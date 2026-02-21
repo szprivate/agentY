@@ -116,7 +116,7 @@
   },
   "60": {
     "inputs": {
-      "prompt": "Wide-angle shot capturing the elderly man (image 2) standing in the vast open field with distant mountains and dramatic clouds (image 1). The frame includes the man in the foreground with the expansive landscape stretching to the horizon. Subject: Elderly male (70s+) with deeply wrinkled skin, gray beard, wearing a knit beanie, serious contemplative expression looking slightly downward, weathered texture from years of exposure. Environment: Vast open field with tall grass, distant mountain ranges under a dramatic sky filled with large billowing clouds, late afternoon, clear weather with high contrast lighting. Lighting: High-contrast black-and-white lighting, dramatic shadows and highlights on clouds and landscape, emphasizing texture of man's face and terrain. Style: Photorealistic, 8k, detailed textures. Color Palette: Monochromatic black and white with high contrast.",
+      "prompt": "Wide-angle photographic shot of an elderly man with deeply wrinkled skin, a white beard with gray strands, and wearing a dark knit beanie, standing in the foreground of a vast open field with dry, sparse vegetation. The background features distant rolling mountains under a dramatic sky filled with large, billowing clouds. The scene is in black-and-white, high-contrast, with strong shadows and highlights mimicking natural sunlight. The man has a soft expression with partially closed eyes and a slight smile. The composition is eye-level, medium shot framing to include both the subject and the expansive landscape. Photorealistic, 8k resolution, documentary-style photography with subtle grain texture to enhance realism, no digital artifacts, capturing the exact environment and subject from the provided images.",
       "clip": [
         "30",
         1
@@ -141,7 +141,7 @@
   },
   "61": {
     "inputs": {
-      "prompt": "blurry, deformed, colorful, cartoonish, unrealistic details",
+      "prompt": "blurry, deformed hands, unrealistic textures, color, cartoonish, digital art, low resolution, AI-generated artifacts, overexposed, underexposed, modern clothing, accessories, any elements not matching the original black-and-white landscape and close-up portrait, extra limbs, distorted facial features",
       "clip": [
         "30",
         1
@@ -158,7 +158,7 @@
   },
   "62": {
     "inputs": {
-      "seed": 1772982849,
+      "seed": 3613855520,
       "steps": 8,
       "cfg": 1,
       "sampler_name": "euler",

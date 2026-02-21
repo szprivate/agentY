@@ -4,4 +4,4 @@
 - **Lighting:** Specify the lighting style. (e.g., "dramatic Rembrandt lighting", "soft, diffused morning light", "neon-drenched cyberpunk lighting").
 - **Style:** Define the overall artistic style. (e.g., "photorealistic, 8k", "oil painting by Van Gogh", "anime style", "vintage comic book art").
 - **Color Palette:** Suggest a color scheme or mood. (e.g., "warm and desaturated tones", "vibrant and contrasting colors", "monochromatic blue").
-- **Negative Prompts:** You can optionally include a "negative_prompt" key in the JSON to list things to avoid in the image (e.g., "blurry, ugly, deformed hands").
+- **Negative Prompts:** Include a "negative_prompt" key in the JSON to list things to avoid in the image (e.g., "blurry, ugly, deformed hands").

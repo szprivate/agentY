@@ -1,0 +1,1 @@
+Wide angle photograph of exactly the guy in the images, in exactly this environment. Non-AI look, the result should look as real as possible.

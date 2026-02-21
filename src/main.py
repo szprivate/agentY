@@ -19,18 +19,18 @@ class prompter:
     """
 
     def __init__(self,
-                 model_name: str = "qwen3-vl",
+                 model_name: str = "qwen3-vl:30b",
                  api_base_url: str = "http://localhost:11434/v1",
                  prompt_guide_keyframes: Path = Path("./prompts/guide.keyframes.md"),
-                 prompt_persona_superv: Path = Path("./prompts/persona.supervisor.md"),
+                 prompt_persona_supe: Path = Path("./prompts/persona.supervisor.md"),
                  prompt_persona_writer: Path = Path("./prompts/persona.writer.md")):
 
         self.api_base_url = api_base_url.replace("/v1", "") # Use the native Ollama API endpoint
-        self.ollamaclient = ollama.Client(host=self.api_base_url, timeout=120)
+        self.ollamaclient = ollama.Client(host=self.api_base_url, timeout=60)
         self.ollamamodel = model_name
-        self.keyframes_path = prompt_guide_keyframes
-        self.writer_prompt_path = prompt_persona_writer
-        self.supervisor_prompt_path = prompt_persona_superv
+        self.guide_keyframes_path = prompt_guide_keyframes
+        self.path_prompt_writer = prompt_persona_writer
+        self.path_prompt_supe = prompt_persona_supe
         self._ensure_model_is_loaded()
 
     def _ensure_model_is_loaded(self):
@@ -81,9 +81,9 @@ class prompter:
                       briefing: str, 
                       mood_image_paths: Optional[List[Path]] = None) -> Dict[str, Any]:
         """Create prompt for image generation based on briefing and provided images."""
-        guidelines = self._load_llm_prompt(self.keyframes_path)
-        raw_system_prompt = self._load_llm_prompt(self.writer_prompt_path)
-        system_prompt = raw_system_prompt.format(guidelines=guidelines)
+        keyframes_guidelines = self._load_llm_prompt(self.guide_keyframes_path)
+        raw_system_prompt = self._load_llm_prompt(self.path_prompt_writer)
+        system_prompt = raw_system_prompt.format(guidelines=keyframes_guidelines)
         
         # Initiate LLM prompt with briefing text
         llm_prompt: Dict[str, Any] = {
@@ -121,9 +121,21 @@ class prompter:
             result = self.ollamaclient.chat(**payload)
             if result.get("done_reason") == "length":
                 logging.warning(f"LLM response may be truncated (finish_reason: length)")
-            # The content is a JSON string, so we need to parse it.
+            # The content is expected to be a JSON string, so we need to parse it.
             message_content = result.get("message", {}).get("content", "{}")
-            return json.loads(message_content)
+            parsed = json.loads(message_content)
+
+            # Some models (qwen3-vl:30b for example) return the positive prompt under
+            # the key "prompt" instead of "positive_prompt".  Normalize the result
+            # so that callers always see ``positive_prompt``.
+            if "prompt" in parsed and "positive_prompt" not in parsed:
+                logging.warning("LLM returned key 'prompt' instead of 'positive_prompt'; normalizing")
+                parsed["positive_prompt"] = parsed.pop("prompt")
+
+            if "positive_prompt" not in parsed:
+                logging.warning("Parsed LLM response did not contain a positive prompt")
+
+            return parsed
         except ollama.ResponseError as e:
             logging.error(f"Failed to get response from LLM: {e}")
             return {"error": "Failed to get response from LLM", "raw_content": str(e)}
@@ -137,7 +149,7 @@ class prompter:
                   generated_image_path: Path,
                   mood_image_paths: Optional[List[Path]] = None) -> Dict[str, Any]:
         """Supervises a generated image against the original brief and mood images."""
-        system_prompt = self._load_llm_prompt(self.supervisor_prompt_path)
+        system_prompt = self._load_llm_prompt(self.path_prompt_supe)
 
         # Construnct LLM prompt from briefing
         llm_prompt = f"BRIEFING: {briefing}"
@@ -430,8 +442,14 @@ if __name__ == "__main__":
     if mood_images_dir.is_dir():
         mood_images = list(mood_images_dir.glob('*'))
 
-    # Set environment variables
-    brief = "Wide angle shot of exactly the guy in the images, in exactly this environment. Reference the images of the guy and the environment in your prompt as image 1 and image 2"
+    # Load the briefing from the markdown file
+    briefing_path = Path("./prompts/briefing.md")
+    try:
+        brief = briefing_path.read_text(encoding='utf-8').strip()
+        logging.info(f"Loaded briefing from {briefing_path}")
+    except FileNotFoundError:
+        logging.error(f"Briefing file not found at: {briefing_path}")
+        exit(1)
     num_generations = 1
     
     # Generate the prompt using the LLM ---
