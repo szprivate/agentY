@@ -1,0 +1,16 @@
+{
+  "ollama_api_url": "http://localhost:11434/v1",
+  "comfyui_url": "http://127.0.0.1:8188/",
+  "ollama-model": "qwen3-vl:30b",
+  "prompts": {
+    "guide_keyframes": "./prompts/guide.keyframes.md",
+    "persona_supervisor": "./prompts/persona.supervisor.md",
+    "persona_writer": "./prompts/persona.writer.md",
+    "briefing": "./prompts/briefing.md"
+  },
+  "mood_images_dir": "./mood_images/",
+  "debug_supervision_dir": "./debug/supervision/",
+  "comfyui_workflow": "./comfyui_workflows/agentY_qwen_api.json",
+  "comfyui_output_dir_default": "./output/agentY",
+  "comfyui_output_dir_override": "W://i002_ai_rnd//02_build//comfy//outputs//"
+}

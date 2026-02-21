@@ -12,6 +12,30 @@ import io
 import time
 from typing import List, Dict, Any, Optional
 
+
+def load_paths(config_file: Path = Path("./config/settings.json")) -> Dict[str, Any]:
+    """Read a JSON blob containing application paths.
+
+    The JSON content lives in a file with a `.md` extension so it can be
+    edited manually with minimal tooling.  The structure is completely
+    arbitrary, but this helper mirrors the conventions used throughout the
+    codebase.
+    """
+    try:
+        text = config_file.read_text(encoding="utf-8")
+        return json.loads(text)
+    except FileNotFoundError:
+        logging.error(f"Path configuration file not found: {config_file}")
+        raise
+    except json.JSONDecodeError as exc:
+        logging.error(f"Invalid JSON in path configuration file {config_file}: {exc}")
+        raise
+
+
+# load once, reuse globally
+SYS_CONFIG: Dict[str, Any] = load_paths()
+
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class prompter:
@@ -19,15 +43,21 @@ class prompter:
     """
 
     def __init__(self,
-                 model_name: str = "qwen3-vl:30b",
-                 api_base_url: str = "http://localhost:11434/v1",
-                 prompt_guide_keyframes: Path = Path("./prompts/guide.keyframes.md"),
-                 prompt_persona_supe: Path = Path("./prompts/persona.supervisor.md"),
-                 prompt_persona_writer: Path = Path("./prompts/persona.writer.md")):
+                 model_name: Optional[str] = None,
+                 api_base_url: Optional[str] = None,
+                 prompt_guide_keyframes: Optional[Path] = None,
+                 prompt_persona_supe: Optional[Path] = None,
+                 prompt_persona_writer: Optional[Path] = None):
 
-        self.api_base_url = api_base_url.replace("/v1", "") # Use the native Ollama API endpoint
+        # load defaults from configuration if the caller didn't supply them
+        api_base_url = api_base_url or SYS_CONFIG.get("ollama_api_url")
+        prompt_guide_keyframes = prompt_guide_keyframes or Path(SYS_CONFIG["prompts"]["guide_keyframes"])
+        prompt_persona_supe = prompt_persona_supe or Path(SYS_CONFIG["prompts"]["persona_supervisor"])
+        prompt_persona_writer = prompt_persona_writer or Path(SYS_CONFIG["prompts"]["persona_writer"])
+
+        self.api_base_url = api_base_url.replace("/v1", "")  # Use the native Ollama API endpoint
         self.ollamaclient = ollama.Client(host=self.api_base_url, timeout=60)
-        self.ollamamodel = model_name
+        self.ollamamodel = model_name or SYS_CONFIG.get("ollama-model")
         self.guide_keyframes_path = prompt_guide_keyframes
         self.path_prompt_writer = prompt_persona_writer
         self.path_prompt_supe = prompt_persona_supe
@@ -189,7 +219,8 @@ class prompter:
 
         # --- Debug: Save images being sent to the supervisor ---
         try:
-            debug_dir = Path(f"./debug/supervision/{time.strftime('%Y%m%d-%H%M%S')}")
+            base_debug = Path(SYS_CONFIG.get("debug_supervision_dir", "./debug/supervision/"))
+            debug_dir = base_debug / time.strftime('%Y%m%d-%H%M%S')
             debug_dir.mkdir(parents=True, exist_ok=True)
             logging.info(f"Saving supervisor input images to: {debug_dir}")
 
@@ -226,9 +257,15 @@ class generator:
     """
 
     def __init__(self,
-                 comfyui_url: str = "http://127.0.0.1:8188/",
-                 workflow_path: Path = Path("./comfyui_workflows/agentY_qwen_api.json"),
-                 comfyui_output_dir: Path = Path("./output/agentY")):
+                 comfyui_url: Optional[str] = None,
+                 workflow_path: Optional[Path] = None,
+                 comfyui_output_dir: Optional[Path] = None):
+
+        # resolve configuration defaults
+        comfyui_url = comfyui_url or SYS_CONFIG.get("comfyui_url")
+        workflow_path = workflow_path or Path(SYS_CONFIG.get("comfyui_workflow"))
+        default_out = SYS_CONFIG.get("comfyui_output_dir_default")
+        comfyui_output_dir = comfyui_output_dir or (Path(SYS_CONFIG.get("comfyui_output_dir_override")) if SYS_CONFIG.get("comfyui_output_dir_override") else Path(default_out))
 
         self.comfyui_url = comfyui_url
         self.workflow_path = workflow_path
@@ -436,14 +473,14 @@ class generator:
 
 if __name__ == "__main__":
     
-    # Get Mood images
-    mood_images_dir = Path("./mood_images/")    
+    # Get mood images directory from configuration
+    mood_images_dir = Path(SYS_CONFIG.get("mood_images_dir", "./mood_images/"))    
     mood_images = []
     if mood_images_dir.is_dir():
         mood_images = list(mood_images_dir.glob('*'))
 
-    # Load the briefing from the markdown file
-    briefing_path = Path("./prompts/briefing.md")
+    # Load the briefing from the markdown file defined in configuration
+    briefing_path = Path(SYS_CONFIG["prompts"]["briefing"])
     try:
         brief = briefing_path.read_text(encoding='utf-8').strip()
         logging.info(f"Loaded briefing from {briefing_path}")
@@ -471,7 +508,8 @@ if __name__ == "__main__":
     # Generate the image using ComfyUI ---
     logging.info("Initializing generator for image creation...")
     try:
-        vfxguy = generator(comfyui_output_dir=Path("W://i002_ai_rnd//02_build//comfy//outputs//"))
+        override = SYS_CONFIG.get("comfyui_output_dir_override")
+        vfxguy = generator(comfyui_output_dir=Path(override) if override else None)
     except FileNotFoundError as e:
         logging.error(f"Generator initialization failed: {e}")
         exit(1)
