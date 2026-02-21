@@ -1,0 +1,238 @@
+{
+  "23": {
+    "inputs": {
+      "vae_name": "QWEN\\qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "26": {
+    "inputs": {
+      "shift": 3.1,
+      "model": [
+        "30",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingAuraFlow",
+    "_meta": {
+      "title": "ModelSamplingAuraFlow"
+    }
+  },
+  "28": {
+    "inputs": {
+      "clip_name": "QWEN\\qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "29": {
+    "inputs": {
+      "unet_name": "QWEN\\qwen_image_edit_2511_bf16.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "30": {
+    "inputs": {
+      "lora_name": "QWEN\\Qwen-Image-Edit-2511-Lightning-8steps-V1.0-fp32.safetensors",
+      "strength_model": 1,
+      "strength_clip": 1,
+      "model": [
+        "29",
+        0
+      ],
+      "clip": [
+        "28",
+        0
+      ]
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "44": {
+    "inputs": {
+      "width": 1280,
+      "height": 720,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  },
+  "46": {
+    "inputs": {
+      "samples": [
+        "62",
+        0
+      ],
+      "vae": [
+        "23",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "50": {
+    "inputs": {
+      "strength": 1,
+      "model": [
+        "26",
+        0
+      ]
+    },
+    "class_type": "CFGNorm",
+    "_meta": {
+      "title": "CFGNorm"
+    }
+  },
+  "55": {
+    "inputs": {
+      "filename_prefix": "./agentY/test_",
+      "images": [
+        "46",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "60": {
+    "inputs": {
+      "prompt": "wide-angle shot, eye-level view, capturing the entire desert landscape with rocky mountains, sparse vegetation, and dramatic cloudy sky as seen in image 1, featuring the older man with weathered face, white beard, dark knit hat, and calm contemplative expression from image 2 standing in the foreground. The man is positioned amidst the arid terrain with a camel visible in the distance. High-contrast black-and-white photography with dramatic Rembrandt lighting, photorealistic 8k quality, monochromatic color scheme.",
+      "clip": [
+        "30",
+        1
+      ],
+      "vae": [
+        "23",
+        0
+      ],
+      "image1": [
+        "65",
+        0
+      ],
+      "image2": [
+        "66",
+        0
+      ],
+      "image3": [
+        "67",
+        0
+      ]
+    },
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "_meta": {
+      "title": "positive_prompt"
+    }
+  },
+  "61": {
+    "inputs": {
+      "prompt": "color, blurry, deformed hands, distorted features, extra limbs, cartoonish, low resolution, bad anatomy, text, watermark, signature",
+      "clip": [
+        "30",
+        1
+      ],
+      "vae": [
+        "23",
+        0
+      ]
+    },
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "_meta": {
+      "title": "negative_prompt"
+    }
+  },
+  "62": {
+    "inputs": {
+      "seed": 3162335860,
+      "steps": 8,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "50",
+        0
+      ],
+      "positive": [
+        "60",
+        0
+      ],
+      "negative": [
+        "61",
+        0
+      ],
+      "latent_image": [
+        "44",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "64": {
+    "inputs": {
+      "anything": [
+        "46",
+        0
+      ]
+    },
+    "class_type": "easy cleanGpuUsed",
+    "_meta": {
+      "title": "Clean VRAM Used"
+    }
+  },
+  "65": {
+    "inputs": {
+      "image_path": "D:\\AI\\agentY\\mood_images\\black-and-white-desert-landscape-with-camel-l.jpg",
+      "RGBA": "false",
+      "filename_text_extension": "true"
+    },
+    "class_type": "Image Load",
+    "_meta": {
+      "title": "Image Load"
+    }
+  },
+  "66": {
+    "inputs": {
+      "image_path": "D:\\AI\\agentY\\mood_images\\istockphoto-157644498-612x612.jpg",
+      "RGBA": "false",
+      "filename_text_extension": "true"
+    },
+    "class_type": "Image Load",
+    "_meta": {
+      "title": "Image Load"
+    }
+  },
+  "67": {
+    "inputs": {
+      "image_path": "D:\\AI\\agentY\\mood_images\\old-3975765_960_720.jpg",
+      "RGBA": "false",
+      "filename_text_extension": "true"
+    },
+    "class_type": "Image Load",
+    "_meta": {
+      "title": "Image Load"
+    }
+  }
+}
