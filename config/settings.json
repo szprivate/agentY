@@ -1,7 +1,7 @@
 {
   "ollama_api_url": "http://localhost:11434/v1",
   "comfyui_url": "http://127.0.0.1:8188/",
-  "ollama-model": "qwen3-vl:30b",
+  "ollama-model": "qwen3-vl:30b-a3b-thinking",
   "prompts": {
     "guide_keyframes": "./prompts/guide.keyframes.md",
     "persona_supervisor": "./prompts/persona.supervisor.md",

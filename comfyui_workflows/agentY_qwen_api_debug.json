@@ -116,7 +116,7 @@
   },
   "60": {
     "inputs": {
-      "prompt": "Wide angle photograph of an elderly man (70-80 years old, male) standing in the foreground of a vast desert landscape. He has deep wrinkles on his face, a thick white beard with textured strands, and wears a dark knitted beanie and dark clothing. His expression is gentle, looking directly at the camera. The environment features rolling hills in the distance, sparse dry grass covering the ground, and dramatic clouds in a high-contrast black and white sky. Time of day: late afternoon with strong natural sunlight creating sharp shadows. Shot at eye level, cinematic wide composition, photorealistic 8k detail, high contrast black and white photography, capturing the texture of the man's skin, beard, and the landscape's rugged terrain. The scene should evoke a timeless, documentary-style realism with no artistic filters or stylization.",
+      "prompt": "Wide-angle photograph of an elderly man (70+ years old, male) wearing a dark knit beanie, with a white beard and deeply wrinkled face, standing in the middle of a vast open plain. The environment is an exact match to the reference landscape: distant mountain ranges under a dramatic sky filled with large, billowing clouds, sparse vegetation across the plain. High-contrast black-and-white lighting, dramatic shadows and highlights from the clouds, mimicking the reference image's cinematic composition. Photorealistic, 8k resolution, ultra-detailed film photography style, capturing every texture of the man's skin, beard, and the landscape. The shot is a medium-wide angle, framing the man within the expansive environment to emphasize the scale of the landscape. Time of day: late afternoon/early evening with dark sky and bright clouds. Composition: centered shot of the man against the dramatic backdrop, with the mountains and clouds filling the background. Focus on realism, no digital manipulation, natural textures, and authentic film grain to ensure a non-AI look.",
       "clip": [
         "30",
         1
@@ -141,7 +141,7 @@
   },
   "61": {
     "inputs": {
-      "prompt": "blurry, deformed hands, low resolution, cartoonish, digital art, illustration, watercolor, soft focus, smooth skin, anime, 3D render, painting, drawing, surreal, color, text, logo, watermark, unrealistic details, overexposed, underexposed, digital artifacts, plastic look, AI-generated, stylized, abstract",
+      "prompt": "blurry, deformed hands, low resolution, cartoonish, digital art, watercolor, anime style, 3D render, AI-generated artifacts, overexposed, underexposed, unnatural lighting, synthetic textures, plastic skin, distorted facial features, modern digital filters, colorized, vibrant colors, excessive noise, unsharp",
       "clip": [
         "30",
         1
@@ -158,7 +158,7 @@
   },
   "62": {
     "inputs": {
-      "seed": 3936202717,
+      "seed": 3971143168,
       "steps": 8,
       "cfg": 1,
       "sampler_name": "euler",

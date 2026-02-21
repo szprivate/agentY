@@ -107,6 +107,77 @@ class prompter:
             logging.error(f"Failed to resize and encode image {image_path}: {e}")
             return self._encode_image(image_path) # Fallback to original encoding
 
+    def _encode_existing_images(self, 
+                                image_paths: Optional[List[Path]]) -> List[str]:
+        """Convert a list of image paths to base64 strings, skipping missing files.
+
+        Both ``create_prompt`` and ``supervise`` need essentially the same
+        behaviour when handling mood images; this helper centralises the loop
+        and warning logic.
+        """
+        encoded: List[str] = []
+        if not image_paths:
+            return encoded
+
+        for path in image_paths:
+            if path.is_file():
+                encoded.append(self._encode_image(path))
+            else:
+                logging.warning(f"Image file not found, skipping: {path}")
+        return encoded
+
+    def _build_supervision_llm_prompt(self, 
+                                   briefing: str, 
+                                   mood_image_paths: Optional[List[Path]],
+                                   original_prompt: Optional[str] = None) -> str:
+        """Compose the text portion of a supervision request.
+
+        The returned string includes the briefing and, when mood images are
+        provided, a textual list of their filenames.  The generated-image
+        section is always appended by the caller.  If an `original_prompt` is
+        supplied it is included as an additional section so the supervisor can
+        comment on how to improve it.
+        """
+        llm_prompt = f"BRIEFING: {briefing}"
+        if mood_image_paths:
+            llm_prompt += "\n\nMOOD IMAGES:"
+            for path in mood_image_paths:
+                # only filenames are included - the LLM receives the actual
+                # data separately via the ``images`` field.
+                llm_prompt += f"\n- {path.name}"
+        if original_prompt:
+            llm_prompt += f"\n\nORIGINAL POSITIVE PROMPT: {original_prompt}"
+        llm_prompt += "\n\nGENERATED IMAGE (for review):"
+        return llm_prompt
+
+    def _chat(self, payload: Dict[str, Any], normalize: bool = False) -> Dict[str, Any]:
+        """Send a chat payload to Ollama and parse the resulting JSON.
+
+        ``normalize`` enables the special behaviour that ``create_prompt``
+        previously implemented (renaming ``prompt`` to ``positive_prompt`` and
+        warning if the key is missing).
+        """
+        try:
+            result = self.ollamaclient.chat(**payload)
+            if result.get("done_reason") == "length":
+                logging.warning("LLM response may be truncated (finish_reason: length)")
+            message_content = result.get("message", {}).get("content", "{}")
+            parsed = json.loads(message_content)
+            if normalize:
+                if "prompt" in parsed and "positive_prompt" not in parsed:
+                    logging.warning("LLM returned key 'prompt' instead of 'positive_prompt'; normalizing")
+                    parsed["positive_prompt"] = parsed.pop("prompt")
+                if "positive_prompt" not in parsed:
+                    logging.warning("Parsed LLM response did not contain a positive prompt")
+            return parsed
+        except ollama.ResponseError as e:
+            logging.error(f"Failed to get response from LLM: {e}")
+            return {"error": "Failed to get response from LLM", "raw_content": str(e)}
+        except json.JSONDecodeError as e:
+            raw_content = result.get("message", {}).get("content", "") if 'result' in locals() else ""
+            logging.error(f"Failed to decode LLM response as JSON. Raw response:\n{raw_content}")
+            return {"error": "Failed to parse JSON response", "raw_content": raw_content}
+
     def create_prompt(self, 
                       briefing: str, 
                       mood_image_paths: Optional[List[Path]] = None) -> Dict[str, Any]:
@@ -114,23 +185,17 @@ class prompter:
         keyframes_guidelines = self._load_llm_prompt(self.guide_keyframes_path)
         raw_system_prompt = self._load_llm_prompt(self.path_prompt_writer)
         system_prompt = raw_system_prompt.format(guidelines=keyframes_guidelines)
-        
+
         # Initiate LLM prompt with briefing text
         llm_prompt: Dict[str, Any] = {
             "role": "user",
             "content": f"BRIEFING: {briefing}"
         }
 
-        # Load mood images, add to LLM prompt
-        images_data = []
-        if mood_image_paths:
-            for path in mood_image_paths:
-                if path.is_file():
-                    images_data.append(self._encode_image(path))
-                else:
-                    logging.warning(f"Image file not found, skipping: {path}")
-            if images_data:
-                llm_prompt["images"] = images_data
+        # encode any mood images that were supplied
+        images_data = self._encode_existing_images(mood_image_paths)
+        if images_data:
+            llm_prompt["images"] = images_data
 
         payload = {
             "model": self.ollamamodel,
@@ -147,64 +212,34 @@ class prompter:
             "keep_alive": "5s"
         }
 
-        try:
-            result = self.ollamaclient.chat(**payload)
-            if result.get("done_reason") == "length":
-                logging.warning(f"LLM response may be truncated (finish_reason: length)")
-            # The content is expected to be a JSON string, so we need to parse it.
-            message_content = result.get("message", {}).get("content", "{}")
-            parsed = json.loads(message_content)
-
-            # Some models (qwen3-vl:30b for example) return the positive prompt under
-            # the key "prompt" instead of "positive_prompt".  Normalize the result
-            # so that callers always see ``positive_prompt``.
-            if "prompt" in parsed and "positive_prompt" not in parsed:
-                logging.warning("LLM returned key 'prompt' instead of 'positive_prompt'; normalizing")
-                parsed["positive_prompt"] = parsed.pop("prompt")
-
-            if "positive_prompt" not in parsed:
-                logging.warning("Parsed LLM response did not contain a positive prompt")
-
-            return parsed
-        except ollama.ResponseError as e:
-            logging.error(f"Failed to get response from LLM: {e}")
-            return {"error": "Failed to get response from LLM", "raw_content": str(e)}
-        except json.JSONDecodeError as e:
-            raw_content = result.get("message", {}).get("content", "") if 'result' in locals() else ""
-            logging.error(f"Failed to decode LLM response as JSON. Raw response:\n{raw_content}")
-            return {"error": "Failed to parse JSON response", "raw_content": raw_content}
+        # dispatch to shared helper that handles the chat call and JSON parsing
+        return self._chat(payload, normalize=True)
 
     def supervise(self,
                   briefing: str,
                   generated_image_path: Path,
-                  mood_image_paths: Optional[List[Path]] = None) -> Dict[str, Any]:
-        """Supervises a generated image against the original brief and mood images."""
+                  mood_image_paths: Optional[List[Path]] = None,
+                  original_prompt: Optional[str] = None) -> Dict[str, Any]:
+        """Supervises a generated image against the original brief, mood images,
+        and optionally the positive prompt that was used to generate it.
+        """
         system_prompt = self._load_llm_prompt(self.path_prompt_supe)
 
-        # Construnct LLM prompt from briefing
-        llm_prompt = f"BRIEFING: {briefing}"
-        all_images_data = []
+        # encode mood images (warnings handled by helper)
+        all_images_data = self._encode_existing_images(mood_image_paths)
 
-        # add mood images and labels to LLM briefing
-        if mood_image_paths:
-            llm_prompt += "\n\nMOOD IMAGES:"
-            for path in mood_image_paths:
-                if path.is_file():
-                    all_images_data.append(self._encode_image(path))
-                else:
-                    logging.warning(f"Mood image file not found, skipping: {path}")
-
-        # add generated image and label to LLM briefing
-        llm_prompt += "\n\nGENERATED IMAGE (for review):"
+        # ensure the generated image is available and append its resized version
         if generated_image_path.is_file():
             all_images_data.append(self._encode_and_resize_image(generated_image_path, scale_factor=0.75))
         else:
             logging.error(f"Generated image not found: {generated_image_path}")
             return {"error": "Generated image not found", "raw_content": ""}
 
+        # build the text portion of the user prompt
+        llm_text = self._build_supervision_llm_prompt(briefing, mood_image_paths, original_prompt)
         llm_prompt = {
             "role": "user",
-            "content": llm_prompt,
+            "content": llm_text,
             "images": all_images_data
         }
 
@@ -217,37 +252,9 @@ class prompter:
             "keep_alive": "5s"
         }
 
-        # --- Debug: Save images being sent to the supervisor ---
-        try:
-            base_debug = Path(SYS_CONFIG.get("debug_supervision_dir", "./debug/supervision/"))
-            debug_dir = base_debug / time.strftime('%Y%m%d-%H%M%S')
-            debug_dir.mkdir(parents=True, exist_ok=True)
-            logging.info(f"Saving supervisor input images to: {debug_dir}")
-
-            # Save mood images
-            if mood_image_paths:
-                for i, path in enumerate(mood_image_paths):
-                    with open(debug_dir / f"mood_{i+1}_{path.name}", "wb") as f:
-                        f.write(base64.b64decode(all_images_data[i]))
-
-            # Save the (potentially resized) generated image
-            with open(debug_dir / f"generated_{generated_image_path.name}", "wb") as f:
-                f.write(base64.b64decode(all_images_data[-1]))
-        except Exception as e:
-            logging.error(f"Could not save debug images for supervision: {e}")
-
-        try:
-            logging.info(f"Supervising image: {generated_image_path}")
-            result = self.ollamaclient.chat(**payload)
-            message_content = result.get("message", {}).get("content", "{}")
-            return json.loads(message_content)
-        except ollama.ResponseError as e:
-            logging.error(f"Failed to get response from LLM during supervision: {e}")
-            return {"error": "Failed to get response from LLM", "raw_content": str(e)}
-        except json.JSONDecodeError as e:
-            raw_content = result.get("message", {}).get("content", "") if 'result' in locals() else ""
-            logging.error(f"Failed to decode LLM supervisor response as JSON. Raw response:\n{raw_content}")
-            return {"error": "Failed to parse JSON response", "raw_content": raw_content}
+        # use the shared chat/parse helper; it already logs appropriately
+        logging.info(f"Supervising image: {generated_image_path}")
+        return self._chat(payload)
 
 class generator:
     """GENERATOR CLASS FOR GENERATING IMAGES USING COMFYUI TEMPLATE
@@ -547,10 +554,13 @@ if __name__ == "__main__":
             logging.error("Failed to re-initialize prompter for supervision. Skipping.")
 
         logging.info("--- Starting supervisor step ---")
-        verdict = writer.supervise(brief, generated_image, mood_images)
+        verdict = writer.supervise(brief, generated_image, mood_images, positive_prompt)
         if "error" not in verdict:
             logging.info(f"Supervisor verdict: {'APPROVED' if verdict.get('approved') else 'REJECTED'}")
             logging.info(f"Reason: {verdict.get('reason')}")
+            logging.info(f"ToDo: {verdict.get('todo')}")
+            if verdict.get('prompt_suggestion'):
+                logging.info(f"Prompt suggestion: {verdict.get('prompt_suggestion')}")
         else:
             logging.error(f"Supervisor step failed: {verdict.get('error')}")
     else:
