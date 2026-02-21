@@ -21,61 +21,47 @@ class prompter:
     def __init__(self,
                  model_name: str = "qwen3-vl",
                  api_base_url: str = "http://localhost:11434/v1",
-                 keyframes_path: Path = Path("./prompts/guide.keyframes.md"),
-                 system_prompt_path: Path = Path("./prompts/guide.system.md"),
-                 supervisor_prompt_path: Path = Path("./prompts/guide.supervisor.md")):
+                 prompt_guide_keyframes: Path = Path("./prompts/guide.keyframes.md"),
+                 prompt_persona_superv: Path = Path("./prompts/persona.supervisor.md"),
+                 prompt_persona_writer: Path = Path("./prompts/persona.writer.md")):
 
         self.api_base_url = api_base_url.replace("/v1", "") # Use the native Ollama API endpoint
         self.ollamaclient = ollama.Client(host=self.api_base_url, timeout=120)
         self.ollamamodel = model_name
-        self.keyframes_path = keyframes_path
-        self.system_prompt_path = system_prompt_path
-        self.supervisor_prompt_path = supervisor_prompt_path
+        self.keyframes_path = prompt_guide_keyframes
+        self.writer_prompt_path = prompt_persona_writer
+        self.supervisor_prompt_path = prompt_persona_superv
         self._ensure_model_is_loaded()
 
     def _ensure_model_is_loaded(self):
         """Ensures the specified model is loaded in Ollama."""
         logging.info(f"Checking if model '{self.ollamamodel}' is loaded...")
         try:
-            # This call will load the model if it's not already in memory.
-            # It will raise ollama.ResponseError if the model is not found.
+            # call model to check whether it's active
             self.ollamaclient.show(self.ollamamodel)
-            # The subsequent /api/chat call will have its own keep_alive,
-            # so we don't need to manage it here. This call just ensures
-            # the model is ready for the first real request.
             logging.info(f"Model '{self.ollamamodel}' is loaded and ready.")
         except ollama.ResponseError as e:
             logging.error(f"Failed to preload model '{self.ollamamodel}': {e}")
-            logging.error("Please ensure Ollama is running and the model is available.")
             raise
 
-    def _encode_image(self, image_path: Path) -> str:
+    def _encode_image(self, 
+                      image_path: Path) -> str:
         """Converts an image file to a base64 string."""
         with open(image_path, "rb") as image_file:
             return base64.b64encode(image_file.read()).decode('utf-8')
 
-    def _load_guidelines(self) -> str:
-        """Load guidline.keyframes.md prompt from a file."""
+    def _load_llm_prompt(self,
+                         prompt_file: Path) -> str:
+        """Load LLM prompt from a file."""
         try:
-            return self.keyframes_path.read_text(encoding='utf-8')
+            logging.info(f"Loading LLM prompt from file: {prompt_file}")
+            return prompt_file.read_text(encoding='utf-8')
         except FileNotFoundError:
-            return "No specific guidelines provided."
+            raise FileNotFoundError(f"Supervisor prompt file not found: {prompt_file}")
 
-    def _load_system_prompt(self) -> str:
-        """Load guide.system.md prompt from a file."""
-        try:
-            return self.system_prompt_path.read_text(encoding='utf-8')
-        except FileNotFoundError:
-            raise FileNotFoundError(f"System prompt file not found: {self.system_prompt_path}")
-
-    def _load_supervisor_prompt(self) -> str:
-        """Load guide.supervisor.md prompt from a file."""
-        try:
-            return self.supervisor_prompt_path.read_text(encoding='utf-8')
-        except FileNotFoundError:
-            raise FileNotFoundError(f"Supervisor prompt file not found: {self.supervisor_prompt_path}")
-
-    def _encode_and_resize_image(self, image_path: Path, scale_factor: float = 0.5) -> str:
+    def _encode_and_resize_image(self, 
+                                 image_path: Path, 
+                                 scale_factor: float = 0.5) -> str:
         """Resizes an image and encodes it to a base64 string."""
         try:
             with Image.open(image_path) as img:
@@ -91,10 +77,12 @@ class prompter:
             logging.error(f"Failed to resize and encode image {image_path}: {e}")
             return self._encode_image(image_path) # Fallback to original encoding
 
-    def create_prompt(self, briefing: str, mood_image_paths: Optional[List[Path]] = None) -> Dict[str, Any]:
+    def create_prompt(self, 
+                      briefing: str, 
+                      mood_image_paths: Optional[List[Path]] = None) -> Dict[str, Any]:
         """Create prompt for image generation based on briefing and provided images."""
-        guidelines = self._load_guidelines()
-        raw_system_prompt = self._load_system_prompt()
+        guidelines = self._load_llm_prompt(self.keyframes_path)
+        raw_system_prompt = self._load_llm_prompt(self.writer_prompt_path)
         system_prompt = raw_system_prompt.format(guidelines=guidelines)
         
         # Initiate LLM prompt with briefing text
@@ -131,10 +119,8 @@ class prompter:
 
         try:
             result = self.ollamaclient.chat(**payload)
-
             if result.get("done_reason") == "length":
                 logging.warning(f"LLM response may be truncated (finish_reason: length)")
-
             # The content is a JSON string, so we need to parse it.
             message_content = result.get("message", {}).get("content", "{}")
             return json.loads(message_content)
@@ -151,23 +137,23 @@ class prompter:
                   generated_image_path: Path,
                   mood_image_paths: Optional[List[Path]] = None) -> Dict[str, Any]:
         """Supervises a generated image against the original brief and mood images."""
-        system_prompt = self._load_supervisor_prompt()
+        system_prompt = self._load_llm_prompt(self.supervisor_prompt_path)
 
-        # Construct the user message with briefing and images
-        user_content = f"BRIEFING: {briefing}"
+        # Construnct LLM prompt from briefing
+        llm_prompt = f"BRIEFING: {briefing}"
         all_images_data = []
 
-        # Add mood images first, labeling them as such
+        # add mood images and labels to LLM briefing
         if mood_image_paths:
-            user_content += "\n\nMOOD IMAGES:"
+            llm_prompt += "\n\nMOOD IMAGES:"
             for path in mood_image_paths:
                 if path.is_file():
                     all_images_data.append(self._encode_image(path))
                 else:
                     logging.warning(f"Mood image file not found, skipping: {path}")
 
-        # Add the generated image last, labeling it clearly
-        user_content += "\n\nGENERATED IMAGE (for review):"
+        # add generated image and label to LLM briefing
+        llm_prompt += "\n\nGENERATED IMAGE (for review):"
         if generated_image_path.is_file():
             all_images_data.append(self._encode_and_resize_image(generated_image_path, scale_factor=0.75))
         else:
@@ -176,7 +162,7 @@ class prompter:
 
         llm_prompt = {
             "role": "user",
-            "content": user_content,
+            "content": llm_prompt,
             "images": all_images_data
         }
 
@@ -251,7 +237,8 @@ class generator:
                 "via the `comfyui_output_dir` parameter."
             )
 
-    def _get_comfyui_output_path(self, comfyui_url: str) -> Optional[Path]:
+    def _get_comfyui_output_path(self, 
+                                 comfyui_url: str) -> Optional[Path]:
         """Fetches the output directory path from the running ComfyUI instance."""
         logging.info("Attempting to fetch ComfyUI output directory from API...")
         try:
@@ -281,7 +268,8 @@ class generator:
             logging.error(f"Failed to decode workflow JSON from {self.workflow_path}")
             raise
 
-    def _find_node_id_by_title(self, title: str) -> Optional[str]:
+    def _find_node_id_by_title(self, 
+                               title: str) -> Optional[str]:
         """Finds a node's ID in the workflow by its title."""
         for node_id, node in self.workflow.items():
             # Ensure we are only checking dictionary-like node objects with a _meta key
@@ -289,7 +277,8 @@ class generator:
                     return node_id
         return None
     
-    def _find_node_ids_by_class_type(self, class_type: str) -> List[str]:
+    def _find_node_ids_by_class_type(self, 
+                                     class_type: str) -> List[str]:
         """Finds node IDs in the workflow by their class type."""
         return [
             node_id
@@ -297,7 +286,10 @@ class generator:
             if isinstance(node, dict) and node.get("class_type") == class_type
         ]
 
-    def generate(self, positive_prompt: str, negative_prompt: str, mood_images: Optional[List[Path]] = None) -> Optional[tuple[str, Path]]:
+    def generate(self, 
+                 positive_prompt: str, 
+                 negative_prompt: str, 
+                 mood_images: Optional[List[Path]] = None) -> Optional[tuple[str, Path]]:
         """Generates an image by queueing a prompt in ComfyUI."""
         positive_node_id = self._find_node_id_by_title("positive_prompt")
         negative_node_id = self._find_node_id_by_title("negative_prompt")
@@ -387,7 +379,9 @@ class generator:
             logging.error(f"Failed to queue prompt in ComfyUI: {e}")
             return None, None
 
-    def wait_for_generation(self, prompt_id: str, output_dir: Path) -> Optional[Path]:
+    def wait_for_generation(self, 
+                            prompt_id: str, 
+                            output_dir: Path) -> Optional[Path]:
         """
         Waits for the generation to complete and returns the path to the first output image.
         Note: This assumes the ComfyUI output directory is accessible.
@@ -440,57 +434,53 @@ if __name__ == "__main__":
     brief = "Wide angle shot of exactly the guy in the images, in exactly this environment. Reference the images of the guy and the environment in your prompt as image 1 and image 2"
     num_generations = 1
     
-    # # Generate the prompt using the LLM ---
-    # logging.info("Initializing prompter to generate prompts...")
-    # try:
-    #     writer = prompter()
-    # except (FileNotFoundError, ollama.ResponseError):
-    #     exit(1) # Exit if model preloading fails
-    # prompt = writer.create_prompt(brief, mood_images)
+    # Generate the prompt using the LLM ---
+    logging.info("Initializing prompter to generate prompts...")
+    try:
+        writer = prompter()
+    except (FileNotFoundError, ollama.ResponseError):
+        exit(1) # Exit if model preloading fails
+    prompt = writer.create_prompt(brief, mood_images)
    
-    # if "error" in prompt:
-    #     logging.error("Failed to generate prompt. Exiting.")
-    #     exit()
+    if "error" in prompt:
+        logging.error("Failed to generate prompt. Exiting.")
+        exit()
 
-    # logging.info("Successfully generated prompts.")
-    # logging.info(f"Positive Prompt: {prompt.get('positive_prompt')}")
-    # logging.info(f"Negative Prompt: {prompt.get('negative_prompt')}")
+    logging.info("Successfully generated prompts.")
+    logging.info(f"Positive Prompt: {prompt.get('positive_prompt')}")
+    logging.info(f"Negative Prompt: {prompt.get('negative_prompt')}")
 
-    # # Generate the image using ComfyUI ---
-    # logging.info("Initializing generator for image creation...")
-    # try:
-    #     vfxguy = generator(comfyui_output_dir=Path("W://i002_ai_rnd//02_build//comfy//outputs//"))
-    # except FileNotFoundError as e:
-    #     logging.error(f"Generator initialization failed: {e}")
-    #     exit(1)
-    # positive_prompt = prompt.get("positive_prompt", "")
-    # negative_prompt = prompt.get("negative_prompt", "")
+    # Generate the image using ComfyUI ---
+    logging.info("Initializing generator for image creation...")
+    try:
+        vfxguy = generator(comfyui_output_dir=Path("W://i002_ai_rnd//02_build//comfy//outputs//"))
+    except FileNotFoundError as e:
+        logging.error(f"Generator initialization failed: {e}")
+        exit(1)
+    positive_prompt = prompt.get("positive_prompt", "")
+    negative_prompt = prompt.get("negative_prompt", "")
 
-    # if positive_prompt:
-    #     # --- Release LLM from memory before loading diffusion models ---
-    #     logging.info("Releasing LLM from VRAM to free up resources for image generation...")
-    #     del writer
-    #     # A small delay can help ensure resources are fully released.
-    #     time.sleep(5)
-    #     logging.info("LLM resources should now be free.")
+    if positive_prompt:
+        # --- Release LLM from memory before loading diffusion models ---
+        logging.info("Releasing LLM from VRAM to free up resources for image generation...")
+        del writer
+        # A small delay can help ensure resources are fully released.
+        time.sleep(5)
+        logging.info("LLM resources should now be free.")
 
 
-    #     logging.info(f"--- Queuing {num_generations} generation jobs in ComfyUI ---")
+        logging.info(f"--- Queuing {num_generations} generation jobs in ComfyUI ---")
         
-    #     for i in range(num_generations):
-    #         logging.info(f"Queuing job {i+1}/{num_generations}...")
-    #         prompt_id, output_path = vfxguy.generate(positive_prompt, negative_prompt, mood_images)
-    #         if prompt_id:
-    #             logging.info(f"--- Waiting for job {i+1}/{num_generations} (Prompt ID: {prompt_id}) ---")
-    #             generated_image = vfxguy.wait_for_generation(prompt_id, output_path)
-    # else:
-    #     logging.error("No positive prompt was generated, cannot create image.")
-
-    # logging.info(f"Generated image: {generated_image}")
+        for i in range(num_generations):
+            logging.info(f"Queuing job {i+1}/{num_generations}...")
+            prompt_id, output_path = vfxguy.generate(positive_prompt, negative_prompt, mood_images)
+            if prompt_id:
+                logging.info(f"--- Waiting for job {i+1}/{num_generations} (Prompt ID: {prompt_id}) ---")
+                generated_image = vfxguy.wait_for_generation(prompt_id, output_path)
+    else:
+        logging.error("No positive prompt was generated, cannot create image.")
 
     # Supervise the generated image ---
-    generated_image = Path("W://i002_ai_rnd//02_build//comfy//outputs//agentY//test__00009_.png")
-    brief = "Wide angle shot of exactly the guy in the images, in exactly this environment."
 
     if generated_image:
         # Reload the LLM for the supervision task ---

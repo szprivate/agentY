@@ -116,7 +116,7 @@
   },
   "60": {
     "inputs": {
-      "prompt": "wide-angle shot, eye-level view, capturing the entire desert landscape with rocky mountains, sparse vegetation, and dramatic cloudy sky as seen in image 1, featuring the older man with weathered face, white beard, dark knit hat, and calm contemplative expression from image 2 standing in the foreground. The man is positioned amidst the arid terrain with a camel visible in the distance. High-contrast black-and-white photography with dramatic Rembrandt lighting, photorealistic 8k quality, monochromatic color scheme.",
+      "prompt": "Wide-angle shot capturing the elderly man (image 2) standing in the vast open field with distant mountains and dramatic clouds (image 1). The frame includes the man in the foreground with the expansive landscape stretching to the horizon. Subject: Elderly male (70s+) with deeply wrinkled skin, gray beard, wearing a knit beanie, serious contemplative expression looking slightly downward, weathered texture from years of exposure. Environment: Vast open field with tall grass, distant mountain ranges under a dramatic sky filled with large billowing clouds, late afternoon, clear weather with high contrast lighting. Lighting: High-contrast black-and-white lighting, dramatic shadows and highlights on clouds and landscape, emphasizing texture of man's face and terrain. Style: Photorealistic, 8k, detailed textures. Color Palette: Monochromatic black and white with high contrast.",
       "clip": [
         "30",
         1
@@ -132,10 +132,6 @@
       "image2": [
         "66",
         0
-      ],
-      "image3": [
-        "67",
-        0
       ]
     },
     "class_type": "TextEncodeQwenImageEditPlus",
@@ -145,7 +141,7 @@
   },
   "61": {
     "inputs": {
-      "prompt": "color, blurry, deformed hands, distorted features, extra limbs, cartoonish, low resolution, bad anatomy, text, watermark, signature",
+      "prompt": "blurry, deformed, colorful, cartoonish, unrealistic details",
       "clip": [
         "30",
         1
@@ -162,7 +158,7 @@
   },
   "62": {
     "inputs": {
-      "seed": 3162335860,
+      "seed": 1772982849,
       "steps": 8,
       "cfg": 1,
       "sampler_name": "euler",
@@ -204,17 +200,6 @@
   },
   "65": {
     "inputs": {
-      "image_path": "D:\\AI\\agentY\\mood_images\\black-and-white-desert-landscape-with-camel-l.jpg",
-      "RGBA": "false",
-      "filename_text_extension": "true"
-    },
-    "class_type": "Image Load",
-    "_meta": {
-      "title": "Image Load"
-    }
-  },
-  "66": {
-    "inputs": {
       "image_path": "D:\\AI\\agentY\\mood_images\\istockphoto-157644498-612x612.jpg",
       "RGBA": "false",
       "filename_text_extension": "true"
@@ -224,7 +209,7 @@
       "title": "Image Load"
     }
   },
-  "67": {
+  "66": {
     "inputs": {
       "image_path": "D:\\AI\\agentY\\mood_images\\old-3975765_960_720.jpg",
       "RGBA": "false",
