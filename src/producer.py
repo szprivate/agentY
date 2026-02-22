@@ -88,7 +88,7 @@ class Producer(PrompterBase):
 # entry‑point helper so that ``python -m src.producer`` or running this file
 # directly behaves like the old monolithic script.
 
-def main():
+def iteration():
     # Get mood images directory from configuration
     mood_images_dir = Path(SYS_CONFIG.get("mood_images_dir", "./mood_images/"))
     mood_images: List[Path] = []
@@ -153,7 +153,7 @@ def main():
     logging.info("Initializing generator for image creation...")
     try:
         override = SYS_CONFIG.get("comfyui_output_dir_override")
-        vfxguy = Generator(
+        generator = Generator(
             workflow_path=selected_workflow,
             comfyui_output_dir=Path(override) if override else None,
         )
@@ -174,10 +174,10 @@ def main():
         generated_image: Optional[Path] = None
         for i in range(num_generations):
             logging.info(f"Queuing job {i+1}/{num_generations}...")
-            prompt_id, output_path = vfxguy.generate(positive_prompt, negative_prompt, mood_images)
+            prompt_id, output_path = generator.generate(positive_prompt, negative_prompt, mood_images)
             if prompt_id:
                 logging.info(f"--- Waiting for job {i+1}/{num_generations} (Prompt ID: {prompt_id}) ---")
-                generated_image = vfxguy.wait_for_generation(prompt_id, output_path)
+                generated_image = generator.wait_for_generation(prompt_id, output_path)
     else:
         logging.error("No positive prompt was generated, cannot create image.")
         generated_image = None
@@ -208,4 +208,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    iteration()

@@ -12,4 +12,4 @@ Return your verdict as a JSON object with four keys:
 - ``approved`` a boolean: true if it meets the standard, false otherwise
 - ``reason`` a string explaining your decision
 - ``todo`` a string in which you elaborate which AI-only solutions can be used to improve the image, to get it to approval in the next run. Solutions could include suggestions like: use upscaler to improve details, change to other diffusion model (make suggestions which model), which specific parameters to tweak.
-- ``prompt_suggestion`` a string containing a revised version of the original positive prompt or guidance on how it should be changed to achieve approval next time. 
+- ``prompt_suggestion`` a string containing suggestions on how to change the original prompt to get it to approval.
