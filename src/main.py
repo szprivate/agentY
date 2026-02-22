@@ -85,7 +85,7 @@ class prompter:
             logging.info(f"Loading LLM prompt from file: {prompt_file}")
             return prompt_file.read_text(encoding='utf-8')
         except FileNotFoundError:
-            raise FileNotFoundError(f"Supervisor prompt file not found: {prompt_file}")
+            raise FileNotFoundError(f"Prompt file not found: {prompt_file}")
 
     def _encode_and_resize_image(self, 
                                  image_path: Path, 
@@ -175,22 +175,43 @@ class prompter:
     def create_image_prompt(self, 
                       briefing: str,
                       selected_workflow_path: Path,
-                      mood_image_paths: Optional[List[Path]] = None) -> Dict[str, Any]:
-        """Create prompt for image generation based on briefing and provided images."""
-        # Determine the specific guideline file based on the selected workflow
-        workflow_name = selected_workflow_path.stem
-        specific_guide_path = self.guide_keyframes_path.parent / f"guide.{workflow_name}.md"
+                      mood_image_paths: Optional[List[Path]] = None,
+                      prompt_type: Optional[str] = None) -> Dict[str, Any]:
+        """Create prompt for image generation based on briefing and provided images.
 
-        # Use the specific guide if it exists, otherwise fall back to the default
-        if specific_guide_path.is_file():
-            logging.info(f"Using specific guideline file for workflow '{workflow_name}': {specific_guide_path}")
-            keyframes_guidelines = self._load_llm_prompt(specific_guide_path)
-        else:
-            logging.info(f"Specific guideline file not found. Using default: {self.guide_keyframes_path}")
-            keyframes_guidelines = self._load_llm_prompt(self.guide_keyframes_path)
+        ``prompt_type`` is an optional string that corresponds to one of the
+        predefined prompt guides (the part of the filename after ``guide.``).
+        When supplied, the contents of that guide will be appended to the
+        system prompt to influence how the writer composes the final prompts.
+        """
+        # Determine which guideline to use.  Prompt type (suggested by producer)
+        # has the highest priority; if a corresponding guide file exists we'll
+        # load it and skip the workflow-specific/default logic entirely.  This
+        # addresses the case where the producer wants a style such as
+        # "concise" regardless of which workflow is chosen.
+        keyframes_guidelines = ""
+        if prompt_type:
+            pt_path = self.guide_keyframes_path.parent / f"guide.{prompt_type}.md"
+            if pt_path.is_file():
+                logging.info(f"Prompt type '{prompt_type}' yields guideline file: {pt_path}")
+                keyframes_guidelines = self._load_llm_prompt(pt_path)
+            else:
+                logging.warning(f"Prompt type guide not found: {pt_path}; falling back to workflow/default")
+
+        # Any remaining prompt_type guidance is redundant because we've already
+        # consumed it; keep variable for compatibility but it will be empty.
+        prompt_type_guidelines = ""
+        # note: we intentionally do not load it again to avoid duplicate
+        # content in the system prompt.  The writer prompt template is already
+        # written to handle this case without issue.
 
         raw_system_prompt = self._load_llm_prompt(self.path_prompt_writer)
-        system_prompt = raw_system_prompt.format(guidelines=keyframes_guidelines)
+        # provide both guideline sets to the format string; the writer prompt
+        # template must be updated accordingly.
+        system_prompt = raw_system_prompt.format(
+            guidelines=keyframes_guidelines,
+            prompt_type_guidelines=prompt_type_guidelines
+        )
         
         # Initiate LLM prompt with briefing text
         llm_prompt: Dict[str, Any] = {
@@ -268,7 +289,8 @@ class prompter:
                         workflow_dir: Path) -> Optional[Dict[str, Any]]:
         """
         Acts as a "producer" to select the best ComfyUI workflow and provide a directive.
-        Returns a dictionary with 'workflow_path' and 'reason'.
+        Now also decides on a ``prompt_type`` based on available prompt guides.
+        Returns a dictionary with 'workflow_path', 'reason', and optionally 'prompt_type'.
         """
         system_prompt = self._load_llm_prompt(self.path_prompt_producer)
         if not workflow_dir.is_dir():
@@ -283,10 +305,19 @@ class prompter:
 
         workflow_list_str = "\n".join(workflow_files)
 
+        # gather available prompt guides (files prefixed with 'guide.' in prompts directory)
+        prompts_dir = Path(self.guide_keyframes_path).parent
+        prompt_guides = sorted(prompts_dir.glob("guide.*.md"))
+        # Exclude the keyframes guideline itself since that's used elsewhere
+        prompt_guides = [p for p in prompt_guides if not p.name.startswith("guide.keyframes")]
+        # we pass the filenames so the LLM can choose one; producers should strip the 'guide.' prefix
+        prompt_guides_str = "\n".join([p.name for p in prompt_guides])
+
         llm_text = (
             f"BRIEFING: {briefing}\n\n"
             f"INPUT SUMMARY: {input_summary}\n\n"
-            f"AVAILABLE WORKFLOWS:\n{workflow_list_str}"
+            f"AVAILABLE WORKFLOWS:\n{workflow_list_str}\n\n"
+            f"AVAILABLE PROMPT GUIDES:\n{prompt_guides_str}"
         )
         payload = {
             "model": self.ollamamodel,
@@ -299,12 +330,20 @@ class prompter:
 
         workflow_path_str = result.get("workflow_path")
         reason = result.get("reason", "No reason provided.")
+        prompt_type = result.get("prompt_type")
 
         logging.info(f"Producer raw result: {result}")
 
         if not workflow_path_str:
             return None
-        return {"workflow_path": Path(workflow_path_str), "reason": reason}
+        output = {"workflow_path": Path(workflow_path_str), "reason": reason}
+        if prompt_type:
+            # normalize value by stripping potential file name parts
+            # if user returned a filename like 'guide.concise.md', keep 'concise'
+            if prompt_type.startswith("guide."):
+                prompt_type = Path(prompt_type).stem.split('.', 1)[1] if '.' in Path(prompt_type).stem else Path(prompt_type).stem
+            output["prompt_type"] = prompt_type
+        return output
 
 class generator:
     """GENERATOR CLASS FOR GENERATING IMAGES USING COMFYUI TEMPLATE
@@ -568,7 +607,10 @@ if __name__ == "__main__":
 
     # Generate the prompt using the LLM, informed by the producer's directive ---
     logging.info("--- Running Writer to generate prompts ---")
-    prompt = promptr.create_image_prompt(brief, selected_workflow, mood_images)
+    prompt_type = producer_choice.get("prompt_type")
+    if prompt_type:
+        logging.info(f"Producer suggested prompt type: {prompt_type}")
+    prompt = promptr.create_image_prompt(brief, selected_workflow, mood_images, prompt_type=prompt_type)
 
     if "error" in prompt:
         logging.error("Writer failed to generate prompt. Exiting.")
