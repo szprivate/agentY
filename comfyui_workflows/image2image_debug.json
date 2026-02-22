@@ -116,7 +116,7 @@
   },
   "60": {
     "inputs": {
-      "prompt": "Change the close-up angle of the person's face to a new perspective; all other elements including facial details, beard, hat, and dark background stay the same.",
+      "prompt": "Replace the current face angle with a new close-up shot; the person's beard, hat, and background stay exactly as they are.",
       "clip": [
         "30",
         1
@@ -141,7 +141,7 @@
   },
   "61": {
     "inputs": {
-      "prompt": "Desert landscape, wide shot, sky, mountains, grassland",
+      "prompt": "desert landscape, wide angle, distant mountains",
       "clip": [
         "30",
         1
@@ -158,7 +158,7 @@
   },
   "62": {
     "inputs": {
-      "seed": 384000337,
+      "seed": 2781134209,
       "steps": 8,
       "cfg": 1,
       "sampler_name": "euler",
