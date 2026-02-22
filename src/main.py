@@ -581,54 +581,56 @@ if __name__ == "__main__":
     logging.info(f"Negative Prompt: {negative_prompt}")
 
     # Generate the image using ComfyUI ---
-    # logging.info("Initializing generator for image creation...")
-    # try:
-    #     override = SYS_CONFIG.get("comfyui_output_dir_override")
-    #     vfxguy = generator(
-    #         workflow_path=selected_workflow,
-    #         comfyui_output_dir=Path(override) if override else None)
-    #     logging.error(f"Generator initialization failed: {e}")
-    #     exit(1)
+    logging.info("Initializing generator for image creation...")
+    try:
+        override = SYS_CONFIG.get("comfyui_output_dir_override")
+        vfxguy = generator(
+            workflow_path=selected_workflow,
+            comfyui_output_dir=Path(override) if override else None)
+    
+    except Exception as e:
+       logging.error(f"Generator initialization failed: {e}")
+       exit(1)
 
-    # if positive_prompt:
-    #     # --- Release LLM from memory before loading diffusion models ---
-    #     logging.info("Releasing LLM from VRAM to free up resources for image generation...")
-    #     del writer
-    #     # A small delay can help ensure resources are fully released.
-    #     time.sleep(5)
-    #     logging.info("LLM resources should now be free.")
+    if positive_prompt:
+        # --- Release LLM from memory before loading diffusion models ---
+        logging.info("Releasing LLM from VRAM to free up resources for image generation...")
+        del promptr
+        # A small delay can help ensure resources are fully released.
+        time.sleep(5)
+        logging.info("LLM resources should now be free.")
 
 
-    #     logging.info(f"--- Queuing {num_generations} generation jobs in ComfyUI ---")
+        logging.info(f"--- Queuing {num_generations} generation jobs in ComfyUI ---")
         
-    #     for i in range(num_generations):
-    #         logging.info(f"Queuing job {i+1}/{num_generations}...")
-    #         prompt_id, output_path = vfxguy.generate(positive_prompt, negative_prompt, mood_images)
-    #         if prompt_id:
-    #             logging.info(f"--- Waiting for job {i+1}/{num_generations} (Prompt ID: {prompt_id}) ---")
-    #             generated_image = vfxguy.wait_for_generation(prompt_id, output_path)
-    # else:
-    #     logging.error("No positive prompt was generated, cannot create image.")
+        for i in range(num_generations):
+            logging.info(f"Queuing job {i+1}/{num_generations}...")
+            prompt_id, output_path = vfxguy.generate(positive_prompt, negative_prompt, mood_images)
+            if prompt_id:
+                logging.info(f"--- Waiting for job {i+1}/{num_generations} (Prompt ID: {prompt_id}) ---")
+                generated_image = vfxguy.wait_for_generation(prompt_id, output_path)
+    else:
+        logging.error("No positive prompt was generated, cannot create image.")
 
-    # # Supervise the generated image ---
+    # Supervise the generated image ---
 
-    # if generated_image:
-    #     # Reload the LLM for the supervision task ---
-    #     logging.info("Re-initializing prompter to supervise the generated image...")
-    #     try:
-    #         writer = prompter()
-    #     except (FileNotFoundError, ollama.ResponseError):
-    #         logging.error("Failed to re-initialize prompter for supervision. Skipping.")
+    if generated_image:
+        # Reload the LLM for the supervision task ---
+        logging.info("Re-initializing prompter to supervise the generated image...")
+        try:
+            promptr = prompter()
+        except (FileNotFoundError, ollama.ResponseError):
+            logging.error("Failed to re-initialize prompter for supervision. Skipping.")
 
-    #     logging.info("--- Starting supervisor step ---")
-    #     verdict = writer.supervise(brief, generated_image, mood_images, positive_prompt)
-    #     if "error" not in verdict:
-    #         logging.info(f"Supervisor verdict: {'APPROVED' if verdict.get('approved') else 'REJECTED'}")
-    #         logging.info(f"Reason: {verdict.get('reason')}")
-    #         logging.info(f"ToDo: {verdict.get('todo')}")
-    #         if verdict.get('prompt_suggestion'):
-    #             logging.info(f"Prompt suggestion: {verdict.get('prompt_suggestion')}")
-    #     else:
-    #         logging.error(f"Supervisor step failed: {verdict.get('error')}")
-    # else:
-    #     logging.warning("Could not retrieve generated image for supervision.")
+        logging.info("--- Starting supervisor step ---")
+        verdict = promptr.supervise(brief, generated_image, mood_images, positive_prompt)
+        if "error" not in verdict:
+            logging.info(f"Supervisor verdict: {'APPROVED' if verdict.get('approved') else 'REJECTED'}")
+            logging.info(f"Reason: {verdict.get('reason')}")
+            logging.info(f"ToDo: {verdict.get('todo')}")
+            if verdict.get('prompt_suggestion'):
+                logging.info(f"Prompt suggestion: {verdict.get('prompt_suggestion')}")
+        else:
+            logging.error(f"Supervisor step failed: {verdict.get('error')}")
+    else:
+        logging.warning("Could not retrieve generated image for supervision.")

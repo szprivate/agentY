@@ -1,1 +1,1 @@
-Create a new shot, with the man in the environment.
+Create close-up shots, new angles on the person's face. Ignore the image of the desert.
