@@ -1,0 +1,1 @@
+The prompt should not be longer than 1 or 2 sentences, describing what needs to change, and in what way. Be precise, make sure there is no ambiguity about the image elements that need to change.

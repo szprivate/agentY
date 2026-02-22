@@ -182,17 +182,18 @@ class prompter:
             return {"error": "Failed to parse JSON response", "raw_content": raw_content}
 
     def create_prompt(self, 
-                      briefing: str, 
+                      briefing: str,
+                      directive: str,
                       mood_image_paths: Optional[List[Path]] = None) -> Dict[str, Any]:
         """Create prompt for image generation based on briefing and provided images."""
         keyframes_guidelines = self._load_llm_prompt(self.guide_keyframes_path)
         raw_system_prompt = self._load_llm_prompt(self.path_prompt_writer)
         system_prompt = raw_system_prompt.format(guidelines=keyframes_guidelines)
 
-        # Initiate LLM prompt with briefing text
+        # Initiate LLM prompt with briefing text and the producer's directive
         llm_prompt: Dict[str, Any] = {
             "role": "user",
-            "content": f"BRIEFING: {briefing}"
+            "content": f"DIRECTIVE: {directive}\n\nBRIEFING: {briefing}"
         }
 
         # encode any mood images that were supplied
@@ -261,13 +262,13 @@ class prompter:
 
     def select_workflow(self,
                         briefing: str,
-                        positive_prompt: str,
-                        workflow_dir: Path) -> Optional[Path]:
+                        input_summary: str,
+                        workflow_dir: Path) -> Optional[Dict[str, Any]]:
         """
-        Acts as a "producer" to select the best ComfyUI workflow.
+        Acts as a "producer" to select the best ComfyUI workflow and provide a directive.
+        Returns a dictionary with 'workflow_path' and 'reason' (as the directive).
         """
         system_prompt = self._load_llm_prompt(self.path_prompt_producer)
-
         if not workflow_dir.is_dir():
             logging.error(f"Workflow directory not found: {workflow_dir}")
             return None
@@ -282,10 +283,9 @@ class prompter:
 
         llm_text = (
             f"BRIEFING: {briefing}\n\n"
-            f"POSITIVE PROMPT: {positive_prompt}\n\n"
+            f"INPUT SUMMARY: {input_summary}\n\n"
             f"AVAILABLE WORKFLOWS:\n{workflow_list_str}"
         )
-
         payload = {
             "model": self.ollamamodel,
             "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": llm_text}],
@@ -295,8 +295,20 @@ class prompter:
         }
         logging.info(f"Producer prompt:\n{payload}")
         result = self._chat(payload)
-        logging.info(f"Producer raw result: {result}")
-        return Path(result["workflow_path"]) if "workflow_path" in result and result.get("workflow_path") else None
+
+        workflow_path_str = result.get("workflow_path")
+        reason = result.get("reason")
+        directive = result.get("directive")
+
+        if reason:
+            logging.info(f"Producer's reason/directive: {directive}")
+        else:
+            logging.info(f"Producer raw result: {result}")
+
+        if not workflow_path_str:
+            return None
+        return {"workflow_path": Path(workflow_path_str), 
+                "reason": reason, "directive": directive}
 
 class generator:
     """GENERATOR CLASS FOR GENERATING IMAGES USING COMFYUI TEMPLATE
@@ -309,7 +321,6 @@ class generator:
                  comfyui_url: Optional[str] = None,
                  workflow_path: Optional[Path] = None,
                  comfyui_output_dir: Optional[Path] = None):
-
         # resolve configuration defaults
         comfyui_url = comfyui_url or SYS_CONFIG.get("comfyui_url")
         workflow_path = workflow_path or Path(SYS_CONFIG.get("comfyui_workflow"))
@@ -537,36 +548,43 @@ if __name__ == "__main__":
         logging.error(f"Briefing file not found at: {briefing_path}")
         exit(1)
     num_generations = 1
-    
-    # Generate the prompt using the LLM ---
-    logging.info("Initializing prompter to generate prompts...")
+
+    # Initialize the prompter class
     try:
         writer = prompter()
     except (FileNotFoundError, ollama.ResponseError):
         exit(1) # Exit if model preloading fails
-    prompt = writer.create_prompt(brief, mood_images)
-   
-    if "error" in prompt:
-        logging.error("Failed to generate prompt. Exiting.")
-        exit()
 
-    logging.info("Successfully generated prompts.")
-    logging.info(f"Positive Prompt: {prompt.get('positive_prompt')}")
-    logging.info(f"Negative Prompt: {prompt.get('negative_prompt')}")
-
-    positive_prompt = prompt.get("positive_prompt", "")
-    negative_prompt = prompt.get("negative_prompt", "")
+    # Create a summary of available inputs for the producer
+    num_mood_images = len(mood_images)
+    input_summary = f"Available inputs: {num_mood_images} mood image(s), 1 text prompt."
 
     # Have the producer select the workflow ---
-    logging.info("Initializing producer to select workflow...")
+    logging.info("--- Running Producer to select workflow ---")
     workflows_dir = Path(SYS_CONFIG.get("comfyui_workflows_dir", "./comfyui_workflows/"))
-    selected_workflow = writer.select_workflow(brief, positive_prompt, workflows_dir)
+    producer_choice = writer.select_workflow(brief, input_summary, workflows_dir)
 
-    if not selected_workflow or not selected_workflow.is_file():
+    if not producer_choice or not producer_choice.get("workflow_path"):
         logging.error("Producer failed to select a valid workflow. Exiting.")
         exit(1)
 
+    selected_workflow = producer_choice["workflow_path"]
+    writer_directive = producer_choice["directive"] 
     logging.info(f"Producer selected workflow: {selected_workflow}")
+
+    # Generate the prompt using the LLM, informed by the producer's directive ---
+    logging.info("--- Running Writer to generate prompts ---")
+    prompt = writer.create_prompt(brief, writer_directive, mood_images)
+
+    if "error" in prompt:
+        logging.error("Writer failed to generate prompt. Exiting.")
+        exit(1)
+
+    logging.info("Writer successfully generated prompts.")
+    positive_prompt = prompt.get("positive_prompt", "")
+    negative_prompt = prompt.get("negative_prompt", "")
+    logging.info(f"Positive Prompt: {positive_prompt}")
+    logging.info(f"Negative Prompt: {negative_prompt}")
 
     # Generate the image using ComfyUI ---
     # logging.info("Initializing generator for image creation...")
@@ -575,7 +593,6 @@ if __name__ == "__main__":
     #     vfxguy = generator(
     #         workflow_path=selected_workflow,
     #         comfyui_output_dir=Path(override) if override else None)
-    # except FileNotFoundError as e:
     #     logging.error(f"Generator initialization failed: {e}")
     #     exit(1)
 
