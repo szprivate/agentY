@@ -1,1 +1,1 @@
-Change the man's shirt to a black design.
+Create a new shot, with the man in the environment.

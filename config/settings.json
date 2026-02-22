@@ -13,5 +13,6 @@
   "debug_supervision_dir": "./debug/supervision/",
   "comfyui_workflow": "./comfyui_workflows/agentY_qwen_api.json",
   "comfyui_output_dir_default": "./output/agentY",
-  "comfyui_output_dir_override": "W://i002_ai_rnd//02_build//comfy//outputs//"
+  "comfyui_output_dir_override": "W://i002_ai_rnd//02_build//comfy//outputs//",
+  "comfyui_workflows_dir": "./comfyui_workflows/"
 }

@@ -13,13 +13,8 @@ import time
 from typing import List, Dict, Any, Optional
 
 
-def load_paths(config_file: Path = Path("./config/settings.json")) -> Dict[str, Any]:
-    """Read a JSON blob containing application paths.
-
-    The JSON content lives in a file with a `.md` extension so it can be
-    edited manually with minimal tooling.  The structure is completely
-    arbitrary, but this helper mirrors the conventions used throughout the
-    codebase.
+def load_settings(config_file: Path = Path("./config/settings.json")) -> Dict[str, Any]:
+    """READ SETTINGS
     """
     try:
         text = config_file.read_text(encoding="utf-8")
@@ -33,7 +28,7 @@ def load_paths(config_file: Path = Path("./config/settings.json")) -> Dict[str, 
 
 
 # load once, reuse globally
-SYS_CONFIG: Dict[str, Any] = load_paths()
+SYS_CONFIG: Dict[str, Any] = load_settings()
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -45,14 +40,14 @@ class prompter:
     def __init__(self,
                  model_name: Optional[str] = None,
                  api_base_url: Optional[str] = None,
-                 prompt_guide_keyframes: Optional[Path] = None,
+                 prompt_guide_default: Optional[Path] = None,
                  prompt_persona_supe: Optional[Path] = None,
                  prompt_persona_writer: Optional[Path] = None,
                  prompt_persona_producer: Optional[Path] = None):
 
         # load defaults from configuration if the caller didn't supply them
         api_base_url = api_base_url or SYS_CONFIG.get("ollama_api_url")
-        prompt_guide_keyframes = prompt_guide_keyframes or Path(SYS_CONFIG["prompts"]["guide_keyframes"])
+        prompt_guide_default = prompt_guide_default or Path(SYS_CONFIG["prompts"]["guide_keyframes"])
         prompt_persona_supe = prompt_persona_supe or Path(SYS_CONFIG["prompts"]["persona_supervisor"])
         prompt_persona_writer = prompt_persona_writer or Path(SYS_CONFIG["prompts"]["persona_writer"])
         prompt_persona_producer = prompt_persona_producer or Path(SYS_CONFIG["prompts"]["persona_producer"])
@@ -60,7 +55,7 @@ class prompter:
         self.api_base_url = api_base_url.replace("/v1", "")  # Use the native Ollama API endpoint
         self.ollamaclient = ollama.Client(host=self.api_base_url, timeout=60)
         self.ollamamodel = model_name or SYS_CONFIG.get("ollama-model")
-        self.guide_keyframes_path = prompt_guide_keyframes
+        self.guide_keyframes_path = prompt_guide_default
         self.path_prompt_producer = prompt_persona_producer
         self.path_prompt_writer = prompt_persona_writer
         self.path_prompt_supe = prompt_persona_supe
@@ -113,10 +108,6 @@ class prompter:
     def _encode_existing_images(self, 
                                 image_paths: Optional[List[Path]]) -> List[str]:
         """Convert a list of image paths to base64 strings, skipping missing files.
-
-        Both ``create_prompt`` and ``supervise`` need essentially the same
-        behaviour when handling mood images; this helper centralises the loop
-        and warning logic.
         """
         encoded: List[str] = []
         if not image_paths:
@@ -181,19 +172,30 @@ class prompter:
             logging.error(f"Failed to decode LLM response as JSON. Raw response:\n{raw_content}")
             return {"error": "Failed to parse JSON response", "raw_content": raw_content}
 
-    def create_prompt(self, 
+    def create_image_prompt(self, 
                       briefing: str,
-                      directive: str,
+                      selected_workflow_path: Path,
                       mood_image_paths: Optional[List[Path]] = None) -> Dict[str, Any]:
         """Create prompt for image generation based on briefing and provided images."""
-        keyframes_guidelines = self._load_llm_prompt(self.guide_keyframes_path)
+        # Determine the specific guideline file based on the selected workflow
+        workflow_name = selected_workflow_path.stem
+        specific_guide_path = self.guide_keyframes_path.parent / f"guide.{workflow_name}.md"
+
+        # Use the specific guide if it exists, otherwise fall back to the default
+        if specific_guide_path.is_file():
+            logging.info(f"Using specific guideline file for workflow '{workflow_name}': {specific_guide_path}")
+            keyframes_guidelines = self._load_llm_prompt(specific_guide_path)
+        else:
+            logging.info(f"Specific guideline file not found. Using default: {self.guide_keyframes_path}")
+            keyframes_guidelines = self._load_llm_prompt(self.guide_keyframes_path)
+
         raw_system_prompt = self._load_llm_prompt(self.path_prompt_writer)
         system_prompt = raw_system_prompt.format(guidelines=keyframes_guidelines)
-
-        # Initiate LLM prompt with briefing text and the producer's directive
+        
+        # Initiate LLM prompt with briefing text
         llm_prompt: Dict[str, Any] = {
             "role": "user",
-            "content": f"DIRECTIVE: {directive}\n\nBRIEFING: {briefing}"
+            "content": f"BRIEFING: {briefing}"
         }
 
         # encode any mood images that were supplied
@@ -266,7 +268,7 @@ class prompter:
                         workflow_dir: Path) -> Optional[Dict[str, Any]]:
         """
         Acts as a "producer" to select the best ComfyUI workflow and provide a directive.
-        Returns a dictionary with 'workflow_path' and 'reason' (as the directive).
+        Returns a dictionary with 'workflow_path' and 'reason'.
         """
         system_prompt = self._load_llm_prompt(self.path_prompt_producer)
         if not workflow_dir.is_dir():
@@ -293,22 +295,16 @@ class prompter:
             "stream": False,
             "options": {"temperature": 0.0},
         }
-        logging.info(f"Producer prompt:\n{payload}")
         result = self._chat(payload)
 
         workflow_path_str = result.get("workflow_path")
-        reason = result.get("reason")
-        directive = result.get("directive")
+        reason = result.get("reason", "No reason provided.")
 
-        if reason:
-            logging.info(f"Producer's reason/directive: {directive}")
-        else:
-            logging.info(f"Producer raw result: {result}")
+        logging.info(f"Producer raw result: {result}")
 
         if not workflow_path_str:
             return None
-        return {"workflow_path": Path(workflow_path_str), 
-                "reason": reason, "directive": directive}
+        return {"workflow_path": Path(workflow_path_str), "reason": reason}
 
 class generator:
     """GENERATOR CLASS FOR GENERATING IMAGES USING COMFYUI TEMPLATE
@@ -543,7 +539,6 @@ if __name__ == "__main__":
     briefing_path = Path(SYS_CONFIG["prompts"]["briefing"])
     try:
         brief = briefing_path.read_text(encoding='utf-8').strip()
-        logging.info(f"Loaded briefing from {briefing_path}")
     except FileNotFoundError:
         logging.error(f"Briefing file not found at: {briefing_path}")
         exit(1)
@@ -551,7 +546,7 @@ if __name__ == "__main__":
 
     # Initialize the prompter class
     try:
-        writer = prompter()
+        promptr = prompter()
     except (FileNotFoundError, ollama.ResponseError):
         exit(1) # Exit if model preloading fails
 
@@ -561,20 +556,19 @@ if __name__ == "__main__":
 
     # Have the producer select the workflow ---
     logging.info("--- Running Producer to select workflow ---")
-    workflows_dir = Path(SYS_CONFIG.get("comfyui_workflows_dir", "./comfyui_workflows/"))
-    producer_choice = writer.select_workflow(brief, input_summary, workflows_dir)
+    workflows_dir = Path(SYS_CONFIG.get("comfyui_workflows_dir"))
+    producer_choice = promptr.select_workflow(brief, input_summary, workflows_dir)
 
     if not producer_choice or not producer_choice.get("workflow_path"):
         logging.error("Producer failed to select a valid workflow. Exiting.")
         exit(1)
 
     selected_workflow = producer_choice["workflow_path"]
-    writer_directive = producer_choice["directive"] 
     logging.info(f"Producer selected workflow: {selected_workflow}")
 
     # Generate the prompt using the LLM, informed by the producer's directive ---
     logging.info("--- Running Writer to generate prompts ---")
-    prompt = writer.create_prompt(brief, writer_directive, mood_images)
+    prompt = promptr.create_image_prompt(brief, selected_workflow, mood_images)
 
     if "error" in prompt:
         logging.error("Writer failed to generate prompt. Exiting.")
