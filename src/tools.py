@@ -131,27 +131,6 @@ class PrompterBase:
                 logging.warning(f"Image file not found, skipping: {path}")
         return encoded
 
-    def _build_supervision_llm_prompt(
-        self, briefing: str, mood_image_paths: Optional[List[Path]], original_prompt: Optional[str] = None
-    ) -> str:
-        """Compose the text portion of a supervision request.
-
-        The returned string includes the briefing and, when mood images are
-        provided, a textual list of their filenames.  The generated-image
-        section is always appended by the caller.  If an `original_prompt` is
-        supplied it is included as an additional section so the supervisor can
-        comment on how to improve it.
-        """
-        llm_prompt = f"BRIEFING: {briefing}"
-        if mood_image_paths:
-            llm_prompt += "\n\nMOOD IMAGES:"
-            for path in mood_image_paths:
-                llm_prompt += f"\n- {path.name}"
-        if original_prompt:
-            llm_prompt += f"\n\nORIGINAL POSITIVE PROMPT: {original_prompt}"
-        llm_prompt += "\n\nGENERATED IMAGE (for review):"
-        return llm_prompt
-
     def _chat(self, payload: Dict[str, Any], normalize: bool = False) -> Dict[str, Any]:
         """Send a chat payload to Ollama and parse the resulting JSON.
 

@@ -5,8 +5,7 @@ You will be given:
 1. A BRIEFING: The user's creative request.
 2. An INPUT SUMMARY: A summary of the available inputs for the generation (e.g., number of images, presence of a text prompt).
 3. A list of available ComfyUI WORKFLOWS.
-4. A list of AVAILABLE PROMPT GUIDES (filenames beginning with "guide."). Each guide represents a different
-   writing style or level of detail.
+4. A list of AVAILABLE PROMPT GUIDES (filenames beginning with "guide."). Each guide represents a different writing style or level of detail.
 
 Analyze the briefing, the input summary, the workflow filenames, and the available prompt
 guides. The filenames indicate the purpose of each workflow (e.g., 'prompt2image', 'image2image',

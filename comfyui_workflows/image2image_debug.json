@@ -116,7 +116,7 @@
   },
   "60": {
     "inputs": {
-      "prompt": "Modify the prompt to: 'Create a close-up shot of the person's face from a 1/4 view angle (right side visible), maintaining identical facial features, wrinkles, and beard texture; remove all background elements including the desert. Use a low-angle perspective to emphasize the subject's expression. Ensure the angle is distinct from the reference mood image.'",
+      "prompt": "Revise prompt to: \"Close-up side profile of elderly person's face, no background, only face visible, high detail, black and white, sharp facial features, no desert, no landscape\"",
       "clip": [
         "30",
         1
@@ -141,7 +141,7 @@
   },
   "61": {
     "inputs": {
-      "prompt": "desert, landscape, background elements, wide shot, other people",
+      "prompt": "desert, landscape, background",
       "clip": [
         "30",
         1
@@ -158,7 +158,7 @@
   },
   "62": {
     "inputs": {
-      "seed": 2594445943,
+      "seed": 2231719390,
       "steps": 8,
       "cfg": 1,
       "sampler_name": "euler",

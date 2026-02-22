@@ -11,6 +11,38 @@ class Supervisor(PrompterBase):
     the one public method ``supervise``.
     """
 
+    def _build_supervision_llm_prompt(
+        self, briefing: str, 
+        mood_image_paths: Optional[List[Path]], 
+        original_prompt: Optional[str] = None
+    ) -> str:
+        """Compose the text portion of a supervision request.
+
+        The returned string includes the briefing and, when mood images are
+        provided, a textual list of their filenames.  The generated-image
+        section is always appended by the caller.  If an `original_prompt` is
+        supplied it is included as an additional section so the supervisor can
+        comment on how to improve it.
+
+        To help the LLM distinguish which of the transmitted pictures are
+        merely inspiration versus the actual output under review, the text
+        explicitly notes that the mood images come first and are not to be
+        judged as the generated image.  The generated image is always listed
+        last and clearly labelled "for review".
+        """
+        llm_prompt = f"BRIEFING: {briefing}"
+        if mood_image_paths:
+            llm_prompt += (
+                "\n\nMOOD IMAGES (for reference only; do NOT evaluate these as the\n"
+                "generated result – they are provided to convey style/tone):"
+            )
+            for path in mood_image_paths:
+                llm_prompt += f"\n- {path.name}"
+        if original_prompt:
+            llm_prompt += f"\n\nORIGINAL POSITIVE PROMPT: {original_prompt}"
+        llm_prompt += "\n\nGENERATED IMAGE (for review):"
+        return llm_prompt
+
     def supervise(
         self,
         briefing: str,
