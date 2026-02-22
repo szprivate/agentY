@@ -6,6 +6,7 @@
     "guide_keyframes": "./prompts/guide.keyframes.md",
     "persona_supervisor": "./prompts/persona.supervisor.md",
     "persona_writer": "./prompts/persona.writer.md",
+    "persona_producer": "./prompts/persona.producer.md",
     "briefing": "./prompts/briefing.md"
   },
   "mood_images_dir": "./mood_images/",

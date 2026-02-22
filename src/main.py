@@ -47,18 +47,21 @@ class prompter:
                  api_base_url: Optional[str] = None,
                  prompt_guide_keyframes: Optional[Path] = None,
                  prompt_persona_supe: Optional[Path] = None,
-                 prompt_persona_writer: Optional[Path] = None):
+                 prompt_persona_writer: Optional[Path] = None,
+                 prompt_persona_producer: Optional[Path] = None):
 
         # load defaults from configuration if the caller didn't supply them
         api_base_url = api_base_url or SYS_CONFIG.get("ollama_api_url")
         prompt_guide_keyframes = prompt_guide_keyframes or Path(SYS_CONFIG["prompts"]["guide_keyframes"])
         prompt_persona_supe = prompt_persona_supe or Path(SYS_CONFIG["prompts"]["persona_supervisor"])
         prompt_persona_writer = prompt_persona_writer or Path(SYS_CONFIG["prompts"]["persona_writer"])
+        prompt_persona_producer = prompt_persona_producer or Path(SYS_CONFIG["prompts"]["persona_producer"])
 
         self.api_base_url = api_base_url.replace("/v1", "")  # Use the native Ollama API endpoint
         self.ollamaclient = ollama.Client(host=self.api_base_url, timeout=60)
         self.ollamamodel = model_name or SYS_CONFIG.get("ollama-model")
         self.guide_keyframes_path = prompt_guide_keyframes
+        self.path_prompt_producer = prompt_persona_producer
         self.path_prompt_writer = prompt_persona_writer
         self.path_prompt_supe = prompt_persona_supe
         self._ensure_model_is_loaded()
@@ -255,6 +258,45 @@ class prompter:
         # use the shared chat/parse helper; it already logs appropriately
         logging.info(f"Supervising image: {generated_image_path}")
         return self._chat(payload)
+
+    def select_workflow(self,
+                        briefing: str,
+                        positive_prompt: str,
+                        workflow_dir: Path) -> Optional[Path]:
+        """
+        Acts as a "producer" to select the best ComfyUI workflow.
+        """
+        system_prompt = self._load_llm_prompt(self.path_prompt_producer)
+
+        if not workflow_dir.is_dir():
+            logging.error(f"Workflow directory not found: {workflow_dir}")
+            return None
+
+        # Get a list of workflow file paths
+        workflow_files = [str(p.resolve()) for p in workflow_dir.glob('*.json')]
+        if not workflow_files:
+            logging.error(f"No workflow files (.json) found in {workflow_dir}")
+            return None
+
+        workflow_list_str = "\n".join(workflow_files)
+
+        llm_text = (
+            f"BRIEFING: {briefing}\n\n"
+            f"POSITIVE PROMPT: {positive_prompt}\n\n"
+            f"AVAILABLE WORKFLOWS:\n{workflow_list_str}"
+        )
+
+        payload = {
+            "model": self.ollamamodel,
+            "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": llm_text}],
+            "format": "json",
+            "stream": False,
+            "options": {"temperature": 0.0},
+        }
+        logging.info(f"Producer prompt:\n{payload}")
+        result = self._chat(payload)
+        logging.info(f"Producer raw result: {result}")
+        return Path(result["workflow_path"]) if "workflow_path" in result and result.get("workflow_path") else None
 
 class generator:
     """GENERATOR CLASS FOR GENERATING IMAGES USING COMFYUI TEMPLATE
@@ -512,56 +554,70 @@ if __name__ == "__main__":
     logging.info(f"Positive Prompt: {prompt.get('positive_prompt')}")
     logging.info(f"Negative Prompt: {prompt.get('negative_prompt')}")
 
-    # Generate the image using ComfyUI ---
-    logging.info("Initializing generator for image creation...")
-    try:
-        override = SYS_CONFIG.get("comfyui_output_dir_override")
-        vfxguy = generator(comfyui_output_dir=Path(override) if override else None)
-    except FileNotFoundError as e:
-        logging.error(f"Generator initialization failed: {e}")
-        exit(1)
     positive_prompt = prompt.get("positive_prompt", "")
     negative_prompt = prompt.get("negative_prompt", "")
 
-    if positive_prompt:
-        # --- Release LLM from memory before loading diffusion models ---
-        logging.info("Releasing LLM from VRAM to free up resources for image generation...")
-        del writer
-        # A small delay can help ensure resources are fully released.
-        time.sleep(5)
-        logging.info("LLM resources should now be free.")
+    # Have the producer select the workflow ---
+    logging.info("Initializing producer to select workflow...")
+    workflows_dir = Path(SYS_CONFIG.get("comfyui_workflows_dir", "./comfyui_workflows/"))
+    selected_workflow = writer.select_workflow(brief, positive_prompt, workflows_dir)
+
+    if not selected_workflow or not selected_workflow.is_file():
+        logging.error("Producer failed to select a valid workflow. Exiting.")
+        exit(1)
+
+    logging.info(f"Producer selected workflow: {selected_workflow}")
+
+    # Generate the image using ComfyUI ---
+    # logging.info("Initializing generator for image creation...")
+    # try:
+    #     override = SYS_CONFIG.get("comfyui_output_dir_override")
+    #     vfxguy = generator(
+    #         workflow_path=selected_workflow,
+    #         comfyui_output_dir=Path(override) if override else None)
+    # except FileNotFoundError as e:
+    #     logging.error(f"Generator initialization failed: {e}")
+    #     exit(1)
+
+    # if positive_prompt:
+    #     # --- Release LLM from memory before loading diffusion models ---
+    #     logging.info("Releasing LLM from VRAM to free up resources for image generation...")
+    #     del writer
+    #     # A small delay can help ensure resources are fully released.
+    #     time.sleep(5)
+    #     logging.info("LLM resources should now be free.")
 
 
-        logging.info(f"--- Queuing {num_generations} generation jobs in ComfyUI ---")
+    #     logging.info(f"--- Queuing {num_generations} generation jobs in ComfyUI ---")
         
-        for i in range(num_generations):
-            logging.info(f"Queuing job {i+1}/{num_generations}...")
-            prompt_id, output_path = vfxguy.generate(positive_prompt, negative_prompt, mood_images)
-            if prompt_id:
-                logging.info(f"--- Waiting for job {i+1}/{num_generations} (Prompt ID: {prompt_id}) ---")
-                generated_image = vfxguy.wait_for_generation(prompt_id, output_path)
-    else:
-        logging.error("No positive prompt was generated, cannot create image.")
+    #     for i in range(num_generations):
+    #         logging.info(f"Queuing job {i+1}/{num_generations}...")
+    #         prompt_id, output_path = vfxguy.generate(positive_prompt, negative_prompt, mood_images)
+    #         if prompt_id:
+    #             logging.info(f"--- Waiting for job {i+1}/{num_generations} (Prompt ID: {prompt_id}) ---")
+    #             generated_image = vfxguy.wait_for_generation(prompt_id, output_path)
+    # else:
+    #     logging.error("No positive prompt was generated, cannot create image.")
 
-    # Supervise the generated image ---
+    # # Supervise the generated image ---
 
-    if generated_image:
-        # Reload the LLM for the supervision task ---
-        logging.info("Re-initializing prompter to supervise the generated image...")
-        try:
-            writer = prompter()
-        except (FileNotFoundError, ollama.ResponseError):
-            logging.error("Failed to re-initialize prompter for supervision. Skipping.")
+    # if generated_image:
+    #     # Reload the LLM for the supervision task ---
+    #     logging.info("Re-initializing prompter to supervise the generated image...")
+    #     try:
+    #         writer = prompter()
+    #     except (FileNotFoundError, ollama.ResponseError):
+    #         logging.error("Failed to re-initialize prompter for supervision. Skipping.")
 
-        logging.info("--- Starting supervisor step ---")
-        verdict = writer.supervise(brief, generated_image, mood_images, positive_prompt)
-        if "error" not in verdict:
-            logging.info(f"Supervisor verdict: {'APPROVED' if verdict.get('approved') else 'REJECTED'}")
-            logging.info(f"Reason: {verdict.get('reason')}")
-            logging.info(f"ToDo: {verdict.get('todo')}")
-            if verdict.get('prompt_suggestion'):
-                logging.info(f"Prompt suggestion: {verdict.get('prompt_suggestion')}")
-        else:
-            logging.error(f"Supervisor step failed: {verdict.get('error')}")
-    else:
-        logging.warning("Could not retrieve generated image for supervision.")
+    #     logging.info("--- Starting supervisor step ---")
+    #     verdict = writer.supervise(brief, generated_image, mood_images, positive_prompt)
+    #     if "error" not in verdict:
+    #         logging.info(f"Supervisor verdict: {'APPROVED' if verdict.get('approved') else 'REJECTED'}")
+    #         logging.info(f"Reason: {verdict.get('reason')}")
+    #         logging.info(f"ToDo: {verdict.get('todo')}")
+    #         if verdict.get('prompt_suggestion'):
+    #             logging.info(f"Prompt suggestion: {verdict.get('prompt_suggestion')}")
+    #     else:
+    #         logging.error(f"Supervisor step failed: {verdict.get('error')}")
+    # else:
+    #     logging.warning("Could not retrieve generated image for supervision.")
