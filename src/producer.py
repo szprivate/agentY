@@ -11,8 +11,7 @@ from .supervisor import Supervisor
 
 class Producer(PrompterBase):
     """Responsible for choosing a workflow and providing a directive to the
-    writer.  This mirrors the ``select_workflow`` method of the former
-    ``prompter`` class.
+    writer. 
     """
 
     def select_workflow(
@@ -102,7 +101,6 @@ def iteration():
     except FileNotFoundError:
         logging.error(f"Briefing file not found at: {briefing_path}")
         exit(1)
-    num_generations = 1
 
     # Initialize the producer class (also preloads the model)
     try:
@@ -149,7 +147,15 @@ def iteration():
     logging.info(f"Positive Prompt: {positive_prompt}")
     logging.info(f"Negative Prompt: {negative_prompt}")
 
-    # Generate the image using ComfyUI ---
+    if not positive_prompt:
+        logging.error("No positive prompt was generated, cannot create image.")
+        exit(1)
+
+    # Determine maximum number of iterations from config (default 3)
+    max_iter = SYS_CONFIG.get("max_iter", 3)
+    logging.info(f"Maximum iterations set to {max_iter}")
+
+    # Initialize the generator
     logging.info("Initializing generator for image creation...")
     try:
         override = SYS_CONFIG.get("comfyui_output_dir_override")
@@ -161,50 +167,78 @@ def iteration():
         logging.error(f"Generator initialization failed: {e}")
         exit(1)
 
+    # release LLM resources now that the writer is no longer needed
     if positive_prompt:
-        # --- Release LLM from memory before loading diffusion models ---
         logging.info("Releasing LLM from VRAM to free up resources for image generation...")
         del writer
-        # A small delay can help ensure resources are fully released.
         time.sleep(5)
         logging.info("LLM resources should now be free.")
 
-        logging.info(f"--- Queuing {num_generations} generation jobs in ComfyUI ---")
+    # loop until approved or max iterations reached
+    current_prompt = positive_prompt
+    generated_image: Optional[Path] = None
+    supervisor: Optional[Supervisor] = None
+    approved = False
 
-        generated_image: Optional[Path] = None
-        for i in range(num_generations):
-            logging.info(f"Queuing job {i+1}/{num_generations}...")
-            prompt_id, output_path = generator.generate(positive_prompt, negative_prompt, mood_images)
-            if prompt_id:
-                logging.info(f"--- Waiting for job {i+1}/{num_generations} (Prompt ID: {prompt_id}) ---")
-                generated_image = generator.wait_for_generation(prompt_id, output_path)
-    else:
-        logging.error("No positive prompt was generated, cannot create image.")
-        generated_image = None
+    for attempt in range(1, max_iter + 1):
+        logging.info(f"--- Iteration {attempt}/{max_iter} ---")
 
-    # Supervise the generated image ---
-    if generated_image:
-        # Reload the LLM for the supervision task ---
-        logging.info("Re-initializing prompter to supervise the generated image...")
-        try:
-            supervisor = Supervisor()
-        except (FileNotFoundError, ollama.ResponseError):
-            logging.error("Failed to re-initialize supervisor for supervision. Skipping.")
-            supervisor = None
+        if not current_prompt:
+            logging.error("No prompt available for generation; stopping iterations.")
+            break
 
-        if supervisor:
-            logging.info("--- Starting supervisor step ---")
-            verdict = supervisor.supervise(brief, generated_image, mood_images, positive_prompt)
-            if "error" not in verdict:
-                logging.info(f"Supervisor verdict: {'APPROVED' if verdict.get('approved') else 'REJECTED'}")
-                logging.info(f"Reason: {verdict.get('reason')}")
-                logging.info(f"ToDo: {verdict.get('todo')}")
-                if verdict.get('prompt_suggestion'):
-                    logging.info(f"Prompt suggestion: {verdict.get('prompt_suggestion')}")
+        logging.info(f"Queuing generation with prompt: {current_prompt}")
+        prompt_id, output_path = generator.generate(current_prompt, negative_prompt, mood_images)
+        if prompt_id:
+            generated_image = generator.wait_for_generation(prompt_id, output_path)
+        else:
+            logging.error("Failed to queue generation; aborting iterations.")
+            break
+
+        if not generated_image:
+            logging.error("Generation did not produce an image; aborting iterations.")
+            break
+
+        # prepare supervisor if needed
+        if supervisor is None:
+            try:
+                logging.info("Re-initializing prompter to supervise the generated image...")
+                supervisor = Supervisor()
+            except (FileNotFoundError, ollama.ResponseError):
+                logging.error("Failed to initialize supervisor for supervision. Stopping further iterations.")
+                break
+
+        logging.info("--- Starting supervisor step ---")
+        verdict = supervisor.supervise(brief, generated_image, mood_images, current_prompt)
+        if "error" in verdict:
+            logging.error(f"Supervisor step failed: {verdict.get('error')}")
+            break
+
+        approved = verdict.get("approved", False)
+        logging.info(f"Supervisor verdict: {'APPROVED' if approved else 'REJECTED'}")
+        logging.info(f"Reason: {verdict.get('reason')}")
+        logging.info(f"ToDo: {verdict.get('todo')}")
+        suggestion = verdict.get("prompt_suggestion")
+        if suggestion:
+            logging.info(f"Prompt suggestion: {suggestion}")
+
+        if approved:
+            logging.info("Image approved by supervisor; ending iterations.")
+            break
+        else:
+            if suggestion:
+                logging.info("Supervisor rejected image; using suggestion for next generation.")
+                current_prompt = suggestion
+                continue
             else:
-                logging.error(f"Supervisor step failed: {verdict.get('error')}")
-    else:
-        logging.warning("Could not retrieve generated image for supervision.")
+                logging.info("Supervisor rejected image but provided no suggestion; stopping iterations.")
+                break
+
+    if not approved:
+        if attempt >= max_iter:
+            logging.warning("Reached maximum iterations without approval.")
+        else:
+            logging.warning("Stopped before receiving approval.")
 
 
 if __name__ == "__main__":
