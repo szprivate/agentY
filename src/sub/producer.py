@@ -312,7 +312,11 @@ def iteration():
     # run the collector to split the briefing into discrete tasks
     try:
         collector = _init_collector()
-        tasks = collector.analyze(brief)
+        collector_result = collector.analyze(brief)
+        tasks = collector_result.get("tasks", [])
+        task_summary = collector_result.get("summary")
+        if task_summary:
+            logging.info(f"Collector summary: {task_summary}")
     except Exception as e:
         logging.error(f"Collector failed to initialise or analyse briefing: {e}")
         exit(1)

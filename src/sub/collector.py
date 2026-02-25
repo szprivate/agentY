@@ -44,8 +44,13 @@ class Collector(PrompterBase):
             or Path(SYS_CONFIG["prompts"].get("persona_collector", "./prompts/persona.collector.md"))
         )
 
-    def analyze(self, briefing: str) -> List[Dict[str, Any]]:
-        """Parse the briefing and return a list of task dictionaries.
+    def analyze(self, briefing: str) -> Dict[str, Any]:
+        """Parse the briefing and return metadata about extracted tasks.
+
+        The returned dictionary contains two keys:
+        ``tasks`` - a list of task dictionaries (same format as before).
+        ``summary`` - a human-readable summary describing what the collector
+            decided, useful for logging or debugging.
 
         The collector prefers to ask the LLM for the decomposition; if that
         attempt returns a usable list of tasks we return it immediately.  Any
@@ -86,7 +91,8 @@ class Collector(PrompterBase):
                             pass
                     validated.append({"type": ttype, "summary": summary, "paths": normalized})
                 if validated:
-                    return validated
+                    text = "; ".join([f"{t['type']}: {t['summary']}" for t in validated])
+                    return {"tasks": validated, "summary": text}
         except Exception:
             # ignore and fall through to rule-based parser
             pass
@@ -147,7 +153,8 @@ class Collector(PrompterBase):
                 "paths": collected_paths,
             })
 
-        return tasks
+        summary_text = "; ".join([f"{t['type']}: {t['summary']}" for t in tasks])
+        return {"tasks": tasks, "summary": summary_text}
 
 
 # helper to mirror the pattern of other modules

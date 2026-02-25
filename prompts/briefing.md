@@ -1,1 +1,1 @@
-Create close-up shots, new angles on the person's face. Ignore the image of the desert.
+First, merge the image of the environment and the image of the man into a single image. Create a different camera angle on the man's face - anything but the current, straight-on one, make some suggestions for angles. Then, upscale all of the resulting images.

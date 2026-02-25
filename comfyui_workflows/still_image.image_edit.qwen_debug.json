@@ -103,7 +103,7 @@
   },
   "55": {
     "inputs": {
-      "filename_prefix": "./agentY/test_",
+      "filename_prefix": "./qwenIE_",
       "images": [
         "46",
         0
@@ -116,25 +116,13 @@
   },
   "60": {
     "inputs": {
-      "prompt": "Change the color of the upper walls to a darker, but very desaturated chimney red. Maintain the exact composition of image1. Maintain the color of the ceilings white.",
+      "prompt": "Integrate the man into the environment image, ensuring the environment stays exactly as it is and the man's appearance remains unchanged.",
       "clip": [
         "30",
         1
       ],
       "vae": [
         "23",
-        0
-      ],
-      "image1": [
-        "65",
-        0
-      ],
-      "image2": [
-        "66",
-        0
-      ],
-      "image3": [
-        "67",
         0
       ]
     },
@@ -145,7 +133,7 @@
   },
   "61": {
     "inputs": {
-      "prompt": "",
+      "prompt": "Extra limbs, deformed hands, blurry details, distorted face, altered environment background, unnatural lighting, text, watermark",
       "clip": [
         "30",
         1
@@ -162,8 +150,8 @@
   },
   "62": {
     "inputs": {
-      "seed": 391953376491292,
-      "steps": 10,
+      "seed": 2213654780,
+      "steps": 8,
       "cfg": 1,
       "sampler_name": "euler",
       "scheduler": "simple",
@@ -200,39 +188,6 @@
     "class_type": "easy cleanGpuUsed",
     "_meta": {
       "title": "Clean VRAM Used"
-    }
-  },
-  "65": {
-    "inputs": {
-      "image_path": "./ComfyUI/input/example.png",
-      "RGBA": "false",
-      "filename_text_extension": "true"
-    },
-    "class_type": "Image Load",
-    "_meta": {
-      "title": "Image Load"
-    }
-  },
-  "66": {
-    "inputs": {
-      "image_path": "./ComfyUI/input/example.png",
-      "RGBA": "false",
-      "filename_text_extension": "true"
-    },
-    "class_type": "Image Load",
-    "_meta": {
-      "title": "Image Load"
-    }
-  },
-  "67": {
-    "inputs": {
-      "image_path": "./ComfyUI/input/example.png",
-      "RGBA": "false",
-      "filename_text_extension": "true"
-    },
-    "class_type": "Image Load",
-    "_meta": {
-      "title": "Image Load"
     }
   }
 }
