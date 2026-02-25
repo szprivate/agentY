@@ -1,8 +1,7 @@
-"""Thin wrapper that delegates all work to ``src.producer.main``.
+"""Thin wrapper that delegates all work to ``src.sub.producer.iteration``.
 
 Maintains backwards compatibility with the original entrypoint.
 """
-
 import sys
 import os
 
@@ -13,7 +12,7 @@ root = os.path.dirname(os.path.dirname(__file__))
 if root not in sys.path:
     sys.path.insert(0, root)
 
-from src.producer import iteration
+from src.sub.producer import iteration
 
 
 if __name__ == "__main__":

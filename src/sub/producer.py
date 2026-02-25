@@ -84,97 +84,78 @@ class Producer(PrompterBase):
         return output
 
 
-# entry‑point helper so that ``python -m src.producer`` or running this file
-# directly behaves like the old monolithic script.
 
-def iteration():
-    # Get mood images directory from configuration
+# utility helpers used by the module-level ``iteration`` entrypoint.
+# they make the main loop much easier to follow and test.
+
+def _load_mood_images() -> List[Path]:
+    """Return a list of existing mood image paths from configuration."""
     mood_images_dir = Path(SYS_CONFIG.get("mood_images_dir", "./mood_images/"))
-    mood_images: List[Path] = []
     if mood_images_dir.is_dir():
-        mood_images = list(mood_images_dir.glob('*'))
+        return list(mood_images_dir.glob("*"))
+    return []
 
-    # Load the briefing from the markdown file defined in configuration
+
+def _load_briefing() -> str:
+    """Read the briefing text file specified in the config.
+
+    Raises FileNotFoundError if the file does not exist (caller should handle).
+    """
     briefing_path = Path(SYS_CONFIG["prompts"]["briefing"])
-    try:
-        brief = briefing_path.read_text(encoding='utf-8').strip()
-    except FileNotFoundError:
-        logging.error(f"Briefing file not found at: {briefing_path}")
-        exit(1)
+    text = briefing_path.read_text(encoding="utf-8").strip()
+    if not text:
+        logging.warning(f"Briefing file was empty: {briefing_path}")
+    return text
 
-    # Initialize the producer class (also preloads the model)
-    try:
-        producer = Producer()
-    except (FileNotFoundError, ollama.ResponseError):
-        exit(1)  # Exit if model preloading fails
 
-    # Create a summary of available inputs for the producer
-    num_mood_images = len(mood_images)
-    input_summary = f"Available inputs: {num_mood_images} mood image(s), 1 text prompt."
+def _init_producer() -> Producer:
+    """Instantiate the ``Producer`` and propagate initialization errors."""
+    return Producer()
 
-    # Have the producer select the workflow ---
-    logging.info("--- Running Producer to select workflow ---")
+
+def _choose_workflow(
+    producer: Producer, briefing: str, input_summary: str
+) -> Dict[str, Any]:
+    """Ask the producer to select a workflow and return its choice dict.
+
+    Raises RuntimeError if the producer fails to pick a valid path.
+    """
     workflows_dir = Path(SYS_CONFIG.get("comfyui_workflows_dir"))
-    producer_choice = producer.select_workflow(brief, input_summary, workflows_dir)
+    choice = producer.select_workflow(briefing, input_summary, workflows_dir)
+    if not choice or not choice.get("workflow_path"):
+        raise RuntimeError("Producer failed to select a valid workflow")
+    return choice
 
-    if not producer_choice or not producer_choice.get("workflow_path"):
-        logging.error("Producer failed to select a valid workflow. Exiting.")
-        exit(1)
 
-    selected_workflow = producer_choice["workflow_path"]
-    logging.info(f"Producer selected workflow: {selected_workflow}")
+def _init_writer() -> Writer:
+    """Return an initialized ``Writer`` or propagate errors."""
+    return Writer()
 
-    # Generate the prompt using the LLM, informed by the producer's directive ---
-    logging.info("--- Running Writer to generate prompts ---")
-    prompt_type = producer_choice.get("prompt_type")
-    if prompt_type:
-        logging.info(f"Producer suggested prompt type: {prompt_type}")
-    try:
-        writer = Writer()
-    except (FileNotFoundError, ollama.ResponseError):
-        logging.error("Failed to initialize writer.")
-        exit(1)
 
-    prompt = writer.create_image_prompt(brief, selected_workflow, mood_images, prompt_type=prompt_type)
+def _init_generator(selected_workflow: Path) -> Generator:
+    """Return a configured ``Generator`` instance.
 
-    if "error" in prompt:
-        logging.error("Writer failed to generate prompt. Exiting.")
-        exit(1)
+    May raise exceptions if initialization fails; caller should handle.
+    """
+    override = SYS_CONFIG.get("comfyui_output_dir_override")
+    return Generator(
+        workflow_path=selected_workflow,
+        comfyui_output_dir=Path(override) if override else None,
+    )
 
-    logging.info("Writer successfully generated prompts.")
-    positive_prompt = prompt.get("positive_prompt", "")
-    negative_prompt = prompt.get("negative_prompt", "")
-    logging.info(f"Positive Prompt: {positive_prompt}")
-    logging.info(f"Negative Prompt: {negative_prompt}")
 
-    if not positive_prompt:
-        logging.error("No positive prompt was generated, cannot create image.")
-        exit(1)
+def _supervision_loop(
+    generator: Generator,
+    positive_prompt: str,
+    negative_prompt: str,
+    mood_images: List[Path],
+    briefing: str,
+) -> None:
+    """Perform the generate/review loop until the image is approved or we bail."""
 
-    # Determine maximum number of iterations from config (default 3)
     max_iter = SYS_CONFIG.get("max_iter", 3)
     logging.info(f"Maximum iterations set to {max_iter}")
 
-    # Initialize the generator
-    logging.info("Initializing generator for image creation...")
-    try:
-        override = SYS_CONFIG.get("comfyui_output_dir_override")
-        generator = Generator(
-            workflow_path=selected_workflow,
-            comfyui_output_dir=Path(override) if override else None,
-        )
-    except Exception as e:
-        logging.error(f"Generator initialization failed: {e}")
-        exit(1)
-
-    # release LLM resources now that the writer is no longer needed
-    if positive_prompt:
-        logging.info("Releasing LLM from VRAM to free up resources for image generation...")
-        del writer
-        time.sleep(5)
-        logging.info("LLM resources should now be free.")
-
-    # loop until approved or max iterations reached
     current_prompt = positive_prompt
     generated_image: Optional[Path] = None
     supervisor: Optional[Supervisor] = None
@@ -182,7 +163,6 @@ def iteration():
 
     for attempt in range(1, max_iter + 1):
         logging.info(f"--- Iteration {attempt}/{max_iter} ---")
-
         if not current_prompt:
             logging.error("No prompt available for generation; stopping iterations.")
             break
@@ -199,7 +179,6 @@ def iteration():
             logging.error("Generation did not produce an image; aborting iterations.")
             break
 
-        # prepare supervisor if needed
         if supervisor is None:
             try:
                 logging.info("Re-initializing prompter to supervise the generated image...")
@@ -209,7 +188,7 @@ def iteration():
                 break
 
         logging.info("--- Starting supervisor step ---")
-        verdict = supervisor.supervise(brief, generated_image, mood_images, current_prompt)
+        verdict = supervisor.supervise(briefing, generated_image, mood_images, current_prompt)
         if "error" in verdict:
             logging.error(f"Supervisor step failed: {verdict.get('error')}")
             break
@@ -225,20 +204,89 @@ def iteration():
         if approved:
             logging.info("Image approved by supervisor; ending iterations.")
             break
-        else:
-            if suggestion:
-                logging.info("Supervisor rejected image; using suggestion for next generation.")
-                current_prompt = suggestion
-                continue
-            else:
-                logging.info("Supervisor rejected image but provided no suggestion; stopping iterations.")
-                break
+        if suggestion:
+            logging.info("Supervisor rejected image; using suggestion for next generation.")
+            current_prompt = suggestion
+            continue
+        logging.info("Supervisor rejected image but provided no suggestion; stopping iterations.")
+        break
 
     if not approved:
         if attempt >= max_iter:
             logging.warning("Reached maximum iterations without approval.")
         else:
             logging.warning("Stopped before receiving approval.")
+
+
+# entry‑point helper so that ``python -m src.sub.producer`` or running this file
+# directly behaves like the old monolithic script.
+
+def iteration():
+    try:
+        mood_images = _load_mood_images()
+        brief = _load_briefing()
+    except FileNotFoundError as e:
+        logging.error(e)
+        exit(1)
+
+    try:
+        producer = _init_producer()
+    except (FileNotFoundError, ollama.ResponseError) as e:
+        logging.error(e)
+        exit(1)
+
+    input_summary = f"Available inputs: {len(mood_images)} mood image(s), 1 text prompt."
+
+    logging.info("--- Running Producer to select workflow ---")
+    try:
+        producer_choice = _choose_workflow(producer, brief, input_summary)
+    except RuntimeError as e:
+        logging.error(e)
+        exit(1)
+
+    selected_workflow = producer_choice["workflow_path"]
+    logging.info(f"Producer selected workflow: {selected_workflow}")
+
+    logging.info("--- Running Writer to generate prompts ---")
+    prompt_type = producer_choice.get("prompt_type")
+    if prompt_type:
+        logging.info(f"Producer suggested prompt type: {prompt_type}")
+
+    try:
+        writer = _init_writer()
+    except (FileNotFoundError, ollama.ResponseError) as e:
+        logging.error(e)
+        exit(1)
+
+    prompt = writer.create_image_prompt(brief, selected_workflow, mood_images, prompt_type=prompt_type)
+    if "error" in prompt:
+        logging.error("Writer failed to generate prompt. Exiting.")
+        exit(1)
+
+    logging.info("Writer successfully generated prompts.")
+    positive_prompt = prompt.get("positive_prompt", "")
+    negative_prompt = prompt.get("negative_prompt", "")
+    logging.info(f"Positive Prompt: {positive_prompt}")
+    logging.info(f"Negative Prompt: {negative_prompt}")
+
+    if not positive_prompt:
+        logging.error("No positive prompt was generated, cannot create image.")
+        exit(1)
+
+    logging.info("Initializing generator for image creation...")
+    try:
+        generator = _init_generator(selected_workflow)
+    except Exception as e:
+        logging.error(f"Generator initialization failed: {e}")
+        exit(1)
+
+    if positive_prompt:
+        logging.info("Releasing LLM from VRAM to free up resources for image generation...")
+        del writer
+        time.sleep(5)
+        logging.info("LLM resources should now be free.")
+
+    _supervision_loop(generator, positive_prompt, negative_prompt, mood_images, brief)
 
 
 if __name__ == "__main__":

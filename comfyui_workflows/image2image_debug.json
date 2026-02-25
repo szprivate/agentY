@@ -116,7 +116,7 @@
   },
   "60": {
     "inputs": {
-      "prompt": "Revise prompt to: \"Close-up side profile of elderly person's face, no background, only face visible, high detail, black and white, sharp facial features, no desert, no landscape\"",
+      "prompt": "Replace the current close-up angle of the elderly person's face with a new close-up angle, keeping all facial details (wrinkles, beard) exactly as they are, ignore the desert background.",
       "clip": [
         "30",
         1
@@ -141,7 +141,7 @@
   },
   "61": {
     "inputs": {
-      "prompt": "desert, landscape, background",
+      "prompt": "desert background, wide angle, landscape, distant view",
       "clip": [
         "30",
         1
@@ -158,7 +158,7 @@
   },
   "62": {
     "inputs": {
-      "seed": 2231719390,
+      "seed": 3545944752,
       "steps": 8,
       "cfg": 1,
       "sampler_name": "euler",
