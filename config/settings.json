@@ -7,6 +7,7 @@
     "persona_supervisor": "./prompts/persona.supervisor.md",
     "persona_writer": "./prompts/persona.writer.md",
     "persona_producer": "./prompts/persona.producer.md",
+    "persona_collector": "./prompts/persona.collector.md",
     "briefing": "./prompts/briefing.md"
   },
   "mood_images_dir": "./mood_images/",

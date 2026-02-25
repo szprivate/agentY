@@ -7,6 +7,7 @@ import ollama
 from .tools import PrompterBase, Generator, SYS_CONFIG
 from .writer import Writer
 from .supervisor import Supervisor
+from .collector import _init_collector, Collector
 
 
 class Producer(PrompterBase):
@@ -19,6 +20,8 @@ class Producer(PrompterBase):
         briefing: str,
         input_summary: str,
         workflow_dir: Path,
+        task_type: Optional[str] = None,
+        paths: Optional[List[Path]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Acts as a "producer" to select the best ComfyUI workflow and provide a
         directive.  Now also decides on a ``prompt_type`` based on available
@@ -53,6 +56,13 @@ class Producer(PrompterBase):
             f"AVAILABLE WORKFLOWS:\n{workflow_list_str}\n\n"
             f"AVAILABLE PROMPT GUIDES:\n{prompt_guides_str}"
         )
+        # include any task-specific metadata so the model can choose workflows
+        if task_type:
+            llm_text += f"\n\nTASK TYPE: {task_type}"
+        if paths:
+            # note: only include filenames to keep the prompt concise
+            path_list_str = "\n" + "\n".join(str(p) for p in paths)
+            llm_text += f"\n\nTASK PATHS:{path_list_str}"
         payload = {
             "model": self.ollamamodel,
             "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": llm_text}],
@@ -114,14 +124,14 @@ def _init_producer() -> Producer:
 
 
 def _choose_workflow(
-    producer: Producer, briefing: str, input_summary: str
+    producer: Producer, briefing: str, input_summary: str, task_type: Optional[str] = None, paths: Optional[List[Path]] = None
 ) -> Dict[str, Any]:
     """Ask the producer to select a workflow and return its choice dict.
 
     Raises RuntimeError if the producer fails to pick a valid path.
     """
     workflows_dir = Path(SYS_CONFIG.get("comfyui_workflows_dir"))
-    choice = producer.select_workflow(briefing, input_summary, workflows_dir)
+    choice = producer.select_workflow(briefing, input_summary, workflows_dir, task_type=task_type, paths=paths)
     if not choice or not choice.get("workflow_path"):
         raise RuntimeError("Producer failed to select a valid workflow")
     return choice
@@ -211,8 +221,12 @@ def _supervision_loop(
     negative_prompt: str,
     mood_images: List[Path],
     briefing: str,
-) -> None:
-    """Perform the generate/review loop until the image is approved or we bail."""
+) -> Optional[Path]:
+    """Perform the generate/review loop until the image is approved or we bail.
+
+    Returns the last generated image path (regardless of approval) so that
+    callers can remember it for subsequent tasks.
+    """
 
     max_iter = SYS_CONFIG.get("max_iter", 3)
     logging.info(f"Maximum iterations set to {max_iter}")
@@ -281,6 +295,7 @@ def _supervision_loop(
             logging.warning("Reached maximum iterations without approval.")
         else:
             logging.warning("Stopped before receiving approval.")
+    return generated_image
 
 
 # entry‑point helper so that ``python -m src.sub.producer`` or running this file
@@ -294,66 +309,137 @@ def iteration():
         logging.error(e)
         exit(1)
 
+    # run the collector to split the briefing into discrete tasks
+    try:
+        collector = _init_collector()
+        tasks = collector.analyze(brief)
+    except Exception as e:
+        logging.error(f"Collector failed to initialise or analyse briefing: {e}")
+        exit(1)
+
     try:
         producer = _init_producer()
     except (FileNotFoundError, ollama.ResponseError) as e:
         logging.error(e)
         exit(1)
 
-    input_summary = f"Available inputs: {len(mood_images)} mood image(s), 1 text prompt."
+    # iterate through tasks sequentially, keeping state for prompts and images
+    last_positive: str = ""
+    last_negative: str = ""
+    last_generated_image: Optional[Path] = None
 
-    logging.info("--- Running Producer to select workflow ---")
-    try:
-        producer_choice = _choose_workflow(producer, brief, input_summary)
-    except RuntimeError as e:
-        logging.error(e)
-        exit(1)
+    for idx, task in enumerate(tasks, start=1):
+        ttype = task.get("type")
+        summary = task.get("summary", "")
+        paths = task.get("paths", [])
+        logging.info(f"--- Task {idx}/{len(tasks)}: {summary} ({ttype}) ---")
+        input_summary = f"Task type: {ttype}. Available paths: {len(paths)}"
 
-    selected_workflow = producer_choice["workflow_path"]
-    logging.info(f"Producer selected workflow: {selected_workflow}")
+        logging.info("--- Running Producer to select workflow ---")
+        try:
+            producer_choice = _choose_workflow(
+                producer,
+                summary,
+                input_summary,
+                task_type=ttype,
+                paths=paths,
+            )
+        except RuntimeError as e:
+            logging.error(e)
+            exit(1)
 
-    logging.info("--- Running Writer to generate prompts ---")
-    prompt_type = producer_choice.get("prompt_type")
-    if prompt_type:
-        logging.info(f"Producer suggested prompt type: {prompt_type}")
+        selected_workflow = producer_choice["workflow_path"]
+        logging.info(f"Producer selected workflow: {selected_workflow}")
 
-    try:
-        writer = _init_writer()
-    except (FileNotFoundError, ollama.ResponseError) as e:
-        logging.error(e)
-        exit(1)
+        prompt_type = producer_choice.get("prompt_type")
+        if prompt_type:
+            logging.info(f"Producer suggested prompt type: {prompt_type}")
 
-    prompt = _retry_writer_prompt(
-        writer, brief, selected_workflow, mood_images, prompt_type
-    )
-    if "error" in prompt:
-        logging.error("Writer failed to generate prompt after retries. Exiting.")
-        exit(1)
+        # handle simple pass-through tasks
+        if ttype == "data_collection":
+            logging.info("Data collection task - skipping further steps.")
+            continue
 
-    logging.info("Writer successfully generated prompts.")
-    positive_prompt = prompt.get("positive_prompt", "")
-    negative_prompt = prompt.get("negative_prompt", "")
-    logging.info(f"Positive Prompt: {positive_prompt}")
-    logging.info(f"Negative Prompt: {negative_prompt}")
+        if ttype == "prompt_creation":
+            try:
+                writer = _init_writer()
+            except (FileNotFoundError, ollama.ResponseError) as e:
+                logging.error(e)
+                exit(1)
+            mood_for_writer = [
+                p for p in paths
+                if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".gif")
+            ]
+            prompt = _retry_writer_prompt(writer, summary, selected_workflow, mood_for_writer, prompt_type)
+            if "error" in prompt:
+                logging.error("Writer failed to generate prompt after retries. Exiting.")
+                exit(1)
+            last_positive = prompt.get("positive_prompt", "")
+            last_negative = prompt.get("negative_prompt", "")
+            logging.info("Stored prompts for subsequent tasks.")
+            continue
 
-    if not positive_prompt:
-        logging.error("No positive prompt was generated, cannot create image.")
-        exit(1)
+        if ttype == "supervision":
+            if not last_generated_image:
+                logging.error("No generated image available for supervision task.")
+                continue
+            try:
+                supervisor = Supervisor()
+            except (FileNotFoundError, ollama.ResponseError) as e:
+                logging.error(f"Failed to initialize supervisor: {e}")
+                continue
+            verdict = _supervise_with_retries(
+                supervisor,
+                summary,
+                last_generated_image,
+                [p for p in paths if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".gif")],
+                last_positive,
+            )
+            logging.info(f"Supervision verdict: {verdict}")
+            continue
 
-    logging.info("Initializing generator for image creation...")
-    try:
-        generator = _init_generator(selected_workflow)
-    except Exception as e:
-        logging.error(f"Generator initialization failed: {e}")
-        exit(1)
+        # for generation-type tasks we need prompts
+        if not last_positive:
+            try:
+                writer = _init_writer()
+            except (FileNotFoundError, ollama.ResponseError) as e:
+                logging.error(e)
+                exit(1)
+            mood_for_writer = [
+                p for p in paths
+                if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".gif")
+            ]
+            prompt = _retry_writer_prompt(writer, summary, selected_workflow, mood_for_writer, prompt_type)
+            if "error" in prompt:
+                logging.error("Writer failed to generate prompt after retries. Exiting.")
+                exit(1)
+            last_positive = prompt.get("positive_prompt", "")
+            last_negative = prompt.get("negative_prompt", "")
 
-    if positive_prompt:
-        logging.info("Releasing LLM from VRAM to free up resources for image generation...")
-        del writer
-        time.sleep(5)
-        logging.info("LLM resources should now be free.")
+        if not last_positive:
+            logging.error("No positive prompt available, cannot proceed with generation.")
+            exit(1)
 
-    _supervision_loop(generator, positive_prompt, negative_prompt, mood_images, brief)
+        try:
+            generator = _init_generator(selected_workflow)
+        except Exception as e:
+            logging.error(f"Generator initialization failed: {e}")
+            exit(1)
+
+        gen_moods = [
+            p for p in paths
+            if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".gif")
+        ]
+        if ttype in ("upscale", "creative_upscale") and last_generated_image:
+            gen_moods.append(last_generated_image)
+
+        last_generated_image = _supervision_loop(
+            generator,
+            last_positive,
+            last_negative,
+            gen_moods,
+            summary,
+        )
 
 
 if __name__ == "__main__":
