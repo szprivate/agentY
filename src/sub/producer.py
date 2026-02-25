@@ -144,6 +144,67 @@ def _init_generator(selected_workflow: Path) -> Generator:
     )
 
 
+
+def _retry_writer_prompt(
+    writer: Writer,
+    briefing: str,
+    selected_workflow: Path,
+    mood_images: List[Path],
+    prompt_type: Optional[str],
+    retries: int = 3,
+) -> Dict[str, Any]:
+    """Attempt to create an image prompt multiple times if the response is incomplete.
+
+    The writer sometimes returns no prompt or an error; if so we log a warning
+    and retry.  After ``retries`` attempts the last result is returned and the
+    caller can decide how to handle it.
+    """
+    last = {}
+    for attempt in range(1, retries + 1):
+        logging.info(f"Writer attempt {attempt}/{retries}")
+        result = writer.create_image_prompt(
+            briefing, selected_workflow, mood_images, prompt_type=prompt_type
+        )
+        last = result
+        if "error" in result:
+            logging.warning(f"Writer returned error: {result.get('error')}")
+            continue
+        if not result.get("positive_prompt"):
+            logging.warning("Writer did not provide a positive prompt; retrying.")
+            continue
+        # if we got here, the result looks usable
+        return result
+    return last
+
+
+def _supervise_with_retries(
+    supervisor: Supervisor,
+    briefing: str,
+    generated_image: Path,
+    mood_images: List[Path],
+    original_prompt: str,
+    retries: int = 3,
+) -> Dict[str, Any]:
+    """Call ``supervisor.supervise`` and retry if response lacks reason/todo.
+
+    The supervisor might return an empty verdict or omit the reason/todo keys.
+    We retry up to ``retries`` times before returning whatever we last got.
+    """
+    last = {}
+    for attempt in range(1, retries + 1):
+        logging.info(f"Supervisor attempt {attempt}/{retries}")
+        verdict = supervisor.supervise(briefing, generated_image, mood_images, original_prompt)
+        last = verdict
+        if "error" in verdict:
+            logging.error(f"Supervisor returned error: {verdict.get('error')}")
+            break
+        # if either of the informative fields is present we consider it valid
+        if verdict.get("reason") or verdict.get("todo") or verdict.get("prompt_suggestion"):
+            return verdict
+        logging.warning("Supervisor result missing reason/todo/suggestion; retrying.")
+    return last
+
+
 def _supervision_loop(
     generator: Generator,
     positive_prompt: str,
@@ -188,14 +249,17 @@ def _supervision_loop(
                 break
 
         logging.info("--- Starting supervisor step ---")
-        verdict = supervisor.supervise(briefing, generated_image, mood_images, current_prompt)
+        verdict = _supervise_with_retries(
+            supervisor, briefing, generated_image, mood_images, current_prompt
+        )
         if "error" in verdict:
-            logging.error(f"Supervisor step failed: {verdict.get('error')}")
+            # if we got an error even after retries bail out
+            logging.error(f"Supervisor step failed ultimately: {verdict.get('error')}")
             break
 
         approved = verdict.get("approved", False)
         logging.info(f"Supervisor verdict: {'APPROVED' if approved else 'REJECTED'}")
-        logging.info(f"Reason: {verdict.get('reason')}")
+        logging.info(f"Reason: {verdict.get('reason')}" )
         logging.info(f"ToDo: {verdict.get('todo')}")
         suggestion = verdict.get("prompt_suggestion")
         if suggestion:
@@ -204,12 +268,13 @@ def _supervision_loop(
         if approved:
             logging.info("Image approved by supervisor; ending iterations.")
             break
+        # replay current prompt if no suggestion (do not stop the loop)
         if suggestion:
             logging.info("Supervisor rejected image; using suggestion for next generation.")
             current_prompt = suggestion
             continue
-        logging.info("Supervisor rejected image but provided no suggestion; stopping iterations.")
-        break
+        logging.warning("Supervisor provided no suggestion; will retry next iteration with same prompt.")
+        # loop will naturally proceed to next attempt with unchanged prompt
 
     if not approved:
         if attempt >= max_iter:
@@ -258,9 +323,11 @@ def iteration():
         logging.error(e)
         exit(1)
 
-    prompt = writer.create_image_prompt(brief, selected_workflow, mood_images, prompt_type=prompt_type)
+    prompt = _retry_writer_prompt(
+        writer, brief, selected_workflow, mood_images, prompt_type
+    )
     if "error" in prompt:
-        logging.error("Writer failed to generate prompt. Exiting.")
+        logging.error("Writer failed to generate prompt after retries. Exiting.")
         exit(1)
 
     logging.info("Writer successfully generated prompts.")

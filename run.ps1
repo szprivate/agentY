@@ -49,5 +49,5 @@ if (-not (Test-ComfyUI)) {
 Start-IfNotRunning -ProcessName "ollama" -StartAction { Start-Process -NoNewWindow -FilePath "ollama" -ArgumentList "serve" }
 
 # finally invoke the Python entrypoint
-Write-Host "Launching python ./src/main.py" -ForegroundColor Yellow
+Write-Host "Launching agent" -ForegroundColor Yellow
 python .\src\main.py
