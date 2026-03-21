@@ -1,13 +1,11 @@
 {
   "ollama_api_url": "http://localhost:11434/v1",
   "comfyui_url": "http://127.0.0.1:8188/",
-  "ollama-model": "qwen3-vl:30b-a3b-thinking",
+  "ollama-model": "qwen3-vl:30b",
   "prompts": {
-    "guide_keyframes": "./prompts/guide.elaborate.md",
     "persona_supervisor": "./prompts/persona.supervisor.md",
     "persona_writer": "./prompts/persona.writer.md",
-    "persona_producer": "./prompts/persona.producer.md",
-    "persona_collector": "./prompts/persona.collector.md",
+    "persona_producer": "./prompts/persona.orchstrator.md",
     "briefing": "./prompts/briefing.md"
   },
   "mood_images_dir": "./mood_images/",
@@ -16,5 +14,6 @@
   "comfyui_output_dir_default": "./output/agentY",
   "comfyui_output_dir_override": "W://i002_ai_rnd//02_build//comfy//outputs//",
   "comfyui_workflows_dir": "./comfyui_workflows/",
-  "max_iter": 3
+  "max_iter": 3,
+  "ollama_timeout": 120
 }
