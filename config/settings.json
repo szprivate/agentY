@@ -1,6 +1,7 @@
 {
   "ollama_api_url": "http://localhost:11434/v1",
   "comfyui_url": "http://127.0.0.1:8188/",
+  "comfyui_mcp_url": "http://127.0.0.1:9000/mcp",
   "ollama-model": "qwen3-vl:30b",
   "prompts": {
     "persona_supervisor": "./prompts/persona.supervisor.md",
@@ -10,7 +11,7 @@
   },
   "mood_images_dir": "./mood_images/",
   "debug_supervision_dir": "./debug/supervision/",
-  "comfyui_workflow": "./comfyui_workflows/agentY_qwen_api.json",
+  "comfyui_workflow": "./comfyui_workflows/image_editing_for_still_images_using_references.model_flux1Klein.json",
   "comfyui_output_dir_default": "./output/agentY",
   "comfyui_output_dir_override": "W://i002_ai_rnd//02_build//comfy//outputs//",
   "comfyui_workflows_dir": "./comfyui_workflows/",

@@ -1,11 +1,11 @@
-# import statements
-from collections import deque
-from dataclasses import dataclass
 import json
 import os
-import time
 from typing import Any
-import uuid
+
+import requests
+from pydantic import BaseModel, Field
+from strands import Agent, tool
+from strands.models.openai import OpenAIModel
 
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -19,426 +19,465 @@ def resolve_path(path: str | None) -> str | None:
 	return os.path.normpath(os.path.join(BASE_DIR, path))
 
 
-@dataclass(slots=True)
-class Message:
-	sender: str
-	recipient: str
-	data: dict[str, Any]
+def load_config() -> dict[str, Any]:
+	config_path = resolve_path("./config/settings.json")
+	if not config_path:
+		raise RuntimeError("Missing config path.")
+	with open(config_path, "r", encoding="utf-8") as file:
+		return json.load(file)
 
 
-class Agent:
-	def __init__(self, name: str):
-		self.name = name
-		self._runtime = None
-
-	def attach_runtime(self, runtime: "AgentRuntime"):
-		self._runtime = runtime
-
-	def send(self, recipient: str, data: dict[str, Any]):
-		if self._runtime is None:
-			raise RuntimeError(f"Agent '{self.name}' is not attached to a runtime.")
-		self._runtime.enqueue(Message(sender=self.name, recipient=recipient, data=data))
-
-	def on_message(self, message: Message):
-		raise NotImplementedError
+config = load_config()
+MCP_REQUEST_HEADERS = {
+	"Content-Type": "application/json",
+	"Accept": "application/json, text/event-stream",
+}
 
 
-class AgentRuntime:
-	def __init__(self, agents: list[Agent]):
-		self.agents = {agent.name: agent for agent in agents}
-		self.queue: deque[Message] = deque()
-		self.external_messages: list[Message] = []
-		for agent in agents:
-			agent.attach_runtime(self)
-
-	def enqueue(self, message: Message):
-		if message.recipient in self.agents:
-			self.queue.append(message)
-		else:
-			self.external_messages.append(message)
-
-	def run(self, initial_messages: list[Message] | None = None, max_steps: int = 100):
-		for message in initial_messages or []:
-			self.enqueue(message)
-
-		steps = 0
-		while self.queue:
-			if steps >= max_steps:
-				raise RuntimeError(f"Agent runtime exceeded max_steps={max_steps}.")
-			message = self.queue.popleft()
-			self.agents[message.recipient].on_message(message)
-			steps += 1
-
-		return self.external_messages
+class PromptOutput(BaseModel):
+	prompt: str = Field(..., description="A production-ready creative prompt.")
 
 
-def run_agents(agents: list[Agent], initial_messages: list[Message] | None = None, max_steps: int | None = None):
-	runtime = AgentRuntime(agents)
-	if not initial_messages:
-		print(f"Initialized {len(agents)} agents. No initial messages queued.")
-		return []
-	return runtime.run(initial_messages=initial_messages, max_steps=max_steps or 100)
+class SupervisionOutput(BaseModel):
+	accepted: bool = Field(..., description="Whether the result should be accepted.")
+	supervision: str = Field(..., description="A short review explaining the decision.")
 
 
-def load_briefing_text() -> str:
-	briefing_path = resolve_path(config.get("prompts", {}).get("briefing"))
-	if not briefing_path or not os.path.exists(briefing_path):
+class FinalResult(BaseModel):
+	accepted: bool
+	supervision: str
+	output_image: str | None = None
+	prompt: str
+	brief: str
+
+
+def ensure_openai_base_url(url: str | None) -> str:
+	base_url = (url or "http://localhost:11434/v1").rstrip("/")
+	if base_url.endswith("/v1"):
+		return base_url
+	return f"{base_url}/v1"
+
+
+def ensure_mcp_url(url: str | None) -> str:
+	return (url or "http://127.0.0.1:9000/mcp").rstrip("/")
+
+
+def create_model() -> OpenAIModel:
+	model_id = config.get("ollama-model")
+	if not model_id:
+		raise RuntimeError("Missing 'ollama-model' in config/settings.json.")
+
+	api_key = (
+		os.getenv("OLLAMA_API_KEY")
+		or os.getenv("OPENAI_API_KEY")
+		or "ollama"
+	)
+
+	return OpenAIModel(
+		model_id=model_id,
+		client_args={
+			"api_key": api_key,
+			"base_url": ensure_openai_base_url(config.get("ollama_api_url")),
+		},
+	)
+
+
+def read_text_file(path: str | None) -> str:
+	if not path or not os.path.exists(path):
 		return ""
-	with open(briefing_path, "r", encoding="utf-8") as f:
-		return f.read().strip()
+	with open(path, "r", encoding="utf-8") as file:
+		return file.read().strip()
 
 
-def print_external_messages(messages: list[Message]):
-	if not messages:
-		print("Run completed, but no user-facing messages were produced.")
+def collect_mood_images() -> list[str]:
+	mood_dir = resolve_path(config.get("mood_images_dir", "./mood_images/"))
+	if not mood_dir or not os.path.isdir(mood_dir):
+		return []
+	return [
+		os.path.join(mood_dir, file_name)
+		for file_name in os.listdir(mood_dir)
+		if file_name.lower().endswith((".jpg", ".jpeg", ".png", ".webp"))
+	]
+
+
+def select_workflow_file() -> str:
+	configured_workflow = resolve_path(config.get("comfyui_workflow"))
+	if configured_workflow and os.path.exists(configured_workflow):
+		return configured_workflow
+
+	workflows_dir = resolve_path(config.get("comfyui_workflows_dir", "./comfyui_workflows/"))
+	if not workflows_dir or not os.path.isdir(workflows_dir):
+		raise RuntimeError("Configured workflow directory does not exist.")
+
+	workflow_files = sorted(
+		file_name for file_name in os.listdir(workflows_dir) if file_name.endswith(".json")
+	)
+	if not workflow_files:
+		raise RuntimeError("No ComfyUI workflow JSON files were found.")
+
+	return os.path.join(workflows_dir, workflow_files[0])
+
+
+def load_workflow_template(workflow_file: str) -> dict[str, Any]:
+	with open(workflow_file, "r", encoding="utf-8") as file:
+		return json.load(file)
+
+
+def replace_prompt_fields(obj: Any, prompt: str):
+	if isinstance(obj, dict):
+		for key, value in obj.items():
+			if key == "prompt":
+				obj[key] = prompt
+			else:
+				replace_prompt_fields(value, prompt)
+	elif isinstance(obj, list):
+		for item in obj:
+			replace_prompt_fields(item, prompt)
+
+
+def replace_image_fields(obj: Any, images: list[str]):
+	if isinstance(obj, dict):
+		for key, value in obj.items():
+			if key == "image_path" and images:
+				obj[key] = images.pop(0)
+			else:
+				replace_image_fields(value, images)
+	elif isinstance(obj, list):
+		for item in obj:
+			replace_image_fields(item, images)
+
+
+def prepare_workflow_payload(workflow_file: str, prompt: str, input_images: list[str]) -> dict[str, Any]:
+	workflow = load_workflow_template(workflow_file)
+	replace_prompt_fields(workflow, prompt)
+	replace_image_fields(workflow, input_images.copy())
+	return workflow
+
+
+def parse_sse_response(response_text: str) -> dict[str, Any]:
+	for line in response_text.replace("\r\n", "\n").split("\n"):
+		line = line.strip()
+		if line.startswith("data: "):
+			payload = line[6:]
+			try:
+				return json.loads(payload)
+			except json.JSONDecodeError:
+				continue
+	raise ValueError("No valid JSON data found in MCP SSE response.")
+
+
+def mcp_request(method: str, params: dict[str, Any], request_id: int = 1) -> dict[str, Any]:
+	mcp_url = ensure_mcp_url(config.get("comfyui_mcp_url"))
+	response = requests.post(
+		mcp_url,
+		json={
+			"jsonrpc": "2.0",
+			"id": request_id,
+			"method": method,
+			"params": params,
+		},
+		headers=MCP_REQUEST_HEADERS,
+		timeout=300,
+	)
+	response.raise_for_status()
+	content_type = response.headers.get("content-type", "")
+	if "text/event-stream" in content_type:
+		return parse_sse_response(response.text)
+	return response.json()
+
+
+def mcp_call_tool(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+	response = mcp_request(
+		"tools/call",
+		{"name": tool_name, "arguments": arguments},
+		request_id=2,
+	)
+	if "error" in response:
+		raise RuntimeError(json.dumps(response["error"], ensure_ascii=False))
+
+	result = response.get("result", {})
+	content = result.get("content")
+	if isinstance(content, list) and content:
+		first_item = content[0]
+		if isinstance(first_item, dict) and "text" in first_item:
+			text_value = first_item["text"]
+			if isinstance(text_value, dict):
+				return text_value
+			try:
+				return json.loads(text_value)
+			except (json.JSONDecodeError, TypeError):
+				return {"message": text_value}
+	if isinstance(result, dict):
+		return result
+	raise RuntimeError("Unexpected MCP response format.")
+
+
+def run_comfyui_workflow(workflow: dict[str, Any], workflow_id: str) -> dict[str, Any]:
+	return mcp_call_tool(
+		"run_raw_workflow",
+		{
+			"workflow": workflow,
+			"workflow_id": workflow_id,
+			"return_inline_preview": False,
+		},
+	)
+
+
+def extract_output_image(result: dict[str, Any]) -> str | None:
+	asset_url = result.get("asset_url") or result.get("image_url")
+	if isinstance(asset_url, str) and asset_url:
+		return asset_url
+
+	outputs = result.get("outputs") if isinstance(result, dict) else None
+	if isinstance(outputs, dict):
+		for node_output in outputs.values():
+			if not isinstance(node_output, dict):
+				continue
+			for image in node_output.get("images", []):
+				if not isinstance(image, dict):
+					continue
+				filename = image.get("filename")
+				if not filename:
+					continue
+				subfolder = image.get("subfolder", "")
+				folder_type = image.get("type", "output")
+				return (
+					f"{(config.get('comfyui_url') or '').rstrip('/')}"
+					f"/view?filename={filename}&subfolder={subfolder}&type={folder_type}"
+				)
+
+	stack: list[Any] = [result]
+	while stack:
+		current = stack.pop()
+		if isinstance(current, dict):
+			stack.extend(current.values())
+		elif isinstance(current, list):
+			stack.extend(current)
+		elif isinstance(current, str) and current.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+			return current
+	return None
+
+
+def summarize_for_llm(value: Any, limit: int = 4000) -> str:
+	text = json.dumps(value, indent=2, ensure_ascii=False, default=str)
+	if len(text) <= limit:
+		return text
+	return f"{text[:limit]}\n... [truncated]"
+
+
+def unload_ollama_model():
+	ollama_url = (config.get("ollama_api_url") or "").rstrip("/")
+	ollama_model = config.get("ollama-model")
+	if not ollama_url or not ollama_model:
 		return
 
-	print(f"Run completed with {len(messages)} message(s):")
-	for index, message in enumerate(messages, start=1):
-		print(f"\n[{index}] {message.sender} -> {message.recipient}")
-		print(json.dumps(message.data, indent=2, ensure_ascii=False))
+	api_base = ollama_url[:-3] if ollama_url.endswith("/v1") else ollama_url
+	try:
+		response = requests.post(
+			f"{api_base}/api/generate",
+			json={
+				"model": ollama_model,
+				"prompt": "",
+				"keep_alive": 0,
+			},
+			timeout=30,
+		)
+		response.raise_for_status()
+	except requests.RequestException:
+		pass
 
 
-def update_workflow_prompt(workflow: dict[str, Any], prompt: str) -> bool:
-	replaced = False
-
-	for node in workflow.values():
-		if not isinstance(node, dict):
-			continue
-		inputs = node.get("inputs")
-		if not isinstance(inputs, dict):
-			continue
-
-		title = str(node.get("_meta", {}).get("title", "")).lower()
-		class_type = str(node.get("class_type", "")).lower()
-
-		if "prompt" in inputs:
-			inputs["prompt"] = prompt
-			replaced = True
-		elif class_type == "cliptextencode" and "text" in inputs and "negative" not in title:
-			inputs["text"] = prompt
-			replaced = True
-
-	return replaced
+model = create_model()
+_creator_state: dict[str, Any] = {}
 
 
-def extract_comfyui_output_images(result: dict[str, Any]) -> list[str]:
-	comfyui_url = config.get("comfyui_url", "").rstrip("/")
-	image_urls: list[str] = []
-	outputs = result.get("outputs", {}) if isinstance(result, dict) else {}
-
-	for node_output in outputs.values():
-		if not isinstance(node_output, dict):
-			continue
-		for image in node_output.get("images", []):
-			if not isinstance(image, dict):
-				continue
-			filename = image.get("filename")
-			if not filename:
-				continue
-			subfolder = image.get("subfolder", "")
-			folder_type = image.get("type", "output")
-			image_urls.append(
-				f"{comfyui_url}/view?filename={filename}&subfolder={subfolder}&type={folder_type}"
-			)
-
-	return image_urls
+prompter_agent = Agent(
+	model=model,
+	name="prompter",
+	description="Turns a creative brief into a production-ready prompt.",
+	system_prompt=(
+		"You are a creative image prompt engineer. "
+		"Turn the user's brief, mood references, and instructions into one strong image-generation prompt. "
+		"Be specific about composition, camera angle, lighting, and style."
+	),
+)
 
 
-def run_comfyui_workflow(workflow: dict[str, Any]) -> dict[str, Any]:
-	import requests
-
-	comfyui_url = config.get("comfyui_url", "").rstrip("/")
-	client_id = str(uuid.uuid4())
-	queue_response = requests.post(
-		comfyui_url + "/prompt",
-		json={"prompt": workflow, "client_id": client_id},
-		timeout=120,
-	)
-	queue_response.raise_for_status()
-	queue_data = queue_response.json()
-	prompt_id = queue_data.get("prompt_id")
-	if not prompt_id:
-		return queue_data
-
-	max_polls = int(config.get("comfyui_poll_attempts", 120))
-	poll_interval = float(config.get("comfyui_poll_interval", 2))
-	history_url = comfyui_url + f"/history/{prompt_id}"
-
-	for _ in range(max_polls):
-		history_response = requests.get(history_url, timeout=30)
-		history_response.raise_for_status()
-		history = history_response.json()
-		result = history.get(str(prompt_id)) or history.get(prompt_id)
-		if isinstance(result, dict) and result.get("outputs"):
-			return result
-		time.sleep(poll_interval)
-
+@tool
+def submit_workflow(prompt: str, workflow_file: str, input_images: list[str]) -> dict[str, Any]:
+	"""Render an image by filling a ComfyUI workflow and submitting it to the MCP endpoint."""
+	workflow = prepare_workflow_payload(workflow_file, prompt, input_images)
+	workflow_id = os.path.splitext(os.path.basename(workflow_file))[0]
+	unload_ollama_model()
+	result = run_comfyui_workflow(workflow, workflow_id=workflow_id)
+	output_image = extract_output_image(result)
+	payload = {
+		"result": result,
+		"output_image": output_image,
+	}
+	_creator_state["last_payload"] = payload
 	return {
-		"prompt_id": prompt_id,
-		"status": "timeout",
-		"message": f"Workflow queued but did not finish after {max_polls} polls.",
+		"output_image": output_image,
+		"result_summary": summarize_for_llm(result, limit=2000),
 	}
 
-# Agent definitions
-class OrchestratorAgent(Agent):
-	def on_message(self, message: Message):
-		if "brief" in message.data:
-			self._start_generation(message)
-			return
-		if "prompt" in message.data:
-			self._handle_prompt(message)
-			return
-		if "supervision" in message.data or "accepted" in message.data:
-			self._handle_supervision(message)
-			return
-		if "error" in message.data:
-			self._handle_error(message)
 
-	def _start_generation(self, message: Message):
-		# Expecting message.data = {"brief": str, "input_images": list}
-		brief = message.data.get("brief") or load_briefing_text()
-		input_images = message.data.get("input_images", [])
-		if not brief:
-			self.send(message.sender, {"error": "No briefing text available. Set prompts.briefing in settings.json."})
-			return
+creator_agent = Agent(
+	model=model,
+	name="creator",
+	description="Submits a prepared prompt and workflow to ComfyUI.",
+	tools=[submit_workflow],
+	system_prompt=(
+		"You are the creator agent. "
+		"Always call `submit_workflow` exactly once using the values provided in the user's message. "
+		"After the tool succeeds, reply with a short factual summary."
+	),
+)
 
-		# 1. Collect mood images
-		mood_dir = resolve_path(config.get("mood_images_dir", "./mood_images/"))
-		mood_images = [os.path.join(mood_dir, f) for f in os.listdir(mood_dir) if f.lower().endswith(('.jpg', '.png'))]
 
-		# 2. Select workflow (simple: pick first workflow in comfyui_workflows_dir)
-		configured_workflow = resolve_path(config.get("comfyui_workflow"))
-		workflows_dir = resolve_path(config.get("comfyui_workflows_dir", "./comfyui_workflows/"))
-		workflow_files = [f for f in os.listdir(workflows_dir) if f.endswith('.json')]
-		if configured_workflow and os.path.exists(configured_workflow):
-			selected_workflow = configured_workflow
-		elif workflow_files:
-			selected_workflow = os.path.join(workflows_dir, workflow_files[0])
-		else:
-			self.send(message.sender, {"error": "No workflows found."})
-			return
+supervisor_agent = Agent(
+	model=model,
+	name="supervisor",
+	description="Reviews whether the generated output satisfies the brief.",
+	system_prompt=(
+		"You are an expert creative supervisor. "
+		"Assess whether the output matches the brief, mood references, and input images. "
+		"Be strict but concise."
+	),
+)
 
-		# 3. Ask prompter to generate a prompt
-		prompter_msg = {
-			"brief": brief,
-			"mood_images": mood_images
-		}
-		self.send("prompter", prompter_msg)
 
-		# 4. Store state for next step (simulate FSM)
-		self._pending = {
-			"input_images": input_images,
-			"selected_workflow": selected_workflow,
-			"brief": brief,
-			"mood_images": mood_images,
-			"original_sender": message.sender,
-			"iterations": 0
-		}
+def run_prompter_agent(brief: str, mood_images: list[str], instructions: str) -> PromptOutput:
+	mood_list = ", ".join(os.path.basename(path) for path in mood_images) or "None"
+	result = prompter_agent(
+		(
+			f"Brief:\n{brief}\n\n"
+			f"Mood images:\n{mood_list}\n\n"
+			f"Instructions:\n{instructions or 'None'}"
+		),
+		structured_output_model=PromptOutput,
+	)
+	if result.structured_output is None:
+		raise RuntimeError("Prompter agent did not return structured output.")
+	return result.structured_output
 
-	def _handle_prompt(self, message: Message):
-		if not hasattr(self, '_pending'):
-			return
-		prompt = message.data.get("prompt")
-		if not prompt:
-			self.send(self._pending["original_sender"], {"error": "No prompt generated."})
-			return
-		self._pending["prompt"] = prompt
-		# Forward to creator
-		creator_msg = {
-			"workflow_file": self._pending["selected_workflow"],
-			"prompt": prompt,
-			"input_images": self._pending["input_images"],
-			"brief": self._pending["brief"],
-			"mood_images": self._pending["mood_images"]
-		}
-		self.send("creator", creator_msg)
 
-	def _handle_supervision(self, message: Message):
-		if not hasattr(self, '_pending'):
-			return
-		final_message = {
-			"accepted": message.data.get("accepted", False),
-			"supervision": message.data.get("supervision"),
-			"output_image": message.data.get("output_image"),
-			"prompt": self._pending.get("prompt"),
-			"brief": self._pending.get("brief")
-		}
-		self.send(self._pending["original_sender"], final_message)
-		del self._pending
+def run_creator_agent(prompt: str, workflow_file: str, input_images: list[str]) -> dict[str, Any]:
+	_creator_state.clear()
+	creator_agent(
+		json.dumps(
+			{
+				"prompt": prompt,
+				"workflow_file": workflow_file,
+				"input_images": input_images,
+			},
+			indent=2,
+		),
+	)
+	payload = _creator_state.get("last_payload")
+	if payload is None:
+		raise RuntimeError("Creator agent did not submit a workflow.")
+	return payload
 
-	def _handle_error(self, message: Message):
-		if hasattr(self, '_pending'):
-			self.send(self._pending["original_sender"], message.data)
-			del self._pending
 
-class PrompterAgent(Agent):
-	def on_message(self, message: Message):
-		# message.data: {"brief": str, "mood_images": list}
-		brief = message.data.get("brief", "")
-		mood_images = message.data.get("mood_images", [])
+def run_supervisor_agent(
+	brief: str,
+	prompt: str,
+	mood_images: list[str],
+	input_images: list[str],
+	creator_payload: dict[str, Any],
+) -> SupervisionOutput:
+	mood_list = ", ".join(os.path.basename(path) for path in mood_images) or "None"
+	input_list = ", ".join(os.path.basename(path) for path in input_images) or "None"
+	result = supervisor_agent(
+		(
+			f"Brief:\n{brief}\n\n"
+			f"Prompt:\n{prompt}\n\n"
+			f"Mood images:\n{mood_list}\n\n"
+			f"Input images:\n{input_list}\n\n"
+			f"Output image:\n{creator_payload.get('output_image')}\n\n"
+			f"ComfyUI result summary:\n{summarize_for_llm(creator_payload.get('result', {}), limit=2500)}\n\n"
+			"Decide whether the result should be accepted."
+		),
+		structured_output_model=SupervisionOutput,
+	)
+	if result.structured_output is None:
+		raise RuntimeError("Supervisor agent did not return structured output.")
+	return result.structured_output
 
-		# Compose prompt for LLM
-		# Optionally, read briefing.md for extra context
-		briefing_path = resolve_path(config["prompts"].get("briefing"))
-		briefing_text = ""
-		if briefing_path and os.path.exists(briefing_path):
-			with open(briefing_path, "r", encoding="utf-8") as f:
-				briefing_text = f.read()
 
-		# Prepare LLM input
-		llm_input = f"Brief: {brief}\nMood images: {', '.join(os.path.basename(m) for m in mood_images)}\nInstructions: {briefing_text}"
+@tool
+def run_prompter(brief: str, mood_images: list[str], instructions: str) -> dict[str, Any]:
+	"""Generate a polished image prompt from the user's brief and references."""
+	return run_prompter_agent(brief, mood_images, instructions).model_dump()
 
-		# Call Ollama LLM server
-		import requests
-		ollama_url = config.get("ollama_api_url")
-		ollama_model = config.get("ollama-model")
-		try:
-			response = requests.post(
-				ollama_url.rstrip("/") + "/chat/completions",
-				json={
-					"model": ollama_model,
-					"messages": [
-						{"role": "system", "content": "You are a creative image prompt engineer."},
-						{"role": "user", "content": llm_input}
-					]
-				},
-				timeout=config.get("ollama_timeout", 60)
-			)
-			response.raise_for_status()
-			data = response.json()
-			prompt = data["choices"][0]["message"]["content"]
-		except Exception as e:
-			self.send(message.sender, {"error": f"LLM error: {e}"})
-			return
 
-		# Reply to orchestrator
-		self.send("orchestrator", {"prompt": prompt})
+@tool
+def run_creator(prompt: str, workflow_file: str, input_images: list[str]) -> dict[str, Any]:
+	"""Create an image by submitting the selected workflow to ComfyUI."""
+	return run_creator_agent(prompt, workflow_file, input_images)
 
-class CreatorAgent(Agent):
-	def on_message(self, message: Message):
-		# message.data: {"workflow_file", "prompt", "input_images", "brief", "mood_images"}
-		workflow_file = message.data.get("workflow_file")
-		prompt = message.data.get("prompt")
-		input_images = message.data.get("input_images", [])
-		# Load workflow JSON
-		try:
-			with open(workflow_file, "r", encoding="utf-8") as f:
-				workflow = json.load(f)
-		except Exception as e:
-			self.send(message.sender, {"error": f"Workflow load error: {e}"})
-			return
 
-		if prompt:
-			update_workflow_prompt(workflow, prompt)
+@tool
+def run_supervisor(
+	brief: str,
+	prompt: str,
+	mood_images: list[str],
+	input_images: list[str],
+	creator_payload: dict[str, Any],
+) -> dict[str, Any]:
+	"""Review the generated output and decide whether it satisfies the brief."""
+	return run_supervisor_agent(brief, prompt, mood_images, input_images, creator_payload).model_dump()
 
-		# Replace reference images in workflow (if any, adjust as needed)
-		def replace_images(obj, images):
-			if isinstance(obj, dict):
-				for k, v in obj.items():
-					if k == "image_path" and images:
-						obj[k] = images.pop(0)
-					else:
-						replace_images(v, images)
-			elif isinstance(obj, list):
-				for item in obj:
-					replace_images(item, images)
-		replace_images(workflow, input_images.copy())
 
-		# Send workflow to ComfyUI server
-		try:
-			result = run_comfyui_workflow(workflow)
-		except Exception as e:
-			self.send(message.sender, {"error": f"ComfyUI error: {e}"})
-			return
+orchestrator_agent = Agent(
+	model=model,
+	name="orchestrator",
+	description="Coordinates prompt creation, image generation, and review.",
+	tools=[run_prompter, run_creator, run_supervisor],
+	system_prompt=(
+		"You are the orchestration agent. "
+		"Use the tools in this exact order: `run_prompter`, then `run_creator`, then `run_supervisor`. "
+		"Do not skip any step. "
+		"When you finish, return the final accepted flag, supervision summary, output image path, prompt, and brief."
+	),
+)
 
-		# Send result to supervisor
-		supervisor_msg = {
-			"result": result,
-			"brief": message.data.get("brief"),
-			"mood_images": message.data.get("mood_images"),
-			"input_images": input_images,
-			"prompt": prompt
-		}
-		self.send("supervisor", supervisor_msg)
 
-class SupervisorAgent(Agent):
-	def on_message(self, message: Message):
-		# message.data: {"result", "brief", "mood_images", "input_images", "prompt"}
-		import requests
-		result = message.data.get("result")
-		brief = message.data.get("brief")
-		mood_images = message.data.get("mood_images", [])
-		input_images = message.data.get("input_images", [])
-		prompt = message.data.get("prompt")
+def run_generation_pipeline(brief: str, input_images: list[str] | None = None) -> dict[str, Any]:
+	workflow_file = select_workflow_file()
+	mood_images = collect_mood_images()
+	instructions = read_text_file(resolve_path(config.get("prompts", {}).get("briefing")))
+	orchestrator_result = orchestrator_agent(
+		json.dumps(
+			{
+				"brief": brief,
+				"workflow_file": workflow_file,
+				"input_images": input_images or [],
+				"mood_images": mood_images,
+				"instructions": instructions,
+			},
+			indent=2,
+		),
+		structured_output_model=FinalResult,
+	)
+	if orchestrator_result.structured_output is None:
+		raise RuntimeError("Orchestrator agent did not return structured output.")
+	return orchestrator_result.structured_output.model_dump()
 
-		# Extract output image path from result
-		output_image = None
-		if isinstance(result, dict):
-			output_images = extract_comfyui_output_images(result)
-			if output_images:
-				output_image = output_images[0]
-		# Compose evaluation prompt for LLM
-		eval_prompt = f"Brief: {brief}\nPrompt: {prompt}\nMood images: {', '.join(os.path.basename(m) for m in mood_images)}\nInput images: {', '.join(os.path.basename(i) for i in input_images)}\nOutput image: {output_image}\nAnalyze if the output image matches the brief and mood. Reply with 'ACCEPT' or 'REJECT' and a short reason."
 
-		# Call Ollama LLM for evaluation
-		ollama_url = config.get("ollama_api_url")
-		ollama_model = config.get("ollama-model")
-		try:
-			response = requests.post(
-				ollama_url.rstrip("/") + "/chat/completions",
-				json={
-					"model": ollama_model,
-					"messages": [
-						{"role": "system", "content": "You are an expert creative supervisor. Evaluate the result strictly."},
-						{"role": "user", "content": eval_prompt}
-					]
-				},
-				timeout=config.get("ollama_timeout", 60)
-			)
-			response.raise_for_status()
-			data = response.json()
-			verdict = data["choices"][0]["message"]["content"]
-		except Exception as e:
-			self.send("orchestrator", {"error": f"LLM evaluation error: {e}"})
-			return
-
-		# Parse verdict
-		accept = verdict.strip().upper().startswith("ACCEPT")
-		# Notify orchestrator
-		self.send("orchestrator", {
-			"supervision": verdict,
-			"accepted": accept,
-			"output_image": output_image
-		})
-
-# Load config
-with open(resolve_path('./config/settings.json'), 'r', encoding='utf-8') as f:
-	config = json.load(f)
-
-# Instantiate agents
-orchestrator = OrchestratorAgent('orchestrator')
-prompter = PrompterAgent('prompter')
-creator = CreatorAgent('creator')
-supervisor = SupervisorAgent('supervisor')
-
-# Register agents
-agents = [orchestrator, prompter, creator, supervisor]
-
-if __name__ == '__main__':
-	brief = load_briefing_text()
-	initial_messages = []
-	if brief:
-		print("Loaded briefing from settings.json and queued it for the orchestrator.")
-		initial_messages.append(
-			Message(
-				sender="user",
-				recipient="orchestrator",
-				data={"brief": brief, "input_images": []},
-			)
-		)
-	else:
+def main():
+	brief = read_text_file(resolve_path(config.get("prompts", {}).get("briefing")))
+	if not brief:
 		print("No briefing text found. Check the prompts.briefing path in settings.json.")
+		return
 
-	results = run_agents(agents, initial_messages=initial_messages)
-	print_external_messages(results)
+	try:
+		result = run_generation_pipeline(brief=brief)
+		print(json.dumps(result, indent=2, ensure_ascii=False))
+	finally:
+		unload_ollama_model()
+
+
+if __name__ == "__main__":
+	main()
