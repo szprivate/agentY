@@ -1,3 +1,2 @@
-First, collect the images from here: D:\AI\agentY\mood_images
-Then, merge the image of the environment and the image of the man into a single image and create a different camera angle on the man's face - anything but the current, straight-on one, make some suggestions for angles. 
-Then, upscale all of the resulting images. Resulting image should be twice the resolution of 720p
+First, collect the image from here: D:\AI\agentY\mood_images
+I want you to create new camera angles from this image. From the side, the front, the back, etc. Please create these as a 3x3 grid in a single image, image resolution should be 2k. When you're done, do a quick, non-creative upscale please.

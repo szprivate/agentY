@@ -44,6 +44,7 @@ from models import (
     WorkflowSelectionDetails,
     WorkflowSelectionOutput,
 )
+from template_library import RemoteTemplateLibrary
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +58,23 @@ def summarize_for_llm(value: Any, limit: int = 4000) -> str:
     if len(text) <= limit:
         return text
     return f"{text[:limit]}\n... [truncated]"
+
+
+def describe_local_workflow(file_name: str) -> str:
+    """Create a short description for a local workflow file name."""
+    stem = os.path.splitext(file_name)[0].replace("_", " ").replace(".", " ")
+    lowered = stem.lower()
+
+    if "upscale" in lowered:
+        capability = "Local workflow for image upscaling or enhancement"
+    elif "edit" in lowered:
+        capability = "Local workflow for image editing using reference images"
+    elif "generation" in lowered or "prompt" in lowered:
+        capability = "Local workflow for prompt-driven image generation"
+    else:
+        capability = "Local workflow available in this workspace"
+
+    return f"{capability}. Filename hint: {stem}."
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +95,7 @@ class CreativePipeline:
     def __init__(self, config: AppConfig) -> None:
         self._config = config
         self._comfyui = ComfyUIClient(config)
+        self._template_library = RemoteTemplateLibrary(config.generated_workflows_dir)
         self._model = self._create_llm()
         self._progress_enabled = True
 
@@ -193,7 +212,9 @@ class CreativePipeline:
         # Local aliases used by the closures below
         comfyui = self._comfyui
         creator_state = self._creator_state
+        template_library = self._template_library
         pipeline = self  # for unload_llm inside submit_workflow
+        retrieval_state: dict[str, dict[str, Any]] = {}
 
         # ── Creator's tool ────────────────────────────────────────────────
 
@@ -247,6 +268,72 @@ class CreativePipeline:
                 "result_summary": summarize_for_llm(result, limit=2000),
             }
 
+        @tool
+        def retrieve_workflow_candidates(
+            brief: str,
+            input_image_count: int = 0,
+            limit: int = 10,
+        ) -> dict[str, Any]:
+            """Retrieve executable local and remote workflow candidates.
+
+            Remote repository templates are currently limited to prompt-only
+            image workflows so they remain compatible with the existing runtime.
+            """
+            local_candidates: list[dict[str, Any]] = []
+            for workflow_path in self._config.list_workflow_files():
+                workflow_name = os.path.basename(workflow_path)
+                local_candidates.append(
+                    {
+                        "workflow_id": workflow_name,
+                        "source": "local",
+                        "title": os.path.splitext(workflow_name)[0],
+                        "description": describe_local_workflow(workflow_name),
+                        "workflow_file": workflow_path,
+                        "compatibility": "native",
+                    }
+                )
+
+            remote_candidates: list[dict[str, Any]] = []
+            if input_image_count == 0:
+                for candidate in template_library.search(
+                    brief,
+                    limit=max(3, limit // 2),
+                    media_type="image",
+                    prompt_only=True,
+                ):
+                    remote_candidates.append(
+                        {
+                            "workflow_id": candidate.name,
+                            "source": "remote",
+                            "title": candidate.title,
+                            "description": candidate.description,
+                            "workflow_file": None,
+                            "compatibility": "prompt_only_remote",
+                            "input_count": candidate.input_count,
+                            "usage": candidate.usage,
+                        }
+                    )
+
+            ordered_candidates = [*local_candidates, *remote_candidates][:limit]
+            retrieval_state.clear()
+            retrieval_state.update(
+                {
+                    candidate["workflow_id"]: candidate
+                    for candidate in ordered_candidates
+                }
+            )
+            return {
+                "brief": brief,
+                "input_image_count": input_image_count,
+                "selection_notes": [
+                    "Choose exactly one workflow_id from the candidate list.",
+                    "Use descriptions as the primary evidence for task fit.",
+                    "Local candidates are immediately executable in this workspace.",
+                    "Remote candidates are cached locally on demand and are limited to prompt-only image templates.",
+                ],
+                "candidates": ordered_candidates,
+            }
+
         # ── Individual agents ─────────────────────────────────────────────
 
         self._prompter = Agent(
@@ -283,12 +370,13 @@ class CreativePipeline:
             model=self._model,
             name="workflow_selector",
             description="Chooses the most suitable ComfyUI workflow for a brief.",
+            tools=[retrieve_workflow_candidates],
             system_prompt=(
                 "You are selecting the best ComfyUI workflow for an image task. "
-                "Infer the user's intent from the brief, and use the workflow "
-                "file names as hints about their capabilities. Prefer the most "
-                "specific workflow that matches the task. Return exactly one "
-                "workflow file name from the provided list."
+                "Always retrieve workflow candidates first, then choose exactly "
+                "one workflow_id from the returned candidates. Use candidate "
+                "descriptions as the primary evidence for task fit, and prefer "
+                "the most specific executable workflow for the requested step."
             ),
         )
 
@@ -324,24 +412,42 @@ class CreativePipeline:
         workflow_selector = self._workflow_selector
 
         @tool
-        def select_workflow(brief: str) -> dict[str, Any]:
+        def select_workflow(brief: str, input_image_count: int = 0) -> dict[str, Any]:
             """Choose the most suitable workflow for the supplied brief.
 
             The selection is based on the semantic intent of the brief and the
-            available workflow file names in ``comfyui_workflows_dir``.
+            available local workflows plus retrieved remote template metadata.
             """
-            available_workflows = self._config.list_workflow_files()
-            workflow_names = [os.path.basename(path) for path in available_workflows]
+            def resolve_selected_candidate(
+                workflow_id: str,
+            ) -> dict[str, Any] | None:
+                """Resolve exact or extension-less workflow identifiers."""
+                candidate = retrieval_state.get(workflow_id)
+                if candidate is not None:
+                    return candidate
+
+                candidate = retrieval_state.get(f"{workflow_id}.json")
+                if candidate is not None:
+                    return candidate
+
+                for candidate in retrieval_state.values():
+                    candidate_id = str(candidate.get("workflow_id", ""))
+                    if os.path.splitext(candidate_id)[0] == workflow_id:
+                        return candidate
+                return None
+
+            retrieval_state.clear()
 
             result = workflow_selector(
                 json.dumps(
                     {
                         "brief": brief,
-                        "available_workflows": workflow_names,
+                        "input_image_count": input_image_count,
                         "selection_rules": [
-                            "Pick exactly one workflow from the provided list.",
-                            "Use the workflow file name as a hint about what it does.",
-                            "Prefer edit workflows for modification tasks, generation workflows for creating new images, and upscale workflows for enlargement tasks.",
+                            "Call `retrieve_workflow_candidates` exactly once before making a decision.",
+                            "Pick exactly one workflow_id from the retrieved candidates.",
+                            "Use descriptions as the primary basis for the selection.",
+                            "Prefer the most specific executable workflow for the task.",
                         ],
                     },
                     indent=2,
@@ -355,13 +461,27 @@ class CreativePipeline:
 
             selection = result.structured_output
             selected_name = selection.workflow_name
-            selected_path = next(
-                (path for path in available_workflows if os.path.basename(path) == selected_name),
-                None,
-            )
-            if selected_path is None:
+            selected_candidate = resolve_selected_candidate(selected_name)
+            if selected_candidate is None:
+                retrieve_workflow_candidates(
+                    brief,
+                    input_image_count=input_image_count,
+                )
+                selected_candidate = resolve_selected_candidate(selected_name)
+
+            if selected_candidate is None:
                 raise RuntimeError(
                     "Workflow selector chose an unknown workflow: "
+                    f"{selected_name}"
+                )
+
+            selected_path = selected_candidate.get("workflow_file")
+            if selected_candidate.get("source") == "remote":
+                selected_path = template_library.ensure_template_cached(selected_name)
+
+            if not selected_path:
+                raise RuntimeError(
+                    "Could not resolve the selected workflow to a local JSON file: "
                     f"{selected_name}"
                 )
 
@@ -416,8 +536,8 @@ class CreativePipeline:
 
         @tool
         def run_supervisor(
-            original_brief: str,
-            brief: str,
+            primary_brief: str,
+            supporting_brief: str,
             prompt: str,
             mood_images: list[str],
             input_images: list[str],
@@ -437,8 +557,8 @@ class CreativePipeline:
                 else "None"
             )
             result = supervisor(
-                f"Original user brief (primary evaluation target):\n{original_brief}\n\n"
-                f"Current execution step brief:\n{brief}\n\n"
+                f"Primary evaluation target:\n{primary_brief}\n\n"
+                f"Supporting context:\n{supporting_brief}\n\n"
                 f"Generated prompt (implementation detail, not the success criteria):\n{prompt}\n\n"
                 f"Mood images:\n{mood_list}\n\n"
                 f"Input images:\n{input_list}\n\n"
@@ -446,8 +566,8 @@ class CreativePipeline:
                 f"Output files:\n{output_file_list}\n\n"
                 f"ComfyUI result summary:\n"
                 f"{summarize_for_llm(creator_payload.get('result', {}), limit=2500)}\n\n"
-                "Judge success primarily against the original user brief. "
-                "Use the current step brief only to understand this step's role. "
+                "Judge success primarily against the primary evaluation target. "
+                "Use the supporting context only to understand the broader goal. "
                 "Treat the generated prompt as implementation context rather than "
                 "the source of truth for success. "
                 "If an output image reference or output files are listed above, "
@@ -550,7 +670,14 @@ class CreativePipeline:
                 "Workflow selector: choosing workflow",
                 self._brief_preview(step.brief),
             )
-            workflow_selection_payload = self._select_workflow_tool(step.brief)
+            workflow_selection_payload = self._select_workflow_tool(
+                step.brief,
+                input_image_count=len(step_input_images),
+            )
+            self._emit_progress(
+                "Selected workflow",
+                workflow_selection_payload["workflow_name"],
+            )
 
             self._emit_progress(
                 "Prompter: generating image prompt",
@@ -580,8 +707,8 @@ class CreativePipeline:
                 f"workflow={workflow_selection_payload['workflow_name']}",
             )
             supervision_payload = self._run_supervisor_tool(
-                brief,
                 step.brief,
+                brief,
                 prompt_payload["prompt"],
                 mood_images,
                 step_input_images,
@@ -625,14 +752,50 @@ class CreativePipeline:
                 )
 
         final_step = step_traces[-1]
-        overall_accepted = all(step.supervision.accepted for step in step_traces)
-        overall_supervision = "\n".join(
+        final_supervision_payload = self._run_supervisor_tool(
+            brief,
+            final_step.brief,
+            final_step.prompt_generation.prompt,
+            mood_images,
+            final_step.input_images,
+            {
+                "output_image": final_step.output_image,
+                "output_files": final_step.output_files,
+                "result": {
+                    "step_count": len(step_traces),
+                    "step_summaries": [
+                        {
+                            "step_number": step.step_number,
+                            "title": step.title,
+                            "accepted": step.supervision.accepted,
+                            "verdict": step.supervision.verdict,
+                            "output_image": step.output_image,
+                            "output_files": step.output_files,
+                        }
+                        for step in step_traces
+                    ],
+                },
+            },
+        )
+        final_supervision = SupervisionDetails(
+            accepted=final_supervision_payload["accepted"],
+            verdict=final_supervision_payload["supervision"],
+        )
+
+        overall_accepted = final_supervision.accepted
+        step_supervision_summary = "\n".join(
             (
                 f"Step {step.step_number} ({step.title}): "
                 f"{'accepted' if step.supervision.accepted else 'rejected'} - "
                 f"{step.supervision.verdict}"
             )
             for step in step_traces
+        )
+        overall_supervision = (
+            f"{step_supervision_summary}\n"
+            f"Final review against original brief: "
+            f"{'accepted' if final_supervision.accepted else 'rejected'} - "
+            f"{final_supervision.verdict}"
         )
         orchestration_summary = (
             f"Planned {len(step_traces)} step(s). {plan.summary} "
@@ -657,7 +820,7 @@ class CreativePipeline:
                 plan_summary=plan.summary,
                 workflow_selection=final_step.workflow_selection,
                 prompt_generation=final_step.prompt_generation,
-                supervision=final_step.supervision,
+                supervision=final_supervision,
                 steps=step_traces,
             ),
         )

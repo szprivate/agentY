@@ -20,14 +20,14 @@ class PromptOutput(BaseModel):
 class WorkflowSelectionOutput(BaseModel):
     """Structured output from the workflow-selection step.
 
-    The selected workflow is expressed as a file name rather than a full path,
-    because the decision is made from a shortlist of workflow files that all
-    live in the configured workflows directory.
+    The selected workflow is expressed as a workflow identifier rather than a
+    full path. Local workflows use their file name, while remote ComfyUI
+    templates use the upstream template name from ``templates/index.json``.
     """
 
     workflow_name: str = Field(
         ...,
-        description="The exact workflow JSON file name chosen for this brief.",
+        description="The exact workflow identifier chosen for this brief.",
     )
     rationale: str = Field(
         ...,

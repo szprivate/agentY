@@ -16,8 +16,10 @@ Typical usage::
 
 import json
 import os
+import re
 import time
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import requests
 
@@ -35,6 +37,8 @@ _MCP_HEADERS: dict[str, str] = {
 
 #: Timeout (seconds) for MCP requests to ComfyUI.
 _MCP_TIMEOUT: int = 300
+_URL_RE = re.compile(r"https?://[^\s)\]]+")
+_IMAGE_NAME_RE = re.compile(r"[A-Za-z0-9._-]+\.(?:png|jpg|jpeg|webp)", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -65,8 +69,44 @@ class ComfyUIClient:
 
     @staticmethod
     def _inject_prompts(obj: Any, prompt: str) -> None:
-        """Walk *obj* recursively, replacing every ``"prompt"`` value."""
+        """Walk *obj* recursively, replacing prompt-bearing fields.
+
+        Supports both the simplified API-style workflow format used in the
+        local workspace and exported ComfyUI graph JSON files.
+        """
         if isinstance(obj, dict):
+            class_type = obj.get("class_type")
+            inputs = obj.get("inputs")
+            if isinstance(class_type, str) and isinstance(inputs, dict):
+                text_value = inputs.get("text")
+                node_title = str((obj.get("_meta") or {}).get("title") or "").lower()
+                if (
+                    class_type in {"CLIPTextEncode", "Text Multiline"}
+                    and isinstance(text_value, str)
+                    and "negative" not in node_title
+                ):
+                    inputs["text"] = prompt
+
+            node_inputs = obj.get("inputs")
+            widgets_values = obj.get("widgets_values")
+            if isinstance(node_inputs, list) and isinstance(widgets_values, list):
+                for index, node_input in enumerate(node_inputs):
+                    if not isinstance(node_input, dict):
+                        continue
+                    label = str(node_input.get("label") or "").lower()
+                    name = str(node_input.get("name") or "").lower()
+                    widget = node_input.get("widget") or {}
+                    widget_name = str(widget.get("name") or "").lower()
+                    input_type = str(node_input.get("type") or "").upper()
+                    if input_type != "STRING":
+                        continue
+                    if (
+                        label == "prompt"
+                        or name in {"prompt", "text"}
+                        or widget_name in {"prompt", "text"}
+                    ) and index < len(widgets_values):
+                        widgets_values[index] = prompt
+
             for key in obj:
                 if key == "prompt":
                     obj[key] = prompt
@@ -213,6 +253,55 @@ class ComfyUIClient:
             },
         )
 
+    @staticmethod
+    def _iter_text_values(value: Any) -> list[str]:
+        """Collect all string values nested inside an arbitrary object."""
+        collected: list[str] = []
+        stack: list[Any] = [value]
+        while stack:
+            current = stack.pop()
+            if isinstance(current, dict):
+                stack.extend(current.values())
+            elif isinstance(current, list):
+                stack.extend(current)
+            elif isinstance(current, str):
+                collected.append(current)
+        return collected
+
+    def _extract_output_references_from_text(self, value: Any) -> list[str]:
+        """Extract output image references from free-form result text."""
+        references: list[str] = []
+        seen: set[str] = set()
+
+        for text in self._iter_text_values(value):
+            for url in _URL_RE.findall(text):
+                parsed = urlparse(url)
+                params = parse_qs(parsed.query)
+                filename = (params.get("filename") or [""])[0]
+                subfolder = (params.get("subfolder") or [""])[0]
+
+                if filename and filename.lower().endswith(IMAGE_EXTENSIONS):
+                    resolved = self._config.resolve_comfyui_output_file(
+                        filename,
+                        subfolder,
+                    )
+                    if resolved not in seen:
+                        seen.add(resolved)
+                        references.append(resolved)
+                    continue
+
+                if url.lower().endswith(IMAGE_EXTENSIONS) and url not in seen:
+                    seen.add(url)
+                    references.append(url)
+
+            for filename in _IMAGE_NAME_RE.findall(text):
+                resolved = self._config.resolve_comfyui_output_file(filename)
+                if resolved not in seen:
+                    seen.add(resolved)
+                    references.append(resolved)
+
+        return references
+
     def list_output_files_on_disk(self) -> list[str]:
         """Return all image files currently present in configured output dirs."""
         discovered: list[str] = []
@@ -275,6 +364,8 @@ class ComfyUIClient:
                         self._config.resolve_comfyui_output_file(filename, subfolder)
                     )
 
+        files.extend(self._extract_output_references_from_text(result))
+
         deduplicated: list[str] = []
         seen: set[str] = set()
         for file_path in files:
@@ -335,6 +426,10 @@ class ComfyUIClient:
                 and current.lower().endswith(IMAGE_EXTENSIONS)
             ):
                 return current
+
+        text_references = self._extract_output_references_from_text(result)
+        if text_references:
+            return text_references[0]
 
         # Strategy 4: fall back to the first resolved generated output file.
         output_files = self.extract_output_files(result)

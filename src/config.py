@@ -179,6 +179,14 @@ class AppConfig:
 
         return [os.path.join(workflows_dir, file_name) for file_name in files]
 
+    @property
+    def generated_workflows_dir(self) -> str:
+        """Directory used for cached or generated workflow JSON files."""
+        return self.resolve_path("./comfyui_workflows_generated/") or os.path.join(
+            BASE_DIR,
+            "comfyui_workflows_generated",
+        )
+
     def list_comfyui_output_dirs(self) -> list[str]:
         """Return configured ComfyUI output directories.
 
