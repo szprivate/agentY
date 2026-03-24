@@ -16,6 +16,7 @@ Typical usage::
 
 import json
 import os
+import time
 from typing import Any
 
 import requests
@@ -212,7 +213,75 @@ class ComfyUIClient:
             },
         )
 
+    def list_output_files_on_disk(self) -> list[str]:
+        """Return all image files currently present in configured output dirs."""
+        discovered: list[str] = []
+        for output_dir in self._config.list_comfyui_output_dirs():
+            if not os.path.isdir(output_dir):
+                continue
+            for root, _, file_names in os.walk(output_dir):
+                for file_name in file_names:
+                    if not file_name.lower().endswith(IMAGE_EXTENSIONS):
+                        continue
+                    discovered.append(os.path.normpath(os.path.join(root, file_name)))
+        return sorted(discovered)
+
+    def find_recent_output_files(
+        self,
+        started_at: float,
+        known_files: set[str] | None = None,
+    ) -> list[str]:
+        """Return newly created or recently modified output files on disk.
+
+        This is used as a robust fallback when the MCP response does not expose
+        enough metadata to reconstruct the generated output path.
+        """
+        recent_files: list[tuple[float, str]] = []
+        tolerance_seconds = 2.0
+        known_files = known_files or set()
+
+        for file_path in self.list_output_files_on_disk():
+            if file_path in known_files:
+                continue
+            try:
+                modified_at = os.path.getmtime(file_path)
+            except OSError:
+                continue
+            if modified_at >= started_at - tolerance_seconds:
+                recent_files.append((modified_at, file_path))
+
+        recent_files.sort(key=lambda item: (item[0], item[1]))
+        return [file_path for _, file_path in recent_files]
+
     # ── Output extraction ─────────────────────────────────────────────────
+
+    def extract_output_files(self, result: dict[str, Any]) -> list[str]:
+        """Locate generated image file paths inside a ComfyUI result."""
+        files: list[str] = []
+
+        outputs = result.get("outputs") if isinstance(result, dict) else None
+        if isinstance(outputs, dict):
+            for node_output in outputs.values():
+                if not isinstance(node_output, dict):
+                    continue
+                for image in node_output.get("images", []):
+                    if not isinstance(image, dict):
+                        continue
+                    filename = image.get("filename")
+                    if not filename:
+                        continue
+                    subfolder = image.get("subfolder", "")
+                    files.append(
+                        self._config.resolve_comfyui_output_file(filename, subfolder)
+                    )
+
+        deduplicated: list[str] = []
+        seen: set[str] = set()
+        for file_path in files:
+            if file_path not in seen:
+                seen.add(file_path)
+                deduplicated.append(file_path)
+        return deduplicated
 
     def extract_output_image(self, result: dict[str, Any]) -> str | None:
         """Locate the output image URL/path inside a ComfyUI result.
@@ -266,5 +335,10 @@ class ComfyUIClient:
                 and current.lower().endswith(IMAGE_EXTENSIONS)
             ):
                 return current
+
+        # Strategy 4: fall back to the first resolved generated output file.
+        output_files = self.extract_output_files(result)
+        if output_files:
+            return output_files[0]
 
         return None

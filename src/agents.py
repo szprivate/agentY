@@ -22,7 +22,9 @@ are defined as **closures** inside :meth:`CreativePipeline._build_agents`.
 
 import json
 import os
+from urllib.parse import parse_qs, urlparse
 from typing import Any
+import time
 
 import requests
 from strands import Agent, tool
@@ -30,7 +32,18 @@ from strands.models.openai import OpenAIModel
 
 from comfyui import ComfyUIClient
 from config import AppConfig
-from models import FinalResult, PromptOutput, SupervisionOutput
+from models import (
+    ExecutionPlanOutput,
+    FinalResult,
+    OrchestrationTrace,
+    PromptOutput,
+    PromptDetails,
+    StepTrace,
+    SupervisionDetails,
+    SupervisionOutput,
+    WorkflowSelectionDetails,
+    WorkflowSelectionOutput,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +78,7 @@ class CreativePipeline:
         self._config = config
         self._comfyui = ComfyUIClient(config)
         self._model = self._create_llm()
+        self._progress_enabled = True
 
         # Mutable dict shared with the creator tool closure so that the
         # orchestrator can retrieve the ComfyUI result after the tool runs.
@@ -110,6 +124,62 @@ class CreativePipeline:
         except requests.RequestException:
             pass
 
+    def _emit_progress(self, title: str, details: str | None = None) -> None:
+        """Print a short progress line before an agent starts a task."""
+        if not self._progress_enabled:
+            return
+        print(f"[agent] {title}")
+        if details:
+            print(f"        {details}")
+
+    @staticmethod
+    def _brief_preview(text: str, limit: int = 140) -> str:
+        """Return a one-line preview of a longer brief or instruction."""
+        compact = " ".join(text.split())
+        if len(compact) <= limit:
+            return compact
+        return f"{compact[:limit - 3]}..."
+
+    def _resolve_output_reference(self, output_reference: str | None) -> str | None:
+        """Convert an output reference into a local file path when possible.
+
+        ComfyUI sometimes returns a preview URL rather than a filesystem path.
+        For multi-step chaining, later steps need a usable local input path, so
+        this method resolves ``/view?filename=...`` URLs back to the configured
+        output directory.
+        """
+        if not output_reference:
+            return None
+        if os.path.exists(output_reference):
+            return output_reference
+        if output_reference.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+            return output_reference
+
+        parsed = urlparse(output_reference)
+        if not parsed.query:
+            return None
+
+        params = parse_qs(parsed.query)
+        filename = (params.get("filename") or [""])[0]
+        subfolder = (params.get("subfolder") or [""])[0]
+        if not filename:
+            return None
+        return self._config.resolve_comfyui_output_file(filename, subfolder)
+
+    def _derive_next_step_inputs(self, creator_payload: dict[str, Any]) -> list[str]:
+        """Return the concrete files that should feed the next planned step."""
+        output_files = list(creator_payload.get("output_files", []))
+        if output_files:
+            return output_files
+
+        resolved_output = self._resolve_output_reference(
+            creator_payload.get("output_image")
+        )
+        if resolved_output:
+            return [resolved_output]
+
+        return []
+
     # ── Agent construction ────────────────────────────────────────────────
 
     def _build_agents(self) -> None:
@@ -140,20 +210,40 @@ class CreativePipeline:
             """
             workflow = comfyui.prepare_workflow(workflow_file, prompt, input_images)
             workflow_id = os.path.splitext(os.path.basename(workflow_file))[0]
+            started_at = time.time()
+            known_output_files = set(comfyui.list_output_files_on_disk())
 
             # Free GPU VRAM before ComfyUI needs it
             pipeline.unload_llm()
 
             result = comfyui.run_workflow(workflow, workflow_id=workflow_id)
+            output_files = comfyui.extract_output_files(result)
+            recent_output_files = comfyui.find_recent_output_files(
+                started_at=started_at,
+                known_files=known_output_files,
+            )
+            if recent_output_files:
+                merged_output_files: list[str] = []
+                seen_files: set[str] = set()
+                for file_path in [*output_files, *recent_output_files]:
+                    if file_path in seen_files:
+                        continue
+                    seen_files.add(file_path)
+                    merged_output_files.append(file_path)
+                output_files = merged_output_files
             output_image = comfyui.extract_output_image(result)
+            if not output_image and output_files:
+                output_image = output_files[0]
 
             # Stash full payload so the orchestrator can forward it later
             creator_state["last_payload"] = {
                 "result": result,
                 "output_image": output_image,
+                "output_files": output_files,
             }
             return {
                 "output_image": output_image,
+                "output_files": output_files,
                 "result_summary": summarize_for_llm(result, limit=2000),
             }
 
@@ -168,6 +258,37 @@ class CreativePipeline:
                 "Turn the user's brief, mood references, and instructions "
                 "into one strong image-generation prompt. Be specific about "
                 "composition, camera angle, lighting, and style."
+            ),
+        )
+
+        self._orchestrator = Agent(
+            model=self._model,
+            name="orchestrator",
+            description="Plans single-step or multi-step execution from the brief.",
+            system_prompt=(
+                "You are the orchestration agent. Analyze the user's brief and "
+                "convert it into an ordered execution plan. Each step must be a "
+                "single image-processing action that can be handled by one "
+                "workflow-selection, prompt-generation, creation, and supervision "
+                "cycle. If the brief contains multiple sequential actions such as "
+                "'first', 'then', or 'finally', return multiple steps in order. "
+                "Ignore setup-only actions like collecting files from a folder, "
+                "because the application already provides available input images. "
+                "Later steps may assume they receive the previous step's output as "
+                "their input. Keep the number of steps minimal but complete."
+            ),
+        )
+
+        self._workflow_selector = Agent(
+            model=self._model,
+            name="workflow_selector",
+            description="Chooses the most suitable ComfyUI workflow for a brief.",
+            system_prompt=(
+                "You are selecting the best ComfyUI workflow for an image task. "
+                "Infer the user's intent from the brief, and use the workflow "
+                "file names as hints about their capabilities. Prefer the most "
+                "specific workflow that matches the task. Return exactly one "
+                "workflow file name from the provided list."
             ),
         )
 
@@ -200,6 +321,55 @@ class CreativePipeline:
         prompter = self._prompter
         creator = self._creator
         supervisor = self._supervisor
+        workflow_selector = self._workflow_selector
+
+        @tool
+        def select_workflow(brief: str) -> dict[str, Any]:
+            """Choose the most suitable workflow for the supplied brief.
+
+            The selection is based on the semantic intent of the brief and the
+            available workflow file names in ``comfyui_workflows_dir``.
+            """
+            available_workflows = self._config.list_workflow_files()
+            workflow_names = [os.path.basename(path) for path in available_workflows]
+
+            result = workflow_selector(
+                json.dumps(
+                    {
+                        "brief": brief,
+                        "available_workflows": workflow_names,
+                        "selection_rules": [
+                            "Pick exactly one workflow from the provided list.",
+                            "Use the workflow file name as a hint about what it does.",
+                            "Prefer edit workflows for modification tasks, generation workflows for creating new images, and upscale workflows for enlargement tasks.",
+                        ],
+                    },
+                    indent=2,
+                ),
+                structured_output_model=WorkflowSelectionOutput,
+            )
+            if result.structured_output is None:
+                raise RuntimeError(
+                    "Workflow selector agent did not return structured output."
+                )
+
+            selection = result.structured_output
+            selected_name = selection.workflow_name
+            selected_path = next(
+                (path for path in available_workflows if os.path.basename(path) == selected_name),
+                None,
+            )
+            if selected_path is None:
+                raise RuntimeError(
+                    "Workflow selector chose an unknown workflow: "
+                    f"{selected_name}"
+                )
+
+            return {
+                "workflow_file": selected_path,
+                "workflow_name": selected_name,
+                "rationale": selection.rationale,
+            }
 
         @tool
         def run_prompter(
@@ -246,6 +416,7 @@ class CreativePipeline:
 
         @tool
         def run_supervisor(
+            original_brief: str,
             brief: str,
             prompt: str,
             mood_images: list[str],
@@ -259,15 +430,29 @@ class CreativePipeline:
             input_list = (
                 ", ".join(os.path.basename(p) for p in input_images) or "None"
             )
+            output_files = creator_payload.get("output_files", [])
+            output_file_list = (
+                "\n".join(f"- {file_path}" for file_path in output_files)
+                if output_files
+                else "None"
+            )
             result = supervisor(
-                f"Brief:\n{brief}\n\n"
-                f"Prompt:\n{prompt}\n\n"
+                f"Original user brief (primary evaluation target):\n{original_brief}\n\n"
+                f"Current execution step brief:\n{brief}\n\n"
+                f"Generated prompt (implementation detail, not the success criteria):\n{prompt}\n\n"
                 f"Mood images:\n{mood_list}\n\n"
                 f"Input images:\n{input_list}\n\n"
-                f"Output image:\n{creator_payload.get('output_image')}\n\n"
+                f"Output image reference:\n{creator_payload.get('output_image') or 'None'}\n\n"
+                f"Output files:\n{output_file_list}\n\n"
                 f"ComfyUI result summary:\n"
                 f"{summarize_for_llm(creator_payload.get('result', {}), limit=2500)}\n\n"
-                "Decide whether the result should be accepted.",
+                "Judge success primarily against the original user brief. "
+                "Use the current step brief only to understand this step's role. "
+                "Treat the generated prompt as implementation context rather than "
+                "the source of truth for success. "
+                "If an output image reference or output files are listed above, "
+                "treat that as evidence that an image was produced. Decide whether "
+                "the result should be accepted.",
                 structured_output_model=SupervisionOutput,
             )
             if result.structured_output is None:
@@ -276,21 +461,12 @@ class CreativePipeline:
                 )
             return result.structured_output.model_dump()
 
-        # ── Orchestrator agent ────────────────────────────────────────────
-
-        self._orchestrator = Agent(
-            model=self._model,
-            name="orchestrator",
-            description="Coordinates prompt creation, image generation, and review.",
-            tools=[run_prompter, run_creator, run_supervisor],
-            system_prompt=(
-                "You are the orchestration agent. Use the tools in this "
-                "exact order: `run_prompter`, then `run_creator`, then "
-                "`run_supervisor`. Do not skip any step. When you finish, "
-                "return the final accepted flag, supervision summary, "
-                "output image path, prompt, and brief."
-            ),
-        )
+        # Store the tool callables so the Python execution engine can reuse the
+        # same logic after the orchestrator has produced a multi-step plan.
+        self._select_workflow_tool = select_workflow
+        self._run_prompter_tool = run_prompter
+        self._run_creator_tool = run_creator
+        self._run_supervisor_tool = run_supervisor
 
     # ── Public API ────────────────────────────────────────────────────────
 
@@ -301,42 +477,188 @@ class CreativePipeline:
     ) -> dict[str, Any]:
         """Execute the full generation pipeline.
 
-        1. Resolve the workflow file and collect mood images.
-        2. Invoke the orchestrator (which chains prompter → creator →
-           supervisor internally).
-        3. Return the structured :class:`FinalResult` as a plain dict.
+          1. Collect mood images and available workflow names.
+          2. Ask the orchestration agent to turn the brief into one or more
+              sequential execution steps.
+          3. Execute each planned step with workflow selection, prompt
+              generation, image creation, and supervision.
+          4. Return a structured :class:`FinalResult` including a per-step trace.
 
         Args:
             brief: The creative brief describing the desired output.
             input_images: Optional paths to reference / input images.
 
         Returns:
-            Dict with keys ``accepted``, ``supervision``,
-            ``output_image``, ``prompt``, and ``brief``.
+            Dict with the final result plus verbose execution details for each
+            planned step.
 
         Raises:
             RuntimeError: If the orchestrator fails to produce output.
         """
-        workflow_file = self._config.select_workflow_file()
         mood_images = self._config.collect_mood_images()
         instructions = self._config.briefing_text
+        available_workflows = [
+            os.path.basename(path) for path in self._config.list_workflow_files()
+        ]
 
-        result = self._orchestrator(
+        self._emit_progress(
+            "Orchestrator: building execution plan",
+            self._brief_preview(brief),
+        )
+        planning_result = self._orchestrator(
             json.dumps(
                 {
                     "brief": brief,
-                    "workflow_file": workflow_file,
+                    "available_workflows": available_workflows,
                     "input_images": input_images or [],
                     "mood_images": mood_images,
                     "instructions": instructions,
+                    "planning_rules": [
+                        "Return a single step when the brief is one coherent task.",
+                        "Return multiple steps when the brief clearly describes a sequence.",
+                        "Ignore setup-only actions such as collecting files from disk.",
+                        "Later steps can build on previous step outputs.",
+                    ],
                 },
                 indent=2,
             ),
-            structured_output_model=FinalResult,
+            structured_output_model=ExecutionPlanOutput,
         )
 
-        if result.structured_output is None:
+        if planning_result.structured_output is None:
             raise RuntimeError(
-                "Orchestrator agent did not return structured output."
+                "Orchestrator agent did not return a valid execution plan."
             )
-        return result.structured_output.model_dump()
+
+        plan = planning_result.structured_output
+        steps = sorted(plan.steps, key=lambda step: step.step_number)
+        if not steps:
+            raise RuntimeError("Orchestrator returned an empty execution plan.")
+
+        current_input_images = list(input_images or mood_images)
+        step_traces: list[StepTrace] = []
+
+        for step in steps:
+            step_input_images = list(current_input_images)
+
+            self._emit_progress(
+                f"Step {step.step_number}/{len(steps)}: preparing execution plan item",
+                self._brief_preview(step.title or step.brief),
+            )
+
+            self._emit_progress(
+                "Workflow selector: choosing workflow",
+                self._brief_preview(step.brief),
+            )
+            workflow_selection_payload = self._select_workflow_tool(step.brief)
+
+            self._emit_progress(
+                "Prompter: generating image prompt",
+                self._brief_preview(step.brief),
+            )
+            prompt_payload = self._run_prompter_tool(
+                step.brief,
+                mood_images,
+                instructions,
+            )
+
+            self._emit_progress(
+                "Creator: running selected workflow",
+                (
+                    f"workflow={workflow_selection_payload['workflow_name']}; "
+                    f"inputs={len(step_input_images)}"
+                ),
+            )
+            creator_payload = self._run_creator_tool(
+                prompt_payload["prompt"],
+                workflow_selection_payload["workflow_file"],
+                step_input_images,
+            )
+
+            self._emit_progress(
+                "Supervisor: reviewing generated result",
+                f"workflow={workflow_selection_payload['workflow_name']}",
+            )
+            supervision_payload = self._run_supervisor_tool(
+                brief,
+                step.brief,
+                prompt_payload["prompt"],
+                mood_images,
+                step_input_images,
+                creator_payload,
+            )
+
+            step_trace = StepTrace(
+                step_number=step.step_number,
+                title=step.title,
+                brief=step.brief,
+                input_images=step_input_images,
+                output_image=creator_payload.get("output_image"),
+                output_files=creator_payload.get("output_files", []),
+                workflow_selection=WorkflowSelectionDetails(
+                    workflow_name=workflow_selection_payload["workflow_name"],
+                    workflow_file=workflow_selection_payload["workflow_file"],
+                    rationale=workflow_selection_payload.get("rationale", ""),
+                ),
+                prompt_generation=PromptDetails(
+                    prompt=prompt_payload["prompt"],
+                ),
+                supervision=SupervisionDetails(
+                    accepted=supervision_payload["accepted"],
+                    verdict=supervision_payload["supervision"],
+                ),
+            )
+            step_traces.append(step_trace)
+
+            next_input_images = self._derive_next_step_inputs(creator_payload)
+            if next_input_images:
+                current_input_images = list(next_input_images)
+                self._emit_progress(
+                    "Chaining step output into next input",
+                    f"files={len(next_input_images)}",
+                )
+            elif step.step_number < len(steps):
+                raise RuntimeError(
+                    "A multi-step plan requires the previous step to produce an "
+                    "input image for the next step, but no reusable output file "
+                    f"was found after step {step.step_number}."
+                )
+
+        final_step = step_traces[-1]
+        overall_accepted = all(step.supervision.accepted for step in step_traces)
+        overall_supervision = "\n".join(
+            (
+                f"Step {step.step_number} ({step.title}): "
+                f"{'accepted' if step.supervision.accepted else 'rejected'} - "
+                f"{step.supervision.verdict}"
+            )
+            for step in step_traces
+        )
+        orchestration_summary = (
+            f"Planned {len(step_traces)} step(s). {plan.summary} "
+            f"Overall result: {'accepted' if overall_accepted else 'rejected'}."
+        )
+
+        final_result = FinalResult(
+            accepted=overall_accepted,
+            supervision=overall_supervision,
+            output_image=final_step.output_image,
+            output_files=final_step.output_files,
+            prompt=final_step.prompt_generation.prompt,
+            brief=brief,
+            workflow_name=final_step.workflow_selection.workflow_name,
+            workflow_file=final_step.workflow_selection.workflow_file,
+            workflow_rationale=final_step.workflow_selection.rationale,
+            plan_summary=plan.summary,
+            step_count=len(step_traces),
+            orchestration_summary=orchestration_summary,
+            trace=OrchestrationTrace(
+                summary=orchestration_summary,
+                plan_summary=plan.summary,
+                workflow_selection=final_step.workflow_selection,
+                prompt_generation=final_step.prompt_generation,
+                supervision=final_step.supervision,
+                steps=step_traces,
+            ),
+        )
+        return final_result.model_dump()

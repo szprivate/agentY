@@ -11,7 +11,6 @@
   },
   "mood_images_dir": "./mood_images/",
   "debug_supervision_dir": "./debug/supervision/",
-  "comfyui_workflow": "./comfyui_workflows/image_editing_for_still_images_using_references.model_flux1Klein.json",
   "comfyui_output_dir_default": "./output/agentY",
   "comfyui_output_dir_override": "W://i002_ai_rnd//02_build//comfy//outputs//",
   "comfyui_workflows_dir": "./comfyui_workflows/",

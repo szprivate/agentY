@@ -156,23 +156,17 @@ class AppConfig:
             if name.lower().endswith(IMAGE_EXTENSIONS)
         ]
 
-    def select_workflow_file(self) -> str:
-        """Choose the ComfyUI workflow JSON file to use.
+    def list_workflow_files(self) -> list[str]:
+        """Return all available ComfyUI workflow JSON files.
 
-        Resolution order:
-
-        1. The explicit ``comfyui_workflow`` path from settings (if it exists).
-        2. The first ``.json`` file (alphabetically) in the workflows directory.
+        The files are returned as absolute paths sorted alphabetically. This is
+        the canonical workflow catalogue used by the orchestrator when it asks
+        the model to choose the best workflow for a given brief.
 
         Raises:
-            RuntimeError: If no usable workflow file can be located.
+            RuntimeError: If the configured workflow directory is missing or no
+                workflow JSON files exist.
         """
-        # 1. Explicitly configured workflow
-        explicit = self.resolve_path(self._settings.get("comfyui_workflow"))
-        if explicit and os.path.exists(explicit):
-            return explicit
-
-        # 2. First JSON in the workflows directory
         workflows_dir = self.resolve_path(
             self._settings.get("comfyui_workflows_dir", "./comfyui_workflows/")
         )
@@ -183,4 +177,38 @@ class AppConfig:
         if not files:
             raise RuntimeError("No ComfyUI workflow JSON files found.")
 
-        return os.path.join(workflows_dir, files[0])
+        return [os.path.join(workflows_dir, file_name) for file_name in files]
+
+    def list_comfyui_output_dirs(self) -> list[str]:
+        """Return configured ComfyUI output directories.
+
+        The override directory is preferred over the project-local default.
+        Only non-empty directories are returned.
+        """
+        candidates = [
+            self._settings.get("comfyui_output_dir_override"),
+            self._settings.get("comfyui_output_dir_default"),
+        ]
+        resolved: list[str] = []
+        for path in candidates:
+            resolved_path = self.resolve_path(path)
+            if resolved_path:
+                resolved.append(resolved_path)
+        return resolved
+
+    def resolve_comfyui_output_file(self, filename: str, subfolder: str = "") -> str:
+        """Resolve a generated ComfyUI file to the most likely absolute path.
+
+        If multiple output directories are configured, the first existing path
+        wins. If none exist yet, the first candidate path is returned.
+        """
+        candidates = [
+            os.path.join(output_dir, subfolder, filename)
+            for output_dir in self.list_comfyui_output_dirs()
+        ]
+        for path in candidates:
+            if os.path.exists(path):
+                return os.path.normpath(path)
+        if candidates:
+            return os.path.normpath(candidates[0])
+        return os.path.normpath(os.path.join(subfolder, filename))
