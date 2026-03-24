@@ -14,7 +14,7 @@
   },
   "95": {
     "inputs": {
-      "image_path": "D:\\AI\\agentY\\mood_images\\old-3975765_960_720.jpg",
+      "image_path": "pathhere",
       "RGBA": "false",
       "filename_text_extension": "true"
     },
@@ -25,7 +25,7 @@
   },
   "96": {
     "inputs": {
-      "image_path": "D:\\AI\\agentY\\mood_images\\istockphoto-157644498-612x612.jpg",
+      "image_path": "pathhere",
       "RGBA": "false",
       "filename_text_extension": "true"
     },
