@@ -223,13 +223,19 @@ class CreativePipeline:
             prompt: str,
             workflow_file: str,
             input_images: list[str],
+            parameter_overrides: list[dict[str, Any]] | None = None,
         ) -> dict[str, Any]:
             """Fill a ComfyUI workflow template and submit it for rendering.
 
             The generated image URL (if found) and a truncated result
             summary are returned to the calling agent.
             """
-            workflow = comfyui.prepare_workflow(workflow_file, prompt, input_images)
+            workflow, applied_overrides, skipped_overrides = comfyui.prepare_workflow(
+                workflow_file,
+                prompt,
+                input_images,
+                parameter_overrides,
+            )
             workflow_id = os.path.splitext(os.path.basename(workflow_file))[0]
             started_at = time.time()
             known_output_files = set(comfyui.list_output_files_on_disk())
@@ -261,10 +267,14 @@ class CreativePipeline:
                 "result": result,
                 "output_image": output_image,
                 "output_files": output_files,
+                "applied_parameter_overrides": applied_overrides,
+                "skipped_parameter_overrides": skipped_overrides,
             }
             return {
                 "output_image": output_image,
                 "output_files": output_files,
+                "applied_parameter_overrides": applied_overrides,
+                "skipped_parameter_overrides": skipped_overrides,
                 "result_summary": summarize_for_llm(result, limit=2000),
             }
 
@@ -388,8 +398,14 @@ class CreativePipeline:
             system_prompt=(
                 "You are the creator agent. Always call `submit_workflow` "
                 "exactly once using the values provided in the user's "
-                "message. After the tool succeeds, reply with a short "
-                "factual summary."
+                "message. If the current step explicitly requests measurable "
+                "workflow settings such as width, height, batch size, steps, "
+                "denoise, seed, CFG, or similar scalar parameters, include a "
+                "`parameter_overrides` list. Only use parameters that appear "
+                "in the provided editable parameter list, and copy the exact "
+                "`node_title`, `class_type`, and `input_name` fields from that "
+                "list when creating overrides. Do not invent parameters. After "
+                "the tool succeeds, reply with a short factual summary."
             ),
         )
 
@@ -513,18 +529,28 @@ class CreativePipeline:
 
         @tool
         def run_creator(
+            brief: str,
             prompt: str,
             workflow_file: str,
             input_images: list[str],
         ) -> dict[str, Any]:
             """Create an image by submitting the workflow to ComfyUI."""
             creator_state.clear()
+            editable_parameters = comfyui.describe_workflow_parameters(workflow_file)
             creator(
                 json.dumps(
                     {
+                        "brief": brief,
                         "prompt": prompt,
                         "workflow_file": workflow_file,
                         "input_images": input_images,
+                        "editable_workflow_parameters": editable_parameters,
+                        "override_rules": [
+                            "Set parameter_overrides only when the brief explicitly asks for a measurable workflow setting.",
+                            "Use the editable_workflow_parameters list as the only allowed source of override targets.",
+                            "Prefer exact node_title plus input_name matches.",
+                            "Do not override prompt text or input image paths through parameter_overrides.",
+                        ],
                     },
                     indent=2,
                 ),
@@ -697,6 +723,7 @@ class CreativePipeline:
                 ),
             )
             creator_payload = self._run_creator_tool(
+                step.brief,
                 prompt_payload["prompt"],
                 workflow_selection_payload["workflow_file"],
                 step_input_images,
@@ -722,6 +749,14 @@ class CreativePipeline:
                 input_images=step_input_images,
                 output_image=creator_payload.get("output_image"),
                 output_files=creator_payload.get("output_files", []),
+                parameter_overrides=creator_payload.get(
+                    "applied_parameter_overrides",
+                    [],
+                ),
+                skipped_parameter_overrides=creator_payload.get(
+                    "skipped_parameter_overrides",
+                    [],
+                ),
                 workflow_selection=WorkflowSelectionDetails(
                     workflow_name=workflow_selection_payload["workflow_name"],
                     workflow_file=workflow_selection_payload["workflow_file"],

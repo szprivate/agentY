@@ -133,26 +133,258 @@ class ComfyUIClient:
             for item in obj:
                 ComfyUIClient._inject_images(item, images)
 
+    @staticmethod
+    def _is_editable_scalar(value: Any) -> bool:
+        """Return whether *value* is a scalar that can be overridden safely."""
+        return isinstance(value, (str, int, float, bool))
+
+    @staticmethod
+    def _iter_workflow_nodes(workflow: Any) -> list[tuple[str | None, dict[str, Any]]]:
+        """Return all detectable workflow nodes with optional node ids."""
+        nodes: list[tuple[str | None, dict[str, Any]]] = []
+        seen: set[int] = set()
+
+        def visit(value: Any, node_id: str | None = None) -> None:
+            if isinstance(value, dict):
+                identity = id(value)
+                if identity in seen:
+                    return
+                seen.add(identity)
+
+                if isinstance(value.get("class_type"), str):
+                    detected_id = node_id or str(value.get("id") or "").strip() or None
+                    nodes.append((detected_id, value))
+
+                for key, child in value.items():
+                    next_node_id = None
+                    if isinstance(child, dict) and isinstance(child.get("class_type"), str):
+                        next_node_id = str(key)
+                    visit(child, next_node_id)
+            elif isinstance(value, list):
+                for item in value:
+                    visit(item, None)
+
+        visit(workflow)
+        return nodes
+
+    @staticmethod
+    def _coerce_override_value(value: Any, current_value: Any) -> Any:
+        """Convert *value* to the type already used by the workflow when possible."""
+        if isinstance(current_value, bool):
+            if isinstance(value, str):
+                return value.strip().lower() in {"1", "true", "yes", "on"}
+            return bool(value)
+        if isinstance(current_value, int) and not isinstance(current_value, bool):
+            return int(value)
+        if isinstance(current_value, float):
+            return float(value)
+        if isinstance(current_value, str):
+            return str(value)
+        return value
+
+    def describe_workflow_parameters(
+        self,
+        workflow_file: str,
+        max_parameters: int = 80,
+    ) -> list[dict[str, Any]]:
+        """List editable scalar workflow parameters for agent-side selection."""
+        workflow = self.load_template(workflow_file)
+        parameters: list[dict[str, Any]] = []
+        excluded_names = {"prompt", "text", "image_path"}
+
+        for node_id, node in self._iter_workflow_nodes(workflow):
+            class_type = str(node.get("class_type") or "")
+            node_title = str((node.get("_meta") or {}).get("title") or "")
+
+            inputs = node.get("inputs")
+            if isinstance(inputs, dict):
+                for input_name, current_value in inputs.items():
+                    if str(input_name).lower() in excluded_names:
+                        continue
+                    if not self._is_editable_scalar(current_value):
+                        continue
+                    parameters.append(
+                        {
+                            "node_id": node_id,
+                            "node_title": node_title,
+                            "class_type": class_type,
+                            "input_name": input_name,
+                            "current_value": current_value,
+                            "value_type": type(current_value).__name__,
+                            "source": "inputs",
+                        }
+                    )
+
+            if isinstance(inputs, list) and isinstance(node.get("widgets_values"), list):
+                widgets_values = node["widgets_values"]
+                for index, node_input in enumerate(inputs):
+                    if not isinstance(node_input, dict) or index >= len(widgets_values):
+                        continue
+                    current_value = widgets_values[index]
+                    if not self._is_editable_scalar(current_value):
+                        continue
+                    input_name = (
+                        node_input.get("name")
+                        or node_input.get("label")
+                        or ((node_input.get("widget") or {}).get("name"))
+                    )
+                    if not input_name or str(input_name).lower() in excluded_names:
+                        continue
+                    parameters.append(
+                        {
+                            "node_id": node_id,
+                            "node_title": node_title,
+                            "class_type": class_type,
+                            "input_name": input_name,
+                            "current_value": current_value,
+                            "value_type": type(current_value).__name__,
+                            "source": "widgets_values",
+                        }
+                    )
+
+        return parameters[:max_parameters]
+
+    def apply_parameter_overrides(
+        self,
+        workflow: dict[str, Any],
+        parameter_overrides: list[dict[str, Any]] | None,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Apply agent-selected overrides to a prepared workflow."""
+        if not parameter_overrides:
+            return [], []
+
+        applied: list[dict[str, Any]] = []
+        skipped: list[dict[str, Any]] = []
+        nodes = self._iter_workflow_nodes(workflow)
+
+        for override in parameter_overrides:
+            requested_input_name = str(override.get("input_name") or "").strip()
+            if not requested_input_name:
+                skipped.append({
+                    **override,
+                    "reason": "Missing input_name.",
+                })
+                continue
+
+            requested_node_id = str(override.get("node_id") or "").strip()
+            requested_node_title = str(override.get("node_title") or "").strip().lower()
+            requested_class_type = str(override.get("class_type") or "").strip().lower()
+            requested_value = override.get("value")
+
+            matched = False
+            for node_id, node in nodes:
+                class_type = str(node.get("class_type") or "")
+                node_title = str((node.get("_meta") or {}).get("title") or "")
+
+                if requested_node_id and requested_node_id != str(node_id or ""):
+                    continue
+                if requested_node_title and requested_node_title != node_title.lower():
+                    continue
+                if requested_class_type and requested_class_type != class_type.lower():
+                    continue
+
+                inputs = node.get("inputs")
+                if isinstance(inputs, dict):
+                    for actual_name, current_value in inputs.items():
+                        if str(actual_name).lower() != requested_input_name.lower():
+                            continue
+                        if not self._is_editable_scalar(current_value):
+                            continue
+                        coerced_value = self._coerce_override_value(
+                            requested_value,
+                            current_value,
+                        )
+                        inputs[actual_name] = coerced_value
+                        applied.append(
+                            {
+                                "node_id": node_id,
+                                "node_title": node_title,
+                                "class_type": class_type,
+                                "input_name": actual_name,
+                                "value": coerced_value,
+                                "previous_value": current_value,
+                                "source": "inputs",
+                                "rationale": override.get("rationale", ""),
+                            }
+                        )
+                        matched = True
+                        break
+                    if matched:
+                        break
+
+                if isinstance(inputs, list) and isinstance(node.get("widgets_values"), list):
+                    widgets_values = node["widgets_values"]
+                    for index, node_input in enumerate(inputs):
+                        if not isinstance(node_input, dict) or index >= len(widgets_values):
+                            continue
+                        input_name = (
+                            node_input.get("name")
+                            or node_input.get("label")
+                            or ((node_input.get("widget") or {}).get("name"))
+                        )
+                        if str(input_name or "").lower() != requested_input_name.lower():
+                            continue
+                        current_value = widgets_values[index]
+                        if not self._is_editable_scalar(current_value):
+                            continue
+                        coerced_value = self._coerce_override_value(
+                            requested_value,
+                            current_value,
+                        )
+                        widgets_values[index] = coerced_value
+                        applied.append(
+                            {
+                                "node_id": node_id,
+                                "node_title": node_title,
+                                "class_type": class_type,
+                                "input_name": input_name,
+                                "value": coerced_value,
+                                "previous_value": current_value,
+                                "source": "widgets_values",
+                                "rationale": override.get("rationale", ""),
+                            }
+                        )
+                        matched = True
+                        break
+                    if matched:
+                        break
+
+            if not matched:
+                skipped.append(
+                    {
+                        **override,
+                        "reason": "No matching editable workflow parameter was found.",
+                    }
+                )
+
+        return applied, skipped
+
     def prepare_workflow(
         self,
         workflow_file: str,
         prompt: str,
         input_images: list[str],
-    ) -> dict[str, Any]:
+        parameter_overrides: list[dict[str, Any]] | None = None,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
         """Load a workflow template, inject the prompt and images, return it.
 
         Args:
             workflow_file: Path to the ``.json`` workflow template.
             prompt: Creative prompt to write into every ``"prompt"`` field.
             input_images: Image paths written into ``"image_path"`` fields.
+            parameter_overrides: Optional list of scalar workflow input changes.
 
         Returns:
-            A fully-patched workflow dict ready for :meth:`run_workflow`.
+            The patched workflow plus applied and skipped override summaries.
         """
         workflow = self.load_template(workflow_file)
         self._inject_prompts(workflow, prompt)
         self._inject_images(workflow, list(input_images))  # copy to avoid mutation
-        return workflow
+        applied_overrides, skipped_overrides = self.apply_parameter_overrides(
+            workflow,
+            parameter_overrides,
+        )
+        return workflow, applied_overrides, skipped_overrides
 
     # ── MCP communication ─────────────────────────────────────────────────
 

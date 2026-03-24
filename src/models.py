@@ -4,6 +4,8 @@ Defines the structured output schemas used by the AI agents to ensure
 type-safe, validated responses at each stage of the pipeline.
 """
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -92,6 +94,8 @@ class StepTrace(BaseModel):
     input_images: list[str]
     output_image: str | None = None
     output_files: list[str] = Field(default_factory=list)
+    parameter_overrides: list[dict[str, Any]] = Field(default_factory=list)
+    skipped_parameter_overrides: list[dict[str, Any]] = Field(default_factory=list)
     workflow_selection: WorkflowSelectionDetails
     prompt_generation: PromptDetails
     supervision: SupervisionDetails

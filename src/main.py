@@ -59,6 +59,28 @@ def print_verbose_result(result: dict) -> None:
         print("Generated prompt:")
         print(prompt_data.get("prompt", ""))
         print()
+        print("Workflow parameter overrides:")
+        parameter_overrides = step.get("parameter_overrides", [])
+        if parameter_overrides:
+            for override in parameter_overrides:
+                node_title = override.get("node_title") or override.get("class_type") or "Unknown node"
+                print(
+                    "- "
+                    f"{node_title} :: {override.get('input_name', '')} = "
+                    f"{override.get('value', '')}"
+                )
+        else:
+            print("- None")
+        skipped_overrides = step.get("skipped_parameter_overrides", [])
+        if skipped_overrides:
+            print("Skipped override requests:")
+            for override in skipped_overrides:
+                print(
+                    "- "
+                    f"{override.get('input_name', '')}: "
+                    f"{override.get('reason', '')}"
+                )
+        print()
         print("Supervisor verdict:")
         print(f"- Accepted: {supervision.get('accepted', False)}")
         print(f"- Verdict:  {supervision.get('verdict', '')}")
