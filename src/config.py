@@ -119,11 +119,27 @@ class AppConfig:
         ).rstrip("/")
 
     @property
-    def comfyui_mcp_url(self) -> str:
-        """URL for the ComfyUI MCP JSON-RPC endpoint."""
-        return (
-            self._settings.get("comfyui_mcp_url") or "http://127.0.0.1:9000/mcp"
-        ).rstrip("/")
+    def comfyui_mcp_command(self) -> str:
+        """Command to start the comfyui-mcp server subprocess.
+
+        Defaults to ``"node"`` for a local npm/source installation.
+        Set to ``"docker"`` when using the Docker image.
+        """
+        return self._settings.get("comfyui_mcp_command", "node")
+
+    @property
+    def comfyui_mcp_args(self) -> list[str]:
+        """Arguments passed to the comfyui-mcp server command.
+
+        For a local npm build this is typically
+        ``["path/to/comfyui-mcp/dist/index.js"]``.
+
+        For Docker this is typically
+        ``["run", "-i", "--rm", "ghcr.io/shawnrushefsky/comfyui-mcp:latest"]``.
+
+        The ``COMFYUI_URL`` env var is set automatically by the client.
+        """
+        return list(self._settings.get("comfyui_mcp_args", []))
 
     @property
     def max_iterations(self) -> int:
@@ -134,6 +150,16 @@ class AppConfig:
     def ollama_timeout(self) -> int:
         """Timeout (seconds) for Ollama API requests."""
         return int(self._settings.get("ollama_timeout", 120))
+
+    @property
+    def comfyui_output_wait_timeout(self) -> int:
+        """Maximum time to wait for generated ComfyUI output files."""
+        return int(self._settings.get("comfyui_output_wait_timeout", 180))
+
+    @property
+    def comfyui_output_poll_interval(self) -> float:
+        """Polling interval while waiting for generated ComfyUI outputs."""
+        return float(self._settings.get("comfyui_output_poll_interval", 2.0))
 
     @property
     def briefing_text(self) -> str:

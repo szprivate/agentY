@@ -44,7 +44,6 @@ from models import (
     WorkflowSelectionDetails,
     WorkflowSelectionOutput,
 )
-from template_library import RemoteTemplateLibrary
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +94,6 @@ class CreativePipeline:
     def __init__(self, config: AppConfig) -> None:
         self._config = config
         self._comfyui = ComfyUIClient(config)
-        self._template_library = RemoteTemplateLibrary(config.generated_workflows_dir)
         self._model = self._create_llm()
         self._progress_enabled = True
 
@@ -212,7 +210,6 @@ class CreativePipeline:
         # Local aliases used by the closures below
         comfyui = self._comfyui
         creator_state = self._creator_state
-        template_library = self._template_library
         pipeline = self  # for unload_llm inside submit_workflow
         retrieval_state: dict[str, dict[str, Any]] = {}
 
@@ -224,45 +221,97 @@ class CreativePipeline:
             workflow_file: str,
             input_images: list[str],
             parameter_overrides: list[dict[str, Any]] | None = None,
+            template_id: str | None = None,
         ) -> dict[str, Any]:
             """Fill a ComfyUI workflow template and submit it for rendering.
+
+            For local workflows, loads the JSON template and injects the
+            prompt and images.  For MCP templates (when *template_id* is
+            provided), builds the workflow via the MCP server's
+            ``get_template`` tool instead.
 
             The generated image URL (if found) and a truncated result
             summary are returned to the calling agent.
             """
-            workflow, applied_overrides, skipped_overrides = comfyui.prepare_workflow(
-                workflow_file,
-                prompt,
-                input_images,
-                parameter_overrides,
+            applied_overrides: list[dict[str, Any]] = []
+            skipped_overrides: list[dict[str, Any]] = []
+
+            if template_id:
+                # Build workflow from MCP server template
+                template_params: dict[str, Any] = {"prompt": prompt}
+                template_result = comfyui.get_template(
+                    template_id, parameters=template_params,
+                )
+                workflow = template_result.get(
+                    "workflow", template_result
+                )
+            else:
+                # Local workflow JSON file
+                workflow, applied_overrides, skipped_overrides = (
+                    comfyui.prepare_workflow(
+                        workflow_file,
+                        prompt,
+                        input_images,
+                        parameter_overrides,
+                    )
+                )
+
+            # Validate the workflow before running
+            try:
+                validation = comfyui.validate_workflow(workflow)
+                if validation.get("errors"):
+                    pipeline._emit_progress(
+                        "Workflow validation warnings",
+                        summarize_for_llm(
+                            validation["errors"], limit=500
+                        ),
+                    )
+            except Exception:
+                pass  # validation is best-effort
+
+            workflow_name = (
+                template_id
+                or os.path.splitext(
+                    os.path.basename(workflow_file or "unnamed")
+                )[0]
             )
-            workflow_id = os.path.splitext(os.path.basename(workflow_file))[0]
             started_at = time.time()
             known_output_files = set(comfyui.list_output_files_on_disk())
 
             # Free GPU VRAM before ComfyUI needs it
             pipeline.unload_llm()
 
-            result = comfyui.run_workflow(workflow, workflow_id=workflow_id)
-            output_files = comfyui.extract_output_files(result)
-            recent_output_files = comfyui.find_recent_output_files(
-                started_at=started_at,
-                known_files=known_output_files,
+            # Run via MCP server (synchronous mode: blocks until done)
+            result = comfyui.run_workflow(
+                workflow, sync=True, name=workflow_name,
             )
-            if recent_output_files:
-                merged_output_files: list[str] = []
-                seen_files: set[str] = set()
-                for file_path in [*output_files, *recent_output_files]:
-                    if file_path in seen_files:
-                        continue
-                    seen_files.add(file_path)
-                    merged_output_files.append(file_path)
-                output_files = merged_output_files
+
+            output_files = comfyui.extract_output_files(result)
             output_image = comfyui.extract_output_image(result)
+
+            # Fallback: scan disk for recently created files
+            if not output_files:
+                recent_output_files = comfyui.find_recent_output_files(
+                    started_at=started_at,
+                    known_files=known_output_files,
+                )
+                if not recent_output_files:
+                    pipeline._emit_progress(
+                        "Creator: waiting for generated output files",
+                        workflow_name,
+                    )
+                    recent_output_files = comfyui.wait_for_output_files(
+                        started_at=started_at,
+                        known_files=known_output_files,
+                        expected_files=output_files,
+                    )
+                if recent_output_files:
+                    output_files = recent_output_files
+
             if not output_image and output_files:
                 output_image = output_files[0]
 
-            # Stash full payload so the orchestrator can forward it later
+            # Stash full payload for the orchestrator
             creator_state["last_payload"] = {
                 "result": result,
                 "output_image": output_image,
@@ -284,10 +333,10 @@ class CreativePipeline:
             input_image_count: int = 0,
             limit: int = 10,
         ) -> dict[str, Any]:
-            """Retrieve executable local and remote workflow candidates.
+            """Retrieve executable local and MCP server workflow candidates.
 
-            Remote repository templates are currently limited to prompt-only
-            image workflows so they remain compatible with the existing runtime.
+            Combines local workspace workflows with templates discovered
+            via the comfyui-mcp server's ``search_templates`` tool.
             """
             local_candidates: list[dict[str, Any]] = []
             for workflow_path in self._config.list_workflow_files():
@@ -299,32 +348,69 @@ class CreativePipeline:
                         "title": os.path.splitext(workflow_name)[0],
                         "description": describe_local_workflow(workflow_name),
                         "workflow_file": workflow_path,
+                        "template_id": None,
                         "compatibility": "native",
                     }
                 )
 
-            remote_candidates: list[dict[str, Any]] = []
-            if input_image_count == 0:
-                for candidate in template_library.search(
-                    brief,
-                    limit=max(3, limit // 2),
-                    media_type="image",
-                    prompt_only=True,
-                ):
-                    remote_candidates.append(
-                        {
-                            "workflow_id": candidate.name,
-                            "source": "remote",
-                            "title": candidate.title,
-                            "description": candidate.description,
-                            "workflow_file": None,
-                            "compatibility": "prompt_only_remote",
-                            "input_count": candidate.input_count,
-                            "usage": candidate.usage,
-                        }
-                    )
+            # Query the MCP server for matching templates
+            mcp_candidates: list[dict[str, Any]] = []
+            try:
+                # Determine search parameters based on the brief
+                search_kwargs: dict[str, Any] = {}
+                brief_lower = brief.lower()
+                if "upscal" in brief_lower:
+                    search_kwargs["taskType"] = "upscale"
+                elif "inpaint" in brief_lower:
+                    search_kwargs["taskType"] = "inpaint"
+                elif input_image_count > 0:
+                    search_kwargs["taskType"] = "img2img"
+                else:
+                    search_kwargs["taskType"] = "txt2img"
+                search_kwargs["query"] = brief[:200]
 
-            ordered_candidates = [*local_candidates, *remote_candidates][:limit]
+                search_result = comfyui.search_templates(**search_kwargs)
+                templates = search_result.get(
+                    "templates", search_result.get("results", [])
+                )
+                if isinstance(templates, list):
+                    for tmpl in templates[: max(3, limit // 2)]:
+                        if not isinstance(tmpl, dict):
+                            continue
+                        tmpl_id = (
+                            tmpl.get("id")
+                            or tmpl.get("templateId")
+                            or tmpl.get("name")
+                            or ""
+                        )
+                        if not tmpl_id:
+                            continue
+                        mcp_candidates.append(
+                            {
+                                "workflow_id": tmpl_id,
+                                "source": "mcp",
+                                "title": tmpl.get(
+                                    "name", tmpl.get("title", tmpl_id)
+                                ),
+                                "description": tmpl.get(
+                                    "description", ""
+                                ),
+                                "workflow_file": None,
+                                "template_id": tmpl_id,
+                                "compatibility": "mcp_template",
+                                "model_type": tmpl.get("modelType", ""),
+                                "task_type": tmpl.get("taskType", ""),
+                            }
+                        )
+            except Exception as exc:
+                pipeline._emit_progress(
+                    "MCP template search failed (using local only)",
+                    str(exc)[:200],
+                )
+
+            ordered_candidates = [
+                *local_candidates, *mcp_candidates
+            ][:limit]
             retrieval_state.clear()
             retrieval_state.update(
                 {
@@ -339,7 +425,7 @@ class CreativePipeline:
                     "Choose exactly one workflow_id from the candidate list.",
                     "Use descriptions as the primary evidence for task fit.",
                     "Local candidates are immediately executable in this workspace.",
-                    "Remote candidates are cached locally on demand and are limited to prompt-only image templates.",
+                    "MCP template candidates are built on-the-fly by the MCP server and support diverse model architectures.",
                 ],
                 "candidates": ordered_candidates,
             }
@@ -398,7 +484,9 @@ class CreativePipeline:
             system_prompt=(
                 "You are the creator agent. Always call `submit_workflow` "
                 "exactly once using the values provided in the user's "
-                "message. If the current step explicitly requests measurable "
+                "message. If a template_id is provided, pass it to "
+                "`submit_workflow` so the MCP server builds the workflow. "
+                "If the current step explicitly requests measurable "
                 "workflow settings such as width, height, batch size, steps, "
                 "denoise, seed, CFG, or similar scalar parameters, include a "
                 "`parameter_overrides` list. Only use parameters that appear "
@@ -492,18 +580,20 @@ class CreativePipeline:
                 )
 
             selected_path = selected_candidate.get("workflow_file")
-            if selected_candidate.get("source") == "remote":
-                selected_path = template_library.ensure_template_cached(selected_name)
+            selected_template_id = selected_candidate.get("template_id")
 
-            if not selected_path:
+            # MCP templates don't have a local file — they are built
+            # on-the-fly by the server when get_template is called.
+            if not selected_path and not selected_template_id:
                 raise RuntimeError(
-                    "Could not resolve the selected workflow to a local JSON file: "
-                    f"{selected_name}"
+                    "Could not resolve the selected workflow to a local "
+                    f"file or MCP template: {selected_name}"
                 )
 
             return {
                 "workflow_file": selected_path,
                 "workflow_name": selected_name,
+                "template_id": selected_template_id,
                 "rationale": selection.rationale,
             }
 
@@ -533,16 +623,33 @@ class CreativePipeline:
             prompt: str,
             workflow_file: str,
             input_images: list[str],
+            template_id: str | None = None,
         ) -> dict[str, Any]:
-            """Create an image by submitting the workflow to ComfyUI."""
+            """Create an image by submitting the workflow to ComfyUI.
+
+            For local workflows, loads the JSON template and injects the
+            prompt / images.  For MCP server templates, passes the
+            *template_id* to the creator so the workflow is built via
+            ``get_template``.
+            """
             creator_state.clear()
-            editable_parameters = comfyui.describe_workflow_parameters(workflow_file)
+
+            # For local workflows, describe editable parameters so the
+            # agent can set overrides.  MCP templates handle parameters
+            # internally via get_template.
+            editable_parameters: list[dict[str, Any]] = []
+            if workflow_file and not template_id:
+                editable_parameters = comfyui.describe_workflow_parameters(
+                    workflow_file
+                )
+
             creator(
                 json.dumps(
                     {
                         "brief": brief,
                         "prompt": prompt,
-                        "workflow_file": workflow_file,
+                        "workflow_file": workflow_file or "",
+                        "template_id": template_id or "",
                         "input_images": input_images,
                         "editable_workflow_parameters": editable_parameters,
                         "override_rules": [
@@ -550,6 +657,7 @@ class CreativePipeline:
                             "Use the editable_workflow_parameters list as the only allowed source of override targets.",
                             "Prefer exact node_title plus input_name matches.",
                             "Do not override prompt text or input image paths through parameter_overrides.",
+                            "When template_id is provided, pass it to submit_workflow.",
                         ],
                     },
                     indent=2,
@@ -577,9 +685,17 @@ class CreativePipeline:
                 ", ".join(os.path.basename(p) for p in input_images) or "None"
             )
             output_files = creator_payload.get("output_files", [])
+            existing_output_files = [
+                file_path for file_path in output_files if os.path.exists(file_path)
+            ]
             output_file_list = (
                 "\n".join(f"- {file_path}" for file_path in output_files)
                 if output_files
+                else "None"
+            )
+            existing_output_file_list = (
+                "\n".join(f"- {file_path}" for file_path in existing_output_files)
+                if existing_output_files
                 else "None"
             )
             result = supervisor(
@@ -590,12 +706,16 @@ class CreativePipeline:
                 f"Input images:\n{input_list}\n\n"
                 f"Output image reference:\n{creator_payload.get('output_image') or 'None'}\n\n"
                 f"Output files:\n{output_file_list}\n\n"
+                f"Existing output files on disk:\n{existing_output_file_list}\n\n"
                 f"ComfyUI result summary:\n"
                 f"{summarize_for_llm(creator_payload.get('result', {}), limit=2500)}\n\n"
                 "Judge success primarily against the primary evaluation target. "
                 "Use the supporting context only to understand the broader goal. "
                 "Treat the generated prompt as implementation context rather than "
                 "the source of truth for success. "
+                "If output files are listed under existing output files on disk, "
+                "treat that as stronger evidence than a stale job status such as "
+                "'running'. A real file on disk means the step produced an image. "
                 "If an output image reference or output files are listed above, "
                 "treat that as evidence that an image was produced. Decide whether "
                 "the result should be accepted.",
@@ -623,12 +743,13 @@ class CreativePipeline:
     ) -> dict[str, Any]:
         """Execute the full generation pipeline.
 
-          1. Collect mood images and available workflow names.
-          2. Ask the orchestration agent to turn the brief into one or more
+          1. Start the MCP server connection to ComfyUI.
+          2. Collect mood images and available workflow names.
+          3. Ask the orchestration agent to turn the brief into one or more
               sequential execution steps.
-          3. Execute each planned step with workflow selection, prompt
+          4. Execute each planned step with workflow selection, prompt
               generation, image creation, and supervision.
-          4. Return a structured :class:`FinalResult` including a per-step trace.
+          5. Return a structured :class:`FinalResult` including a per-step trace.
 
         Args:
             brief: The creative brief describing the desired output.
@@ -641,10 +762,35 @@ class CreativePipeline:
         Raises:
             RuntimeError: If the orchestrator fails to produce output.
         """
+        # Start the MCP server connection
+        self._emit_progress("Starting ComfyUI MCP server connection")
+        self._comfyui.start()
+        try:
+            return self._run_pipeline(brief, input_images)
+        finally:
+            self._comfyui.stop()
+
+    def _run_pipeline(
+        self,
+        brief: str,
+        input_images: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Inner pipeline execution (assumes MCP server is connected)."""
+        # Optional: check ComfyUI status
+        try:
+            status = self._comfyui.get_status()
+            self._emit_progress(
+                "ComfyUI status",
+                summarize_for_llm(status, limit=200),
+            )
+        except Exception:
+            pass  # status check is informational
+
         mood_images = self._config.collect_mood_images()
         instructions = self._config.briefing_text
         available_workflows = [
-            os.path.basename(path) for path in self._config.list_workflow_files()
+            os.path.basename(path)
+            for path in self._config.list_workflow_files()
         ]
 
         self._emit_progress(
@@ -725,8 +871,9 @@ class CreativePipeline:
             creator_payload = self._run_creator_tool(
                 step.brief,
                 prompt_payload["prompt"],
-                workflow_selection_payload["workflow_file"],
+                workflow_selection_payload.get("workflow_file") or "",
                 step_input_images,
+                template_id=workflow_selection_payload.get("template_id"),
             )
 
             self._emit_progress(
@@ -759,7 +906,11 @@ class CreativePipeline:
                 ),
                 workflow_selection=WorkflowSelectionDetails(
                     workflow_name=workflow_selection_payload["workflow_name"],
-                    workflow_file=workflow_selection_payload["workflow_file"],
+                    workflow_file=(
+                        workflow_selection_payload.get("workflow_file")
+                        or workflow_selection_payload.get("template_id")
+                        or ""
+                    ),
                     rationale=workflow_selection_payload.get("rationale", ""),
                 ),
                 prompt_generation=PromptDetails(

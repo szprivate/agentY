@@ -1,7 +1,8 @@
 {
   "ollama_api_url": "http://localhost:11434/v1",
   "comfyui_url": "http://127.0.0.1:8188/",
-  "comfyui_mcp_url": "http://127.0.0.1:9000/mcp",
+  "comfyui_mcp_command": "npx",
+  "comfyui_mcp_args": ["-y", "comfyui-mcp"],
   "ollama-model": "qwen3-vl:30b",
   "prompts": {
     "persona_supervisor": "./prompts/persona.supervisor.md",

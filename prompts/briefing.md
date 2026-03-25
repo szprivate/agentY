@@ -1,2 +1,2 @@
 First, collect the image from here: D:\AI\agentY\mood_images
-I want you to create new camera angles of the old man in the image. From the side, the front, the back, etc. Please create these as a 3x3 grid in a single image, image resolution should be 2k. When you're done, do a quick, non-creative upscale please.
+I want you to create new camera angles of the old man in the image. From the side, the front, the back, etc. Use nano banana 2 api node. Please create these as a 3x3 grid in a single image, image resolution should be 2k. When you're done, do a quick, non-creative upscale please.
