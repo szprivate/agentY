@@ -12,10 +12,15 @@ Or:
 import os
 import sys
 
+from dotenv import load_dotenv
+
 # Ensure project root is on sys.path when run as a script
 _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
+
+# Load .env from project root
+load_dotenv(os.path.join(_project_root, ".env"))
 
 from src.agent import create_agent  # noqa: E402
 
@@ -27,6 +32,12 @@ def main() -> None:
         print("[agentY] ComfyUI API key loaded from API_KEY_COMFY_ORG.")
     else:
         print("[agentY] No API_KEY_COMFY_ORG set – using unauthenticated access.")
+
+    hf_token = os.environ.get("HF_TOKEN", "")
+    if hf_token:
+        print("[agentY] Hugging Face token loaded from HF_TOKEN.")
+    else:
+        print("[agentY] No HF_TOKEN set – gated model downloads will fail.")
 
     slack_token = os.environ.get("SLACK_BOT_TOKEN", "")
     slack_member = os.environ.get("SLACK_MEMBER_ID", "")

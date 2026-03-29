@@ -5,6 +5,7 @@ __pycache__/
 dist/
 build/
 .venv/
+.env
 
 # Official Comfy-Org workflow templates (cloned repo — large)
 comfyui_workflow_templates_official/

@@ -55,6 +55,12 @@ from src.tools.slack_tools import (  # noqa: F401
     slack_read_messages,
     slack_add_reaction,
 )
+from src.tools.huggingface import (  # noqa: F401
+    search_huggingface_models,
+    get_model_info,
+    check_local_model,
+    download_hf_model,
+)
 
 ALL_TOOLS: list = [
     # System / info
@@ -110,4 +116,9 @@ ALL_TOOLS: list = [
     slack_send_file,
     slack_read_messages,
     slack_add_reaction,
+    # Hugging Face model management
+    search_huggingface_models,
+    get_model_info,
+    check_local_model,
+    download_hf_model,
 ]
