@@ -124,13 +124,13 @@ def slack_send_dm(
     channel_id: str = "",
     thread_ts: str = "",
 ) -> str:
-    """Send a text message to a Slack channel or DM. Auto-routes to the originating channel when inside an event handler.
+    """Send a text message to a Slack channel or DM. Auto-routes to originating channel inside an event handler.
 
     Args:
-        text: Message body (supports Slack mrkdwn formatting).
-        user_id: Slack member ID to DM (ignored if channel_id provided).
-        channel_id: Slack channel ID to post to; uses event context if omitted.
-        thread_ts: Parent message ts to reply in-thread.
+        text: Message body (mrkdwn).
+        user_id: Member ID to DM (ignored if channel_id set).
+        channel_id: Channel ID; uses event context if omitted.
+        thread_ts: Parent ts for threaded reply.
     """
     try:
         channel = _get_active_channel(channel_id)
@@ -164,14 +164,14 @@ def slack_send_image(
     user_id: str = "",
     channel_id: str = "",
 ) -> str:
-    """Upload and send an image file to a Slack channel or DM.
+    """Upload an image file to a Slack channel or DM.
 
     Args:
-        file_path: Local path to the image file.
-        title: Optional title shown above the image.
-        initial_comment: Optional accompanying text.
-        user_id: Slack member ID to DM (ignored if channel_id set).
-        channel_id: Slack channel ID; uses event context if omitted.
+        file_path: Local path to image.
+        title: Title shown above image.
+        initial_comment: Accompanying text.
+        user_id: Member ID to DM (ignored if channel_id set).
+        channel_id: Channel ID; uses event context if omitted.
     """
     try:
         path = Path(file_path)
@@ -216,14 +216,14 @@ def slack_send_video(
     user_id: str = "",
     channel_id: str = "",
 ) -> str:
-    """Upload and send a video file to a Slack channel or DM.
+    """Upload a video file to a Slack channel or DM.
 
     Args:
-        file_path: Local path to the video file.
-        title: Optional title shown above the video.
-        initial_comment: Optional accompanying text.
-        user_id: Slack member ID to DM (ignored if channel_id set).
-        channel_id: Slack channel ID; uses event context if omitted.
+        file_path: Local path to video.
+        title: Title shown above video.
+        initial_comment: Accompanying text.
+        user_id: Member ID to DM (ignored if channel_id set).
+        channel_id: Channel ID; uses event context if omitted.
     """
     try:
         path = Path(file_path)
@@ -394,14 +394,14 @@ def slack_send_json(
     comment: str = "",
     channel_id: str = "",
 ) -> str:
-    """Save JSON to a local file and upload it to Slack as a file snippet. Use this instead of pasting large JSON into messages.
+    """Upload JSON as a Slack file snippet instead of pasting into messages.
 
     Args:
-        data: JSON string (or serialised dict/list) to send.
-        filename: Slack filename (default 'workflow.json').
-        title: Optional title shown above the snippet.
-        comment: Optional message alongside the file.
-        channel_id: Slack channel/DM ID; auto-detected from event context if omitted.
+        data: JSON string or dict/list to send.
+        filename: Filename in Slack (default 'workflow.json').
+        title: Title above the snippet.
+        comment: Message alongside the file.
+        channel_id: Channel ID; auto-detected if omitted.
     """
     try:
         # Pretty-print if possible

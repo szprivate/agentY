@@ -8,11 +8,27 @@ ComfyUI tools registered.
 import os
 
 from strands import Agent
-from strands.models.anthropic import AnthropicModel
+from strands.models.anthropic import AnthropicModel as _BaseAnthropicModel
 from strands.models.ollama import OllamaModel
 from strands.agent.conversation_manager import SlidingWindowConversationManager
 
 from src.tools import ALL_TOOLS
+
+
+class AnthropicModel(_BaseAnthropicModel):
+    """AnthropicModel with cache_control injected on the last tool.
+
+    This causes Anthropic to cache the entire tools block on every request,
+    reducing cached-token cost to 10 % of the normal input price after the
+    first call (which pays the 1.25× cache-write surcharge).
+    """
+
+    def format_request(self, messages, tool_specs=None, system_prompt=None, tool_choice=None):  # type: ignore[override]
+        req = super().format_request(messages, tool_specs, system_prompt, tool_choice)
+        if req.get("tools"):
+            *head, last = req["tools"]
+            req["tools"] = head + [{**last, "cache_control": {"type": "ephemeral"}}]
+        return req
 
 SYSTEM_PROMPT = """\
 You are agentY, a ComfyUI workflow agent. Construct and execute ComfyUI workflows
@@ -82,9 +98,22 @@ def _build_model(llm: str):
             model_id=os.environ.get("OLLAMA_MODEL", "qwen3-vl:30b"),
         )
     # Default: claude
+    # Pass system_prompt as a structured content block so Anthropic's
+    # prompt-caching kicks in (cache_control="ephemeral"). params is
+    # expanded last in AnthropicModel.format_request, so it overrides
+    # the plain-string "system" key that Strands sets from system_prompt.
     return AnthropicModel(
         model_id=os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5"),
         max_tokens=int(os.environ.get("ANTHROPIC_MAX_TOKENS", "4096")),
+        params={
+            "system": [
+                {
+                    "type": "text",
+                    "text": SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+        },
     )
 
 

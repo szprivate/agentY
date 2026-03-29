@@ -361,11 +361,18 @@ def _handle_message_async(content, channel: str, thread_ts: str, user: str):
             usage = _agent_ref.event_loop_metrics.accumulated_usage
             in_tok = usage.get("inputTokens", 0)
             out_tok = usage.get("outputTokens", 0)
+            cache_read = usage.get("cacheReadInputTokens", 0)
+            cache_write = usage.get("cacheWriteInputTokens", 0)
             logger.info(
-                "Token usage — in: %d, out: %d, total: %d",
-                in_tok, out_tok, in_tok + out_tok,
+                "Token usage — in: %d, out: %d, total: %d, cache_read: %d, cache_write: %d",
+                in_tok, out_tok, in_tok + out_tok, cache_read, cache_write,
             )
-            accumulated.append(f"\n\n_🪙 {in_tok:,} in / {out_tok:,} out_")
+            parts = [f"{in_tok:,} in", f"{out_tok:,} out"]
+            if cache_read:
+                parts.append(f"{cache_read:,} cache hit")
+            if cache_write:
+                parts.append(f"{cache_write:,} cache write")
+            accumulated.append(f"\n\n_🪙 {' / '.join(parts)}_")
         except Exception as _tok_exc:
             logger.debug("Could not read token usage: %s", _tok_exc)
 

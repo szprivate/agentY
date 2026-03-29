@@ -235,13 +235,13 @@ def download_hf_model(
     destination_folder: str,
     subfolder: str = "",
 ) -> str:
-    """Download a file from a Hugging Face repo. Only call after check_local_model confirms it doesn't exist.
+    """Download a file from a HuggingFace repo. Call check_local_model first.
 
     Args:
-        model_id: HF model identifier e.g. 'black-forest-labs/FLUX.1-dev'.
+        model_id: HF model ID e.g. 'black-forest-labs/FLUX.1-dev'.
         filename: File to download e.g. 'flux1-dev.safetensors'.
-        destination_folder: Local folder under models base dir e.g. 'FLUX1', 'WAN21'.
-        subfolder: Optional subfolder within the HF repo e.g. 'transformer'.
+        destination_folder: Target subfolder under models dir e.g. 'FLUX1'.
+        subfolder: Subfolder within the HF repo e.g. 'transformer'.
     """
     try:
         base = _models_base_dir()
