@@ -100,6 +100,14 @@ def _resolve_bot_user_id() -> Optional[str]:
 _seen_event_ids: set = set()
 _SEEN_MAX = 500
 
+# Matches Werkzeug / Flask access-log lines that occasionally leak into the
+# Strands SDK streamed output via captured stdout, e.g.:
+#   127.0.0.1 - - [29/Mar/2026 23:12:15] "POST /slack/events HTTP/1.1" 200 -
+_ACCESS_LOG_RE = re.compile(
+    r"^\d{1,3}(?:\.\d{1,3}){3}\s+-\s+-\s+\[.*?\]\s+\".*?\"\s+\d{3}.*$",
+    re.MULTILINE,
+)
+
 
 def _is_duplicate(event_id: str) -> bool:
     if event_id in _seen_event_ids:
@@ -304,7 +312,10 @@ def _handle_message_async(content, channel: str, thread_ts: str, user: str):
         def _push_update(final: bool = False):
             """Update the Slack message with accumulated text so far."""
             nonlocal last_update_time
-            current_text = "".join(accumulated).strip()
+            raw = "".join(accumulated)
+            # Strip HTTP access-log lines that the Strands SDK occasionally
+            # captures from stdout and injects into the streamed text.
+            current_text = _ACCESS_LOG_RE.sub("", raw).strip()
             if not current_text:
                 return
             suffix = "" if final else " :writing_hand:"
