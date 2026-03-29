@@ -194,11 +194,14 @@ def search_nodes(query: str, limit: int = 20) -> dict:
                             input_types.add(t)
 
             # Build a searchable blob
-            searchable = " ".join([
-                class_name, display, category, desc,
-                " ".join(str(o) for o in outputs),
+            searchable = " ".join(filter(None, [
+                class_name,
+                display or "",
+                category or "",
+                desc or "",
+                " ".join(str(o) for o in outputs if o is not None),
                 " ".join(input_types),
-            ]).lower()
+            ])).lower()
 
             if query_lower in searchable:
                 matches.append({

@@ -23,6 +23,7 @@ if _project_root not in sys.path:
 load_dotenv(os.path.join(_project_root, ".env"))
 
 from src.agent import create_agent  # noqa: E402
+from src.slack_server import start_slack_server  # noqa: E402
 
 
 def main() -> None:
@@ -31,24 +32,35 @@ def main() -> None:
     if api_key:
         print("[agentY] ComfyUI API key loaded from API_KEY_COMFY_ORG.")
     else:
-        print("[agentY] No API_KEY_COMFY_ORG set – using unauthenticated access.")
+        print("[agentY] No API_KEY_COMFY_ORG set - using unauthenticated access.")
 
     hf_token = os.environ.get("HF_TOKEN", "")
     if hf_token:
         print("[agentY] Hugging Face token loaded from HF_TOKEN.")
     else:
-        print("[agentY] No HF_TOKEN set – gated model downloads will fail.")
+        print("[agentY] No HF_TOKEN set - gated model downloads will fail.")
 
     slack_token = os.environ.get("SLACK_BOT_TOKEN", "")
     slack_member = os.environ.get("SLACK_MEMBER_ID", "")
     if slack_token and slack_member:
         print("[agentY] Slack integration enabled (SLACK_BOT_TOKEN + SLACK_MEMBER_ID loaded).")
     else:
-        print("[agentY] Slack env vars missing – Slack tools will be unavailable.")
+        print("[agentY] Slack env vars missing - Slack tools will be unavailable.")
 
     agent = create_agent()
 
-    print("\n=== agentY – ComfyUI Agent ===")
+    # -- Start Slack Events API server + ngrok tunnel ------------------- #
+    if slack_token and slack_member:
+        events_url = start_slack_server(agent)
+        if events_url:
+            print(f"[agentY] Slack event listener active at {events_url}")
+        else:
+            print("[agentY] WARNING: Slack event server failed to start.")
+            print("[agentY]   Ensure ngrok is installed and NGROK_AUTH_TOKEN is set in .env")
+    else:
+        print("[agentY] Skipping Slack event server (missing env vars).")
+
+    print("\n=== agentY - ComfyUI Agent ===")
     print("Type your message (or 'quit' / 'exit' to stop).\n")
 
     while True:

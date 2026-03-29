@@ -1,4 +1,4 @@
-# run_agent.ps1 — Launch agentY
+# run_agent.ps1 - Launch agentY
 # Usage: .\run_agent.ps1
 
 Set-StrictMode -Version Latest
@@ -11,7 +11,7 @@ try {
     # Activate the virtual environment
     $venvActivate = Join-Path $ProjectRoot ".venv\Scripts\Activate.ps1"
     if (-not (Test-Path $venvActivate)) {
-        Write-Host "[run_agent] .venv not found — creating virtual environment..." -ForegroundColor Yellow
+        Write-Host "[run_agent] .venv not found - creating virtual environment..." -ForegroundColor Yellow
         python -m venv .venv
         & $venvActivate
         Write-Host "[run_agent] Installing dependencies..." -ForegroundColor Yellow

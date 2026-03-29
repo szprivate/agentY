@@ -6,6 +6,7 @@ ComfyUI tools registered.
 """
 
 from strands import Agent
+from strands.models.ollama import OllamaModel
 
 from src.tools import ALL_TOOLS
 
@@ -133,7 +134,12 @@ def create_agent(**kwargs) -> Agent:
     Any extra keyword arguments are forwarded to the Strands Agent constructor
     (e.g. to override the model or system prompt).
     """
+    model = OllamaModel(
+        host="http://localhost:11434",
+        model_id="qwen3-vl:30b",
+    )
     agent_kwargs = {
+        "model": model,
         "system_prompt": SYSTEM_PROMPT,
         "tools": ALL_TOOLS,
     }
