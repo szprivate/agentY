@@ -336,11 +336,6 @@ def _handle_message_async(content, channel: str, thread_ts: str, user: str):
                 if "data" in event:
                     chunk = event["data"]
                     if chunk:
-                        # Insert a blank line when text resumes after a non-text
-                        # event (e.g. a tool call), so each response segment is
-                        # visually separated in Slack.
-                        if not last_was_text and accumulated:
-                            accumulated.append("\n\n")
                         accumulated.append(chunk)
                         last_was_text = True
                         # Push an update if enough time has elapsed
