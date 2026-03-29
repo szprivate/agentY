@@ -15,16 +15,13 @@ def upload_image(
     image_type: str = "input",
     overwrite: bool = False,
 ) -> dict:
-    """Upload an image file to ComfyUI so it can be used in workflows.
+    """Upload an image file to ComfyUI for use in workflows.
 
     Args:
-        file_path: Absolute or relative path to the image file on the local filesystem.
+        file_path: Local path to the image file.
         subfolder: Optional subfolder inside the target directory.
-        image_type: The image type/directory. Typically 'input', 'output', or 'temp'.
-        overwrite: If True, overwrite an existing file with the same name.
-
-    Returns:
-        A dictionary with the upload result including the final filename.
+        image_type: 'input', 'output', or 'temp' (default 'input').
+        overwrite: Overwrite existing file with the same name.
     """
     try:
         if not os.path.isfile(file_path):
@@ -49,17 +46,14 @@ def upload_mask(
     image_type: str = "input",
     overwrite: bool = False,
 ) -> str:
-    """Upload a mask image to ComfyUI, associated with an original reference image.
+    """Upload a mask image to ComfyUI linked to an original reference image.
 
     Args:
-        file_path: Absolute or relative path to the mask image file.
-        original_ref: The filename of the original image this mask is associated with.
-        subfolder: Optional subfolder inside the target directory.
-        image_type: The image type/directory. Typically 'input'.
-        overwrite: If True, overwrite an existing file with the same name.
-
-    Returns:
-        A dictionary with the upload result.
+        file_path: Local path to the mask image.
+        original_ref: Filename of the original image this mask is associated with.
+        subfolder: Optional subfolder.
+        image_type: Typically 'input'.
+        overwrite: Overwrite existing file.
     """
     try:
         if not os.path.isfile(file_path):

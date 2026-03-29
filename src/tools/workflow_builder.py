@@ -70,28 +70,10 @@ def _load_official_index() -> list:
 
 @tool
 def get_node_schema(node_class: str) -> str:
-    """Retrieve a detailed, human-readable schema for a specific ComfyUI node type.
-
-    Returns the node's required and optional inputs (with types, defaults, and
-    constraints), its output types, display name, description, and category.
-    This is the primary tool to understand what a node expects before wiring it
-    into a workflow.
+    """Get a structured schema for a ComfyUI node: required/optional inputs with types and defaults, output types, and description.
 
     Args:
-        node_class: The exact node class name (e.g. 'KSampler', 'CLIPTextEncode',
-                    'CheckpointLoaderSimple', 'SaveImage').
-
-    Returns:
-        A structured dictionary with:
-        - display_name: The human-readable name.
-        - description: What the node does.
-        - category: The node's menu category.
-        - input_required: Dict of required input names → type info.
-        - input_optional: Dict of optional input names → type info.
-        - output_types: List of output type names in order.
-        - output_names: List of output slot names.
-        - output_is_list: Whether each output is a list.
-        - is_output_node: Whether this node produces final output (e.g. SaveImage).
+        node_class: Exact node class name e.g. 'KSampler', 'CLIPTextEncode', 'SaveImage'.
     """
     try:
         raw = get_client().get(f"/object_info/{node_class}")
@@ -152,22 +134,11 @@ def get_node_schema(node_class: str) -> str:
 
 @tool
 def search_nodes(query: str, limit: int = 20) -> str:
-    """Search for ComfyUI nodes by keyword across their names, descriptions, categories, and input/output types.
-
-    Use this to find which node to use for a particular task (e.g. "upscale",
-    "mask", "controlnet", "lora", "text encode", "vae decode").
+    """Search ComfyUI nodes by keyword across names, descriptions, categories, and I/O types.
 
     Args:
-        query: A search term or phrase to match against node names, descriptions,
-               categories, and I/O types (case-insensitive).
-        limit: Maximum number of results to return (default 20).
-
-    Returns:
-        A dictionary with:
-        - query: The search term used.
-        - count: Number of matches found.
-        - results: List of dicts with node_class, display_name, category,
-                   description (truncated), input_types, and output_types.
+        query: Search term e.g. 'upscale', 'mask', 'lora', 'vae decode'.
+        limit: Max results (default 20).
     """
     try:
         all_nodes = get_client().get("/object_info")
@@ -234,25 +205,12 @@ def search_nodes(query: str, limit: int = 20) -> str:
 
 @tool
 def validate_workflow(workflow_json: str) -> str:
-    """Validate a ComfyUI workflow without executing it.
+    """Validate a ComfyUI workflow (local + server-side) without executing it.
 
-    Performs two levels of validation:
-    1. **Local validation** – checks that every node class exists, all required
-       inputs are provided or connected, and connection source nodes/slots exist.
-    2. **Server validation** – sends the workflow to the ComfyUI /prompt endpoint
-       for full server-side validation (which catches type mismatches, missing
-       models, etc.) but does NOT queue it for execution if valid.
+    Returns valid=true/false, local_errors list, and server_errors dict.
 
     Args:
-        workflow_json: A JSON string of the workflow in ComfyUI API format
-                       (node-id keyed dict).
-
-    Returns:
-        A dictionary with:
-        - valid: True/False overall assessment.
-        - local_errors: List of issues found by local analysis.
-        - server_errors: Any errors returned by the server validator
-                        (empty dict if server validation passes).
+        workflow_json: Workflow JSON string in ComfyUI API format.
     """
     try:
         workflow = json.loads(workflow_json) if isinstance(workflow_json, str) else workflow_json
@@ -344,26 +302,10 @@ def validate_workflow(workflow_json: str) -> str:
 
 @tool
 def list_workflow_templates(source: str = "all") -> str:
-    """List all available workflow templates — both custom (local) and official (Comfy-Org).
-
-    Templates from the official Comfy-Org repository include rich metadata:
-    title, description, mediaType (image/video/audio/3d), required models,
-    required custom nodes, VRAM estimate, and I/O definitions.
-
-    Custom templates in the local comfyui_workflows/ directory are simpler
-    JSON files with descriptions derived from their filenames.
+    """List available workflow templates (custom local and/or official Comfy-Org).
 
     Args:
-        source: Which templates to list. One of:
-                - 'all': Both official and custom templates (default).
-                - 'official': Only official Comfy-Org templates.
-                - 'custom': Only local custom templates.
-
-    Returns:
-        A dictionary with:
-        - official_count / custom_count: Number of templates in each source.
-        - official: List of official template summaries.
-        - custom: List of custom template summaries.
+        source: 'all' (default), 'official', or 'custom'.
     """
     try:
         result: dict = {}
@@ -414,21 +356,10 @@ def search_workflow_templates(
 ) -> str:
     """Search official Comfy-Org workflow templates by keyword.
 
-    Searches across template names, titles, descriptions, model names,
-    required custom nodes, and categories. Optionally filter by media type.
-
     Args:
-        query: Search term (case-insensitive). Use descriptive words like
-               'text to image', 'video upscale', 'inpaint', 'flux', 'wan',
-               'lora', 'controlnet', etc.
+        query: Search term e.g. 'text to image', 'flux', 'wan', 'inpaint'.
         media_type: Optional filter: 'image', 'video', 'audio', '3d', or '' for all.
-        limit: Maximum results to return (default 15).
-
-    Returns:
-        A dictionary with:
-        - query: The search term used.
-        - count: Number of matches.
-        - results: List of matching template summaries with metadata.
+        limit: Max results (default 15).
     """
     try:
         flat = _load_official_index()
@@ -478,24 +409,12 @@ def search_workflow_templates(
 
 @tool
 def get_workflow_template(template_name: str) -> str:
-    """Load a workflow template by name and return its full contents.
+    """Load a workflow template by name. Checks custom templates first, then official Comfy-Org.
 
-    Searches both local custom templates and official Comfy-Org templates.
-    Custom templates are checked first. The returned workflow is in ComfyUI
-    API format, ready to be modified and submitted via submit_prompt.
+    Returns the full workflow JSON plus metadata and a node summary.
 
     Args:
-        template_name: The template name (filename without .json extension)
-                      or the full filename. Use list_workflow_templates() or
-                      search_workflow_templates() to discover available names.
-
-    Returns:
-        A dictionary with:
-        - name: Template name.
-        - source: 'custom' or 'official'.
-        - metadata: Template metadata (official only — title, description, models, etc.).
-        - workflow: The full workflow JSON object.
-        - summary: A quick overview with node count and node classes used.
+        template_name: Template name (without .json) from list_workflow_templates() or search_workflow_templates().
     """
     try:
         # Normalise: strip .json suffix for matching
@@ -584,28 +503,10 @@ def get_workflow_template(template_name: str) -> str:
 
 @tool
 def parse_workflow_connections(workflow_json: str) -> str:
-    """Parse a ComfyUI workflow and extract its complete graph structure.
-
-    Analyses the workflow to produce:
-    - A list of all nodes with their class types and titles.
-    - All connections (edges) showing data flow between nodes.
-    - Input and output summaries for every node.
-    - An execution-order hint (topologically sorted if acyclic).
-
-    This helps reason about how data flows through the workflow, identify
-    bottlenecks, missing connections, or nodes that aren't wired up.
+    """Parse a ComfyUI workflow and return its graph structure: nodes, connections, roots, leaves, and execution order.
 
     Args:
-        workflow_json: A JSON string of the workflow in ComfyUI API format.
-
-    Returns:
-        A dictionary with:
-        - node_count: Total number of nodes.
-        - nodes: Dict of node_id → {class_type, title, literal_inputs, connected_inputs, outputs_used_by}.
-        - connections: List of {from_node, from_slot, to_node, to_input} dicts.
-        - roots: Node IDs with no incoming connections (entry points).
-        - leaves: Node IDs with no outgoing connections (final outputs).
-        - execution_order: Suggested execution order (topological sort).
+        workflow_json: Workflow JSON string in ComfyUI API format.
     """
     try:
         workflow = json.loads(workflow_json) if isinstance(workflow_json, str) else workflow_json

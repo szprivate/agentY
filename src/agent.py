@@ -10,6 +10,7 @@ import os
 from strands import Agent
 from strands.models.anthropic import AnthropicModel
 from strands.models.ollama import OllamaModel
+from strands.agent.conversation_manager import SlidingWindowConversationManager
 
 from src.tools import ALL_TOOLS
 
@@ -43,7 +44,6 @@ Full model list in settings.json — load it when a model above is not sufficien
 - Always add bEpicSendToViewer (tab_name="Claude") on last IMAGE output.
 - API format only. Search templates first, scaffold with get_workflow_template(),
   modify minimally. Validate before queuing. Track and report results.
-- Export workflow JSON via slack_send_json() unless in test mode.
 
 ## Node defaults
 - GeminiNanoBananaPro: resolution="1K", thinking_level="MINIMAL",
@@ -84,7 +84,7 @@ def _build_model(llm: str):
     # Default: claude
     return AnthropicModel(
         model_id=os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5"),
-        max_tokens=int(os.environ.get("ANTHROPIC_MAX_TOKENS", "8096")),
+        max_tokens=int(os.environ.get("ANTHROPIC_MAX_TOKENS", "4096")),
     )
 
 
@@ -100,10 +100,14 @@ def create_agent(llm: str | None = None, **kwargs) -> Agent:
     resolved_llm = llm or os.environ.get("AGENT_LLM", "claude")
     model = _build_model(resolved_llm)
     print(f"[agentY] Using LLM backend: {resolved_llm} ({model.__class__.__name__})")
+    # Limit conversation history to the last 40 messages (≈20 turns).
+    # This prevents costs from compounding as history grows across long sessions.
+    window_size = int(os.environ.get("AGENT_HISTORY_WINDOW", "40"))
     agent_kwargs = {
         "model": model,
         "system_prompt": SYSTEM_PROMPT,
         "tools": ALL_TOOLS,
+        "conversation_manager": SlidingWindowConversationManager(window_size=window_size),
     }
     agent_kwargs.update(kwargs)
     return Agent(**agent_kwargs)

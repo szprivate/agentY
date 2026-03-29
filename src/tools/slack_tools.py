@@ -124,23 +124,13 @@ def slack_send_dm(
     channel_id: str = "",
     thread_ts: str = "",
 ) -> str:
-    """Send a message to a Slack channel or DM.
-
-    When called from a Slack event handler the message is automatically
-    sent to the originating channel/thread unless overridden.
+    """Send a text message to a Slack channel or DM. Auto-routes to the originating channel when inside an event handler.
 
     Args:
-        text:       The message body.  Supports Slack mrkdwn formatting
-                    (*bold*, _italic_, `code`, ```code blocks```, etc.).
-        user_id:    (Optional) Slack member ID to DM.  Ignored when
-                    channel_id is provided.
-        channel_id: (Optional) Slack channel ID to post to.  When omitted
-                    the active event channel is used, or a DM is opened.
-        thread_ts:  (Optional) Timestamp of a parent message to reply
-                    in-thread.
-
-    Returns:
-        JSON string with the message timestamp and channel, or an error.
+        text: Message body (supports Slack mrkdwn formatting).
+        user_id: Slack member ID to DM (ignored if channel_id provided).
+        channel_id: Slack channel ID to post to; uses event context if omitted.
+        thread_ts: Parent message ts to reply in-thread.
     """
     try:
         channel = _get_active_channel(channel_id)
@@ -176,19 +166,12 @@ def slack_send_image(
 ) -> str:
     """Upload and send an image file to a Slack channel or DM.
 
-    When called from a Slack event handler the file is automatically
-    sent to the originating channel unless overridden.
-
     Args:
-        file_path:       Absolute or relative path to the image file.
-        title:           (Optional) A title shown above the image in Slack.
-        initial_comment: (Optional) Accompanying text message.
-        user_id:         (Optional) Slack member ID to DM.  Ignored when
-                         channel_id is provided.
-        channel_id:      (Optional) Slack channel ID to upload to.
-
-    Returns:
-        JSON result with file id and permalink, or an error.
+        file_path: Local path to the image file.
+        title: Optional title shown above the image.
+        initial_comment: Optional accompanying text.
+        user_id: Slack member ID to DM (ignored if channel_id set).
+        channel_id: Slack channel ID; uses event context if omitted.
     """
     try:
         path = Path(file_path)
@@ -235,19 +218,12 @@ def slack_send_video(
 ) -> str:
     """Upload and send a video file to a Slack channel or DM.
 
-    When called from a Slack event handler the file is automatically
-    sent to the originating channel unless overridden.
-
     Args:
-        file_path:       Absolute or relative path to the video file.
-        title:           (Optional) A title shown above the video in Slack.
-        initial_comment: (Optional) Accompanying text message.
-        user_id:         (Optional) Slack member ID to DM.  Ignored when
-                         channel_id is provided.
-        channel_id:      (Optional) Slack channel ID to upload to.
-
-    Returns:
-        JSON result with file id and permalink, or an error.
+        file_path: Local path to the video file.
+        title: Optional title shown above the video.
+        initial_comment: Optional accompanying text.
+        user_id: Slack member ID to DM (ignored if channel_id set).
+        channel_id: Slack channel ID; uses event context if omitted.
     """
     try:
         path = Path(file_path)
@@ -291,25 +267,14 @@ def slack_send_file(
     user_id: str = "",
     channel_id: str = "",
 ) -> str:
-    """Upload and send any file to a Slack channel or DM.
-
-    Use this as a general-purpose file sender (documents, archives, etc.).
-    For images or videos, prefer the dedicated slack_send_image /
-    slack_send_video tools.
-
-    When called from a Slack event handler the file is automatically
-    sent to the originating channel unless overridden.
+    """Upload and send any file (document, archive, etc.) to Slack. Prefer slack_send_image/video for media.
 
     Args:
-        file_path:       Absolute or relative path to the file.
-        title:           (Optional) A title for the file in Slack.
-        initial_comment: (Optional) Accompanying text message.
-        user_id:         (Optional) Slack member ID to DM.  Ignored when
-                         channel_id is provided.
-        channel_id:      (Optional) Slack channel ID to upload to.
-
-    Returns:
-        JSON result with file id and permalink, or an error.
+        file_path: Local path to the file.
+        title: Optional title for the file in Slack.
+        initial_comment: Optional accompanying text.
+        user_id: Slack member ID to DM (ignored if channel_id set).
+        channel_id: Slack channel ID; uses event context if omitted.
     """
     try:
         path = Path(file_path)
@@ -350,16 +315,11 @@ def slack_read_messages(
     count: int = 10,
     user_id: str = "",
 ) -> str:
-    """Read recent messages from the DM conversation with a Slack user.
+    """Read recent messages from a Slack DM conversation.
 
     Args:
-        count:   Number of recent messages to retrieve (max 100, default 10).
-        user_id: (Optional) Slack member ID whose DM to read. Defaults to
-                 SLACK_MEMBER_ID env var.
-
-    Returns:
-        JSON array of messages (newest first), each with ts, user, text,
-        and optional files array — or an error.
+        count: Number of messages to retrieve (max 100, default 10).
+        user_id: Slack member ID to read DM from; defaults to SLACK_MEMBER_ID env var.
     """
     try:
         channel = _get_dm_channel(user_id or None)
@@ -406,16 +366,12 @@ def slack_add_reaction(
     timestamp: str,
     user_id: str = "",
 ) -> str:
-    """Add an emoji reaction to a message in a DM conversation.
+    """Add an emoji reaction to a Slack DM message.
 
     Args:
-        emoji:     Emoji name without colons (e.g. "thumbsup", "fire").
-        timestamp: The ``ts`` value of the message to react to.
-        user_id:   (Optional) Slack member ID whose DM contains the message.
-                   Defaults to SLACK_MEMBER_ID env var.
-
-    Returns:
-        JSON success / error result.
+        emoji: Emoji name without colons e.g. 'thumbsup', 'fire'.
+        timestamp: The ts of the message to react to.
+        user_id: Slack member ID whose DM contains the message; defaults to SLACK_MEMBER_ID.
     """
     try:
         channel = _get_dm_channel(user_id or None)
@@ -438,23 +394,14 @@ def slack_send_json(
     comment: str = "",
     channel_id: str = "",
 ) -> str:
-    """Save JSON data to a local file and upload it to Slack as a file snippet.
-
-    Use this instead of pasting large JSON (e.g. workflow definitions) directly
-    into a Slack message, which would exceed the message length limit.
+    """Save JSON to a local file and upload it to Slack as a file snippet. Use this instead of pasting large JSON into messages.
 
     Args:
-        data:       The JSON string to send.  May also be a Python dict/list
-                    serialised as a string — the tool will attempt to
-                    pretty-print it automatically.
-        filename:   Filename for the uploaded file (default: ``workflow.json``).
-        title:      Optional title shown above the snippet in Slack.
-        comment:    Optional message posted alongside the file.
-        channel_id: Slack channel/DM ID to upload into.  Auto-detected from
-                    the current Slack event context when omitted.
-
-    Returns:
-        JSON result with ``ok``, local ``file_path``, and Slack ``file_id``.
+        data: JSON string (or serialised dict/list) to send.
+        filename: Slack filename (default 'workflow.json').
+        title: Optional title shown above the snippet.
+        comment: Optional message alongside the file.
+        channel_id: Slack channel/DM ID; auto-detected from event context if omitted.
     """
     try:
         # Pretty-print if possible

@@ -67,18 +67,12 @@ from strands_tools import file_read, file_write, editor  # noqa: F401
 ALL_TOOLS: list = [
     # System / info
     get_system_stats,
-    get_features,
-    get_embeddings,
-    get_extensions,
     # Models / nodes
     get_model_types,
     get_models_in_folder,
-    get_object_info,
     get_node_info,
-    get_view_metadata,
     # Prompt execution
     submit_prompt,
-    get_prompt_status,
     interrupt_execution,
     free_memory,
     # Queue
@@ -90,10 +84,8 @@ ALL_TOOLS: list = [
     manage_history,
     # Upload / view
     upload_image,
-    upload_mask,
     view_image,
     # Workflows & building
-    get_server_workflow_templates,
     list_workflow_templates,
     search_workflow_templates,
     get_workflow_template,
@@ -103,14 +95,10 @@ ALL_TOOLS: list = [
     parse_workflow_connections,
     # User data
     list_userdata,
-    list_userdata_v2,
     get_userdata_file,
     save_userdata_file,
     delete_userdata_file,
     move_userdata_file,
-    # Users
-    get_users,
-    create_user,
     # Slack DM
     slack_send_dm,
     slack_send_image,

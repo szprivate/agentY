@@ -8,14 +8,11 @@ from src.comfyui_client import get_client
 
 
 @tool
-def get_history(max_items: int = 0) -> str:
-    """Retrieve the execution history from ComfyUI.
+def get_history(max_items: int = 5) -> str:
+    """Get recent ComfyUI execution history.
 
     Args:
-        max_items: Maximum number of history entries to return. 0 means return all.
-
-    Returns:
-        A dictionary of prompt_id -> execution details.
+        max_items: Max entries to return (default 5; 0 = all).
     """
     try:
         params = {}
@@ -28,13 +25,10 @@ def get_history(max_items: int = 0) -> str:
 
 @tool
 def get_prompt_history(prompt_id: str) -> str:
-    """Retrieve the execution history for a specific prompt by its ID.
+    """Get execution history for a specific prompt ID.
 
     Args:
-        prompt_id: The unique prompt identifier returned when a prompt was submitted.
-
-    Returns:
-        A dictionary with the execution details for that prompt.
+        prompt_id: Prompt ID returned by submit_prompt.
     """
     try:
         return json.dumps(get_client().get(f"/history/{prompt_id}"))
@@ -44,16 +38,11 @@ def get_prompt_history(prompt_id: str) -> str:
 
 @tool
 def manage_history(action: str, prompt_id: str = "") -> str:
-    """Manage execution history by clearing all entries or deleting a specific item.
+    """Clear or delete ComfyUI execution history entries.
 
     Args:
-        action: The history action. Must be one of:
-                - 'clear': Delete all history entries.
-                - 'delete': Delete a specific history entry (requires prompt_id).
-        prompt_id: The prompt ID to delete. Required when action is 'delete'.
-
-    Returns:
-        A confirmation dictionary or error details.
+        action: 'clear' (all) or 'delete' (one entry).
+        prompt_id: Required when action is 'delete'.
     """
     try:
         if action == "clear":

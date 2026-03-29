@@ -9,13 +9,7 @@ from src.comfyui_client import get_client
 
 @tool
 def get_queue() -> str:
-    """Retrieve the current state of the ComfyUI execution queue.
-
-    Shows both currently running and pending items.
-
-    Returns:
-        A dictionary with 'queue_running' and 'queue_pending' lists.
-    """
+    """Get the current ComfyUI queue (running and pending items)."""
     try:
         return json.dumps(get_client().get("/queue"))
     except Exception as e:
@@ -24,15 +18,10 @@ def get_queue() -> str:
 
 @tool
 def manage_queue(action: str) -> str:
-    """Manage the ComfyUI execution queue by clearing pending or running items.
+    """Clear the ComfyUI execution queue.
 
     Args:
-        action: The queue action to perform. Must be one of:
-                - 'clear': Clear all pending items from the queue.
-                - 'clear_running': Clear all currently running items.
-
-    Returns:
-        A confirmation dictionary or error details.
+        action: 'clear' (pending) or 'clear_running' (running items).
     """
     try:
         if action == "clear":

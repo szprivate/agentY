@@ -9,13 +9,10 @@ from src.comfyui_client import get_client
 
 @tool
 def list_userdata(directory: str) -> str:
-    """List user data files in a specified directory on the ComfyUI server.
+    """List user data files in a directory on the ComfyUI server.
 
     Args:
-        directory: The directory path to list (relative to the userdata root).
-
-    Returns:
-        A list of filenames in the directory.
+        directory: Directory path relative to the userdata root.
     """
     try:
         return json.dumps(get_client().get("/userdata", params={"dir": directory}))
@@ -25,15 +22,10 @@ def list_userdata(directory: str) -> str:
 
 @tool
 def list_userdata_v2(directory: str) -> str:
-    """List user data files and directories in a structured format (v2 endpoint).
-
-    Returns both files and subdirectories with additional metadata.
+    """List user data files and directories with metadata (v2 endpoint).
 
     Args:
-        directory: The directory path to list (relative to the userdata root).
-
-    Returns:
-        A structured dictionary with files and directories.
+        directory: Directory path relative to the userdata root.
     """
     try:
         return json.dumps(get_client().get("/v2/userdata", params={"dir": directory}))
@@ -43,13 +35,10 @@ def list_userdata_v2(directory: str) -> str:
 
 @tool
 def get_userdata_file(file_path: str) -> str:
-    """Retrieve the content of a specific user data file from ComfyUI.
+    """Get the content of a user data file from ComfyUI.
 
     Args:
-        file_path: The file path relative to the userdata root (e.g. 'workflows/my_flow.json').
-
-    Returns:
-        The file content (parsed as JSON if applicable, otherwise as text).
+        file_path: Path relative to userdata root e.g. 'workflows/my_flow.json'.
     """
     try:
         return json.dumps(get_client().get(f"/userdata/{file_path}"))
@@ -62,12 +51,9 @@ def save_userdata_file(file_path: str, content: str, overwrite: bool = True) -> 
     """Upload or update a user data file on the ComfyUI server.
 
     Args:
-        file_path: Destination path relative to the userdata root.
-        content: The file content to save (text or JSON string).
-        overwrite: If True (default), overwrite existing files.
-
-    Returns:
-        A confirmation or error dictionary.
+        file_path: Destination path relative to userdata root.
+        content: File content (text or JSON string).
+        overwrite: Overwrite existing file (default True).
     """
     try:
         params = {}
@@ -84,13 +70,10 @@ def save_userdata_file(file_path: str, content: str, overwrite: bool = True) -> 
 
 @tool
 def delete_userdata_file(file_path: str) -> str:
-    """Delete a specific user data file from the ComfyUI server.
+    """Delete a user data file from the ComfyUI server.
 
     Args:
-        file_path: The file path relative to the userdata root to delete.
-
-    Returns:
-        A confirmation or error dictionary.
+        file_path: Path of the file to delete, relative to userdata root.
     """
     try:
         resp = get_client().delete(f"/userdata/{file_path}")
@@ -104,11 +87,8 @@ def move_userdata_file(file_path: str, destination: str) -> str:
     """Move or rename a user data file on the ComfyUI server.
 
     Args:
-        file_path: The current file path relative to the userdata root.
-        destination: The new file path relative to the userdata root.
-
-    Returns:
-        A confirmation or error dictionary.
+        file_path: Current path relative to userdata root.
+        destination: New path relative to userdata root.
     """
     try:
         resp = get_client().post(f"/userdata/{file_path}/move/{destination}", json_data={})

@@ -356,7 +356,19 @@ def _handle_message_async(content, channel: str, thread_ts: str, user: str):
         finally:
             loop.close()
 
-        # -- Step 3: Final update --------------------------------------- #
+        # -- Step 3: Append token-usage summary then finalise ----------- #
+        try:
+            usage = _agent_ref.event_loop_metrics.accumulated_usage
+            in_tok = usage.get("inputTokens", 0)
+            out_tok = usage.get("outputTokens", 0)
+            logger.info(
+                "Token usage — in: %d, out: %d, total: %d",
+                in_tok, out_tok, in_tok + out_tok,
+            )
+            accumulated.append(f"\n\n_🪙 {in_tok:,} in / {out_tok:,} out_")
+        except Exception as _tok_exc:
+            logger.debug("Could not read token usage: %s", _tok_exc)
+
         _push_update(final=True)
         clear_slack_channel_context()
         logger.info("Streamed reply to %s in channel %s", user, channel)

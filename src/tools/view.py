@@ -16,21 +16,13 @@ def view_image(
     image_type: str = "output",
     save_to: str = "",
 ) -> str:
-    """View or download an image from the ComfyUI server.
-
-    Retrieves the image from the server. If save_to is provided the image is
-    written to that local path; otherwise a base64-encoded representation is
-    returned (useful for passing to other tools or models).
+    """Download an image from ComfyUI. Returns base64 data or saves to a local path.
 
     Args:
-        filename: The image filename on the server (e.g. 'ComfyUI_00001_.png').
+        filename: Image filename on the server e.g. 'ComfyUI_00001_.png'.
         subfolder: Optional subfolder where the image is located.
-        image_type: The directory type: 'output', 'input', or 'temp'.
-        save_to: Optional local file path to save the downloaded image to.
-
-    Returns:
-        A dictionary with 'saved_to' path if saved, or 'base64' encoded image data,
-        along with 'content_type' and 'size_bytes'.
+        image_type: Directory type: 'output', 'input', or 'temp'.
+        save_to: Local file path to save the image; returns base64 if omitted.
     """
     try:
         params: dict = {"filename": filename, "type": image_type}

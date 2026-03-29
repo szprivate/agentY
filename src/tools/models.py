@@ -9,11 +9,7 @@ from src.comfyui_client import get_client
 
 @tool
 def get_model_types() -> str:
-    """Retrieve the list of available model type categories (folders) in ComfyUI, such as checkpoints, loras, vae, etc.
-
-    Returns:
-        A list of model folder names.
-    """
+    """List available model folder types in ComfyUI (checkpoints, loras, unet, vae, clip, etc.)."""
     try:
         return json.dumps(get_client().get("/models"))
     except Exception as e:
@@ -22,13 +18,10 @@ def get_model_types() -> str:
 
 @tool
 def get_models_in_folder(folder: str) -> str:
-    """Retrieve the list of model files inside a specific model folder.
+    """List model files in a ComfyUI model folder.
 
     Args:
-        folder: The model folder name (e.g. 'checkpoints', 'loras', 'vae', 'clip', 'unet').
-
-    Returns:
-        A list of model filenames in that folder.
+        folder: Folder name e.g. 'checkpoints', 'loras', 'vae', 'clip', 'unet'.
     """
     try:
         return json.dumps(get_client().get(f"/models/{folder}"))
@@ -38,13 +31,7 @@ def get_models_in_folder(folder: str) -> str:
 
 @tool
 def get_object_info() -> str:
-    """Retrieve detailed information about ALL node types available in this ComfyUI instance.
-
-    This returns a large dictionary with every node class and its inputs, outputs, and configuration.
-
-    Returns:
-        A dictionary keyed by node class name with full node definitions.
-    """
+    """Return a compact list of all ComfyUI node class names and categories. Use get_node_schema(node_class) for full details on any specific node."""
     try:
         return json.dumps(get_client().get("/object_info"))
     except Exception as e:
@@ -53,13 +40,10 @@ def get_object_info() -> str:
 
 @tool
 def get_node_info(node_class: str) -> str:
-    """Retrieve detailed information about a single node type by its class name.
+    """Get raw ComfyUI object_info for a single node class. Prefer get_node_schema() for a friendlier format.
 
     Args:
-        node_class: The node class name (e.g. 'KSampler', 'CLIPTextEncode', 'CheckpointLoaderSimple').
-
-    Returns:
-        A dictionary with the node's inputs, outputs, display name, and description.
+        node_class: Node class name e.g. 'KSampler', 'CLIPTextEncode'.
     """
     try:
         return json.dumps(get_client().get(f"/object_info/{node_class}"))
@@ -69,13 +53,10 @@ def get_node_info(node_class: str) -> str:
 
 @tool
 def get_view_metadata(folder: str) -> str:
-    """Retrieve metadata for models in a specific folder.
+    """Get metadata for models in a ComfyUI folder.
 
     Args:
-        folder: The model folder to read metadata from (e.g. 'checkpoints').
-
-    Returns:
-        A dictionary with model metadata.
+        folder: Model folder name e.g. 'checkpoints'.
     """
     try:
         return json.dumps(get_client().get(f"/view_metadata/{folder}"))

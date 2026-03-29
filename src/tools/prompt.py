@@ -9,13 +9,7 @@ from src.comfyui_client import get_client
 
 @tool
 def get_prompt_status() -> str:
-    """Retrieve the current queue status and execution information from ComfyUI.
-
-    Returns the exec_info including the number of items in the queue.
-
-    Returns:
-        A dictionary with queue status information.
-    """
+    """Get ComfyUI queue status and exec_info (items pending)."""
     try:
         return json.dumps(get_client().get("/prompt"))
     except Exception as e:
@@ -24,19 +18,11 @@ def get_prompt_status() -> str:
 
 @tool
 def submit_prompt(prompt_workflow: str, client_id: str = "") -> str:
-    """Submit a prompt workflow to the ComfyUI execution queue.
-
-    The workflow must be a valid ComfyUI API-format JSON object describing
-    the node graph to execute.
+    """Submit a workflow to the ComfyUI execution queue. Returns prompt_id on success.
 
     Args:
-        prompt_workflow: A JSON string of the workflow to execute in ComfyUI API format.
-                         This is the node graph with node IDs as keys and node configs as values.
-        client_id: Optional client identifier for tracking. Leave empty for auto-generated.
-
-    Returns:
-        A dictionary with 'prompt_id' and 'number' (queue position) on success,
-        or 'error' and 'node_errors' on validation failure.
+        prompt_workflow: Workflow JSON string in ComfyUI API format (node-id keyed dict).
+        client_id: Optional client identifier for tracking.
     """
     try:
         workflow = json.loads(prompt_workflow) if isinstance(prompt_workflow, str) else prompt_workflow

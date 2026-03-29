@@ -87,17 +87,12 @@ def search_huggingface_models(
     filter_tag: str = "",
     limit: int = 10,
 ) -> str:
-    """Search the Hugging Face Hub for models matching a text query.
+    """Search the Hugging Face Hub for models by keyword.
 
     Args:
-        query:      Free-text search string (e.g. "flux lora", "wan2.1 video").
-        filter_tag: (Optional) Pipeline or library tag to filter by
-                    (e.g. "diffusers", "flux", "wan", "text-to-image").
-        limit:      Maximum number of results to return (default 10, max 50).
-
-    Returns:
-        JSON array of matching models, each containing model_id, downloads,
-        likes, tags, last_modified, and pipeline_tag.
+        query: Search string e.g. 'flux lora', 'wan2.1 video'.
+        filter_tag: Optional pipeline/library tag e.g. 'diffusers', 'flux'.
+        limit: Max results (default 10, max 50).
     """
     try:
         params: dict = {
@@ -140,18 +135,10 @@ def search_huggingface_models(
 
 @tool
 def get_model_info(model_id: str) -> str:
-    """Fetch full metadata for a specific Hugging Face model.
-
-    Use this to inspect a model's file list (siblings), gated status, license,
-    and tags before deciding which file to download.
+    """Fetch metadata and file list for a specific Hugging Face model.
 
     Args:
-        model_id: The Hugging Face model identifier (e.g. "black-forest-labs/FLUX.1-dev").
-
-    Returns:
-        JSON object with model metadata including id, tags, license, gated status,
-        pipeline_tag, card_data summary, and a files array listing every file in
-        the repo with name and size.
+        model_id: HF model identifier e.g. 'black-forest-labs/FLUX.1-dev'.
     """
     try:
         url = f"{HF_API_BASE}/{model_id}"
@@ -190,20 +177,10 @@ def get_model_info(model_id: str) -> str:
 
 @tool
 def check_local_model(filename: str) -> str:
-    """Check whether a model file already exists in the local model folders.
-
-    Scans the known ComfyUI model subdirectories (FLUX1, FLUX2, WAN21, WAN22,
-    MISC, SD15, SDXL, LoRA, QWEN, ICLight, Flux-Dev, WAN) under the models
-    base directory.
-
-    ALWAYS call this before attempting any download.
+    """Check if a model file already exists locally. Always call this before downloading.
 
     Args:
-        filename: The filename to look for (e.g. "flux1-dev-fp8.safetensors").
-                  Can also be a relative path like "FLUX1/flux1-dev-fp8.safetensors".
-
-    Returns:
-        JSON object with found=True and full path, or found=False.
+        filename: Filename to find e.g. 'flux1-dev-fp8.safetensors' or 'FLUX1/flux1-dev-fp8.safetensors'.
     """
     try:
         base = _models_base_dir()
@@ -258,22 +235,13 @@ def download_hf_model(
     destination_folder: str,
     subfolder: str = "",
 ) -> str:
-    """Download a specific file from a Hugging Face model repository.
-
-    Streams the download in chunks and reports progress.  Only call this
-    AFTER check_local_model has confirmed the file does not exist locally.
+    """Download a file from a Hugging Face repo. Only call after check_local_model confirms it doesn't exist.
 
     Args:
-        model_id:           HF model identifier (e.g. "black-forest-labs/FLUX.1-dev").
-        filename:           Name of the file to download (e.g. "flux1-dev.safetensors").
-        destination_folder: Local folder name under the models base dir to save to
-                            (e.g. "FLUX1", "WAN21", "MISC").
-        subfolder:          (Optional) Subfolder within the HF repo where the file
-                            lives (e.g. "transformer", "vae").  If empty, the file
-                            is assumed to be at the repo root.
-
-    Returns:
-        JSON object with ok=True and the full local path, or an error.
+        model_id: HF model identifier e.g. 'black-forest-labs/FLUX.1-dev'.
+        filename: File to download e.g. 'flux1-dev.safetensors'.
+        destination_folder: Local folder under models base dir e.g. 'FLUX1', 'WAN21'.
+        subfolder: Optional subfolder within the HF repo e.g. 'transformer'.
     """
     try:
         base = _models_base_dir()
