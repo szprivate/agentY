@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+
+# Official Comfy-Org workflow templates (cloned repo — large)
+comfyui_workflow_templates_official/
+
+# Output
+output/

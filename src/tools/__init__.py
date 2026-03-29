@@ -1,0 +1,98 @@
+"""
+ComfyUI tools for the Strands agent.
+
+Each sub-module exposes one or more @tool-decorated functions that map
+directly to ComfyUI server REST endpoints.
+"""
+
+from src.tools.execution import free_memory, interrupt_execution  # noqa: F401
+from src.tools.history import (  # noqa: F401
+    get_history,
+    get_prompt_history,
+    manage_history,
+)
+from src.tools.models import (  # noqa: F401
+    get_model_types,
+    get_models_in_folder,
+    get_node_info,
+    get_object_info,
+    get_view_metadata,
+)
+from src.tools.prompt import get_prompt_status, submit_prompt  # noqa: F401
+from src.tools.queue import get_queue, manage_queue  # noqa: F401
+from src.tools.system import (  # noqa: F401
+    get_embeddings,
+    get_extensions,
+    get_features,
+    get_system_stats,
+)
+from src.tools.upload import upload_image, upload_mask  # noqa: F401
+from src.tools.userdata import (  # noqa: F401
+    delete_userdata_file,
+    get_userdata_file,
+    list_userdata,
+    list_userdata_v2,
+    move_userdata_file,
+    save_userdata_file,
+)
+from src.tools.users import create_user, get_users  # noqa: F401
+from src.tools.view import view_image  # noqa: F401
+from src.tools.workflow_builder import (  # noqa: F401
+    get_node_schema,
+    get_workflow_template,
+    list_workflow_templates,
+    parse_workflow_connections,
+    search_nodes,
+    search_workflow_templates,
+    validate_workflow,
+)
+from src.tools.workflows import get_workflow_templates as get_server_workflow_templates  # noqa: F401
+
+ALL_TOOLS: list = [
+    # System / info
+    get_system_stats,
+    get_features,
+    get_embeddings,
+    get_extensions,
+    # Models / nodes
+    get_model_types,
+    get_models_in_folder,
+    get_object_info,
+    get_node_info,
+    get_view_metadata,
+    # Prompt execution
+    submit_prompt,
+    get_prompt_status,
+    interrupt_execution,
+    free_memory,
+    # Queue
+    get_queue,
+    manage_queue,
+    # History
+    get_history,
+    get_prompt_history,
+    manage_history,
+    # Upload / view
+    upload_image,
+    upload_mask,
+    view_image,
+    # Workflows & building
+    get_server_workflow_templates,
+    list_workflow_templates,
+    search_workflow_templates,
+    get_workflow_template,
+    get_node_schema,
+    search_nodes,
+    validate_workflow,
+    parse_workflow_connections,
+    # User data
+    list_userdata,
+    list_userdata_v2,
+    get_userdata_file,
+    save_userdata_file,
+    delete_userdata_file,
+    move_userdata_file,
+    # Users
+    get_users,
+    create_user,
+]
