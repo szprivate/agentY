@@ -5,7 +5,10 @@ This module configures and exposes the Strands Agent instance with all
 ComfyUI tools registered.
 """
 
+import os
+
 from strands import Agent
+from strands.models.anthropic import AnthropicModel
 from strands.models.ollama import OllamaModel
 
 from src.tools import ALL_TOOLS
@@ -128,16 +131,36 @@ clarification.  Always report errors clearly.
 """
 
 
-def create_agent(**kwargs) -> Agent:
+def _build_model(llm: str):
+    """Instantiate the requested LLM backend.
+
+    Args:
+        llm: ``'claude'`` (default) or ``'ollama'``.
+    """
+    llm = llm.strip().lower()
+    if llm == "ollama":
+        return OllamaModel(
+            host=os.environ.get("OLLAMA_HOST", "http://localhost:11434"),
+            model_id=os.environ.get("OLLAMA_MODEL", "qwen3-vl:30b"),
+        )
+    # Default: claude
+    return AnthropicModel(
+        model_id=os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5"),
+    )
+
+
+def create_agent(llm: str | None = None, **kwargs) -> Agent:
     """Create and return the agentY Strands Agent with all ComfyUI tools.
 
-    Any extra keyword arguments are forwarded to the Strands Agent constructor
-    (e.g. to override the model or system prompt).
+    Args:
+        llm: Which LLM backend to use: ``'claude'`` (default) or ``'ollama'``.
+             Falls back to the ``AGENT_LLM`` env var, then to ``'claude'``.
+        **kwargs: Extra keyword arguments forwarded to the Strands Agent
+                  constructor (e.g. to override the model or system prompt).
     """
-    model = OllamaModel(
-        host="http://localhost:11434",
-        model_id="qwen3-vl:30b",
-    )
+    resolved_llm = llm or os.environ.get("AGENT_LLM", "claude")
+    model = _build_model(resolved_llm)
+    print(f"[agentY] Using LLM backend: {resolved_llm} ({model.__class__.__name__})")
     agent_kwargs = {
         "model": model,
         "system_prompt": SYSTEM_PROMPT,

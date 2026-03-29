@@ -4,11 +4,11 @@ agentY – main entry point.
 
 Run with:
     python -m src.main
-
-Or:
-    python src/main.py
+    python -m src.main --llm claude
+    python -m src.main --llm ollama
 """
 
+import argparse
 import os
 import sys
 
@@ -28,6 +28,16 @@ from src.slack_server import start_slack_server  # noqa: E402
 
 def main() -> None:
     """Launch the interactive agent loop."""
+    parser = argparse.ArgumentParser(description="agentY – ComfyUI AI agent")
+    parser.add_argument(
+        "--llm",
+        choices=["claude", "ollama"],
+        default=None,
+        help="LLM backend to use: 'claude' (default) or 'ollama'. "
+             "Overrides the AGENT_LLM env var.",
+    )
+    args = parser.parse_args()
+
     api_key = os.environ.get("API_KEY_COMFY_ORG", "")
     if api_key:
         print("[agentY] ComfyUI API key loaded from API_KEY_COMFY_ORG.")
@@ -47,7 +57,7 @@ def main() -> None:
     else:
         print("[agentY] Slack env vars missing - Slack tools will be unavailable.")
 
-    agent = create_agent()
+    agent = create_agent(llm=args.llm)
 
     # -- Start Slack Events API server + ngrok tunnel ------------------- #
     if slack_token and slack_member:
