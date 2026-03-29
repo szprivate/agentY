@@ -61,6 +61,7 @@ from src.tools.huggingface import (  # noqa: F401
     check_local_model,
     download_hf_model,
 )
+from strands_tools import file_read, file_write, editor  # noqa: F401
 
 ALL_TOOLS: list = [
     # System / info
@@ -121,4 +122,8 @@ ALL_TOOLS: list = [
     get_model_info,
     check_local_model,
     download_hf_model,
+    # File operations (strands built-in)
+    file_read,
+    file_write,
+    editor,
 ]
