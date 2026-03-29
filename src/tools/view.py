@@ -1,6 +1,7 @@
 """Image viewing tool for ComfyUI."""
 
 import base64
+import json
 import os
 
 from strands import tool
@@ -14,7 +15,7 @@ def view_image(
     subfolder: str = "",
     image_type: str = "output",
     save_to: str = "",
-) -> dict:
+) -> str:
     """View or download an image from the ComfyUI server.
 
     Retrieves the image from the server. If save_to is provided the image is
@@ -44,16 +45,16 @@ def view_image(
             os.makedirs(os.path.dirname(save_to) or ".", exist_ok=True)
             with open(save_to, "wb") as f:
                 f.write(image_bytes)
-            return {
+            return json.dumps({
                 "saved_to": save_to,
                 "content_type": content_type,
                 "size_bytes": len(image_bytes),
-            }
+            })
 
-        return {
+        return json.dumps({
             "base64": base64.b64encode(image_bytes).decode("utf-8"),
             "content_type": content_type,
             "size_bytes": len(image_bytes),
-        }
+        })
     except Exception as e:
-        return {"error": str(e)}
+        return json.dumps({"error": str(e)})

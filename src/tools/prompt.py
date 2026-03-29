@@ -8,7 +8,7 @@ from src.comfyui_client import get_client
 
 
 @tool
-def get_prompt_status() -> dict:
+def get_prompt_status() -> str:
     """Retrieve the current queue status and execution information from ComfyUI.
 
     Returns the exec_info including the number of items in the queue.
@@ -17,13 +17,13 @@ def get_prompt_status() -> dict:
         A dictionary with queue status information.
     """
     try:
-        return get_client().get("/prompt")
+        return json.dumps(get_client().get("/prompt"))
     except Exception as e:
-        return {"error": str(e)}
+        return json.dumps({"error": str(e)})
 
 
 @tool
-def submit_prompt(prompt_workflow: str, client_id: str = "") -> dict:
+def submit_prompt(prompt_workflow: str, client_id: str = "") -> str:
     """Submit a prompt workflow to the ComfyUI execution queue.
 
     The workflow must be a valid ComfyUI API-format JSON object describing
@@ -43,8 +43,8 @@ def submit_prompt(prompt_workflow: str, client_id: str = "") -> dict:
         payload: dict = {"prompt": workflow}
         if client_id:
             payload["client_id"] = client_id
-        return get_client().post("/prompt", json_data=payload)
+        return json.dumps(get_client().post("/prompt", json_data=payload))
     except json.JSONDecodeError as e:
-        return {"error": f"Invalid JSON in prompt_workflow: {e}"}
+        return json.dumps({"error": f"Invalid JSON in prompt_workflow: {e}"})
     except Exception as e:
-        return {"error": str(e)}
+        return json.dumps({"error": str(e)})

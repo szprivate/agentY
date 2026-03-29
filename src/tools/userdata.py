@@ -1,12 +1,14 @@
 """User-data file management tools for ComfyUI."""
 
+import json
+
 from strands import tool
 
 from src.comfyui_client import get_client
 
 
 @tool
-def list_userdata(directory: str) -> dict:
+def list_userdata(directory: str) -> str:
     """List user data files in a specified directory on the ComfyUI server.
 
     Args:
@@ -16,13 +18,13 @@ def list_userdata(directory: str) -> dict:
         A list of filenames in the directory.
     """
     try:
-        return get_client().get("/userdata", params={"dir": directory})
+        return json.dumps(get_client().get("/userdata", params={"dir": directory}))
     except Exception as e:
-        return {"error": str(e)}
+        return json.dumps({"error": str(e)})
 
 
 @tool
-def list_userdata_v2(directory: str) -> dict:
+def list_userdata_v2(directory: str) -> str:
     """List user data files and directories in a structured format (v2 endpoint).
 
     Returns both files and subdirectories with additional metadata.
@@ -34,13 +36,13 @@ def list_userdata_v2(directory: str) -> dict:
         A structured dictionary with files and directories.
     """
     try:
-        return get_client().get("/v2/userdata", params={"dir": directory})
+        return json.dumps(get_client().get("/v2/userdata", params={"dir": directory}))
     except Exception as e:
-        return {"error": str(e)}
+        return json.dumps({"error": str(e)})
 
 
 @tool
-def get_userdata_file(file_path: str) -> dict:
+def get_userdata_file(file_path: str) -> str:
     """Retrieve the content of a specific user data file from ComfyUI.
 
     Args:
@@ -50,13 +52,13 @@ def get_userdata_file(file_path: str) -> dict:
         The file content (parsed as JSON if applicable, otherwise as text).
     """
     try:
-        return get_client().get(f"/userdata/{file_path}")
+        return json.dumps(get_client().get(f"/userdata/{file_path}"))
     except Exception as e:
-        return {"error": str(e)}
+        return json.dumps({"error": str(e)})
 
 
 @tool
-def save_userdata_file(file_path: str, content: str, overwrite: bool = True) -> dict:
+def save_userdata_file(file_path: str, content: str, overwrite: bool = True) -> str:
     """Upload or update a user data file on the ComfyUI server.
 
     Args:
@@ -75,13 +77,13 @@ def save_userdata_file(file_path: str, content: str, overwrite: bool = True) -> 
             f"/userdata/{file_path}",
             data=content.encode("utf-8") if isinstance(content, str) else content,
         )
-        return resp if isinstance(resp, dict) else {"status": "ok", "response": resp}
+        return json.dumps(resp if isinstance(resp, dict) else {"status": "ok", "response": resp})
     except Exception as e:
-        return {"error": str(e)}
+        return json.dumps({"error": str(e)})
 
 
 @tool
-def delete_userdata_file(file_path: str) -> dict:
+def delete_userdata_file(file_path: str) -> str:
     """Delete a specific user data file from the ComfyUI server.
 
     Args:
@@ -92,13 +94,13 @@ def delete_userdata_file(file_path: str) -> dict:
     """
     try:
         resp = get_client().delete(f"/userdata/{file_path}")
-        return resp if isinstance(resp, dict) else {"status": "ok", "response": resp}
+        return json.dumps(resp if isinstance(resp, dict) else {"status": "ok", "response": resp})
     except Exception as e:
-        return {"error": str(e)}
+        return json.dumps({"error": str(e)})
 
 
 @tool
-def move_userdata_file(file_path: str, destination: str) -> dict:
+def move_userdata_file(file_path: str, destination: str) -> str:
     """Move or rename a user data file on the ComfyUI server.
 
     Args:
@@ -110,6 +112,6 @@ def move_userdata_file(file_path: str, destination: str) -> dict:
     """
     try:
         resp = get_client().post(f"/userdata/{file_path}/move/{destination}", json_data={})
-        return resp if isinstance(resp, dict) else {"status": "ok", "response": resp}
+        return json.dumps(resp if isinstance(resp, dict) else {"status": "ok", "response": resp})
     except Exception as e:
-        return {"error": str(e)}
+        return json.dumps({"error": str(e)})

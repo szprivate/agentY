@@ -69,7 +69,7 @@ def _load_official_index() -> list:
 # ── 1. Understand node schemas ────────────────────────────────────────────────
 
 @tool
-def get_node_schema(node_class: str) -> dict:
+def get_node_schema(node_class: str) -> str:
     """Retrieve a detailed, human-readable schema for a specific ComfyUI node type.
 
     Returns the node's required and optional inputs (with types, defaults, and
@@ -96,7 +96,7 @@ def get_node_schema(node_class: str) -> dict:
     try:
         raw = get_client().get(f"/object_info/{node_class}")
         if not raw or node_class not in raw:
-            return {"error": f"Node class '{node_class}' not found."}
+            return json.dumps({"error": f"Node class '{node_class}' not found."})
 
         info = raw[node_class]
 
@@ -143,15 +143,15 @@ def get_node_schema(node_class: str) -> dict:
             "output_is_list": info.get("output_is_list", []),
             "is_output_node": info.get("output_node", False),
         }
-        return schema
+        return json.dumps(schema)
     except Exception as e:
-        return {"error": str(e)}
+        return json.dumps({"error": str(e)})
 
 
 # ── 2. Search for nodes by capabilities ───────────────────────────────────────
 
 @tool
-def search_nodes(query: str, limit: int = 20) -> dict:
+def search_nodes(query: str, limit: int = 20) -> str:
     """Search for ComfyUI nodes by keyword across their names, descriptions, categories, and input/output types.
 
     Use this to find which node to use for a particular task (e.g. "upscale",
@@ -172,7 +172,7 @@ def search_nodes(query: str, limit: int = 20) -> dict:
     try:
         all_nodes = get_client().get("/object_info")
         if isinstance(all_nodes, dict) and "error" in all_nodes:
-            return all_nodes
+            return json.dumps(all_nodes)
 
         query_lower = query.lower()
         matches = []
@@ -221,19 +221,19 @@ def search_nodes(query: str, limit: int = 20) -> dict:
         matches.sort(key=sort_key)
         matches = matches[:limit]
 
-        return {
+        return json.dumps({
             "query": query,
             "count": len(matches),
             "results": matches,
-        }
+        })
     except Exception as e:
-        return {"error": str(e)}
+        return json.dumps({"error": str(e)})
 
 
 # ── 3. Validate a workflow (dry-run) ──────────────────────────────────────────
 
 @tool
-def validate_workflow(workflow_json: str) -> dict:
+def validate_workflow(workflow_json: str) -> str:
     """Validate a ComfyUI workflow without executing it.
 
     Performs two levels of validation:
@@ -257,7 +257,7 @@ def validate_workflow(workflow_json: str) -> dict:
     try:
         workflow = json.loads(workflow_json) if isinstance(workflow_json, str) else workflow_json
     except json.JSONDecodeError as e:
-        return {"valid": False, "local_errors": [f"Invalid JSON: {e}"], "server_errors": {}}
+        return json.dumps({"valid": False, "local_errors": [f"Invalid JSON: {e}"], "server_errors": {}})
 
     local_errors = []
 
@@ -333,17 +333,17 @@ def validate_workflow(workflow_json: str) -> dict:
 
     is_valid = len(local_errors) == 0 and len(server_errors) == 0
 
-    return {
+    return json.dumps({
         "valid": is_valid,
         "local_errors": local_errors,
         "server_errors": server_errors,
-    }
+    })
 
 
 # ── 4. Workflow templates (custom + official Comfy-Org) ───────────────────────
 
 @tool
-def list_workflow_templates(source: str = "all") -> dict:
+def list_workflow_templates(source: str = "all") -> str:
     """List all available workflow templates — both custom (local) and official (Comfy-Org).
 
     Templates from the official Comfy-Org repository include rich metadata:
@@ -401,9 +401,9 @@ def list_workflow_templates(source: str = "all") -> dict:
             result["custom_count"] = len(custom_list)
             result["custom"] = custom_list
 
-        return result
+        return json.dumps(result)
     except Exception as e:
-        return {"error": str(e)}
+        return json.dumps({"error": str(e)})
 
 
 @tool
@@ -411,7 +411,7 @@ def search_workflow_templates(
     query: str,
     media_type: str = "",
     limit: int = 15,
-) -> dict:
+) -> str:
     """Search official Comfy-Org workflow templates by keyword.
 
     Searches across template names, titles, descriptions, model names,
@@ -433,7 +433,7 @@ def search_workflow_templates(
     try:
         flat = _load_official_index()
         if not flat:
-            return {"error": "Official templates index not found. Is the repo cloned?"}
+            return json.dumps({"error": "Official templates index not found. Is the repo cloned?"})
 
         query_lower = query.lower()
         matches = []
@@ -471,13 +471,13 @@ def search_workflow_templates(
         matches.sort(key=lambda m: m.get("usage", 0), reverse=True)
         matches = matches[:limit]
 
-        return {"query": query, "count": len(matches), "results": matches}
+        return json.dumps({"query": query, "count": len(matches), "results": matches})
     except Exception as e:
-        return {"error": str(e)}
+        return json.dumps({"error": str(e)})
 
 
 @tool
-def get_workflow_template(template_name: str) -> dict:
+def get_workflow_template(template_name: str) -> str:
     """Load a workflow template by name and return its full contents.
 
     Searches both local custom templates and official Comfy-Org templates.
@@ -520,13 +520,13 @@ def get_workflow_template(template_name: str) -> dict:
                     title = node.get("_meta", {}).get("title", cls)
                     classes_used.append({"node_id": nid, "class_type": cls, "title": title})
 
-                return {
+                return json.dumps({
                     "name": lookup,
                     "source": "custom",
                     "metadata": {},
                     "workflow": workflow,
                     "summary": {"node_count": len(classes_used), "nodes": classes_used},
-                }
+                })
 
         # ── Try official templates ─────────────────────────────────────────
         ot_dir = _official_templates_dir()
@@ -563,27 +563,27 @@ def get_workflow_template(template_name: str) -> dict:
                     title = node.get("_meta", {}).get("title", cls)
                     classes_used.append({"node_id": nid, "class_type": cls, "title": title})
 
-                return {
+                return json.dumps({
                     "name": lookup,
                     "source": "official",
                     "metadata": metadata,
                     "workflow": workflow,
                     "summary": {"node_count": len(classes_used), "nodes": classes_used},
-                }
+                })
 
         # ── Not found ──────────────────────────────────────────────────────
-        return {
+        return json.dumps({
             "error": f"Template '{template_name}' not found in custom or official templates.",
             "hint": "Use list_workflow_templates() or search_workflow_templates() to find available templates.",
-        }
+        })
     except Exception as e:
-        return {"error": str(e)}
+        return json.dumps({"error": str(e)})
 
 
 # ── 5. Parse workflow connections (graph analysis) ────────────────────────────
 
 @tool
-def parse_workflow_connections(workflow_json: str) -> dict:
+def parse_workflow_connections(workflow_json: str) -> str:
     """Parse a ComfyUI workflow and extract its complete graph structure.
 
     Analyses the workflow to produce:
@@ -610,7 +610,7 @@ def parse_workflow_connections(workflow_json: str) -> dict:
     try:
         workflow = json.loads(workflow_json) if isinstance(workflow_json, str) else workflow_json
     except json.JSONDecodeError as e:
-        return {"error": f"Invalid JSON: {e}"}
+        return json.dumps({"error": f"Invalid JSON: {e}"})
 
     nodes_info: dict = {}
     connections: list = []
@@ -683,7 +683,7 @@ def parse_workflow_connections(workflow_json: str) -> dict:
 
     has_cycle = len(exec_order) != len(workflow)
 
-    return {
+    return json.dumps({
         "node_count": len(workflow),
         "nodes": nodes_info,
         "connections": connections,
@@ -691,4 +691,4 @@ def parse_workflow_connections(workflow_json: str) -> dict:
         "leaves": leaves,
         "execution_order": exec_order if not has_cycle else [],
         "has_cycle": has_cycle,
-    }
+    })

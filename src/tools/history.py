@@ -1,12 +1,14 @@
 """Execution history tools for ComfyUI."""
 
+import json
+
 from strands import tool
 
 from src.comfyui_client import get_client
 
 
 @tool
-def get_history(max_items: int = 0) -> dict:
+def get_history(max_items: int = 0) -> str:
     """Retrieve the execution history from ComfyUI.
 
     Args:
@@ -19,13 +21,13 @@ def get_history(max_items: int = 0) -> dict:
         params = {}
         if max_items > 0:
             params["max_items"] = max_items
-        return get_client().get("/history", params=params or None)
+        return json.dumps(get_client().get("/history", params=params or None))
     except Exception as e:
-        return {"error": str(e)}
+        return json.dumps({"error": str(e)})
 
 
 @tool
-def get_prompt_history(prompt_id: str) -> dict:
+def get_prompt_history(prompt_id: str) -> str:
     """Retrieve the execution history for a specific prompt by its ID.
 
     Args:
@@ -35,13 +37,13 @@ def get_prompt_history(prompt_id: str) -> dict:
         A dictionary with the execution details for that prompt.
     """
     try:
-        return get_client().get(f"/history/{prompt_id}")
+        return json.dumps(get_client().get(f"/history/{prompt_id}"))
     except Exception as e:
-        return {"error": str(e)}
+        return json.dumps({"error": str(e)})
 
 
 @tool
-def manage_history(action: str, prompt_id: str = "") -> dict:
+def manage_history(action: str, prompt_id: str = "") -> str:
     """Manage execution history by clearing all entries or deleting a specific item.
 
     Args:
@@ -58,10 +60,10 @@ def manage_history(action: str, prompt_id: str = "") -> dict:
             payload = {"clear": True}
         elif action == "delete":
             if not prompt_id:
-                return {"error": "prompt_id is required when action is 'delete'."}
+                return json.dumps({"error": "prompt_id is required when action is 'delete'"})
             payload = {"delete": [prompt_id]}
         else:
-            return {"error": f"Unknown action '{action}'. Use 'clear' or 'delete'."}
-        return get_client().post("/history", json_data=payload)
+            return json.dumps({"error": f"Unknown action '{action}'. Use 'clear' or 'delete'"})
+        return json.dumps(get_client().post("/history", json_data=payload))
     except Exception as e:
-        return {"error": str(e)}
+        return json.dumps({"error": str(e)})

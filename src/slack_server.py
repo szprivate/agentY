@@ -157,14 +157,25 @@ def _download_slack_file(url: str) -> Optional[bytes]:
         return None
 
 
+def _slack_downloads_dir() -> str:
+    """Return (and create) the directory for files downloaded from Slack."""
+    d = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "slack_downloads")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
 def _build_content_blocks(text: str, files: list) -> list:
     """Build Strands content blocks from message text + Slack file attachments.
+
+    Files are saved to ``<project>/slack_downloads/`` so the agent can reference
+    them by path when submitting to ComfyUI or other tools.
 
     Returns a list of ContentBlock dicts suitable for ``agent.stream_async()``.
     If there are no processable media files, returns the plain text string.
     """
     blocks: list = []
     media_count = 0
+    saved_paths: list[str] = []
 
     for f in files:
         mimetype = f.get("mimetype", "")
@@ -185,6 +196,13 @@ def _build_content_blocks(text: str, files: list) -> list:
             data = _download_slack_file(url)
             if not data:
                 continue
+
+            # Save to disk so agent tools can reference the file
+            save_path = os.path.join(_slack_downloads_dir(), name)
+            with open(save_path, "wb") as fp:
+                fp.write(data)
+            saved_paths.append(save_path)
+
             blocks.append({
                 "image": {
                     "format": img_fmt,
@@ -192,7 +210,7 @@ def _build_content_blocks(text: str, files: list) -> list:
                 }
             })
             media_count += 1
-            logger.info("Downloaded image '%s' (%s, %d bytes)", name, img_fmt, len(data))
+            logger.info("Downloaded image '%s' (%s, %d bytes) -> %s", name, img_fmt, len(data), save_path)
             continue
 
         # --- Try video ------------------------------------------------- #
@@ -209,6 +227,13 @@ def _build_content_blocks(text: str, files: list) -> list:
             data = _download_slack_file(url)
             if not data:
                 continue
+
+            # Save to disk
+            save_path = os.path.join(_slack_downloads_dir(), name)
+            with open(save_path, "wb") as fp:
+                fp.write(data)
+            saved_paths.append(save_path)
+
             blocks.append({
                 "video": {
                     "format": vid_fmt,
@@ -216,7 +241,7 @@ def _build_content_blocks(text: str, files: list) -> list:
                 }
             })
             media_count += 1
-            logger.info("Downloaded video '%s' (%s, %d bytes)", name, vid_fmt, len(data))
+            logger.info("Downloaded video '%s' (%s, %d bytes) -> %s", name, vid_fmt, len(data), save_path)
             continue
 
         logger.debug("Skipping unsupported file: %s (type=%s)", name, filetype)
@@ -225,11 +250,14 @@ def _build_content_blocks(text: str, files: list) -> list:
         # No media - just return text directly (agent accepts str)
         return text  # type: ignore[return-value]
 
-    # Prepend text block if there is accompanying text
+    # Build text that tells the agent where the files are on disk
+    paths_info = "\n".join(f"  - {p}" for p in saved_paths)
+    file_context = f"\n\n[Attached files saved to disk:\n{paths_info}\nUse these paths when tools need a file_path.]"
+
     if text:
-        blocks.insert(0, {"text": text})
+        blocks.insert(0, {"text": text + file_context})
     else:
-        blocks.insert(0, {"text": "Describe or process this image/video."})
+        blocks.insert(0, {"text": "The user sent the following file(s)." + file_context})
 
     return blocks
 

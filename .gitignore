@@ -12,3 +12,6 @@ comfyui_workflow_templates_official/
 
 # Output
 output/
+
+# Slack file downloads
+slack_downloads/

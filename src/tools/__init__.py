@@ -54,6 +54,7 @@ from src.tools.slack_tools import (  # noqa: F401
     slack_send_file,
     slack_read_messages,
     slack_add_reaction,
+    slack_send_json,
 )
 from src.tools.huggingface import (  # noqa: F401
     search_huggingface_models,
@@ -117,6 +118,7 @@ ALL_TOOLS: list = [
     slack_send_file,
     slack_read_messages,
     slack_add_reaction,
+    slack_send_json,
     # Hugging Face model management
     search_huggingface_models,
     get_model_info,

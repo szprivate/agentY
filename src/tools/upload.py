@@ -1,5 +1,6 @@
 """Upload tools for ComfyUI – images and masks."""
 
+import json
 import os
 
 from strands import tool
@@ -27,7 +28,7 @@ def upload_image(
     """
     try:
         if not os.path.isfile(file_path):
-            return {"error": f"File not found: {file_path}"}
+            return json.dumps({"error": f"File not found: {file_path}"})
 
         filename = os.path.basename(file_path)
         with open(file_path, "rb") as f:
@@ -35,9 +36,9 @@ def upload_image(
             data = {"type": image_type, "overwrite": str(overwrite).lower()}
             if subfolder:
                 data["subfolder"] = subfolder
-            return get_client().post("/upload/image", data=data, files=files)
+            return json.dumps(get_client().post("/upload/image", data=data, files=files))
     except Exception as e:
-        return {"error": str(e)}
+        return json.dumps({"error": str(e)})
 
 
 @tool
@@ -47,7 +48,7 @@ def upload_mask(
     subfolder: str = "",
     image_type: str = "input",
     overwrite: bool = False,
-) -> dict:
+) -> str:
     """Upload a mask image to ComfyUI, associated with an original reference image.
 
     Args:
@@ -62,7 +63,7 @@ def upload_mask(
     """
     try:
         if not os.path.isfile(file_path):
-            return {"error": f"File not found: {file_path}"}
+            return json.dumps({"error": f"File not found: {file_path}"})
 
         filename = os.path.basename(file_path)
         with open(file_path, "rb") as f:
@@ -74,6 +75,6 @@ def upload_mask(
             }
             if subfolder:
                 data["subfolder"] = subfolder
-            return get_client().post("/upload/mask", data=data, files=files)
+            return json.dumps(get_client().post("/upload/mask", data=data, files=files))
     except Exception as e:
-        return {"error": str(e)}
+        return json.dumps({"error": str(e)})

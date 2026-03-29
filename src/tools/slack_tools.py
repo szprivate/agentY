@@ -428,3 +428,89 @@ def slack_add_reaction(
     except Exception as exc:
         logger.error("Error in slack_add_reaction: %s", exc, exc_info=True)
         return json.dumps({"ok": False, "error": str(exc)})
+
+
+@tool
+def slack_send_json(
+    data: str,
+    filename: str = "workflow.json",
+    title: str = "",
+    comment: str = "",
+    channel_id: str = "",
+) -> str:
+    """Save JSON data to a local file and upload it to Slack as a file snippet.
+
+    Use this instead of pasting large JSON (e.g. workflow definitions) directly
+    into a Slack message, which would exceed the message length limit.
+
+    Args:
+        data:       The JSON string to send.  May also be a Python dict/list
+                    serialised as a string — the tool will attempt to
+                    pretty-print it automatically.
+        filename:   Filename for the uploaded file (default: ``workflow.json``).
+        title:      Optional title shown above the snippet in Slack.
+        comment:    Optional message posted alongside the file.
+        channel_id: Slack channel/DM ID to upload into.  Auto-detected from
+                    the current Slack event context when omitted.
+
+    Returns:
+        JSON result with ``ok``, local ``file_path``, and Slack ``file_id``.
+    """
+    try:
+        # Pretty-print if possible
+        try:
+            parsed = json.loads(data) if isinstance(data, str) else data
+            pretty = json.dumps(parsed, indent=2, ensure_ascii=False)
+        except (json.JSONDecodeError, TypeError):
+            pretty = data  # send as-is if not valid JSON
+
+        # Determine target channel
+        target_channel = channel_id or _get_active_channel()
+        if not target_channel:
+            user_id = os.environ.get("SLACK_MEMBER_ID")
+            if not user_id:
+                return json.dumps({"ok": False, "error": "No channel context and SLACK_MEMBER_ID not set."})
+            target_channel = _get_dm_channel(user_id)
+
+        # Save to disk
+        save_dir = os.path.join(os.getcwd(), "slack_downloads")
+        os.makedirs(save_dir, exist_ok=True)
+        # Ensure unique filename
+        base, ext = os.path.splitext(filename)
+        if not ext:
+            ext = ".json"
+        import time as _time
+        local_path = os.path.join(save_dir, f"{base}_{int(_time.time())}{ext}")
+        with open(local_path, "w", encoding="utf-8") as fh:
+            fh.write(pretty)
+        logger.info("Saved JSON to %s (%d bytes)", local_path, len(pretty))
+
+        # Upload to Slack
+        client = _get_slack_client()
+        thread_ts = _get_active_thread_ts()
+        upload_kwargs: dict = {
+            "channel": target_channel,
+            "file": local_path,
+            "filename": f"{base}{ext}",
+            "title": title or filename,
+        }
+        if comment:
+            upload_kwargs["initial_comment"] = comment
+        if thread_ts:
+            upload_kwargs["thread_ts"] = thread_ts
+
+        resp = client.files_upload_v2(**upload_kwargs)
+        file_id = resp.get("file", {}).get("id", "unknown")
+        logger.info("Uploaded JSON file to Slack: file_id=%s", file_id)
+        return json.dumps({
+            "ok": True,
+            "file_path": local_path,
+            "file_id": file_id,
+            "message": f"JSON file uploaded to Slack as {filename}",
+        })
+    except SlackApiError as exc:
+        logger.error("Slack API error in slack_send_json: %s", exc.response["error"])
+        return json.dumps({"ok": False, "error": exc.response["error"]})
+    except Exception as exc:
+        logger.error("Error in slack_send_json: %s", exc, exc_info=True)
+        return json.dumps({"ok": False, "error": str(exc)})

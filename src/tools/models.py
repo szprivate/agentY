@@ -1,25 +1,27 @@
 """Model and node-type tools for ComfyUI."""
 
+import json
+
 from strands import tool
 
 from src.comfyui_client import get_client
 
 
 @tool
-def get_model_types() -> dict:
+def get_model_types() -> str:
     """Retrieve the list of available model type categories (folders) in ComfyUI, such as checkpoints, loras, vae, etc.
 
     Returns:
         A list of model folder names.
     """
     try:
-        return get_client().get("/models")
+        return json.dumps(get_client().get("/models"))
     except Exception as e:
-        return {"error": str(e)}
+        return json.dumps({"error": str(e)})
 
 
 @tool
-def get_models_in_folder(folder: str) -> dict:
+def get_models_in_folder(folder: str) -> str:
     """Retrieve the list of model files inside a specific model folder.
 
     Args:
@@ -29,13 +31,13 @@ def get_models_in_folder(folder: str) -> dict:
         A list of model filenames in that folder.
     """
     try:
-        return get_client().get(f"/models/{folder}")
+        return json.dumps(get_client().get(f"/models/{folder}"))
     except Exception as e:
-        return {"error": str(e)}
+        return json.dumps({"error": str(e)})
 
 
 @tool
-def get_object_info() -> dict:
+def get_object_info() -> str:
     """Retrieve detailed information about ALL node types available in this ComfyUI instance.
 
     This returns a large dictionary with every node class and its inputs, outputs, and configuration.
@@ -44,13 +46,13 @@ def get_object_info() -> dict:
         A dictionary keyed by node class name with full node definitions.
     """
     try:
-        return get_client().get("/object_info")
+        return json.dumps(get_client().get("/object_info"))
     except Exception as e:
-        return {"error": str(e)}
+        return json.dumps({"error": str(e)})
 
 
 @tool
-def get_node_info(node_class: str) -> dict:
+def get_node_info(node_class: str) -> str:
     """Retrieve detailed information about a single node type by its class name.
 
     Args:
@@ -60,13 +62,13 @@ def get_node_info(node_class: str) -> dict:
         A dictionary with the node's inputs, outputs, display name, and description.
     """
     try:
-        return get_client().get(f"/object_info/{node_class}")
+        return json.dumps(get_client().get(f"/object_info/{node_class}"))
     except Exception as e:
-        return {"error": str(e)}
+        return json.dumps({"error": str(e)})
 
 
 @tool
-def get_view_metadata(folder: str) -> dict:
+def get_view_metadata(folder: str) -> str:
     """Retrieve metadata for models in a specific folder.
 
     Args:
@@ -76,6 +78,6 @@ def get_view_metadata(folder: str) -> dict:
         A dictionary with model metadata.
     """
     try:
-        return get_client().get(f"/view_metadata/{folder}")
+        return json.dumps(get_client().get(f"/view_metadata/{folder}"))
     except Exception as e:
-        return {"error": str(e)}
+        return json.dumps({"error": str(e)})

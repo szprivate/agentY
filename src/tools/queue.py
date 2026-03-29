@@ -1,12 +1,14 @@
 """Queue management tools for ComfyUI."""
 
+import json
+
 from strands import tool
 
 from src.comfyui_client import get_client
 
 
 @tool
-def get_queue() -> dict:
+def get_queue() -> str:
     """Retrieve the current state of the ComfyUI execution queue.
 
     Shows both currently running and pending items.
@@ -15,13 +17,13 @@ def get_queue() -> dict:
         A dictionary with 'queue_running' and 'queue_pending' lists.
     """
     try:
-        return get_client().get("/queue")
+        return json.dumps(get_client().get("/queue"))
     except Exception as e:
-        return {"error": str(e)}
+        return json.dumps({"error": str(e)})
 
 
 @tool
-def manage_queue(action: str) -> dict:
+def manage_queue(action: str) -> str:
     """Manage the ComfyUI execution queue by clearing pending or running items.
 
     Args:
@@ -38,7 +40,7 @@ def manage_queue(action: str) -> dict:
         elif action == "clear_running":
             payload = {"clear_running": True}
         else:
-            return {"error": f"Unknown action '{action}'. Use 'clear' or 'clear_running'."}
-        return get_client().post("/queue", json_data=payload)
+            return json.dumps({"error": f"Unknown action '{action}'. Use 'clear' or 'clear_running'"})
+        return json.dumps(get_client().post("/queue", json_data=payload))
     except Exception as e:
-        return {"error": str(e)}
+        return json.dumps({"error": str(e)})
