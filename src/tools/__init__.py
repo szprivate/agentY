@@ -47,6 +47,14 @@ from src.tools.workflow_builder import (  # noqa: F401
     validate_workflow,
 )
 from src.tools.workflows import get_workflow_templates as get_server_workflow_templates  # noqa: F401
+from src.tools.slack_tools import (  # noqa: F401
+    slack_send_dm,
+    slack_send_image,
+    slack_send_video,
+    slack_send_file,
+    slack_read_messages,
+    slack_add_reaction,
+)
 
 ALL_TOOLS: list = [
     # System / info
@@ -95,4 +103,11 @@ ALL_TOOLS: list = [
     # Users
     get_users,
     create_user,
+    # Slack DM
+    slack_send_dm,
+    slack_send_image,
+    slack_send_video,
+    slack_send_file,
+    slack_read_messages,
+    slack_add_reaction,
 ]

@@ -28,6 +28,13 @@ def main() -> None:
     else:
         print("[agentY] No API_KEY_COMFY_ORG set – using unauthenticated access.")
 
+    slack_token = os.environ.get("SLACK_BOT_TOKEN", "")
+    slack_member = os.environ.get("SLACK_MEMBER_ID", "")
+    if slack_token and slack_member:
+        print("[agentY] Slack integration enabled (SLACK_BOT_TOKEN + SLACK_MEMBER_ID loaded).")
+    else:
+        print("[agentY] Slack env vars missing – Slack tools will be unavailable.")
+
     agent = create_agent()
 
     print("\n=== agentY – ComfyUI Agent ===")
