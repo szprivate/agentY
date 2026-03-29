@@ -40,10 +40,15 @@ def submit_prompt(prompt_workflow: str, client_id: str = "") -> str:
     """
     try:
         workflow = json.loads(prompt_workflow) if isinstance(prompt_workflow, str) else prompt_workflow
+        client = get_client()
         payload: dict = {"prompt": workflow}
         if client_id:
             payload["client_id"] = client_id
-        return json.dumps(get_client().post("/prompt", json_data=payload))
+        # Forward the ComfyUI API key in extra_data so API/partner nodes receive
+        # it via the AUTH_TOKEN_COMFY_ORG / API_KEY_COMFY_ORG hidden input.
+        if client.api_key:
+            payload["extra_data"] = {"api_key_comfy_org": client.api_key}
+        return json.dumps(client.post("/prompt", json_data=payload))
     except json.JSONDecodeError as e:
         return json.dumps({"error": f"Invalid JSON in prompt_workflow: {e}"})
     except Exception as e:
