@@ -146,6 +146,7 @@ def _build_model(llm: str):
     # Default: claude
     return AnthropicModel(
         model_id=os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5"),
+        max_tokens=int(os.environ.get("ANTHROPIC_MAX_TOKENS", "8096")),
     )
 
 
