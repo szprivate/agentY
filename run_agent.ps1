@@ -11,6 +11,13 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# Normalise double-dash --help / -h (Linux style) which PowerShell binds
+# as a positional string rather than the $Help switch.
+if ($OllamaModel -eq "--help" -or $OllamaModel -eq "-h" -or $OllamaModel -eq "-help") {
+    $Help = $true
+    $OllamaModel = ""
+}
+
 if ($Help) {
     Write-Host ""
     Write-Host "Usage: .\run_agent.ps1 [OPTIONS]" -ForegroundColor Cyan
