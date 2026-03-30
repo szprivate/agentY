@@ -522,31 +522,88 @@ def start_slack_server(agent) -> Optional[str]:
     # -- Start ngrok tunnel --------------------------------------------- #
     try:
         from pyngrok import ngrok, conf
+        from pyngrok.exception import PyngrokNgrokHTTPError
 
         auth_token = os.environ.get("NGROK_AUTH_TOKEN", "")
         if auth_token:
             conf.get_default().auth_token = auth_token
 
-        # pyngrok >= 7.x uses scheme="https"; older used bind_tls=True
+        # ----------------------------------------------------------------
+        # Step 1: check whether a tunnel on our port is already running
+        # inside this ngrok agent process and reuse it.
+        # ----------------------------------------------------------------
+        tunnel = None
         try:
-            tunnel = ngrok.connect(
-                addr=str(SLACK_SERVER_PORT),
-                proto="http",
-                bind_tls=True,
-            )
-        except TypeError:
-            # Fallback for newer pyngrok API
-            tunnel = ngrok.connect(
-                addr=str(SLACK_SERVER_PORT),
-                schemes=["https"],
-            )
+            for t in ngrok.get_tunnels():
+                if str(SLACK_SERVER_PORT) in t.config.get("addr", ""):
+                    logger.info("Reusing existing ngrok tunnel on port %d: %s",
+                                SLACK_SERVER_PORT, t.public_url)
+                    tunnel = t
+                    break
+            # Disconnect any tunnel that is NOT on our port (stale leftovers)
+            if tunnel is None:
+                for t in ngrok.get_tunnels():
+                    try:
+                        ngrok.disconnect(t.public_url)
+                        logger.info("Disconnected stale tunnel: %s", t.public_url)
+                    except Exception as _disc_exc:
+                        logger.warning("Could not disconnect %s: %s", t.public_url, _disc_exc)
+        except Exception as _list_exc:
+            logger.debug("Could not list existing tunnels: %s", _list_exc)
 
-        _ngrok_url = tunnel.public_url
+        # ----------------------------------------------------------------
+        # Step 2: open a fresh tunnel if we didn't find an existing one.
+        # ----------------------------------------------------------------
+        if tunnel is None:
+            def _connect_tunnel():
+                # pyngrok >= 7.x uses scheme="https"; older used bind_tls=True
+                try:
+                    return ngrok.connect(
+                        addr=str(SLACK_SERVER_PORT),
+                        proto="http",
+                        bind_tls=True,
+                    )
+                except TypeError:
+                    return ngrok.connect(
+                        addr=str(SLACK_SERVER_PORT),
+                        schemes=["https"],
+                    )
+
+            try:
+                tunnel = _connect_tunnel()
+            except PyngrokNgrokHTTPError as http_exc:
+                err_str = str(http_exc)
+                # ERR_NGROK_334 – the cloud endpoint is already registered
+                # (e.g. previous run crashed without cleaning up).
+                # Option A: extract the live URL from the error message and
+                #           reuse it – the tunnel is already forwarding.
+                # Option B: if we can't parse a URL, kill the local agent
+                #           and retry so we get a clean connection.
+                if "already online" in err_str or "ERR_NGROK_334" in err_str:
+                    url_match = re.search(r"https://[^\s'\"\\]+\.ngrok[^\s'\"\\]*", err_str)
+                    if url_match:
+                        _ngrok_url = url_match.group(0).rstrip(".")
+                        logger.info(
+                            "Cloud endpoint already online – reusing URL: %s", _ngrok_url
+                        )
+                    else:
+                        logger.warning(
+                            "ERR_NGROK_334 but could not parse URL – killing ngrok and retrying"
+                        )
+                        ngrok.kill()
+                        time.sleep(2)
+                        tunnel = _connect_tunnel()
+                else:
+                    raise
+
+        if tunnel is not None:
+            _ngrok_url = tunnel.public_url
+
         # Ensure https
         if _ngrok_url and _ngrok_url.startswith("http://"):
             _ngrok_url = _ngrok_url.replace("http://", "https://", 1)
 
-        logger.info("ngrok tunnel established: %s", _ngrok_url)
+        logger.info("ngrok tunnel active: %s", _ngrok_url)
     except Exception as exc:
         logger.error("Failed to start ngrok tunnel: %s", exc, exc_info=True)
         print(f"[agentY] ERROR: Could not start ngrok tunnel: {exc}")
