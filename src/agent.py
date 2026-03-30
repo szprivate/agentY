@@ -5,9 +5,11 @@ This module configures and exposes the Strands Agent instance with all
 ComfyUI tools registered.
 """
 
-import json
 import os
+import subprocess
 from pathlib import Path
+
+import requests
 
 from strands import Agent
 from strands.models.anthropic import AnthropicModel as _BaseAnthropicModel
@@ -32,7 +34,7 @@ class AnthropicModel(_BaseAnthropicModel):
             req["tools"] = head + [{**last, "cache_control": {"type": "ephemeral"}}]
         return req
 
-# Map from resolved llm name → system-prompt JSON file stem.
+# Map from resolved llm name → system-prompt markdown filename stem.
 _SYSTEM_PROMPT_FILE: dict[str, str] = {
     "claude": "system_prompt.claude",
     "ollama": "system_prompt.qwencode",
@@ -40,18 +42,40 @@ _SYSTEM_PROMPT_FILE: dict[str, str] = {
 
 
 def _load_system_prompt(llm: str) -> str:
-    """Load the system prompt for *llm* from config/system_prompt.<model>.json.
-
-    The ``system_prompt`` value may be a plain string or an array of lines;
-    arrays are joined with newlines so the JSON file stays human-readable.
-    """
+    """Load the system prompt for *llm* from config/system_prompt.<model>.md."""
     stem = _SYSTEM_PROMPT_FILE.get(llm, f"system_prompt.{llm}")
-    path = Path(__file__).parent.parent / "config" / f"{stem}.json"
-    with open(path, encoding="utf-8") as fh:
-        value = json.load(fh)["system_prompt"]
-    if isinstance(value, list):
-        return "\n".join(value)
-    return value
+    path = Path(__file__).parent.parent / "config" / f"{stem}.md"
+    return path.read_text(encoding="utf-8")
+
+
+def _ensure_ollama_model(model_id: str, host: str) -> None:
+    """Pull *model_id* via ``ollama pull`` if it is not already present locally.
+
+    Checks the Ollama REST API first; only pulls when the model is absent.
+    Streams pull progress to stdout so the user can see download progress.
+    """
+    try:
+        resp = requests.get(f"{host}/api/tags", timeout=10)
+        resp.raise_for_status()
+        local_names = {m["name"] for m in resp.json().get("models", [])}
+        # Ollama stores names as "model:tag"; normalise the requested id the same way.
+        normalised = model_id if ":" in model_id else f"{model_id}:latest"
+        if normalised in local_names or model_id in local_names:
+            print(f"[agentY] Ollama model '{model_id}' already present — skipping pull.")
+            return
+    except Exception as exc:  # noqa: BLE001
+        print(f"[agentY] Warning: could not query Ollama tags ({exc}). Attempting pull anyway.")
+
+    print(f"[agentY] Pulling Ollama model '{model_id}' …")
+    try:
+        subprocess.run(["ollama", "pull", model_id], check=True)
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f"Failed to pull Ollama model '{model_id}': {exc}") from exc
+    except FileNotFoundError:
+        raise RuntimeError(
+            "The 'ollama' CLI was not found on PATH. "
+            "Install Ollama from https://ollama.com and ensure it is in PATH."
+        )
 
 
 def _build_model(llm: str, ollama_model: str | None = None):
@@ -66,8 +90,10 @@ def _build_model(llm: str, ollama_model: str | None = None):
     system_prompt = _load_system_prompt(llm)
     if llm == "ollama":
         model_id = ollama_model or os.environ.get("OLLAMA_MODEL", "qwen3-vl:30b")
+        host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+        _ensure_ollama_model(model_id, host)
         return OllamaModel(
-            host=os.environ.get("OLLAMA_HOST", "http://localhost:11434"),
+            host=host,
             model_id=model_id,
         )
     # Default: claude
