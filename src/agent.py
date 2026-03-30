@@ -5,7 +5,9 @@ This module configures and exposes the Strands Agent instance with all
 ComfyUI tools registered.
 """
 
+import json
 import os
+from pathlib import Path
 
 from strands import Agent
 from strands.models.anthropic import AnthropicModel as _BaseAnthropicModel
@@ -30,68 +32,26 @@ class AnthropicModel(_BaseAnthropicModel):
             req["tools"] = head + [{**last, "cache_control": {"type": "ephemeral"}}]
         return req
 
-SYSTEM_PROMPT = """\
-You are agentY, a ComfyUI workflow agent. Construct and execute ComfyUI workflows
-via the available tools. Follow the standards below unless told otherwise.
+# Map from resolved llm name → system-prompt JSON file stem.
+_SYSTEM_PROMPT_FILE: dict[str, str] = {
+    "claude": "system_prompt.claude",
+    "ollama": "system_prompt.qwencode",
+}
 
-## Models
-Use paths below directly. Only call get_model_types() or get_models_in_folder()
-for models not listed here. Never guess a path.
 
-UNETs: flux1-dev-fp8 → FLUX1/flux1-dev-fp8.safetensors | flux1-kontext →
-FLUX1/flux1-dev-kontext_fp8_scaled.safetensors | wan21-i2v-720p →
-WAN21/Wan2_1-I2V-14B-720P_fp8_e4m3fn.safetensors | wan22-i2v-high →
-WAN22/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors | wan22-i2v-low →
-WAN22/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors
-VAE: flux → FLUX1/ae.safetensors | wan21 → WAN21/Wan2_1_VAE_bf16.safetensors |
-wan22 → WAN22/wan2.2_vae.safetensors
-CLIP (Flux): Flux-Dev/t5xxl_fp16.safetensors + Flux-Dev/clip_l.safetensors, type=flux
+def _load_system_prompt(llm: str) -> str:
+    """Load the system prompt for *llm* from config/system_prompt.<model>.json.
 
-Full model list in settings.json — load it when a model above is not sufficient.
-
-## Workflow standards
-- ALWAYS ask for SequenceName and ShotName if not provided before doing anything.
-- ALWAYS create bepicSetPath (path_id="claude_01234") with SequenceName/ShotName.
-- ALWAYS load images via VHS_LoadImagePath, videos via VHS_LoadVideoPath.
-- ALWAYS call upload_image() with base64 + filename BEFORE building workflow.
-- ALWAYS save images with SaveImage (PNG), videos with VHS_VideoCombine (mp4).
-- ALWAYS connect bEpicGetPath (with path_id="claude_01234", path_key=pathImages or pathVideo,
-  suffix=descriptive name) to every SaveImage / VHS_VideoCombine filename_prefix.
-- API format only. Search templates first, scaffold with get_workflow_template(),
-  modify minimally. Validate before queuing. Track and report results.
-
-## Node defaults
-- GeminiNanoBananaPro: resolution="1K", thinking_level="MINIMAL",
-  model="gemini-3-pro-image-preview", response_modalities="IMAGE", aspect_ratio="16:9"
-- GeminiNanoBanana2: resolution="1K", thinking_level="MINIMAL",
-  model="Nano Banana 2 (Gemini 3.1 Flash Image)", response_modalities="IMAGE", aspect_ratio="16:9"
-- ModelSamplingFlux: max_shift=1.15, base_shift=0.5, explicit width+height required.
-
-## Hugging Face
-1. Identify exact file via search_huggingface_models() or get_model_info().
-2. check_local_model(filename) — if found, use it and stop.
-3. Only if not found: download_hf_model() to correct folder.
-
-## Slack
-You are ALWAYS running inside a Slack DM. Every response is displayed in Slack.
-Slack CANNOT render local file paths or base64 data URIs — they appear as broken
-text. You MUST upload every generated image/video via the tools below.
-
-After every generation, WITHOUT asking the user, immediately:
-1. Call view_image(filename=..., save_to="./output/<filename>") to download the
-   file to disk. NEVER omit save_to.
-2. Call slack_send_image(file_path="./output/<filename>") to upload it.
-
-NEVER write markdown image syntax ![...](...)  — it does not work in Slack.
-NEVER include base64 or data URIs in your replies.
-NEVER ask "would you like me to send it to Slack?" — just send it.
-
-## Test mode
-When user says "test mode": skip all slack_send_*, skip bEpicSendToViewer,
-use 512×512.
-
-Be concise. Ask when ambiguous. Report errors clearly.
-"""
+    The ``system_prompt`` value may be a plain string or an array of lines;
+    arrays are joined with newlines so the JSON file stays human-readable.
+    """
+    stem = _SYSTEM_PROMPT_FILE.get(llm, f"system_prompt.{llm}")
+    path = Path(__file__).parent.parent / "config" / f"{stem}.json"
+    with open(path, encoding="utf-8") as fh:
+        value = json.load(fh)["system_prompt"]
+    if isinstance(value, list):
+        return "\n".join(value)
+    return value
 
 
 def _build_model(llm: str, ollama_model: str | None = None):
@@ -103,6 +63,7 @@ def _build_model(llm: str, ollama_model: str | None = None):
                       over the ``OLLAMA_MODEL`` env var when provided.
     """
     llm = llm.strip().lower()
+    system_prompt = _load_system_prompt(llm)
     if llm == "ollama":
         model_id = ollama_model or os.environ.get("OLLAMA_MODEL", "qwen3-vl:30b")
         return OllamaModel(
@@ -121,7 +82,7 @@ def _build_model(llm: str, ollama_model: str | None = None):
             "system": [
                 {
                     "type": "text",
-                    "text": SYSTEM_PROMPT,
+                    "text": system_prompt,
                     "cache_control": {"type": "ephemeral"},
                 }
             ]
@@ -148,7 +109,7 @@ def create_agent(llm: str | None = None, ollama_model: str | None = None, **kwar
     window_size = int(os.environ.get("AGENT_HISTORY_WINDOW", "40"))
     agent_kwargs = {
         "model": model,
-        "system_prompt": SYSTEM_PROMPT,
+        "system_prompt": _load_system_prompt(resolved_llm),
         "tools": ALL_TOOLS,
         "conversation_manager": SlidingWindowConversationManager(window_size=window_size),
     }
