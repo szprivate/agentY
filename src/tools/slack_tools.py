@@ -148,6 +148,11 @@ def slack_send_dm(
 ) -> str:
     """Send a text message to a Slack channel or DM. Auto-routes to originating channel inside an event handler.
 
+    Requires the ``chat:write`` OAuth scope on the bot token.
+    Opening a DM via user_id also requires ``im:write``.
+    If you see a ``missing_scope`` error, add the needed scope at
+    https://api.slack.com/apps → OAuth & Permissions → Scopes, then reinstall.
+
     Args:
         text: Message body (mrkdwn).
         user_id: Member ID to DM (ignored if channel_id set).
@@ -171,8 +176,9 @@ def slack_send_dm(
             "message": "Message sent successfully.",
         })
     except SlackApiError as exc:
-        logger.error("Slack API error in slack_send_dm: %s", exc.response["error"])
-        return json.dumps({"ok": False, "error": exc.response["error"]})
+        payload = _slack_api_error_payload(exc)
+        logger.error("Slack API error in slack_send_dm: %s", payload)
+        return json.dumps(payload)
     except Exception as exc:
         logger.error("Error in slack_send_dm: %s", exc, exc_info=True)
         return json.dumps({"ok": False, "error": str(exc)})

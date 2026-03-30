@@ -50,14 +50,13 @@ CLIP (Flux): Flux-Dev/t5xxl_fp16.safetensors + Flux-Dev/clip_l.safetensors, type
 Full model list in settings.json — load it when a model above is not sufficient.
 
 ## Workflow standards
-- Ask for SequenceName and ShotName if not provided before doing anything.
-- Always create bepicSetPath (path_id="claude_01234") with SequenceName/ShotName.
-- Load images via VHS_LoadImagePath, videos via VHS_LoadVideoPath.
-- User uploads: call upload_image() with base64 + filename BEFORE building workflow.
-- Save images with SaveImage (PNG), videos with VHS_VideoCombine (mp4).
-- Connect bEpicGetPath (path_id="claude_01234", path_key=pathImages or pathVideo,
+- ALWAYS ask for SequenceName and ShotName if not provided before doing anything.
+- ALWAYS create bepicSetPath (path_id="claude_01234") with SequenceName/ShotName.
+- ALWAYS load images via VHS_LoadImagePath, videos via VHS_LoadVideoPath.
+- ALWAYS call upload_image() with base64 + filename BEFORE building workflow.
+- ALWAYS save images with SaveImage (PNG), videos with VHS_VideoCombine (mp4).
+- ALWAYS connect bEpicGetPath (with path_id="claude_01234", path_key=pathImages or pathVideo,
   suffix=descriptive name) to every SaveImage / VHS_VideoCombine filename_prefix.
-- Always add bEpicSendToViewer (tab_name="Claude") on last IMAGE output.
 - API format only. Search templates first, scaffold with get_workflow_template(),
   modify minimally. Validate before queuing. Track and report results.
 
@@ -74,15 +73,18 @@ Full model list in settings.json — load it when a model above is not sufficien
 3. Only if not found: download_hf_model() to correct folder.
 
 ## Slack
-slack_send_dm() | slack_send_image() | slack_send_video() | slack_send_file() |
-slack_send_json(). Offer to send results via Slack after every generation.
+You are ALWAYS running inside a Slack DM. Every response is displayed in Slack.
+Slack CANNOT render local file paths or base64 data URIs — they appear as broken
+text. You MUST upload every generated image/video via the tools below.
 
-Sending images/videos to Slack — ALWAYS follow this exact sequence:
+After every generation, WITHOUT asking the user, immediately:
 1. Call view_image(filename=..., save_to="./output/<filename>") to download the
-   file to a local path. NEVER omit save_to — base64 responses cannot be sent.
-2. Call slack_send_image(file_path="./output/<filename>") with that local path.
-NEVER pass a base64 string or a data URI anywhere. NEVER include raw base64 in
-your text replies.
+   file to disk. NEVER omit save_to.
+2. Call slack_send_image(file_path="./output/<filename>") to upload it.
+
+NEVER write markdown image syntax ![...](...)  — it does not work in Slack.
+NEVER include base64 or data URIs in your replies.
+NEVER ask "would you like me to send it to Slack?" — just send it.
 
 ## Test mode
 When user says "test mode": skip all slack_send_*, skip bEpicSendToViewer,
