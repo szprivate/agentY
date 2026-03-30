@@ -123,8 +123,10 @@ def _is_duplicate(event_id: str) -> bool:
 # Agent invocation (runs in its own thread so Flask can respond quickly)
 # ---------------------------------------------------------------------------
 
-# How often (seconds) to push partial text to Slack via chat_update
-_STREAM_UPDATE_INTERVAL = 2.0
+# How often (seconds) to push partial text to Slack via chat_update.
+# Set to a large value (e.g. 60) to effectively disable mid-stream updates
+# and only post the final completed message.
+_STREAM_UPDATE_INTERVAL = 0.5
 
 # Image MIME types we can handle as vision input
 _IMAGE_EXTENSIONS = {
