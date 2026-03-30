@@ -6,6 +6,7 @@ Run with:
     python -m src.main
     python -m src.main --llm claude
     python -m src.main --llm ollama
+    python -m src.main --llm ollama --ollama-model llama3.2
 """
 
 import argparse
@@ -36,7 +37,18 @@ def main() -> None:
         help="LLM backend to use: 'claude' (default) or 'ollama'. "
              "Overrides the AGENT_LLM env var.",
     )
+    parser.add_argument(
+        "--ollama-model",
+        default=None,
+        metavar="MODEL",
+        help="Ollama model name (e.g. 'llama3.2', 'qwen3-vl:30b'). "
+             "Implies --llm ollama. Overrides the OLLAMA_MODEL env var.",
+    )
     args = parser.parse_args()
+
+    # --ollama-model implicitly selects the ollama backend
+    if args.ollama_model and args.llm is None:
+        args.llm = "ollama"
 
     api_key = os.environ.get("API_KEY_COMFY_ORG", "")
     if api_key:
@@ -57,7 +69,7 @@ def main() -> None:
     else:
         print("[agentY] Slack env vars missing - Slack tools will be unavailable.")
 
-    agent = create_agent(llm=args.llm)
+    agent = create_agent(llm=args.llm, ollama_model=args.ollama_model)
 
     # -- Start Slack Events API server + ngrok tunnel ------------------- #
     if slack_token and slack_member:

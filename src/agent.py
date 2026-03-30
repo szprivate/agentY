@@ -94,17 +94,20 @@ Be concise. Ask when ambiguous. Report errors clearly.
 """
 
 
-def _build_model(llm: str):
+def _build_model(llm: str, ollama_model: str | None = None):
     """Instantiate the requested LLM backend.
 
     Args:
         llm: ``'claude'`` (default) or ``'ollama'``.
+        ollama_model: Optional Ollama model name override. Takes precedence
+                      over the ``OLLAMA_MODEL`` env var when provided.
     """
     llm = llm.strip().lower()
     if llm == "ollama":
+        model_id = ollama_model or os.environ.get("OLLAMA_MODEL", "qwen3-vl:30b")
         return OllamaModel(
             host=os.environ.get("OLLAMA_HOST", "http://localhost:11434"),
-            model_id=os.environ.get("OLLAMA_MODEL", "qwen3-vl:30b"),
+            model_id=model_id,
         )
     # Default: claude
     # Pass system_prompt as a structured content block so Anthropic's
@@ -126,17 +129,19 @@ def _build_model(llm: str):
     )
 
 
-def create_agent(llm: str | None = None, **kwargs) -> Agent:
+def create_agent(llm: str | None = None, ollama_model: str | None = None, **kwargs) -> Agent:
     """Create and return the agentY Strands Agent with all ComfyUI tools.
 
     Args:
         llm: Which LLM backend to use: ``'claude'`` (default) or ``'ollama'``.
              Falls back to the ``AGENT_LLM`` env var, then to ``'claude'``.
+        ollama_model: Ollama model name to use when ``llm='ollama'``. Overrides
+                      the ``OLLAMA_MODEL`` env var when provided.
         **kwargs: Extra keyword arguments forwarded to the Strands Agent
                   constructor (e.g. to override the model or system prompt).
     """
     resolved_llm = llm or os.environ.get("AGENT_LLM", "claude")
-    model = _build_model(resolved_llm)
+    model = _build_model(resolved_llm, ollama_model=ollama_model)
     print(f"[agentY] Using LLM backend: {resolved_llm} ({model.__class__.__name__})")
     # Limit conversation history to the last 40 messages (≈20 turns).
     # This prevents costs from compounding as history grows across long sessions.
