@@ -77,6 +77,13 @@ Full model list in settings.json — load it when a model above is not sufficien
 slack_send_dm() | slack_send_image() | slack_send_video() | slack_send_file() |
 slack_send_json(). Offer to send results via Slack after every generation.
 
+Sending images/videos to Slack — ALWAYS follow this exact sequence:
+1. Call view_image(filename=..., save_to="./output/<filename>") to download the
+   file to a local path. NEVER omit save_to — base64 responses cannot be sent.
+2. Call slack_send_image(file_path="./output/<filename>") with that local path.
+NEVER pass a base64 string or a data URI anywhere. NEVER include raw base64 in
+your text replies.
+
 ## Test mode
 When user says "test mode": skip all slack_send_*, skip bEpicSendToViewer,
 use 512×512.

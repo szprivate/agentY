@@ -86,6 +86,28 @@ def _get_slack_client() -> WebClient:
     return _slack_client
 
 
+def _slack_api_error_payload(exc: SlackApiError) -> dict:
+    """Extract a consistent, human-readable dict from a SlackApiError.
+
+    Includes the ``needed`` scope when the error is ``missing_scope`` so the
+    caller knows exactly which OAuth scope to add to the Slack App.
+    """
+    resp = exc.response or {}
+    error = resp.get("error", str(exc))
+    payload: dict = {"ok": False, "error": error}
+    if error == "missing_scope":
+        needed = resp.get("needed", "")
+        provided = resp.get("provided", "")
+        payload["needed_scope"] = needed
+        payload["provided_scopes"] = provided
+        payload["fix"] = (
+            f"Add the '{needed}' scope to your Slack App "
+            "(https://api.slack.com/apps → OAuth & Permissions → Scopes), "
+            "then reinstall the app to your workspace."
+        )
+    return payload
+
+
 def _get_dm_channel(user_id: Optional[str] = None) -> str:
     """Open (or retrieve) a DM channel with the given user.
 
@@ -166,6 +188,10 @@ def slack_send_image(
 ) -> str:
     """Upload an image file to a Slack channel or DM.
 
+    Requires the ``files:write`` OAuth scope on the bot token.
+    If you see a ``missing_scope`` error, add ``files:write`` to your Slack
+    App's Bot Token Scopes and reinstall the app.
+
     Args:
         file_path: Local path to image.
         title: Title shown above image.
@@ -201,8 +227,9 @@ def slack_send_image(
             "message": f"Image '{path.name}' sent successfully.",
         })
     except SlackApiError as exc:
-        logger.error("Slack API error in slack_send_image: %s", exc.response["error"])
-        return json.dumps({"ok": False, "error": exc.response["error"]})
+        payload = _slack_api_error_payload(exc)
+        logger.error("Slack API error in slack_send_image: %s", payload)
+        return json.dumps(payload)
     except Exception as exc:
         logger.error("Error in slack_send_image: %s", exc, exc_info=True)
         return json.dumps({"ok": False, "error": str(exc)})
@@ -252,8 +279,9 @@ def slack_send_video(
             "message": f"Video '{path.name}' sent successfully.",
         })
     except SlackApiError as exc:
-        logger.error("Slack API error in slack_send_video: %s", exc.response["error"])
-        return json.dumps({"ok": False, "error": exc.response["error"]})
+        payload = _slack_api_error_payload(exc)
+        logger.error("Slack API error in slack_send_video: %s", payload)
+        return json.dumps(payload)
     except Exception as exc:
         logger.error("Error in slack_send_video: %s", exc, exc_info=True)
         return json.dumps({"ok": False, "error": str(exc)})
@@ -303,8 +331,9 @@ def slack_send_file(
             "message": f"File '{path.name}' sent successfully.",
         })
     except SlackApiError as exc:
-        logger.error("Slack API error in slack_send_file: %s", exc.response["error"])
-        return json.dumps({"ok": False, "error": exc.response["error"]})
+        payload = _slack_api_error_payload(exc)
+        logger.error("Slack API error in slack_send_file: %s", payload)
+        return json.dumps(payload)
     except Exception as exc:
         logger.error("Error in slack_send_file: %s", exc, exc_info=True)
         return json.dumps({"ok": False, "error": str(exc)})
@@ -456,8 +485,9 @@ def slack_send_json(
             "message": f"JSON file uploaded to Slack as {filename}",
         })
     except SlackApiError as exc:
-        logger.error("Slack API error in slack_send_json: %s", exc.response["error"])
-        return json.dumps({"ok": False, "error": exc.response["error"]})
+        payload = _slack_api_error_payload(exc)
+        logger.error("Slack API error in slack_send_json: %s", payload)
+        return json.dumps(payload)
     except Exception as exc:
         logger.error("Error in slack_send_json: %s", exc, exc_info=True)
         return json.dumps({"ok": False, "error": str(exc)})

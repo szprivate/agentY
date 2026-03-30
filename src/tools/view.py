@@ -16,7 +16,12 @@ def view_image(
     image_type: str = "output",
     save_to: str = "",
 ) -> str:
-    """Download an image from ComfyUI. Returns base64 data or saves to a local path.
+    """Download an image from ComfyUI. Saves to a local path or returns base64.
+
+    When you need to send an image to Slack:
+      ALWAYS provide save_to (e.g. save_to="./output/image.png") so the file
+      is written to disk, then pass that path to slack_send_image().
+      NEVER use the base64 response for Slack — it will be sent as raw text.
 
     Args:
         filename: Image filename on the server e.g. 'ComfyUI_00001_.png'.
