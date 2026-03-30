@@ -27,15 +27,6 @@ from src.tools.system import (  # noqa: F401
     get_system_stats,
 )
 from src.tools.upload import upload_image, upload_mask  # noqa: F401
-from src.tools.userdata import (  # noqa: F401
-    delete_userdata_file,
-    get_userdata_file,
-    list_userdata,
-    list_userdata_v2,
-    move_userdata_file,
-    save_userdata_file,
-)
-from src.tools.users import create_user, get_users  # noqa: F401
 from src.tools.view import view_image  # noqa: F401
 from src.tools.workflow_builder import (  # noqa: F401
     get_node_schema,
@@ -63,7 +54,7 @@ from strands_tools import file_read, file_write, editor  # noqa: F401
 
 ALL_TOOLS: list = [
     # System / info
-    get_system_stats,
+    # get_system_stats,
     # Models / nodes
     get_model_types,
     get_models_in_folder,
@@ -90,12 +81,6 @@ ALL_TOOLS: list = [
     search_nodes,
     validate_workflow,
     parse_workflow_connections,
-    # User data
-    list_userdata,
-    get_userdata_file,
-    save_userdata_file,
-    delete_userdata_file,
-    move_userdata_file,
     # Slack DM
     slack_send_dm,
     slack_send_image,
@@ -108,6 +93,6 @@ ALL_TOOLS: list = [
     download_hf_model,
     # File operations (strands built-in)
     file_read,
-    file_write,
-    editor,
+    # file_write,
+    # editor,
 ]
