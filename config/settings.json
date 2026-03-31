@@ -10,7 +10,7 @@
 
     "pipeline": {
       "researcher_llm": "ollama",
-      "researcher_ollama_model": "qwen3-coder:32b",
+      "researcher_ollama_model": "qwen3-coder:30b",
       "researcher_anthropic_model": "claude-haiku-4-5",
 
       "brain_llm": "claude",

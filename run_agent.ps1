@@ -73,7 +73,7 @@ if ($Help) {
     Write-Host "  SLACK_BOT_TOKEN                  Slack bot token (enables Slack integration)"
     Write-Host "  SLACK_MEMBER_ID                  Slack member ID"
     Write-Host ""
-    Write-Host "Settings (config/settings.json — overridden by env vars):"
+    Write-Host "Settings (config/settings.json - overridden by env vars):"
     Write-Host "  llm.agent_mode, llm.pipeline.*, llm.ollama.host, llm.anthropic.*"
     Write-Host ""
     exit 0
