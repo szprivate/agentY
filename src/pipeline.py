@@ -141,8 +141,14 @@ class Pipeline:
 
     # ── Internal helpers ─────────────────────────────────────────────── #
 
+    _MAX_RESEARCHER_RETRIES = 2  # up to 2 correction rounds after the first attempt
+
     def _run_researcher(self, user_input: str) -> tuple[str | None, str | None]:
         """Run the Researcher and return ``(raw_json, error_message)``.
+
+        If the first attempt fails validation, the error is fed back to the
+        Researcher for up to ``_MAX_RESEARCHER_RETRIES`` correction rounds
+        before giving up.
 
         Returns ``(json_str, None)`` on success, ``(None, error_str)`` on failure.
         """
@@ -153,31 +159,62 @@ class Pipeline:
             Resolve all fields and output the brainbriefing JSON.
         """).strip()
 
-        researcher_response = str(self._researcher(researcher_prompt))
-        if self._verbose:
-            print("[pipeline] Researcher finished. Extracting brainbriefing …")
+        last_error: str | None = None
+        last_response: str = ""
 
-        raw_json = _extract_json(researcher_response)
-        if raw_json is None:
-            return None, (
-                "Researcher did not produce a brainbriefing JSON.\n\n"
-                f"Researcher output:\n{researcher_response}"
-            )
+        for attempt in range(1 + self._MAX_RESEARCHER_RETRIES):
+            if attempt == 0:
+                prompt = researcher_prompt
+            else:
+                # Feed the validation error back so the model can self-correct
+                if self._verbose:
+                    print(
+                        f"[pipeline] Researcher retry {attempt}/{self._MAX_RESEARCHER_RETRIES} …"
+                    )
+                prompt = textwrap.dedent(f"""
+                    Your previous output failed validation with this error:
+                    {last_error}
 
-        try:
-            briefing = _validate_brainbriefing(raw_json)
-        except ValueError as exc:
-            return None, f"Brainbriefing validation failed: {exc}\n\nRaw output:\n{researcher_response}"
+                    Please output ONLY the corrected brainbriefing JSON object with
+                    all required top-level keys: brief, workflow, models,
+                    sampler_config, prompt.  No commentary, no markdown fences — just
+                    the raw JSON.
+                """).strip()
 
-        task_id = briefing.get("task_id", "unknown")
-        intent = briefing.get("brief", {}).get("intent", "unknown")
-        template = briefing.get("workflow", {}).get("template_name", "unknown")
-        if self._verbose:
-            print(
-                f"[pipeline] Brainbriefing OK — task_id={task_id}, "
-                f"intent={intent}, template={template}"
-            )
-        return raw_json, None
+            last_response = str(self._researcher(prompt))
+            if self._verbose:
+                label = "initial" if attempt == 0 else f"retry {attempt}"
+                print(f"[pipeline] Researcher finished ({label}). Extracting brainbriefing …")
+
+            raw_json = _extract_json(last_response)
+            if raw_json is None:
+                last_error = "No JSON object found in the output."
+                continue
+
+            try:
+                briefing = _validate_brainbriefing(raw_json)
+            except ValueError as exc:
+                last_error = str(exc)
+                continue
+
+            # Success
+            task_id = briefing.get("task_id", "unknown")
+            intent = briefing.get("brief", {}).get("intent", "unknown")
+            template = briefing.get("workflow", {}).get("template_name", "unknown")
+            if self._verbose:
+                if attempt > 0:
+                    print(f"[pipeline] Brainbriefing recovered after {attempt} retry(ies).")
+                print(
+                    f"[pipeline] Brainbriefing OK — task_id={task_id}, "
+                    f"intent={intent}, template={template}"
+                )
+            return raw_json, None
+
+        # All attempts exhausted
+        return None, (
+            f"Brainbriefing validation failed after {1 + self._MAX_RESEARCHER_RETRIES} attempts: "
+            f"{last_error}\n\nLast researcher output:\n{last_response}"
+        )
 
     def _build_brain_prompt(self, raw_json: str) -> str:
         """Format the Brain's input prompt from the resolved brainbriefing JSON."""

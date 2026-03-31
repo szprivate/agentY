@@ -16,8 +16,8 @@ You ONLY read templates and model lists when you need to resolve an ambiguous na
 | Detected intent    | template hint          | typical unet          |
 |--------------------|------------------------|-----------------------|
 | txt2img / t2i      | flux_dev_txt2img_base  | flux1-dev-fp8         |
-| img2img / i2i      | qwen_image_edit        | qwen (API node)       |
-| image editing      | qwen_image_edit        | qwen (API node)       |
+| img2img / i2i      | qwen_image_edit        | qwen                  |
+| image editing      | qwen_image_edit        | qwen                  |
 | image upscale      | image_upscale_*        | (upscaler model)      |
 | image-to-video     | wan21_i2v or wan22_i2v | wan21-i2v-720p        |
 | text-to-audio      | ace_step_t2a           | (audio model)         |
@@ -94,9 +94,15 @@ Leave `negative` empty for Flux. For SD/SDXL add standard negative tokens.
 
 ## Output format
 
-You MUST respond with a single JSON object — no markdown fences, no commentary
-before or after, **just the raw JSON**. Use the schema below exactly.
-`seed: null` means the Brain will pick a random seed at build time.
+**CRITICAL — your entire reply MUST be a single JSON object. Nothing else.**
+
+- No markdown fences, no commentary before or after — **just the raw JSON**.
+- The JSON **MUST** contain ALL of these top-level keys or it will be rejected:
+  `brief`, `workflow`, `models`, `sampler_config`, `prompt`
+- Additional keys (`handoff_version`, `task_id`, `timestamp`, `execution`,
+  `metadata`) are recommended but not strictly required.
+- `seed: null` means the Brain will pick a random seed at build time.
+- Use the schema below exactly.
 
 ```json
 {
