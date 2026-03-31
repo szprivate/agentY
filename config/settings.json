@@ -6,7 +6,7 @@
   "llm": {
     "_comment": "All values here are overridden by the corresponding environment variables when set.",
 
-    "agent_mode": "pipeline",
+    "agent_mode": "single",
 
     "pipeline": {
       "researcher_llm": "ollama",

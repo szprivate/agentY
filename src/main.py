@@ -13,7 +13,7 @@ Single-agent mode (legacy) — one model does everything:
     python -m src.main --mode single --llm ollama --ollama-model llama3.2
 
 Environment variable equivalents (all optional):
-    AGENT_MODE                  pipeline | single          (default: pipeline)
+    AGENT_MODE                  pipeline | single          (default: single)
     RESEARCHER_LLM              ollama | claude            (default: ollama)
     RESEARCHER_OLLAMA_MODEL     model id                   (default: qwen3-coder:32b)
     RESEARCHER_ANTHROPIC_MODEL  model id
@@ -129,7 +129,7 @@ def main() -> None:
         if args.llm or args.ollama_model:
             mode = "single"
         else:
-            mode = str(_cfg("AGENT_MODE", "agent_mode", default="pipeline"))
+            mode = str(_cfg("AGENT_MODE", "agent_mode", default="single"))
 
     # ── Environment checks ─────────────────────────────────────────────── #
     api_key = os.environ.get("API_KEY_COMFY_ORG", "")

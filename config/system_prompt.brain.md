@@ -64,8 +64,6 @@ After the workflow completes:
 2. check_local_model(filename) — if found, use it and stop.
 3. Only if not found: download_hf_model() to correct folder.
 
----
-
 ## Slack
 You are ALWAYS running inside a Slack DM. Every response is displayed in Slack.
 Slack CANNOT render local file paths or base64 data URIs — they appear as broken text.

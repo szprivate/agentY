@@ -16,7 +16,7 @@ from pathlib import Path
 
 import requests
 
-from strands import Agent
+from strands import Agent, AgentSkills
 from strands.models.anthropic import AnthropicModel as _BaseAnthropicModel
 from strands.models.ollama import OllamaModel
 from strands.agent.conversation_manager import SlidingWindowConversationManager
@@ -243,6 +243,12 @@ def _build_model(llm: str, ollama_model: str | None = None):
     )
 
 
+# ---------------------------------------------------------------------------
+# Skills directory – lives at <project_root>/skills/
+# ---------------------------------------------------------------------------
+_SKILLS_DIR = Path(__file__).parent.parent / "skills"
+
+
 def _make_agent(
     *,
     role: str,
@@ -252,6 +258,7 @@ def _make_agent(
     ollama_model: str | None = None,
     anthropic_model: str | None = None,
     max_tokens: int | None = None,
+    plugins: list | None = None,
     **kwargs,
 ) -> Agent:
     """Internal helper that builds a model and wraps it in a Strands Agent.
@@ -264,6 +271,7 @@ def _make_agent(
         ollama_model: Override for the Ollama model ID.
         anthropic_model: Override for the Anthropic model ID.
         max_tokens: Override for Anthropic max_tokens.
+        plugins: Optional list of Strands plugins (e.g. AgentSkills).
         **kwargs: Extra kwargs forwarded to the Strands Agent constructor.
     """
     llm = llm.strip().lower()
@@ -298,6 +306,8 @@ def _make_agent(
         "tools": tools,
         "conversation_manager": SlidingWindowConversationManager(window_size=window_size),
     }
+    if plugins:
+        agent_kwargs["plugins"] = plugins
     agent_kwargs.update(kwargs)
     return Agent(**agent_kwargs)
 
@@ -363,6 +373,16 @@ def create_brain_agent(
         default=_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5")))
     resolved_ollama = ollama_model or str(_cfg("BRAIN_OLLAMA_MODEL", "pipeline", "brain_ollama_model", default="qwen3-vl:30b"))
     system_prompt = _load_system_prompt("brain")
+
+    # Load skills from the project-level skills/ directory.
+    skills_plugins: list = []
+    if _SKILLS_DIR.is_dir():
+        skills_plugin = AgentSkills(skills=str(_SKILLS_DIR))
+        skills_plugins.append(skills_plugin)
+        loaded = [s.name for s in skills_plugin.get_available_skills()]
+        if loaded:
+            print(f"[agentY:brain] Loaded skills: {', '.join(loaded)}")
+
     return _make_agent(
         role="brain",
         llm=resolved_llm,
@@ -370,6 +390,7 @@ def create_brain_agent(
         tools=BRAIN_TOOLS,
         ollama_model=resolved_ollama,
         anthropic_model=resolved_anthropic,
+        plugins=skills_plugins or None,
         **kwargs,
     )
 
@@ -391,11 +412,23 @@ def create_agent(llm: str | None = None, ollama_model: str | None = None, **kwar
     model = _build_model(resolved_llm, ollama_model=ollama_model)
     print(f"[agentY] Using LLM backend: {resolved_llm} ({model.__class__.__name__})")
     window_size = int(_cfg("AGENT_HISTORY_WINDOW", "history_window", default=40))
+
+    # Load skills from the project-level skills/ directory.
+    skills_plugins: list = []
+    if _SKILLS_DIR.is_dir():
+        skills_plugin = AgentSkills(skills=str(_SKILLS_DIR))
+        skills_plugins.append(skills_plugin)
+        loaded = [s.name for s in skills_plugin.get_available_skills()]
+        if loaded:
+            print(f"[agentY] Loaded skills: {', '.join(loaded)}")
+
     agent_kwargs = {
         "model": model,
         "system_prompt": _load_system_prompt(resolved_llm),
         "tools": ALL_TOOLS,
         "conversation_manager": SlidingWindowConversationManager(window_size=window_size),
     }
+    if skills_plugins:
+        agent_kwargs["plugins"] = skills_plugins
     agent_kwargs.update(kwargs)
     return Agent(**agent_kwargs)

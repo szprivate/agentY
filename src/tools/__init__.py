@@ -28,6 +28,7 @@ from src.tools.system import (  # noqa: F401
 )
 from src.tools.upload import upload_image, upload_mask  # noqa: F401
 from src.tools.view import view_image  # noqa: F401
+from src.tools.shell import run_script  # noqa: F401
 from src.tools.workflow_builder import (  # noqa: F401
     get_node_schema,
     get_workflow_template,
@@ -90,6 +91,8 @@ BRAIN_TOOLS: list = [
     # Upload / view
     upload_image,
     view_image,
+    # Script execution (for skills)
+    run_script,
     # Workflows & building
     list_workflow_templates,
     search_workflow_templates,
