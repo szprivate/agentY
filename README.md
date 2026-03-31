@@ -6,13 +6,15 @@ An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanony
 
 ## Features
 
-- **Natural language → ComfyUI workflow**: Describe what you want; the agent builds and queues the workflow automatically.
+- **Two-agent pipeline**: A lightweight Researcher (Ollama by default) resolves templates, model paths, and sampler settings; the Brain (Claude by default) does the high-value work — workflow assembly, node wiring, execution, and vision QA.
+- **Natural language → ComfyUI workflow**: Describe what you want; the pipeline builds and queues the workflow automatically.
 - **Image & video generation**: Supports Flux, WAN2.1/2.2, Qwen, HunyuanVideo, and many other models.
 - **Image editing**: Reference-based editing, inpainting, upscaling, and more.
 - **Hugging Face model management**: Search, check local availability, and download models on demand.
 - **Slack integration**: Runs as a Slack bot — send a DM and get images/videos back directly in the channel.
-- **Multiple LLM backends**: Claude (default, with prompt-caching) or a local Ollama model.
+- **Multiple LLM backends**: Claude and Ollama supported; configurable per agent stage.
 - **Workflow templates**: 50+ pre-built templates from Comfy-Org as a starting point.
+- **Single source of truth for models**: `config/models.json` drives the model table injected into every agent's system prompt automatically.
 
 ---
 
@@ -61,14 +63,11 @@ pip install -r requirements.txt
 Copy the example below into a `.env` file in the project root and fill in your values:
 
 ```dotenv
-# -- LLM -----------------------------------------------------------------
-ANTHROPIC_API_KEY=sk-ant-...          # Required when using the Claude backend
-ANTHROPIC_MODEL=claude-haiku-4-5      # Optional – override the default model
-ANTHROPIC_MAX_TOKENS=4096             # Optional
+# -- Anthropic (Brain agent, or single-agent mode) -----------------------
+ANTHROPIC_API_KEY=sk-ant-...          # Required when using any Claude backend
 
-# -- Ollama (alternative backend) ----------------------------------------
+# -- Ollama (Researcher agent by default) --------------------------------
 OLLAMA_HOST=http://localhost:11434    # Optional – defaults to localhost
-OLLAMA_MODEL=qwen3-vl:30b            # Optional – defaults to qwen3-vl:30b
 
 # -- Hugging Face --------------------------------------------------------
 HF_TOKEN=hf_...                       # Required for gated model downloads
@@ -82,6 +81,8 @@ SLACK_MEMBER_ID=U0123456789          # Your Slack member ID
 SLACK_SIGNING_SECRET=...             # Signing secret for request verification
 NGROK_AUTH_TOKEN=...                 # ngrok auth token for the public tunnel
 ```
+
+All LLM settings (models, mode, history window) can also be set in `config/settings.json` under the `"llm"` key — env vars always take precedence.
 
 ### 4. Configure ComfyUI connection
 
@@ -100,12 +101,20 @@ Edit `config/settings.json` to point to your ComfyUI instance if it is not runni
 ### Interactive CLI
 
 ```bash
-# Default (Claude backend)
+# Default: pipeline mode (Researcher=Ollama, Brain=Claude)
 python -m src.main
 
-# Explicitly choose a backend
-python -m src.main --llm claude
-python -m src.main --llm ollama
+# Override individual pipeline agents
+python -m src.main --researcher-ollama-model qwen3-coder:32b
+python -m src.main --brain-anthropic-model claude-sonnet-4-5
+
+# Run both pipeline agents on Ollama (fully local)
+python -m src.main --researcher-llm ollama --brain-llm ollama --brain-ollama-model qwen3-vl:30b
+
+# Legacy single-agent mode
+python -m src.main --mode single
+python -m src.main --mode single --llm claude
+python -m src.main --mode single --llm ollama --ollama-model llama3.2
 ```
 
 Type messages at the `You:` prompt. Type `quit` or `exit` to stop.
@@ -115,7 +124,17 @@ Type messages at the `You:` prompt. Type `quit` or `exit` to stop.
 The script automatically creates the virtual environment and installs dependencies on first run:
 
 ```powershell
+# Default pipeline mode
 .\run_agent.ps1
+
+# Override Researcher model
+.\run_agent.ps1 -ResearcherOllamaModel qwen3-coder:32b
+
+# Override Brain model
+.\run_agent.ps1 -BrainAnthropicModel claude-sonnet-4-5
+
+# Legacy single-agent
+.\run_agent.ps1 -Mode single -OllamaModel llama3.2
 ```
 
 ### Slack bot
@@ -215,8 +234,9 @@ Generated images and videos are uploaded back to the conversation automatically.
 ```
 agentY/
 ├── src/
-│   ├── main.py              # Entry point, CLI loop, Slack server bootstrap
-│   ├── agent.py             # Strands Agent setup, system prompt, LLM config
+│   ├── main.py              # Entry point, CLI arg parsing, Slack server bootstrap
+│   ├── agent.py             # Agent factories (Researcher, Brain, single), LLM config
+│   ├── pipeline.py          # Two-agent Pipeline: Researcher → Brain handoff
 │   ├── comfyui_client.py    # HTTP client for the ComfyUI REST API
 │   ├── slack_server.py      # Flask + ngrok Slack Events API handler
 │   └── tools/               # Agent tool implementations
@@ -229,16 +249,19 @@ agentY/
 │       ├── slack_tools.py   # Slack messaging & file upload
 │       ├── system.py        # System / server info
 │       ├── upload.py        # Image upload to ComfyUI
-│       ├── userdata.py      # bEpic path management
-│       ├── users.py         # User data helpers
 │       ├── view.py          # Image/video download & preview
 │       ├── workflow_builder.py  # Dynamic workflow construction
 │       └── workflows.py     # Workflow template loading
 ├── comfyui_workflows/       # Custom workflow JSON files
 ├── comfyui_workflow_templates_official/  # Comfy-Org template library
 ├── config/
-│   └── settings.json        # ComfyUI URL, output dir, model paths
-├── output/                  # Generated files saved here
+│   ├── settings.json              # ComfyUI URL, LLM defaults
+│   ├── models.json                # Model shortname → path table (injected into all prompts)
+│   ├── system_prompt.researcher.md  # Researcher system prompt
+│   ├── system_prompt.brain.md       # Brain system prompt
+│   ├── system_prompt.claude.md      # Single-agent Claude prompt
+│   └── system_prompt.qwencode.md    # Single-agent Ollama prompt
+├── output/                  # Downloaded outputs (view_image save_to target)
 ├── requirements.txt
 ├── run_agent.ps1            # Windows launcher script
 └── .env                     # Local secrets (never commit this)
@@ -248,43 +271,96 @@ agentY/
 
 ## LLM Backends
 
-| Backend | Env var to set | Default model |
-|---------|---------------|---------------|
-| `claude` (default) | `ANTHROPIC_API_KEY` | `claude-haiku-4-5` |
-| `ollama` | `OLLAMA_HOST`, `OLLAMA_MODEL` | `qwen3-vl:30b` |
+### Pipeline mode (default)
 
-Switch backends at runtime with `--llm`:
+Two agents run in sequence. Each can use a different LLM backend:
+
+| Agent | Role | Default backend | Default model |
+|-------|------|-----------------|---------------|
+| Researcher | Template/model/sampler resolution | Ollama | `qwen3-coder:32b` |
+| Brain | Workflow assembly, execution, QA | Claude | `claude-sonnet-4-5` |
+
+Override via CLI flags or `config/settings.json`:
 
 ```bash
-python -m src.main --llm ollama
+# Use a different Researcher model
+python -m src.main --researcher-ollama-model qwen3-coder:7b
+
+# Use a stronger Brain model
+python -m src.main --brain-anthropic-model claude-sonnet-4-5
+
+# Run the Brain on Ollama instead of Claude
+python -m src.main --brain-llm ollama --brain-ollama-model qwen3-vl:30b
 ```
 
-Or set the default via the environment:
+Or set defaults in `config/settings.json`:
 
-```dotenv
-AGENT_LLM=ollama
+```json
+"llm": {
+  "pipeline": {
+    "researcher_ollama_model": "qwen3-coder:32b",
+    "brain_anthropic_model": "claude-sonnet-4-5"
+  }
+}
 ```
+
+### Single-agent mode (legacy)
+
+One model handles everything. Activate with `--mode single`:
+
+```bash
+python -m src.main --mode single              # Claude
+python -m src.main --mode single --llm ollama # Ollama
+```
+
+Or set `AGENT_MODE=single` / `"agent_mode": "single"` in `settings.json`.
 
 ---
 
 ## Configuration Reference
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | ✓ (Claude) | — | Anthropic API key |
-| `ANTHROPIC_MODEL` | | `claude-haiku-4-5` | Claude model ID |
-| `ANTHROPIC_MAX_TOKENS` | | `4096` | Max tokens per response |
-| `AGENT_LLM` | | `claude` | Default LLM backend |
-| `AGENT_HISTORY_WINDOW` | | `40` | Sliding conversation window size |
-| `HF_TOKEN` | | — | Hugging Face token for gated models |
-| `API_KEY_COMFY_ORG` | | — | Comfy.org API key |
-| `SLACK_BOT_TOKEN` | | — | Slack bot token |
-| `SLACK_MEMBER_ID` | | — | Slack member ID |
-| `SLACK_SIGNING_SECRET` | | — | Slack signing secret |
-| `NGROK_AUTH_TOKEN` | | — | ngrok auth token |
-| `SLACK_SERVER_PORT` | | `3000` | Port for the Slack event server |
-| `OLLAMA_HOST` | | `http://localhost:11434` | Ollama server address |
-| `OLLAMA_MODEL` | | `qwen3-vl:30b` | Ollama model ID |
+All LLM settings can be set either as environment variables or in `config/settings.json` under the `"llm"` key. **Env vars always win.**
+
+### Pipeline agents
+
+| Env var | settings.json key | Default | Description |
+|---------|-------------------|---------|-------------|
+| `AGENT_MODE` | `agent_mode` | `pipeline` | `pipeline` or `single` |
+| `RESEARCHER_LLM` | `pipeline.researcher_llm` | `ollama` | Researcher backend |
+| `RESEARCHER_OLLAMA_MODEL` | `pipeline.researcher_ollama_model` | `qwen3-coder:32b` | Researcher Ollama model |
+| `RESEARCHER_ANTHROPIC_MODEL` | `pipeline.researcher_anthropic_model` | `claude-haiku-4-5` | Researcher Anthropic model |
+| `BRAIN_LLM` | `pipeline.brain_llm` | `claude` | Brain backend |
+| `BRAIN_ANTHROPIC_MODEL` | `pipeline.brain_anthropic_model` | `claude-sonnet-4-5` | Brain Anthropic model |
+| `BRAIN_OLLAMA_MODEL` | `pipeline.brain_ollama_model` | `qwen3-vl:30b` | Brain Ollama model |
+
+### Single-agent mode
+
+| Env var | settings.json key | Default | Description |
+|---------|-------------------|---------|-------------|
+| `AGENT_LLM` | `single_agent.llm` | `claude` | LLM backend |
+| `OLLAMA_MODEL` | `single_agent.ollama_model` | `qwen3-vl:30b` | Ollama model |
+
+### Shared LLM settings
+
+| Env var | settings.json key | Default | Description |
+|---------|-------------------|---------|-------------|
+| `ANTHROPIC_API_KEY` | — | — | **Required** for any Claude backend |
+| `ANTHROPIC_MODEL` | `anthropic.model` | `claude-haiku-4-5` | Fallback Anthropic model |
+| `ANTHROPIC_MAX_TOKENS` | `anthropic.max_tokens` | `4096` | Max tokens per response |
+| `OLLAMA_HOST` | `ollama.host` | `http://localhost:11434` | Ollama server URL |
+| `AGENT_HISTORY_WINDOW` | `history_window` | `40` | Sliding conversation window |
+
+### Services
+
+| Env var | Default | Description |
+|---------|---------|-------------|
+| `HF_TOKEN` | — | Hugging Face token for gated model downloads |
+| `API_KEY_COMFY_ORG` | — | Comfy.org cloud API key |
+| `SLACK_BOT_TOKEN` | — | Slack Bot User OAuth Token |
+| `SLACK_MEMBER_ID` | — | Your Slack member ID |
+| `SLACK_SIGNING_SECRET` | — | Slack request signing secret |
+| `NGROK_AUTH_TOKEN` | — | ngrok auth token |
+| `SLACK_SERVER_PORT` | `3000` | Port for the Slack event server |
 
 ---
 
