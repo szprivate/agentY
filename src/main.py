@@ -2,11 +2,26 @@
 """
 agentY – main entry point.
 
-Run with:
+Pipeline mode (default) — Researcher resolves the spec, Brain assembles + runs it:
     python -m src.main
-    python -m src.main --llm claude
-    python -m src.main --llm ollama
-    python -m src.main --llm ollama --ollama-model llama3.2
+    python -m src.main --researcher-llm ollama --researcher-ollama-model qwen3-coder:32b
+    python -m src.main --brain-llm claude --brain-anthropic-model claude-sonnet-4-5
+
+Single-agent mode (legacy) — one model does everything:
+    python -m src.main --mode single
+    python -m src.main --mode single --llm claude
+    python -m src.main --mode single --llm ollama --ollama-model llama3.2
+
+Environment variable equivalents (all optional):
+    AGENT_MODE                  pipeline | single          (default: pipeline)
+    RESEARCHER_LLM              ollama | claude            (default: ollama)
+    RESEARCHER_OLLAMA_MODEL     model id                   (default: qwen3-coder:32b)
+    RESEARCHER_ANTHROPIC_MODEL  model id
+    BRAIN_LLM                   claude | ollama            (default: claude)
+    BRAIN_ANTHROPIC_MODEL       model id
+    BRAIN_OLLAMA_MODEL          model id
+    AGENT_LLM                   claude | ollama            (single-agent mode)
+    OLLAMA_MODEL                model id                   (single-agent mode)
 """
 
 import argparse
@@ -23,62 +38,143 @@ if _project_root not in sys.path:
 # Load .env from project root
 load_dotenv(os.path.join(_project_root, ".env"))
 
-from src.agent import create_agent  # noqa: E402
+from src.agent import create_agent, _cfg  # noqa: E402
+from src.pipeline import create_pipeline  # noqa: E402
 from src.slack_server import start_slack_server  # noqa: E402
 
 
 def main() -> None:
     """Launch the interactive agent loop."""
-    parser = argparse.ArgumentParser(description="agentY – ComfyUI AI agent")
+    parser = argparse.ArgumentParser(
+        description="agentY – ComfyUI AI agent",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+
+    # ── Mode selection ─────────────────────────────────────────────────── #
     parser.add_argument(
+        "--mode",
+        choices=["pipeline", "single"],
+        default=None,
+        help=(
+            "Execution mode:\n"
+            "  pipeline  Researcher (Ollama) → Brain (Claude) [default]\n"
+            "  single    Legacy single-agent mode"
+        ),
+    )
+
+    # ── Pipeline: Researcher overrides ────────────────────────────────── #
+    pipeline_group = parser.add_argument_group("Pipeline – Researcher agent")
+    pipeline_group.add_argument(
+        "--researcher-llm",
+        choices=["ollama", "claude"],
+        default=None,
+        metavar="BACKEND",
+        help="LLM backend for the Researcher (default: ollama / RESEARCHER_LLM env).",
+    )
+    pipeline_group.add_argument(
+        "--researcher-ollama-model",
+        default=None,
+        metavar="MODEL",
+        help="Ollama model for the Researcher (default: qwen3-coder:32b).",
+    )
+    pipeline_group.add_argument(
+        "--researcher-anthropic-model",
+        default=None,
+        metavar="MODEL",
+        help="Anthropic model for the Researcher when --researcher-llm=claude.",
+    )
+
+    # ── Pipeline: Brain overrides ──────────────────────────────────────── #
+    brain_group = parser.add_argument_group("Pipeline – Brain agent")
+    brain_group.add_argument(
+        "--brain-llm",
+        choices=["claude", "ollama"],
+        default=None,
+        metavar="BACKEND",
+        help="LLM backend for the Brain (default: claude / BRAIN_LLM env).",
+    )
+    brain_group.add_argument(
+        "--brain-anthropic-model",
+        default=None,
+        metavar="MODEL",
+        help="Anthropic model for the Brain (e.g. claude-sonnet-4-5).",
+    )
+    brain_group.add_argument(
+        "--brain-ollama-model",
+        default=None,
+        metavar="MODEL",
+        help="Ollama model for the Brain when --brain-llm=ollama.",
+    )
+
+    # ── Single-agent (legacy) overrides ───────────────────────────────── #
+    single_group = parser.add_argument_group("Single-agent mode (--mode single)")
+    single_group.add_argument(
         "--llm",
         choices=["claude", "ollama"],
         default=None,
-        help="LLM backend to use: 'claude' (default) or 'ollama'. "
-             "Overrides the AGENT_LLM env var.",
+        help="LLM backend for single-agent mode.",
     )
-    parser.add_argument(
+    single_group.add_argument(
         "--ollama-model",
         default=None,
         metavar="MODEL",
-        help="Ollama model name (e.g. 'llama3.2', 'qwen3-vl:30b'). "
-             "Implies --llm ollama. Overrides the OLLAMA_MODEL env var.",
+        help="Ollama model for single-agent mode.",
     )
+
     args = parser.parse_args()
 
-    # --ollama-model implicitly selects the ollama backend
-    if args.ollama_model and args.llm is None:
-        args.llm = "ollama"
+    # Infer mode: if any single-agent flag is set, default to single.
+    mode = args.mode
+    if mode is None:
+        if args.llm or args.ollama_model:
+            mode = "single"
+        else:
+            mode = str(_cfg("AGENT_MODE", "agent_mode", default="pipeline"))
 
+    # ── Environment checks ─────────────────────────────────────────────── #
     api_key = os.environ.get("API_KEY_COMFY_ORG", "")
-    if api_key:
-        print("[agentY] ComfyUI API key loaded from API_KEY_COMFY_ORG.")
-    else:
-        print("[agentY] No API_KEY_COMFY_ORG set - using unauthenticated access.")
+    print(
+        "[agentY] ComfyUI API key loaded." if api_key
+        else "[agentY] No API_KEY_COMFY_ORG set - using unauthenticated access."
+    )
 
     hf_token = os.environ.get("HF_TOKEN", "")
-    if hf_token:
-        print("[agentY] Hugging Face token loaded from HF_TOKEN.")
-    else:
+    if not hf_token:
         print("[agentY] No HF_TOKEN set - gated model downloads will fail.")
 
     slack_token = os.environ.get("SLACK_BOT_TOKEN", "")
     slack_member = os.environ.get("SLACK_MEMBER_ID", "")
     if slack_token and slack_member:
-        print("[agentY] Slack integration enabled (SLACK_BOT_TOKEN + SLACK_MEMBER_ID loaded).")
+        print("[agentY] Slack integration enabled.")
     else:
         print("[agentY] Slack env vars missing - Slack tools will be unavailable.")
 
-    agent = create_agent(llm=args.llm, ollama_model=args.ollama_model)
+    # ── Build callable agent / pipeline ───────────────────────────────── #
+    if mode == "single":
+        # Legacy: --ollama-model implies ollama backend
+        if args.ollama_model and args.llm is None:
+            args.llm = "ollama"
+        agent = create_agent(llm=args.llm, ollama_model=args.ollama_model)
+        print("[agentY] Mode: single-agent")
+    else:
+        agent = create_pipeline(
+            researcher_llm=args.researcher_llm,
+            researcher_ollama_model=args.researcher_ollama_model,
+            researcher_anthropic_model=args.researcher_anthropic_model,
+            brain_llm=args.brain_llm,
+            brain_anthropic_model=args.brain_anthropic_model,
+            brain_ollama_model=args.brain_ollama_model,
+        )
+        print("[agentY] Mode: pipeline (Researcher → Brain)")
 
-    # -- Start Slack Events API server + ngrok tunnel ------------------- #
+    # ── Start Slack Events API server + ngrok tunnel ───────────────────── #
     if slack_token and slack_member:
         events_url = start_slack_server(agent)
         if events_url:
             print(f"[agentY] Slack event listener active at {events_url}")
         else:
             print("[agentY] WARNING: Slack event server failed to start.")
-            print("[agentY]   Ensure ngrok is installed and NGROK_AUTH_TOKEN is set in .env")
+            print("[agentY]   Ensure ngrok is installed and NGROK_AUTH_TOKEN is set.")
     else:
         print("[agentY] Skipping Slack event server (missing env vars).")
 

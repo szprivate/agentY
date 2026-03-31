@@ -52,9 +52,26 @@ from src.tools.huggingface import (  # noqa: F401
 )
 from strands_tools import file_read, file_write, editor  # noqa: F401
 
-ALL_TOOLS: list = [
-    # System / info
-    # get_system_stats,
+# ---------------------------------------------------------------------------
+# Researcher tools – read-only resolution (template lookup, model listing).
+# No workflow execution or I/O side-effects.
+# ---------------------------------------------------------------------------
+RESEARCHER_TOOLS: list = [
+    # Template discovery / inspection
+    list_workflow_templates,
+    search_workflow_templates,
+    get_workflow_template,
+    # Model catalogue queries
+    get_model_types,
+    get_models_in_folder,
+    # File access (e.g. settings.json for extended model table)
+    file_read,
+]
+
+# ---------------------------------------------------------------------------
+# Brain tools – full execution suite: assembly, validation, run, QA, Slack.
+# ---------------------------------------------------------------------------
+BRAIN_TOOLS: list = [
     # Models / nodes
     get_model_types,
     get_models_in_folder,
@@ -96,3 +113,6 @@ ALL_TOOLS: list = [
     # file_write,
     # editor,
 ]
+
+# Legacy alias – single-agent mode keeps the full set.
+ALL_TOOLS: list = BRAIN_TOOLS

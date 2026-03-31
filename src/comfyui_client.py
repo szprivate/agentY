@@ -12,6 +12,9 @@ from pathlib import Path
 import requests
 
 
+_DEFAULT_COMFYUI_URL = "http://127.0.0.1:8188"
+
+
 class ComfyUIClient:
     """HTTP client for the ComfyUI REST API."""
 
@@ -25,8 +28,8 @@ class ComfyUIClient:
         if config_path.exists():
             with open(config_path, encoding="utf-8") as f:
                 config = json.load(f)
-            return config.get("comfyui_url", "http://127.0.0.1:8188")
-        return "http://127.0.0.1:8188"
+            return config.get("comfyui_url", _DEFAULT_COMFYUI_URL)
+        return _DEFAULT_COMFYUI_URL
 
     def _headers(self) -> dict:
         headers = {"Accept": "application/json"}
