@@ -35,7 +35,9 @@ text. You MUST upload every generated image/video via the tools below.
 After every generation, WITHOUT asking the user, immediately:
 1. Call view_image(filename=..., save_to="./output/<filename>") to download the
    file to disk. NEVER omit save_to.
-2. Call slack_send_image(file_path="./output/<filename>") to post the image to slack.
+2. If `size_bytes` > 5 242 880 (5 MB) in the response, activate the **image-downsize**
+   skill and run the downsize script to produce a smaller copy before proceeding.
+3. Call slack_send_image(file_path="./output/<filename>") to post the image to slack.
 
 NEVER write markdown image syntax ![...](...) — it does not work in Slack.
 NEVER include base64 or data URIs in your replies.

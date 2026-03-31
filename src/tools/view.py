@@ -42,16 +42,28 @@ def view_image(
             os.makedirs(os.path.dirname(save_to) or ".", exist_ok=True)
             with open(save_to, "wb") as f:
                 f.write(image_bytes)
-            return json.dumps({
+            result = {
                 "saved_to": save_to,
                 "content_type": content_type,
                 "size_bytes": len(image_bytes),
-            })
+            }
+            if len(image_bytes) > 5 * 1024 * 1024:
+                result["warning"] = (
+                    f"Image is {len(image_bytes) / 1024 / 1024:.1f} MB — exceeds Claude's 5 MB limit. "
+                    "Activate the 'image-downsize' skill and run the downsize script before sending this image to Claude or Slack."
+                )
+            return json.dumps(result)
 
-        return json.dumps({
+        result = {
             "base64": base64.b64encode(image_bytes).decode("utf-8"),
             "content_type": content_type,
             "size_bytes": len(image_bytes),
-        })
+        }
+        if len(image_bytes) > 5 * 1024 * 1024:
+            result["warning"] = (
+                f"Image is {len(image_bytes) / 1024 / 1024:.1f} MB — exceeds Claude's 5 MB limit. "
+                "Activate the 'image-downsize' skill and run the downsize script before sending this image to Claude or Slack."
+            )
+        return json.dumps(result)
     except Exception as e:
         return json.dumps({"error": str(e)})

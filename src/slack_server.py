@@ -18,6 +18,7 @@ Environment variables (loaded from .env by main.py):
 
 import hashlib
 import hmac
+import io
 import json
 import logging
 import os
@@ -31,16 +32,25 @@ from typing import Optional
 
 import requests as http_requests
 from flask import Flask, Response, jsonify, request
+from PIL import Image
 
 # ---------------------------------------------------------------------------
 # Set up module logger so messages actually print to console
 # ---------------------------------------------------------------------------
+class _GreyFormatter(logging.Formatter):
+    _GREY = "\033[90m"
+    _RESET = "\033[0m"
+
+    def format(self, record: logging.LogRecord) -> str:
+        return self._GREY + super().format(record) + self._RESET
+
+
 logger = logging.getLogger("agentY.slack_server")
 logger.setLevel(logging.DEBUG)
 if not logger.handlers:
     _handler = logging.StreamHandler(sys.stdout)
     _handler.setLevel(logging.DEBUG)
-    _handler.setFormatter(logging.Formatter(
+    _handler.setFormatter(_GreyFormatter(
         "[%(asctime)s] [SlackServer] %(levelname)s: %(message)s",
         datefmt="%H:%M:%S",
     ))
@@ -174,6 +184,81 @@ def _slack_downloads_dir() -> str:
     return d
 
 
+# ---------------------------------------------------------------------------
+# Image downsizing for Claude API limits
+# ---------------------------------------------------------------------------
+
+_MAX_IMAGE_BYTES = 5 * 1024 * 1024   # 5 MB hard limit
+_OPTIMAL_LONG_EDGE = 1568            # Claude resizes beyond this anyway
+
+
+def _downsize_image_bytes(data: bytes, img_fmt: str, save_path: str) -> bytes:
+    """Downsize *data* in-memory so it fits Claude's 5 MB limit.
+
+    Also caps the long edge at 1568 px for optimal quality (Claude
+    server-side resizes anything larger, adding latency with no benefit).
+
+    Overwrites *save_path* on disk with the resized version so the
+    agent's file-path reference stays valid.
+
+    Returns the (possibly smaller) image bytes.
+    """
+    if len(data) <= _MAX_IMAGE_BYTES:
+        # Still apply long-edge cap for optimal quality
+        img = Image.open(io.BytesIO(data))
+        long_edge = max(img.width, img.height)
+        if long_edge <= _OPTIMAL_LONG_EDGE:
+            return data
+        # Resize for quality but size is already OK
+        ratio = _OPTIMAL_LONG_EDGE / long_edge
+        new_w, new_h = int(img.width * ratio), int(img.height * ratio)
+        img = img.resize((new_w, new_h), Image.LANCZOS)
+    else:
+        img = Image.open(io.BytesIO(data))
+        long_edge = max(img.width, img.height)
+        target_px = _OPTIMAL_LONG_EDGE
+        if long_edge > target_px:
+            ratio = target_px / long_edge
+            new_w, new_h = int(img.width * ratio), int(img.height * ratio)
+            img = img.resize((new_w, new_h), Image.LANCZOS)
+
+    # Re-encode — try PNG first, fall back to JPEG if still too large
+    pil_fmt = "PNG" if img_fmt == "png" else "JPEG"
+    if img.mode == "RGBA" and pil_fmt == "JPEG":
+        img = img.convert("RGB")
+
+    buf = io.BytesIO()
+    quality = 90
+    while quality >= 20:
+        buf.seek(0)
+        buf.truncate()
+        if pil_fmt == "JPEG":
+            img.save(buf, format=pil_fmt, quality=quality, optimize=True)
+        else:
+            img.save(buf, format=pil_fmt, optimize=True)
+        if buf.tell() <= _MAX_IMAGE_BYTES:
+            break
+        # Switch to JPEG if PNG is too large
+        if pil_fmt == "PNG":
+            pil_fmt = "JPEG"
+            if img.mode == "RGBA":
+                img = img.convert("RGB")
+            continue
+        quality -= 10
+
+    result = buf.getvalue()
+
+    # Overwrite on-disk copy
+    with open(save_path, "wb") as fp:
+        fp.write(result)
+
+    logger.info(
+        "Downsized image for Claude API: %d bytes -> %d bytes (%dx%d, %s)",
+        len(data), len(result), img.width, img.height, pil_fmt,
+    )
+    return result
+
+
 def _build_content_blocks(text: str, files: list) -> list:
     """Build Strands content blocks from message text + Slack file attachments.
 
@@ -212,6 +297,9 @@ def _build_content_blocks(text: str, files: list) -> list:
             with open(save_path, "wb") as fp:
                 fp.write(data)
             saved_paths.append(save_path)
+
+            # Downsize if needed to fit Claude's 5 MB / 1568px limits
+            data = _downsize_image_bytes(data, img_fmt, save_path)
 
             blocks.append({
                 "image": {
