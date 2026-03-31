@@ -172,6 +172,9 @@ def _load_system_prompt(llm: str) -> str:
     text = path.read_text(encoding="utf-8")
     if "{{MODEL_TABLE}}" in text:
         text = text.replace("{{MODEL_TABLE}}", _build_model_table())
+    if "{{EXTERNAL_MODEL_DIR}}" in text:
+        ext_dir = _models().get("external_model_dir", "")
+        text = text.replace("{{EXTERNAL_MODEL_DIR}}", ext_dir)
     return text
 
 

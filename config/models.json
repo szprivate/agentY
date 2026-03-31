@@ -1,4 +1,5 @@
 {
+  "external_model_dir": "L:\\software\\comfyui\\Models",
   "unets": {
     "flux1-dev-fp8":    "FLUX1/flux1-dev-fp8.safetensors",
     "flux1-dev":        "FLUX1/flux1-dev.safetensors",
