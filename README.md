@@ -124,6 +124,92 @@ When `SLACK_BOT_TOKEN` and `SLACK_MEMBER_ID` are set, the agent starts a Flask s
 
 ---
 
+## Slack App Setup
+
+Follow these steps to create and configure the Slack app that agentY uses as its conversational interface.
+
+### 1. Create a Slack app
+
+1. Go to [https://api.slack.com/apps](https://api.slack.com/apps) and click **Create New App → From scratch**.
+2. Give it a name (e.g. `agentY`) and choose your workspace.
+
+### 2. Add Bot Token Scopes
+
+Navigate to **OAuth & Permissions → Scopes → Bot Token Scopes** and add:
+
+| Scope | Purpose |
+|-------|---------|
+| `chat:write` | Post and update messages |
+| `im:history` | Read DM message history |
+| `im:read` | List DM conversations |
+| `im:write` | Open DM channels |
+| `files:read` | Download files shared by users |
+| `files:write` | Upload generated images / videos |
+
+### 3. Install the app to your workspace
+
+Click **Install to Workspace** (or **Reinstall** if you change scopes later) and approve the permissions. Copy the **Bot User OAuth Token** (`xoxb-...`) shown on the OAuth & Permissions page.
+
+### 4. Get the Signing Secret
+
+Go to **Basic Information → App Credentials** and copy the **Signing Secret**.
+
+### 5. Find your Slack Member ID
+
+In Slack, click your profile picture → **Profile → ⋮ (More) → Copy member ID**. This is your `SLACK_MEMBER_ID` (`U0123456789` format).
+
+### 6. Set up ngrok
+
+agentY uses [ngrok](https://ngrok.com/) to expose the local Flask server so Slack can deliver events.
+
+1. [Download and install ngrok](https://ngrok.com/download).
+2. Sign up for a free ngrok account and copy your **Auth Token** from [https://dashboard.ngrok.com/get-started/your-authtoken](https://dashboard.ngrok.com/get-started/your-authtoken).
+3. Add it to your `.env` as `NGROK_AUTH_TOKEN`.
+
+> Without `NGROK_AUTH_TOKEN` a random URL is still generated on each run, but it changes every restart. A paid ngrok plan lets you reserve a static domain so the Request URL never changes.
+
+### 7. Add credentials to `.env`
+
+```dotenv
+SLACK_BOT_TOKEN=xoxb-...          # Bot User OAuth Token from step 3
+SLACK_SIGNING_SECRET=...          # Signing Secret from step 4
+SLACK_MEMBER_ID=U0123456789       # Your personal member ID from step 5
+NGROK_AUTH_TOKEN=...              # ngrok auth token from step 6
+```
+
+### 8. Start the agent
+
+```bash
+python -m src.main
+```
+
+When `SLACK_BOT_TOKEN` and `SLACK_MEMBER_ID` are present, the agent automatically starts the Flask server on port `3000` and opens an ngrok tunnel. The public Request URL is printed to the console:
+
+```
+============================================================
+  SLACK EVENT SUBSCRIPTIONS - Request URL
+============================================================
+  https://xxxx.ngrok-free.app/slack/events
+============================================================
+```
+
+### 9. Configure Event Subscriptions in Slack
+
+1. In your app's settings go to **Event Subscriptions** and toggle **Enable Events** on.
+2. Paste the URL printed in the previous step into the **Request URL** field. Slack will immediately send a verification challenge — the agent responds automatically, and the field turns green.
+3. Under **Subscribe to bot events** add `message.im`.
+4. Click **Save Changes** and reinstall the app if prompted.
+
+### 10. Send the bot a DM
+
+Find the bot in Slack (search for its name), open a direct message, and send any request — for example:
+
+> _"Generate a photorealistic image of a red panda in a forest"_
+
+Generated images and videos are uploaded back to the conversation automatically.
+
+---
+
 ## Project Structure
 
 ```
