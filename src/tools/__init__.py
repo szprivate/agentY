@@ -27,8 +27,8 @@ from src.tools.system import (  # noqa: F401
     get_system_stats,
 )
 from src.tools.upload import upload_image, upload_mask  # noqa: F401
-from src.tools.view import view_image  # noqa: F401
-from src.tools.vision import analyze_image  # noqa: F401
+from src.tools.view import view_image, get_image_resolution  # noqa: F401
+from src.tools.vision import analyze_image, read_image  # noqa: F401
 from src.tools.shell import run_script  # noqa: F401
 from src.tools.workflow_builder import (  # noqa: F401
     get_node_schema,
@@ -72,8 +72,10 @@ RESEARCHER_TOOLS: list = [
     # Upload / view
     upload_image,
     view_image,
+    get_image_resolution,
     # Vision / image analysis
     analyze_image,
+    read_image,
 ]
 
 # ---------------------------------------------------------------------------
@@ -98,8 +100,10 @@ BRAIN_TOOLS: list = [
     # Upload / view
     upload_image,
     view_image,
+    get_image_resolution,
     # Vision / image analysis
     analyze_image,
+    read_image,
     # Script execution (for skills)
     run_script,
     # Workflows & building

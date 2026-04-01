@@ -23,7 +23,6 @@ import json
 import logging
 import os
 import re
-import sys
 import asyncio
 import base64
 import threading
@@ -35,26 +34,26 @@ from flask import Flask, Response, jsonify, request
 from PIL import Image
 
 # ---------------------------------------------------------------------------
-# Set up module logger so messages actually print to console
+# Set up module logger – writes to output/slack_server.log (not the console)
 # ---------------------------------------------------------------------------
-class _GreyFormatter(logging.Formatter):
-    _GREY = "\033[90m"
-    _RESET = "\033[0m"
-
-    def format(self, record: logging.LogRecord) -> str:
-        return self._GREY + super().format(record) + self._RESET
-
+_LOG_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "output",
+    "slack_server.log",
+)
+os.makedirs(os.path.dirname(_LOG_FILE), exist_ok=True)
 
 logger = logging.getLogger("agentY.slack_server")
 logger.setLevel(logging.DEBUG)
 if not logger.handlers:
-    _handler = logging.StreamHandler(sys.stdout)
+    _handler = logging.FileHandler(_LOG_FILE, encoding="utf-8")
     _handler.setLevel(logging.DEBUG)
-    _handler.setFormatter(_GreyFormatter(
+    _handler.setFormatter(logging.Formatter(
         "[%(asctime)s] [SlackServer] %(levelname)s: %(message)s",
-        datefmt="%H:%M:%S",
+        datefmt="%Y-%m-%d %H:%M:%S",
     ))
     logger.addHandler(_handler)
+    logger.propagate = False  # don't bubble up to the root console handler
 
 # ---------------------------------------------------------------------------
 # Module-level references (set by start_slack_server)
@@ -701,6 +700,20 @@ def start_slack_server(agent) -> Optional[str]:
     # -- Start Flask in a daemon thread --------------------------------- #
     def _run_flask():
         logger.info("Starting Flask server on 0.0.0.0:%d", SLACK_SERVER_PORT)
+
+        # Redirect Werkzeug access-log and Flask app logger to the same file
+        # so none of their output appears in the terminal.
+        _file_handler = logging.FileHandler(_LOG_FILE, encoding="utf-8")
+        _file_handler.setFormatter(logging.Formatter(
+            "[%(asctime)s] [%(name)s] %(levelname)s: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        ))
+        for _log_name in ("werkzeug", "flask.app"):
+            _wz = logging.getLogger(_log_name)
+            _wz.handlers.clear()
+            _wz.addHandler(_file_handler)
+            _wz.propagate = False
+
         _flask_app.run(
             host="0.0.0.0",
             port=SLACK_SERVER_PORT,

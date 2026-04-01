@@ -69,6 +69,14 @@ def _validate_brainbriefing(raw: str) -> dict:
         raise ValueError(
             f"Brainbriefing is missing required top-level keys: {sorted(missing)}"
         )
+
+    for key in ("brief", "workflow"):
+        if not isinstance(data[key], dict):
+            raise ValueError(
+                f"Brainbriefing key '{key}' must be a JSON object, "
+                f"got {type(data[key]).__name__}"
+            )
+
     return data
 
 

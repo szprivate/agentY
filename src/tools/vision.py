@@ -111,6 +111,83 @@ def _downsize(data: bytes, img_fmt: str) -> bytes:
 # ---------------------------------------------------------------------------
 
 @tool
+def read_image(file_path: str) -> dict:
+    """Read a PNG or JPG image file from the hard drive and load it into the model's context.
+
+    Use this tool whenever you need to inspect, describe, or reason about an
+    image stored on the local file system.  Unlike ``analyze_image``, this
+    tool is focused purely on local files (no URL support) and makes no
+    assumptions about what question you want answered – it simply loads the
+    image so you can see it.
+
+    Images are automatically downsized to satisfy Claude's 5 MB / 1568 px
+    constraints before being forwarded.
+
+    Args:
+        file_path: Absolute or relative path to a PNG or JPG/JPEG image file.
+
+    Returns:
+        A Strands multimodal ToolResult containing the image bytes so the
+        model can process it directly.
+    """
+    if not file_path:
+        return {"status": "error", "content": [{"text": "file_path is required."}]}
+
+    p = Path(file_path).expanduser()
+    if not p.exists():
+        p = Path(os.getcwd()) / file_path
+    if not p.exists():
+        return {"status": "error", "content": [{"text": f"File not found: {file_path}"}]}
+
+    ext = p.suffix.lstrip(".").lower()
+    img_fmt = _FORMAT_MAP.get(ext)
+    if img_fmt not in ("png", "jpeg"):
+        # Try magic-byte sniff so renamed files still work
+        try:
+            raw_peek = p.read_bytes()[:12]
+        except Exception as exc:
+            return {"status": "error", "content": [{"text": f"Could not read file: {exc}"}]}
+        if raw_peek[:4] == b"\x89PNG":
+            img_fmt = "png"
+        elif raw_peek[:3] == b"\xff\xd8\xff":
+            img_fmt = "jpeg"
+        else:
+            return {
+                "status": "error",
+                "content": [{"text": f"Unsupported format '{ext}'. Only PNG and JPG/JPEG files are supported."}],
+            }
+
+    try:
+        data = p.read_bytes()
+    except Exception as exc:
+        return {"status": "error", "content": [{"text": f"Could not read file: {exc}"}]}
+
+    original_size = len(data)
+    data = _downsize(data, img_fmt)
+    downsized = len(data) < original_size
+
+    info_parts = [
+        f"Image loaded from: {p.resolve()}",
+        f"Format: {img_fmt.upper()}, Size: {len(data):,} bytes",
+    ]
+    if downsized:
+        info_parts.append(f"(downsized from {original_size:,} bytes to fit API limits)")
+
+    return {
+        "status": "success",
+        "content": [
+            {"text": "\n".join(info_parts)},
+            {
+                "image": {
+                    "format": img_fmt,
+                    "source": {"bytes": data},
+                }
+            },
+        ],
+    }
+
+
+@tool
 def analyze_image(
     file_path: str = "",
     image_url: str = "",

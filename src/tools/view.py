@@ -4,6 +4,7 @@ import base64
 import json
 import os
 
+from PIL import Image
 from strands import tool
 
 from src.comfyui_client import get_client
@@ -65,5 +66,22 @@ def view_image(
                 "Activate the 'image-downsize' skill and run the downsize script before sending this image to Claude or Slack."
             )
         return json.dumps(result)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@tool
+def get_image_resolution(image_path: str) -> str:
+    """Return the resolution (width and height in pixels) of a local image file.
+
+    Args:
+        image_path: Absolute or relative path to the image file on disk.
+    """
+    try:
+        with Image.open(image_path) as img:
+            width, height = img.size
+        return json.dumps({"width": width, "height": height, "image_path": image_path})
+    except FileNotFoundError:
+        return json.dumps({"error": f"File not found: {image_path}"})
     except Exception as e:
         return json.dumps({"error": str(e)})

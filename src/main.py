@@ -172,6 +172,7 @@ def main() -> None:
         events_url = start_slack_server(agent)
         if events_url:
             print(f"[agentY] Slack event listener active at {events_url}")
+            print("[agentY] Slack server logs → output/slack_server.log")
         else:
             print("[agentY] WARNING: Slack event server failed to start.")
             print("[agentY]   Ensure ngrok is installed and NGROK_AUTH_TOKEN is set.")
@@ -196,6 +197,22 @@ def main() -> None:
 
         response = agent(user_input)
         print(f"\nagentY: {response}\n")
+
+        # Display token usage in the shell
+        try:
+            usage = agent.event_loop_metrics.accumulated_usage
+            in_tok = usage.get("inputTokens", 0)
+            out_tok = usage.get("outputTokens", 0)
+            cache_read = usage.get("cacheReadInputTokens", 0)
+            cache_write = usage.get("cacheWriteInputTokens", 0)
+            parts = [f"{in_tok:,} in", f"{out_tok:,} out"]
+            if cache_read:
+                parts.append(f"{cache_read:,} cache hit")
+            if cache_write:
+                parts.append(f"{cache_write:,} cache write")
+            print(f"🪙 Tokens: {' / '.join(parts)}\n")
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
