@@ -28,6 +28,7 @@ from src.tools.system import (  # noqa: F401
 )
 from src.tools.upload import upload_image, upload_mask  # noqa: F401
 from src.tools.view import view_image  # noqa: F401
+from src.tools.vision import analyze_image  # noqa: F401
 from src.tools.shell import run_script  # noqa: F401
 from src.tools.workflow_builder import (  # noqa: F401
     get_node_schema,
@@ -65,8 +66,14 @@ RESEARCHER_TOOLS: list = [
     # Model catalogue queries
     get_model_types,
     get_models_in_folder,
+    get_node_info,
     # File access (e.g. settings.json for extended model table)
     file_read,
+    # Upload / view
+    upload_image,
+    view_image,
+    # Vision / image analysis
+    analyze_image,
 ]
 
 # ---------------------------------------------------------------------------
@@ -91,6 +98,8 @@ BRAIN_TOOLS: list = [
     # Upload / view
     upload_image,
     view_image,
+    # Vision / image analysis
+    analyze_image,
     # Script execution (for skills)
     run_script,
     # Workflows & building

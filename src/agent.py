@@ -169,6 +169,7 @@ def _load_system_prompt(llm: str) -> str:
     """Load the system prompt for *llm* and inject the model table."""
     stem = _SYSTEM_PROMPT_FILE.get(llm, f"system_prompt.{llm}")
     path = Path(__file__).parent.parent / "config" / f"{stem}.md"
+    print(f"[agentY] System prompt: {path.resolve()}")
     text = path.read_text(encoding="utf-8")
     if "{{MODEL_TABLE}}" in text:
         text = text.replace("{{MODEL_TABLE}}", _build_model_table())
@@ -428,7 +429,7 @@ def create_agent(llm: str | None = None, ollama_model: str | None = None, **kwar
     agent_kwargs = {
         "model": model,
         "system_prompt": _load_system_prompt(resolved_llm),
-        "tools": RESEARCHER_TOOLS,
+        "tools": ALL_TOOLS,
         "conversation_manager": SlidingWindowConversationManager(window_size=window_size),
     }
     if skills_plugins:
