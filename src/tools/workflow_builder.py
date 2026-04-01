@@ -301,11 +301,15 @@ def validate_workflow(workflow_json: str) -> str:
 # ── 4. Workflow templates (custom + official Comfy-Org) ───────────────────────
 
 @tool
-def list_workflow_templates(source: str = "all") -> str:
+def list_workflow_templates(source: str = "all", verbose: bool = False) -> str:
     """List available workflow templates (custom local and/or official Comfy-Org).
+
+    Returns a lean name+description list by default. Set verbose=True to also
+    include models and requires_custom_nodes fields for model-compatibility checks.
 
     Args:
         source: 'all' (default), 'official', or 'custom'.
+        verbose: When True, also include 'models' and 'requires_custom_nodes' per entry.
     """
     try:
         result: dict = {}
@@ -315,16 +319,14 @@ def list_workflow_templates(source: str = "all") -> str:
             flat = _load_official_index()
             official_list = []
             for tpl in flat:
-                official_list.append({
+                entry: dict = {
                     "name": tpl.get("name", ""),
-                    "title": tpl.get("title", ""),
                     "description": tpl.get("description", ""),
-                    "media_type": tpl.get("mediaType", ""),
-                    "group_category": tpl.get("_group_category", ""),
-                    "models": tpl.get("models", []),
-                    "requires_custom_nodes": tpl.get("requiresCustomNodes", []),
-                    "open_source": tpl.get("openSource", False),
-                })
+                }
+                if verbose:
+                    entry["models"] = tpl.get("models", [])
+                    entry["requires_custom_nodes"] = tpl.get("requiresCustomNodes", [])
+                official_list.append(entry)
             result["official_count"] = len(official_list)
             result["official"] = official_list
 
@@ -337,7 +339,6 @@ def list_workflow_templates(source: str = "all") -> str:
                     desc = f.stem.replace("_", " ").replace(".", " – ")
                     custom_list.append({
                         "name": f.stem,
-                        "filename": f.name,
                         "description": desc,
                     })
             result["custom_count"] = len(custom_list)

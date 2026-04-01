@@ -325,7 +325,7 @@ def create_researcher_agent(
     anthropic_model: str | None = None,
     **kwargs,
 ) -> Agent:
-    """Create the Researcher agent.
+    """Create the Researcher agent for experimental dual-agent pipeline.
 
     Defaults to Ollama (env: ``RESEARCHER_LLM``, then ``'ollama'``).
     Override the Ollama model with ``RESEARCHER_OLLAMA_MODEL`` or *ollama_model*.
@@ -359,7 +359,7 @@ def create_brain_agent(
     anthropic_model: str | None = None,
     **kwargs,
 ) -> Agent:
-    """Create the Brain agent.
+    """Create the Brain agent for experimental dual-agent pipeline.
 
     Defaults to Claude (env: ``BRAIN_LLM``, then ``'claude'``).
     Override the Anthropic model with ``BRAIN_ANTHROPIC_MODEL`` or *anthropic_model*.
@@ -401,7 +401,7 @@ def create_brain_agent(
 def create_agent(llm: str | None = None, ollama_model: str | None = None, **kwargs) -> Agent:
     """Create and return the agentY Strands Agent with all ComfyUI tools.
 
-    Legacy single-agent factory kept for backward compatibility.
+    Used for single-agent factory.
 
     Args:
         llm: Which LLM backend to use: ``'claude'`` (default) or ``'ollama'``.
@@ -428,7 +428,7 @@ def create_agent(llm: str | None = None, ollama_model: str | None = None, **kwar
     agent_kwargs = {
         "model": model,
         "system_prompt": _load_system_prompt(resolved_llm),
-        "tools": ALL_TOOLS,
+        "tools": RESEARCHER_TOOLS,
         "conversation_manager": SlidingWindowConversationManager(window_size=window_size),
     }
     if skills_plugins:

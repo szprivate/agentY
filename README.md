@@ -6,7 +6,6 @@ An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanony
 
 ## Features
 
-- **Two-agent pipeline**: A lightweight Researcher (Ollama by default) resolves templates, model paths, and sampler settings; the Brain (Claude by default) does the high-value work — workflow assembly, node wiring, execution, and vision QA.
 - **Natural language → ComfyUI workflow**: Describe what you want; the pipeline builds and queues the workflow automatically.
 - **Image & video generation**: Supports Flux, WAN2.1/2.2, Qwen, HunyuanVideo, and many other models.
 - **Image editing**: Reference-based editing, inpainting, upscaling, and more.
@@ -15,6 +14,7 @@ An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanony
 - **Multiple LLM backends**: Claude and Ollama supported; configurable per agent stage.
 - **Workflow templates**: 50+ pre-built templates from Comfy-Org as a starting point.
 - **Single source of truth for models**: `config/models.json` drives the model table injected into every agent's system prompt automatically.
+- **Two-agent pipeline (very experimental)**: A lightweight Researcher (Ollama by default) resolves templates, model paths, and sampler settings; the Brain (Claude by default) does the high-value work — workflow assembly, node wiring, execution, and vision QA.
 
 ---
 
