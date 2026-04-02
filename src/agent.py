@@ -20,6 +20,8 @@ from strands import Agent, AgentSkills
 from strands.models.anthropic import AnthropicModel as _BaseAnthropicModel
 from strands.models.ollama import OllamaModel
 from strands.agent.conversation_manager import SlidingWindowConversationManager
+from strands.hooks.registry import HookRegistry
+from strands.hooks.events import AfterToolCallEvent
 
 from src.tools import ALL_TOOLS, RESEARCHER_TOOLS, BRAIN_TOOLS
 
@@ -255,6 +257,69 @@ def _build_model(llm: str, ollama_model: str | None = None):
 
 
 # ---------------------------------------------------------------------------
+# Token-usage hook – prints token counts after every tool call
+# ---------------------------------------------------------------------------
+
+class TokenUsageHookProvider:
+    """Prints a token-usage summary line after every tool call.
+
+    Shows the delta (tokens consumed since the last report) and the
+    running accumulated total so the operator can monitor costs in
+    real time.
+    """
+
+    def __init__(self, role: str = "agent") -> None:
+        self._role = role
+        self._prev_in = 0
+        self._prev_out = 0
+        self._prev_cache_read = 0
+        self._prev_cache_write = 0
+
+    def register_hooks(self, registry: HookRegistry, **kwargs) -> None:  # noqa: ARG002
+        registry.add_callback(AfterToolCallEvent, self._on_after_tool_call)
+
+    def _on_after_tool_call(self, event: AfterToolCallEvent, **kwargs) -> None:  # noqa: ARG002
+        try:
+            usage = event.agent.event_loop_metrics.accumulated_usage
+            in_tok = usage.get("inputTokens", 0)
+            out_tok = usage.get("outputTokens", 0)
+            cache_read = usage.get("cacheReadInputTokens", 0)
+            cache_write = usage.get("cacheWriteInputTokens", 0)
+
+            # Compute delta since last report
+            d_in = in_tok - self._prev_in
+            d_out = out_tok - self._prev_out
+            d_cr = cache_read - self._prev_cache_read
+            d_cw = cache_write - self._prev_cache_write
+            self._prev_in = in_tok
+            self._prev_out = out_tok
+            self._prev_cache_read = cache_read
+            self._prev_cache_write = cache_write
+
+            tool_name = event.tool_use.get("name", "?")
+
+            delta_parts = [f"+{d_in:,} in", f"+{d_out:,} out"]
+            if d_cr:
+                delta_parts.append(f"+{d_cr:,} cache hit")
+            if d_cw:
+                delta_parts.append(f"+{d_cw:,} cache write")
+
+            total_parts = [f"{in_tok:,} in", f"{out_tok:,} out"]
+            if cache_read:
+                total_parts.append(f"{cache_read:,} cache hit")
+            if cache_write:
+                total_parts.append(f"{cache_write:,} cache write")
+
+            print(
+                f"\U0001fa99 [{self._role}] after {tool_name}: "
+                f"{' / '.join(delta_parts)}  "
+                f"(total: {' / '.join(total_parts)})"
+            )
+        except Exception:
+            pass  # Never break the agent loop for cosmetic output
+
+
+# ---------------------------------------------------------------------------
 # Skills directory – lives at <project_root>/skills/
 # ---------------------------------------------------------------------------
 _SKILLS_DIR = Path(__file__).parent.parent / "skills"
@@ -316,6 +381,7 @@ def _make_agent(
         "system_prompt": system_prompt,
         "tools": tools,
         "conversation_manager": SlidingWindowConversationManager(window_size=window_size),
+        "hooks": [TokenUsageHookProvider(role=role)],
     }
     if plugins:
         agent_kwargs["plugins"] = plugins
@@ -438,6 +504,7 @@ def create_agent(llm: str | None = None, ollama_model: str | None = None, **kwar
         "system_prompt": _load_system_prompt(resolved_llm),
         "tools": ALL_TOOLS,
         "conversation_manager": SlidingWindowConversationManager(window_size=window_size),
+        "hooks": [TokenUsageHookProvider(role="agent")],
     }
     if skills_plugins:
         agent_kwargs["plugins"] = skills_plugins

@@ -15,3 +15,6 @@ output/
 
 # Slack file downloads
 slack_downloads/
+
+#Logs
+logs/

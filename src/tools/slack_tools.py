@@ -185,7 +185,7 @@ def slack_send_dm(
 
 
 @tool
-def slack_send_image(
+def dslack_send_image(
     file_path: str,
     title: str = "",
     initial_comment: str = "",
