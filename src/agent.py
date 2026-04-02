@@ -176,6 +176,13 @@ def _load_system_prompt(llm: str) -> str:
     if "{{EXTERNAL_MODEL_DIR}}" in text:
         ext_dir = _models().get("external_model_dir", "")
         text = text.replace("{{EXTERNAL_MODEL_DIR}}", ext_dir)
+    if "{{BRAINBRIEF_EXAMPLE}}" in text:
+        example_path = Path(__file__).parent.parent / "config" / "brainbrief_example.json"
+        if example_path.exists():
+            example_text = example_path.read_text(encoding="utf-8")
+            text = text.replace("{{BRAINBRIEF_EXAMPLE}}", example_text)
+        else:
+            print(f"[agentY] Warning: brainbrief_example.json not found at {example_path.resolve()}")
     return text
 
 
