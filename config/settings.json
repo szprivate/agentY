@@ -9,12 +9,12 @@
     "agent_mode": "single",
 
     "pipeline": {
-      "researcher_llm": "ollama",
+      "researcher_llm": "claude",
       "researcher_ollama_model": "qwen3-coder:30b",
       "researcher_anthropic_model": "claude-haiku-4-5",
 
       "brain_llm": "claude",
-      "brain_anthropic_model": "claude-sonnet-4-5",
+      "brain_anthropic_model": "claude-haiku-4-5",
       "brain_ollama_model": "qwen3-vl:30b"
     },
 
