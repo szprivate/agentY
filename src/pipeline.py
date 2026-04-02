@@ -114,14 +114,14 @@ class Pipeline:
 
     def run(self, user_input: str, **_: Any) -> str:
         """Run the full pipeline for *user_input* and return the Brain's response."""
-        raw_json, error = self._run_researcher(user_input)       
+        raw_json, error = self._run_researcher(user_input)
         if error:
             return error
-        # brain_prompt = self._build_brain_prompt(raw_json)
-        # brain_response = str(self._brain(brain_prompt))
-        # if self._verbose:
-        #     print("[pipeline] Brain finished.")
-        return raw_json
+        brain_prompt = self._build_brain_prompt(raw_json)
+        brain_response = str(self._brain(brain_prompt))
+        if self._verbose:
+            print("[pipeline] Brain finished.")
+        return brain_response
 
     async def stream_async(self, user_input: str):  # noqa: ANN201
         """Async generator compatible with the Slack server's streaming loop.
