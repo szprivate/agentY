@@ -15,6 +15,7 @@ Usage
 from __future__ import annotations
 
 import json
+import os
 import re
 import textwrap
 from typing import Any
@@ -97,10 +98,18 @@ class Pipeline:
     reporting in Slack continues to work.
     """
 
-    def __init__(self, researcher: Agent, brain: Agent, *, verbose: bool = True) -> None:
+    def __init__(self, researcher: Agent, brain: Agent, *, verbose: bool = True, skip_brain: bool = False) -> None:
         self._researcher = researcher
         self._brain = brain
         self._verbose = verbose
+        self._skip_brain = skip_brain
+
+    def _should_skip_brain(self) -> bool:
+        if self._skip_brain:
+            return True
+        return str(os.environ.get("PIPELINE_SKIP_BRAIN", "false")).strip().lower() in (
+            "1", "true", "yes", "on"
+        )
 
     # The Slack server and main.py both do:  response = agent(user_input)
     def __call__(self, user_input: str, **kwargs: Any) -> str:
@@ -114,9 +123,15 @@ class Pipeline:
 
     def run(self, user_input: str, **_: Any) -> str:
         """Run the full pipeline for *user_input* and return the Brain's response."""
-        raw_json, error = self._run_researcher(user_input)
+        raw_json, error, researcher_output = self._run_researcher(user_input)
         if error:
             return error
+
+        if self._should_skip_brain():
+            if self._verbose:
+                print("[pipeline] Skipping Brain stage; returning Researcher output.")
+            return researcher_output
+
         brain_prompt = self._build_brain_prompt(raw_json)
         brain_response = str(self._brain(brain_prompt))
         if self._verbose:
@@ -135,9 +150,15 @@ class Pipeline:
         # Stage 1 – Researcher (synchronous; fast pattern-matching turn)
         if self._verbose:
             print("[pipeline:stream] Stage 1 – Researcher resolving spec …")
-        raw_json, error = self._run_researcher(user_input)
+        raw_json, error, researcher_output = self._run_researcher(user_input)
         if error:
             yield {"data": error}
+            return
+
+        if self._should_skip_brain():
+            if self._verbose:
+                print("[pipeline:stream] Skipping Brain stage; returning Researcher output.")
+            yield {"data": researcher_output}
             return
 
         # Stage 2 – Brain (streamed)
@@ -151,14 +172,14 @@ class Pipeline:
 
     _MAX_RESEARCHER_RETRIES = 2  # up to 2 correction rounds after the first attempt
 
-    def _run_researcher(self, user_input: str) -> tuple[str | None, str | None]:
-        """Run the Researcher and return ``(raw_json, error_message)``.
+    def _run_researcher(self, user_input: str) -> tuple[str | None, str | None, str]:
+        """Run the Researcher and return ``(raw_json, error_message, researcher_output)``.
 
         If the first attempt fails validation, the error is fed back to the
         Researcher for up to ``_MAX_RESEARCHER_RETRIES`` correction rounds
         before giving up.
 
-        Returns ``(json_str, None)`` on success, ``(None, error_str)`` on failure.
+        Returns ``(json_str, None, researcher_output)`` on success, ``(None, error_str, last_output)`` on failure.
         """
         researcher_prompt = textwrap.dedent(f"""
             User request:
@@ -216,13 +237,13 @@ class Pipeline:
                     f"[pipeline] Brainbriefing OK — task_id={task_id}, "
                     f"intent={intent}, template={template}"
                 )
-            return raw_json, None
+            return raw_json, None, last_response
 
         # All attempts exhausted
         return None, (
             f"Brainbriefing validation failed after {1 + self._MAX_RESEARCHER_RETRIES} attempts: "
             f"{last_error}\n\nLast researcher output:\n{last_response}"
-        )
+        ), last_response
 
     def _build_brain_prompt(self, raw_json: str) -> str:
         """Format the Brain's input prompt from the resolved brainbriefing JSON."""
@@ -256,6 +277,7 @@ def create_pipeline(
     brain_anthropic_model: str | None = None,
     brain_ollama_model: str | None = None,
     verbose: bool = True,
+    skip_brain: bool = False,
 ) -> Pipeline:
     """Create and return a ready-to-use two-agent Pipeline.
 
@@ -291,4 +313,4 @@ def create_pipeline(
         anthropic_model=brain_anthropic_model,
         ollama_model=brain_ollama_model,
     )
-    return Pipeline(researcher, brain, verbose=verbose)
+    return Pipeline(researcher, brain, verbose=verbose, skip_brain=skip_brain)

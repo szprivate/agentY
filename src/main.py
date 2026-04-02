@@ -105,6 +105,12 @@ def main() -> None:
         metavar="MODEL",
         help="Ollama model for the Brain when --brain-llm=ollama.",
     )
+    brain_group.add_argument(
+        "--skip-brain",
+        action="store_true",
+        default=False,
+        help="Pipeline mode only: return Researcher output directly and skip Brain stage.",
+    )
 
     # ── Single-agent (legacy) overrides ───────────────────────────────── #
     single_group = parser.add_argument_group("Single-agent mode (--mode single)")
@@ -164,8 +170,11 @@ def main() -> None:
             brain_llm=args.brain_llm,
             brain_anthropic_model=args.brain_anthropic_model,
             brain_ollama_model=args.brain_ollama_model,
+            skip_brain=args.skip_brain,
         )
         print("[agentY] Mode: pipeline (Researcher → Brain)")
+        if args.skip_brain:
+            print("[agentY] SkipBrain is activated: Brain stage will be bypassed and Researcher output will be returned.")
 
     # ── Start Slack Events API server + ngrok tunnel ───────────────────── #
     if slack_token and slack_member:

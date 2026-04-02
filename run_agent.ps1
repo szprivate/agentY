@@ -4,6 +4,7 @@
 #   .\run_agent.ps1
 #   .\run_agent.ps1 -ResearcherOllamaModel qwen3-coder:32b
 #   .\run_agent.ps1 -BrainAnthropicModel claude-sonnet-4-5
+#   .\run_agent.ps1 -SkipBrain
 #
 # Single-agent mode (legacy):
 #   .\run_agent.ps1 -Mode single
@@ -27,6 +28,7 @@ param(
     [string]$BrainLlm = "",
     [string]$BrainAnthropicModel = "",
     [string]$BrainOllamaModel = "",
+    [switch]$SkipBrain,
 
     # Single-agent (legacy)
     [ValidateSet("claude","ollama","")]
@@ -51,6 +53,7 @@ if ($Help) {
     Write-Host "  -BrainLlm <claude|ollama>        LLM for the Brain (default: claude)."
     Write-Host "  -BrainAnthropicModel <id>        Anthropic model for the Brain."
     Write-Host "  -BrainOllamaModel <model>        Ollama model for the Brain."
+    Write-Host "  -SkipBrain                      Pipeline mode only: return Researcher output and skip Brain stage."
     Write-Host ""
     Write-Host "Single-agent mode options (-Mode single):"
     Write-Host "  -Llm <claude|ollama>             LLM backend."
@@ -109,6 +112,7 @@ try {
     if ($BrainLlm -ne "")              { $PythonArgs += "--brain-llm", $BrainLlm }
     if ($BrainAnthropicModel -ne "")   { $PythonArgs += "--brain-anthropic-model", $BrainAnthropicModel }
     if ($BrainOllamaModel -ne "")      { $PythonArgs += "--brain-ollama-model", $BrainOllamaModel }
+    if ($SkipBrain)                       { $PythonArgs += "--skip-brain" }
 
     # Single-agent args
     if ($OllamaModel -ne "") {

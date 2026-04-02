@@ -422,6 +422,7 @@ def get_workflow_template(template_name: str) -> str:
                     title = node.get("_meta", {}).get("title", cls)
                     classes_used.append({"node_id": nid, "class_type": cls, "title": title})
 
+                
                 return json.dumps({
                     "name": lookup,
                     "source": "official",

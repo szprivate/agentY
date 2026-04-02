@@ -36,10 +36,10 @@ Execute every step. Stop on failure.
    - WARNING: defaulted params, inferred models, assumed prompt sections
    - Blockers → `status: "blocked"` / else → `status: "ready"`
 
-## Output
-Raw JSON only. No markdown fences. No prose before/after.
-Example for JSON structure:
-`{{BRAINBRIEF_EXAMPLE}}`
+7. **Export as JSON**
+    Raw JSON only. No markdown fences. No prose before/after.
+    Use exactly the key from this JSON example, fill in the values.
+    `{{BRAINBRIEF_EXAMPLE}}`
 
 ## Hard Rules
     - Never hallucinate model paths — unverified → `verified: false`
