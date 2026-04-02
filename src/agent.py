@@ -411,6 +411,9 @@ def create_researcher_agent(
         anthropic_model: Anthropic model override (e.g. ``'claude-haiku-4-5'``).
         **kwargs: Forwarded to the Strands Agent constructor.
     """
+    # Passing an Ollama model without an explicit LLM backend implies ollama.
+    if ollama_model and llm is None:
+        llm = "ollama"
     resolved_llm = llm or str(_cfg("RESEARCHER_LLM", "pipeline", "researcher_llm", default="claude"))
     resolved_ollama = ollama_model or str(_cfg("RESEARCHER_OLLAMA_MODEL", "pipeline", "researcher_ollama_model", default="qwen3-coder:32b"))
     resolved_anthropic = anthropic_model or str(_cfg("RESEARCHER_ANTHROPIC_MODEL", "pipeline", "researcher_anthropic_model",
@@ -445,6 +448,9 @@ def create_brain_agent(
         ollama_model: Ollama model override.
         **kwargs: Forwarded to the Strands Agent constructor.
     """
+    # Passing an Ollama model without an explicit LLM backend implies ollama.
+    if ollama_model and llm is None:
+        llm = "ollama"
     resolved_llm = llm or str(_cfg("BRAIN_LLM", "pipeline", "brain_llm", default="claude"))
     resolved_anthropic = anthropic_model or str(_cfg("BRAIN_ANTHROPIC_MODEL", "pipeline", "brain_anthropic_model",
         default=_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5")))

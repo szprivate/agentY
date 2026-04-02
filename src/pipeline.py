@@ -56,6 +56,13 @@ class BriefPrompt(BaseModel):
     negative: Optional[str] = Field(default=None, description="Negative prompt, or null")
 
 
+class OutputNode(BaseModel):
+    """A single output node in the ComfyUI workflow that saves generated assets."""
+    node_id: str = Field(description="Node ID in the workflow JSON")
+    node: str = Field(description="ComfyUI output node class name (e.g. SaveImage, VHS_VideoCombine)")
+    output_path: str = Field(description="Full directory path where the node will save its output")
+
+
 class BrainBriefing(BaseModel):
     """Structured handoff document from the Researcher to the Brain."""
     status: str = Field(description="'ready' or 'blocked'")
@@ -64,6 +71,7 @@ class BrainBriefing(BaseModel):
     template: BriefTemplate
     input_images: List[InputImage] = Field(default_factory=list)
     input_image_count: int = Field(default=0, description="Must equal len(input_images)")
+    output_nodes: List[OutputNode] = Field(default_factory=list, description="Output nodes from the workflow with their save paths")
     resolution_width: Optional[Any] = Field(default=None, description="Image width in pixels")
     resolution_height: Optional[Any] = Field(default=None, description="Image height in pixels")
     prompt: BriefPrompt

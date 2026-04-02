@@ -18,6 +18,13 @@
     }
   ],
   "input_image_count": 0,
+  "output_nodes": [
+    {
+      "node_id": "42",
+      "node": "SaveImage",
+      "output_path": "./agentOut/image_generation"
+    }
+  ],
   "resolution_width": "width", 
   "resolution_height": "height",
   "prompt": {

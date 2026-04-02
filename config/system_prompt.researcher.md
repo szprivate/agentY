@@ -22,22 +22,35 @@ Execute every step. Stop on failure.
    - if there's more input nodes than input images, remove the excessive input nodes from the template
    - if there's less input nodes than input images, add new input nodes to the template
 
-4. **Prompt** — write the generation prompt:
+4. **Output nodes** — identify all output nodes in the selected workflow template:
+   - Output nodes are nodes with `is_output_node: true` (e.g. `SaveImage`, `VHS_VideoCombine`, `SaveAudio`)
+   - The `io` key returned by `get_workflow_template` lists output nodes — use those node IDs and class names
+   - Set `output_path` for each node as `./agentOut/{filename}` where `{filename}` is derived from the task type:
+     - `image_generation` → `./agentOut/image_generation`
+     - `image_edit` → `./agentOut/image_edit`
+     - `video_i2v` → `./agentOut/video_i2v`
+     - `video_flf` → `./agentOut/video_flf`
+     - `video_v2v` → `./agentOut/video_v2v`
+     - `audio` → `./agentOut/audio`
+     - `3d` → `./agentOut/model`
+   - Include every output node as an entry in `output_nodes` in the brainbriefing JSON
+
+5. **Prompt** — write the generation prompt:
    - Flux: natural sentences, specific (lighting, materials, camera, mood). No tag lists.
    - Flux Kontext: `"master image — [keep description]. change: [edit description]"`
    - WAN: describe motion, camera movement, start→end states, frame rate aesthetic
    - Flux/WAN negative prompt → `null`
 
-5. **Parameters** — resolve parameters:
+6. **Parameters** — resolve parameters:
     - use `get_image_resolution` to retrieve the width and height of the master image
     - the model names needed are returned in the `models` key from `get_workflow_template`
 
-6. **Blockers/warnings** — list before output:
+7. **Blockers/warnings** — list before output:
    - BLOCKER: unverified model w/o fallback, missing referenced image, unclear task
    - WARNING: defaulted params, inferred models, assumed prompt sections
    - Blockers → `status: "blocked"` / else → `status: "ready"`
 
-7. **Export JSON**
+8. **Export JSON**
     Raw JSON only. No markdown fences. No prose before/after.
     Use exactly the key from this JSON example, fill in the values.
     `{{BRAINBRIEF_EXAMPLE}}`
