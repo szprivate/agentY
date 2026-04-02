@@ -32,6 +32,7 @@ from src.agent import create_brain_agent, create_researcher_agent
 
 class InputImage(BaseModel):
     """A single input image/video asset referenced in the task."""
+    node_id: str = Field(description="Node ID in the workflow JSON (from io.inputs[].nodeId)")
     filename: str = Field(description="Filename of the asset")
     role: str = Field(description="Role: master_image | reference_image | mask | depth_map | control_image")
     node: str = Field(description="ComfyUI loader node class name")

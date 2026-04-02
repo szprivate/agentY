@@ -22,6 +22,22 @@ from src.comfyui_client import get_client
 
 _WORKFLOW_DIR = Path(__file__).parent.parent.parent / "output" / "_workflows"
 
+# ── patch_workflow failure guard ───────────────────────────────────────────────
+# If patch_workflow fails (returns non-empty errors) more than this many times
+# in a single brain session, the tool saves a snapshot and raises StopIteration
+# to break the agent loop.
+
+_PATCH_FAIL_LIMIT: int = 3
+_patch_fail_count: int = 0
+_patch_last_workflow_path: str | None = None
+
+
+def reset_patch_workflow_guard() -> None:
+    """Reset the patch_workflow failure counter.  Call once per brain session."""
+    global _patch_fail_count, _patch_last_workflow_path
+    _patch_fail_count = 0
+    _patch_last_workflow_path = None
+
 
 def _save_workflow(workflow: dict, name: str = "") -> str:
     """Save *workflow* dict to a JSON file and return the absolute path."""
@@ -38,13 +54,174 @@ def _load_workflow(path_or_json: str) -> dict:
     Accepts either:
     - An absolute file path to a previously saved workflow JSON
     - A raw JSON string (legacy callers)
+
+    If the loaded JSON is in ComfyUI graph/export format (has a top-level
+    ``"nodes"`` list), it is automatically converted to ComfyUI API format
+    before being returned, so all downstream tools can treat the dict uniformly.
     """
     # Try as file path first
     p = Path(path_or_json)
     if p.exists() and p.suffix == ".json":
-        return json.loads(p.read_text(encoding="utf-8"))
-    # Fallback: try parsing as inline JSON
-    return json.loads(path_or_json)
+        data = json.loads(p.read_text(encoding="utf-8"))
+    else:
+        # Fallback: try parsing as inline JSON
+        data = json.loads(path_or_json)
+
+    # Auto-convert graph format → API format
+    if _is_graph_format(data):
+        data = _convert_graph_to_api(data)
+
+    return data
+
+
+def _is_graph_format(workflow: dict) -> bool:
+    """Return True if *workflow* is in ComfyUI graph/export format.
+
+    Graph format has a top-level ``"nodes"`` key whose value is a list.
+    API format is a flat ``{node_id: node_dict}`` mapping.
+    """
+    return isinstance(workflow.get("nodes"), list)
+
+
+# Input types that ComfyUI always wires via links (never appear as widget values)
+_LINK_ONLY_TYPES: frozenset[str] = frozenset({
+    "MODEL", "CLIP", "VAE", "LATENT", "IMAGE", "MASK", "CONDITIONING",
+    "CONTROL_NET", "EMBEDS", "SAMPLER", "SIGMAS", "AUDIO", "VIDEO",
+    "SEGS", "BBOX", "UPSCALE_MODEL", "CLIPREGION", "PHOTOMAKER",
+    "GEMINI_INPUT_FILES",
+})
+
+
+def _schema_widget_names(schema: dict, linked_names: set[str]) -> list[str]:
+    """Return the ordered list of widget input names for a node schema.
+
+    Mirrors the logic ComfyUI's frontend uses to assign *widget_values* entries
+    to named inputs: iterate ``required`` then ``optional`` inputs in order,
+    skip any that are link-only types or are already linked in this instance.
+
+    Also marks seed-type INT inputs so the caller can skip the frontend-injected
+    ``seed_control_mode`` value that immediately follows them in ``widgets_values``
+    but is absent from the schema.
+    """
+    names: list[str] = []
+    for section in ("required", "optional"):
+        for inp_name, inp_spec in schema.get(section, {}).items():
+            if inp_name in linked_names:
+                continue  # this slot has a live link in the graph
+            inp_type = inp_spec[0] if (isinstance(inp_spec, (list, tuple)) and inp_spec) else ""
+            # COMBO types have inp_type as a list of options — those are always widgets
+            if isinstance(inp_type, str) and inp_type in _LINK_ONLY_TYPES:
+                continue  # link-only type — never a widget
+            names.append(inp_name)
+    return names
+
+
+# Values that ComfyUI's frontend injects after a seed widget (seed_control_mode).
+# These are NOT part of the schema and must be skipped during widgets_values mapping.
+_SEED_CONTROL_VALUES: frozenset[str] = frozenset({"fixed", "randomize", "increment", "decrement"})
+# Input names that trigger the seed_control_mode injection
+_SEED_INPUT_NAMES: frozenset[str] = frozenset({"seed", "noise_seed"})
+
+
+def _convert_graph_to_api(workflow: dict) -> dict:
+    """Convert a ComfyUI graph-format workflow dict to API format.
+
+    Graph format (exported from the UI) structure::
+
+        {
+            "nodes": [{"id": 16, "type": "LoadImage", "inputs": [...],
+                       "widgets_values": [...], ...}, ...],
+            "links": [[link_id, src_node, src_slot, dst_node, dst_slot, type], ...],
+            ...
+        }
+
+    API format (accepted by ComfyUI's ``/prompt`` endpoint) structure::
+
+        {
+            "16": {"class_type": "LoadImage",
+                   "inputs": {"image": "photo.png", "upload": "image"},
+                   "_meta": {"title": "Load Image"}},
+            ...
+        }
+
+    Widget-value → input-name mapping requires the node schema from
+    ``object_info``.  If the server is unreachable, widget values are stored
+    under a special ``__widgets_values`` key so that ``patch_workflow``'s
+    ``widget_values_index`` patching still works; they will be re-mapped on
+    the next call once the server is available.
+    """
+    # ── Build link lookup: link_id → [str(src_node_id), src_slot] ─────────────
+    link_table: dict[int, list] = {}
+    for link in workflow.get("links", []):
+        if isinstance(link, (list, tuple)) and len(link) >= 3:
+            link_id, src_node, src_slot = int(link[0]), link[1], link[2]
+            link_table[link_id] = [str(src_node), int(src_slot)]
+
+    # ── Fetch node schemas (best-effort; may be unavailable offline) ───────────
+    try:
+        object_info = _get_object_info()
+    except Exception:
+        object_info = {}
+
+    api_workflow: dict = {}
+
+    for node in workflow.get("nodes", []):
+        if not isinstance(node, dict) or "id" not in node:
+            continue
+
+        nid = str(node["id"])
+        class_type: str = node.get("type", "unknown")
+        api_inputs: dict = {}
+
+        # ── Map linked inputs ──────────────────────────────────────────────────
+        # In graph format, node["inputs"] is a list of connector descriptors;
+        # each entry with a non-null "link" key refers to a live wired connection.
+        linked_names: set[str] = set()
+        for connector in node.get("inputs", []):
+            if not isinstance(connector, dict):
+                continue
+            name = connector.get("name", "")
+            link_id = connector.get("link")
+            if name and link_id is not None and link_id in link_table:
+                api_inputs[name] = link_table[link_id]
+                linked_names.add(name)
+
+        # ── Map widget values → named inputs ───────────────────────────────────
+        widgets_values: list = node.get("widgets_values", node.get("widget_values", []))
+        if isinstance(widgets_values, list) and widgets_values:
+            schema = object_info.get(class_type, {}).get("input", {}) if object_info else {}
+            if schema:
+                widget_names = _schema_widget_names(schema, linked_names)
+                wv_idx = 0  # index into widgets_values
+                for name in widget_names:
+                    if wv_idx >= len(widgets_values):
+                        break
+                    val = widgets_values[wv_idx]
+                    api_inputs[name] = val
+                    wv_idx += 1
+                    # Skip the frontend-injected seed_control_mode value that
+                    # immediately follows any seed-type widget in widgets_values
+                    # but is absent from the schema.
+                    if (name in _SEED_INPUT_NAMES
+                            and wv_idx < len(widgets_values)
+                            and widgets_values[wv_idx] in _SEED_CONTROL_VALUES):
+                        wv_idx += 1  # skip "fixed"/"randomize"/… entry
+                # Any remaining widgets_values entries are extra frontend values
+                for extra_i, extra_val in enumerate(widgets_values[wv_idx:], start=wv_idx):
+                    api_inputs[f"__extra_widget_{extra_i}"] = extra_val
+            else:
+                # Server unavailable — store as indexed list for widget_values_index patching
+                api_inputs["__widgets_values"] = list(widgets_values)
+
+        # ── Assemble API node ──────────────────────────────────────────────────
+        api_node: dict = {"class_type": class_type, "inputs": api_inputs}
+        title = node.get("title", "")
+        if title:
+            api_node["_meta"] = {"title": title}
+
+        api_workflow[nid] = api_node
+
+    return api_workflow
 
 
 # ── /object_info cache ─────────────────────────────────────────────────────────
@@ -176,6 +353,105 @@ def get_node_schema(node_class: str) -> str:
         return json.dumps(schema)
     except Exception as e:
         return json.dumps({"error": str(e)})
+
+
+# ── 1b. Inspect a specific node inside a workflow ─────────────────────────────
+
+@tool
+def get_workflow_node_info(node_id: str, workflow_path: str) -> str:
+    """Return full metadata for a single node inside a saved workflow.
+
+    Combines the node's current state from the workflow (class_type, title,
+    literal inputs, connected inputs, widget values) with the ComfyUI schema
+    for its class (required/optional inputs with types and defaults, outputs).
+    Use this to understand exactly what a node does, what values it holds, and
+    what it is connected to before editing it.
+
+    Args:
+        node_id: The node's key inside the workflow JSON, e.g. "6" or "190".
+        workflow_path: File path to the workflow JSON (from get_workflow_template
+            or save_workflow / patch_workflow).
+    """
+    # ── Load workflow ──────────────────────────────────────────────────────────
+    try:
+        workflow = _load_workflow(workflow_path)
+    except (json.JSONDecodeError, FileNotFoundError, OSError) as e:
+        return json.dumps({"error": f"Cannot load workflow: {e}"})
+
+    node_id = str(node_id)
+    if node_id not in workflow:
+        available = sorted(workflow.keys())
+        return json.dumps({"error": f"Node '{node_id}' not found.", "available_node_ids": available})
+
+    raw_node = workflow[node_id]
+    cls = raw_node.get("class_type", "")
+    title = raw_node.get("_meta", {}).get("title", cls)
+
+    # ── Split inputs into literal values and node-link connections ─────────────
+    inputs_raw = raw_node.get("inputs", {})
+    literal_inputs: dict = {}
+    connected_inputs: dict = {}
+    for name, val in inputs_raw.items():
+        if isinstance(val, list) and len(val) == 2 and isinstance(val[1], int):
+            connected_inputs[name] = {"from_node": str(val[0]), "from_slot": val[1]}
+        else:
+            literal_inputs[name] = val
+
+    # ── Fetch ComfyUI schema for this class ────────────────────────────────────
+    schema: dict = {}
+    if cls:
+        try:
+            all_nodes = _get_object_info()
+            if cls in all_nodes:
+                info = all_nodes[cls]
+
+                def _parse_inputs(spec: dict) -> dict:
+                    result = {}
+                    for inp_name, definition in spec.items():
+                        entry: dict = {}
+                        if isinstance(definition, list) and len(definition) >= 1:
+                            type_info = definition[0]
+                            opts = definition[1] if len(definition) > 1 else {}
+                            if isinstance(type_info, list):
+                                entry["type"] = "COMBO"
+                                entry["options"] = type_info
+                            else:
+                                entry["type"] = type_info
+                            if isinstance(opts, dict):
+                                for key in ("default", "min", "max", "step", "tooltip"):
+                                    if key in opts:
+                                        entry[key] = opts[key]
+                        else:
+                            entry["type"] = str(definition)
+                        result[inp_name] = entry
+                    return result
+
+                input_spec = info.get("input", {})
+                schema = {
+                    "display_name": info.get("display_name", cls),
+                    "description": info.get("description", ""),
+                    "category": info.get("category", ""),
+                    "input_required": _parse_inputs(input_spec.get("required", {})),
+                    "input_optional": _parse_inputs(input_spec.get("optional", {})),
+                    "output_types": info.get("output", []),
+                    "output_names": info.get("output_name", []),
+                    "is_output_node": info.get("output_node", False),
+                }
+            else:
+                schema = {"warning": f"Class '{cls}' not found in ComfyUI object_info."}
+        except Exception as e:
+            schema = {"warning": f"Could not fetch schema: {e}"}
+
+    result = {
+        "node_id": node_id,
+        "class_type": cls,
+        "title": title,
+        "literal_inputs": literal_inputs,
+        "connected_inputs": connected_inputs,
+        "widget_values": raw_node.get("widgets_values", raw_node.get("widget_values")),
+        "schema": schema,
+    }
+    return json.dumps(result)
 
 
 # ── 2. Search for nodes by capabilities ───────────────────────────────────────
@@ -460,6 +736,15 @@ def get_workflow_template(template_name: str) -> str:
                 "hint": "Use list_workflow_templates() or the workflow-templates skill.",
             })
 
+        # ── Normalise to API format ────────────────────────────────────────
+        # Official Comfy-Org templates are stored in graph/export format.
+        # All downstream tools (patch_workflow, validate_workflow, submit_prompt)
+        # expect API format, so convert once here and save the API-format copy.
+        converted = False
+        if _is_graph_format(workflow):
+            workflow = _convert_graph_to_api(workflow)
+            converted = True
+
         # ── Save full workflow to file ─────────────────────────────────────
         workflow_path = _save_workflow(workflow, name=lookup)
 
@@ -488,6 +773,8 @@ def get_workflow_template(template_name: str) -> str:
             "node_count": len(node_summary),
             "nodes": node_summary,
         }
+        if converted:
+            result["converted_from_graph_format"] = True
         if metadata.get("models"):
             result["models"] = metadata["models"]
         if metadata.get("io"):
@@ -595,6 +882,42 @@ def patch_workflow(workflow_path: str, patches: str) -> str:
 
     # Save back
     path = _save_workflow(workflow, name=Path(workflow_path).stem)
+
+    # ── failure guard ──────────────────────────────────────────────────────────
+    global _patch_fail_count, _patch_last_workflow_path
+    _patch_last_workflow_path = path
+
+    if errors:
+        _patch_fail_count += 1
+        print(
+            f"[patch_workflow] Failure {_patch_fail_count}/{_PATCH_FAIL_LIMIT}: "
+            f"{len(errors)} patch error(s)."
+        )
+
+        if _patch_fail_count >= _PATCH_FAIL_LIMIT:
+            # Save a human-readable debug snapshot with a distinct name.
+            debug_name = f"{Path(workflow_path).stem}_patch_debug"
+            debug_path = _save_workflow(workflow, name=debug_name)
+            print(
+                f"[patch_workflow] LIMIT REACHED — debug snapshot saved to: {debug_path}"
+            )
+            return json.dumps({
+                "workflow_path": path,
+                "applied": applied,
+                "errors": errors,
+                "patch_count": len(applied),
+                "patch_failure_limit_reached": True,
+                "debug_workflow_path": debug_path,
+                "message": (
+                    f"patch_workflow has failed {_PATCH_FAIL_LIMIT} times. "
+                    f"Current workflow snapshot saved to: {debug_path}. "
+                    "STOP — do not call patch_workflow again. "
+                    "Report the debug_workflow_path to the user and ask for guidance."
+                ),
+            })
+    else:
+        # Reset counter on a fully-successful patch (no errors).
+        _patch_fail_count = 0
 
     return json.dumps({
         "workflow_path": path,

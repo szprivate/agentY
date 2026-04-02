@@ -23,7 +23,7 @@ from strands.agent.conversation_manager import SlidingWindowConversationManager
 from strands.hooks.registry import HookRegistry
 from strands.hooks.events import AfterToolCallEvent
 
-from src.tools import ALL_TOOLS, RESEARCHER_TOOLS, BRAIN_TOOLS
+from src.tools import ALL_TOOLS, RESEARCHER_TOOLS, BRAIN_TOOLS, reset_patch_workflow_guard
 
 
 # ---------------------------------------------------------------------------
@@ -451,6 +451,9 @@ def create_brain_agent(
     # Passing an Ollama model without an explicit LLM backend implies ollama.
     if ollama_model and llm is None:
         llm = "ollama"
+    # Reset the patch_workflow failure counter for each new brain session.
+    reset_patch_workflow_guard()
+
     resolved_llm = llm or str(_cfg("BRAIN_LLM", "pipeline", "brain_llm", default="claude"))
     resolved_anthropic = anthropic_model or str(_cfg("BRAIN_ANTHROPIC_MODEL", "pipeline", "brain_anthropic_model",
         default=_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5")))

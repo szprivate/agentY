@@ -32,6 +32,7 @@ from src.tools.vision import analyze_image  # noqa: F401
 from src.tools.shell import run_script  # noqa: F401
 from src.tools.workflow_builder import (  # noqa: F401
     get_node_schema,
+    get_workflow_node_info,
     get_workflow_catalog,
     get_workflow_template,
     list_workflow_templates,
@@ -42,6 +43,7 @@ from src.tools.workflow_builder import (  # noqa: F401
     save_workflow,
     search_nodes,
     validate_workflow,
+    reset_patch_workflow_guard,
 )
 from src.tools.workflows import get_workflow_templates as get_server_workflow_templates  # noqa: F401
 from src.tools.slack_tools import (  # noqa: F401
@@ -84,6 +86,7 @@ BRAIN_TOOLS: list = [
     get_model_types,
     get_models_in_folder,
     get_node_schema,
+    get_workflow_node_info,
     # Prompt execution
     submit_prompt,
     interrupt_execution,
