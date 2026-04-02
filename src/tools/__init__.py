@@ -36,7 +36,6 @@ from src.tools.workflow_builder import (  # noqa: F401
     list_workflow_templates,
     parse_workflow_connections,
     search_nodes,
-    search_workflow_templates,
     validate_workflow,
 )
 from src.tools.workflows import get_workflow_templates as get_server_workflow_templates  # noqa: F401
@@ -61,7 +60,6 @@ from strands_tools import file_read, file_write, editor  # noqa: F401
 RESEARCHER_TOOLS: list = [
     # Template discovery / inspection
     list_workflow_templates,
-    # search_workflow_templates,
     # get_workflow_template,
     # Model catalogue queries
     get_model_types,
@@ -108,7 +106,6 @@ BRAIN_TOOLS: list = [
     run_script,
     # Workflows & building
     list_workflow_templates,
-    # search_workflow_templates,
     # get_workflow_template,
     get_node_schema,
     search_nodes,

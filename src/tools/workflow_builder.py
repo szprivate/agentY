@@ -350,72 +350,13 @@ def list_workflow_templates(source: str = "all", verbose: bool = False) -> str:
 
 
 @tool
-def search_workflow_templates(
-    query: str,
-    media_type: str = "",
-    limit: int = 15,
-) -> str:
-    """Search official Comfy-Org workflow templates by keyword.
-
-    Args:
-        query: Search term e.g. 'text to image', 'flux', 'wan', 'inpaint'.
-        media_type: Optional filter: 'image', 'video', 'audio', '3d', or '' for all.
-        limit: Max results (default 15).
-    """
-    try:
-        flat = _load_official_index()
-        if not flat:
-            return json.dumps({"error": "Official templates index not found. Is the repo cloned?"})
-
-        query_lower = query.lower()
-        matches = []
-
-        for tpl in flat:
-            # Optional media type filter
-            if media_type and tpl.get("mediaType", "") != media_type:
-                continue
-
-            searchable = " ".join([
-                tpl.get("name", ""),
-                tpl.get("title", ""),
-                tpl.get("description", ""),
-                " ".join(tpl.get("models", [])),
-                " ".join(tpl.get("requiresCustomNodes", [])),
-                " ".join(tpl.get("tags", [])),
-                tpl.get("_group_category", ""),
-            ]).lower()
-
-            if query_lower in searchable:
-                matches.append({
-                    "name": tpl.get("name", ""),
-                    "title": tpl.get("title", ""),
-                    "description": tpl.get("description", ""),
-                    "media_type": tpl.get("mediaType", ""),
-                    "group_category": tpl.get("_group_category", ""),
-                    "models": tpl.get("models", []),
-                    "requires_custom_nodes": tpl.get("requiresCustomNodes", []),
-                    "open_source": tpl.get("openSource", False),
-                    "vram_bytes": tpl.get("vram", 0),
-                    "usage": tpl.get("usage", 0),
-                })
-
-        # Sort by usage (popularity) descending
-        matches.sort(key=lambda m: m.get("usage", 0), reverse=True)
-        matches = matches[:limit]
-
-        return json.dumps({"query": query, "count": len(matches), "results": matches})
-    except Exception as e:
-        return json.dumps({"error": str(e)})
-
-
-@tool
 def get_workflow_template(template_name: str) -> str:
     """Load a workflow template by name. Checks custom templates first, then official Comfy-Org.
 
     Returns the full workflow JSON plus metadata and a node summary.
 
     Args:
-        template_name: Template name (without .json) from list_workflow_templates() or search_workflow_templates().
+        template_name: Template name (without .json) from list_workflow_templates().
     """
     try:
         # Normalise: strip .json suffix for matching
@@ -443,9 +384,7 @@ def get_workflow_template(template_name: str) -> str:
                 return json.dumps({
                     "name": lookup,
                     "source": "custom",
-                    "metadata": {},
                     "workflow": workflow,
-                    "summary": {"node_count": len(classes_used), "nodes": classes_used},
                 })
 
         # ── Try official templates ─────────────────────────────────────────
@@ -486,15 +425,15 @@ def get_workflow_template(template_name: str) -> str:
                 return json.dumps({
                     "name": lookup,
                     "source": "official",
-                    "metadata": metadata,
                     "workflow": workflow,
-                    "summary": {"node_count": len(classes_used), "nodes": classes_used},
+                    "models": metadata.get("models", []),
+                    "io": metadata.get("io", {})
                 })
 
         # ── Not found ──────────────────────────────────────────────────────
         return json.dumps({
             "error": f"Template '{template_name}' not found in custom or official templates.",
-            "hint": "Use list_workflow_templates() or search_workflow_templates() to find available templates.",
+            "hint": "Use list_workflow_templates() to find available templates.",
         })
     except Exception as e:
         return json.dumps({"error": str(e)})
