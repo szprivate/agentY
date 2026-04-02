@@ -9,7 +9,7 @@
     "agent_mode": "single",
 
     "pipeline": {
-      "researcher_llm": "claude",
+      "researcher_llm": "ollama",
       "researcher_ollama_model": "qwen3-coder:30b",
       "researcher_anthropic_model": "claude-haiku-4-5",
 

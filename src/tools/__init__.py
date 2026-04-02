@@ -61,8 +61,8 @@ from strands_tools import file_read, file_write, editor  # noqa: F401
 RESEARCHER_TOOLS: list = [
     # Template discovery / inspection
     list_workflow_templates,
-    search_workflow_templates,
-    get_workflow_template,
+    # search_workflow_templates,
+    # get_workflow_template,
     # Model catalogue queries
     get_model_types,
     get_models_in_folder,
@@ -108,8 +108,8 @@ BRAIN_TOOLS: list = [
     run_script,
     # Workflows & building
     list_workflow_templates,
-    search_workflow_templates,
-    get_workflow_template,
+    # search_workflow_templates,
+    # get_workflow_template,
     get_node_schema,
     search_nodes,
     validate_workflow,

@@ -1,63 +1,28 @@
 {
-  "handoff_version": "1.0",
-  "task_id": "gen_20260331_001",
-  "timestamp": "2026-03-31T14:22:07Z",
-
-  "brief": {
-    "user_prompt": "A cinematic wide shot of a woman walking through a neon-lit Tokyo alley at night, rain-slicked street, reflections, shallow depth of field",
-    "intent": "txt2img",
-    "aspect_ratio": "16:9",
-    "resolution": [1344, 768],
-    "style_tags": ["cinematic", "moody", "neon", "rain", "shallow_dof"]
+  "status": "ready | blocked",
+  "blockers": [],
+  "task": {
+    "type": "image edit | image generation | video flf | video i2v | video v2v | audi | ",
+    "description": "one sentence"
   },
-
-  "workflow": {
-    "template_name": "flux_dev_txt2img_base",
-    "template_source": "saved_templates",
-    "reasoning": "Standard Flux Dev txt2img — no controlnet or inpainting required. User wants high quality, so full dev model over schnell."
+  "template": {
+    "name": "... or null"
   },
-
-  "models": {
-    "unet": "FLUX1\\flux1-dev-fp8.safetensors",
-    "vae": "FLUX1\\ae.safetensors",
-    "clip1": "Flux-Dev\\t5xxl_fp16.safetensors",
-    "clip2": "Flux-Dev\\clip_l.safetensors",
-    "clip_type": "flux",
-    "loras": [],
-    "controlnets": []
-  },
-
-  "sampler_config": {
-    "steps": 25,
-    "cfg": 1.0,
-    "sampler_name": "euler",
-    "scheduler": "simple",
-    "denoise": 1.0,
-    "seed": null,
-    "model_sampling_flux": {
-      "max_shift": 1.15,
-      "base_shift": 0.5,
-      "width": 1344,
-      "height": 768
+  "input_images": [
+    {
+      "filename": "...",
+      "role": "master_image | reference_image | mask | depth_map | control_image",
+      "node": "VHS_LoadImagePath",
+      "slot": "image",
+      "path": "path to the image"
     }
-  },
-
+  ],
+  "input_image_count": 0,
+  "resolution_width": "width", 
+  "resolution_height": "height",
   "prompt": {
-    "positive": "A cinematic wide shot of a woman walking through a neon-lit Tokyo alley at night, rain-slicked street, vivid reflections on wet pavement, shallow depth of field, volumetric light, film grain, anamorphic bokeh",
-    "negative": ""
+    "positive": "...",
+    "negative": "... or null"
   },
-
-  "execution": {
-    "mode": "async",
-    "sync": false,
-    "output_mode": "file"
-  },
-
-  "metadata": {
-    "agent": "qwen-local",
-    "model": "qwen3-coder:32b",
-    "cost_tokens_input": 0,
-    "cost_tokens_output": 0,
-    "notes": "Local inference, zero API cost. Handing off to Claude for workflow JSON assembly and QA."
-  }
+  "notes_for_executor": "..."
 }
