@@ -505,6 +505,169 @@ def save_workflow(workflow_json: str, name: str = "") -> str:
         return json.dumps({"error": str(e)})
 
 
+# ── 4b. Patch workflow in-place (token-efficient) ────────────────────────────
+
+@tool
+def patch_workflow(workflow_path: str, patches: str) -> str:
+    """Apply targeted edits to a saved workflow without re-outputting the full JSON.
+
+    Much more token-efficient than save_workflow for modifying templates.
+    Each patch targets a specific node input or widget value.
+
+    Args:
+        workflow_path: File path to the workflow JSON (from get_workflow_template).
+        patches: JSON string — a list of patch objects. Each patch object has:
+            - node_id (str): The node ID to modify (e.g. "6", "190").
+            - input_name (str): The input field name to set (e.g. "text", "image", "filename").
+            - value: The new value (string, number, bool, or list for links like [node_id, slot]).
+            Optional fields:
+            - widget_values_index (int): If set, patch widget_values[index] inside the node instead of inputs.
+            - class_type (str): If set, change the node's class_type.
+            Example: [{"node_id": "6", "input_name": "text", "value": "a photo of a chimp"},
+                      {"node_id": "190", "input_name": "image", "value": "image.png"}]
+    """
+    try:
+        workflow = _load_workflow(workflow_path)
+    except (json.JSONDecodeError, FileNotFoundError, OSError) as e:
+        return json.dumps({"error": f"Cannot load workflow: {e}"})
+
+    try:
+        patch_list = json.loads(patches) if isinstance(patches, str) else patches
+    except json.JSONDecodeError as e:
+        return json.dumps({"error": f"Invalid patches JSON: {e}"})
+
+    if not isinstance(patch_list, list):
+        return json.dumps({"error": "patches must be a JSON array of patch objects."})
+
+    applied: list[str] = []
+    errors: list[str] = []
+
+    for i, patch in enumerate(patch_list):
+        nid = str(patch.get("node_id", ""))
+        if nid not in workflow:
+            errors.append(f"Patch {i}: node '{nid}' not found in workflow.")
+            continue
+
+        node = workflow[nid]
+
+        # Optional: change class_type
+        if "class_type" in patch:
+            node["class_type"] = patch["class_type"]
+            applied.append(f"Node {nid}: class_type → {patch['class_type']}")
+
+        # Patch widget_values by index
+        if "widget_values_index" in patch:
+            idx = int(patch["widget_values_index"])
+            wv = node.get("widget_values", node.get("widgets_values"))
+            wv_key = "widget_values" if "widget_values" in node else "widgets_values"
+            if isinstance(wv, list) and 0 <= idx < len(wv):
+                wv[idx] = patch["value"]
+                node[wv_key] = wv
+                applied.append(f"Node {nid}: {wv_key}[{idx}] → {patch['value']!r}")
+            else:
+                errors.append(f"Patch {i}: node '{nid}' has no {wv_key}[{idx}].")
+            continue
+
+        # Patch inputs
+        inp_name = patch.get("input_name")
+        if inp_name:
+            if "inputs" not in node:
+                node["inputs"] = {}
+            node["inputs"][inp_name] = patch["value"]
+            val_repr = repr(patch["value"])
+            if len(val_repr) > 80:
+                val_repr = val_repr[:77] + "..."
+            applied.append(f"Node {nid}.inputs.{inp_name} → {val_repr}")
+
+    # Save back
+    path = _save_workflow(workflow, name=Path(workflow_path).stem)
+
+    return json.dumps({
+        "workflow_path": path,
+        "applied": applied,
+        "errors": errors,
+        "patch_count": len(applied),
+    })
+
+
+@tool
+def add_workflow_node(workflow_path: str, node_id: str, class_type: str, inputs: str = "{}", meta_title: str = "") -> str:
+    """Add a new node to an existing workflow file.
+
+    Args:
+        workflow_path: File path to the workflow JSON.
+        node_id: The node ID string (e.g. "200"). Must not already exist.
+        class_type: The ComfyUI node class (e.g. "LoadImage", "CLIPTextEncode").
+        inputs: JSON string of the node's inputs dict.
+        meta_title: Optional display title for the node.
+    """
+    try:
+        workflow = _load_workflow(workflow_path)
+    except (json.JSONDecodeError, FileNotFoundError, OSError) as e:
+        return json.dumps({"error": f"Cannot load workflow: {e}"})
+
+    if node_id in workflow:
+        return json.dumps({"error": f"Node '{node_id}' already exists."})
+
+    try:
+        inputs_dict = json.loads(inputs) if isinstance(inputs, str) else inputs
+    except json.JSONDecodeError as e:
+        return json.dumps({"error": f"Invalid inputs JSON: {e}"})
+
+    node: dict = {"class_type": class_type, "inputs": inputs_dict}
+    if meta_title:
+        node["_meta"] = {"title": meta_title}
+
+    workflow[node_id] = node
+    path = _save_workflow(workflow, name=Path(workflow_path).stem)
+
+    return json.dumps({
+        "workflow_path": path,
+        "added_node": node_id,
+        "class_type": class_type,
+        "node_count": len([k for k in workflow if isinstance(workflow.get(k), dict)]),
+    })
+
+
+@tool
+def remove_workflow_node(workflow_path: str, node_id: str) -> str:
+    """Remove a node from an existing workflow and clean up any links pointing to it.
+
+    Args:
+        workflow_path: File path to the workflow JSON.
+        node_id: The node ID to remove.
+    """
+    try:
+        workflow = _load_workflow(workflow_path)
+    except (json.JSONDecodeError, FileNotFoundError, OSError) as e:
+        return json.dumps({"error": f"Cannot load workflow: {e}"})
+
+    if node_id not in workflow:
+        return json.dumps({"error": f"Node '{node_id}' not found."})
+
+    del workflow[node_id]
+
+    # Remove dangling links to the deleted node
+    cleaned = 0
+    for nid, node in workflow.items():
+        if not isinstance(node, dict):
+            continue
+        inputs = node.get("inputs", {})
+        for inp_name, inp_val in list(inputs.items()):
+            if isinstance(inp_val, list) and len(inp_val) == 2 and str(inp_val[0]) == node_id:
+                del inputs[inp_name]
+                cleaned += 1
+
+    path = _save_workflow(workflow, name=Path(workflow_path).stem)
+
+    return json.dumps({
+        "workflow_path": path,
+        "removed_node": node_id,
+        "cleaned_links": cleaned,
+        "node_count": len([k for k in workflow if isinstance(workflow.get(k), dict)]),
+    })
+
+
 # ── 5. Parse workflow connections (graph analysis) ────────────────────────────
 
 @tool

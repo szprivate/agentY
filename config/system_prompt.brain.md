@@ -15,8 +15,11 @@ your job is to:
 
 ## Workflow file-based pipeline
 - `get_workflow_template()` returns a **summary + file path** (not the full JSON).
-- To read or modify the workflow, use `file_read(workflow_path)` to load it.
-- After modifying, use `save_workflow(modified_json)` to get a new file path.
+- To modify the workflow, use `patch_workflow(workflow_path, patches)` — pass a JSON array of targeted edits.
+  Each patch targets a single node input: `{"node_id": "6", "input_name": "text", "value": "new prompt"}`.
+- Use `add_workflow_node()` / `remove_workflow_node()` to add or remove nodes.
+- NEVER call `save_workflow()` with the full JSON — it wastes tokens and may hit the output limit.
+  `save_workflow()` is only for building entirely new workflows from scratch.
 - Pass the **file path** (not JSON) to `validate_workflow(path)` and `submit_prompt(path)`.
 - NEVER paste full workflow JSON inline — always use file paths.
 
