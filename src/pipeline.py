@@ -18,28 +18,67 @@ import json
 import os
 import re
 import textwrap
-from typing import Any
+from typing import Any, List, Optional
 
+from pydantic import BaseModel, Field, ValidationError
 from strands import Agent
 
 from src.agent import create_brain_agent, create_researcher_agent
 
 
 # ---------------------------------------------------------------------------
-# JSON extraction helpers
+# Brainbriefing schema (Pydantic) — mirrors config/brainbrief_example.json
+# ---------------------------------------------------------------------------
+
+class InputImage(BaseModel):
+    """A single input image/video asset referenced in the task."""
+    filename: str = Field(description="Filename of the asset")
+    role: str = Field(description="Role: master_image | reference_image | mask | depth_map | control_image")
+    node: str = Field(description="ComfyUI loader node class name")
+    slot: str = Field(description="Input slot name on the node")
+    path: str = Field(description="Full path to the asset on disk")
+
+
+class Task(BaseModel):
+    """High-level description of what is being generated."""
+    type: str = Field(description="Task type: image edit | image generation | video flf | video i2v | video v2v | audio")
+    description: str = Field(description="One sentence summary of the task")
+
+
+class BriefTemplate(BaseModel):
+    """Selected ComfyUI workflow template."""
+    name: Optional[str] = Field(default=None, description="Template name, or null if not resolved")
+
+
+class BriefPrompt(BaseModel):
+    """Generation prompts."""
+    positive: str = Field(description="Positive generation prompt")
+    negative: Optional[str] = Field(default=None, description="Negative prompt, or null")
+
+
+class BrainBriefing(BaseModel):
+    """Structured handoff document from the Researcher to the Brain."""
+    status: str = Field(description="'ready' or 'blocked'")
+    blockers: List[str] = Field(default_factory=list, description="List of blocker descriptions")
+    task: Task
+    template: BriefTemplate
+    input_images: List[InputImage] = Field(default_factory=list)
+    input_image_count: int = Field(default=0, description="Must equal len(input_images)")
+    resolution_width: Optional[Any] = Field(default=None, description="Image width in pixels")
+    resolution_height: Optional[Any] = Field(default=None, description="Image height in pixels")
+    prompt: BriefPrompt
+    # notes_for_executor: Optional[str] = Field(default=None, description="Additional notes for the Brain")
+
+
+# ---------------------------------------------------------------------------
+# JSON extraction helper
 # ---------------------------------------------------------------------------
 
 def _extract_json(text: str) -> str | None:
-    """Pull the first JSON object out of *text*, even if wrapped in a code fence.
-
-    Returns the raw JSON string, or None if nothing parseable is found.
-    """
-    # 1. Strip optional ```json … ``` fences
+    """Pull the first JSON object out of *text*, even if wrapped in a code fence."""
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if fenced:
         return fenced.group(1).strip()
-
-    # 2. Grab the outermost { … } block
     start = text.find("{")
     if start == -1:
         return None
@@ -52,33 +91,6 @@ def _extract_json(text: str) -> str | None:
             if depth == 0:
                 return text[start : i + 1].strip()
     return None
-
-
-def _validate_brainbriefing(raw: str) -> dict:
-    """Parse *raw* JSON and check minimum required keys.
-
-    Raises ``ValueError`` with a descriptive message on failure.
-    """
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Researcher did not return valid JSON: {exc}") from exc
-
-    required_top = {"brief", "workflow", "models", "sampler_config", "prompt"}
-    missing = required_top - data.keys()
-    if missing:
-        raise ValueError(
-            f"Brainbriefing is missing required top-level keys: {sorted(missing)}"
-        )
-
-    for key in ("brief", "workflow"):
-        if not isinstance(data[key], dict):
-            raise ValueError(
-                f"Brainbriefing key '{key}' must be a JSON object, "
-                f"got {type(data[key]).__name__}"
-            )
-
-    return data
 
 
 # ---------------------------------------------------------------------------
@@ -175,9 +187,13 @@ class Pipeline:
     def _run_researcher(self, user_input: str) -> tuple[str | None, str | None, str]:
         """Run the Researcher and return ``(raw_json, error_message, researcher_output)``.
 
-        If the first attempt fails validation, the error is fed back to the
-        Researcher for up to ``_MAX_RESEARCHER_RETRIES`` correction rounds
-        before giving up.
+        Calls the Researcher as a normal text agent (preserving its tool use),
+        extracts the JSON from the response, then validates it with the
+        ``BrainBriefing`` Pydantic model.  On success the model is re-serialised
+        so the Brain always receives canonically formatted JSON.
+
+        If validation fails, the error is fed back to the Researcher for up to
+        ``_MAX_RESEARCHER_RETRIES`` correction rounds before giving up.
 
         Returns ``(json_str, None, researcher_output)`` on success, ``(None, error_str, last_output)`` on failure.
         """
@@ -189,7 +205,6 @@ class Pipeline:
         """).strip()
 
         last_error: str | None = None
-        last_response: str = ""
 
         for attempt in range(1 + self._MAX_RESEARCHER_RETRIES):
             if attempt == 0:
@@ -201,18 +216,16 @@ class Pipeline:
                         f"[pipeline] Researcher retry {attempt}/{self._MAX_RESEARCHER_RETRIES} …"
                     )
                 prompt = textwrap.dedent(f"""
-                    Your previous output failed validation with this error:
+                    Your previous brainbriefing output failed JSON/schema validation:
                     {last_error}
 
-                    Please output ONLY the corrected brainbriefing JSON object with
-                    all required top-level keys: brief, workflow, models,
-                    sampler_config, prompt.  No commentary, no markdown fences — just
-                    the raw JSON.
+                    Please output ONLY the corrected brainbriefing JSON with all
+                    required fields correctly typed. No prose, no markdown fences.
                 """).strip()
 
             last_response = str(self._researcher(prompt))
+            label = "initial" if attempt == 0 else f"retry {attempt}"
             if self._verbose:
-                label = "initial" if attempt == 0 else f"retry {attempt}"
                 print(f"[pipeline] Researcher finished ({label}). Extracting brainbriefing …")
 
             raw_json = _extract_json(last_response)
@@ -221,39 +234,41 @@ class Pipeline:
                 continue
 
             try:
-                briefing = _validate_brainbriefing(raw_json)
-            except ValueError as exc:
+                data = json.loads(raw_json)
+                briefing = BrainBriefing.model_validate(data)
+            except (json.JSONDecodeError, ValidationError) as exc:
                 last_error = str(exc)
+                if self._verbose:
+                    print(f"[pipeline] Researcher ({label}) validation failed: {last_error}")
                 continue
 
-            # Success
-            task_id = briefing.get("task_id", "unknown")
-            intent = briefing.get("brief", {}).get("intent", "unknown")
-            template = briefing.get("workflow", {}).get("template_name", "unknown")
+            # Success — re-serialise from validated model so Brain always gets clean JSON
+            raw_json = briefing.model_dump_json(indent=2)
             if self._verbose:
                 if attempt > 0:
                     print(f"[pipeline] Brainbriefing recovered after {attempt} retry(ies).")
                 print(
-                    f"[pipeline] Brainbriefing OK — task_id={task_id}, "
-                    f"intent={intent}, template={template}"
+                    f"[pipeline] Brainbriefing OK ({label}) — "
+                    f"status={briefing.status}, task={briefing.task.description!r}, "
+                    f"template={briefing.template.name!r}"
                 )
-            return raw_json, None, last_response
+            return raw_json, None, raw_json
 
         # All attempts exhausted
         return None, (
             f"Brainbriefing validation failed after {1 + self._MAX_RESEARCHER_RETRIES} attempts: "
-            f"{last_error}\n\nLast researcher output:\n{last_response}"
-        ), last_response
+            f"{last_error}"
+        ), ""
 
     def _build_brain_prompt(self, raw_json: str) -> str:
         """Format the Brain's input prompt from the resolved brainbriefing JSON."""
-        task_id = "unknown"
+        task_description = "unknown"
         try:
-            task_id = json.loads(raw_json).get("task_id", "unknown")
+            task_description = json.loads(raw_json).get("task", {}).get("description", "unknown")
         except Exception:
             pass
         return textwrap.dedent(f"""
-            Brainbriefing from Researcher (task_id={task_id}):
+            Brainbriefing from Researcher (task: {task_description}):
 
             ```json
             {raw_json}

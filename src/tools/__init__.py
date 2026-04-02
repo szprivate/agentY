@@ -28,10 +28,11 @@ from src.tools.system import (  # noqa: F401
 )
 from src.tools.upload import upload_image, upload_mask  # noqa: F401
 from src.tools.view import view_image, get_image_resolution  # noqa: F401
-from src.tools.vision import analyze_image, read_image  # noqa: F401
+from src.tools.vision import analyze_image  # noqa: F401
 from src.tools.shell import run_script  # noqa: F401
 from src.tools.workflow_builder import (  # noqa: F401
     get_node_schema,
+    get_workflow_catalog,
     get_workflow_template,
     list_workflow_templates,
     parse_workflow_connections,
@@ -55,6 +56,7 @@ from src.tools.huggingface import (  # noqa: F401
     check_local_model,
     download_hf_model,
 )
+from src.tools.file_tools import read_text_file  # noqa: F401
 from strands_tools import file_read, file_write, editor  # noqa: F401
 
 # ---------------------------------------------------------------------------
@@ -62,20 +64,16 @@ from strands_tools import file_read, file_write, editor  # noqa: F401
 # No workflow execution or I/O side-effects.
 # ---------------------------------------------------------------------------
 RESEARCHER_TOOLS: list = [
-    # Template discovery / inspection
-    # list_workflow_templates,
+    # Workflow template catalogue (cheap flat dict)
+    get_workflow_catalog,
+    # Full template metadata + workflow path
+    get_workflow_template,
     # Model catalogue queries
     get_model_types,
-    get_models_in_folder,
-    # File access (e.g. settings.json for extended model table)
-    file_read,
-    # Upload / view
-    upload_image,
-    view_image,
+    # File access
+    read_text_file,
     get_image_resolution,
-    # Vision / image analysis
     analyze_image,
-    read_image,
 ]
 
 # ---------------------------------------------------------------------------
@@ -102,7 +100,6 @@ BRAIN_TOOLS: list = [
     get_image_resolution,
     # Vision / image analysis
     analyze_image,
-    read_image,
     # Script execution (for skills)
     run_script,
     # Workflows & building

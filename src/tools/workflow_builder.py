@@ -347,6 +347,20 @@ def validate_workflow(workflow_path: str) -> str:
 # ── 4. Workflow templates (custom + official Comfy-Org) ───────────────────────
 
 @tool
+def get_workflow_catalog() -> str:
+    """Return the workflow template catalog as a flat {name: description} dictionary.
+
+    This is the cheapest way for the Researcher to discover available templates.
+    The dictionary keys are the exact names to pass to get_workflow_template().
+    """
+    catalog_path = _project_root() / "config" / "workflow_templates.json"
+    try:
+        return catalog_path.read_text(encoding="utf-8")
+    except Exception as exc:
+        return json.dumps({"error": str(exc)})
+
+
+@tool
 def list_workflow_templates(source: str = "all", verbose: bool = False) -> str:
     """List available workflow templates (custom local and/or official Comfy-Org).
 

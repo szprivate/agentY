@@ -111,83 +111,6 @@ def _downsize(data: bytes, img_fmt: str) -> bytes:
 # ---------------------------------------------------------------------------
 
 @tool
-def read_image(file_path: str) -> dict:
-    """Read a PNG or JPG image file from the hard drive and load it into the model's context.
-
-    Use this tool whenever you need to inspect, describe, or reason about an
-    image stored on the local file system.  Unlike ``analyze_image``, this
-    tool is focused purely on local files (no URL support) and makes no
-    assumptions about what question you want answered – it simply loads the
-    image so you can see it.
-
-    Images are automatically downsized to satisfy Claude's 5 MB / 1568 px
-    constraints before being forwarded.
-
-    Args:
-        file_path: Absolute or relative path to a PNG or JPG/JPEG image file.
-
-    Returns:
-        A Strands multimodal ToolResult containing the image bytes so the
-        model can process it directly.
-    """
-    if not file_path:
-        return {"status": "error", "content": [{"text": "file_path is required."}]}
-
-    p = Path(file_path).expanduser()
-    if not p.exists():
-        p = Path(os.getcwd()) / file_path
-    if not p.exists():
-        return {"status": "error", "content": [{"text": f"File not found: {file_path}"}]}
-
-    ext = p.suffix.lstrip(".").lower()
-    img_fmt = _FORMAT_MAP.get(ext)
-    if img_fmt not in ("png", "jpeg"):
-        # Try magic-byte sniff so renamed files still work
-        try:
-            raw_peek = p.read_bytes()[:12]
-        except Exception as exc:
-            return {"status": "error", "content": [{"text": f"Could not read file: {exc}"}]}
-        if raw_peek[:4] == b"\x89PNG":
-            img_fmt = "png"
-        elif raw_peek[:3] == b"\xff\xd8\xff":
-            img_fmt = "jpeg"
-        else:
-            return {
-                "status": "error",
-                "content": [{"text": f"Unsupported format '{ext}'. Only PNG and JPG/JPEG files are supported."}],
-            }
-
-    try:
-        data = p.read_bytes()
-    except Exception as exc:
-        return {"status": "error", "content": [{"text": f"Could not read file: {exc}"}]}
-
-    original_size = len(data)
-    data = _downsize(data, img_fmt)
-    downsized = len(data) < original_size
-
-    info_parts = [
-        f"Image loaded from: {p.resolve()}",
-        f"Format: {img_fmt.upper()}, Size: {len(data):,} bytes",
-    ]
-    if downsized:
-        info_parts.append(f"(downsized from {original_size:,} bytes to fit API limits)")
-
-    return {
-        "status": "success",
-        "content": [
-            {"text": "\n".join(info_parts)},
-            {
-                "image": {
-                    "format": img_fmt,
-                    "source": {"bytes": data},
-                }
-            },
-        ],
-    }
-
-
-@tool
 def analyze_image(
     file_path: str = "",
     image_url: str = "",
@@ -195,26 +118,24 @@ def analyze_image(
 ) -> dict:
     """Load an image from a local file path or URL and forward it to the model for visual analysis.
 
-    Use this tool whenever the user provides an image path or URL and asks you
-    to look at, describe, analyse, compare, or reason about its contents.
-    The tool returns the image as a multimodal content block so you can see
-    it directly in your context window.
+    Use this tool whenever you need to inspect, describe, or reason about an
+    image – whether it lives on the local file system or is reachable via URL.
+    Supported formats: PNG, JPEG/JPG, GIF, WEBP.
 
     Images are automatically downsized to satisfy Claude's 5 MB / 1568 px
     constraints before being forwarded.
 
     Args:
-        file_path: Absolute or relative path to a local image file
-                   (PNG, JPEG, GIF, WEBP).  Provide either this or
-                   ``image_url`` – not both.
-        image_url: Public http/https URL of an image to download and
-                   analyse.  Provide either this or ``file_path``.
+        file_path: Absolute or relative path to a local image file.
+                   Provide either this or ``image_url`` – not both.
+        image_url: Public http/https URL of an image to download.
+                   Provide either this or ``file_path``.
         question:  Optional specific question to answer about the image.
-                   If omitted the model will give a general description.
+                   If omitted the model will describe / analyse it freely.
 
     Returns:
-        A list of Strands content blocks (text + image) that the model
-        can process directly.
+        A Strands multimodal ToolResult containing the image bytes so the
+        model can process it directly.
     """
     # ------------------------------------------------------------------ #
     # 1. Load raw bytes                                                    #
@@ -225,7 +146,6 @@ def analyze_image(
 
     if file_path:
         p = Path(file_path).expanduser()
-        # Try the path as given, then relative to cwd
         if not p.exists():
             p = Path(os.getcwd()) / file_path
         if not p.exists():
@@ -254,10 +174,9 @@ def analyze_image(
     # ------------------------------------------------------------------ #
     img_fmt = _detect_format(source_name, detected_mime)
     if img_fmt is None:
-        # Last-resort: sniff magic bytes
         if data[:4] == b"\x89PNG":
             img_fmt = "png"
-        elif data[:3] in (b"\xff\xd8\xff",):
+        elif data[:3] == b"\xff\xd8\xff":
             img_fmt = "jpeg"
         elif data[:6] in (b"GIF87a", b"GIF89a"):
             img_fmt = "gif"
@@ -276,23 +195,19 @@ def analyze_image(
     # ------------------------------------------------------------------ #
     # 4. Build multimodal ToolResult                                       #
     # ------------------------------------------------------------------ #
-    # IMPORTANT: returning {"status": "success", "content": [...]} is the
-    # only way Strands skips JSON-serialisation and keeps the image block
-    # intact.  The Anthropic model adapter then converts bytes → base64
-    # automatically before sending to the API.
-    intro_parts = [f"Image loaded from: {source_name}"]
-    intro_parts.append(f"Format: {img_fmt.upper()}, Size: {len(data):,} bytes")
+    info_parts = [
+        f"Image loaded from: {source_name}",
+        f"Format: {img_fmt.upper()}, Size: {len(data):,} bytes",
+    ]
     if downsized:
-        intro_parts.append(f"(downsized from {original_size:,} bytes to fit API limits)")
+        info_parts.append(f"(downsized from {original_size:,} bytes to fit API limits)")
     if question:
-        intro_parts.append(f"\nUser question: {question}")
-    else:
-        intro_parts.append("\nPlease describe and analyse the image.")
+        info_parts.append(f"\nUser question: {question}")
 
     return {
         "status": "success",
         "content": [
-            {"text": "\n".join(intro_parts)},
+            {"text": "\n".join(info_parts)},
             {
                 "image": {
                     "format": img_fmt,
