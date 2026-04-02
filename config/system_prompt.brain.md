@@ -13,6 +13,13 @@ your job is to:
 
 ---
 
+## Workflow file-based pipeline
+- `get_workflow_template()` returns a **summary + file path** (not the full JSON).
+- To read or modify the workflow, use `file_read(workflow_path)` to load it.
+- After modifying, use `save_workflow(modified_json)` to get a new file path.
+- Pass the **file path** (not JSON) to `validate_workflow(path)` and `submit_prompt(path)`.
+- NEVER paste full workflow JSON inline — always use file paths.
+
 ## Workflow assembly rules
 - Load the template with `get_workflow_template(template_name)`.
 - Patch `brainbriefing.inputs_images` in-place
@@ -55,6 +62,10 @@ After the workflow completes:
 1. Identify exact file via search_huggingface_models() or get_model_info().
 2. check_local_model(filename) — if found, use it and stop.
 3. Only if not found: download_hf_model() to correct folder.
+
+## Execution tracking
+- After `submit_prompt()`, use `get_prompt_status_by_id(prompt_id)` to check if the workflow finished.
+- Do NOT call `get_history()` repeatedly to poll — use `get_prompt_status_by_id()` with the specific prompt_id.
 
 ## Slack
 After every generation, WITHOUT asking the user, immediately:

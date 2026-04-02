@@ -1,6 +1,7 @@
 """Prompt submission and status tools for ComfyUI."""
 
 import json
+from pathlib import Path
 
 from strands import tool
 
@@ -17,15 +18,21 @@ def get_prompt_status() -> str:
 
 
 @tool
-def submit_prompt(prompt_workflow: str, client_id: str = "") -> str:
+def submit_prompt(workflow_path: str, client_id: str = "") -> str:
     """Submit a workflow to the ComfyUI execution queue. Returns prompt_id on success.
 
     Args:
-        prompt_workflow: Workflow JSON string in ComfyUI API format (node-id keyed dict).
+        workflow_path: File path to the workflow JSON (from get_workflow_template or save_workflow).
         client_id: Optional client identifier for tracking.
     """
     try:
-        workflow = json.loads(prompt_workflow) if isinstance(prompt_workflow, str) else prompt_workflow
+        p = Path(workflow_path)
+        if p.exists() and p.suffix == ".json":
+            workflow = json.loads(p.read_text(encoding="utf-8"))
+        else:
+            # Legacy fallback: accept inline JSON string
+            workflow = json.loads(workflow_path)
+
         client = get_client()
         payload: dict = {"prompt": workflow}
         if client_id:
@@ -36,6 +43,6 @@ def submit_prompt(prompt_workflow: str, client_id: str = "") -> str:
             payload["extra_data"] = {"api_key_comfy_org": client.api_key}
         return json.dumps(client.post("/prompt", json_data=payload))
     except json.JSONDecodeError as e:
-        return json.dumps({"error": f"Invalid JSON in prompt_workflow: {e}"})
+        return json.dumps({"error": f"Invalid JSON in workflow: {e}"})
     except Exception as e:
         return json.dumps({"error": str(e)})

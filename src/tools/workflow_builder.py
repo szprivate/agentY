@@ -7,11 +7,59 @@ validate workflows, load templates, and reason about workflow structure.
 
 import json
 import os
+import uuid
 from pathlib import Path
 
 from strands import tool
 
 from src.comfyui_client import get_client
+
+
+# ── Workflow file buffer ───────────────────────────────────────────────────────
+# Instead of passing full workflow JSON through the conversation (thousands of
+# tokens), workflows are written to a temp directory and referenced by path.
+# This avoids bloating the sliding-window context.
+
+_WORKFLOW_DIR = Path(__file__).parent.parent.parent / "output" / "_workflows"
+
+
+def _save_workflow(workflow: dict, name: str = "") -> str:
+    """Save *workflow* dict to a JSON file and return the absolute path."""
+    _WORKFLOW_DIR.mkdir(parents=True, exist_ok=True)
+    stem = name or uuid.uuid4().hex[:8]
+    path = _WORKFLOW_DIR / f"{stem}.json"
+    path.write_text(json.dumps(workflow, indent=2), encoding="utf-8")
+    return str(path.resolve())
+
+
+def _load_workflow(path_or_json: str) -> dict:
+    """Load a workflow from *path_or_json*.
+
+    Accepts either:
+    - An absolute file path to a previously saved workflow JSON
+    - A raw JSON string (legacy callers)
+    """
+    # Try as file path first
+    p = Path(path_or_json)
+    if p.exists() and p.suffix == ".json":
+        return json.loads(p.read_text(encoding="utf-8"))
+    # Fallback: try parsing as inline JSON
+    return json.loads(path_or_json)
+
+
+# ── /object_info cache ─────────────────────────────────────────────────────────
+# The full node database from ComfyUI doesn't change during a session.
+# Caching avoids re-downloading it on every search_nodes / validate call.
+
+_object_info_cache: dict | None = None
+
+
+def _get_object_info() -> dict:
+    """Return the full /object_info dict, cached after first fetch."""
+    global _object_info_cache
+    if _object_info_cache is None:
+        _object_info_cache = get_client().get("/object_info")
+    return _object_info_cache
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -133,15 +181,15 @@ def get_node_schema(node_class: str) -> str:
 # ── 2. Search for nodes by capabilities ───────────────────────────────────────
 
 @tool
-def search_nodes(query: str, limit: int = 20) -> str:
-    """Search ComfyUI nodes by keyword across names, descriptions, categories, and I/O types.
+def search_nodes(query: str, limit: int = 10) -> str:
+    """Search ComfyUI nodes by keyword across names, descriptions, and categories.
 
     Args:
         query: Search term e.g. 'upscale', 'mask', 'lora', 'vae decode'.
-        limit: Max results (default 20).
+        limit: Max results (default 10).
     """
     try:
-        all_nodes = get_client().get("/object_info")
+        all_nodes = _get_object_info()
         if isinstance(all_nodes, dict) and "error" in all_nodes:
             return json.dumps(all_nodes)
 
@@ -179,9 +227,7 @@ def search_nodes(query: str, limit: int = 20) -> str:
                     "node_class": class_name,
                     "display_name": display,
                     "category": category,
-                    "description": desc[:200] if desc else "",
-                    "input_types": sorted(input_types),
-                    "output_types": outputs,
+                    "description": desc[:120] if desc else "",
                 })
 
         # Sort: exact class name matches first, then by category
@@ -204,24 +250,24 @@ def search_nodes(query: str, limit: int = 20) -> str:
 # ── 3. Validate a workflow (dry-run) ──────────────────────────────────────────
 
 @tool
-def validate_workflow(workflow_json: str) -> str:
+def validate_workflow(workflow_path: str) -> str:
     """Validate a ComfyUI workflow (local + server-side) without executing it.
 
     Returns valid=true/false, local_errors list, and server_errors dict.
 
     Args:
-        workflow_json: Workflow JSON string in ComfyUI API format.
+        workflow_path: File path to the workflow JSON (from get_workflow_template or save_workflow).
     """
     try:
-        workflow = json.loads(workflow_json) if isinstance(workflow_json, str) else workflow_json
-    except json.JSONDecodeError as e:
-        return json.dumps({"valid": False, "local_errors": [f"Invalid JSON: {e}"], "server_errors": {}})
+        workflow = _load_workflow(workflow_path)
+    except (json.JSONDecodeError, FileNotFoundError, OSError) as e:
+        return json.dumps({"valid": False, "local_errors": [f"Cannot load workflow: {e}"], "server_errors": {}})
 
     local_errors = []
 
     # ── Fetch object_info for local validation ─────────────────────────────
     try:
-        all_nodes = get_client().get("/object_info")
+        all_nodes = _get_object_info()
     except Exception:
         all_nodes = {}
 
@@ -351,91 +397,110 @@ def list_workflow_templates(source: str = "all", verbose: bool = False) -> str:
 
 @tool
 def get_workflow_template(template_name: str) -> str:
-    """Load a workflow template by name. Checks custom templates first, then official Comfy-Org.
+    """Load a workflow template by name. Saves the full workflow to a file and returns a compact summary with the file path.
 
-    Returns the full workflow JSON plus metadata and a node summary.
+    The returned summary includes: node list (id, class, title, key literal inputs),
+    model info, and io metadata. The full workflow JSON is at the returned
+    ``workflow_path`` — pass that path to validate_workflow / submit_prompt.
 
     Args:
-        template_name: Template name (without .json) from list_workflow_templates().
+        template_name: Template name (without .json) from the workflow-templates skill or list_workflow_templates().
     """
     try:
         # Normalise: strip .json suffix for matching
         lookup = template_name.removesuffix(".json")
+        workflow = None
+        source = ""
+        metadata: dict = {}
 
         # ── Try custom templates first ─────────────────────────────────────
         tdir = _templates_dir()
-        custom_candidates = [
-            tdir / f"{lookup}.json",
-            tdir / template_name,
-        ]
-        for candidate in custom_candidates:
+        for candidate in [tdir / f"{lookup}.json", tdir / template_name]:
             if candidate.exists():
                 with open(candidate, encoding="utf-8") as f:
                     workflow = json.load(f)
-
-                classes_used = []
-                for nid, node in workflow.items():
-                    if not isinstance(node, dict):
-                        continue
-                    cls = node.get("class_type", "unknown")
-                    title = node.get("_meta", {}).get("title", cls)
-                    classes_used.append({"node_id": nid, "class_type": cls, "title": title})
-
-                return json.dumps({
-                    "name": lookup,
-                    "source": "custom",
-                    "workflow": workflow,
-                })
+                source = "custom"
+                break
 
         # ── Try official templates ─────────────────────────────────────────
-        ot_dir = _official_templates_dir()
-        official_candidates = [
-            ot_dir / f"{lookup}.json",
-            ot_dir / template_name,
-        ]
-        for candidate in official_candidates:
-            if candidate.exists():
-                with open(candidate, encoding="utf-8") as f:
-                    workflow = json.load(f)
+        if workflow is None:
+            ot_dir = _official_templates_dir()
+            for candidate in [ot_dir / f"{lookup}.json", ot_dir / template_name]:
+                if candidate.exists():
+                    with open(candidate, encoding="utf-8") as f:
+                        workflow = json.load(f)
+                    source = "official"
+                    # Fetch metadata from index
+                    for tpl in _load_official_index():
+                        if tpl.get("name") == lookup:
+                            metadata = {
+                                "models": tpl.get("models", []),
+                                "io": tpl.get("io", {}),
+                            }
+                            break
+                    break
 
-                # Fetch metadata from index
-                metadata = {}
-                for tpl in _load_official_index():
-                    if tpl.get("name") == lookup:
-                        metadata = {
-                            "title": tpl.get("title", ""),
-                            "description": tpl.get("description", ""),
-                            "media_type": tpl.get("mediaType", ""),
-                            "models": tpl.get("models", []),
-                            "requires_custom_nodes": tpl.get("requiresCustomNodes", []),
-                            "open_source": tpl.get("openSource", False),
-                            "io": tpl.get("io", {}),
-                        }
-                        break
+        if workflow is None:
+            return json.dumps({
+                "error": f"Template '{template_name}' not found.",
+                "hint": "Use list_workflow_templates() or the workflow-templates skill.",
+            })
 
-                # Build node summary
-                classes_used = []
-                for nid, node in workflow.items():
-                    if not isinstance(node, dict):
-                        continue
-                    cls = node.get("class_type", "unknown")
-                    title = node.get("_meta", {}).get("title", cls)
-                    classes_used.append({"node_id": nid, "class_type": cls, "title": title})
+        # ── Save full workflow to file ─────────────────────────────────────
+        workflow_path = _save_workflow(workflow, name=lookup)
 
-                
-                return json.dumps({
-                    "name": lookup,
-                    "source": "official",
-                    "workflow": workflow,
-                    "models": metadata.get("models", []),
-                    "io": metadata.get("io", {})
-                })
+        # ── Build compact node summary ─────────────────────────────────────
+        node_summary = []
+        for nid, node in workflow.items():
+            if not isinstance(node, dict):
+                continue
+            cls = node.get("class_type", "unknown")
+            title = node.get("_meta", {}).get("title", cls)
+            # Include key literal inputs (skip links which are lists)
+            inputs = node.get("inputs", {})
+            key_inputs = {
+                k: v for k, v in inputs.items()
+                if not isinstance(v, list) and v is not None and v != ""
+            }
+            entry: dict = {"id": nid, "class": cls, "title": title}
+            if key_inputs:
+                entry["inputs"] = key_inputs
+            node_summary.append(entry)
 
-        # ── Not found ──────────────────────────────────────────────────────
-        return json.dumps({
-            "error": f"Template '{template_name}' not found in custom or official templates.",
-            "hint": "Use list_workflow_templates() to find available templates.",
-        })
+        result: dict = {
+            "name": lookup,
+            "source": source,
+            "workflow_path": workflow_path,
+            "node_count": len(node_summary),
+            "nodes": node_summary,
+        }
+        if metadata.get("models"):
+            result["models"] = metadata["models"]
+        if metadata.get("io"):
+            result["io"] = metadata["io"]
+
+        return json.dumps(result)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@tool
+def save_workflow(workflow_json: str, name: str = "") -> str:
+    """Save a modified workflow JSON to a file and return the file path.
+
+    Use this after patching a workflow template. Pass the returned path to
+    validate_workflow() and submit_prompt().
+
+    Args:
+        workflow_json: The complete workflow JSON string in ComfyUI API format.
+        name: Optional name for the file (default: auto-generated).
+    """
+    try:
+        workflow = json.loads(workflow_json) if isinstance(workflow_json, str) else workflow_json
+        path = _save_workflow(workflow, name=name)
+        return json.dumps({"workflow_path": path, "node_count": len([k for k in workflow if isinstance(workflow.get(k), dict)])})
+    except json.JSONDecodeError as e:
+        return json.dumps({"error": f"Invalid JSON: {e}"})
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -443,16 +508,16 @@ def get_workflow_template(template_name: str) -> str:
 # ── 5. Parse workflow connections (graph analysis) ────────────────────────────
 
 @tool
-def parse_workflow_connections(workflow_json: str) -> str:
-    """Parse a ComfyUI workflow and return its graph structure: nodes, connections, roots, leaves, and execution order.
+def parse_workflow_connections(workflow_path: str) -> str:
+    """Parse a ComfyUI workflow and return its graph structure: roots, leaves, connections, and execution order.
 
     Args:
-        workflow_json: Workflow JSON string in ComfyUI API format.
+        workflow_path: File path to the workflow JSON (from get_workflow_template or save_workflow).
     """
     try:
-        workflow = json.loads(workflow_json) if isinstance(workflow_json, str) else workflow_json
-    except json.JSONDecodeError as e:
-        return json.dumps({"error": f"Invalid JSON: {e}"})
+        workflow = _load_workflow(workflow_path)
+    except (json.JSONDecodeError, FileNotFoundError, OSError) as e:
+        return json.dumps({"error": f"Cannot load workflow: {e}"})
 
     nodes_info: dict = {}
     connections: list = []

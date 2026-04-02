@@ -8,28 +8,19 @@ from src.comfyui_client import get_client
 
 
 @tool
-def get_queue() -> str:
-    """Get the current ComfyUI queue (running and pending items)."""
-    try:
-        return json.dumps(get_client().get("/queue"))
-    except Exception as e:
-        return json.dumps({"error": str(e)})
-
-
-@tool
-def manage_queue(action: str) -> str:
-    """Clear the ComfyUI execution queue.
+def queue(action: str = "status") -> str:
+    """Get or manage the ComfyUI execution queue.
 
     Args:
-        action: 'clear' (pending) or 'clear_running' (running items).
+        action: 'status' (view queue), 'clear' (clear pending), or 'clear_running' (stop running items).
     """
     try:
-        if action == "clear":
-            payload = {"clear": True}
-        elif action == "clear_running":
-            payload = {"clear_running": True}
+        if action == "status":
+            return json.dumps(get_client().get("/queue"))
+        elif action in ("clear", "clear_running"):
+            payload = {"clear": True} if action == "clear" else {"clear_running": True}
+            return json.dumps(get_client().post("/queue", json_data=payload))
         else:
-            return json.dumps({"error": f"Unknown action '{action}'. Use 'clear' or 'clear_running'"})
-        return json.dumps(get_client().post("/queue", json_data=payload))
+            return json.dumps({"error": f"Unknown action '{action}'. Use 'status', 'clear', or 'clear_running'"})
     except Exception as e:
         return json.dumps({"error": str(e)})

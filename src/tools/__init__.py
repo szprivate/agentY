@@ -8,8 +8,8 @@ directly to ComfyUI server REST endpoints.
 from src.tools.execution import free_memory, interrupt_execution  # noqa: F401
 from src.tools.history import (  # noqa: F401
     get_history,
-    get_prompt_history,
-    manage_history,
+    get_prompt_status_by_id,
+    clear_history,
 )
 from src.tools.models import (  # noqa: F401
     get_model_types,
@@ -19,7 +19,7 @@ from src.tools.models import (  # noqa: F401
     get_view_metadata,
 )
 from src.tools.prompt import get_prompt_status, submit_prompt  # noqa: F401
-from src.tools.queue import get_queue, manage_queue  # noqa: F401
+from src.tools.queue import queue  # noqa: F401
 from src.tools.system import (  # noqa: F401
     get_embeddings,
     get_extensions,
@@ -35,6 +35,7 @@ from src.tools.workflow_builder import (  # noqa: F401
     get_workflow_template,
     list_workflow_templates,
     parse_workflow_connections,
+    save_workflow,
     search_nodes,
     validate_workflow,
 )
@@ -60,11 +61,9 @@ from strands_tools import file_read, file_write, editor  # noqa: F401
 RESEARCHER_TOOLS: list = [
     # Template discovery / inspection
     list_workflow_templates,
-    # get_workflow_template,
     # Model catalogue queries
     get_model_types,
     get_models_in_folder,
-    get_node_info,
     # File access (e.g. settings.json for extended model table)
     file_read,
     # Upload / view
@@ -83,18 +82,17 @@ BRAIN_TOOLS: list = [
     # Models / nodes
     get_model_types,
     get_models_in_folder,
-    get_node_info,
+    get_node_schema,
     # Prompt execution
     submit_prompt,
     interrupt_execution,
     free_memory,
     # Queue
-    get_queue,
-    manage_queue,
-    # History
+    queue,
+    # History / status tracking
     get_history,
-    get_prompt_history,
-    manage_history,
+    get_prompt_status_by_id,
+    clear_history,
     # Upload / view
     upload_image,
     view_image,
@@ -105,12 +103,10 @@ BRAIN_TOOLS: list = [
     # Script execution (for skills)
     run_script,
     # Workflows & building
-    list_workflow_templates,
-    # get_workflow_template,
-    get_node_schema,
+    get_workflow_template,
+    save_workflow,
     search_nodes,
     validate_workflow,
-    parse_workflow_connections,
     # Slack DM
     slack_send_dm,
     slack_send_image,
@@ -123,8 +119,6 @@ BRAIN_TOOLS: list = [
     download_hf_model,
     # File operations (strands built-in)
     file_read,
-    # file_write,
-    # editor,
 ]
 
 # Legacy alias – single-agent mode keeps the full set.

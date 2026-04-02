@@ -42,10 +42,17 @@ Follow these steps:
 9. **Output** 
    - when the workflow is finished, send the resulting image / video to slack using slack_send_image
 
+## Workflow file-based pipeline
+- `get_workflow_template()` returns a **summary + file path** (not the full JSON).
+- To read or modify the workflow, use `file_read(workflow_path)` to load it.
+- After modifying, use `save_workflow(modified_json)` to get a new file path.
+- Pass the **file path** (not JSON) to `validate_workflow(path)` and `submit_prompt(path)`.
+- NEVER paste full workflow JSON inline — always use file paths.
+
 ## Known Models (pre-validated, no lookup needed)
 Paths relative to `{{EXTERNAL_MODEL_DIR}}`:
 {{MODEL_TABLE}}
-Any model NOT listed above → call `list_models` to verify.
+Any model NOT listed above → call `get_models_in_folder` to verify.
 
 ## Models
 - check_local_model(filename) — if found, use it.
@@ -70,7 +77,7 @@ Slack CANNOT render local file paths or base64 data URIs — they appear as brok
 text. You MUST upload every generated image/video via the tools below.
 After every generation, WITHOUT asking the user, immediately:
 1. Call view_image(filename=..., save_to="./output/<filename>") to download the
-   file to disk. NEVER omit save_to.
+   file to disk.
 2. If `size_bytes` > 5 242 880 (5 MB) in the response, activate the **image-downsize**
    skill and run the downsize script to produce a smaller copy before proceeding.
 3. Call slack_send_image(file_path="./output/<filename>") to post the image to slack.

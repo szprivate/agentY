@@ -1,6 +1,5 @@
 """Image viewing tool for ComfyUI."""
 
-import base64
 import json
 import os
 
@@ -13,22 +12,21 @@ from src.comfyui_client import get_client
 @tool
 def view_image(
     filename: str,
+    save_to: str,
     subfolder: str = "",
     image_type: str = "output",
-    save_to: str = "",
 ) -> str:
-    """Download an image from ComfyUI. Saves to a local path or returns base64.
+    """Download an image from ComfyUI and save it to a local path.
 
-    When you need to send an image to Slack:
-      ALWAYS provide save_to (e.g. save_to="./output/image.png") so the file
-      is written to disk, then pass that path to slack_send_image().
-      NEVER use the base64 response for Slack — it will be sent as raw text.
+    After saving, use analyze_image(file_path=save_to) if you need to
+    inspect the image contents. Use slack_send_image(file_path=save_to) to
+    post it to Slack.
 
     Args:
         filename: Image filename on the server e.g. 'ComfyUI_00001_.png'.
+        save_to: Local file path to save the image (e.g. './output/image.png'). Required.
         subfolder: Optional subfolder where the image is located.
         image_type: Directory type: 'output', 'input', or 'temp'.
-        save_to: Local file path to save the image; returns base64 if omitted.
     """
     try:
         params: dict = {"filename": filename, "type": image_type}
@@ -39,31 +37,18 @@ def view_image(
         content_type = resp.headers.get("content-type", "image/png")
         image_bytes = resp.content
 
-        if save_to:
-            os.makedirs(os.path.dirname(save_to) or ".", exist_ok=True)
-            with open(save_to, "wb") as f:
-                f.write(image_bytes)
-            result = {
-                "saved_to": save_to,
-                "content_type": content_type,
-                "size_bytes": len(image_bytes),
-            }
-            if len(image_bytes) > 5 * 1024 * 1024:
-                result["warning"] = (
-                    f"Image is {len(image_bytes) / 1024 / 1024:.1f} MB — exceeds Claude's 5 MB limit. "
-                    "Activate the 'image-downsize' skill and run the downsize script before sending this image to Claude or Slack."
-                )
-            return json.dumps(result)
-
+        os.makedirs(os.path.dirname(save_to) or ".", exist_ok=True)
+        with open(save_to, "wb") as f:
+            f.write(image_bytes)
         result = {
-            "base64": base64.b64encode(image_bytes).decode("utf-8"),
+            "saved_to": save_to,
             "content_type": content_type,
             "size_bytes": len(image_bytes),
         }
         if len(image_bytes) > 5 * 1024 * 1024:
             result["warning"] = (
-                f"Image is {len(image_bytes) / 1024 / 1024:.1f} MB — exceeds Claude's 5 MB limit. "
-                "Activate the 'image-downsize' skill and run the downsize script before sending this image to Claude or Slack."
+                f"Image is {len(image_bytes) / 1024 / 1024:.1f} MB — exceeds 5 MB limit. "
+                "Activate the 'image-downsize' skill to produce a smaller copy."
             )
         return json.dumps(result)
     except Exception as e:
