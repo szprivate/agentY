@@ -63,7 +63,7 @@ from strands_tools import file_read, file_write, editor  # noqa: F401
 # ---------------------------------------------------------------------------
 RESEARCHER_TOOLS: list = [
     # Template discovery / inspection
-    list_workflow_templates,
+    # list_workflow_templates,
     # Model catalogue queries
     get_model_types,
     get_models_in_folder,
