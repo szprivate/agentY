@@ -13,6 +13,7 @@ Environment variables:
     SLACK_MEMBER_ID  - Slack member ID of the primary user for DMs
 """
 
+import contextvars
 import json
 import logging
 import os
@@ -35,32 +36,39 @@ _slack_client: Optional[WebClient] = None
 _dm_channel_id: Optional[str] = None
 
 # ---------------------------------------------------------------------------
-# Thread-local channel context (set by slack_server when processing events)
+# Channel context (set by slack_server when processing events)
+#
+# Uses contextvars.ContextVar instead of threading.local() so that the
+# context is automatically propagated when Strands' run_async() copies it
+# via contextvars.copy_context() into a ThreadPoolExecutor thread.
 # ---------------------------------------------------------------------------
-_channel_context = threading.local()
+_ctx_channel_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("_ctx_channel_id", default=None)
+_ctx_thread_ts: contextvars.ContextVar[str] = contextvars.ContextVar("_ctx_thread_ts", default="")
 
 
 def set_slack_channel_context(channel_id: str, thread_ts: str = "") -> None:
-    """Set the Slack channel context for the current thread.
+    """Set the Slack channel context for the current execution context.
 
     Called by the Slack event server before invoking the agent so that
     tools automatically send files/messages to the originating channel.
+    The values propagate to child threads created via
+    ``contextvars.copy_context().run()``.
     """
-    _channel_context.channel_id = channel_id
-    _channel_context.thread_ts = thread_ts
+    _ctx_channel_id.set(channel_id)
+    _ctx_thread_ts.set(thread_ts)
 
 
 def clear_slack_channel_context() -> None:
     """Clear the channel context after the agent finishes."""
-    _channel_context.channel_id = None
-    _channel_context.thread_ts = None
+    _ctx_channel_id.set(None)
+    _ctx_thread_ts.set("")
 
 
 def _get_active_channel(channel_id: str = "") -> str:
     """Return the channel to use, preferring an explicit value, then context."""
     if channel_id:
         return channel_id
-    ctx = getattr(_channel_context, "channel_id", None)
+    ctx = _ctx_channel_id.get()
     if ctx:
         return ctx
     return ""
@@ -70,7 +78,7 @@ def _get_active_thread_ts(thread_ts: str = "") -> str:
     """Return the thread_ts to use, preferring explicit, then context."""
     if thread_ts:
         return thread_ts
-    return getattr(_channel_context, "thread_ts", "") or ""
+    return _ctx_thread_ts.get() or ""
 
 
 def _get_slack_client() -> WebClient:
