@@ -31,6 +31,7 @@ if _project_root not in sys.path:
 load_dotenv(os.path.join(_project_root, ".env"))
 
 from src.pipeline import create_pipeline  # noqa: E402
+from src.utils.secrets import get_secret  # noqa: E402
 from src.utils.slack_server import start_slack_server  # noqa: E402
 from src.tools.slack_tools import install_console_forwarder  # noqa: E402
 
@@ -97,10 +98,10 @@ def main() -> None:
     args = parser.parse_args()
 
     # ── Environment checks ─────────────────────────────────────────────── #
-    api_key = os.environ.get("API_KEY_COMFY_ORG", "")
+    api_key = get_secret("COMFYUI_API_KEY")
     print(
         "[agentY] ComfyUI API key loaded." if api_key
-        else "[agentY] No API_KEY_COMFY_ORG set - using unauthenticated access."
+        else "[agentY] No COMFYUI_API_KEY set - using unauthenticated access."
     )
 
     hf_token = os.environ.get("HF_TOKEN", "")

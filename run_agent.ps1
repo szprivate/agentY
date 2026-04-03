@@ -38,7 +38,7 @@ if ($Help) {
     Write-Host "Environment variables (.env file in project root):"
     Write-Host "  ANTHROPIC_API_KEY                Anthropic API key"
     Write-Host "  OLLAMA_HOST                      Ollama server URL (default: http://localhost:11434)"
-    Write-Host "  API_KEY_COMFY_ORG                ComfyUI API key"
+    Write-Host "  COMFYUI_API_KEY                  ComfyUI API key"
     Write-Host "  HF_TOKEN                         Hugging Face token for gated models"
     Write-Host "  SLACK_BOT_TOKEN                  Slack bot token (enables Slack integration)"
     Write-Host "  SLACK_MEMBER_ID                  Slack member ID"

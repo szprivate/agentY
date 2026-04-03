@@ -9,11 +9,11 @@ Usage::
 
     from src.utils.secrets import get_secret
 
-    api_key = get_secret("API_KEY_COMFY_ORG")
+    api_key = get_secret("COMFYUI_API_KEY")
 
 Known secrets
 -------------
-    API_KEY_COMFY_ORG   – ComfyUI / Comfy.org API key
+    COMFYUI_API_KEY     – ComfyUI / Comfy.org API key
     HF_TOKEN            – Hugging Face access token
     SLACK_BOT_TOKEN     – Slack Bot User OAuth Token (xoxb-…)
     SLACK_APP_TOKEN     – Slack App-Level Token (xapp-…)

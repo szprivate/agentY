@@ -22,7 +22,7 @@ class ComfyUIClient:
 
     def __init__(self, base_url: str | None = None, api_key: str | None = None):
         self.base_url = (base_url or self._load_base_url()).rstrip("/")
-        self.api_key = api_key or get_secret("API_KEY_COMFY_ORG")
+        self.api_key = api_key or get_secret("COMFYUI_API_KEY")
 
     @staticmethod
     def _load_base_url() -> str:

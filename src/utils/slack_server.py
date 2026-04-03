@@ -28,6 +28,7 @@ import re
 import asyncio
 import threading
 import time
+from pathlib import Path
 from typing import Optional
 
 import requests as http_requests
@@ -252,7 +253,8 @@ def _build_content_blocks(text: str, files: list) -> list:
     """
     blocks: list = []
     media_count = 0
-    saved_paths: list[str] = []
+    # Each entry: {"original": path, "small": path_or_None, "type": "image"|"video"|"file"}
+    saved_files: list[dict] = []
 
     for f in files:
         mimetype = f.get("mimetype", "")
@@ -275,19 +277,30 @@ def _build_content_blocks(text: str, files: list) -> list:
                 continue
 
             # Save ORIGINAL bytes to disk — ComfyUI needs full resolution.
-            # analyze_image() downsizes in-memory on demand when it calls the LLM.
             save_path = os.path.join(_slack_downloads_dir(), name)
             with open(save_path, "wb") as fp:
                 fp.write(data)
-            saved_paths.append(save_path)
 
-            # Downsize IN MEMORY ONLY for the inline content block (no disk overwrite)
-            block_data = _downsize_image_bytes(data, img_fmt)
+            # Downsize in-memory to check if this image exceeds API limits.
+            small_data = _downsize_image_bytes(data, img_fmt)  # no disk write yet
+            if small_data != data:
+                # Image was too large — save the smaller copy so the Researcher
+                # can reference it if the user explicitly wants a smaller input.
+                stem = Path(name).stem
+                suffix = Path(name).suffix or f".{img_fmt}"
+                small_name = f"{stem}_small{suffix}"
+                small_path = os.path.join(_slack_downloads_dir(), small_name)
+                with open(small_path, "wb") as fp:
+                    fp.write(small_data)
+            else:
+                small_path = ""
+
+            saved_files.append({"original": save_path, "small": small_path, "type": "image"})
 
             blocks.append({
                 "image": {
                     "format": img_fmt,
-                    "source": {"bytes": block_data},
+                    "source": {"bytes": small_data},
                 }
             })
             media_count += 1
@@ -313,7 +326,7 @@ def _build_content_blocks(text: str, files: list) -> list:
             save_path = os.path.join(_slack_downloads_dir(), name)
             with open(save_path, "wb") as fp:
                 fp.write(data)
-            saved_paths.append(save_path)
+            saved_files.append({"original": save_path, "small": "", "type": "video"})
 
             blocks.append({
                 "video": {
@@ -331,10 +344,29 @@ def _build_content_blocks(text: str, files: list) -> list:
         # No media - just return text directly (agent accepts str)
         return text  # type: ignore[return-value]
 
-    # Build text that tells the agent where the files are on disk
-    paths_info = "\n".join(f"  - {p}" for p in saved_paths)
-    file_context = f"\n\n[Attached files saved to disk:\n{paths_info}\nUse these paths when tools need a file_path.]"
+    # Build text that tells the agent where the files are on disk.
+    # For images, both the original (full-res) and a pre-downsized copy are
+    # listed so the Researcher can pick the right path for the BrainBriefing.
+    path_lines = []
+    for entry in saved_files:
+        orig = entry["original"]
+        small = entry["small"]
+        kind = entry["type"]
+        if small:
+            path_lines.append(
+                f"  - {orig}  [{kind}, ORIGINAL full-resolution — use this for ComfyUI]"
+            )
+            path_lines.append(
+                f"  - {small}  [{kind}, downsized copy — use this ONLY if the user explicitly asked for a smaller/downsized input]"
+            )
+        else:
+            path_lines.append(f"  - {orig}  [{kind}]")
 
+    paths_info = "\n".join(path_lines)
+    file_context = (
+        f"\n\n[Attached files saved to disk:\n{paths_info}\n"
+        "Use the ORIGINAL path unless the user explicitly requested a smaller/downsized input.]"
+    )
     if text:
         blocks.insert(0, {"text": text + file_context})
     else:
