@@ -1,36 +1,36 @@
 """
-Slack Events API server for agentY.
+Slack Socket Mode listener for agentY.
 
-Runs a lightweight Flask app that:
-  1. Responds to Slack URL-verification challenges.
-  2. Receives event callbacks (DM messages) and feeds them to the agent.
-  3. Replies via Slack using the agent's response.
+Connects to Slack via Socket Mode (WebSocket) instead of a public HTTP
+endpoint, so no ngrok tunnel or port-forwarding is required.
 
-An ngrok tunnel is started automatically so a public Request URL is
-available for Slack Event Subscriptions configuration.
+Uses ``slack_sdk.socket_mode.SocketModeClient`` (the built-in SDK client)
+rather than Slack Bolt, keeping the dependency set minimal.
 
 Environment variables (loaded from .env by main.py):
-    SLACK_BOT_TOKEN   - Bot User OAuth Token (xoxb-...)
-    SLACK_MEMBER_ID   - Default Slack member ID for DMs
-    NGROK_AUTH_TOKEN   - (Optional) ngrok auth token for persistent tunnels
-    SLACK_SIGNING_SECRET - (Optional) Slack signing secret for request verification
+    SLACK_BOT_TOKEN    - Bot User OAuth Token (xoxb-...)
+    SLACK_APP_TOKEN    - App-level token with connections:write scope (xapp-...)
+    SLACK_MEMBER_ID    - Default Slack member ID for DMs
+
+Slack app configuration:
+    Required Bot Token Scopes:
+        chat:write, im:history, im:read, im:write,
+        files:read, files:write, reactions:write
+    Socket Mode:
+        Enable "Socket Mode" in your Slack app settings.
+        Create an App-Level Token with the connections:write scope.
 """
 
-import hashlib
-import hmac
 import io
-import json
 import logging
 import os
 import re
 import asyncio
-import base64
 import threading
 import time
 from typing import Optional
 
 import requests as http_requests
-from flask import Flask, Response, jsonify, request
 from PIL import Image
 
 # ---------------------------------------------------------------------------
@@ -59,27 +59,7 @@ if not logger.handlers:
 # Module-level references (set by start_slack_server)
 # ---------------------------------------------------------------------------
 _agent_ref = None          # Will hold the Strands Agent instance
-_flask_app = Flask(__name__)
-_ngrok_url: Optional[str] = None
-_bot_user_id: Optional[str] = None  # filled on first boot to ignore own msgs
-
-SLACK_SERVER_PORT = int(os.environ.get("SLACK_SERVER_PORT", "3000"))
-
-
-# ---------------------------------------------------------------------------
-# Slack request verification (optional but recommended)
-# ---------------------------------------------------------------------------
-
-def _verify_slack_signature(body: bytes, timestamp: str, signature: str) -> bool:
-    """Verify the request actually came from Slack using the signing secret."""
-    secret = os.environ.get("SLACK_SIGNING_SECRET", "")
-    if not secret:
-        return True  # skip verification when secret is not configured
-    basestring = f"v0:{timestamp}:{body.decode('utf-8')}"
-    computed = "v0=" + hmac.new(
-        secret.encode(), basestring.encode(), hashlib.sha256
-    ).hexdigest()
-    return hmac.compare_digest(computed, signature)
+_bot_user_id: Optional[str] = None  # filled on first message to ignore own msgs
 
 
 # ---------------------------------------------------------------------------
@@ -485,271 +465,166 @@ def _handle_message_async(content, channel: str, thread_ts: str, user: str):
 
 
 # ---------------------------------------------------------------------------
-# Flask routes
+# Event routing
 # ---------------------------------------------------------------------------
 
-@_flask_app.route("/slack/events", methods=["POST"])
-def slack_events():
-    """Handle incoming Slack Events API requests."""
-    body = request.get_data()
-    logger.debug("Incoming request to /slack/events  (%d bytes)", len(body))
-
-    # -- Optional signature verification --------------------------------- #
-    ts = request.headers.get("X-Slack-Request-Timestamp", "")
-    sig = request.headers.get("X-Slack-Signature", "")
-    if not _verify_slack_signature(body, ts, sig):
-        logger.warning("Slack signature verification FAILED")
-        return Response("Unauthorized", status=401)
-
-    payload = request.get_json(force=True)
-    payload_type = payload.get("type", "")
-    logger.debug("Payload type: %s", payload_type)
-
-    # -- URL verification challenge -------------------------------------- #
-    if payload_type == "url_verification":
-        challenge = payload.get("challenge", "")
-        logger.info("Responding to Slack URL verification challenge")
-        return jsonify({"challenge": challenge})
-
-    # -- Event callback -------------------------------------------------- #
-    if payload_type == "event_callback":
-        event_id = payload.get("event_id", "")
-        if _is_duplicate(event_id):
-            logger.debug("Duplicate event %s - skipping", event_id)
-            return Response("OK", status=200)
-
-        event = payload.get("event", {})
-        event_type = event.get("type", "")
-        channel_type = event.get("channel_type", "")
-        logger.info(
-            "Event: type=%s  channel_type=%s  user=%s  event_id=%s",
-            event_type, channel_type, event.get("user", "?"), event_id,
-        )
-
-        # We care about messages - both DMs (im) and channels where bot is mentioned
-        if event_type == "message":
-            # Ignore bot's own messages, message_changed/deleted subtypes, etc.
-            subtype = event.get("subtype")
-            bot_id = event.get("bot_id")
-            user = event.get("user", "")
-
-            # Allow file_share (image uploads) through; block other subtypes
-            _ALLOWED_SUBTYPES = {None, "file_share"}
-            if subtype not in _ALLOWED_SUBTYPES:
-                logger.debug("Ignoring message with subtype=%s", subtype)
-                return Response("OK", status=200)
-            if bot_id:
-                logger.debug("Ignoring message from bot_id=%s", bot_id)
-                return Response("OK", status=200)
-
-            # Resolve our own bot user id
-            bot_uid = _resolve_bot_user_id()
-            if user == bot_uid:
-                logger.debug("Ignoring own message from bot user %s", bot_uid)
-                return Response("OK", status=200)
-
-            text = event.get("text", "").strip()
-            files = event.get("files", [])
-
-            if not text and not files:
-                logger.debug("Ignoring empty message")
-                return Response("OK", status=200)
-
-            channel = event.get("channel", "")
-            thread_ts = event.get("ts", "")  # reply in thread under their msg
-
-            # Build content: plain text or multimodal blocks with images
-            if files:
-                content = _build_content_blocks(text, files)
-            else:
-                content = text
-
-            logger.info(
-                ">> Processing message from user=%s channel=%s: %s",
-                user, channel,
-                text[:120] if text else f"[{len(files)} file(s)]",
-            )
-
-            # Process asynchronously so we respond to Slack within 3 s
-            t = threading.Thread(
-                target=_handle_message_async,
-                args=(content, channel, thread_ts, user),
-                daemon=True,
-            )
-            t.start()
-        else:
-            logger.debug("Unhandled event type: %s", event_type)
-
-    return Response("OK", status=200)
+# file_share is a valid subtype when a user uploads a file with a caption.
+_ALLOWED_SUBTYPES = {None, "file_share"}
 
 
-@_flask_app.route("/health", methods=["GET"])
-def health():
-    """Simple health-check endpoint."""
-    return jsonify({"status": "ok", "ngrok_url": _ngrok_url})
+def _route_message_event(event: dict, event_id: str = "") -> None:
+    """Validate and dispatch a Slack message event to the agent thread.
+
+    Encapsulates the same filtering logic that was previously in the Flask
+    /slack/events route, now called from the Socket Mode event handler.
+    """
+    # Dedup check (Socket Mode can deliver duplicates on reconnect)
+    if event_id and _is_duplicate(event_id):
+        logger.debug("Duplicate event %s - skipping", event_id)
+        return
+
+    subtype = event.get("subtype")
+    bot_id = event.get("bot_id")
+    user = event.get("user", "")
+    event_type = event.get("type", "")
+    channel_type = event.get("channel_type", "")
+
+    logger.info(
+        "Event: type=%s  channel_type=%s  user=%s  event_id=%s",
+        event_type, channel_type, user, event_id,
+    )
+
+    # Allow file_share (image uploads) through; block other subtypes
+    if subtype not in _ALLOWED_SUBTYPES:
+        logger.debug("Ignoring message with subtype=%s", subtype)
+        return
+    if bot_id:
+        logger.debug("Ignoring message from bot_id=%s", bot_id)
+        return
+
+    # Resolve our own bot user id and ignore our own messages
+    bot_uid = _resolve_bot_user_id()
+    if user == bot_uid:
+        logger.debug("Ignoring own message from bot user %s", bot_uid)
+        return
+
+    text = event.get("text", "").strip()
+    files = event.get("files", [])
+
+    if not text and not files:
+        logger.debug("Ignoring empty message")
+        return
+
+    channel = event.get("channel", "")
+    thread_ts = event.get("ts", "")  # reply in thread under their msg
+
+    # Build content: plain text or multimodal blocks with images/video
+    if files:
+        content = _build_content_blocks(text, files)
+    else:
+        content = text
+
+    logger.info(
+        ">> Processing message from user=%s channel=%s: %s",
+        user, channel,
+        text[:120] if text else f"[{len(files)} file(s)]",
+    )
+
+    # Process asynchronously so Slack's ACK isn't delayed
+    t = threading.Thread(
+        target=_handle_message_async,
+        args=(content, channel, thread_ts, user),
+        daemon=True,
+    )
+    t.start()
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
-def start_slack_server(agent) -> Optional[str]:
-    """Start the Flask server + ngrok tunnel in background threads.
+def start_slack_server(agent) -> bool:
+    """Start the Slack Socket Mode listener in a background thread.
+
+    Uses ``slack_sdk.socket_mode.SocketModeClient`` directly (no Bolt).
+    No public URL or ngrok tunnel is required — the listener connects to
+    Slack over an outbound WebSocket using the App-Level Token.
 
     Args:
         agent: The Strands Agent instance that will process messages.
 
     Returns:
-        The public ngrok URL (e.g. ``https://xxxx.ngrok-free.app``) or
-        ``None`` if the server could not be started.
+        True if the Socket Mode connection was established successfully,
+        False otherwise.
     """
-    global _agent_ref, _ngrok_url
+    global _agent_ref
     _agent_ref = agent
 
-    # -- Start ngrok tunnel --------------------------------------------- #
-    try:
-        from pyngrok import ngrok, conf
-        from pyngrok.exception import PyngrokNgrokHTTPError
+    bot_token = os.environ.get("SLACK_BOT_TOKEN", "")
+    app_token = os.environ.get("SLACK_APP_TOKEN", "")
 
-        auth_token = os.environ.get("NGROK_AUTH_TOKEN", "")
-        if auth_token:
-            conf.get_default().auth_token = auth_token
-
-        # ----------------------------------------------------------------
-        # Step 1: check whether a tunnel on our port is already running
-        # inside this ngrok agent process and reuse it.
-        # ----------------------------------------------------------------
-        tunnel = None
-        try:
-            for t in ngrok.get_tunnels():
-                if str(SLACK_SERVER_PORT) in t.config.get("addr", ""):
-                    logger.info("Reusing existing ngrok tunnel on port %d: %s",
-                                SLACK_SERVER_PORT, t.public_url)
-                    tunnel = t
-                    break
-            # Disconnect any tunnel that is NOT on our port (stale leftovers)
-            if tunnel is None:
-                for t in ngrok.get_tunnels():
-                    try:
-                        ngrok.disconnect(t.public_url)
-                        logger.info("Disconnected stale tunnel: %s", t.public_url)
-                    except Exception as _disc_exc:
-                        logger.warning("Could not disconnect %s: %s", t.public_url, _disc_exc)
-        except Exception as _list_exc:
-            logger.debug("Could not list existing tunnels: %s", _list_exc)
-
-        # ----------------------------------------------------------------
-        # Step 2: open a fresh tunnel if we didn't find an existing one.
-        # ----------------------------------------------------------------
-        if tunnel is None:
-            def _connect_tunnel():
-                # pyngrok >= 7.x uses scheme="https"; older used bind_tls=True
-                try:
-                    return ngrok.connect(
-                        addr=str(SLACK_SERVER_PORT),
-                        proto="http",
-                        bind_tls=True,
-                    )
-                except TypeError:
-                    return ngrok.connect(
-                        addr=str(SLACK_SERVER_PORT),
-                        schemes=["https"],
-                    )
-
-            try:
-                tunnel = _connect_tunnel()
-            except PyngrokNgrokHTTPError as http_exc:
-                err_str = str(http_exc)
-                # ERR_NGROK_334 – the cloud endpoint is already registered
-                # (e.g. previous run crashed without cleaning up).
-                # Option A: extract the live URL from the error message and
-                #           reuse it – the tunnel is already forwarding.
-                # Option B: if we can't parse a URL, kill the local agent
-                #           and retry so we get a clean connection.
-                if "already online" in err_str or "ERR_NGROK_334" in err_str:
-                    url_match = re.search(r"https://[^\s'\"\\]+\.ngrok[^\s'\"\\]*", err_str)
-                    if url_match:
-                        _ngrok_url = url_match.group(0).rstrip(".")
-                        logger.info(
-                            "Cloud endpoint already online – reusing URL: %s", _ngrok_url
-                        )
-                    else:
-                        logger.warning(
-                            "ERR_NGROK_334 but could not parse URL – killing ngrok and retrying"
-                        )
-                        ngrok.kill()
-                        time.sleep(2)
-                        tunnel = _connect_tunnel()
-                else:
-                    raise
-
-        if tunnel is not None:
-            _ngrok_url = tunnel.public_url
-
-        # Ensure https
-        if _ngrok_url and _ngrok_url.startswith("http://"):
-            _ngrok_url = _ngrok_url.replace("http://", "https://", 1)
-
-        logger.info("ngrok tunnel active: %s", _ngrok_url)
-    except Exception as exc:
-        logger.error("Failed to start ngrok tunnel: %s", exc, exc_info=True)
-        print(f"[agentY] ERROR: Could not start ngrok tunnel: {exc}")
-        print("[agentY] Install ngrok CLI and/or set NGROK_AUTH_TOKEN in .env")
-        return None
-
-    # -- Start Flask in a daemon thread --------------------------------- #
-    def _run_flask():
-        logger.info("Starting Flask server on 0.0.0.0:%d", SLACK_SERVER_PORT)
-
-        # Redirect Werkzeug access-log and Flask app logger to the same file
-        # so none of their output appears in the terminal.
-        _file_handler = logging.FileHandler(_LOG_FILE, encoding="utf-8")
-        _file_handler.setFormatter(logging.Formatter(
-            "[%(asctime)s] [%(name)s] %(levelname)s: %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        ))
-        for _log_name in ("werkzeug", "flask.app"):
-            _wz = logging.getLogger(_log_name)
-            _wz.handlers.clear()
-            _wz.addHandler(_file_handler)
-            _wz.propagate = False
-
-        _flask_app.run(
-            host="0.0.0.0",
-            port=SLACK_SERVER_PORT,
-            debug=False,
-            use_reloader=False,
+    if not bot_token:
+        logger.error("SLACK_BOT_TOKEN is not set")
+        return False
+    if not app_token:
+        logger.error(
+            "SLACK_APP_TOKEN is not set. "
+            "Create an App-Level Token with connections:write scope in your Slack app settings."
         )
+        return False
 
-    flask_thread = threading.Thread(target=_run_flask, daemon=True)
-    flask_thread.start()
+    try:
+        from slack_sdk.socket_mode import SocketModeClient
+        from slack_sdk.socket_mode.request import SocketModeRequest
+        from slack_sdk.socket_mode.response import SocketModeResponse
+        from slack_sdk import WebClient
 
-    # Give Flask a moment to bind the port
-    time.sleep(1)
+        web_client = WebClient(token=bot_token)
 
-    events_url = f"{_ngrok_url}/slack/events"
-    print()
-    print("=" * 60)
-    print("  SLACK EVENT SUBSCRIPTIONS - Request URL")
-    print("=" * 60)
-    print(f"  {events_url}")
-    print("=" * 60)
-    print()
-    print("  Paste this URL into your Slack app settings:")
-    print("  https://api.slack.com/apps  ->  Event Subscriptions")
-    print("  -> Enable Events -> Request URL")
-    print()
-    print("  Subscribe to bot events:")
-    print("    - message.im  (messages in DMs)")
-    print()
-    print("  Also ensure these Bot Token Scopes are granted:")
-    print("    - chat:write, im:history, im:read, im:write")
-    print("    - files:read, files:write (for image/video tools)")
-    print()
+        def _process(client: SocketModeClient, req: SocketModeRequest) -> None:
+            """Handle every Socket Mode envelope from Slack."""
+            # Always acknowledge immediately so Slack doesn't retry
+            client.send_socket_mode_response(
+                SocketModeResponse(envelope_id=req.envelope_id)
+            )
 
-    return events_url
+            if req.type != "events_api":
+                logger.debug("Ignored Socket Mode request type: %s", req.type)
+                return
 
+            event = req.payload.get("event", {})
+            event_id = req.payload.get("event_id", "")
 
-def get_ngrok_url() -> Optional[str]:
-    """Return the current ngrok public URL, or None."""
-    return _ngrok_url
+            if event.get("type") == "message":
+                _route_message_event(event, event_id=event_id)
+            else:
+                logger.debug("Ignored Slack event type: %s", event.get("type"))
+
+        sm_client = SocketModeClient(
+            app_token=app_token,
+            web_client=web_client,
+        )
+        sm_client.socket_mode_request_listeners.append(_process)
+
+        # connect() is non-blocking — it starts the WebSocket in a background thread
+        sm_client.connect()
+        logger.info("Slack Socket Mode client connected.")
+
+        # Give the WebSocket a moment to complete the handshake
+        time.sleep(2)
+
+        if sm_client.is_connected():
+            logger.info("Slack Socket Mode listener started successfully.")
+            return True
+        else:
+            logger.error("Socket Mode client failed to connect within timeout.")
+            return False
+
+    except ImportError as exc:
+        logger.error(
+            "slack_sdk is not installed. Run: pip install slack-sdk\n%s", exc
+        )
+        return False
+    except Exception as exc:
+        logger.error("Failed to start Slack Socket Mode: %s", exc, exc_info=True)
+        return False

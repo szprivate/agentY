@@ -41,6 +41,7 @@ load_dotenv(os.path.join(_project_root, ".env"))
 from src.agent import create_agent, _cfg  # noqa: E402
 from src.pipeline import create_pipeline  # noqa: E402
 from src.slack_server import start_slack_server  # noqa: E402
+from src.tools.slack_tools import install_console_forwarder  # noqa: E402
 
 
 def main() -> None:
@@ -149,11 +150,15 @@ def main() -> None:
         print("[agentY] No HF_TOKEN set - gated model downloads will fail.")
 
     slack_token = os.environ.get("SLACK_BOT_TOKEN", "")
+    slack_app_token = os.environ.get("SLACK_APP_TOKEN", "")
     slack_member = os.environ.get("SLACK_MEMBER_ID", "")
-    if slack_token and slack_member:
-        print("[agentY] Slack integration enabled.")
+    if slack_token and slack_app_token:
+        print("[agentY] Slack integration enabled (Socket Mode).")
     else:
-        print("[agentY] Slack env vars missing - Slack tools will be unavailable.")
+        if slack_token:
+            print("[agentY] SLACK_APP_TOKEN missing – Slack Socket Mode unavailable.")
+        else:
+            print("[agentY] Slack env vars missing - Slack tools will be unavailable.")
 
     # ── Build callable agent / pipeline ───────────────────────────────── #
     if mode == "single":
@@ -176,17 +181,19 @@ def main() -> None:
         if args.skip_brain:
             print("[agentY] SkipBrain is activated: Brain stage will be bypassed and Researcher output will be returned.")
 
-    # ── Start Slack Events API server + ngrok tunnel ───────────────────── #
-    if slack_token and slack_member:
-        events_url = start_slack_server(agent)
-        if events_url:
-            print(f"[agentY] Slack event listener active at {events_url}")
+    # ── Start Slack Socket Mode listener ──────────────────────────────── #
+    if slack_token and slack_app_token:
+        ok = start_slack_server(agent)
+        if ok:
+            print("[agentY] Slack Socket Mode listener active.")
             print("[agentY] Slack server logs → output/slack_server.log")
+            install_console_forwarder()
         else:
-            print("[agentY] WARNING: Slack event server failed to start.")
-            print("[agentY]   Ensure ngrok is installed and NGROK_AUTH_TOKEN is set.")
+            print("[agentY] WARNING: Slack Socket Mode failed to start.")
+            print("[agentY]   Check SLACK_BOT_TOKEN and SLACK_APP_TOKEN in .env")
+            print("[agentY]   Ensure 'connections:write' scope on the App-Level Token.")
     else:
-        print("[agentY] Skipping Slack event server (missing env vars).")
+        print("[agentY] Skipping Slack listener (missing SLACK_BOT_TOKEN or SLACK_APP_TOKEN).")
 
     print("\n=== agentY - ComfyUI Agent ===")
     print("Type your message (or 'quit' / 'exit' to stop).\n")

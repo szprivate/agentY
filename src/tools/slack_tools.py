@@ -16,6 +16,7 @@ Environment variables:
 import json
 import logging
 import os
+import sys
 import threading
 from pathlib import Path
 from typing import Optional
@@ -497,3 +498,148 @@ def slack_send_json(
     except Exception as exc:
         logger.error("Error in slack_send_json: %s", exc, exc_info=True)
         return json.dumps({"ok": False, "error": str(exc)})
+
+
+# ---------------------------------------------------------------------------
+# Console → Slack forwarder
+# ---------------------------------------------------------------------------
+
+class SlackConsoleForwarder:
+    """Wraps sys.stdout and mirrors all console output to Slack.
+
+    Messages are buffered for a short delay so that rapid consecutive
+    print() calls are collapsed into a single Slack message.  A maximum
+    buffer age ensures long-running output (e.g. the Researcher stage)
+    is posted periodically rather than held until the stage finishes.
+    Sending is done in a daemon thread to keep the main thread non-blocking.
+    The class guards against recursion so Slack SDK log output doesn't
+    trigger another Slack post.
+    """
+
+    def __init__(self, original_stdout, flush_delay: float = 0.5, max_buffer_age: float = 3.0):
+        self._original = original_stdout
+        self._flush_delay = flush_delay
+        self._max_buffer_age = max_buffer_age
+        # Each entry: (channel, thread_ts, text)
+        self._buffer: list[tuple[str, str, str]] = []
+        self._lock = threading.Lock()
+        self._timer: Optional[threading.Timer] = None
+        self._buffer_start: Optional[float] = None  # monotonic time of first buffered write
+        # Re-entrancy guard: set True while we're actively posting to Slack
+        self._sending = threading.local()
+
+    # ------------------------------------------------------------------
+    # stdout interface
+    # ------------------------------------------------------------------
+
+    def write(self, text: str) -> int:
+        import time as _time
+
+        self._original.write(text)
+        stripped = text.strip()
+        if stripped and not getattr(self._sending, "active", False):
+            # Capture the channel context NOW, in the calling thread, because
+            # _channel_context is threading.local() and won't be visible inside
+            # the Timer callback (which runs in a fresh thread).
+            channel = _get_active_channel()
+            if not channel:
+                try:
+                    channel = _get_dm_channel()
+                except Exception:
+                    channel = ""
+            thread_ts = _get_active_thread_ts()
+            if channel:
+                with self._lock:
+                    now = _time.monotonic()
+                    self._buffer.append((channel, thread_ts, text))
+
+                    # Record when the buffer started accumulating
+                    if self._buffer_start is None:
+                        self._buffer_start = now
+
+                    # If buffer has been accumulating longer than max_buffer_age,
+                    # flush immediately instead of resetting the debounce timer.
+                    if (now - self._buffer_start) >= self._max_buffer_age:
+                        if self._timer is not None:
+                            self._timer.cancel()
+                            self._timer = None
+                        # Flush in a separate thread to avoid blocking the caller
+                        t = threading.Thread(target=self._flush_to_slack, daemon=True)
+                        t.start()
+                    else:
+                        # Normal debounce: restart the short timer
+                        if self._timer is not None:
+                            self._timer.cancel()
+                        self._timer = threading.Timer(self._flush_delay, self._flush_to_slack)
+                        self._timer.daemon = True
+                        self._timer.start()
+        return len(text)
+
+    def flush(self) -> None:
+        self._original.flush()
+
+    def fileno(self):
+        return self._original.fileno()
+
+    def isatty(self) -> bool:
+        return getattr(self._original, "isatty", lambda: False)()
+
+    # ------------------------------------------------------------------
+    # Slack posting
+    # ------------------------------------------------------------------
+
+    def _flush_to_slack(self) -> None:
+        """Send accumulated buffer to Slack (best-effort).
+
+        Groups consecutive entries that share the same (channel, thread_ts)
+        so bursts of print() calls become a single Slack message.
+        """
+        with self._lock:
+            if not self._buffer:
+                return
+            entries = list(self._buffer)
+            self._buffer.clear()
+            self._timer = None
+            self._buffer_start = None  # reset age tracking
+
+        # Group by (channel, thread_ts) preserving order of first appearance
+        groups: dict[tuple[str, str], list[str]] = {}
+        for channel, thread_ts, text in entries:
+            key = (channel, thread_ts)
+            groups.setdefault(key, []).append(text)
+
+        self._sending.active = True
+        try:
+            client = _get_slack_client()
+            for (channel, thread_ts), parts in groups.items():
+                text = "".join(parts).strip()
+                if not text:
+                    continue
+                params: dict = {"channel": channel, "text": f"```{text}```"}
+                if thread_ts:
+                    params["thread_ts"] = thread_ts
+                try:
+                    client.chat_postMessage(**params)
+                except Exception:
+                    pass
+        except Exception:
+            pass  # best-effort; never let Slack errors break stdout
+        finally:
+            self._sending.active = False
+
+
+def install_console_forwarder(flush_delay: float = 0.5, max_buffer_age: float = 3.0) -> None:
+    """Replace sys.stdout with a SlackConsoleForwarder.
+
+    Safe to call multiple times – installs the wrapper only once.
+
+    Args:
+        flush_delay: Seconds of silence before posting the accumulated
+                     buffer to Slack (debounce, default 0.5).
+        max_buffer_age: Maximum seconds the buffer can accumulate before
+                        being force-flushed, even during continuous output
+                        (default 3.0).
+    """
+    if not isinstance(sys.stdout, SlackConsoleForwarder):
+        sys.stdout = SlackConsoleForwarder(sys.stdout, flush_delay=flush_delay, max_buffer_age=max_buffer_age)
+        logger.info("SlackConsoleForwarder installed – console output will be mirrored to Slack.")
