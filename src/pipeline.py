@@ -203,7 +203,7 @@ class Pipeline:
         )
 
     # The Slack server and main.py both do:  response = agent(user_input)
-    def __call__(self, user_input: str, **kwargs: Any) -> str:
+    def __call__(self, user_input, **kwargs: Any) -> str:
         return self.run(user_input, **kwargs)
 
     # Delegate metric access to the Brain so the Slack server can read
@@ -212,7 +212,7 @@ class Pipeline:
     def event_loop_metrics(self):  # noqa: ANN201
         return self._brain.event_loop_metrics
 
-    def run(self, user_input: str, **_: Any) -> str:
+    def run(self, user_input, **_: Any) -> str:
         """Run the full pipeline for *user_input* and return the Brain's response."""
         raw_json, error, researcher_output = self._run_researcher(user_input)
         if error:
@@ -229,7 +229,7 @@ class Pipeline:
             print("[pipeline] Brain finished.")
         return brain_response
 
-    async def stream_async(self, user_input: str):  # noqa: ANN201
+    async def stream_async(self, user_input):  # noqa: ANN201
         """Async generator compatible with the Slack server's streaming loop.
 
         Runs the Researcher synchronously (it's a single-turn spec dump),
@@ -321,7 +321,7 @@ class Pipeline:
 
     _MAX_RESEARCHER_RETRIES = 2  # up to 2 correction rounds after the first attempt
 
-    def _run_researcher(self, user_input: str) -> tuple[str | None, str | None, str]:
+    def _run_researcher(self, user_input) -> tuple[str | None, str | None, str]:
         """Run the Researcher and return ``(raw_json, error_message, researcher_output)``.
 
         Calls the Researcher as a normal text agent (preserving its tool use),
@@ -332,20 +332,41 @@ class Pipeline:
         If validation fails, the error is fed back to the Researcher for up to
         ``_MAX_RESEARCHER_RETRIES`` correction rounds before giving up.
 
+        ``user_input`` may be a plain string *or* a list of Strands content
+        blocks (the multimodal format produced by the Slack server when the
+        user attaches images/videos).  When it is a list, the image/video
+        blocks are forwarded to the Researcher intact so it can visually
+        inspect the attachments via its ``analyze_image`` tool.
+
         Returns ``(json_str, None, researcher_output)`` on success, ``(None, error_str, last_output)`` on failure.
         """
-        researcher_prompt = textwrap.dedent(f"""
+        # Build a text-only version of the user request for the preamble and
+        # for retry prompts where we can only send plain text.
+        if isinstance(user_input, list):
+            text_parts = [block["text"] for block in user_input if "text" in block]
+            user_text = "\n".join(text_parts)
+        else:
+            user_text = user_input
+
+        researcher_prompt_text = textwrap.dedent(f"""
             User request:
-            {user_input}
+            {user_text}
 
             Resolve all fields and output the brainbriefing JSON.
         """).strip()
+
+        # Always pass only the text prompt to the Researcher.
+        # When user_input is a multimodal list, the text block already contains
+        # the on-disk paths of any attached files (added by slack_server._build_content_blocks).
+        # The Researcher can call analyze_image(file_path=...) if it needs to inspect
+        # an image — much cheaper than embedding raw bytes in every LLM call.
+        first_attempt_input: Any = researcher_prompt_text
 
         last_error: str | None = None
 
         for attempt in range(1 + self._MAX_RESEARCHER_RETRIES):
             if attempt == 0:
-                prompt = researcher_prompt
+                prompt = first_attempt_input
             else:
                 # Feed the validation error back so the model can self-correct
                 if self._verbose:

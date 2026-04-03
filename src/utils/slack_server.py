@@ -173,14 +173,14 @@ _MAX_IMAGE_BYTES = 5 * 1024 * 1024   # 5 MB hard limit
 _OPTIMAL_LONG_EDGE = 1568            # Claude resizes beyond this anyway
 
 
-def _downsize_image_bytes(data: bytes, img_fmt: str, save_path: str) -> bytes:
+def _downsize_image_bytes(data: bytes, img_fmt: str, save_path: str = "") -> bytes:
     """Downsize *data* in-memory so it fits Claude's 5 MB limit.
 
     Also caps the long edge at 1568 px for optimal quality (Claude
     server-side resizes anything larger, adding latency with no benefit).
 
-    Overwrites *save_path* on disk with the resized version so the
-    agent's file-path reference stays valid.
+    If *save_path* is given, overwrites that file with the resized version.
+    Leave it empty to downsize in memory only (original file is preserved).
 
     Returns the (possibly smaller) image bytes.
     """
@@ -229,9 +229,10 @@ def _downsize_image_bytes(data: bytes, img_fmt: str, save_path: str) -> bytes:
 
     result = buf.getvalue()
 
-    # Overwrite on-disk copy
-    with open(save_path, "wb") as fp:
-        fp.write(result)
+    # Overwrite on-disk copy only when a path was supplied
+    if save_path:
+        with open(save_path, "wb") as fp:
+            fp.write(result)
 
     logger.info(
         "Downsized image for Claude API: %d bytes -> %d bytes (%dx%d, %s)",
@@ -273,19 +274,20 @@ def _build_content_blocks(text: str, files: list) -> list:
             if not data:
                 continue
 
-            # Save to disk so agent tools can reference the file
+            # Save ORIGINAL bytes to disk — ComfyUI needs full resolution.
+            # analyze_image() downsizes in-memory on demand when it calls the LLM.
             save_path = os.path.join(_slack_downloads_dir(), name)
             with open(save_path, "wb") as fp:
                 fp.write(data)
             saved_paths.append(save_path)
 
-            # Downsize if needed to fit Claude's 5 MB / 1568px limits
-            data = _downsize_image_bytes(data, img_fmt, save_path)
+            # Downsize IN MEMORY ONLY for the inline content block (no disk overwrite)
+            block_data = _downsize_image_bytes(data, img_fmt)
 
             blocks.append({
                 "image": {
                     "format": img_fmt,
-                    "source": {"bytes": data},
+                    "source": {"bytes": block_data},
                 }
             })
             media_count += 1
