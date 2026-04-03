@@ -23,6 +23,8 @@ from strands.agent.conversation_manager import SlidingWindowConversationManager
 from strands.hooks.registry import HookRegistry
 from strands.hooks.events import AfterToolCallEvent
 
+from src.comfyui_interrupt_hook import ComfyUIInterruptHook
+
 from src.tools import ALL_TOOLS, RESEARCHER_TOOLS, BRAIN_TOOLS, reset_patch_workflow_guard
 
 
@@ -469,6 +471,13 @@ def create_brain_agent(
         if loaded:
             print(f"[agentY:brain] Loaded skills: {', '.join(loaded)}")
 
+    # Merge the ComfyUI interrupt hook with any caller-supplied hooks so we
+    # don't silently drop the TokenUsageHookProvider built by _make_agent.
+    # We pass the combined list via kwargs; _make_agent's agent_kwargs.update()
+    # will replace its default [TokenUsageHookProvider] with our explicit list.
+    extra_hooks = kwargs.pop("hooks", [])
+    brain_hooks = [TokenUsageHookProvider(role="brain"), ComfyUIInterruptHook(), *extra_hooks]
+
     return _make_agent(
         role="brain",
         llm=resolved_llm,
@@ -477,6 +486,7 @@ def create_brain_agent(
         ollama_model=resolved_ollama,
         anthropic_model=resolved_anthropic,
         plugins=skills_plugins or None,
+        hooks=brain_hooks,
         **kwargs,
     )
 

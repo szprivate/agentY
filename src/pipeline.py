@@ -14,6 +14,7 @@ Usage
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -24,6 +25,7 @@ from pydantic import BaseModel, Field, ValidationError
 from strands import Agent
 
 from src.agent import create_brain_agent, create_researcher_agent
+from src.comfyui_interrupt_hook import INTERRUPT_NAME
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +105,74 @@ def _extract_json(text: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# ComfyUI async poller (zero-token polling between interrupt and resume)
+# ---------------------------------------------------------------------------
+
+# How many seconds to wait between /history checks.
+_COMFYUI_POLL_INTERVAL: float = float(os.environ.get("COMFYUI_POLL_INTERVAL_S", "3"))
+# Hard ceiling so we never wait forever (seconds).
+_COMFYUI_POLL_TIMEOUT: float = float(os.environ.get("COMFYUI_POLL_TIMEOUT_S", str(30 * 60)))
+
+
+async def _poll_comfyui_job(prompt_id: str) -> dict:
+    """Poll ``GET /history/{prompt_id}`` until the job is complete.
+
+    This runs entirely in Python (asyncio.sleep) — no LLM calls, no tokens
+    burned.  Returns the stripped history dict on success, or an error dict
+    if the timeout is exceeded or the job reports an error status.
+
+    Args:
+        prompt_id: The ComfyUI prompt ID returned by ``submit_prompt``.
+
+    Returns:
+        A dict suitable for passing as the interrupt response to the Brain.
+    """
+    import logging
+    from src.comfyui_client import get_client
+    from src.tools.history import _strip_history
+
+    logger = logging.getLogger("agentY.pipeline.poller")
+    client = get_client()
+    waited: float = 0.0
+
+    logger.info("poller: start polling prompt_id=%s (interval=%.1fs, timeout=%.0fs)",
+                prompt_id, _COMFYUI_POLL_INTERVAL, _COMFYUI_POLL_TIMEOUT)
+
+    while waited < _COMFYUI_POLL_TIMEOUT:
+        await asyncio.sleep(_COMFYUI_POLL_INTERVAL)
+        waited += _COMFYUI_POLL_INTERVAL
+
+        try:
+            raw = client.get(f"/history/{prompt_id}")
+        except Exception as exc:
+            logger.warning("poller: HTTP error after %.0fs — %s", waited, exc)
+            continue
+
+        if not isinstance(raw, dict) or prompt_id not in raw:
+            # Job not in history yet — still queued
+            logger.debug("poller: prompt_id=%s not in history yet (%.0fs elapsed)", prompt_id, waited)
+            continue
+
+        entry = raw[prompt_id]
+        status_info = entry.get("status", {})
+        status_str = status_info.get("status_str", "")
+        completed: bool = status_info.get("completed", False)
+
+        if completed:
+            logger.info("poller: prompt_id=%s completed after %.0fs", prompt_id, waited)
+            return _strip_history(raw)
+
+        if status_str == "error":
+            logger.error("poller: prompt_id=%s reported error after %.0fs", prompt_id, waited)
+            return {"error": "ComfyUI job failed", "details": _strip_history(raw)}
+
+        logger.debug("poller: prompt_id=%s status=%s (%.0fs elapsed)", prompt_id, status_str, waited)
+
+    logger.error("poller: prompt_id=%s timed out after %.0fs", prompt_id, waited)
+    return {"error": f"ComfyUI job {prompt_id} timed out after {_COMFYUI_POLL_TIMEOUT:.0f}s"}
+
+
+# ---------------------------------------------------------------------------
 # Pipeline callable
 # ---------------------------------------------------------------------------
 
@@ -166,6 +236,15 @@ class Pipeline:
         then transparently streams the Brain's token output so Slack can
         update its placeholder message in real time.
 
+        When the Brain is interrupted by ``ComfyUIInterruptHook`` (i.e. a
+        ``submit_prompt`` call was just made), this method:
+        1. Detects the ``"interrupt"`` stop reason in the event stream.
+        2. Extracts the ``prompt_id`` from the interrupt's ``reason`` field.
+        3. Polls ``GET /history/{prompt_id}`` in a cheap asyncio.sleep loop
+           (zero LLM tokens burned during the wait).
+        4. Resumes the Brain with an ``interruptResponse`` carrying the
+           completed ComfyUI history, then continues streaming QA output.
+
         Yields the same event dicts that a Strands Agent.stream_async would.
         """
         # Stage 1 – Researcher (synchronous; fast pattern-matching turn)
@@ -182,12 +261,61 @@ class Pipeline:
             yield {"data": researcher_output}
             return
 
-        # Stage 2 – Brain (streamed)
+        # Stage 2 – Brain (streamed, with ComfyUI interrupt handling)
         if self._verbose:
             print("[pipeline:stream] Stage 2 – Brain streaming …")
         brain_prompt = self._build_brain_prompt(raw_json)
-        async for event in self._brain.stream_async(brain_prompt):
-            yield event
+
+        # Brain input for the first invocation is the brain_prompt string;
+        # subsequent invocations (after a ComfyUI interrupt) supply the
+        # interruptResponse list.
+        current_input: Any = brain_prompt
+
+        while True:
+            interrupt_result = None
+
+            async for event in self._brain.stream_async(current_input):
+                yield event  # forward all events to Slack verbatim
+
+                # Detect agent interrupt: the final event before the loop stops
+                # is AgentResultEvent = {"result": AgentResult(...)}
+                if "result" in event:
+                    agent_result = event["result"]
+                    if getattr(agent_result, "stop_reason", None) == "interrupt":
+                        interrupts = getattr(agent_result, "interrupts", [])
+                        for intr in interrupts:
+                            if getattr(intr, "name", None) == INTERRUPT_NAME:
+                                interrupt_result = intr
+                                break
+
+            if interrupt_result is None:
+                # Normal completion — no ComfyUI interrupt pending.
+                if self._verbose:
+                    print("[pipeline:stream] Brain finished (no interrupt).")
+                break
+
+            # ── ComfyUI interrupt: poll cheaply, then resume ───────── #
+            prompt_id: str = interrupt_result.reason
+            if self._verbose:
+                print(f"[pipeline:stream] ComfyUI interrupt — polling prompt_id={prompt_id}")
+
+            yield {"data": f"\n\n_⏳ ComfyUI job queued (`{prompt_id}`). Waiting for completion…_"}
+
+            history_result = await _poll_comfyui_job(prompt_id)
+
+            yield {"data": "\n_✅ ComfyUI job finished — resuming…_"}
+            if self._verbose:
+                print(f"[pipeline:stream] ComfyUI job {prompt_id} finished. Resuming Brain.")
+
+            # Resume the agent: supply the polled history as the interrupt response.
+            current_input = [
+                {
+                    "interruptResponse": {
+                        "interruptId": interrupt_result.id,
+                        "response": json.dumps(history_result),
+                    }
+                }
+            ]
 
     # ── Internal helpers ─────────────────────────────────────────────── #
 

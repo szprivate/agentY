@@ -36,9 +36,11 @@ Follow these steps:
 
 6. **Run** — `submit_prompt(path)`:
    - Do NOT ask the user for permission — run immediately.
-   - After submitting, use `get_prompt_status_by_id(prompt_id)` to poll until finished.
-   - Do NOT call `get_history()` repeatedly to poll — use `get_prompt_status_by_id()` only.
-   - Wait for the workflow to finish, check in periodically.
+   - After submitting, call `get_prompt_status_by_id(prompt_id)` exactly **once**.
+     The orchestrator will transparently pause the agent and poll ComfyUI while
+     the job runs, then resume you with the completed result — you do **not** need
+     to loop or call any polling tool repeatedly.
+   - Do NOT call `get_history()` to track progress — use `get_prompt_status_by_id()` once only.
    - Do NOT submit anything new before the current workflow finishes.
 
 7. **Vision QA**
