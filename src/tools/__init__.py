@@ -57,6 +57,7 @@ from src.tools.huggingface import (  # noqa: F401
 from src.tools.file_tools import read_text_file  # noqa: F401
 from src.tools.shell import run_script  # noqa: F401
 from strands_tools import file_read  # noqa: F401
+from strands_tools import calculator  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # Researcher tools – read-only resolution (template lookup, model listing).
@@ -69,6 +70,8 @@ RESEARCHER_TOOLS: list = [
     read_text_file,
     get_image_resolution,
     analyze_image,
+    run_script,  # needed for skills (e.g. image-downsize)
+    calculator,
 ]
 
 # ---------------------------------------------------------------------------
