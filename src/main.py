@@ -40,7 +40,7 @@ load_dotenv(os.path.join(_project_root, ".env"))
 
 from src.agent import create_agent, _cfg  # noqa: E402
 from src.pipeline import create_pipeline  # noqa: E402
-from src.slack_server import start_slack_server  # noqa: E402
+from src.utils.slack_server import start_slack_server  # noqa: E402
 from src.tools.slack_tools import install_console_forwarder  # noqa: E402
 
 

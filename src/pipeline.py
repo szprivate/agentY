@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field, ValidationError
 from strands import Agent
 
 from src.agent import create_brain_agent, create_researcher_agent
-from src.comfyui_interrupt_hook import INTERRUPT_NAME
+from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
 
 
 # ---------------------------------------------------------------------------
@@ -128,8 +128,8 @@ async def _poll_comfyui_job(prompt_id: str) -> dict:
         A dict suitable for passing as the interrupt response to the Brain.
     """
     import logging
-    from src.comfyui_client import get_client
-    from src.tools.history import _strip_history
+    from src.utils.comfyui_client import get_client
+    from src.tools.comfyui import _strip_history
 
     logger = logging.getLogger("agentY.pipeline.poller")
     client = get_client()

@@ -1,51 +1,47 @@
 """
 ComfyUI tools for the Strands agent.
 
-Each sub-module exposes one or more @tool-decorated functions that map
-directly to ComfyUI server REST endpoints.
+Exports tool lists for the Researcher and Brain agents.
 """
 
-from src.tools.execution import free_memory, interrupt_execution  # noqa: F401
-from src.tools.history import (  # noqa: F401
+from src.tools.comfyui import (  # noqa: F401
+    # Models
+    get_model_types,
+    get_models_in_folder,
+    # Execution control
+    interrupt_execution,
+    free_memory,
+    # Queue
+    queue,
+    # History
     get_history,
     get_prompt_status_by_id,
     clear_history,
-)
-from src.tools.models import (  # noqa: F401
-    get_model_types,
-    get_models_in_folder,
-    get_node_info,
-    get_object_info,
-    get_view_metadata,
-)
-from src.tools.prompt import get_prompt_status, submit_prompt  # noqa: F401
-from src.tools.queue import queue  # noqa: F401
-from src.tools.system import (  # noqa: F401
-    get_embeddings,
-    get_extensions,
-    get_features,
-    get_system_stats,
-)
-from src.tools.upload import upload_image, upload_mask  # noqa: F401
-from src.tools.view import view_image, get_image_resolution  # noqa: F401
-from src.tools.vision import analyze_image  # noqa: F401
-from src.tools.shell import run_script  # noqa: F401
-from src.tools.workflow_builder import (  # noqa: F401
+    # Prompt submission
+    submit_prompt,
+    # Node inspection
     get_node_schema,
     get_workflow_node_info,
+    search_nodes,
+    # Workflow templates
     get_workflow_catalog,
     get_workflow_template,
-    list_workflow_templates,
-    parse_workflow_connections,
+    # Workflow modification
+    save_workflow,
     patch_workflow,
     add_workflow_node,
     remove_workflow_node,
-    save_workflow,
-    search_nodes,
+    # Workflow validation
     validate_workflow,
+    # Public helpers
     reset_patch_workflow_guard,
 )
-from src.tools.workflows import get_workflow_templates as get_server_workflow_templates  # noqa: F401
+from src.tools.image_handling import (  # noqa: F401
+    upload_image,
+    view_image,
+    get_image_resolution,
+    analyze_image,
+)
 from src.tools.slack_tools import (  # noqa: F401
     slack_send_dm,
     slack_send_image,
@@ -59,20 +55,17 @@ from src.tools.huggingface import (  # noqa: F401
     download_hf_model,
 )
 from src.tools.file_tools import read_text_file  # noqa: F401
-from strands_tools import file_read, file_write, editor  # noqa: F401
+from src.tools.shell import run_script  # noqa: F401
+from strands_tools import file_read  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # Researcher tools – read-only resolution (template lookup, model listing).
 # No workflow execution or I/O side-effects.
 # ---------------------------------------------------------------------------
 RESEARCHER_TOOLS: list = [
-    # Workflow template catalogue (cheap flat dict)
     get_workflow_catalog,
-    # Full template metadata + workflow path
     get_workflow_template,
-    # Model catalogue queries
     get_model_types,
-    # File access
     read_text_file,
     get_image_resolution,
     analyze_image,
@@ -113,7 +106,7 @@ BRAIN_TOOLS: list = [
     save_workflow,
     search_nodes,
     validate_workflow,
-    # Slack DM
+    # Slack
     slack_send_dm,
     slack_send_image,
     slack_send_video,

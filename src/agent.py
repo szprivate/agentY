@@ -23,7 +23,7 @@ from strands.agent.conversation_manager import SlidingWindowConversationManager
 from strands.hooks.registry import HookRegistry
 from strands.hooks.events import AfterToolCallEvent
 
-from src.comfyui_interrupt_hook import ComfyUIInterruptHook
+from src.utils.comfyui_interrupt_hook import ComfyUIInterruptHook
 
 from src.tools import ALL_TOOLS, RESEARCHER_TOOLS, BRAIN_TOOLS, reset_patch_workflow_guard
 
