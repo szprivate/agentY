@@ -29,6 +29,7 @@ Follow these steps:
    - NEVER call `save_workflow()` with the full JSON — use `patch_workflow()` instead.
      `save_workflow()` is only for building entirely new workflows from scratch.
    - GeminiImage2Node / GeminiNanoBanana2 with >1 input image: wire inputs through a `BatchImagesNode`, then connect its output to the image input.
+   - GeminiImage2Node / GeminiNanoBanana2 with exactly 1 input image and a `BatchImagesNode` already present in the template: **remove the `BatchImagesNode` immediately** and wire the LoadImage node directly to the generator's `images` input. Do not attempt to keep or reconfigure it — it requires multiple inputs and will always fail validation with a single image.
 
 5. **Validate** — `validate_workflow(path)`:
    - Fix any validation errors, then re-validate — do not skip this step.
@@ -48,6 +49,7 @@ Follow these steps:
    - `analyze_image(file_path="./output/<filename>")` — inspect for artifacts, wrong aspect ratio, or generation failures.
    - If quality is acceptable → proceed to Slack.
    - If the output is broken → re-run with a different seed, or report the issue clearly.
+   - **Do NOT view or analyze the original input image** — the Researcher already did this. Only analyze the output.
 
 8. **Post to Slack**
    - If `size_bytes` > 5 242 880 (5 MB): activate the **image-downsize** skill and run the downsize script first.

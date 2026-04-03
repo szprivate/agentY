@@ -436,6 +436,9 @@ def _handle_message_async(content, channel: str, thread_ts: str, user: str):
                 parts.append(f"{cache_read:,} cache hit")
             if cache_write:
                 parts.append(f"{cache_write:,} cache write")
+            from src.agent import _compute_cost  # local import to avoid circular
+            cost = _compute_cost(in_tok, out_tok, cache_read, cache_write)
+            parts.append(f"~${cost:.4f}")
             accumulated.append(f"\n\n_🪙 {' / '.join(parts)}_")
         except Exception as _tok_exc:
             logger.debug("Could not read token usage: %s", _tok_exc)

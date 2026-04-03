@@ -259,6 +259,31 @@ def _build_model(llm: str, ollama_model: str | None = None):
 
 
 # ---------------------------------------------------------------------------
+# Cost estimation – Claude Haiku 4.5 list prices (per 1 M tokens)
+# ---------------------------------------------------------------------------
+
+_PRICE_INPUT        = 0.80   # $/1M input tokens
+_PRICE_OUTPUT       = 4.00   # $/1M output tokens
+_PRICE_CACHE_WRITE  = 1.00   # $/1M cache-write tokens (1.25× input)
+_PRICE_CACHE_READ   = 0.08   # $/1M cache-read tokens  (0.10× input)
+
+
+def _compute_cost(
+    in_tok: int,
+    out_tok: int,
+    cache_read: int = 0,
+    cache_write: int = 0,
+) -> float:
+    """Return estimated USD cost using Claude Haiku 4.5 list prices."""
+    return (
+        in_tok        * _PRICE_INPUT       / 1_000_000
+        + out_tok     * _PRICE_OUTPUT      / 1_000_000
+        + cache_read  * _PRICE_CACHE_READ  / 1_000_000
+        + cache_write * _PRICE_CACHE_WRITE / 1_000_000
+    )
+
+
+# ---------------------------------------------------------------------------
 # Token-usage hook – prints token counts after every tool call
 # ---------------------------------------------------------------------------
 
@@ -311,6 +336,8 @@ class TokenUsageHookProvider:
                 total_parts.append(f"{cache_read:,} cache hit")
             if cache_write:
                 total_parts.append(f"{cache_write:,} cache write")
+            cost = _compute_cost(in_tok, out_tok, cache_read, cache_write)
+            total_parts.append(f"~${cost:.4f}")
 
             print(
                 f"\U0001fa99 [{self._role}] after {tool_name}: "
