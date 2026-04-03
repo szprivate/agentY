@@ -2,26 +2,18 @@
 """
 agentY – main entry point.
 
-Pipeline mode (default) — Researcher resolves the spec, Brain assembles + runs it:
+Pipeline mode — Researcher resolves the spec, Brain assembles + runs it:
     python -m src.main
     python -m src.main --researcher-llm ollama --researcher-ollama-model qwen3-coder:32b
     python -m src.main --brain-llm claude --brain-anthropic-model claude-sonnet-4-5
 
-Single-agent mode (legacy) — one model does everything:
-    python -m src.main --mode single
-    python -m src.main --mode single --llm claude
-    python -m src.main --mode single --llm ollama --ollama-model llama3.2
-
 Environment variable equivalents (all optional):
-    AGENT_MODE                  pipeline | single          (default: single)
     RESEARCHER_LLM              ollama | claude            (default: ollama)
     RESEARCHER_OLLAMA_MODEL     model id                   (default: qwen3-coder:32b)
     RESEARCHER_ANTHROPIC_MODEL  model id
     BRAIN_LLM                   claude | ollama            (default: claude)
     BRAIN_ANTHROPIC_MODEL       model id
     BRAIN_OLLAMA_MODEL          model id
-    AGENT_LLM                   claude | ollama            (single-agent mode)
-    OLLAMA_MODEL                model id                   (single-agent mode)
 """
 
 import argparse
@@ -38,7 +30,6 @@ if _project_root not in sys.path:
 # Load .env from project root
 load_dotenv(os.path.join(_project_root, ".env"))
 
-from src.agent import create_agent, _cfg  # noqa: E402
 from src.pipeline import create_pipeline  # noqa: E402
 from src.utils.slack_server import start_slack_server  # noqa: E402
 from src.tools.slack_tools import install_console_forwarder  # noqa: E402
@@ -51,17 +42,6 @@ def main() -> None:
         formatter_class=argparse.RawTextHelpFormatter,
     )
 
-    # ── Mode selection ─────────────────────────────────────────────────── #
-    parser.add_argument(
-        "--mode",
-        choices=["pipeline", "single"],
-        default=None,
-        help=(
-            "Execution mode:\n"
-            "  pipeline  Researcher (Ollama) → Brain (Claude) [default]\n"
-            "  single    Legacy single-agent mode"
-        ),
-    )
 
     # ── Pipeline: Researcher overrides ────────────────────────────────── #
     pipeline_group = parser.add_argument_group("Pipeline – Researcher agent")
@@ -113,30 +93,8 @@ def main() -> None:
         help="Pipeline mode only: return Researcher output directly and skip Brain stage.",
     )
 
-    # ── Single-agent (legacy) overrides ───────────────────────────────── #
-    single_group = parser.add_argument_group("Single-agent mode (--mode single)")
-    single_group.add_argument(
-        "--llm",
-        choices=["claude", "ollama"],
-        default=None,
-        help="LLM backend for single-agent mode.",
-    )
-    single_group.add_argument(
-        "--ollama-model",
-        default=None,
-        metavar="MODEL",
-        help="Ollama model for single-agent mode.",
-    )
 
     args = parser.parse_args()
-
-    # Infer mode: if any single-agent flag is set, default to single.
-    mode = args.mode
-    if mode is None:
-        if args.llm or args.ollama_model:
-            mode = "single"
-        else:
-            mode = str(_cfg("AGENT_MODE", "agent_mode", default="single"))
 
     # ── Environment checks ─────────────────────────────────────────────── #
     api_key = os.environ.get("API_KEY_COMFY_ORG", "")
@@ -161,25 +119,18 @@ def main() -> None:
             print("[agentY] Slack env vars missing - Slack tools will be unavailable.")
 
     # ── Build callable agent / pipeline ───────────────────────────────── #
-    if mode == "single":
-        # Legacy: --ollama-model implies ollama backend
-        if args.ollama_model and args.llm is None:
-            args.llm = "ollama"
-        agent = create_agent(llm=args.llm, ollama_model=args.ollama_model)
-        print("[agentY] Mode: single-agent")
-    else:
-        agent = create_pipeline(
-            researcher_llm=args.researcher_llm,
-            researcher_ollama_model=args.researcher_ollama_model,
-            researcher_anthropic_model=args.researcher_anthropic_model,
-            brain_llm=args.brain_llm,
-            brain_anthropic_model=args.brain_anthropic_model,
-            brain_ollama_model=args.brain_ollama_model,
-            skip_brain=args.skip_brain,
-        )
-        print("[agentY] Mode: pipeline (Researcher → Brain)")
-        if args.skip_brain:
-            print("[agentY] SkipBrain is activated: Brain stage will be bypassed and Researcher output will be returned.")
+    agent = create_pipeline(
+        researcher_llm=args.researcher_llm,
+        researcher_ollama_model=args.researcher_ollama_model,
+        researcher_anthropic_model=args.researcher_anthropic_model,
+        brain_llm=args.brain_llm,
+        brain_anthropic_model=args.brain_anthropic_model,
+        brain_ollama_model=args.brain_ollama_model,
+        skip_brain=args.skip_brain,
+    )
+    print("[agentY] Mode: pipeline (Researcher → Brain)")
+    if args.skip_brain:
+        print("[agentY] SkipBrain is activated: Brain stage will be bypassed and Researcher output will be returned.")
 
     # ── Start Slack Socket Mode listener ──────────────────────────────── #
     if slack_token and slack_app_token:

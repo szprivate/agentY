@@ -1,5 +1,5 @@
 """
-Slack Socket Mode listener for agentY.
+Slack socket mode server.
 
 Connects to Slack via Socket Mode (WebSocket) instead of a public HTTP
 endpoint, so no ngrok tunnel or port-forwarding is required.
@@ -7,7 +7,7 @@ endpoint, so no ngrok tunnel or port-forwarding is required.
 Uses ``slack_sdk.socket_mode.SocketModeClient`` (the built-in SDK client)
 rather than Slack Bolt, keeping the dependency set minimal.
 
-Environment variables (loaded from .env by main.py):
+.env secrets (read directly from the .env file):
     SLACK_BOT_TOKEN    - Bot User OAuth Token (xoxb-...)
     SLACK_APP_TOKEN    - App-level token with connections:write scope (xapp-...)
     SLACK_MEMBER_ID    - Default Slack member ID for DMs
@@ -33,12 +33,14 @@ from typing import Optional
 import requests as http_requests
 from PIL import Image
 
+from src.utils.secrets import get_secret
+
 # ---------------------------------------------------------------------------
 # Set up module logger – writes to output/slack_server.log (not the console)
 # ---------------------------------------------------------------------------
 _LOG_FILE = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "output",
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "logs",
     "slack_server.log",
 )
 os.makedirs(os.path.dirname(_LOG_FILE), exist_ok=True)
@@ -72,7 +74,7 @@ def _resolve_bot_user_id() -> Optional[str]:
         return _bot_user_id
     try:
         from slack_sdk import WebClient
-        client = WebClient(token=os.environ.get("SLACK_BOT_TOKEN", ""))
+        client = WebClient(token=get_secret("SLACK_BOT_TOKEN"))
         resp = client.auth_test()
         _bot_user_id = resp.get("user_id")
         logger.info("Resolved bot user ID: %s", _bot_user_id)
@@ -142,7 +144,7 @@ _VIDEO_EXTENSIONS = {
 
 def _download_slack_file(url: str) -> Optional[bytes]:
     """Download a file from Slack using the bot token for auth."""
-    token = os.environ.get("SLACK_BOT_TOKEN", "")
+    token = get_secret("SLACK_BOT_TOKEN")
     try:
         resp = http_requests.get(
             url,
@@ -158,7 +160,7 @@ def _download_slack_file(url: str) -> Optional[bytes]:
 
 def _slack_downloads_dir() -> str:
     """Return (and create) the directory for files downloaded from Slack."""
-    d = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "slack_downloads")
+    d = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "input_slack")
     os.makedirs(d, exist_ok=True)
     return d
 
@@ -357,7 +359,7 @@ def _handle_message_async(content, channel: str, thread_ts: str, user: str):
 
         from slack_sdk import WebClient
         from src.tools.slack_tools import set_slack_channel_context, clear_slack_channel_context
-        client = WebClient(token=os.environ.get("SLACK_BOT_TOKEN", ""))
+        client = WebClient(token=get_secret("SLACK_BOT_TOKEN"))
 
         # Set channel context so agent tools send files to this channel
         set_slack_channel_context(channel, thread_ts)
@@ -457,7 +459,7 @@ def _handle_message_async(content, channel: str, thread_ts: str, user: str):
         # Attempt to notify the user about the error
         try:
             from slack_sdk import WebClient
-            client = WebClient(token=os.environ.get("SLACK_BOT_TOKEN", ""))
+            client = WebClient(token=get_secret("SLACK_BOT_TOKEN"))
             client.chat_postMessage(
                 channel=channel,
                 text=f"Sorry, I encountered an error processing your message: {exc}",
@@ -563,8 +565,8 @@ def start_slack_server(agent) -> bool:
     global _agent_ref
     _agent_ref = agent
 
-    bot_token = os.environ.get("SLACK_BOT_TOKEN", "")
-    app_token = os.environ.get("SLACK_APP_TOKEN", "")
+    bot_token = get_secret("SLACK_BOT_TOKEN")
+    app_token = get_secret("SLACK_APP_TOKEN")
 
     if not bot_token:
         logger.error("SLACK_BOT_TOKEN is not set")

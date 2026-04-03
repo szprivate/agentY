@@ -2,25 +2,14 @@
   "comfyui_url": "http://127.0.0.1:8188",
   "comfyui_workflows_dir": "./comfyui_workflows/",
   "comfyui_official_templates_dir": "./comfyui_workflow_templates_official/templates/",
+  "comfyui_poll_interval_s": 3,
+  "comfyui_poll_timeout_s": 1800,
 
   "llm": {
-    "_comment": "All values here are overridden by the corresponding environment variables when set.",
-
-    "agent_mode": "single",
-
+    
     "pipeline": {
-      "researcher_llm": "ollama",
-      "researcher_ollama_model": "qwen3.5:9b",
-      "researcher_anthropic_model": "claude-haiku-4-5",
-
-      "brain_llm": "claude",
-      "brain_anthropic_model": "claude-haiku-4-5",
-      "brain_ollama_model": "qwen3-vl:30b"
-    },
-
-    "single_agent": {
-      "llm": "claude",
-      "ollama_model": "qwen3-vl:30b"
+      "researcher": "ollama,qwen3.5:9b",
+      "brain": "claude,claude-haiku-4-5"
     },
 
     "ollama": {

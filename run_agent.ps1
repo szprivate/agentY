@@ -2,38 +2,20 @@
 #
 # Pipeline mode (default) — Researcher resolves the spec, Brain executes it:
 #   .\run_agent.ps1
-#   .\run_agent.ps1 -ResearcherOllamaModel qwen3-coder:32b
-#   .\run_agent.ps1 -BrainAnthropicModel claude-sonnet-4-5
+#   .\run_agent.ps1 -LlmResearcher "ollama,qwen3-coder:32b"
+#   .\run_agent.ps1 -LlmBrain "claude,claude-sonnet-4-5"
 #   .\run_agent.ps1 -SkipBrain
-#
-# Single-agent mode (legacy):
-#   .\run_agent.ps1 -Mode single
-#   .\run_agent.ps1 -Mode single -OllamaModel llama3.2
 
 param(
     [switch]$Help,
 
-    # Mode
-    [ValidateSet("pipeline","single","")]
-    [string]$Mode = "",
+    # Pipeline – Researcher  e.g. -LlmResearcher "ollama,qwen3:9b"  or  -LlmResearcher "claude,claude-haiku-4-5"
+    [string]$LlmResearcher = "",
 
-    # Pipeline – Researcher
-    [ValidateSet("ollama","claude","")]
-    [string]$ResearcherLlm = "",
-    [string]$ResearcherOllamaModel = "",
-    [string]$ResearcherAnthropicModel = "",
+    # Pipeline – Brain  e.g. -LlmBrain "claude,claude-sonnet-4-5"  or  -LlmBrain "ollama,qwen3-vl:30b"
+    [string]$LlmBrain = "",
 
-    # Pipeline – Brain
-    [ValidateSet("claude","ollama","")]
-    [string]$BrainLlm = "",
-    [string]$BrainAnthropicModel = "",
-    [string]$BrainOllamaModel = "",
-    [switch]$SkipBrain,
-
-    # Single-agent (legacy)
-    [ValidateSet("claude","ollama","")]
-    [string]$Llm = "",
-    [string]$OllamaModel = ""
+    [switch]$SkipBrain
 )
 
 Set-StrictMode -Version Latest
@@ -43,32 +25,17 @@ if ($Help) {
     Write-Host ""
     Write-Host "Usage: .\run_agent.ps1 [OPTIONS]" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "Mode:"
-    Write-Host "  -Mode <pipeline|single>          Execution mode (default: pipeline)."
-    Write-Host ""
-    Write-Host "Pipeline mode options (default):"
-    Write-Host "  -ResearcherLlm <ollama|claude>   LLM for the Researcher (default: ollama)."
-    Write-Host "  -ResearcherOllamaModel <model>   Ollama model for the Researcher."
-    Write-Host "  -ResearcherAnthropicModel <id>   Anthropic model for the Researcher."
-    Write-Host "  -BrainLlm <claude|ollama>        LLM for the Brain (default: claude)."
-    Write-Host "  -BrainAnthropicModel <id>        Anthropic model for the Brain."
-    Write-Host "  -BrainOllamaModel <model>        Ollama model for the Brain."
-    Write-Host "  -SkipBrain                      Pipeline mode only: return Researcher output and skip Brain stage."
-    Write-Host ""
-    Write-Host "Single-agent mode options (-Mode single):"
-    Write-Host "  -Llm <claude|ollama>             LLM backend."
-    Write-Host "  -OllamaModel <model>             Ollama model name (implies -Llm ollama)."
-    Write-Host ""
+    Write-Host "Options:"
+    Write-Host "  -LlmResearcher `"provider,model`"  LLM for the Researcher stage."
+    Write-Host "                                    e.g.  .\run_agent.ps1 -LlmResearcher `"ollama,qwen3-coder:32b`""
+    Write-Host "                                          .\run_agent.ps1 -LlmResearcher `"claude,claude-haiku-4-5`""
+    Write-Host "  -LlmBrain `"provider,model`"       LLM for the Brain stage."
+    Write-Host "                                    e.g.  .\run_agent.ps1 -LlmBrain `"claude,claude-sonnet-4-5`""
+    Write-Host "                                          .\run_agent.ps1 -LlmBrain `"ollama,qwen3-vl:30b`""
+    Write-Host "  -SkipBrain                       Return Researcher output and skip the Brain stage."
     Write-Host "  -Help                            Show this help message and exit."
     Write-Host ""
-    Write-Host "Environment variables (all overridable in .env or shell):"
-    Write-Host "  AGENT_MODE                       pipeline | single"
-    Write-Host "  RESEARCHER_LLM                   ollama | claude"
-    Write-Host "  RESEARCHER_OLLAMA_MODEL          e.g. qwen3-coder:32b"
-    Write-Host "  RESEARCHER_ANTHROPIC_MODEL       e.g. claude-haiku-4-5"
-    Write-Host "  BRAIN_LLM                        claude | ollama"
-    Write-Host "  BRAIN_ANTHROPIC_MODEL            e.g. claude-sonnet-4-5"
-    Write-Host "  BRAIN_OLLAMA_MODEL               e.g. qwen3-vl:30b"
+    Write-Host "Environment variables (.env file in project root):"
     Write-Host "  ANTHROPIC_API_KEY                Anthropic API key"
     Write-Host "  OLLAMA_HOST                      Ollama server URL (default: http://localhost:11434)"
     Write-Host "  API_KEY_COMFY_ORG                ComfyUI API key"
@@ -76,8 +43,9 @@ if ($Help) {
     Write-Host "  SLACK_BOT_TOKEN                  Slack bot token (enables Slack integration)"
     Write-Host "  SLACK_MEMBER_ID                  Slack member ID"
     Write-Host ""
-    Write-Host "Settings (config/settings.json - overridden by env vars):"
-    Write-Host "  llm.agent_mode, llm.pipeline.*, llm.ollama.host, llm.anthropic.*"
+    Write-Host "Defaults (config/settings.json):"
+    Write-Host "  Default LLMs and models are read from settings.json and can be overridden"
+    Write-Host "  by -LlmResearcher / -LlmBrain flags or environment variables."
     Write-Host ""
     exit 0
 }
@@ -101,25 +69,37 @@ try {
     # Build argument list
     $PythonArgs = @()
 
-    if ($Mode -ne "") {
-        $PythonArgs += "--mode", $Mode
+    # Parse -LlmResearcher  "provider,modelname"
+    if ($LlmResearcher -ne "") {
+        $parts = $LlmResearcher -split ",", 2
+        $provider = $parts[0].Trim()
+        $model    = if ($parts.Count -gt 1) { $parts[1].Trim() } else { "" }
+        $PythonArgs += "--researcher-llm", $provider
+        if ($model -ne "") {
+            switch ($provider) {
+                "ollama"  { $PythonArgs += "--researcher-ollama-model",    $model }
+                "claude"  { $PythonArgs += "--researcher-anthropic-model", $model }
+                default   { $PythonArgs += "--researcher-ollama-model",    $model }
+            }
+        }
     }
 
-    # Pipeline args
-    if ($ResearcherLlm -ne "")          { $PythonArgs += "--researcher-llm", $ResearcherLlm }
-    if ($ResearcherOllamaModel -ne "")  { $PythonArgs += "--researcher-ollama-model", $ResearcherOllamaModel }
-    if ($ResearcherAnthropicModel -ne ""){ $PythonArgs += "--researcher-anthropic-model", $ResearcherAnthropicModel }
-    if ($BrainLlm -ne "")              { $PythonArgs += "--brain-llm", $BrainLlm }
-    if ($BrainAnthropicModel -ne "")   { $PythonArgs += "--brain-anthropic-model", $BrainAnthropicModel }
-    if ($BrainOllamaModel -ne "")      { $PythonArgs += "--brain-ollama-model", $BrainOllamaModel }
-    if ($SkipBrain)                       { $PythonArgs += "--skip-brain" }
-
-    # Single-agent args
-    if ($OllamaModel -ne "") {
-        $PythonArgs += "--mode", "single", "--ollama-model", $OllamaModel
-    } elseif ($Llm -ne "") {
-        $PythonArgs += "--mode", "single", "--llm", $Llm
+    # Parse -LlmBrain  "provider,modelname"
+    if ($LlmBrain -ne "") {
+        $parts = $LlmBrain -split ",", 2
+        $provider = $parts[0].Trim()
+        $model    = if ($parts.Count -gt 1) { $parts[1].Trim() } else { "" }
+        $PythonArgs += "--brain-llm", $provider
+        if ($model -ne "") {
+            switch ($provider) {
+                "claude"  { $PythonArgs += "--brain-anthropic-model", $model }
+                "ollama"  { $PythonArgs += "--brain-ollama-model",    $model }
+                default   { $PythonArgs += "--brain-ollama-model",    $model }
+            }
+        }
     }
+
+    if ($SkipBrain) { $PythonArgs += "--skip-brain" }
 
     Write-Host ""
     Write-Host "Starting agentY..." -ForegroundColor Cyan

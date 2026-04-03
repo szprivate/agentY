@@ -24,7 +24,7 @@ from typing import Any, List, Optional
 from pydantic import BaseModel, Field, ValidationError
 from strands import Agent
 
-from src.agent import create_brain_agent, create_researcher_agent
+from src.agent import create_brain_agent, create_researcher_agent, _settings
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
 
 
@@ -109,9 +109,9 @@ def _extract_json(text: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 # How many seconds to wait between /history checks.
-_COMFYUI_POLL_INTERVAL: float = float(os.environ.get("COMFYUI_POLL_INTERVAL_S", "3"))
+_COMFYUI_POLL_INTERVAL: float = float(_settings().get("comfyui_poll_interval_s", 3))
 # Hard ceiling so we never wait forever (seconds).
-_COMFYUI_POLL_TIMEOUT: float = float(os.environ.get("COMFYUI_POLL_TIMEOUT_S", str(30 * 60)))
+_COMFYUI_POLL_TIMEOUT: float = float(_settings().get("comfyui_poll_timeout_s", 30 * 60))
 
 
 async def _poll_comfyui_job(prompt_id: str) -> dict:

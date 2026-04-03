@@ -5,8 +5,6 @@ Two-agent pipeline:
   • Researcher  – Ollama (default) or any LLM; pattern-matching/resolution only.
                   Produces a brainbriefing JSON.
   • Brain       – Claude (default) or any LLM; workflow assembly, execution, QA.
-
-Single-agent fallback (``create_agent``) is kept for backward compatibility.
 """
 
 import json
@@ -25,7 +23,7 @@ from strands.hooks.events import AfterToolCallEvent
 
 from src.utils.comfyui_interrupt_hook import ComfyUIInterruptHook
 
-from src.tools import ALL_TOOLS, RESEARCHER_TOOLS, BRAIN_TOOLS, reset_patch_workflow_guard
+from src.tools import RESEARCHER_TOOLS, BRAIN_TOOLS, reset_patch_workflow_guard
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +76,16 @@ def _cfg(env_var: str, *settings_path: str, default: str | int = "") -> str | in
 
     # 3. Hard-coded default
     return default
+
+
+def _parse_llm_setting(value: str) -> tuple[str, str]:
+    """Split a 'provider,model' string into (provider, model).
+
+    The model part is an empty string when the value contains no comma
+    (e.g. when the value came from a plain RESEARCHER_LLM env var).
+    """
+    provider, _, model = value.partition(",")
+    return provider.strip(), model.strip()
 
 
 class AnthropicModel(_BaseAnthropicModel):
@@ -219,43 +227,6 @@ def _ensure_ollama_model(model_id: str, host: str) -> None:
             "Install Ollama from https://ollama.com and ensure it is in PATH."
         )
 
-
-def _build_model(llm: str, ollama_model: str | None = None):
-    """Instantiate the requested LLM backend.
-
-    Args:
-        llm: ``'claude'`` (default) or ``'ollama'``.
-        ollama_model: Optional Ollama model name override. Takes precedence
-                      over the ``OLLAMA_MODEL`` env var when provided.
-    """
-    llm = llm.strip().lower()
-    system_prompt = _load_system_prompt(llm)
-    if llm == "ollama":
-        model_id = ollama_model or str(_cfg("OLLAMA_MODEL", "single_agent", "ollama_model", default="qwen3-vl:30b"))
-        host = str(_cfg("OLLAMA_HOST", "ollama", "host", default="http://localhost:11434"))
-        _ensure_ollama_model(model_id, host)
-        return OllamaModel(
-            host=host,
-            model_id=model_id,
-        )
-    # Default: claude
-    # Pass system_prompt as a structured content block so Anthropic's
-    # prompt-caching kicks in (cache_control="ephemeral"). params is
-    # expanded last in AnthropicModel.format_request, so it overrides
-    # the plain-string "system" key that Strands sets from system_prompt.
-    return AnthropicModel(
-        model_id=str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5")),
-        max_tokens=int(_cfg("ANTHROPIC_MAX_TOKENS", "anthropic", "max_tokens", default=4096)),
-        params={
-            "system": [
-                {
-                    "type": "text",
-                    "text": system_prompt,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ]
-        },
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -443,10 +414,34 @@ def create_researcher_agent(
     # Passing an Ollama model without an explicit LLM backend implies ollama.
     if ollama_model and llm is None:
         llm = "ollama"
-    resolved_llm = llm or str(_cfg("RESEARCHER_LLM", "pipeline", "researcher_llm", default="claude"))
-    resolved_ollama = ollama_model or str(_cfg("RESEARCHER_OLLAMA_MODEL", "pipeline", "researcher_ollama_model", default="qwen3-coder:32b"))
-    resolved_anthropic = anthropic_model or str(_cfg("RESEARCHER_ANTHROPIC_MODEL", "pipeline", "researcher_anthropic_model",
-        default=_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5")))
+
+    # Read combined 'provider,model' from settings (env var RESEARCHER_LLM still wins).
+    _raw = str(_cfg("RESEARCHER_LLM", "pipeline", "researcher", default="ollama"))
+    _settings_llm, _settings_model = _parse_llm_setting(_raw)
+    resolved_llm = llm or _settings_llm or "ollama"
+
+    # Model: CLI arg > provider-specific env var > model extracted from settings > hard default.
+    if resolved_llm == "ollama":
+        resolved_ollama = (
+            ollama_model
+            or os.environ.get("RESEARCHER_OLLAMA_MODEL")
+            or _settings_model
+            or "qwen3-coder:32b"
+        )
+        resolved_anthropic = (
+            anthropic_model
+            or os.environ.get("RESEARCHER_ANTHROPIC_MODEL")
+            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
+        )
+    else:  # claude
+        resolved_anthropic = (
+            anthropic_model
+            or os.environ.get("RESEARCHER_ANTHROPIC_MODEL")
+            or _settings_model
+            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
+        )
+        resolved_ollama = ollama_model or "qwen3-coder:32b"
+
     system_prompt = _load_system_prompt("researcher")
     return _make_agent(
         role="researcher",
@@ -483,10 +478,32 @@ def create_brain_agent(
     # Reset the patch_workflow failure counter for each new brain session.
     reset_patch_workflow_guard()
 
-    resolved_llm = llm or str(_cfg("BRAIN_LLM", "pipeline", "brain_llm", default="claude"))
-    resolved_anthropic = anthropic_model or str(_cfg("BRAIN_ANTHROPIC_MODEL", "pipeline", "brain_anthropic_model",
-        default=_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5")))
-    resolved_ollama = ollama_model or str(_cfg("BRAIN_OLLAMA_MODEL", "pipeline", "brain_ollama_model", default="qwen3-vl:30b"))
+    # Read combined 'provider,model' from settings (env var BRAIN_LLM still wins).
+    _raw = str(_cfg("BRAIN_LLM", "pipeline", "brain", default="claude"))
+    _settings_llm, _settings_model = _parse_llm_setting(_raw)
+    resolved_llm = llm or _settings_llm or "claude"
+
+    # Model: CLI arg > provider-specific env var > model extracted from settings > hard default.
+    if resolved_llm == "claude":
+        resolved_anthropic = (
+            anthropic_model
+            or os.environ.get("BRAIN_ANTHROPIC_MODEL")
+            or _settings_model
+            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
+        )
+        resolved_ollama = ollama_model or "qwen3-vl:30b"
+    else:  # ollama
+        resolved_ollama = (
+            ollama_model
+            or os.environ.get("BRAIN_OLLAMA_MODEL")
+            or _settings_model
+            or "qwen3-vl:30b"
+        )
+        resolved_anthropic = (
+            anthropic_model
+            or os.environ.get("BRAIN_ANTHROPIC_MODEL")
+            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
+        )
     system_prompt = _load_system_prompt("brain")
 
     # Load skills from the project-level skills/ directory.
@@ -518,41 +535,3 @@ def create_brain_agent(
     )
 
 
-def create_agent(llm: str | None = None, ollama_model: str | None = None, **kwargs) -> Agent:
-    """Create and return the agentY Strands Agent with all ComfyUI tools.
-
-    Used for single-agent factory.
-
-    Args:
-        llm: Which LLM backend to use: ``'claude'`` (default) or ``'ollama'``.
-             Falls back to the ``AGENT_LLM`` env var, then to ``'claude'``.
-        ollama_model: Ollama model name to use when ``llm='ollama'``. Overrides
-                      the ``OLLAMA_MODEL`` env var when provided.
-        **kwargs: Extra keyword arguments forwarded to the Strands Agent
-                  constructor (e.g. to override the model or system prompt).
-    """
-    resolved_llm = llm or str(_cfg("AGENT_LLM", "single_agent", "llm", default="claude"))
-    model = _build_model(resolved_llm, ollama_model=ollama_model)
-    print(f"[agentY] Using LLM backend: {resolved_llm} ({model.__class__.__name__})")
-    window_size = int(_cfg("AGENT_HISTORY_WINDOW", "history_window", default=40))
-
-    # Load skills from the project-level skills/ directory.
-    skills_plugins: list = []
-    if _SKILLS_DIR.is_dir():
-        skills_plugin = AgentSkills(skills=str(_SKILLS_DIR))
-        skills_plugins.append(skills_plugin)
-        loaded = [s.name for s in skills_plugin.get_available_skills()]
-        if loaded:
-            print(f"[agentY] Loaded skills: {', '.join(loaded)}")
-
-    agent_kwargs = {
-        "model": model,
-        "system_prompt": _load_system_prompt(resolved_llm),
-        "tools": ALL_TOOLS,
-        "conversation_manager": SlidingWindowConversationManager(window_size=window_size),
-        "hooks": [TokenUsageHookProvider(role="agent")],
-    }
-    if skills_plugins:
-        agent_kwargs["plugins"] = skills_plugins
-    agent_kwargs.update(kwargs)
-    return Agent(**agent_kwargs)

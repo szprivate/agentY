@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Optional
 
 import requests
+
+from src.utils.secrets import get_secret
 from strands import tool
 
 logger = logging.getLogger(__name__)
@@ -44,7 +46,7 @@ LOCAL_MODEL_FOLDERS = [
 def _hf_headers() -> dict:
     """Return request headers including HF auth token if available."""
     headers = {"Accept": "application/json"}
-    token = os.environ.get("HF_TOKEN")
+    token = get_secret("HF_TOKEN")
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return headers
@@ -58,7 +60,7 @@ def _models_base_dir() -> Path:
     2. comfyui_models_dir key in config/settings.json
     3. Default: D:/AI/ComfyUI/models
     """
-    env_dir = os.environ.get("COMFYUI_MODELS_DIR")
+    env_dir = get_secret("COMFYUI_MODELS_DIR")
     if env_dir:
         return Path(env_dir)
 
@@ -265,7 +267,7 @@ def download_hf_model(
             url = f"https://huggingface.co/{model_id}/resolve/main/{filename}"
 
         headers = {}
-        token = os.environ.get("HF_TOKEN")
+        token = get_secret("HF_TOKEN")
         if token:
             headers["Authorization"] = f"Bearer {token}"
 

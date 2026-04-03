@@ -26,6 +26,8 @@ from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 from strands import tool
 
+from src.utils.secrets import get_secret
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -82,13 +84,13 @@ def _get_active_thread_ts(thread_ts: str = "") -> str:
 
 
 def _get_slack_client() -> WebClient:
-    """Return a cached Slack WebClient, initialised from env vars."""
+    """Return a cached Slack WebClient, initialised from the .env file."""
     global _slack_client
     if _slack_client is None:
-        token = os.environ.get("SLACK_BOT_TOKEN")
+        token = get_secret("SLACK_BOT_TOKEN")
         if not token:
             raise RuntimeError(
-                "SLACK_BOT_TOKEN environment variable is not set. "
+                "SLACK_BOT_TOKEN is not set in .env. "
                 "Cannot initialise Slack client."
             )
         _slack_client = WebClient(token=token)
@@ -124,21 +126,21 @@ def _get_dm_channel(user_id: Optional[str] = None) -> str:
     Results are cached so subsequent calls don't hit the API again.
     """
     global _dm_channel_id
-    uid = user_id or os.environ.get("SLACK_MEMBER_ID")
+    uid = user_id or get_secret("SLACK_MEMBER_ID")
     if not uid:
         raise RuntimeError(
             "No user_id provided and SLACK_MEMBER_ID is not set."
         )
 
     # Only cache when using the default member
-    if uid == os.environ.get("SLACK_MEMBER_ID") and _dm_channel_id:
+    if uid == get_secret("SLACK_MEMBER_ID") and _dm_channel_id:
         return _dm_channel_id
 
     client = _get_slack_client()
     resp = client.conversations_open(users=[uid])
     channel_id = resp["channel"]["id"]
 
-    if uid == os.environ.get("SLACK_MEMBER_ID"):
+    if uid == get_secret("SLACK_MEMBER_ID"):
         _dm_channel_id = channel_id
     return channel_id
 
@@ -458,7 +460,7 @@ def slack_send_json(
         # Determine target channel
         target_channel = channel_id or _get_active_channel()
         if not target_channel:
-            user_id = os.environ.get("SLACK_MEMBER_ID")
+            user_id = get_secret("SLACK_MEMBER_ID")
             if not user_id:
                 return json.dumps({"ok": False, "error": "No channel context and SLACK_MEMBER_ID not set."})
             target_channel = _get_dm_channel(user_id)

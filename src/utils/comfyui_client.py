@@ -2,7 +2,7 @@
 HTTP client wrapper for communicating with the ComfyUI server.
 
 Provides a singleton client that handles authentication and base URL configuration.
-The ComfyUI API key is read from the API_KEY_COMFY_ORG environment variable.
+The ComfyUI API key is read directly from the .env file.
 """
 
 import json
@@ -10,6 +10,8 @@ import os
 from pathlib import Path
 
 import requests
+
+from src.utils.secrets import get_secret
 
 
 _DEFAULT_COMFYUI_URL = "http://127.0.0.1:8188"
@@ -20,7 +22,7 @@ class ComfyUIClient:
 
     def __init__(self, base_url: str | None = None, api_key: str | None = None):
         self.base_url = (base_url or self._load_base_url()).rstrip("/")
-        self.api_key = api_key or os.environ.get("API_KEY_COMFY_ORG", "")
+        self.api_key = api_key or get_secret("API_KEY_COMFY_ORG")
 
     @staticmethod
     def _load_base_url() -> str:

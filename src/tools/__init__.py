@@ -119,6 +119,3 @@ BRAIN_TOOLS: list = [
     # File operations (strands built-in)
     file_read,
 ]
-
-# Legacy alias – single-agent mode keeps the full set.
-ALL_TOOLS: list = BRAIN_TOOLS
