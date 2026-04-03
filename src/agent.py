@@ -170,8 +170,6 @@ def _build_model_table() -> str:
 
 # Map from resolved llm name → system-prompt markdown filename stem.
 _SYSTEM_PROMPT_FILE: dict[str, str] = {
-    "claude": "system_prompt.claude",
-    "ollama": "system_prompt.qwencode",
     "researcher": "system_prompt.researcher",
     "brain": "system_prompt.brain",
 }
