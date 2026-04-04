@@ -10,7 +10,8 @@
     "pipeline": {
       "researcher": "ollama,qwen3.5:9b",
       "brain": "claude,claude-haiku-4-5",
-      "llm_functions": "qwen3.5:9b"
+      "llm_functions": "qwen3.5:9b",
+      "executor_vision_model": "llava:latest"
     },
 
     "ollama": {

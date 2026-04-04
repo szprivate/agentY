@@ -455,6 +455,42 @@ def submit_prompt(workflow_path: str, client_id: str = "") -> str:
         return json.dumps({"error": str(e)})
 
 
+@tool
+def signal_workflow_ready(workflow_path: str) -> str:
+    """Signal that the workflow is fully assembled and validated, ready for execution.
+
+    Call this as your **final step** once ``validate_workflow()`` passes without
+    errors.  The pipeline will automatically handle ComfyUI submission, completion
+    polling, Vision QA (via Ollama), saving outputs to ``./output``, and posting
+    results to Slack.
+
+    Do NOT call ``submit_prompt`` — this tool replaces it.
+
+    Args:
+        workflow_path: File path to the validated workflow JSON
+                       (the same path returned by ``get_workflow_template`` or
+                       ``save_workflow`` and used in ``patch_workflow``).
+    """
+    from src.utils.workflow_signal import set_workflow_path
+
+    p = Path(workflow_path)
+    if not p.exists():
+        return json.dumps({"error": f"Workflow file not found: {workflow_path}"})
+
+    resolved = str(p.resolve())
+    set_workflow_path(resolved)
+    return json.dumps({
+        "status": "ready",
+        "workflow_path": resolved,
+        "message": (
+            "Workflow has been queued for execution. "
+            "The pipeline will submit it to ComfyUI, run Vision QA, "
+            "save outputs to ./output, and post results to Slack automatically. "
+            "Your work here is done — no further tool calls are needed."
+        ),
+    })
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Tools: Node inspection
 # ═══════════════════════════════════════════════════════════════════════════════

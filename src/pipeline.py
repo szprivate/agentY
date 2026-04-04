@@ -27,8 +27,11 @@ from strands import Agent
 from src.agent import create_brain_agent, create_researcher_agent, _settings
 from src.utils.chat_summary import summarize_conversation
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
+from src.utils.comfyui_poller import poll_comfyui_job as _poll_comfyui_job
 from src.utils.models import AgentSession, ChatSummary, TriageResult
 from src.utils.triage import triage as _triage, route as _route
+from src.utils.workflow_signal import clear_and_get as _get_workflow_signal
+from src.executor import execute_workflow as _execute_workflow
 
 
 # ---------------------------------------------------------------------------
@@ -108,74 +111,6 @@ def _extract_json(text: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# ComfyUI async poller (zero-token polling between interrupt and resume)
-# ---------------------------------------------------------------------------
-
-# How many seconds to wait between /history checks.
-_COMFYUI_POLL_INTERVAL: float = float(_settings().get("comfyui_poll_interval_s", 3))
-# Hard ceiling so we never wait forever (seconds).
-_COMFYUI_POLL_TIMEOUT: float = float(_settings().get("comfyui_poll_timeout_s", 30 * 60))
-
-
-async def _poll_comfyui_job(prompt_id: str) -> dict:
-    """Poll ``GET /history/{prompt_id}`` until the job is complete.
-
-    This runs entirely in Python (asyncio.sleep) — no LLM calls, no tokens
-    burned.  Returns the stripped history dict on success, or an error dict
-    if the timeout is exceeded or the job reports an error status.
-
-    Args:
-        prompt_id: The ComfyUI prompt ID returned by ``submit_prompt``.
-
-    Returns:
-        A dict suitable for passing as the interrupt response to the Brain.
-    """
-    import logging
-    from src.utils.comfyui_client import get_client
-    from src.tools.comfyui import _strip_history
-
-    logger = logging.getLogger("agentY.pipeline.poller")
-    client = get_client()
-    waited: float = 0.0
-
-    logger.info("poller: start polling prompt_id=%s (interval=%.1fs, timeout=%.0fs)",
-                prompt_id, _COMFYUI_POLL_INTERVAL, _COMFYUI_POLL_TIMEOUT)
-
-    while waited < _COMFYUI_POLL_TIMEOUT:
-        await asyncio.sleep(_COMFYUI_POLL_INTERVAL)
-        waited += _COMFYUI_POLL_INTERVAL
-
-        try:
-            raw = client.get(f"/history/{prompt_id}")
-        except Exception as exc:
-            logger.warning("poller: HTTP error after %.0fs — %s", waited, exc)
-            continue
-
-        if not isinstance(raw, dict) or prompt_id not in raw:
-            # Job not in history yet — still queued
-            logger.debug("poller: prompt_id=%s not in history yet (%.0fs elapsed)", prompt_id, waited)
-            continue
-
-        entry = raw[prompt_id]
-        status_info = entry.get("status", {})
-        status_str = status_info.get("status_str", "")
-        completed: bool = status_info.get("completed", False)
-
-        if completed:
-            logger.info("poller: prompt_id=%s completed after %.0fs", prompt_id, waited)
-            return _strip_history(raw)
-
-        if status_str == "error":
-            logger.error("poller: prompt_id=%s reported error after %.0fs", prompt_id, waited)
-            return {"error": "ComfyUI job failed", "details": _strip_history(raw)}
-
-        logger.debug("poller: prompt_id=%s status=%s (%.0fs elapsed)", prompt_id, status_str, waited)
-
-    logger.error("poller: prompt_id=%s timed out after %.0fs", prompt_id, waited)
-    return {"error": f"ComfyUI job {prompt_id} timed out after {_COMFYUI_POLL_TIMEOUT:.0f}s"}
-
-
-# ---------------------------------------------------------------------------
 # Pipeline callable
 # ---------------------------------------------------------------------------
 
@@ -208,6 +143,9 @@ class Pipeline:
         self._skip_brain = skip_brain
         self._info_context: dict = info_context or {}
         self._session: AgentSession = AgentSession(session_id=session_id)
+        # Brainbriefing JSON from the most recent Researcher run; used by the
+        # Executor for Vision QA comparison in follow-up / feedback-loop rounds.
+        self._last_brainbriefing_json: str | None = None
 
     def _should_skip_brain(self) -> bool:
         if self._skip_brain:
@@ -253,6 +191,19 @@ class Pipeline:
             brain_response = str(self._brain(brain_prompt))
             self._session.follow_up_count += 1
             self._record_chat_summary(user_text, triage_result, status="completed")
+            # Executor handoff: Brain signals a (re-)assembled workflow is ready
+            workflow_path = _get_workflow_signal()
+            if workflow_path:
+                if self._verbose:
+                    print(f"[pipeline] Brain (follow-up) signaled workflow ready: {workflow_path}")
+                executor_lines = asyncio.run(
+                    self._drain_executor(
+                        workflow_path,
+                        self._last_brainbriefing_json or "",
+                    )
+                )
+                if executor_lines:
+                    brain_response = brain_response + "\n\n" + "\n".join(executor_lines)
             asyncio.run(self._compress_brain_history())
             if self._verbose:
                 print("[pipeline] Brain (follow-up) finished.")
@@ -269,9 +220,20 @@ class Pipeline:
                 print("[pipeline] Skipping Brain stage; returning Researcher output.")
             return researcher_output
 
+        self._last_brainbriefing_json = raw_json
         brain_prompt = self._build_brain_prompt(raw_json)
         self._ensure_clean_history()
         brain_response = str(self._brain(brain_prompt))
+        # Executor handoff: Brain signals the assembled workflow is ready
+        workflow_path = _get_workflow_signal()
+        if workflow_path:
+            if self._verbose:
+                print(f"[pipeline] Brain signaled workflow ready: {workflow_path}")
+            executor_lines = asyncio.run(
+                self._drain_executor(workflow_path, raw_json)
+            )
+            if executor_lines:
+                brain_response = brain_response + "\n\n" + "\n".join(executor_lines)
         self._record_chat_summary(user_text, triage_result, status="completed", raw_json=raw_json)
         asyncio.run(self._compress_brain_history())
         if self._verbose:
@@ -316,6 +278,21 @@ class Pipeline:
             self._session.follow_up_count += 1
             async for event in self._brain.stream_async(brain_prompt):
                 yield event
+            # Executor handoff: stream execution events back to Slack
+            workflow_path = _get_workflow_signal()
+            if workflow_path:
+                if self._verbose:
+                    print(f"[pipeline:stream] Brain (follow-up) signaled workflow ready: {workflow_path}")
+                yield {"data": "\n\n_⚙️ Handing off to executor…_"}
+                slack_channel_id, slack_thread_ts = self._get_slack_context()
+                async for line in _execute_workflow(
+                    workflow_path,
+                    self._last_brainbriefing_json or "",
+                    slack_channel_id=slack_channel_id,
+                    slack_thread_ts=slack_thread_ts,
+                    verbose=self._verbose,
+                ):
+                    yield {"data": f"\n{line}"}
             self._record_chat_summary(user_text, triage_result, status="completed")
             await self._compress_brain_history()
             return
@@ -330,13 +307,15 @@ class Pipeline:
             yield {"data": error}
             return
 
+        self._last_brainbriefing_json = raw_json
+
         if self._should_skip_brain():
             if self._verbose:
                 print("[pipeline:stream] Skipping Brain stage; returning Researcher output.")
             yield {"data": researcher_output}
             return
 
-        # Stage 2 – Brain (streamed, with ComfyUI interrupt handling)
+        # Stage 2 – Brain (streamed, with optional ComfyUI interrupt handling)
         if self._verbose:
             print("[pipeline:stream] Stage 2 – Brain streaming …")
         self._ensure_clean_history()
@@ -365,11 +344,26 @@ class Pipeline:
                                 break
 
             if interrupt_result is None:
-                # Normal completion — no ComfyUI interrupt pending.
+                # Normal Brain completion — no ComfyUI interrupt pending.
+                # Stage 3 – Executor: submit, poll, QA, Slack, save
+                workflow_path = _get_workflow_signal()
+                if workflow_path:
+                    if self._verbose:
+                        print(f"[pipeline:stream] Brain signaled workflow ready: {workflow_path}")
+                    yield {"data": "\n\n_⚙️ Handing off to executor…_"}
+                    slack_channel_id, slack_thread_ts = self._get_slack_context()
+                    async for line in _execute_workflow(
+                        workflow_path,
+                        raw_json,
+                        slack_channel_id=slack_channel_id,
+                        slack_thread_ts=slack_thread_ts,
+                        verbose=self._verbose,
+                    ):
+                        yield {"data": f"\n{line}"}
                 self._record_chat_summary(user_text, triage_result, status="completed", raw_json=raw_json)
                 await self._compress_brain_history()
                 if self._verbose:
-                    print("[pipeline:stream] Brain finished (no interrupt).")
+                    print("[pipeline:stream] Brain finished.")
                 break
 
             # ── ComfyUI interrupt: poll cheaply, then resume ───────── #
@@ -691,9 +685,41 @@ class Pipeline:
             {raw_json}
             ```
 
-            Assemble the ComfyUI workflow from this spec, execute it, run QA,
-            and send the result to Slack.
+            Assemble and validate the ComfyUI workflow from this spec, then call
+            `signal_workflow_ready(workflow_path)` as your final step.
+            The pipeline will handle ComfyUI submission, completion polling,
+            Vision QA (via Ollama), saving outputs to ./output, and Slack.
         """).strip()
+
+    async def _drain_executor(
+        self,
+        workflow_path: str,
+        brainbriefing_json: str,
+        slack_channel_id: str = "",
+        slack_thread_ts: str = "",
+    ) -> list[str]:
+        """Drain the executor async generator into a list of status strings."""
+        lines: list[str] = []
+        async for line in _execute_workflow(
+            workflow_path,
+            brainbriefing_json,
+            slack_channel_id=slack_channel_id,
+            slack_thread_ts=slack_thread_ts,
+            verbose=self._verbose,
+        ):
+            lines.append(line)
+            if self._verbose:
+                print(f"[executor] {line}")
+        return lines
+
+    @staticmethod
+    def _get_slack_context() -> tuple[str, str]:
+        """Return ``(channel_id, thread_ts)`` from the active Slack contextvar."""
+        try:
+            from src.tools.slack_tools import _ctx_channel_id, _ctx_thread_ts
+            return _ctx_channel_id.get() or "", _ctx_thread_ts.get() or ""
+        except Exception:
+            return "", ""
 
 
 # ---------------------------------------------------------------------------

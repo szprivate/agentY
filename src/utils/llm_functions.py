@@ -2,13 +2,17 @@
 agentY – Ollama/Qwen LLM helper.
 
 Provides :class:`LLMFunctions`, a thin wrapper around the Ollama ``/api/chat``
-endpoint that reads model and host from ``config/settings.json`` and exposes a
-single coroutine method for making chat requests.
+endpoint that reads model and host from ``config/settings.json`` and exposes
+coroutine methods for text and vision chat requests.
 
 Typical usage
 -------------
 >>> llm = LLMFunctions.from_settings()
 >>> raw = await llm.chat(messages, json_format=True)
+
+Vision usage (requires a multimodal model such as llava or qwen2.5-vl):
+>>> llm_vis = LLMFunctions.for_vision()
+>>> answer = await llm_vis.vision_chat("Does this image match the brief?", image_bytes)
 """
 
 from __future__ import annotations
@@ -46,6 +50,23 @@ def _get_ollama_config() -> tuple[str, str]:
     return model, host
 
 
+def _get_vision_config() -> tuple[str, str]:
+    """Return ``(vision_model, host)`` for multimodal analysis from ``settings.json``.
+
+    Reads ``llm.pipeline.executor_vision_model``; falls back to ``llm_functions``
+    model or the hard-coded default ``llava:latest`` when not set.
+    """
+    settings = _load_settings()
+    llm = settings.get("llm", {})
+    pipeline = llm.get("pipeline", {})
+    model: str = (
+        pipeline.get("executor_vision_model")
+        or pipeline.get("llm_functions", "llava:latest")
+    )
+    host: str = llm.get("ollama", {}).get("host", "http://localhost:11434")
+    return model, host
+
+
 # ---------------------------------------------------------------------------
 # LLMFunctions
 # ---------------------------------------------------------------------------
@@ -70,6 +91,12 @@ class LLMFunctions:
     def from_settings(cls) -> "LLMFunctions":
         """Construct from ``config/settings.json`` (``llm.pipeline.llm_functions`` key)."""
         model, host = _get_ollama_config()
+        return cls(model, host)
+
+    @classmethod
+    def for_vision(cls) -> "LLMFunctions":
+        """Construct a vision-capable instance (``llm.pipeline.executor_vision_model`` key)."""
+        model, host = _get_vision_config()
         return cls(model, host)
 
     async def chat(
@@ -111,6 +138,62 @@ class LLMFunctions:
                 f"{self.host}/api/chat",
                 json=payload,
                 timeout=60.0,
+            )
+        resp.raise_for_status()
+        return resp.json()["message"]["content"]
+
+    async def vision_chat(
+        self,
+        prompt: str,
+        image_bytes: bytes,
+        *,
+        system: str = "",
+    ) -> str:
+        """Send *image_bytes* plus a text *prompt* to an Ollama multimodal model.
+
+        The image is base64-encoded and sent in the Ollama ``images`` field.
+        Requires a model that supports vision, e.g. ``llava``, ``qwen2.5-vl``,
+        ``moondream``.  Configure via ``llm.pipeline.executor_vision_model`` in
+        ``settings.json``.
+
+        Parameters
+        ----------
+        prompt:
+            Text instruction / question about the image.
+        image_bytes:
+            Raw bytes of the image (PNG, JPEG, etc.).
+        system:
+            Optional system message injected before the user turn.
+
+        Returns
+        -------
+        str
+            Raw text content of the model's reply.
+
+        Raises
+        ------
+        httpx.HTTPStatusError
+            On a non-2xx response from Ollama.
+        """
+        import base64
+
+        b64 = base64.b64encode(image_bytes).decode("ascii")
+        messages: list[dict] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt, "images": [b64]})
+
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "stream": False,
+        }
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{self.host}/api/chat",
+                json=payload,
+                timeout=120.0,
             )
         resp.raise_for_status()
         return resp.json()["message"]["content"]

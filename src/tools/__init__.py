@@ -19,6 +19,8 @@ from src.tools.comfyui import (  # noqa: F401
     clear_history,
     # Prompt submission
     submit_prompt,
+    # Workflow handoff (replaces submit_prompt for the Brain)
+    signal_workflow_ready,
     # Node inspection
     get_node_schema,
     get_workflow_node_info,
@@ -75,7 +77,8 @@ RESEARCHER_TOOLS: list = [
 ]
 
 # ---------------------------------------------------------------------------
-# Brain tools – full execution suite: assembly, validation, run, QA, Slack.
+# Brain tools – workflow assembly only (steps 1-5 + handoff).
+# Execution, polling, Vision QA, and Slack are handled by the Executor.
 # ---------------------------------------------------------------------------
 BRAIN_TOOLS: list = [
     # Models / nodes
@@ -83,25 +86,10 @@ BRAIN_TOOLS: list = [
     get_models_in_folder,
     get_node_schema,
     get_workflow_node_info,
-    # Prompt execution
-    submit_prompt,
-    interrupt_execution,
-    free_memory,
-    # Queue
-    queue,
-    # History / status tracking
-    get_history,
-    get_prompt_status_by_id,
-    clear_history,
-    # Upload / view
+    # Upload input images
     upload_image,
-    view_image,
     get_image_resolution,
-    # Vision / image analysis
-    analyze_image,
-    # Script execution (for skills)
-    run_script,
-    # Workflows & building
+    # Workflow assembly & validation
     get_workflow_template,
     patch_workflow,
     add_workflow_node,
@@ -109,10 +97,12 @@ BRAIN_TOOLS: list = [
     save_workflow,
     search_nodes,
     validate_workflow,
-    # Slack
+    # Handoff to executor (replaces submit_prompt)
+    signal_workflow_ready,
+    # Script execution (for skills, e.g. image-downsize)
+    run_script,
+    # Slack – DM only, for reporting assembly errors / blockers
     slack_send_dm,
-    slack_send_image,
-    slack_send_video,
     slack_send_json,
     # Hugging Face model management
     search_huggingface_models,
