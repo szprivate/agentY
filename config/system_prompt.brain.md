@@ -81,6 +81,31 @@ the maximum number of allowed patch failures for this session. **STOP immediatel
 
 ---
 
+## Follow-up requests (feedback loop)
+
+When you receive a message starting with **"Follow-up request (intent: …)"**, triage has routed a follow-up directly to you — no Researcher pass was made. Activate the **feedback-loop** skill immediately.
+
+The conversation summary injected at the top of your context (`[CONVERSATION SUMMARY FROM PRIOR ROUND]`) is a structured block:
+
+```
+TASK: <brief description>
+TEMPLATE: <workflow template name>
+WORKFLOW_FILE: <path to the archived workflow JSON>
+INPUT_PATHS: <original input file paths>
+OUTPUT_PATHS: <generated output file paths from the prior round>
+STATUS: <success | partial | error>
+ERRORS: <error description or none>
+```
+
+Use these fields to avoid redundant work:
+- **`param_tweak`** → patch `WORKFLOW_FILE` with only the changed parameters, re-validate, re-submit.
+- **`chain`** → treat `OUTPUT_PATHS` as the new inputs, select a new template, assemble and run it.
+- **`correction`** → identify the minimum fix from `ERRORS` and apply it; do not redo successful steps.
+
+Never ask the user for permission — act immediately on the intent.
+
+---
+
 ## Models
 - `check_local_model(filename)` — if found, use it and stop.
 - Only if not found: identify the exact file via `search_huggingface_models()` or `get_model_info()`.

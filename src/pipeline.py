@@ -248,6 +248,7 @@ class Pipeline:
 
         if handler == "brain":
             # Follow-up: skip Researcher, send directly to Brain
+            self._ensure_clean_history()
             brain_prompt = self._build_followup_prompt(user_text, triage_result)
             brain_response = str(self._brain(brain_prompt))
             self._session.follow_up_count += 1
@@ -269,6 +270,7 @@ class Pipeline:
             return researcher_output
 
         brain_prompt = self._build_brain_prompt(raw_json)
+        self._ensure_clean_history()
         brain_response = str(self._brain(brain_prompt))
         self._record_chat_summary(user_text, triage_result, status="completed", raw_json=raw_json)
         asyncio.run(self._compress_brain_history())
@@ -309,6 +311,7 @@ class Pipeline:
 
         if handler == "brain":
             # Follow-up: skip Researcher, send directly to Brain (streamed)
+            self._ensure_clean_history()
             brain_prompt = self._build_followup_prompt(user_text, triage_result)
             self._session.follow_up_count += 1
             async for event in self._brain.stream_async(brain_prompt):
@@ -336,6 +339,7 @@ class Pipeline:
         # Stage 2 – Brain (streamed, with ComfyUI interrupt handling)
         if self._verbose:
             print("[pipeline:stream] Stage 2 – Brain streaming …")
+        self._ensure_clean_history()
         brain_prompt = self._build_brain_prompt(raw_json)
 
         # Brain input for the first invocation is the brain_prompt string;
@@ -422,6 +426,66 @@ class Pipeline:
             Apply the requested change directly, reusing the current session context.
         """).strip()
 
+    def _ensure_clean_history(self) -> None:
+        """Sanitize the Brain's message list before an invocation.
+
+        If a previous call crashed mid-tool-execution, the Brain's
+        messages may contain orphaned ``toolResult`` or ``toolUse``
+        blocks.  This guard cleans them before the next API call so
+        the Anthropic API doesn't reject the request.
+        """
+        msgs = self._brain.messages
+        if not msgs:
+            return
+        cleaned = self._sanitize_messages(list(msgs))
+        if len(cleaned) != len(msgs):
+            if self._verbose:
+                removed = len(msgs) - len(cleaned)
+                print(f"[pipeline] Sanitized Brain history: removed {removed} "
+                      f"orphaned tool message(s).")
+            self._brain.messages[:] = cleaned
+
+    @staticmethod
+    def _sanitize_messages(messages: list[dict]) -> list[dict]:
+        """Ensure *messages* don't start with orphaned ``toolResult`` blocks.
+
+        The Anthropic API requires every ``tool_result`` content block to have
+        a corresponding ``tool_use`` block in the immediately preceding
+        assistant message.  When we slice message history (e.g. fallback
+        ``messages[-4:]``), the slice may begin with a ``user`` message
+        carrying ``toolResult`` blocks whose matching ``toolUse`` was in an
+        earlier (now-discarded) assistant message.
+
+        This helper trims leading messages until the first message no longer
+        contains orphaned ``toolResult`` (or ``toolUse`` without a following
+        ``toolResult``) blocks.
+        """
+        while messages:
+            first = messages[0]
+            content = first.get("content", [])
+            if isinstance(content, list):
+                has_tool_result = any(
+                    isinstance(b, dict) and "toolResult" in b for b in content
+                )
+                if has_tool_result:
+                    messages = messages[1:]
+                    continue
+
+                # An assistant message with toolUse but no following
+                # toolResult message is also invalid.
+                has_tool_use = any(
+                    isinstance(b, dict) and "toolUse" in b for b in content
+                )
+                if has_tool_use:
+                    if len(messages) < 2 or not any(
+                        isinstance(b, dict) and "toolResult" in b
+                        for b in (messages[1].get("content", []) if isinstance(messages[1].get("content", []), list) else [])
+                    ):
+                        messages = messages[1:]
+                        continue
+            break
+        return messages
+
     async def _compress_brain_history(self) -> None:
         """Summarise the Brain's conversation and replace its messages.
 
@@ -445,8 +509,9 @@ class Pipeline:
             if self._verbose:
                 print(f"[pipeline] WARNING: conversation summarisation failed ({exc}); "
                       "keeping last 4 messages as fallback.")
-            # Fallback: keep only the last few messages to cap token growth
-            self._brain.messages[:] = messages[-4:]
+            # Fallback: keep only the last few messages to cap token growth.
+            # Sanitize to avoid orphaned toolResult blocks at the start.
+            self._brain.messages[:] = self._sanitize_messages(messages[-4:])
             return
 
         if not summary:
@@ -454,6 +519,9 @@ class Pipeline:
                 print("[pipeline] Empty summary returned; clearing history.")
             self._brain.messages.clear()
             return
+
+        if self._verbose:
+            print(f"[pipeline] Chat summary:\n{summary}\n")
 
         # Replace the entire history with a single summary message.
         # Using an "assistant" message so the agent treats it as its own
