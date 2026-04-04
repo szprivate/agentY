@@ -26,7 +26,7 @@ def _load_poll_settings() -> tuple[float, float]:
             cfg = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             pass
-    interval = float(cfg.get("comfyui_poll_interval_s", 3))
+    interval = float(cfg.get("comfyui_poll_interval_s", 1))
     timeout = float(cfg.get("comfyui_poll_timeout_s", 30 * 60))
     return interval, timeout
 
@@ -58,41 +58,39 @@ async def poll_comfyui_job(prompt_id: str) -> dict:
     )
 
     while waited < timeout:
-        await asyncio.sleep(interval)
-        waited += interval
-
         try:
             raw = client.get(f"/history/{prompt_id}")
         except Exception as exc:
             logger.warning("poller: HTTP error after %.0fs — %s", waited, exc)
-            continue
+        else:
+            if not isinstance(raw, dict) or prompt_id not in raw:
+                logger.debug(
+                    "poller: prompt_id=%s not in history yet (%.0fs elapsed)",
+                    prompt_id, waited,
+                )
+            else:
+                entry = raw[prompt_id]
+                status_info = entry.get("status", {})
+                status_str = status_info.get("status_str", "")
+                completed: bool = status_info.get("completed", False)
 
-        if not isinstance(raw, dict) or prompt_id not in raw:
-            logger.debug(
-                "poller: prompt_id=%s not in history yet (%.0fs elapsed)",
-                prompt_id, waited,
-            )
-            continue
+                if completed:
+                    logger.info("poller: prompt_id=%s completed after %.0fs", prompt_id, waited)
+                    return _strip_history(raw)
 
-        entry = raw[prompt_id]
-        status_info = entry.get("status", {})
-        status_str = status_info.get("status_str", "")
-        completed: bool = status_info.get("completed", False)
+                if status_str == "error":
+                    logger.error(
+                        "poller: prompt_id=%s reported error after %.0fs", prompt_id, waited
+                    )
+                    return {"error": "ComfyUI job failed", "details": _strip_history(raw)}
 
-        if completed:
-            logger.info("poller: prompt_id=%s completed after %.0fs", prompt_id, waited)
-            return _strip_history(raw)
+                logger.debug(
+                    "poller: prompt_id=%s status=%s (%.0fs elapsed)",
+                    prompt_id, status_str, waited,
+                )
 
-        if status_str == "error":
-            logger.error(
-                "poller: prompt_id=%s reported error after %.0fs", prompt_id, waited
-            )
-            return {"error": "ComfyUI job failed", "details": _strip_history(raw)}
-
-        logger.debug(
-            "poller: prompt_id=%s status=%s (%.0fs elapsed)",
-            prompt_id, status_str, waited,
-        )
+        await asyncio.sleep(interval)
+        waited += interval
 
     logger.error("poller: prompt_id=%s timed out after %.0fs", prompt_id, timeout)
     return {"error": f"ComfyUI job {prompt_id} timed out after {timeout:.0f}s"}

@@ -2,7 +2,7 @@
   "comfyui_url": "http://127.0.0.1:8188",
   "comfyui_workflows_dir": "./comfyui_workflows/",
   "comfyui_official_templates_dir": "./comfyui_workflow_templates_official/templates/",
-  "comfyui_poll_interval_s": 3,
+  "comfyui_poll_interval_s": 1,
   "comfyui_poll_timeout_s": 1800,
 
   "llm": {
