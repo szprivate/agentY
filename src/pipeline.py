@@ -25,8 +25,9 @@ from pydantic import BaseModel, Field, ValidationError
 from strands import Agent
 
 from src.agent import create_brain_agent, create_researcher_agent, _settings
+from src.utils.chat_summary import summarize_conversation
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
-from src.utils.models import AgentSession, ChatSummary, MessageIntent, TriageResult
+from src.utils.models import AgentSession, ChatSummary, TriageResult
 from src.utils.triage import triage as _triage, route as _route
 
 
@@ -251,6 +252,7 @@ class Pipeline:
             brain_response = str(self._brain(brain_prompt))
             self._session.follow_up_count += 1
             self._record_chat_summary(user_text, triage_result, status="completed")
+            asyncio.run(self._compress_brain_history())
             if self._verbose:
                 print("[pipeline] Brain (follow-up) finished.")
             return brain_response
@@ -269,6 +271,7 @@ class Pipeline:
         brain_prompt = self._build_brain_prompt(raw_json)
         brain_response = str(self._brain(brain_prompt))
         self._record_chat_summary(user_text, triage_result, status="completed", raw_json=raw_json)
+        asyncio.run(self._compress_brain_history())
         if self._verbose:
             print("[pipeline] Brain finished.")
         return brain_response
@@ -311,6 +314,7 @@ class Pipeline:
             async for event in self._brain.stream_async(brain_prompt):
                 yield event
             self._record_chat_summary(user_text, triage_result, status="completed")
+            await self._compress_brain_history()
             return
 
         # handler == "researcher" or "log_warning" → full Researcher → Brain flow
@@ -359,6 +363,7 @@ class Pipeline:
             if interrupt_result is None:
                 # Normal completion — no ComfyUI interrupt pending.
                 self._record_chat_summary(user_text, triage_result, status="completed", raw_json=raw_json)
+                await self._compress_brain_history()
                 if self._verbose:
                     print("[pipeline:stream] Brain finished (no interrupt).")
                 break
@@ -417,6 +422,68 @@ class Pipeline:
             Apply the requested change directly, reusing the current session context.
         """).strip()
 
+    async def _compress_brain_history(self) -> None:
+        """Summarise the Brain's conversation and replace its messages.
+
+        After every Brain invocation the full message history is compressed
+        into a single compact summary via ``summarize_conversation``.  The
+        Brain's ``messages`` list is then replaced with a single assistant
+        message containing that summary.  This ensures that the next agent
+        call carries only the summary — not the full, token-heavy history.
+        """
+        messages = self._brain.messages
+        if not messages:
+            return
+
+        if self._verbose:
+            msg_count = len(messages)
+            print(f"[pipeline] Compressing Brain history ({msg_count} messages) …")
+
+        try:
+            summary = await summarize_conversation(messages)
+        except Exception as exc:
+            if self._verbose:
+                print(f"[pipeline] WARNING: conversation summarisation failed ({exc}); "
+                      "keeping last 4 messages as fallback.")
+            # Fallback: keep only the last few messages to cap token growth
+            self._brain.messages[:] = messages[-4:]
+            return
+
+        if not summary:
+            if self._verbose:
+                print("[pipeline] Empty summary returned; clearing history.")
+            self._brain.messages.clear()
+            return
+
+        # Replace the entire history with a single summary message.
+        # Using an "assistant" message so the agent treats it as its own
+        # prior context rather than a new user instruction.
+        self._brain.messages[:] = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "text": (
+                            "[CONVERSATION SUMMARY FROM PRIOR ROUND]\n\n"
+                            f"{summary}\n\n"
+                            "[END OF SUMMARY — use this context for follow-up requests]"
+                        ),
+                    }
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "text": "Understood. I have the context from the prior round and am ready for the next request.",
+                    }
+                ],
+            },
+        ]
+
+        if self._verbose:
+            print(f"[pipeline] Brain history compressed → {len(summary)} chars summary.")
+
     def _record_chat_summary(
         self,
         user_text: str,
@@ -438,7 +505,6 @@ class Pipeline:
             ChatSummary(
                 workflow_name=workflow_name,
                 output_paths=list(self._session.current_output_paths),
-                key_params={},
                 user_intent=triage_result.intent.value,
                 status=status,
             )

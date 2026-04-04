@@ -23,16 +23,8 @@ class MessageIntent(str, Enum):
 class ChatSummary(BaseModel):
     workflow_name: str
     output_paths: list[str]
-    key_params: dict
     user_intent: str
     status: str
-
-
-class WorkflowResult(BaseModel):
-    workflow_name: str
-    output_paths: list[str]
-    params: dict
-    error: str | None
 
 
 class AgentSession(BaseModel):

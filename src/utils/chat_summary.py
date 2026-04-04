@@ -1,115 +1,154 @@
 """
-agentY – Chat summary generator.
+agentY – Conversation-history summarisation.
 
-After a workflow completes, ``generate_chat_summary`` makes a single Qwen call
-to distil the raw ``params`` dict down to the handful of keys that actually
-matter to the user (seed, prompt, resolution, model, …) and wraps everything
-into a validated ``ChatSummary``.
+``summarize_conversation`` compresses a full Strands Agent message list into a
+compact text summary so that only the summary—not the full conversation—is
+forwarded to the next agent call, drastically reducing token baggage.
 
 Typical usage
 -------------
->>> result  = WorkflowResult(workflow_name="flux_t2i", output_paths=["/out/img.png"],
-...                           params=raw_params, error=None)
->>> summary = await generate_chat_summary(result, user_intent="Generate a sunset over the sea")
+>>> text_summary = await summarize_conversation(agent.messages)
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from typing import Any
 
 from .llm_functions import LLMFunctions
-from .models import ChatSummary, WorkflowResult
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Prompt
+# Conversation-history summarisation
 # ---------------------------------------------------------------------------
 
-_EXTRACT_SYSTEM = """\
-You are a parameter extractor for an AI ComfyUI production agent.
+_SUMMARISE_SYSTEM = """\
+You are a conversation summariser for an AI ComfyUI production agent.
 
-You will receive a raw params dict that may contain hundreds of internal keys
-(node IDs, class_type fields, widget_values arrays, etc.).
+You will receive the full message history of an agent conversation (user
+requests, assistant actions, tool calls, tool results, etc.).
 
-Your task: return ONLY the keys that a non-technical user would care about.
-Keep: seed, prompt (or positive/negative), resolution (width/height), model \
-(checkpoint, lora, controlnet), steps, cfg, denoise, strength, style, \
-sampler, scheduler, and any obviously human-readable creative parameters.
-Drop: node IDs, class_type, _meta, inputs/outputs wiring, file paths that are \
-internal temporary files, and any numeric IDs.
+Your task: produce a CONCISE summary that captures ONLY the information
+needed for the agent to continue working effectively in a follow-up call.
 
-Respond with a single JSON object — no markdown, no explanation:
-{"key_params": {"<param>": <value>, ...}}
+Include:
+- What the user originally requested (task description / prompt / intent).
+- Which workflow template was used and its key parameters (model, resolution,
+  seed, steps, cfg, prompt, lora, controlnet, etc.).
+- What the agent did (loaded template, patched params, submitted to ComfyUI, etc.).
+- Final output file paths / filenames.
+- Any errors or issues that occurred.
+- The current state: success, partial, or error.
 
-If no user-relevant params can be identified, return {"key_params": {}}."""
+Exclude:
+- Raw JSON blobs, node IDs, internal wiring details.
+- Full tool-call payloads or verbose API responses.
+- Conversational filler, confirmations, or agent reasoning traces.
+- Redundant information already covered elsewhere in the summary.
+
+Respond with ONLY the summary text — no markdown fences, no preamble."""
+
+# Hard cap on raw conversation text fed to the summariser to avoid
+# blowing up the context window of the small Qwen model.
+_MAX_CONVERSATION_CHARS = 24_000
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
+def _flatten_messages(messages: list[dict]) -> str:
+    """Convert a Strands message list into a readable text block for the summariser.
+
+    Strands messages use a ``content`` field that may be a plain string or a
+    list of typed content blocks (``{"text": ...}``, ``{"toolUse": ...}``,
+    ``{"toolResult": ...}``).  This helper normalises both formats into a
+    simple ``role: text`` transcript, truncated to ``_MAX_CONVERSATION_CHARS``
+    so it fits comfortably in the summariser's context window.
+    """
+    lines: list[str] = []
+    for msg in messages:
+        role = msg.get("role", "unknown")
+        content = msg.get("content", "")
+
+        if isinstance(content, str):
+            lines.append(f"[{role}] {content}")
+            continue
+
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, str):
+                    lines.append(f"[{role}] {block}")
+                elif isinstance(block, dict):
+                    if "text" in block:
+                        lines.append(f"[{role}] {block['text']}")
+                    elif "toolUse" in block:
+                        tu = block["toolUse"]
+                        name = tu.get("name", "?")
+                        # Compact representation — skip bulky input payloads
+                        lines.append(f"[{role}:tool_call] {name}(…)")
+                    elif "toolResult" in block:
+                        tr = block["toolResult"]
+                        status = tr.get("status", "?")
+                        # Include first 300 chars of the result content for context
+                        result_content = json.dumps(tr.get("content", ""), ensure_ascii=False)
+                        if len(result_content) > 300:
+                            result_content = result_content[:300] + "…"
+                        lines.append(f"[{role}:tool_result:{status}] {result_content}")
+
+    text = "\n".join(lines)
+    if len(text) > _MAX_CONVERSATION_CHARS:
+        text = text[-_MAX_CONVERSATION_CHARS:]
+        text = "…(earlier messages truncated)…\n" + text
+    return text
 
 
-async def generate_chat_summary(
-    result: WorkflowResult,
-    user_intent: str,
-) -> ChatSummary:
-    """Generate a ``ChatSummary`` for a completed workflow run.
+async def summarize_conversation(messages: list[dict]) -> str:
+    """Summarise a Strands Agent message list into a compact text block.
 
-    Makes a single Qwen call to extract user-relevant params from
-    ``result.params``; all other fields are derived directly.
+    Uses the cheap Qwen model (configured in ``settings.json`` under
+    ``llm.pipeline.llm_functions``) so this adds virtually no cost.
 
     Parameters
     ----------
-    result:
-        The raw outcome of a workflow execution.
-    user_intent:
-        One-sentence summary of what the user asked for (passed through as-is,
-        no LLM needed).
+    messages:
+        The full ``agent.messages`` list from a Strands Agent.
 
     Returns
     -------
-    ChatSummary
-        Validated summary.  ``status`` is ``"success"`` when ``result.error``
-        is ``None``, otherwise ``"error"``.
+    str
+        A concise plain-text summary suitable for injection as the sole
+        conversation context in the next agent invocation.
     """
+    if not messages:
+        return ""
+
+    conversation_text = _flatten_messages(messages)
+    if not conversation_text.strip():
+        return ""
+
     llm = LLMFunctions.from_settings()
 
-    params_json = json.dumps(result.params, ensure_ascii=False, indent=None)
-
-    messages: list[dict[str, str]] = [
-        {"role": "system", "content": _EXTRACT_SYSTEM},
-        {
-            "role": "user",
-            "content": (
-                f"Workflow: {result.workflow_name}\n\n"
-                f"Raw params:\n{params_json}"
-            ),
-        },
+    llm_messages: list[dict[str, str]] = [
+        {"role": "system", "content": _SUMMARISE_SYSTEM},
+        {"role": "user",   "content": f"Conversation to summarise:\n\n{conversation_text}"},
     ]
 
-    key_params: dict[str, Any] = {}
-    raw = await llm.chat(messages, json_format=True)
-
     try:
-        parsed = json.loads(raw)
-        key_params = parsed.get("key_params", {})
-        if not isinstance(key_params, dict):
-            raise ValueError(f"key_params is not a dict: {type(key_params)}")
-    except (json.JSONDecodeError, ValueError) as exc:
-        logger.warning(
-            "Chat summary param extraction failed (%s); raw=%r — using empty key_params",
-            exc,
-            raw,
+        summary = await llm.chat(llm_messages)
+        logger.info(
+            "Conversation summarised: %d messages → %d chars",
+            len(messages),
+            len(summary),
         )
-
-    return ChatSummary(
-        workflow_name=result.workflow_name,
-        output_paths=result.output_paths,
-        key_params=key_params,
-        user_intent=user_intent,
-        status="success" if result.error is None else "error",
-    )
+        return summary.strip()
+    except Exception as exc:
+        logger.warning("Conversation summarisation failed (%s); using fallback", exc)
+        # Fallback: return the last assistant text so the agent has *some* context
+        for msg in reversed(messages):
+            if msg.get("role") == "assistant":
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    return content[:2000]
+                if isinstance(content, list):
+                    texts = [b["text"] for b in content if isinstance(b, dict) and "text" in b]
+                    return "\n".join(texts)[:2000]
+        return ""
