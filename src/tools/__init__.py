@@ -62,6 +62,20 @@ from strands_tools import file_read  # noqa: F401
 from strands_tools import calculator  # noqa: F401
 
 # ---------------------------------------------------------------------------
+# Info-agent tools – read-only; answers questions about capabilities/models/workflows.
+# ---------------------------------------------------------------------------
+INFO_TOOLS: list = [
+    get_workflow_catalog,
+    get_workflow_template,
+    get_model_types,
+    get_models_in_folder,
+    get_node_schema,
+    search_nodes,
+    read_text_file,
+    file_read,
+]
+
+# ---------------------------------------------------------------------------
 # Researcher tools – read-only resolution (template lookup, model listing).
 # No workflow execution or I/O side-effects.
 # ---------------------------------------------------------------------------

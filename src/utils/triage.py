@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 
 from .llm_functions import LLMFunctions
 from .models import AgentSession, MessageIntent, TriageResult
@@ -46,70 +45,6 @@ or models — NOT requesting generation
 Respond with a JSON object only, no markdown, no explanation:
 {"intent": "<intent>", "confidence": <float 0.0–1.0>}"""
 
-_ANSWER_SYSTEM = """\
-You are a concise assistant for an AI ComfyUI production agent.
-Answer the user's question using ONLY the provided context.
-If the answer is not in the context, say so briefly.
-Do not hallucinate workflow names or model names."""
-
-
-# ---------------------------------------------------------------------------
-# Keyword-based context slicing
-# ---------------------------------------------------------------------------
-
-_STOP_WORDS: frozenset[str] = frozenset({
-    "a", "an", "the", "is", "are", "was", "were", "be", "been",
-    "what", "which", "how", "can", "do", "does", "did",
-    "i", "you", "it", "in", "of", "for", "to", "and", "or",
-    "use", "with", "my", "that", "this", "have", "has",
-})
-
-_MAX_WORKFLOWS = 20
-_MAX_MODELS    = 8
-
-
-def _extract_keywords(text: str) -> list[str]:
-    words = re.findall(r"[a-zA-Z0-9_\-]+", text.lower())
-    return [w for w in words if w not in _STOP_WORDS and len(w) > 2]
-
-
-def _slice_info_context(user_message: str, info_context: dict) -> str:
-    """Return a compact, keyword-matched slice of info_context as plain text."""
-    keywords = _extract_keywords(user_message)
-
-    # --- workflows ---
-    workflows: dict[str, str] = info_context.get("workflows", {})
-    matched_wf: dict[str, str] = {
-        name: desc
-        for name, desc in workflows.items()
-        if any(kw in (name + " " + desc).lower() for kw in keywords)
-    }
-    if not matched_wf and workflows:
-        matched_wf = dict(list(workflows.items())[:10])  # fallback: first 10
-    matched_wf = dict(list(matched_wf.items())[:_MAX_WORKFLOWS])
-
-    # --- models ---
-    models: list = info_context.get("models", [])
-    matched_models = [
-        m for m in models
-        if any(kw in str(m).lower() for kw in keywords)
-    ] or models[:_MAX_MODELS]
-    matched_models = matched_models[:_MAX_MODELS]
-
-    # --- capabilities ---
-    capabilities: str = info_context.get("capabilities", "")
-
-    parts: list[str] = []
-    if matched_wf:
-        wf_lines = "\n".join(f"- {name}: {desc}" for name, desc in matched_wf.items())
-        parts.append(f"## Relevant Workflows\n{wf_lines}")
-    if matched_models:
-        parts.append("## Models\n" + "\n".join(f"- {m}" for m in matched_models))
-    if capabilities:
-        parts.append(f"## Capabilities\n{capabilities}")
-
-    return "\n\n".join(parts)
-
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -118,9 +53,9 @@ def _slice_info_context(user_message: str, info_context: dict) -> str:
 async def triage(
     user_message: str,
     session: AgentSession,
-    info_context: dict,
+    info_context: dict,  # noqa: ARG001  — reserved for future use
 ) -> TriageResult:
-    """Classify *user_message* and — for info queries — answer it.
+    """Classify *user_message* and return a routing result.
 
     Parameters
     ----------
@@ -129,18 +64,14 @@ async def triage(
     session:
         Current agent session (used to give the classifier prior context).
     info_context:
-        Injected at startup; shape::
-
-            {
-                "workflows": {"name": "description", ...},
-                "models": [...],
-                "capabilities": "...",
-            }
+        Reserved — no longer used by triage directly.  Answering info_query
+        requests is now handled by the dedicated Info agent in the pipeline.
 
     Returns
     -------
     TriageResult
-        ``response`` is ``None`` for every intent except ``info_query``.
+        ``response`` is always ``None``; the pipeline delegates info queries
+        to the Info agent.
     """
     llm = LLMFunctions.from_settings()
 
@@ -182,20 +113,7 @@ async def triage(
             confidence=confidence,
         )
 
-    # ── Call 2 (info_query only): answer using sliced context ─────────────
-    response: str | None = None
-    if intent == MessageIntent.info_query:
-        context_slice = _slice_info_context(user_message, info_context)
-        answer_messages = [
-            {"role": "system", "content": _ANSWER_SYSTEM},
-            {
-                "role": "user",
-                "content": f"Context:\n{context_slice}\n\nQuestion: {user_message}",
-            },
-        ]
-        response = await llm.chat(answer_messages)
-
-    return TriageResult(intent=intent, response=response, confidence=confidence)
+    return TriageResult(intent=intent, response=None, confidence=confidence)
 
 
 def route(result: TriageResult) -> str:

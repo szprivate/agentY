@@ -24,7 +24,7 @@ from typing import Any, List, Optional
 from pydantic import BaseModel, Field, ValidationError
 from strands import Agent
 
-from src.agent import create_brain_agent, create_researcher_agent, _settings
+from src.agent import create_brain_agent, create_info_agent, create_researcher_agent, _settings
 from src.utils.chat_summary import summarize_conversation
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
 from src.utils.comfyui_poller import poll_comfyui_job as _poll_comfyui_job
@@ -132,6 +132,7 @@ class Pipeline:
         researcher: Agent,
         brain: Agent,
         *,
+        info_agent: Agent | None = None,
         verbose: bool = True,
         skip_brain: bool = False,
         info_context: dict | None = None,
@@ -139,6 +140,7 @@ class Pipeline:
     ) -> None:
         self._researcher = researcher
         self._brain = brain
+        self._info_agent: Agent = info_agent or create_info_agent()
         self._verbose = verbose
         self._skip_brain = skip_brain
         self._info_context: dict = info_context or {}
@@ -182,7 +184,9 @@ class Pipeline:
                   f" confidence={triage_result.confidence:.2f}, handler={handler}")
 
         if handler == "answer":
-            return triage_result.response or ""
+            if self._verbose:
+                print("[pipeline] info_query → Info agent")
+            return str(self._info_agent(user_text))
 
         if handler == "brain":
             # Follow-up: skip Researcher, send directly to Brain
@@ -274,7 +278,10 @@ class Pipeline:
                   f" confidence={triage_result.confidence:.2f}, handler={handler}")
 
         if handler == "answer":
-            yield {"data": triage_result.response or ""}
+            if self._verbose:
+                print("[pipeline:stream] info_query → Info agent (streamed)")
+            async for event in self._info_agent.stream_async(user_text):
+                yield event
             return
 
         if handler == "brain":
@@ -803,9 +810,11 @@ def create_pipeline(
         anthropic_model=brain_anthropic_model,
         ollama_model=brain_ollama_model,
     )
+    info_agent = create_info_agent()
     return Pipeline(
         researcher,
         brain,
+        info_agent=info_agent,
         verbose=verbose,
         skip_brain=skip_brain,
         info_context=info_context,

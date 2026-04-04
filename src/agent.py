@@ -23,7 +23,7 @@ from strands.hooks.events import AfterToolCallEvent
 
 from src.utils.comfyui_interrupt_hook import ComfyUIInterruptHook
 
-from src.tools import RESEARCHER_TOOLS, BRAIN_TOOLS, reset_patch_workflow_guard
+from src.tools import RESEARCHER_TOOLS, BRAIN_TOOLS, INFO_TOOLS, reset_patch_workflow_guard
 
 
 # ---------------------------------------------------------------------------
@@ -448,6 +448,38 @@ def create_researcher_agent(
         tools=RESEARCHER_TOOLS,
         ollama_model=resolved_ollama,
         anthropic_model=resolved_anthropic,
+        **kwargs,
+    )
+
+
+def create_info_agent(
+    ollama_model: str | None = None,
+    **kwargs,
+) -> Agent:
+    """Create the Info agent — a lightweight Ollama agent that answers questions
+    about available ComfyUI workflows, models, and capabilities.
+
+    Defaults to the same Ollama model used by ``llm_functions``
+    (``llm.pipeline.llm_functions`` in settings.json).
+    Override with ``INFO_OLLAMA_MODEL`` env var or *ollama_model*.
+
+    Args:
+        ollama_model: Ollama model override (e.g. ``'qwen3.5:9b'``).
+        **kwargs: Forwarded to the Strands Agent constructor.
+    """
+    resolved_model = (
+        ollama_model
+        or os.environ.get("INFO_OLLAMA_MODEL")
+        or str(_cfg("INFO_OLLAMA_MODEL", "pipeline", "info", default=""))
+        or str(_cfg("LLM_FUNCTIONS_MODEL", "pipeline", "llm_functions", default="qwen3.5:9b"))
+    )
+    system_prompt = _load_system_prompt("info")
+    return _make_agent(
+        role="info",
+        llm="ollama",
+        system_prompt=system_prompt,
+        tools=INFO_TOOLS,
+        ollama_model=resolved_model,
         **kwargs,
     )
 
