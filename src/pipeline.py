@@ -190,21 +190,24 @@ class Pipeline:
             brain_prompt = self._build_followup_prompt(user_text, triage_result)
             brain_response = str(self._brain(brain_prompt))
             self._session.follow_up_count += 1
-            self._record_chat_summary(user_text, triage_result, status="completed")
             # Executor handoff: Brain signals a (re-)assembled workflow is ready
             workflow_path = _get_workflow_signal()
+            executor_paths: list[str] = []
             if workflow_path:
                 if self._verbose:
                     print(f"[pipeline] Brain (follow-up) signaled workflow ready: {workflow_path}")
-                executor_lines = asyncio.run(
+                executor_lines, executor_paths = asyncio.run(
                     self._drain_executor(
                         workflow_path,
                         self._last_brainbriefing_json or "",
                     )
                 )
+                if executor_paths:
+                    self._session.current_output_paths[:] = executor_paths
                 if executor_lines:
                     brain_response = brain_response + "\n\n" + "\n".join(executor_lines)
-            asyncio.run(self._compress_brain_history())
+            self._record_chat_summary(user_text, triage_result, status="completed")
+            asyncio.run(self._compress_brain_history(extra_output_paths=executor_paths))
             if self._verbose:
                 print("[pipeline] Brain (follow-up) finished.")
             return brain_response
@@ -226,16 +229,19 @@ class Pipeline:
         brain_response = str(self._brain(brain_prompt))
         # Executor handoff: Brain signals the assembled workflow is ready
         workflow_path = _get_workflow_signal()
+        executor_paths_r: list[str] = []
         if workflow_path:
             if self._verbose:
                 print(f"[pipeline] Brain signaled workflow ready: {workflow_path}")
-            executor_lines = asyncio.run(
+            executor_lines, executor_paths_r = asyncio.run(
                 self._drain_executor(workflow_path, raw_json)
             )
+            if executor_paths_r:
+                self._session.current_output_paths[:] = executor_paths_r
             if executor_lines:
                 brain_response = brain_response + "\n\n" + "\n".join(executor_lines)
         self._record_chat_summary(user_text, triage_result, status="completed", raw_json=raw_json)
-        asyncio.run(self._compress_brain_history())
+        asyncio.run(self._compress_brain_history(extra_output_paths=executor_paths_r))
         if self._verbose:
             print("[pipeline] Brain finished.")
         return brain_response
@@ -280,6 +286,7 @@ class Pipeline:
                 yield event
             # Executor handoff: stream execution events back to Slack
             workflow_path = _get_workflow_signal()
+            executor_paths_fu: list[str] = []
             if workflow_path:
                 if self._verbose:
                     print(f"[pipeline:stream] Brain (follow-up) signaled workflow ready: {workflow_path}")
@@ -291,10 +298,13 @@ class Pipeline:
                     slack_channel_id=slack_channel_id,
                     slack_thread_ts=slack_thread_ts,
                     verbose=self._verbose,
+                    collected_paths=executor_paths_fu,
                 ):
                     yield {"data": f"\n{line}"}
+            if executor_paths_fu:
+                self._session.current_output_paths[:] = executor_paths_fu
             self._record_chat_summary(user_text, triage_result, status="completed")
-            await self._compress_brain_history()
+            await self._compress_brain_history(extra_output_paths=executor_paths_fu)
             return
 
         # handler == "researcher" or "log_warning" → full Researcher → Brain flow
@@ -347,6 +357,7 @@ class Pipeline:
                 # Normal Brain completion — no ComfyUI interrupt pending.
                 # Stage 3 – Executor: submit, poll, QA, Slack, save
                 workflow_path = _get_workflow_signal()
+                executor_paths_s: list[str] = []
                 if workflow_path:
                     if self._verbose:
                         print(f"[pipeline:stream] Brain signaled workflow ready: {workflow_path}")
@@ -358,10 +369,13 @@ class Pipeline:
                         slack_channel_id=slack_channel_id,
                         slack_thread_ts=slack_thread_ts,
                         verbose=self._verbose,
+                        collected_paths=executor_paths_s,
                     ):
                         yield {"data": f"\n{line}"}
+                if executor_paths_s:
+                    self._session.current_output_paths[:] = executor_paths_s
                 self._record_chat_summary(user_text, triage_result, status="completed", raw_json=raw_json)
-                await self._compress_brain_history()
+                await self._compress_brain_history(extra_output_paths=executor_paths_s)
                 if self._verbose:
                     print("[pipeline:stream] Brain finished.")
                 break
@@ -480,7 +494,7 @@ class Pipeline:
             break
         return messages
 
-    async def _compress_brain_history(self) -> None:
+    async def _compress_brain_history(self, extra_output_paths: list[str] | None = None) -> None:
         """Summarise the Brain's conversation and replace its messages.
 
         After every Brain invocation the full message history is compressed
@@ -488,6 +502,11 @@ class Pipeline:
         Brain's ``messages`` list is then replaced with a single assistant
         message containing that summary.  This ensures that the next agent
         call carries only the summary — not the full, token-heavy history.
+
+        ``extra_output_paths`` are executor-produced file paths that don't
+        appear in the Brain's message history (the executor runs outside the
+        Brain loop).  They are injected into the summary so the next round
+        can reference the generated outputs.
         """
         messages = self._brain.messages
         if not messages:
@@ -498,7 +517,7 @@ class Pipeline:
             print(f"[pipeline] Compressing Brain history ({msg_count} messages) …")
 
         try:
-            summary = await summarize_conversation(messages)
+            summary = await summarize_conversation(messages, extra_output_paths=extra_output_paths)
         except Exception as exc:
             if self._verbose:
                 print(f"[pipeline] WARNING: conversation summarisation failed ({exc}); "
@@ -697,20 +716,22 @@ class Pipeline:
         brainbriefing_json: str,
         slack_channel_id: str = "",
         slack_thread_ts: str = "",
-    ) -> list[str]:
-        """Drain the executor async generator into a list of status strings."""
+    ) -> tuple[list[str], list[str]]:
+        """Drain the executor; return ``(status_lines, output_paths)``."""
         lines: list[str] = []
+        output_paths: list[str] = []
         async for line in _execute_workflow(
             workflow_path,
             brainbriefing_json,
             slack_channel_id=slack_channel_id,
             slack_thread_ts=slack_thread_ts,
             verbose=self._verbose,
+            collected_paths=output_paths,
         ):
             lines.append(line)
             if self._verbose:
                 print(f"[executor] {line}")
-        return lines
+        return lines, output_paths
 
     @staticmethod
     def _get_slack_context() -> tuple[str, str]:

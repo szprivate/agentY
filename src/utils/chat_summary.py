@@ -287,7 +287,10 @@ def _archive_workflow(workflow_path: str | None, template_name: str | None) -> s
         return None
 
 
-async def summarize_conversation(messages: list[dict]) -> str:
+async def summarize_conversation(
+    messages: list[dict],
+    extra_output_paths: list[str] | None = None,
+) -> str:
     """Summarise a Strands Agent message list into a compact structured block.
 
     Uses the cheap Qwen model (configured in ``settings.json`` under
@@ -327,9 +330,12 @@ async def summarize_conversation(messages: list[dict]) -> str:
         extracted["workflow_path"], extracted["template_name"]
     ) or extracted["workflow_path"] or "unknown"
 
-    output_paths_str = (
-        ", ".join(extracted["output_paths"]) if extracted["output_paths"] else "none"
-    )
+    all_output_paths = list(extracted["output_paths"])
+    if extra_output_paths:
+        for p in extra_output_paths:
+            if p not in all_output_paths:
+                all_output_paths.append(p)
+    output_paths_str = ", ".join(all_output_paths) if all_output_paths else "none"
 
     # ── Build hint block injected into the LLM prompt ────────────────────
     hint_lines: list[str] = [

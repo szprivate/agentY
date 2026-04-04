@@ -178,6 +178,7 @@ async def execute_workflow(
     slack_channel_id: str = "",
     slack_thread_ts: str = "",
     verbose: bool = True,
+    collected_paths: list[str] | None = None,
 ) -> AsyncGenerator[str, None]:
     """Submit the validated workflow, poll ComfyUI, QA outputs, post to Slack.
 
@@ -290,6 +291,10 @@ async def execute_workflow(
     yield f"✅ Done. Outputs: {output_summary}"
     if verbose:
         print(f"[executor] Finished. Outputs: {[str(p) for p in saved_paths]}")
+
+    # Propagate saved paths to caller so the pipeline can update session state
+    if collected_paths is not None:
+        collected_paths.extend(str(p) for p in saved_paths)
 
 
 def _downsize_for_slack(source: Path) -> Path | None:
