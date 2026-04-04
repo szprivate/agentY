@@ -26,6 +26,14 @@ from strands import Agent
 
 from src.agent import create_brain_agent, create_researcher_agent, _settings
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
+from src.utils.triage import (
+    triage as _triage,
+    route as _route,
+    AgentSession,
+    MessageIntent,
+    RunReceipt,
+    TriageResult,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -189,11 +197,22 @@ class Pipeline:
     reporting in Slack continues to work.
     """
 
-    def __init__(self, researcher: Agent, brain: Agent, *, verbose: bool = True, skip_brain: bool = False) -> None:
+    def __init__(
+        self,
+        researcher: Agent,
+        brain: Agent,
+        *,
+        verbose: bool = True,
+        skip_brain: bool = False,
+        info_context: dict | None = None,
+        session_id: str = "default",
+    ) -> None:
         self._researcher = researcher
         self._brain = brain
         self._verbose = verbose
         self._skip_brain = skip_brain
+        self._info_context: dict = info_context or {}
+        self._session: AgentSession = AgentSession(session_id=session_id)
 
     def _should_skip_brain(self) -> bool:
         if self._skip_brain:
@@ -213,9 +232,39 @@ class Pipeline:
         return self._brain.event_loop_metrics
 
     def run(self, user_input, **_: Any) -> str:
-        """Run the full pipeline for *user_input* and return the Brain's response."""
+        """Run the full pipeline for *user_input* and return the Brain's response.
+
+        Triage runs first to classify intent, then routes to:
+        - ``researcher`` (new_request / low-confidence): full Researcher → Brain flow
+        - ``brain`` (param_tweak / chain / correction): direct Brain follow-up
+        - ``answer`` (info_query): return the triage answer directly
+        - ``log_warning`` (low-confidence fallback): treat as new_request
+        """
+        user_text = self._extract_text(user_input)
+        triage_result = asyncio.run(_triage(user_text, self._session, self._info_context))
+        handler = _route(triage_result)
+
+        if self._verbose:
+            print(f"[pipeline] Triage → intent={triage_result.intent.value},"
+                  f" confidence={triage_result.confidence:.2f}, handler={handler}")
+
+        if handler == "answer":
+            return triage_result.response or ""
+
+        if handler == "brain":
+            # Follow-up: skip Researcher, send directly to Brain
+            brain_prompt = self._build_followup_prompt(user_text, triage_result)
+            brain_response = str(self._brain(brain_prompt))
+            self._session.follow_up_count += 1
+            self._record_receipt(user_text, triage_result, status="completed")
+            if self._verbose:
+                print("[pipeline] Brain (follow-up) finished.")
+            return brain_response
+
+        # handler == "researcher" or "log_warning" → full Researcher → Brain flow
         raw_json, error, researcher_output = self._run_researcher(user_input)
         if error:
+            self._record_receipt(user_text, triage_result, status="error")
             return error
 
         if self._should_skip_brain():
@@ -225,6 +274,7 @@ class Pipeline:
 
         brain_prompt = self._build_brain_prompt(raw_json)
         brain_response = str(self._brain(brain_prompt))
+        self._record_receipt(user_text, triage_result, status="completed", raw_json=raw_json)
         if self._verbose:
             print("[pipeline] Brain finished.")
         return brain_response
@@ -247,11 +297,35 @@ class Pipeline:
 
         Yields the same event dicts that a Strands Agent.stream_async would.
         """
+        # Stage 0 – Triage (classify intent before any agent is called)
+        user_text = self._extract_text(user_input)
+        triage_result = await _triage(user_text, self._session, self._info_context)
+        handler = _route(triage_result)
+
+        if self._verbose:
+            print(f"[pipeline:stream] Triage → intent={triage_result.intent.value},"
+                  f" confidence={triage_result.confidence:.2f}, handler={handler}")
+
+        if handler == "answer":
+            yield {"data": triage_result.response or ""}
+            return
+
+        if handler == "brain":
+            # Follow-up: skip Researcher, send directly to Brain (streamed)
+            brain_prompt = self._build_followup_prompt(user_text, triage_result)
+            self._session.follow_up_count += 1
+            async for event in self._brain.stream_async(brain_prompt):
+                yield event
+            self._record_receipt(user_text, triage_result, status="completed")
+            return
+
+        # handler == "researcher" or "log_warning" → full Researcher → Brain flow
         # Stage 1 – Researcher (synchronous; fast pattern-matching turn)
         if self._verbose:
             print("[pipeline:stream] Stage 1 – Researcher resolving spec …")
         raw_json, error, researcher_output = self._run_researcher(user_input)
         if error:
+            self._record_receipt(user_text, triage_result, status="error")
             yield {"data": error}
             return
 
@@ -290,6 +364,7 @@ class Pipeline:
 
             if interrupt_result is None:
                 # Normal completion — no ComfyUI interrupt pending.
+                self._record_receipt(user_text, triage_result, status="completed", raw_json=raw_json)
                 if self._verbose:
                     print("[pipeline:stream] Brain finished (no interrupt).")
                 break
@@ -318,6 +393,62 @@ class Pipeline:
             ]
 
     # ── Internal helpers ─────────────────────────────────────────────── #
+
+    # ── Triage helpers ───────────────────────────────────────────────── #
+
+    @staticmethod
+    def _extract_text(user_input: Any) -> str:
+        """Extract a plain-text string from a str or multimodal content-block list."""
+        if isinstance(user_input, list):
+            return "\n".join(block["text"] for block in user_input if "text" in block)
+        return str(user_input)
+
+    def _build_followup_prompt(self, user_text: str, triage_result: TriageResult) -> str:
+        """Prompt for Brain when handling a follow-up (no Researcher pass needed)."""
+        context_lines: list[str] = []
+        if self._session.receipts:
+            last = self._session.receipts[-1]
+            context_lines.append(f"Last workflow: {last.workflow_name}")
+            context_lines.append(f"Last status: {last.status}")
+        if self._session.current_output_paths:
+            context_lines.append(
+                f"Current outputs: {', '.join(self._session.current_output_paths)}"
+            )
+        context_block = ("\n".join(context_lines) + "\n\n") if context_lines else ""
+        return textwrap.dedent(f"""\
+            Follow-up request (intent: {triage_result.intent.value}):
+
+            {context_block}{user_text}
+
+            Apply the requested change directly, reusing the current session context.
+        """).strip()
+
+    def _record_receipt(
+        self,
+        user_text: str,
+        triage_result: TriageResult,
+        *,
+        status: str,
+        raw_json: str | None = None,
+    ) -> None:
+        """Append a RunReceipt to the session after each pipeline invocation."""
+        workflow_name = "unknown"
+        if raw_json:
+            try:
+                workflow_name = (
+                    json.loads(raw_json).get("template", {}).get("name") or "unknown"
+                )
+            except Exception:
+                pass
+        self._session.receipts.append(
+            RunReceipt(
+                workflow_name=workflow_name,
+                output_paths=list(self._session.current_output_paths),
+                key_params={},
+                user_intent=triage_result.intent.value,
+                status=status,
+            )
+        )
 
     _MAX_RESEARCHER_RETRIES = 2  # up to 2 correction rounds after the first attempt
 
@@ -451,6 +582,8 @@ def create_pipeline(
     brain_ollama_model: str | None = None,
     verbose: bool = True,
     skip_brain: bool = False,
+    info_context: dict | None = None,
+    session_id: str = "default",
 ) -> Pipeline:
     """Create and return a ready-to-use two-agent Pipeline.
 
@@ -486,4 +619,11 @@ def create_pipeline(
         anthropic_model=brain_anthropic_model,
         ollama_model=brain_ollama_model,
     )
-    return Pipeline(researcher, brain, verbose=verbose, skip_brain=skip_brain)
+    return Pipeline(
+        researcher,
+        brain,
+        verbose=verbose,
+        skip_brain=skip_brain,
+        info_context=info_context,
+        session_id=session_id,
+    )
