@@ -161,7 +161,7 @@ def _download_slack_file(url: str) -> Optional[bytes]:
 
 def _slack_downloads_dir() -> str:
     """Return (and create) the directory for files downloaded from Slack."""
-    d = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "input_slack")
+    d = str(Path(__file__).parents[2] / "input_slack")
     os.makedirs(d, exist_ok=True)
     return d
 

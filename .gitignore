@@ -10,11 +10,10 @@ build/
 # Official Comfy-Org workflow templates (cloned repo — large)
 comfyui_workflow_templates_official/
 
-# Output
-output/
-
 # Slack file downloads
 slack_downloads/
 
-#Logs
+#Logs and outputs 
 logs/
+input_slack/
+output/
