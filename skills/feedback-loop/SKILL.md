@@ -8,7 +8,7 @@ allowed-tools: get_workflow_template, patch_workflow, validate_workflow, submit_
 # Feedback Loop — Follow-up Request Handler
 
 Activate this skill whenever the incoming prompt starts with:
-> **Follow-up request (intent: `param_tweak` | `chain` | `correction`)**
+> **Follow-up request (intent: `param_tweak` | `chain` | `feedback`)**
 
 The conversation summary block at the top of your context provides:
 - `TASK` — what was done in the prior round

@@ -28,7 +28,7 @@ from src.agent import create_brain_agent, create_researcher_agent, _settings
 from src.utils.chat_summary import summarize_conversation
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
 from src.utils.comfyui_poller import poll_comfyui_job as _poll_comfyui_job
-from src.utils.models import AgentSession, ChatSummary, TriageResult
+from src.utils.models import AgentSession, ChatSummary, MessageIntent, TriageResult
 from src.utils.triage import triage as _triage, route as _route
 from src.utils.workflow_signal import clear_and_get as _get_workflow_signal
 from src.executor import execute_workflow as _execute_workflow
@@ -169,7 +169,7 @@ class Pipeline:
 
         Triage runs first to classify intent, then routes to:
         - ``researcher`` (new_request / low-confidence): full Researcher → Brain flow
-        - ``brain`` (param_tweak / chain / correction): direct Brain follow-up
+        - ``brain`` (param_tweak / chain / feedback): direct Brain follow-up
         - ``answer`` (info_query): return the triage answer directly
         - ``log_warning`` (low-confidence fallback): treat as new_request
         """
@@ -415,7 +415,16 @@ class Pipeline:
         return str(user_input)
 
     def _build_followup_prompt(self, user_text: str, triage_result: TriageResult) -> str:
-        """Prompt for Brain when handling a follow-up (no Researcher pass needed)."""
+        """Prompt for Brain when handling a follow-up (no Researcher pass needed).
+
+        For ``feedback`` intent the raw user message is returned verbatim — the
+        Brain receives it exactly as the user wrote it, with no wrapper.
+        For all other follow-up intents a compact context block is prepended.
+        """
+        if triage_result.intent == MessageIntent.feedback:
+            # The user's feedback message IS the new prompt for the Brain.
+            return user_text
+
         context_lines: list[str] = []
         if self._session.chat_summaries:
             last = self._session.chat_summaries[-1]

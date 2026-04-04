@@ -36,7 +36,9 @@ Classify the user message into exactly one of these intents:
 (e.g. change style, resolution, strength, seed)
 - chain        : User wants to pipe the last output into a new workflow \
 (e.g. "now upscale it", "turn it into a video")
-- correction   : User is correcting or overriding a mistake the agent made
+- feedback     : User is providing qualitative feedback or a correction on the generated output \
+(e.g. "the face looks wrong", "colors are too saturated", "make it more dramatic", \
+"the lighting is off", "that's not what I asked for") — they evaluate the result and want changes
 - new_request  : User is making a fresh generation request unrelated to prior context
 - info_query   : User is asking a factual question about capabilities, workflows, \
 or models — NOT requesting generation
@@ -210,7 +212,7 @@ def route(result: TriageResult) -> str:
     match result.intent:
         case MessageIntent.info_query:
             return "answer"
-        case MessageIntent.param_tweak | MessageIntent.chain | MessageIntent.correction:
+        case MessageIntent.param_tweak | MessageIntent.chain | MessageIntent.feedback:
             return "brain"
         case MessageIntent.new_request:
             return "researcher"

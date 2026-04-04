@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 class MessageIntent(str, Enum):
     param_tweak  = "param_tweak"   # adjust a param of the last run
     chain        = "chain"          # pipe last output into a new workflow
-    correction   = "correction"     # override a mistake the agent made
+    feedback     = "feedback"       # qualitative feedback / correction on the generated output
     new_request  = "new_request"    # fresh generation request
     info_query   = "info_query"     # question about capabilities / workflows / models
 

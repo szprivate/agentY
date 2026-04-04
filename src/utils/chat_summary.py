@@ -66,24 +66,19 @@ You will receive the full message history of an agent conversation (user
 requests, assistant actions, tool calls, tool results, etc.), plus a block
 of already-extracted metadata (authoritative — do not change those values).
 
-Your task: output EXACTLY seven labeled lines, in this order:
+Your task: output EXACTLY six labeled lines, in this order:
 
 TASK: <3–8 word production summary, e.g. "image edit, then upscale" | "image generation" | "video i2v" | "downsize, image edit, upscale">
-TEMPLATE: <exact workflow template name from the conversation, or "unknown">
+TEMPLATE: <value from extracted metadata — copy verbatim, do NOT change>
 WORKFLOW_FILE: <value from extracted metadata — copy verbatim, do NOT change>
-INPUT_PATHS: <comma-separated absolute paths of input images/videos from the conversation, or "none">
+INPUT_PATHS: <value from extracted metadata — copy verbatim, do NOT change>
 OUTPUT_PATHS: <value from extracted metadata — copy verbatim, do NOT change>
-STATUS: <success | partial | error>
-ERRORS: <one-sentence error description, or "none">
+PATCHES: <value from extracted metadata — copy verbatim, do NOT change>
 
 Rules:
-- Output ONLY the seven labeled lines — no preamble, no markdown, no blank lines between them.
+- Output ONLY the six labeled lines — no preamble, no markdown, no blank lines between them.
 - TASK: extremely brief (≤8 words). Describe the production pipeline, not internal steps.
-- TEMPLATE: copy the exact name from a get_workflow_template call in the conversation.
-- WORKFLOW_FILE and OUTPUT_PATHS: always copy verbatim from the extracted metadata block.
-- INPUT_PATHS: exact file paths from upload_image / LoadImage calls in the conversation.
-- STATUS: success if ComfyUI job completed and result posted to Slack; partial if job ran but QA/post failed; error otherwise.
-- ERRORS: one sentence max, or "none"."""
+- TEMPLATE, WORKFLOW_FILE, INPUT_PATHS, OUTPUT_PATHS, PATCHES: always copy verbatim from the extracted metadata block."""
 
 # Hard cap on raw conversation text fed to the summariser to avoid
 # blowing up the context window of the small Qwen model.
@@ -173,19 +168,32 @@ def _flatten_messages(messages: list[dict]) -> str:
 # Path extraction helpers
 # ---------------------------------------------------------------------------
 
+def _stem_without_timestamp(path: str) -> str:
+    """Strip a leading ``YYYYMMDD_HHMMSS_`` timestamp from a file stem."""
+    stem = Path(path).stem
+    m = re.match(r"^\d{8}_\d{6}_(.+)$", stem)
+    return m.group(1) if m else stem
+
+
 def _extract_paths_from_messages(messages: list[dict]) -> dict:
     """Scan raw Strands messages and extract key production paths.
 
     Returns a dict with keys:
-    - ``workflow_path``  – last patched workflow file path (str | None)
-    - ``template_name``  – workflow template name (str | None)
-    - ``output_paths``   – ordered list of generated output file paths
-    - ``input_paths``    – ordered list of input image/video file paths
+    - ``workflow_path``          – last patched workflow file path (str | None)
+    - ``template_name``          – workflow template name, researcher-preferred (str | None)
+    - ``output_paths``           – ordered list of generated output file paths
+    - ``input_paths``            – ordered list of input image/video file paths
+    - ``patch_changes``          – ordered list of human-readable patch descriptions
     """
     workflow_path: str | None = None
-    template_name: str | None = None
+    brainbriefing_template: str | None = None   # researcher-selected (highest priority)
+    get_template_name: str | None = None         # brain's get_workflow_template call
+    prior_summary_template: str | None = None    # from injected prior-round summary
     output_paths: list[str] = []
     input_paths: list[str] = []
+    prior_summary_input_paths: list[str] = []   # from injected prior-round summary
+    patch_image_values: list[str] = []          # "image" inputs patched, as fallback
+    patch_changes: list[str] = []
 
     for msg in messages:
         content = msg.get("content", [])
@@ -196,8 +204,41 @@ def _extract_paths_from_messages(messages: list[dict]) -> dict:
             if not isinstance(block, dict):
                 continue
 
+            # ── Plain text blocks ──────────────────────────────────────
+            if "text" in block:
+                text = block["text"]
+
+                # Brainbriefing injected by pipeline: "template": {"name": "..."}
+                if not brainbriefing_template:
+                    m = re.search(
+                        r'"template"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)"',
+                        text,
+                        re.DOTALL,
+                    )
+                    if m:
+                        brainbriefing_template = m.group(1)
+
+                # Prior-round summary injected as first user message:
+                # "[CONVERSATION SUMMARY FROM PRIOR ROUND]\n..."
+                if "[CONVERSATION SUMMARY FROM PRIOR ROUND]" in text:
+                    if not prior_summary_template:
+                        m = re.search(r"^TEMPLATE:\s*(.+)$", text, re.MULTILINE)
+                        if m:
+                            val = m.group(1).strip()
+                            if val and val.lower() not in ("unknown", "none", ""):
+                                prior_summary_template = val
+
+                    ip_match = re.search(r"^INPUT_PATHS:\s*(.+)$", text, re.MULTILINE)
+                    if ip_match:
+                        val = ip_match.group(1).strip()
+                        if val.lower() not in ("none", "unknown", ""):
+                            for p in val.split(","):
+                                p = p.strip()
+                                if p:
+                                    prior_summary_input_paths.append(p)
+
             # ── toolUse blocks ─────────────────────────────────────────
-            if "toolUse" in block:
+            elif "toolUse" in block:
                 tu = block["toolUse"]
                 tool_name: str = tu.get("name", "")
                 inp: dict = tu.get("input", {}) if isinstance(tu.get("input"), dict) else {}
@@ -206,11 +247,50 @@ def _extract_paths_from_messages(messages: list[dict]) -> dict:
                     wp = inp.get("workflow_path")
                     if isinstance(wp, str) and wp:
                         workflow_path = wp  # keep last (most recent) patch target
+                    # Extract human-readable patch descriptions
+                    raw_patches = inp.get("patches")
+                    if isinstance(raw_patches, str):
+                        try:
+                            patch_list = json.loads(raw_patches)
+                            if isinstance(patch_list, list):
+                                for patch in patch_list:
+                                    nid = str(patch.get("node_id", "?"))
+                                    if "class_type" in patch:
+                                        patch_changes.append(
+                                            f"Node {nid}: class_type → {patch['class_type']}"
+                                        )
+                                    elif "widget_values_index" in patch:
+                                        idx = patch["widget_values_index"]
+                                        val_r = repr(patch.get("value", "?"))
+                                        if len(val_r) > 80:
+                                            val_r = val_r[:77] + "..."
+                                        patch_changes.append(
+                                            f"Node {nid}.widget_values[{idx}] → {val_r}"
+                                        )
+                                    elif "input_name" in patch:
+                                        inp_name = patch["input_name"]
+                                        val = patch.get("value")
+                                        val_r = repr(val)
+                                        if len(val_r) > 80:
+                                            val_r = val_r[:77] + "..."
+                                        patch_changes.append(
+                                            f"Node {nid}.{inp_name} → {val_r}"
+                                        )
+                                        # Capture "image" inputs with string values as
+                                        # fallback input-path hints (LoadImage patches)
+                                        if (
+                                            inp_name == "image"
+                                            and isinstance(val, str)
+                                            and val
+                                        ):
+                                            patch_image_values.append(val)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
 
                 elif tool_name == "get_workflow_template":
                     tn = inp.get("name") or inp.get("template_name")
-                    if isinstance(tn, str) and tn and not template_name:
-                        template_name = tn
+                    if isinstance(tn, str) and tn and not get_template_name:
+                        get_template_name = tn
 
                 elif tool_name in _OUTPUT_TOOLS:
                     fp = inp.get("file_path") or inp.get("save_to") or inp.get("filename")
@@ -218,11 +298,12 @@ def _extract_paths_from_messages(messages: list[dict]) -> dict:
                         output_paths.append(fp)
 
                 elif tool_name == "upload_image":
-                    fp = inp.get("image_path") or inp.get("filename")
+                    # The tool uses "file_path"; also accept legacy "image_path"/"filename"
+                    fp = inp.get("file_path") or inp.get("image_path") or inp.get("filename")
                     if isinstance(fp, str) and fp and fp not in input_paths:
                         input_paths.append(fp)
 
-            # ── toolResult blocks (fallback: mine workflow_path / template) ──
+            # ── toolResult blocks (fallback: mine workflow_path) ───────
             elif "toolResult" in block:
                 tr = block["toolResult"]
                 raw = tr.get("content", [])
@@ -238,10 +319,6 @@ def _extract_paths_from_messages(messages: list[dict]) -> dict:
                             wp = data.get("workflow_path")
                             if isinstance(wp, str) and wp:
                                 workflow_path = wp
-                        if not template_name:
-                            tn = data.get("template_name") or data.get("name")
-                            if isinstance(tn, str) and tn:
-                                template_name = tn
                     except (json.JSONDecodeError, ValueError):
                         # Fall back to regex scan for paths inside plain text
                         text = item.get("text", "")
@@ -250,11 +327,22 @@ def _extract_paths_from_messages(messages: list[dict]) -> dict:
                             if m:
                                 workflow_path = m.group(1)
 
+    # Priority: researcher brainbriefing > get_workflow_template call > prior summary
+    template_name = brainbriefing_template or get_template_name or prior_summary_template
+
+    # Fallback input paths: use prior-summary values, then LoadImage patch values
+    if not input_paths:
+        if prior_summary_input_paths:
+            input_paths = list(prior_summary_input_paths)
+        elif patch_image_values:
+            input_paths = list(dict.fromkeys(patch_image_values))  # deduplicated
+
     return {
         "workflow_path": workflow_path,
         "template_name": template_name,
         "output_paths": output_paths,
         "input_paths": input_paths,
+        "patch_changes": patch_changes,
     }
 
 
@@ -296,7 +384,7 @@ async def summarize_conversation(
     Uses the cheap Qwen model (configured in ``settings.json`` under
     ``llm.pipeline.llm_functions``) so this adds virtually no cost.
 
-    The summary is a seven-line labelled block:
+    The summary is a six-line labelled block:
 
     .. code-block:: text
 
@@ -305,8 +393,7 @@ async def summarize_conversation(
         WORKFLOW_FILE: ./output/_workflows/20260404_123456_image_editing.json
         INPUT_PATHS: /path/to/input.jpg
         OUTPUT_PATHS: ./output/result.png
-        STATUS: success
-        ERRORS: none
+        PATCHES: Node 6.text → 'a photograph of ...', Node 190.image → 'input.png'
 
     Parameters
     ----------
@@ -338,16 +425,25 @@ async def summarize_conversation(
     output_paths_str = ", ".join(all_output_paths) if all_output_paths else "none"
 
     # ── Build hint block injected into the LLM prompt ────────────────────
+    patches_str = ", ".join(extracted["patch_changes"]) if extracted["patch_changes"] else "none"
+    input_paths_str = ", ".join(extracted["input_paths"]) if extracted["input_paths"] else "none"
+
+    # If no template name was resolved through any source, fall back to
+    # "same as WORKFLOW_FILE" so the Brain always has a usable reference.
+    template_display = extracted["template_name"]
+    if not template_display:
+        if extracted["workflow_path"]:
+            template_display = f"same as WORKFLOW_FILE ({_stem_without_timestamp(extracted['workflow_path'])})"
+        else:
+            template_display = "unknown"
+
     hint_lines: list[str] = [
+        f"TEMPLATE (authoritative): {template_display}",
         f"WORKFLOW_FILE (authoritative): {workflow_file}",
+        f"INPUT_PATHS (authoritative): {input_paths_str}",
         f"OUTPUT_PATHS (authoritative): {output_paths_str}",
+        f"PATCHES (authoritative): {patches_str}",
     ]
-    if extracted["template_name"]:
-        hint_lines.append(f"TEMPLATE (authoritative): {extracted['template_name']}")
-    if extracted["input_paths"]:
-        hint_lines.append(
-            f"INPUT_PATHS (authoritative): {', '.join(extracted['input_paths'])}"
-        )
     hint_block = "\n".join(hint_lines)
 
     conversation_text = _flatten_messages(messages)
@@ -361,7 +457,7 @@ async def summarize_conversation(
         {
             "role": "user",
             "content": (
-                f"Extracted metadata (copy WORKFLOW_FILE and OUTPUT_PATHS verbatim):\n"
+                f"Extracted metadata (copy all authoritative fields verbatim):\n"
                 f"{hint_block}\n\n"
                 f"---\n\n"
                 f"Conversation to summarise:\n\n{conversation_text}"
@@ -382,10 +478,9 @@ async def summarize_conversation(
         # Fallback: return a minimal structured block from extracted metadata
         return (
             f"TASK: unknown\n"
-            f"TEMPLATE: {extracted['template_name'] or 'unknown'}\n"
+            f"TEMPLATE: {template_display}\n"
             f"WORKFLOW_FILE: {workflow_file}\n"
-            f"INPUT_PATHS: {', '.join(extracted['input_paths']) or 'none'}\n"
+            f"INPUT_PATHS: {input_paths_str}\n"
             f"OUTPUT_PATHS: {output_paths_str}\n"
-            f"STATUS: unknown\n"
-            f"ERRORS: summarisation failed — {exc}"
+            f"PATCHES: {patches_str}"
         )
