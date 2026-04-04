@@ -17,69 +17,11 @@ from __future__ import annotations
 import json
 import logging
 import re
-from enum import Enum
-from pathlib import Path
-from typing import Any
 
-import httpx
-from pydantic import BaseModel, Field
+from .llm_functions import LLMFunctions
+from .models import AgentSession, MessageIntent, TriageResult
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-
-def _load_settings() -> dict:
-    path = Path(__file__).parent.parent.parent / "config" / "settings.json"
-    if path.exists():
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    return {}
-
-
-def _get_ollama_config() -> tuple[str, str]:
-    """Return (model_name, host) from settings.json."""
-    settings = _load_settings()
-    llm = settings.get("llm", {})
-    model: str = llm.get("pipeline", {}).get("llm_functions", "qwen3:0.6b")
-    host: str = llm.get("ollama", {}).get("host", "http://localhost:11434")
-    return model, host
-
-
-# ---------------------------------------------------------------------------
-# Models
-# ---------------------------------------------------------------------------
-
-class MessageIntent(str, Enum):
-    param_tweak  = "param_tweak"   # adjust a param of the last run
-    chain        = "chain"          # pipe last output into a new workflow
-    correction   = "correction"     # override a mistake the agent made
-    new_request  = "new_request"    # fresh generation request
-    info_query   = "info_query"     # question about capabilities / workflows / models
-
-
-class RunReceipt(BaseModel):
-    workflow_name: str
-    output_paths: list[str]
-    key_params: dict
-    user_intent: str
-    status: str
-
-
-class AgentSession(BaseModel):
-    session_id: str
-    receipts: list[RunReceipt] = Field(default_factory=list)
-    current_output_paths: list[str] = Field(default_factory=list)
-    follow_up_count: int = 0
-
-
-class TriageResult(BaseModel):
-    intent: MessageIntent
-    response: str | None = None   # populated only for info_query
-    confidence: float
 
 
 # ---------------------------------------------------------------------------
@@ -168,36 +110,6 @@ def _slice_info_context(user_message: str, info_context: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Ollama low-level caller
-# ---------------------------------------------------------------------------
-
-async def _chat(
-    client: httpx.AsyncClient,
-    host: str,
-    model: str,
-    messages: list[dict[str, str]],
-    *,
-    json_format: bool = False,
-) -> str:
-    """POST to Ollama /api/chat and return the assistant message content."""
-    payload: dict[str, Any] = {
-        "model":    model,
-        "messages": messages,
-        "stream":   False,
-    }
-    if json_format:
-        payload["format"] = "json"
-
-    resp = await client.post(
-        f"{host}/api/chat",
-        json=payload,
-        timeout=60.0,
-    )
-    resp.raise_for_status()
-    return resp.json()["message"]["content"]
-
-
-# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -228,60 +140,58 @@ async def triage(
     TriageResult
         ``response`` is ``None`` for every intent except ``info_query``.
     """
-    model, host = _get_ollama_config()
+    llm = LLMFunctions.from_settings()
 
     # Build a compact session summary for the classifier (no leaking info_context).
     session_hint = ""
-    if session.receipts:
-        last = session.receipts[-1]
+    if session.chat_summaries:
+        last = session.chat_summaries[-1]
         session_hint = (
             f"\n\nRecent context: last_workflow='{last.workflow_name}', "
             f"status='{last.status}', follow_up_count={session.follow_up_count}."
         )
 
-    async with httpx.AsyncClient() as client:
+    # ── Call 1: intent classification ─────────────────────────────────────
+    classify_messages = [
+        {"role": "system", "content": _CLASSIFY_SYSTEM + session_hint},
+        {"role": "user",   "content": user_message},
+    ]
+    raw = await llm.chat(classify_messages, json_format=True)
 
-        # ── Call 1: intent classification ─────────────────────────────────
-        classify_messages = [
-            {"role": "system", "content": _CLASSIFY_SYSTEM + session_hint},
-            {"role": "user",   "content": user_message},
+    intent     = MessageIntent.new_request
+    confidence = 0.0
+    try:
+        parsed     = json.loads(raw)
+        intent     = MessageIntent(parsed["intent"])
+        confidence = float(parsed.get("confidence", 0.5))
+    except (json.JSONDecodeError, KeyError, ValueError) as exc:
+        logger.warning("Intent parse failed (%s); raw=%r — defaulting to new_request", exc, raw)
+
+    # Confidence gate
+    if confidence < 0.6:
+        logger.warning(
+            "Low-confidence classification (%.2f) for %r — defaulting to new_request",
+            confidence,
+            user_message,
+        )
+        return TriageResult(
+            intent=MessageIntent.new_request,
+            response=None,
+            confidence=confidence,
+        )
+
+    # ── Call 2 (info_query only): answer using sliced context ─────────────
+    response: str | None = None
+    if intent == MessageIntent.info_query:
+        context_slice = _slice_info_context(user_message, info_context)
+        answer_messages = [
+            {"role": "system", "content": _ANSWER_SYSTEM},
+            {
+                "role": "user",
+                "content": f"Context:\n{context_slice}\n\nQuestion: {user_message}",
+            },
         ]
-        raw = await _chat(client, host, model, classify_messages, json_format=True)
-
-        intent     = MessageIntent.new_request
-        confidence = 0.0
-        try:
-            parsed     = json.loads(raw)
-            intent     = MessageIntent(parsed["intent"])
-            confidence = float(parsed.get("confidence", 0.5))
-        except (json.JSONDecodeError, KeyError, ValueError) as exc:
-            logger.warning("Intent parse failed (%s); raw=%r — defaulting to new_request", exc, raw)
-
-        # Confidence gate
-        if confidence < 0.6:
-            logger.warning(
-                "Low-confidence classification (%.2f) for %r — defaulting to new_request",
-                confidence,
-                user_message,
-            )
-            return TriageResult(
-                intent=MessageIntent.new_request,
-                response=None,
-                confidence=confidence,
-            )
-
-        # ── Call 2 (info_query only): answer using sliced context ─────────
-        response: str | None = None
-        if intent == MessageIntent.info_query:
-            context_slice = _slice_info_context(user_message, info_context)
-            answer_messages = [
-                {"role": "system", "content": _ANSWER_SYSTEM},
-                {
-                    "role": "user",
-                    "content": f"Context:\n{context_slice}\n\nQuestion: {user_message}",
-                },
-            ]
-            response = await _chat(client, host, model, answer_messages)
+        response = await llm.chat(answer_messages)
 
     return TriageResult(intent=intent, response=response, confidence=confidence)
 

@@ -26,14 +26,8 @@ from strands import Agent
 
 from src.agent import create_brain_agent, create_researcher_agent, _settings
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
-from src.utils.triage import (
-    triage as _triage,
-    route as _route,
-    AgentSession,
-    MessageIntent,
-    RunReceipt,
-    TriageResult,
-)
+from src.utils.models import AgentSession, ChatSummary, MessageIntent, TriageResult
+from src.utils.triage import triage as _triage, route as _route
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +250,7 @@ class Pipeline:
             brain_prompt = self._build_followup_prompt(user_text, triage_result)
             brain_response = str(self._brain(brain_prompt))
             self._session.follow_up_count += 1
-            self._record_receipt(user_text, triage_result, status="completed")
+            self._record_chat_summary(user_text, triage_result, status="completed")
             if self._verbose:
                 print("[pipeline] Brain (follow-up) finished.")
             return brain_response
@@ -264,7 +258,7 @@ class Pipeline:
         # handler == "researcher" or "log_warning" → full Researcher → Brain flow
         raw_json, error, researcher_output = self._run_researcher(user_input)
         if error:
-            self._record_receipt(user_text, triage_result, status="error")
+            self._record_chat_summary(user_text, triage_result, status="error")
             return error
 
         if self._should_skip_brain():
@@ -274,7 +268,7 @@ class Pipeline:
 
         brain_prompt = self._build_brain_prompt(raw_json)
         brain_response = str(self._brain(brain_prompt))
-        self._record_receipt(user_text, triage_result, status="completed", raw_json=raw_json)
+        self._record_chat_summary(user_text, triage_result, status="completed", raw_json=raw_json)
         if self._verbose:
             print("[pipeline] Brain finished.")
         return brain_response
@@ -316,7 +310,7 @@ class Pipeline:
             self._session.follow_up_count += 1
             async for event in self._brain.stream_async(brain_prompt):
                 yield event
-            self._record_receipt(user_text, triage_result, status="completed")
+            self._record_chat_summary(user_text, triage_result, status="completed")
             return
 
         # handler == "researcher" or "log_warning" → full Researcher → Brain flow
@@ -325,7 +319,7 @@ class Pipeline:
             print("[pipeline:stream] Stage 1 – Researcher resolving spec …")
         raw_json, error, researcher_output = self._run_researcher(user_input)
         if error:
-            self._record_receipt(user_text, triage_result, status="error")
+            self._record_chat_summary(user_text, triage_result, status="error")
             yield {"data": error}
             return
 
@@ -364,7 +358,7 @@ class Pipeline:
 
             if interrupt_result is None:
                 # Normal completion — no ComfyUI interrupt pending.
-                self._record_receipt(user_text, triage_result, status="completed", raw_json=raw_json)
+                self._record_chat_summary(user_text, triage_result, status="completed", raw_json=raw_json)
                 if self._verbose:
                     print("[pipeline:stream] Brain finished (no interrupt).")
                 break
@@ -406,8 +400,8 @@ class Pipeline:
     def _build_followup_prompt(self, user_text: str, triage_result: TriageResult) -> str:
         """Prompt for Brain when handling a follow-up (no Researcher pass needed)."""
         context_lines: list[str] = []
-        if self._session.receipts:
-            last = self._session.receipts[-1]
+        if self._session.chat_summaries:
+            last = self._session.chat_summaries[-1]
             context_lines.append(f"Last workflow: {last.workflow_name}")
             context_lines.append(f"Last status: {last.status}")
         if self._session.current_output_paths:
@@ -423,7 +417,7 @@ class Pipeline:
             Apply the requested change directly, reusing the current session context.
         """).strip()
 
-    def _record_receipt(
+    def _record_chat_summary(
         self,
         user_text: str,
         triage_result: TriageResult,
@@ -431,7 +425,7 @@ class Pipeline:
         status: str,
         raw_json: str | None = None,
     ) -> None:
-        """Append a RunReceipt to the session after each pipeline invocation."""
+        """Append a ChatSummary to the session after each pipeline invocation."""
         workflow_name = "unknown"
         if raw_json:
             try:
@@ -440,8 +434,8 @@ class Pipeline:
                 )
             except Exception:
                 pass
-        self._session.receipts.append(
-            RunReceipt(
+        self._session.chat_summaries.append(
+            ChatSummary(
                 workflow_name=workflow_name,
                 output_paths=list(self._session.current_output_paths),
                 key_params={},
