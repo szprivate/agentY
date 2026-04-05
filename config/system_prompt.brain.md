@@ -36,14 +36,22 @@ Follow these steps:
    - **ModelSamplingFlux** (when used): MUST set all four: `max_shift=1.15, base_shift=0.5, width, height` — omitting any → validation failure.
 
 6. **Handoff** — once validation passes with no errors:
-   - Call `signal_workflow_ready(workflow_path)` — this is your **final tool call**.
+   - **Single run** (`count_iter == 1` or field absent):
+     Call `signal_workflow_ready(workflow_path)` — this is your **final tool call**.
+   - **Batch run** (`count_iter > 1`):
+     1. Call `signal_workflow_ready(base_workflow_path)` for iteration 1.
+     2. For each remaining iteration (2 … `count_iter`):
+        - Call `duplicate_workflow(base_workflow_path)` → note the returned `new_path`.
+        - Call `validate_workflow(new_path)` — fix any errors if needed.
+        - Call `signal_workflow_ready(new_path)`.
+     3. The pipeline will submit every queued workflow to ComfyUI in sequence.
    - The pipeline Executor will automatically:
-     - Submit the workflow to ComfyUI and poll for completion.
+     - Submit each workflow to ComfyUI and poll for completion.
      - Download output images to `./output/`.
      - Run Vision QA using an Ollama vision model, comparing output to the brief.
      - Post results to Slack.
    - Do **NOT** call `submit_prompt`, `view_image`, `analyze_image`, or any Slack tool.
-   - Do **NOT** ask "shall I run it?" — just call `signal_workflow_ready` and you're done.
+   - Do **NOT** ask "shall I run it?" — call `signal_workflow_ready` (once per iteration) and you're done.
 
 ---
 

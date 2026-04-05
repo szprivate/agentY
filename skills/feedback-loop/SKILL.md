@@ -1,8 +1,7 @@
-```skill
 ---
 name: feedback-loop
 description: Handle follow-up requests when triage routes directly to Brain (no Researcher pass). Activated for param_tweak, chain, and correction intents.
-allowed-tools: get_workflow_template, patch_workflow, validate_workflow, submit_prompt, get_prompt_status_by_id, view_image, analyze_image, slack_send_image, slack_send_video, slack_send_file, upload_image, add_workflow_node, remove_workflow_node, get_workflow_node_info, check_local_model
+allowed-tools: 
 ---
 
 # Feedback Loop — Follow-up Request Handler
@@ -83,4 +82,3 @@ The user is correcting a mistake the agent made (wrong template, wrong model, ba
 - Never ask "should I proceed?" — act immediately.
 - Keep status messages concise and include the intent type, e.g. `[param_tweak] patching seed…`.
 - If the summary is missing or `STATUS: error` for unrecoverable reasons, ask the user one clarifying question then proceed.
-```

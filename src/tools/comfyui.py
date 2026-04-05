@@ -464,6 +464,10 @@ def signal_workflow_ready(workflow_path: str) -> str:
     polling, Vision QA (via Ollama), saving outputs to ``./output``, and posting
     results to Slack.
 
+    For **batch runs** (``count_iter > 1``): call this tool once for every
+    workflow file produced by ``duplicate_workflow()``.  Each call appends to
+    the execution queue; the pipeline submits them to ComfyUI in order.
+
     Do NOT call ``submit_prompt`` — this tool replaces it.
 
     Args:
@@ -471,23 +475,97 @@ def signal_workflow_ready(workflow_path: str) -> str:
                        (the same path returned by ``get_workflow_template`` or
                        ``save_workflow`` and used in ``patch_workflow``).
     """
-    from src.utils.workflow_signal import set_workflow_path
+    from src.utils.workflow_signal import append_workflow_path
 
     p = Path(workflow_path)
     if not p.exists():
         return json.dumps({"error": f"Workflow file not found: {workflow_path}"})
 
     resolved = str(p.resolve())
-    set_workflow_path(resolved)
+    append_workflow_path(resolved)
     return json.dumps({
         "status": "ready",
         "workflow_path": resolved,
         "message": (
-            "Workflow has been queued for execution. "
+            "Workflow has been added to the execution queue. "
             "The pipeline will submit it to ComfyUI, run Vision QA, "
             "save outputs to ./output, and post results to Slack automatically. "
-            "Your work here is done — no further tool calls are needed."
+            "For batch runs, call signal_workflow_ready for each duplicate workflow; "
+            "otherwise your work here is done — no further tool calls are needed."
         ),
+    })
+
+
+@tool
+def duplicate_workflow(source_path: str) -> str:
+    """Create a copy of an existing workflow JSON with a fresh random seed.
+
+    Use this during **batch runs** (``count_iter > 1``) to produce iteration
+    copies from the base validated workflow.  Each duplicate gets a new random
+    seed injected into every KSampler / RandomNoise / similar seed field so
+    outputs are genuinely varied.
+
+    Typical batch flow:
+    1. Assemble + validate the base workflow normally.
+    2. Call ``signal_workflow_ready(base_path)`` for iteration 1.
+    3. For iterations 2..N: call ``duplicate_workflow(base_path)`` → validate
+       the returned path → call ``signal_workflow_ready(new_path)``.
+
+    Args:
+        source_path: Path to the already-validated base workflow JSON.
+
+    Returns:
+        JSON with ``new_path`` (the path of the newly created workflow copy)
+        or ``error`` on failure.
+    """
+    import random
+    import shutil
+
+    p = Path(source_path)
+    if not p.exists():
+        return json.dumps({"error": f"Source workflow not found: {source_path}"})
+
+    # Build a unique destination path: <stem>_iter_<N>.json in the same directory.
+    parent = p.parent
+    stem = p.stem
+    # Strip any existing _iter_<N> suffix so duplicating a duplicate stays tidy.
+    import re as _re
+    stem = _re.sub(r"_iter_\d+$", "", stem)
+    idx = 1
+    while True:
+        candidate = parent / f"{stem}_iter_{idx:03d}.json"
+        if not candidate.exists():
+            break
+        idx += 1
+
+    shutil.copy2(p, candidate)
+
+    # Randomise seed fields in the copy so each iteration produces a unique result.
+    try:
+        data = json.loads(candidate.read_text(encoding="utf-8"))
+        _SEED_KEYS = {"seed", "noise_seed"}
+        changed = 0
+        for node in data.values():
+            if not isinstance(node, dict):
+                continue
+            inputs = node.get("inputs", {})
+            for key in _SEED_KEYS:
+                if key in inputs and isinstance(inputs[key], (int, float)):
+                    inputs[key] = random.randint(0, 2**32 - 1)
+                    changed += 1
+        candidate.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except Exception as exc:
+        # If seed patching fails, the copy is still usable (same seed → same image,
+        # but the pipeline will still queue it as requested).
+        return json.dumps({
+            "new_path": str(candidate),
+            "warning": f"Seed randomisation failed — copy uses original seed: {exc}",
+        })
+
+    return json.dumps({
+        "new_path": str(candidate),
+        "seeds_randomised": changed,
+        "message": f"Workflow duplicated to {candidate.name} with {changed} seed(s) randomised.",
     })
 
 

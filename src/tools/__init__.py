@@ -21,6 +21,8 @@ from src.tools.comfyui import (  # noqa: F401
     submit_prompt,
     # Workflow handoff (replaces submit_prompt for the Brain)
     signal_workflow_ready,
+    # Batch: create iteration copies of a validated workflow
+    duplicate_workflow,
     # Node inspection
     get_node_schema,
     get_workflow_node_info,
@@ -116,6 +118,8 @@ BRAIN_TOOLS: list = [
     validate_workflow,
     # Handoff to executor (replaces submit_prompt)
     signal_workflow_ready,
+    # Batch: duplicate workflow for each iteration
+    duplicate_workflow,
     # Script execution (for skills, e.g. image-downsize)
     run_script,
     # Slack – DM only, for reporting assembly errors / blockers

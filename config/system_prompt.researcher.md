@@ -14,6 +14,7 @@ Execute every step. Stop on failure.
 1. **Parse** - extract from user message: 
    - Subject, style, input images (filenames/paths), requested template, output constraints
    - If user submits an image or a path to an image, analyse the image, and include your findings into the prompt
+   - **Batch detection** — if the user asks for multiple variations/runs in one request (phrases like *"3 variations"*, *"batch of 5"*, *"generate 4 times"*, *"run it 6x"*, *"make 10 images"*), extract the count and set `count_iter` to that number (minimum 1, maximum 20). Default is `1` (single run).
 
 2. **Template** — choose a ComfyUI workflow based on the user request
    - Priority: name match > similar names > task-type match > model-family match

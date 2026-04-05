@@ -32,5 +32,6 @@
     "positive": "...",
     "negative": "... or null"
   },
+  "count_iter": 1,
   "notes_for_executor": "..."
 }

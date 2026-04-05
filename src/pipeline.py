@@ -84,6 +84,7 @@ class BrainBriefing(BaseModel):
     resolution_width: Optional[Any] = Field(default=None, description="Image width in pixels")
     resolution_height: Optional[Any] = Field(default=None, description="Image height in pixels")
     prompt: BriefPrompt
+    count_iter: int = Field(default=1, description="Number of batch iterations to generate (1 = single run, N > 1 = batch)")
     # notes_for_executor: Optional[str] = Field(default=None, description="Additional notes for the Brain")
 
 
@@ -195,21 +196,30 @@ class Pipeline:
             brain_response = str(self._brain(brain_prompt))
             self._session.follow_up_count += 1
             # Executor handoff: Brain signals a (re-)assembled workflow is ready
-            workflow_path = _get_workflow_signal()
+            workflow_paths = _get_workflow_signal()
             executor_paths: list[str] = []
-            if workflow_path:
-                if self._verbose:
-                    print(f"[pipeline] Brain (follow-up) signaled workflow ready: {workflow_path}")
-                executor_lines, executor_paths = asyncio.run(
-                    self._drain_executor(
-                        workflow_path,
-                        self._last_brainbriefing_json or "",
+            if workflow_paths:
+                count = len(workflow_paths)
+                if count > 1:
+                    if self._verbose:
+                        print(f"[pipeline] Brain (follow-up) signaled {count} workflows ready (batch).")
+                else:
+                    if self._verbose:
+                        print(f"[pipeline] Brain (follow-up) signaled workflow ready: {workflow_paths[0]}")
+                all_executor_lines: list[str] = []
+                for wf_path in workflow_paths:
+                    wf_lines, wf_out = asyncio.run(
+                        self._drain_executor(
+                            wf_path,
+                            self._last_brainbriefing_json or "",
+                        )
                     )
-                )
+                    all_executor_lines.extend(wf_lines)
+                    executor_paths.extend(wf_out)
                 if executor_paths:
                     self._session.current_output_paths[:] = executor_paths
-                if executor_lines:
-                    brain_response = brain_response + "\n\n" + "\n".join(executor_lines)
+                if all_executor_lines:
+                    brain_response = brain_response + "\n\n" + "\n".join(all_executor_lines)
             self._record_chat_summary(user_text, triage_result, status="completed")
             asyncio.run(self._compress_brain_history(extra_output_paths=executor_paths))
             if self._verbose:
@@ -231,19 +241,28 @@ class Pipeline:
         brain_prompt = self._build_brain_prompt(raw_json)
         self._ensure_clean_history()
         brain_response = str(self._brain(brain_prompt))
-        # Executor handoff: Brain signals the assembled workflow is ready
-        workflow_path = _get_workflow_signal()
+        # Executor handoff: Brain signals the assembled workflow(s) are ready
+        workflow_paths_r = _get_workflow_signal()
         executor_paths_r: list[str] = []
-        if workflow_path:
-            if self._verbose:
-                print(f"[pipeline] Brain signaled workflow ready: {workflow_path}")
-            executor_lines, executor_paths_r = asyncio.run(
-                self._drain_executor(workflow_path, raw_json)
-            )
+        if workflow_paths_r:
+            count = len(workflow_paths_r)
+            if count > 1:
+                if self._verbose:
+                    print(f"[pipeline] Brain signaled {count} workflows ready (batch).")
+            else:
+                if self._verbose:
+                    print(f"[pipeline] Brain signaled workflow ready: {workflow_paths_r[0]}")
+            all_executor_lines_r: list[str] = []
+            for wf_path in workflow_paths_r:
+                wf_lines, wf_out = asyncio.run(
+                    self._drain_executor(wf_path, raw_json)
+                )
+                all_executor_lines_r.extend(wf_lines)
+                executor_paths_r.extend(wf_out)
             if executor_paths_r:
                 self._session.current_output_paths[:] = executor_paths_r
-            if executor_lines:
-                brain_response = brain_response + "\n\n" + "\n".join(executor_lines)
+            if all_executor_lines_r:
+                brain_response = brain_response + "\n\n" + "\n".join(all_executor_lines_r)
         self._record_chat_summary(user_text, triage_result, status="completed", raw_json=raw_json)
         asyncio.run(self._compress_brain_history(extra_output_paths=executor_paths_r))
         if self._verbose:
@@ -292,22 +311,31 @@ class Pipeline:
             async for event in self._brain.stream_async(brain_prompt):
                 yield event
             # Executor handoff: stream execution events back to Slack
-            workflow_path = _get_workflow_signal()
+            workflow_paths_fu = _get_workflow_signal()
             executor_paths_fu: list[str] = []
-            if workflow_path:
-                if self._verbose:
-                    print(f"[pipeline:stream] Brain (follow-up) signaled workflow ready: {workflow_path}")
-                yield {"data": "\n\n_⚙️ Handing off to executor…_"}
+            if workflow_paths_fu:
+                count = len(workflow_paths_fu)
+                if count > 1:
+                    if self._verbose:
+                        print(f"[pipeline:stream] Brain (follow-up) signaled {count} workflows ready (batch).")
+                    yield {"data": f"\n\n_⚙️ Handing off to executor — batch of {count} workflows…_"}
+                else:
+                    if self._verbose:
+                        print(f"[pipeline:stream] Brain (follow-up) signaled workflow ready: {workflow_paths_fu[0]}")
+                    yield {"data": "\n\n_⚙️ Handing off to executor…_"}
                 slack_channel_id, slack_thread_ts = self._get_slack_context()
-                async for line in _execute_workflow(
-                    workflow_path,
-                    self._last_brainbriefing_json or "",
-                    slack_channel_id=slack_channel_id,
-                    slack_thread_ts=slack_thread_ts,
-                    verbose=self._verbose,
-                    collected_paths=executor_paths_fu,
-                ):
-                    yield {"data": f"\n{line}"}
+                for idx, wf_path in enumerate(workflow_paths_fu, 1):
+                    if count > 1:
+                        yield {"data": f"\n\n_▶️ Iteration {idx}/{count}…_"}
+                    async for line in _execute_workflow(
+                        wf_path,
+                        self._last_brainbriefing_json or "",
+                        slack_channel_id=slack_channel_id,
+                        slack_thread_ts=slack_thread_ts,
+                        verbose=self._verbose,
+                        collected_paths=executor_paths_fu,
+                    ):
+                        yield {"data": f"\n{line}"}
             if executor_paths_fu:
                 self._session.current_output_paths[:] = executor_paths_fu
             self._record_chat_summary(user_text, triage_result, status="completed")
@@ -363,22 +391,31 @@ class Pipeline:
             if interrupt_result is None:
                 # Normal Brain completion — no ComfyUI interrupt pending.
                 # Stage 3 – Executor: submit, poll, QA, Slack, save
-                workflow_path = _get_workflow_signal()
+                workflow_paths_s = _get_workflow_signal()
                 executor_paths_s: list[str] = []
-                if workflow_path:
-                    if self._verbose:
-                        print(f"[pipeline:stream] Brain signaled workflow ready: {workflow_path}")
-                    yield {"data": "\n\n_⚙️ Handing off to executor…_"}
+                if workflow_paths_s:
+                    count = len(workflow_paths_s)
+                    if count > 1:
+                        if self._verbose:
+                            print(f"[pipeline:stream] Brain signaled {count} workflows ready (batch).")
+                        yield {"data": f"\n\n_⚙️ Handing off to executor — batch of {count} workflows…_"}
+                    else:
+                        if self._verbose:
+                            print(f"[pipeline:stream] Brain signaled workflow ready: {workflow_paths_s[0]}")
+                        yield {"data": "\n\n_⚙️ Handing off to executor…_"}
                     slack_channel_id, slack_thread_ts = self._get_slack_context()
-                    async for line in _execute_workflow(
-                        workflow_path,
-                        raw_json,
-                        slack_channel_id=slack_channel_id,
-                        slack_thread_ts=slack_thread_ts,
-                        verbose=self._verbose,
-                        collected_paths=executor_paths_s,
-                    ):
-                        yield {"data": f"\n{line}"}
+                    for idx, wf_path in enumerate(workflow_paths_s, 1):
+                        if count > 1:
+                            yield {"data": f"\n\n_▶️ Iteration {idx}/{count}…_"}
+                        async for line in _execute_workflow(
+                            wf_path,
+                            raw_json,
+                            slack_channel_id=slack_channel_id,
+                            slack_thread_ts=slack_thread_ts,
+                            verbose=self._verbose,
+                            collected_paths=executor_paths_s,
+                        ):
+                            yield {"data": f"\n{line}"}
                 if executor_paths_s:
                     self._session.current_output_paths[:] = executor_paths_s
                 self._record_chat_summary(user_text, triage_result, status="completed", raw_json=raw_json)
