@@ -41,6 +41,8 @@ Classify the user message into exactly one of these intents:
 - new_request  : User is making a fresh generation request unrelated to prior context
 - info_query   : User is asking a factual question about capabilities, workflows, \
 or models — NOT requesting generation
+- restart      : User wants to restart or reset the agent \
+(e.g. "restart", "reboot", "reset the agent", "start over", "restart the bot")
 
 Respond with a JSON object only, no markdown, no explanation:
 {"intent": "<intent>", "confidence": <float 0.0–1.0>}"""
@@ -122,7 +124,7 @@ def route(result: TriageResult) -> str:
     Returns
     -------
     str
-        One of ``"researcher"`` | ``"brain"`` | ``"answer"`` | ``"log_warning"``.
+        One of ``"researcher"`` | ``"brain"`` | ``"answer"`` | ``"restart"`` | ``"log_warning"``.
     """
     if result.confidence < 0.6:
         return "log_warning"
@@ -130,6 +132,8 @@ def route(result: TriageResult) -> str:
     match result.intent:
         case MessageIntent.info_query:
             return "answer"
+        case MessageIntent.restart:
+            return "restart"
         case MessageIntent.param_tweak | MessageIntent.chain | MessageIntent.feedback:
             return "brain"
         case MessageIntent.new_request:

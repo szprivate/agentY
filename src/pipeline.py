@@ -32,6 +32,7 @@ from src.utils.models import AgentSession, ChatSummary, MessageIntent, TriageRes
 from src.utils.triage import triage as _triage, route as _route
 from src.utils.workflow_signal import clear_and_get as _get_workflow_signal
 from src.executor import execute_workflow as _execute_workflow
+from src.tools.restart import restart_agent as _restart_agent
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +189,12 @@ class Pipeline:
                 print("[pipeline] info_query → Info agent")
             return str(self._info_agent(user_text))
 
+        if handler == "restart":
+            if self._verbose:
+                print("[pipeline] restart → restarting agent process")
+            _restart_agent()
+            return "♻️ Restarting agent…"  # unreachable; os.execv replaces the process
+
         if handler == "brain":
             # Follow-up: skip Researcher, send directly to Brain
             self._ensure_clean_history()
@@ -282,6 +289,13 @@ class Pipeline:
                 print("[pipeline:stream] info_query → Info agent (streamed)")
             async for event in self._info_agent.stream_async(user_text):
                 yield event
+            return
+
+        if handler == "restart":
+            if self._verbose:
+                print("[pipeline:stream] restart → restarting agent process")
+            yield {"data": "♻️ Restarting agent…"}
+            _restart_agent()
             return
 
         if handler == "brain":
