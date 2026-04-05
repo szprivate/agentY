@@ -36,9 +36,18 @@ Follow these steps:
    - **ModelSamplingFlux** (when used): MUST set all four: `max_shift=1.15, base_shift=0.5, width, height` — omitting any → validation failure.
 
 6. **Handoff** — once validation passes with no errors:
-   - **Single run** (`count_iter == 1` or field absent):
+   - **Single run** (`count_iter == 1` or `variations == false`):
      Call `signal_workflow_ready(workflow_path)` — this is your **final tool call**.
-   - **Batch run** (`count_iter > 1`):
+   - **Variations batch** (`count_iter > 1` AND `variations == true`):
+     Activate the **image-batch** skill. It will generate `count_iter` distinct prompts and
+     save them to `output/_workflows/multiprompt.json`.  Then:
+     1. Read `output/_workflows/multiprompt.json` — use `prompt1` as the positive prompt for the base workflow.
+        Patch the base workflow with `prompt1` (using `positive_prompt_node_id` from the brainbriefing).
+     2. Call `signal_workflow_ready(base_workflow_path)` exactly **once**.
+        Do **not** duplicate or signal more workflows — the pipeline will create
+        the remaining copies (one per prompt in `multiprompt.json`) and stitch in the prompts automatically.
+   - **Identical batch run** (`count_iter > 1` AND `variations == false`):
+     All iterations use the **same** prompt — only seeds differ.
      1. Call `signal_workflow_ready(base_workflow_path)` for iteration 1.
      2. For each remaining iteration (2 … `count_iter`):
         - Call `duplicate_workflow(base_workflow_path)` → note the returned `new_path`.

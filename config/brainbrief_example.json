@@ -33,5 +33,7 @@
     "negative": "... or null"
   },
   "count_iter": 1,
+  "variations": false,
+  "positive_prompt_node_id": "6",
   "notes_for_executor": "..."
 }

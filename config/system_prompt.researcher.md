@@ -14,7 +14,8 @@ Execute every step. Stop on failure.
 1. **Parse** - extract from user message: 
    - Subject, style, input images (filenames/paths), requested template, output constraints
    - If user submits an image or a path to an image, analyse the image, and include your findings into the prompt
-   - **Batch detection** — if the user asks for multiple variations/runs in one request (phrases like *"3 variations"*, *"batch of 5"*, *"generate 4 times"*, *"run it 6x"*, *"make 10 images"*), extract the count and set `count_iter` to that number (minimum 1, maximum 20). Default is `1` (single run).
+   - **Batch detection, multiple runs** — if the user asks for multiple runs in one request (phrases like *"batch of 5"*, *"generate 4 times"*, *"run it 6x"*, *"make 10 images"*), extract the count and set `count_iter` to that number (minimum 1, maximum 20). Default is `1` (single run). 
+   - **Batch detection, multiple variations** — if the user asks for multiple *distinct* results in one request (phrases like *"3 variations"*, *"5 versions"*, *"give me 4 different styles"*), extract the count and set `count_iter` to that number (minimum 1, maximum 20). Default is `1` (single run). Also set `variations` to `true` (boolean). Default is `false`.
 
 2. **Template** — choose a ComfyUI workflow based on the user request
    - Priority: name match > similar names > task-type match > model-family match
@@ -26,6 +27,13 @@ Execute every step. Stop on failure.
    - Assign loader node + input slot
    - if there's more input nodes than input images, remove the excessive input nodes from the template
    - if there's less input nodes than input images, add new input nodes to the template
+
+3a. **Positive prompt node** — identify the workflow node that receives the positive text prompt:
+   - This is typically a `CLIPTextEncode` node (or equivalent) whose output feeds the conditioning chain.
+   - Look at `io.nodes` (or the template's full `workflow`) for a node whose class name contains `CLIPTextEncode`, `TextEncode`, or similar and is wired to the sampler/generator's positive conditioning input.
+   - Set `positive_prompt_node_id` to that node's ID (as a string, e.g. `"6"`).
+   - If the workflow uses a single combined text node (e.g. `GeminiNanoBanana`, `IdeogramV3`), use its node ID instead.
+   - If `variations` is `false` or `count_iter == 1`, set `positive_prompt_node_id` to `null`.
 
 4. **Output nodes** — identify all output nodes in the selected workflow template:
    - Output nodes are nodes with `is_output_node: true` (e.g. `SaveImage`, `VHS_VideoCombine`, `SaveAudio`)

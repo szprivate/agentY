@@ -58,7 +58,7 @@ from src.tools.huggingface import (  # noqa: F401
     check_local_model,
     download_hf_model,
 )
-from src.tools.file_tools import read_text_file  # noqa: F401
+from src.tools.file_tools import read_text_file, write_text_file  # noqa: F401
 from src.tools.shell import run_script  # noqa: F401
 from strands_tools import file_read  # noqa: F401
 from strands_tools import calculator  # noqa: F401
@@ -130,7 +130,9 @@ BRAIN_TOOLS: list = [
     get_model_info,
     check_local_model,
     download_hf_model,
-    # File operations (strands built-in)
+    # File operations (strands built-in + project)
     file_read,
+    read_text_file,
+    write_text_file,
     stop,
 ]

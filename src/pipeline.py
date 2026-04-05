@@ -18,7 +18,9 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import textwrap
+from pathlib import Path
 from typing import Any, List, Optional
 
 from pydantic import BaseModel, Field, ValidationError
@@ -85,7 +87,111 @@ class BrainBriefing(BaseModel):
     resolution_height: Optional[Any] = Field(default=None, description="Image height in pixels")
     prompt: BriefPrompt
     count_iter: int = Field(default=1, description="Number of batch iterations to generate (1 = single run, N > 1 = batch)")
+    variations: bool = Field(default=False, description="True when each iteration should use a distinct prompt from multiprompt.json")
+    positive_prompt_node_id: Optional[str] = Field(default=None, description="ComfyUI node ID of the positive prompt text node (used to splice per-variation prompts into workflow copies)")
     # notes_for_executor: Optional[str] = Field(default=None, description="Additional notes for the Brain")
+
+
+# ---------------------------------------------------------------------------
+# Multiprompt variations helper
+# ---------------------------------------------------------------------------
+
+# Canonical path where the image-batch skill writes variation prompts.
+_MULTIPROMPT_PATH = Path("output/_workflows/multiprompt.json")
+
+
+def _apply_multiprompt_variations(
+    base_workflow_path: str,
+    positive_prompt_node_id: str,
+    *,
+    verbose: bool = True,
+) -> list[str]:
+    """Expand one base workflow into N per-variation copies using multiprompt.json.
+
+    When ``count_iter > 1`` **and** ``variations == True``, the image-batch
+    skill writes ``output/_workflows/multiprompt.json`` with one key per
+    prompt (``prompt1`` … ``promptN``).  This helper:
+
+    1. Reads that file.
+    2. Patches the base workflow in-place with ``prompt1``.
+    3. Creates a copy of the base for each remaining prompt and patches it.
+    4. Returns the ordered list of all workflow paths (base first).
+
+    If ``multiprompt.json`` is absent or contains fewer than 2 entries the
+    base workflow path is returned unchanged (single-workflow passthrough).
+
+    Args:
+        base_workflow_path:     Absolute path to the validated base workflow.
+        positive_prompt_node_id: Node ID whose ``inputs.text`` field receives
+                                 the per-variation prompt text.
+        verbose:                 Log progress to stdout when True.
+    """
+    mp_file = _MULTIPROMPT_PATH
+    if not mp_file.exists():
+        if verbose:
+            print(f"[pipeline] multiprompt.json not found at {mp_file} — skipping variation expansion.")
+        return [base_workflow_path]
+
+    try:
+        prompts_data: dict = json.loads(mp_file.read_text(encoding="utf-8"))
+    except Exception as exc:
+        if verbose:
+            print(f"[pipeline] WARNING: could not parse multiprompt.json — {exc}")
+        return [base_workflow_path]
+
+    # Support both formats:
+    #   {"prompts": ["p1", "p2", ...]}   ← Brain/image-batch skill output
+    #   {"prompt1": "p1", "prompt2": "p2", ...}  ← legacy flat format
+    if "prompts" in prompts_data and isinstance(prompts_data["prompts"], list):
+        prompts: list[str] = [p for p in prompts_data["prompts"] if isinstance(p, str)]
+    else:
+        prompts = [v for v in prompts_data.values() if isinstance(v, str)]
+
+    if len(prompts) < 2:
+        if verbose:
+            print("[pipeline] multiprompt.json has < 2 entries — skipping variation expansion.")
+        return [base_workflow_path]
+
+    if verbose:
+        print(f"[pipeline] Expanding {len(prompts)} variation prompts onto workflows …")
+
+    base = Path(base_workflow_path)
+    all_paths: list[str] = []
+
+    for idx, prompt_text in enumerate(prompts, 1):
+        if idx == 1:
+            target = base  # patch the original in-place
+        else:
+            stem_clean = re.sub(r"_var_\d+$", "", base.stem)
+            dest = base.parent / f"{stem_clean}_var_{idx:03d}.json"
+            shutil.copy2(base, dest)
+            target = dest
+
+        try:
+            data: dict = json.loads(target.read_text(encoding="utf-8"))
+            node = data.get(str(positive_prompt_node_id))
+            if node is None:
+                if verbose:
+                    print(f"[pipeline] WARNING: prompt node '{positive_prompt_node_id}' not found "
+                          f"in {target.name} — skipping prompt patch for variation {idx}.")
+            else:
+                node.setdefault("inputs", {})["text"] = prompt_text
+                target.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                if verbose:
+                    print(f"[pipeline] variation {idx}/{len(prompts)} → {target.name}")
+        except Exception as exc:
+            if verbose:
+                print(f"[pipeline] WARNING: could not patch variation {idx} — {exc}")
+
+        all_paths.append(str(target))
+
+    # Clean up the multiprompt.json so it doesn't bleed into the next pipeline run.
+    try:
+        mp_file.unlink()
+    except Exception:
+        pass
+
+    return all_paths
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +303,7 @@ class Pipeline:
             self._session.follow_up_count += 1
             # Executor handoff: Brain signals a (re-)assembled workflow is ready
             workflow_paths = _get_workflow_signal()
+            workflow_paths = self._expand_variations(workflow_paths, self._last_brainbriefing_json or "")
             executor_paths: list[str] = []
             if workflow_paths:
                 count = len(workflow_paths)
@@ -233,6 +340,8 @@ class Pipeline:
         brain_response = str(self._brain(brain_prompt))
         # Executor handoff: Brain signals the assembled workflow(s) are ready
         workflow_paths_r = _get_workflow_signal()
+        # Expand variation prompts from multiprompt.json if applicable
+        workflow_paths_r = self._expand_variations(workflow_paths_r, raw_json)
         executor_paths_r: list[str] = []
         if workflow_paths_r:
             count = len(workflow_paths_r)
@@ -295,6 +404,7 @@ class Pipeline:
                 yield event
             # Executor handoff: stream execution events back to Slack
             workflow_paths_fu = _get_workflow_signal()
+            workflow_paths_fu = self._expand_variations(workflow_paths_fu, self._last_brainbriefing_json or "")
             executor_paths_fu: list[str] = []
             if workflow_paths_fu:
                 count = len(workflow_paths_fu)
@@ -369,6 +479,7 @@ class Pipeline:
                 # Normal Brain completion — no ComfyUI interrupt pending.
                 # Stage 3 – Executor: submit, poll, QA, Slack, save
                 workflow_paths_s = _get_workflow_signal()
+                workflow_paths_s = self._expand_variations(workflow_paths_s, raw_json)
                 executor_paths_s: list[str] = []
                 if workflow_paths_s:
                     count = len(workflow_paths_s)
@@ -783,6 +894,60 @@ class Pipeline:
             if self._verbose:
                 print(f"[executor] {line}")
         return lines, output_paths
+
+    def _expand_variations(
+        self,
+        workflow_paths: list[str],
+        brainbriefing_json: str,
+    ) -> list[str]:
+        """Replace the base workflow list with per-variation copies when applicable.
+
+        Conditions to activate:
+        - Exactly **one** base workflow was signalled (the Brain's normal output
+          in variations mode).
+        - The brainbriefing has ``variations: true`` and ``count_iter > 1``.
+        - ``positive_prompt_node_id`` is set so the pipeline knows which node
+          to patch with each variation prompt.
+        - ``output/_workflows/multiprompt.json`` exists (written by image-batch skill).
+
+        When all conditions are met the single base workflow path is expanded to
+        N paths (one per prompt in multiprompt.json).  If any condition fails the
+        original list is returned unchanged so the executor still runs normally.
+        """
+        if not workflow_paths:
+            return workflow_paths
+
+        try:
+            briefing: dict = json.loads(brainbriefing_json) if brainbriefing_json else {}
+        except Exception:
+            briefing = {}
+
+        if not (briefing.get("variations") and briefing.get("count_iter", 1) > 1):
+            return workflow_paths
+
+        node_id = briefing.get("positive_prompt_node_id")
+        if not node_id:
+            if self._verbose:
+                print("[pipeline] variations=true but positive_prompt_node_id is missing — "
+                      "skipping multiprompt expansion.")
+            return workflow_paths
+
+        if not _MULTIPROMPT_PATH.exists():
+            if self._verbose:
+                print("[pipeline] variations=true but multiprompt.json not found — "
+                      "running base workflow as-is.")
+            return workflow_paths
+
+        # Use only the first base workflow (Brain should signal exactly one)
+        base_path = workflow_paths[0]
+        expanded = _apply_multiprompt_variations(
+            base_path,
+            node_id,
+            verbose=self._verbose,
+        )
+        if self._verbose and len(expanded) > 1:
+            print(f"[pipeline] Variation expansion: 1 base → {len(expanded)} workflows.")
+        return expanded
 
     @staticmethod
     def _get_slack_context() -> tuple[str, str]:
