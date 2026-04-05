@@ -129,6 +129,8 @@ python -m src.main --skip-brain
 
 Type messages at the `You:` prompt. Type `quit` or `exit` to stop.
 
+You can also ask the agent to stop mid-task — the agent has access to a `stop` tool (from `strands_tools`) that gracefully terminates the current event loop cycle. Just say something like *"stop"* or *"cancel"* and the agent will call `stop` to halt its own processing cleanly.
+
 ---
 
 ## Architecture
