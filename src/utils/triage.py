@@ -2,7 +2,7 @@
 agentY – Triage entry point.
 
 Classifies incoming user messages and routes them to the appropriate handler.
-Uses a small Qwen model (``llm.pipeline.triage``) via Ollama for fast,
+Uses a small Qwen model (``llm.pipeline.llm_functions``) via Ollama for fast,
 cheap intent classification.
 
 Typical usage
@@ -142,7 +142,7 @@ async def triage(
     TriageResult
         ``response`` is ``None`` for every intent except ``info_query``.
     """
-    llm = LLMFunctions.for_triage()
+    llm = LLMFunctions.from_settings()
 
     # Build a compact session summary for the classifier (no leaking info_context).
     session_hint = ""
