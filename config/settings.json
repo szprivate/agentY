@@ -5,12 +5,16 @@
   "comfyui_poll_interval_s": 1,
   "comfyui_poll_timeout_s": 1800,
 
+  "slack": {
+    "startup_channel": ""
+  },
+
   "llm": {
     
     "pipeline": {
       "researcher": "ollama,qwen3.5:9b",
       "brain": "claude,claude-haiku-4-5",
-      "llm_functions": "qwen3.5:9b",
+      "llm_functions": "qwen3.5:0.8b",
       "executor_vision_model": "qwen3.5:9b"
     },
 

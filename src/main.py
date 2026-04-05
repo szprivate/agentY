@@ -34,6 +34,7 @@ from src.pipeline import create_pipeline  # noqa: E402
 from src.utils.secrets import get_secret  # noqa: E402
 from src.utils.slack_server import start_slack_server  # noqa: E402
 from src.tools.slack_tools import install_console_forwarder  # noqa: E402
+from src.tools.agent_control import is_restart_command, restart_process  # noqa: E402
 
 
 def main() -> None:
@@ -162,6 +163,10 @@ def main() -> None:
         if user_input.lower() in ("quit", "exit", "q"):
             print("Goodbye!")
             break
+        if is_restart_command(user_input):
+            print("[agentY] Restarting...")
+            restart_process()
+            break  # restart_process replaces the process; break is a safety net
 
         response = agent(user_input)
         print(f"\nagentY: {response}\n")

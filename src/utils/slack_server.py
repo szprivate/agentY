@@ -66,6 +66,60 @@ _bot_user_id: Optional[str] = None  # filled on first message to ignore own msgs
 
 
 # ---------------------------------------------------------------------------
+# Startup message
+# ---------------------------------------------------------------------------
+
+def _get_startup_channel() -> str:
+    """Return the channel ID to post the startup message to.
+
+    Priority: SLACK_STARTUP_CHANNEL env var > settings.json["slack"]["startup_channel"].
+    Returns an empty string if neither is configured.
+    """
+    channel = os.environ.get("SLACK_STARTUP_CHANNEL", "").strip()
+    if channel:
+        return channel
+    try:
+        import json
+        settings_path = (
+            Path(__file__).parent.parent.parent / "config" / "settings.json"
+        )
+        data = json.loads(settings_path.read_text(encoding="utf-8"))
+        channel = data.get("slack", {}).get("startup_channel", "").strip()
+    except Exception:
+        pass
+    return channel
+
+
+def _post_startup_message(web_client) -> None:
+    """Post a startup notification to the configured Slack channel and the last DM."""
+    message = ":robot_face: *agentY is online and ready!*"
+
+    # ── Configured channel (optional) ─────────────────────────────────── #
+    channel = _get_startup_channel()
+    if channel:
+        try:
+            web_client.chat_postMessage(channel=channel, text=message)
+            logger.info("Startup message posted to channel %s", channel)
+        except Exception as exc:
+            logger.warning("Could not post startup message to %s: %s", channel, exc)
+
+    # ── Last active DM ────────────────────────────────────────────────── #
+    try:
+        resp = web_client.conversations_list(types="im", limit=200, exclude_archived=True)
+        ims = resp.get("channels", [])
+        # Each IM has an optional "latest" dict with a "ts" field.
+        active = [im for im in ims if im.get("latest")]
+        if active:
+            last_dm = max(active, key=lambda im: float(im["latest"].get("ts", 0)))
+            dm_channel = last_dm.get("id", "")
+            if dm_channel and dm_channel != channel:  # skip if same as above
+                web_client.chat_postMessage(channel=dm_channel, text=message)
+                logger.info("Startup message posted to last DM channel %s", dm_channel)
+    except Exception as exc:
+        logger.warning("Could not post startup message to last DM: %s", exc)
+
+
+# ---------------------------------------------------------------------------
 # Resolve bot's own user-id so we can ignore our own messages
 # ---------------------------------------------------------------------------
 
@@ -393,7 +447,22 @@ def _handle_message_async(content, channel: str, thread_ts: str, user: str):
 
         from slack_sdk import WebClient
         from src.tools.slack_tools import set_slack_channel_context, clear_slack_channel_context
+        from src.tools.agent_control import is_restart_command, restart_process
         client = WebClient(token=get_secret("SLACK_BOT_TOKEN"))
+
+        # ── Restart command: handle before touching the LLM ─────────── #
+        if isinstance(content, str) and is_restart_command(content):
+            logger.info("Restart command received from %s; restarting process.", user)
+            try:
+                client.chat_postMessage(
+                    channel=channel,
+                    text=":arrows_counterclockwise: Restarting agent...",
+                    thread_ts=thread_ts,
+                )
+            except Exception:
+                pass
+            restart_process(delay=1.0)
+            return
 
         # Set channel context so agent tools send files to this channel
         set_slack_channel_context(channel, thread_ts)
@@ -654,6 +723,7 @@ def start_slack_server(agent) -> bool:
 
         if sm_client.is_connected():
             logger.info("Slack Socket Mode listener started successfully.")
+            _post_startup_message(web_client)
             return True
         else:
             logger.error("Socket Mode client failed to connect within timeout.")

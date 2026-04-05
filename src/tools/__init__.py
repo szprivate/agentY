@@ -60,6 +60,7 @@ from src.tools.file_tools import read_text_file  # noqa: F401
 from src.tools.shell import run_script  # noqa: F401
 from strands_tools import file_read  # noqa: F401
 from strands_tools import calculator  # noqa: F401
+from strands_tools import stop  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # Info-agent tools – read-only; answers questions about capabilities/models/workflows.
@@ -73,6 +74,7 @@ INFO_TOOLS: list = [
     search_nodes,
     read_text_file,
     file_read,
+    stop,
 ]
 
 # ---------------------------------------------------------------------------
@@ -88,6 +90,7 @@ RESEARCHER_TOOLS: list = [
     analyze_image,
     run_script,  # needed for skills (e.g. image-downsize)
     calculator,
+    stop,
 ]
 
 # ---------------------------------------------------------------------------
@@ -125,4 +128,5 @@ BRAIN_TOOLS: list = [
     download_hf_model,
     # File operations (strands built-in)
     file_read,
+    stop,
 ]
