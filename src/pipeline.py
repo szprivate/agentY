@@ -31,7 +31,7 @@ from src.utils.comfyui_poller import poll_comfyui_job as _poll_comfyui_job
 from src.utils.models import AgentSession, ChatSummary, MessageIntent, TriageResult
 from src.utils.triage import triage as _triage, route as _route
 from src.utils.workflow_signal import clear_and_get as _get_workflow_signal
-from src.executor import execute_workflow as _execute_workflow
+from src.executor import execute_workflow as _execute_workflow, execute_workflows_batch as _execute_workflows_batch
 
 
 # ---------------------------------------------------------------------------
@@ -200,26 +200,16 @@ class Pipeline:
             executor_paths: list[str] = []
             if workflow_paths:
                 count = len(workflow_paths)
-                if count > 1:
-                    if self._verbose:
-                        print(f"[pipeline] Brain (follow-up) signaled {count} workflows ready (batch).")
-                else:
-                    if self._verbose:
-                        print(f"[pipeline] Brain (follow-up) signaled workflow ready: {workflow_paths[0]}")
-                all_executor_lines: list[str] = []
-                for wf_path in workflow_paths:
-                    wf_lines, wf_out = asyncio.run(
-                        self._drain_executor(
-                            wf_path,
-                            self._last_brainbriefing_json or "",
-                        )
-                    )
-                    all_executor_lines.extend(wf_lines)
-                    executor_paths.extend(wf_out)
+                if self._verbose:
+                    tag = f"{count} workflows (batch)" if count > 1 else workflow_paths[0]
+                    print(f"[pipeline] Brain (follow-up) signaled {tag} ready.")
+                executor_lines, executor_paths = asyncio.run(
+                    self._drain_executor_batch(workflow_paths, self._last_brainbriefing_json or "")
+                )
                 if executor_paths:
                     self._session.current_output_paths[:] = executor_paths
-                if all_executor_lines:
-                    brain_response = brain_response + "\n\n" + "\n".join(all_executor_lines)
+                if executor_lines:
+                    brain_response = brain_response + "\n\n" + "\n".join(executor_lines)
             self._record_chat_summary(user_text, triage_result, status="completed")
             asyncio.run(self._compress_brain_history(extra_output_paths=executor_paths))
             if self._verbose:
@@ -246,23 +236,16 @@ class Pipeline:
         executor_paths_r: list[str] = []
         if workflow_paths_r:
             count = len(workflow_paths_r)
-            if count > 1:
-                if self._verbose:
-                    print(f"[pipeline] Brain signaled {count} workflows ready (batch).")
-            else:
-                if self._verbose:
-                    print(f"[pipeline] Brain signaled workflow ready: {workflow_paths_r[0]}")
-            all_executor_lines_r: list[str] = []
-            for wf_path in workflow_paths_r:
-                wf_lines, wf_out = asyncio.run(
-                    self._drain_executor(wf_path, raw_json)
-                )
-                all_executor_lines_r.extend(wf_lines)
-                executor_paths_r.extend(wf_out)
+            if self._verbose:
+                tag = f"{count} workflows (batch)" if count > 1 else workflow_paths_r[0]
+                print(f"[pipeline] Brain signaled {tag} ready.")
+            executor_lines_r, executor_paths_r = asyncio.run(
+                self._drain_executor_batch(workflow_paths_r, raw_json)
+            )
             if executor_paths_r:
                 self._session.current_output_paths[:] = executor_paths_r
-            if all_executor_lines_r:
-                brain_response = brain_response + "\n\n" + "\n".join(all_executor_lines_r)
+            if executor_lines_r:
+                brain_response = brain_response + "\n\n" + "\n".join(executor_lines_r)
         self._record_chat_summary(user_text, triage_result, status="completed", raw_json=raw_json)
         asyncio.run(self._compress_brain_history(extra_output_paths=executor_paths_r))
         if self._verbose:
@@ -315,27 +298,21 @@ class Pipeline:
             executor_paths_fu: list[str] = []
             if workflow_paths_fu:
                 count = len(workflow_paths_fu)
-                if count > 1:
-                    if self._verbose:
-                        print(f"[pipeline:stream] Brain (follow-up) signaled {count} workflows ready (batch).")
-                    yield {"data": f"\n\n_⚙️ Handing off to executor — batch of {count} workflows…_"}
-                else:
-                    if self._verbose:
-                        print(f"[pipeline:stream] Brain (follow-up) signaled workflow ready: {workflow_paths_fu[0]}")
-                    yield {"data": "\n\n_⚙️ Handing off to executor…_"}
+                if self._verbose:
+                    tag = f"{count} workflows (batch)" if count > 1 else workflow_paths_fu[0]
+                    print(f"[pipeline:stream] Brain (follow-up) signaled {tag} ready.")
+                hdr = f"batch of {count} workflows" if count > 1 else "workflow"
+                yield {"data": f"\n\n_⚙️ Handing off to executor ({hdr})…_"}
                 slack_channel_id, slack_thread_ts = self._get_slack_context()
-                for idx, wf_path in enumerate(workflow_paths_fu, 1):
-                    if count > 1:
-                        yield {"data": f"\n\n_▶️ Iteration {idx}/{count}…_"}
-                    async for line in _execute_workflow(
-                        wf_path,
-                        self._last_brainbriefing_json or "",
-                        slack_channel_id=slack_channel_id,
-                        slack_thread_ts=slack_thread_ts,
-                        verbose=self._verbose,
-                        collected_paths=executor_paths_fu,
-                    ):
-                        yield {"data": f"\n{line}"}
+                async for line in _execute_workflows_batch(
+                    workflow_paths_fu,
+                    self._last_brainbriefing_json or "",
+                    slack_channel_id=slack_channel_id,
+                    slack_thread_ts=slack_thread_ts,
+                    verbose=self._verbose,
+                    collected_paths=executor_paths_fu,
+                ):
+                    yield {"data": f"\n{line}"}
             if executor_paths_fu:
                 self._session.current_output_paths[:] = executor_paths_fu
             self._record_chat_summary(user_text, triage_result, status="completed")
@@ -395,27 +372,21 @@ class Pipeline:
                 executor_paths_s: list[str] = []
                 if workflow_paths_s:
                     count = len(workflow_paths_s)
-                    if count > 1:
-                        if self._verbose:
-                            print(f"[pipeline:stream] Brain signaled {count} workflows ready (batch).")
-                        yield {"data": f"\n\n_⚙️ Handing off to executor — batch of {count} workflows…_"}
-                    else:
-                        if self._verbose:
-                            print(f"[pipeline:stream] Brain signaled workflow ready: {workflow_paths_s[0]}")
-                        yield {"data": "\n\n_⚙️ Handing off to executor…_"}
+                    if self._verbose:
+                        tag = f"{count} workflows (batch)" if count > 1 else workflow_paths_s[0]
+                        print(f"[pipeline:stream] Brain signaled {tag} ready.")
+                    hdr = f"batch of {count} workflows" if count > 1 else "workflow"
+                    yield {"data": f"\n\n_⚙️ Handing off to executor ({hdr})…_"}
                     slack_channel_id, slack_thread_ts = self._get_slack_context()
-                    for idx, wf_path in enumerate(workflow_paths_s, 1):
-                        if count > 1:
-                            yield {"data": f"\n\n_▶️ Iteration {idx}/{count}…_"}
-                        async for line in _execute_workflow(
-                            wf_path,
-                            raw_json,
-                            slack_channel_id=slack_channel_id,
-                            slack_thread_ts=slack_thread_ts,
-                            verbose=self._verbose,
-                            collected_paths=executor_paths_s,
-                        ):
-                            yield {"data": f"\n{line}"}
+                    async for line in _execute_workflows_batch(
+                        workflow_paths_s,
+                        raw_json,
+                        slack_channel_id=slack_channel_id,
+                        slack_thread_ts=slack_thread_ts,
+                        verbose=self._verbose,
+                        collected_paths=executor_paths_s,
+                    ):
+                        yield {"data": f"\n{line}"}
                 if executor_paths_s:
                     self._session.current_output_paths[:] = executor_paths_s
                 self._record_chat_summary(user_text, triage_result, status="completed", raw_json=raw_json)
@@ -770,11 +741,38 @@ class Pipeline:
         slack_channel_id: str = "",
         slack_thread_ts: str = "",
     ) -> tuple[list[str], list[str]]:
-        """Drain the executor; return ``(status_lines, output_paths)``."""
+        """Drain the executor for a single workflow; return ``(status_lines, output_paths)``."""
         lines: list[str] = []
         output_paths: list[str] = []
         async for line in _execute_workflow(
             workflow_path,
+            brainbriefing_json,
+            slack_channel_id=slack_channel_id,
+            slack_thread_ts=slack_thread_ts,
+            verbose=self._verbose,
+            collected_paths=output_paths,
+        ):
+            lines.append(line)
+            if self._verbose:
+                print(f"[executor] {line}")
+        return lines, output_paths
+
+    async def _drain_executor_batch(
+        self,
+        workflow_paths: list[str],
+        brainbriefing_json: str,
+        slack_channel_id: str = "",
+        slack_thread_ts: str = "",
+    ) -> tuple[list[str], list[str]]:
+        """Submit all workflows then poll + process each; return ``(status_lines, output_paths)``.
+
+        Uses ``execute_workflows_batch`` (submit-all-then-poll) for any number
+        of workflows, including a single one.
+        """
+        lines: list[str] = []
+        output_paths: list[str] = []
+        async for line in _execute_workflows_batch(
+            workflow_paths,
             brainbriefing_json,
             slack_channel_id=slack_channel_id,
             slack_thread_ts=slack_thread_ts,

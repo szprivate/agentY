@@ -3,10 +3,14 @@ agentY – Post-Brain workflow executor.
 
 After the Brain assembles and validates a ComfyUI workflow it calls
 ``signal_workflow_ready(workflow_path)``.  The pipeline then calls
-``execute_workflow()``, which:
+``execute_workflow()`` (single) or ``execute_workflows_batch()`` (batch), which:
 
-1. Submits the workflow to ComfyUI (``POST /prompt``).
+1. Submits the workflow(s) to ComfyUI (``POST /prompt``).
+   Batch: ALL workflows are submitted before any polling begins, so
+   ComfyUI can start working on the queue immediately.
 2. Polls until execution completes (zero LLM tokens burned during the wait).
+   Batch: polls each prompt_id in submission order; earlier jobs are
+   typically already done by the time we reach them.
 3. Downloads every output image to ``./output/<filename>``.
 4. Runs a Vision QA pass with an Ollama multimodal model, comparing the
    output against the original brainbriefing.
@@ -19,7 +23,12 @@ Usage
                                               slack_thread_ts=ts):
         print(status_line)
 
-The function is an ``AsyncGenerator[str, None]`` so the pipeline can forward
+    async for status_line in execute_workflows_batch(paths, brainbriefing_json,
+                                                     slack_channel_id=cid,
+                                                     slack_thread_ts=ts):
+        print(status_line)
+
+Both functions are ``AsyncGenerator[str, None]`` so the pipeline can forward
 each status update to Slack in real time.
 """
 
@@ -168,7 +177,94 @@ def _send_to_slack(
 
 
 # ---------------------------------------------------------------------------
-# Public executor
+# Shared post-processing helper
+# ---------------------------------------------------------------------------
+
+async def _process_completed_job(
+    history: dict,
+    prompt_id: str,
+    brainbriefing: dict,
+    *,
+    slack_channel_id: str,
+    slack_thread_ts: str,
+    verbose: bool,
+    collected_paths: list[str] | None,
+    label: str = "",
+) -> AsyncGenerator[str, None]:
+    """Download outputs, run Vision QA, and post to Slack for one finished job.
+
+    Yields one-line status strings.  ``label`` is an optional prefix like
+    ``"[2/5] "`` used in batch runs so the user knows which iteration each
+    message belongs to.
+    """
+    pfx = label  # e.g. "[2/5] " or ""
+
+    output_files = _extract_output_files(history)
+    if not output_files:
+        yield f"{pfx}⚠️ No output files found in ComfyUI history."
+        logger.warning("executor: no output files in history for prompt_id=%s", prompt_id)
+        return
+
+    saved_paths: list[Path] = []
+    for item in output_files:
+        filename = item.get("filename", "")
+        subfolder = item.get("subfolder", "")
+        file_type = item.get("type", "output")
+        if not filename:
+            continue
+        try:
+            dest = _download_output(filename, subfolder, file_type)
+            saved_paths.append(dest)
+            yield f"{pfx}💾 Saved `{filename}` → `{dest}`"
+        except Exception as exc:
+            yield f"{pfx}⚠️ Could not download `{filename}`: {exc}"
+            logger.warning("executor: download failed for %s — %s", filename, exc)
+
+    if not saved_paths:
+        yield f"{pfx}❌ All output downloads failed."
+        return
+
+    # Vision QA
+    yield f"{pfx}🔍 Running Vision QA with Ollama…"
+    for path in saved_paths:
+        verdict = await _vision_qa(path, brainbriefing)
+        yield f"{pfx}🔍 QA `{path.name}` → {verdict}"
+
+    # Post to Slack
+    if slack_channel_id or os.environ.get("SLACK_BOT_TOKEN"):
+        for path in saved_paths:
+            try:
+                size_bytes = path.stat().st_size
+                target_path = path
+                if size_bytes > 5 * 1024 * 1024:
+                    yield f"{pfx}⚠️ `{path.name}` is {size_bytes / 1024 / 1024:.1f} MB — downsizing…"
+                    target_path = _downsize_for_slack(path)
+                    if target_path is None:
+                        yield f"{pfx}⚠️ Downsize failed for `{path.name}` — skipping Slack upload."
+                        continue
+                _send_to_slack(
+                    target_path,
+                    channel_id=slack_channel_id,
+                    thread_ts=slack_thread_ts,
+                )
+                yield f"{pfx}📤 Sent `{path.name}` to Slack."
+            except Exception as exc:
+                yield f"{pfx}⚠️ Slack upload failed for `{path.name}`: {exc}"
+                logger.warning("executor: slack upload failed for %s — %s", path.name, exc)
+    else:
+        yield f"{pfx}ℹ️ No Slack token configured — skipping Slack upload."
+
+    output_summary = ", ".join(f"`{p.name}`" for p in saved_paths)
+    yield f"{pfx}✅ Done. Outputs: {output_summary}"
+    if verbose:
+        print(f"[executor] {pfx}Finished. Outputs: {[str(p) for p in saved_paths]}")
+
+    if collected_paths is not None:
+        collected_paths.extend(str(p) for p in saved_paths)
+
+
+# ---------------------------------------------------------------------------
+# Public executor — single workflow
 # ---------------------------------------------------------------------------
 
 async def execute_workflow(
@@ -195,7 +291,6 @@ async def execute_workflow(
     """
     from src.utils.comfyui_poller import poll_comfyui_job
 
-    # Parse the brainbriefing (best-effort; QA still runs on parse failure)
     try:
         brainbriefing: dict = json.loads(brainbriefing_json)
     except Exception:
@@ -226,75 +321,107 @@ async def execute_workflow(
 
     yield "✅ ComfyUI execution complete — collecting outputs…"
 
-    # ── 3. Download outputs ────────────────────────────────────────────────
-    output_files = _extract_output_files(history)
-    if not output_files:
-        yield "⚠️ No output files found in ComfyUI history."
-        logger.warning("executor: no output files in history for prompt_id=%s", prompt_id)
-        return
+    # ── 3-5. Download, QA, Slack ───────────────────────────────────────────
+    async for line in _process_completed_job(
+        history,
+        prompt_id,
+        brainbriefing,
+        slack_channel_id=slack_channel_id,
+        slack_thread_ts=slack_thread_ts,
+        verbose=verbose,
+        collected_paths=collected_paths,
+    ):
+        yield line
 
-    saved_paths: list[Path] = []
-    for item in output_files:
-        filename = item.get("filename", "")
-        subfolder = item.get("subfolder", "")
-        file_type = item.get("type", "output")
-        if not filename:
-            continue
+
+# ---------------------------------------------------------------------------
+# Public executor — batch (submit-all-then-poll)
+# ---------------------------------------------------------------------------
+
+async def execute_workflows_batch(
+    workflow_paths: list[str],
+    brainbriefing_json: str,
+    *,
+    slack_channel_id: str = "",
+    slack_thread_ts: str = "",
+    verbose: bool = True,
+    collected_paths: list[str] | None = None,
+) -> AsyncGenerator[str, None]:
+    """Submit ALL workflows to ComfyUI first, then poll + process each in order.
+
+    This avoids the submit→wait→submit→wait pattern: ComfyUI receives the full
+    batch immediately and can start executing jobs while the client is still
+    submitting remaining ones.  Polling then starts *after* the last submission,
+    so earlier jobs are frequently already done by the time we reach them.
+
+    Args:
+        workflow_paths:     Ordered list of absolute workflow JSON file paths.
+        brainbriefing_json: Researcher brainbriefing (for Vision QA).
+        slack_channel_id:   Slack channel (empty = no Slack).
+        slack_thread_ts:    Slack thread ts for replies.
+        verbose:            Log progress to stdout when True.
+    """
+    from src.utils.comfyui_poller import poll_comfyui_job
+
+    try:
+        brainbriefing: dict = json.loads(brainbriefing_json)
+    except Exception:
+        brainbriefing = {}
+
+    total = len(workflow_paths)
+
+    # ── Phase 1: submit all ────────────────────────────────────────────────
+    queued: list[tuple[str, str]] = []  # [(prompt_id, workflow_path), ...]
+    for idx, wf_path in enumerate(workflow_paths, 1):
+        yield f"🚀 Queuing iteration {idx}/{total}…"
         try:
-            dest = _download_output(filename, subfolder, file_type)
-            saved_paths.append(dest)
-            yield f"💾 Saved `{filename}` → `{dest}`"
+            prompt_id = _submit_workflow(wf_path)
+            queued.append((prompt_id, wf_path))
+            yield f"✅ Iteration {idx}/{total} queued · prompt_id=`{prompt_id}`"
+            if verbose:
+                print(f"[executor] Batch {idx}/{total} queued prompt_id={prompt_id}")
         except Exception as exc:
-            yield f"⚠️ Could not download `{filename}`: {exc}"
-            logger.warning("executor: download failed for %s — %s", filename, exc)
+            error_msg = f"❌ Submission failed for iteration {idx}/{total}: {exc}"
+            logger.error("executor: %s", error_msg)
+            yield error_msg
 
-    if not saved_paths:
-        yield "❌ All output downloads failed."
+    if not queued:
+        yield "❌ All workflow submissions failed — nothing to poll."
         return
 
-    # ── 4. Vision QA ───────────────────────────────────────────────────────
-    yield "🔍 Running Vision QA with Ollama…"
-    qa_results: list[str] = []
-    for path in saved_paths:
-        verdict = await _vision_qa(path, brainbriefing)
-        qa_results.append(f"`{path.name}`: {verdict}")
-        yield f"🔍 QA `{path.name}` → {verdict}"
+    yield (
+        f"⏳ All {len(queued)}/{total} workflows queued — "
+        f"waiting for ComfyUI to finish…"
+    )
 
-    # ── 5. Post to Slack ───────────────────────────────────────────────────
-    if slack_channel_id or os.environ.get("SLACK_BOT_TOKEN"):
-        for path in saved_paths:
-            try:
-                # Check size and downsize if > 5 MB
-                size_bytes = path.stat().st_size
-                target_path = path
-                if size_bytes > 5 * 1024 * 1024:
-                    yield f"⚠️ `{path.name}` is {size_bytes / 1024 / 1024:.1f} MB — downsizing…"
-                    target_path = _downsize_for_slack(path)
-                    if target_path is None:
-                        yield f"⚠️ Downsize failed for `{path.name}` — skipping Slack upload."
-                        continue
+    # ── Phase 2: poll + process each in submission order ───────────────────
+    for idx, (prompt_id, _wf_path) in enumerate(queued, 1):
+        label = f"[{idx}/{len(queued)}] "
+        yield f"{label}⏳ Waiting for ComfyUI (prompt_id=`{prompt_id}`)…"
+        if verbose:
+            print(f"[executor] Batch polling {idx}/{len(queued)} prompt_id={prompt_id}")
 
-                _send_to_slack(
-                    target_path,
-                    channel_id=slack_channel_id,
-                    thread_ts=slack_thread_ts,
-                )
-                yield f"📤 Sent `{path.name}` to Slack."
-            except Exception as exc:
-                yield f"⚠️ Slack upload failed for `{path.name}`: {exc}"
-                logger.warning("executor: slack upload failed for %s — %s", path.name, exc)
-    else:
-        yield "ℹ️ No Slack token configured — skipping Slack upload."
+        history = await poll_comfyui_job(prompt_id)
 
-    # ── Done ───────────────────────────────────────────────────────────────
-    output_summary = ", ".join(f"`{p.name}`" for p in saved_paths)
-    yield f"✅ Done. Outputs: {output_summary}"
-    if verbose:
-        print(f"[executor] Finished. Outputs: {[str(p) for p in saved_paths]}")
+        if "error" in history:
+            error_msg = f"{label}❌ ComfyUI execution error: {history['error']}"
+            logger.error("executor: %s", error_msg)
+            yield error_msg
+            continue  # move on to the next iteration, don't abort the whole batch
 
-    # Propagate saved paths to caller so the pipeline can update session state
-    if collected_paths is not None:
-        collected_paths.extend(str(p) for p in saved_paths)
+        yield f"{label}✅ Complete — collecting outputs…"
+
+        async for line in _process_completed_job(
+            history,
+            prompt_id,
+            brainbriefing,
+            slack_channel_id=slack_channel_id,
+            slack_thread_ts=slack_thread_ts,
+            verbose=verbose,
+            collected_paths=collected_paths,
+            label=label,
+        ):
+            yield line
 
 
 def _downsize_for_slack(source: Path) -> Path | None:
