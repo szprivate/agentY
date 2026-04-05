@@ -50,6 +50,19 @@ def _get_ollama_config() -> tuple[str, str]:
     return model, host
 
 
+def _get_triage_config() -> tuple[str, str]:
+    """Return ``(model_name, host)`` for triage classification from ``settings.json``.
+
+    Reads ``llm.pipeline.triage``; falls back to the hard-coded default
+    ``qwen3:0.6b`` when not set.
+    """
+    settings = _load_settings()
+    llm = settings.get("llm", {})
+    model: str = llm.get("pipeline", {}).get("triage", "qwen3:0.6b")
+    host: str = llm.get("ollama", {}).get("host", "http://localhost:11434")
+    return model, host
+
+
 def _get_vision_config() -> tuple[str, str]:
     """Return ``(vision_model, host)`` for multimodal analysis from ``settings.json``.
 
@@ -91,6 +104,16 @@ class LLMFunctions:
     def from_settings(cls) -> "LLMFunctions":
         """Construct from ``config/settings.json`` (``llm.pipeline.llm_functions`` key)."""
         model, host = _get_ollama_config()
+        return cls(model, host)
+
+    @classmethod
+    def for_triage(cls) -> "LLMFunctions":
+        """Construct a triage-optimised instance (``llm.pipeline.triage`` key).
+
+        Uses a really small Ollama model for fast, cheap intent classification.
+        Falls back to ``qwen3:0.6b`` when the key is absent.
+        """
+        model, host = _get_triage_config()
         return cls(model, host)
 
     @classmethod
