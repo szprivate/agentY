@@ -18,6 +18,7 @@ class MessageIntent(str, Enum):
     feedback     = "feedback"       # qualitative feedback / correction on the generated output
     new_request  = "new_request"    # fresh generation request
     info_query   = "info_query"     # question about capabilities / workflows / models
+    restart      = "restart"        # reset session and agent state
 
 
 class ChatSummary(BaseModel):

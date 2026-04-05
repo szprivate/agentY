@@ -32,6 +32,7 @@ from src.utils.models import AgentSession, ChatSummary, MessageIntent, TriageRes
 from src.utils.triage import triage as _triage, route as _route
 from src.utils.workflow_signal import clear_and_get as _get_workflow_signal
 from src.executor import execute_workflow as _execute_workflow
+from src.tools import reset_patch_workflow_guard
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +172,7 @@ class Pipeline:
         - ``researcher`` (new_request / low-confidence): full Researcher → Brain flow
         - ``brain`` (param_tweak / chain / feedback): direct Brain follow-up
         - ``answer`` (info_query): return the triage answer directly
+        - ``restart`` (restart): reset session and history, return confirmation
         - ``log_warning`` (low-confidence fallback): treat as new_request
         """
         user_text = self._extract_text(user_input)
@@ -183,6 +185,9 @@ class Pipeline:
 
         if handler == "answer":
             return triage_result.response or ""
+
+        if handler == "restart":
+            return self._restart()
 
         if handler == "brain":
             # Follow-up: skip Researcher, send directly to Brain
@@ -275,6 +280,10 @@ class Pipeline:
 
         if handler == "answer":
             yield {"data": triage_result.response or ""}
+            return
+
+        if handler == "restart":
+            yield {"data": self._restart()}
             return
 
         if handler == "brain":
@@ -413,6 +422,24 @@ class Pipeline:
         if isinstance(user_input, list):
             return "\n".join(block["text"] for block in user_input if "text" in block)
         return str(user_input)
+
+    def _restart(self) -> str:
+        """Reset all agent and session state for a clean start.
+
+        Clears the Brain's conversation history, resets the session, and
+        discards the last brainbriefing so the next request is fully fresh.
+        Returns a confirmation message.
+        """
+        session_id = self._session.session_id
+        self._brain.messages.clear()
+        self._session = AgentSession(session_id=session_id)
+        self._last_brainbriefing_json = None
+        # Reset the patch_workflow guard so Brain can assemble new workflows
+        # from scratch without being blocked by a lingering guard state.
+        reset_patch_workflow_guard()
+        if self._verbose:
+            print("[pipeline] Agent restarted — session and Brain history cleared.")
+        return "✅ Agent restarted. Session and conversation history have been cleared. Ready for a fresh start!"
 
     def _build_followup_prompt(self, user_text: str, triage_result: TriageResult) -> str:
         """Prompt for Brain when handling a follow-up (no Researcher pass needed).
