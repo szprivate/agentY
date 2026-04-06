@@ -23,7 +23,7 @@ from strands.hooks.events import AfterToolCallEvent
 
 from src.utils.comfyui_interrupt_hook import ComfyUIInterruptHook
 
-from src.tools import RESEARCHER_TOOLS, BRAIN_TOOLS, INFO_TOOLS, reset_patch_workflow_guard
+from src.tools import RESEARCHER_TOOLS, BRAIN_TOOLS, INFO_TOOLS, TRIAGE_TOOLS, reset_patch_workflow_guard
 
 
 # ---------------------------------------------------------------------------
@@ -520,7 +520,7 @@ def create_triage_agent(
         role="triage",
         llm=resolved_llm,
         system_prompt=system_prompt,
-        tools=[],
+        tools=TRIAGE_TOOLS,
         ollama_model=resolved_ollama,
         anthropic_model=resolved_anthropic,
         **kwargs,

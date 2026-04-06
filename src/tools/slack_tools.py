@@ -31,6 +31,22 @@ from src.utils.secrets import get_secret
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Thread-local flag: suppress ConsoleForwarder while streaming handler is active
+# ---------------------------------------------------------------------------
+
+_forwarder_suppress = threading.local()
+
+
+def set_forwarder_suppressed(state: bool) -> None:
+    """Tell SlackConsoleForwarder to suppress stdout forwarding in this thread.
+
+    Call with ``True`` before streaming agent output to Slack (the streaming
+    handler already takes care of posting it); call with ``False`` when done.
+    """
+    _forwarder_suppress.active = state
+
+
+# ---------------------------------------------------------------------------
 # Singleton Slack client
 # ---------------------------------------------------------------------------
 
@@ -547,7 +563,7 @@ class SlackConsoleForwarder:
 
         self._original.write(text)
         stripped = text.strip()
-        if stripped and not getattr(self._sending, "active", False):
+        if stripped and not getattr(self._sending, "active", False) and not getattr(_forwarder_suppress, "active", False):
             # Capture the channel context NOW, in the calling thread, because
             # _channel_context is threading.local() and won't be visible inside
             # the Timer callback (which runs in a fresh thread).
