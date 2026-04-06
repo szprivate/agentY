@@ -172,6 +172,7 @@ def _build_model_table() -> str:
 _SYSTEM_PROMPT_FILE: dict[str, str] = {
     "researcher": "system_prompt.researcher",
     "brain": "system_prompt.brain",
+    "triage": "system_prompt.triage",
 }
 
 
@@ -482,6 +483,74 @@ def create_info_agent(
         ollama_model=resolved_model,
         **kwargs,
     )
+
+
+def create_triage_agent(
+    llm: str | None = None,
+    ollama_model: str | None = None,
+    anthropic_model: str | None = None,
+    **kwargs,
+) -> Agent:
+    """Create the Triage agent — a stateless, tool-free intent classifier.
+
+    Reads ``llm.pipeline.triage`` from settings.json (format: ``'provider,model'``,
+    e.g. ``'ollama,qwen3:0.6b'`` or ``'claude,claude-haiku-4-5'``).
+    Env var ``TRIAGE_LLM`` overrides the full setting; ``TRIAGE_OLLAMA_MODEL``
+    or ``TRIAGE_ANTHROPIC_MODEL`` override just the model.
+
+    The agent has no tools and no meaningful conversation history — it reads
+    the user message (optionally prefixed with session context) and returns a
+    JSON ``{"intent": "...", "confidence": 0.0–1.0}`` object.
+
+    Args:
+        llm: ``'ollama'`` or ``'claude'``. Falls back to ``TRIAGE_LLM`` env var.
+        ollama_model: Ollama model override (e.g. ``'qwen3:0.6b'``).
+        anthropic_model: Anthropic model override (e.g. ``'claude-haiku-4-5'``).
+        **kwargs: Forwarded to the Strands Agent constructor.
+    """
+    if ollama_model and llm is None:
+        llm = "ollama"
+
+    # Read combined 'provider,model' from settings (env var TRIAGE_LLM still wins).
+    _raw = str(_cfg("TRIAGE_LLM", "pipeline", "triage", default="ollama"))
+    _settings_llm, _settings_model = _parse_llm_setting(_raw)
+    resolved_llm = llm or _settings_llm or "ollama"
+
+    if resolved_llm == "ollama":
+        resolved_ollama = (
+            ollama_model
+            or os.environ.get("TRIAGE_OLLAMA_MODEL")
+            or _settings_model
+            or str(_cfg("LLM_FUNCTIONS_MODEL", "pipeline", "llm_functions", default="qwen3:0.6b"))
+        )
+        resolved_anthropic = (
+            anthropic_model
+            or os.environ.get("TRIAGE_ANTHROPIC_MODEL")
+            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
+        )
+    else:  # claude
+        resolved_anthropic = (
+            anthropic_model
+            or os.environ.get("TRIAGE_ANTHROPIC_MODEL")
+            or _settings_model
+            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
+        )
+        resolved_ollama = ollama_model or str(_cfg("LLM_FUNCTIONS_MODEL", "pipeline", "llm_functions", default="qwen3:0.6b"))
+
+    system_prompt = _load_system_prompt("triage")
+    agent = _make_agent(
+        role="triage",
+        llm=resolved_llm,
+        system_prompt=system_prompt,
+        tools=[],
+        ollama_model=resolved_ollama,
+        anthropic_model=resolved_anthropic,
+        **kwargs,
+    )
+    # Triage is single-turn and stateless — cap history to avoid stale
+    # classification exchanges polluting future calls.
+    agent.conversation_manager = SlidingWindowConversationManager(window_size=2)
+    return agent
 
 
 def create_brain_agent(

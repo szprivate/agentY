@@ -1,4 +1,3 @@
-skill
 ---
 name: image-batch
 description: Use ONLY when count_iter > 1 AND variations is true in the brainbriefing. Generate N distinct variation prompts and write them to multiprompt.json so the pipeline can split them across individual workflow copies.

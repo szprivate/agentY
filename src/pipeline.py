@@ -26,7 +26,7 @@ from typing import Any, List, Optional
 from pydantic import BaseModel, Field, ValidationError
 from strands import Agent
 
-from src.agent import create_brain_agent, create_info_agent, create_researcher_agent, _settings
+from src.agent import create_brain_agent, create_info_agent, create_researcher_agent, create_triage_agent, _settings
 from src.utils.chat_summary import summarize_conversation
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
 from src.utils.comfyui_poller import poll_comfyui_job as _poll_comfyui_job
@@ -240,6 +240,7 @@ class Pipeline:
         brain: Agent,
         *,
         info_agent: Agent | None = None,
+        triage_agent: Agent | None = None,
         verbose: bool = True,
         skip_brain: bool = False,
         info_context: dict | None = None,
@@ -248,6 +249,7 @@ class Pipeline:
         self._researcher = researcher
         self._brain = brain
         self._info_agent: Agent = info_agent or create_info_agent()
+        self._triage_agent: Agent = triage_agent or create_triage_agent()
         self._verbose = verbose
         self._skip_brain = skip_brain
         self._info_context: dict = info_context or {}
@@ -283,7 +285,7 @@ class Pipeline:
         - ``log_warning`` (low-confidence fallback): treat as new_request
         """
         user_text = self._extract_text(user_input)
-        triage_result = asyncio.run(_triage(user_text, self._session, self._info_context))
+        triage_result = asyncio.run(_triage(user_text, self._session, self._info_context, self._triage_agent))
         handler = _route(triage_result)
 
         if self._verbose:
@@ -381,7 +383,7 @@ class Pipeline:
         """
         # Stage 0 – Triage (classify intent before any agent is called)
         user_text = self._extract_text(user_input)
-        triage_result = await _triage(user_text, self._session, self._info_context)
+        triage_result = await _triage(user_text, self._session, self._info_context, self._triage_agent)
         handler = _route(triage_result)
 
         if self._verbose:
@@ -971,6 +973,9 @@ def create_pipeline(
     brain_llm: str | None = None,
     brain_anthropic_model: str | None = None,
     brain_ollama_model: str | None = None,
+    triage_llm: str | None = None,
+    triage_ollama_model: str | None = None,
+    triage_anthropic_model: str | None = None,
     verbose: bool = True,
     skip_brain: bool = False,
     info_context: dict | None = None,
@@ -991,6 +996,11 @@ def create_pipeline(
         BRAIN_ANTHROPIC_MODEL   = (ANTHROPIC_MODEL env, then claude-haiku-4-5)
         BRAIN_OLLAMA_MODEL (if llm=ollama)
 
+    Triage defaults:
+        TRIAGE_LLM              = ollama  (reads llm.pipeline.triage from settings.json)
+        TRIAGE_OLLAMA_MODEL     = (model from settings, then llm.pipeline.llm_functions)
+        TRIAGE_ANTHROPIC_MODEL  (if llm=claude)
+
     Args:
         researcher_llm: LLM backend for the Researcher (``'ollama'`` or ``'claude'``).
         researcher_ollama_model: Ollama model override for the Researcher.
@@ -998,6 +1008,9 @@ def create_pipeline(
         brain_llm: LLM backend for the Brain (``'claude'`` or ``'ollama'``).
         brain_anthropic_model: Anthropic model override for the Brain.
         brain_ollama_model: Ollama model override for the Brain.
+        triage_llm: LLM backend for the Triage agent (``'ollama'`` or ``'claude'``).
+        triage_ollama_model: Ollama model override for the Triage agent.
+        triage_anthropic_model: Anthropic model override for the Triage agent.
         verbose: Print stage-transition log lines (default True).
     """
     researcher = create_researcher_agent(
@@ -1011,10 +1024,16 @@ def create_pipeline(
         ollama_model=brain_ollama_model,
     )
     info_agent = create_info_agent()
+    triage_agent = create_triage_agent(
+        llm=triage_llm,
+        ollama_model=triage_ollama_model,
+        anthropic_model=triage_anthropic_model,
+    )
     return Pipeline(
         researcher,
         brain,
         info_agent=info_agent,
+        triage_agent=triage_agent,
         verbose=verbose,
         skip_brain=skip_brain,
         info_context=info_context,
