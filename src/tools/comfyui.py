@@ -12,6 +12,7 @@ import os
 import uuid
 from pathlib import Path
 
+import requests
 from strands import tool
 
 from src.utils.comfyui_client import get_client
@@ -32,6 +33,15 @@ _patch_last_workflow_path: str | None = None
 
 # /object_info cache – the full node database doesn't change during a session.
 _object_info_cache: dict | None = None
+
+# GitHub source for the official Comfy-Org workflow templates.
+_GITHUB_TEMPLATES_BASE = (
+    "https://raw.githubusercontent.com/Comfy-Org/workflow_templates/main/templates"
+)
+
+# In-memory caches for GitHub-fetched data (reset on process restart).
+_official_index_cache: list | None = None
+_official_template_cache: dict[str, dict] = {}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -89,12 +99,39 @@ def _official_templates_dir() -> Path:
 
 
 def _load_official_index() -> list:
-    """Load and return the official templates index.json as a flat list."""
-    index_path = _official_templates_dir() / "index.json"
-    if not index_path.exists():
-        return []
-    with open(index_path, encoding="utf-8") as f:
-        raw = json.load(f)
+    """Return the official templates index.json as a flat list.
+
+    Tries to fetch from GitHub first; falls back to the local copy if the
+    network request fails.  Result is cached for the lifetime of the process.
+    """
+    global _official_index_cache
+    if _official_index_cache is not None:
+        return _official_index_cache
+
+    raw: list | None = None
+
+    # 1. Try GitHub
+    try:
+        resp = requests.get(
+            f"{_GITHUB_TEMPLATES_BASE}/index.json",
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            raw = resp.json()
+    except Exception:
+        pass
+
+    # 2. Fall back to local copy
+    if raw is None:
+        index_path = _official_templates_dir() / "index.json"
+        if index_path.exists():
+            with open(index_path, encoding="utf-8") as f:
+                raw = json.load(f)
+
+    if not raw:
+        _official_index_cache = []
+        return _official_index_cache
+
     flat: list[dict] = []
     for group in raw:
         group_category = group.get("title", group.get("category", ""))
@@ -103,7 +140,45 @@ def _load_official_index() -> list:
             tpl["_group_category"] = group_category
             tpl["_group_media"] = group_media
             flat.append(tpl)
+
+    _official_index_cache = flat
     return flat
+
+
+def _fetch_official_template(name: str) -> dict | None:
+    """Download a single official template JSON by name.
+
+    Tries GitHub first, then the local directory.  Returns the parsed dict, or
+    None if the template cannot be found anywhere.  Results are cached.
+    """
+    if name in _official_template_cache:
+        return _official_template_cache[name]
+
+    data: dict | None = None
+
+    # 1. Try GitHub
+    for filename in [f"{name}.json", name]:
+        try:
+            url = f"{_GITHUB_TEMPLATES_BASE}/{filename}"
+            resp = requests.get(url, timeout=15)
+            if resp.status_code == 200:
+                data = resp.json()
+                break
+        except Exception:
+            pass
+
+    # 2. Fall back to local copy
+    if data is None:
+        ot_dir = _official_templates_dir()
+        for candidate in [ot_dir / f"{name}.json", ot_dir / name]:
+            if candidate.exists():
+                with open(candidate, encoding="utf-8") as f:
+                    data = json.load(f)
+                break
+
+    if data is not None:
+        _official_template_cache[name] = data
+    return data
 
 
 def _save_workflow(workflow: dict, name: str = "") -> str:
@@ -780,22 +855,21 @@ def get_workflow_template(template_name: str) -> str:
                 source = "custom"
                 break
 
-        # Try official templates
+        # Try official templates (GitHub, then local fallback)
         if workflow is None:
-            ot_dir = _official_templates_dir()
-            for candidate in [ot_dir / f"{lookup}.json", ot_dir / template_name]:
-                if candidate.exists():
-                    with open(candidate, encoding="utf-8") as f:
-                        workflow = json.load(f)
-                    source = "official"
-                    for tpl in _load_official_index():
-                        if tpl.get("name") == lookup:
-                            metadata = {
-                                "models": tpl.get("models", []),
-                                "io": tpl.get("io", {}),
-                            }
-                            break
-                    break
+            data = _fetch_official_template(lookup)
+            if data is None and lookup != template_name:
+                data = _fetch_official_template(template_name)
+            if data is not None:
+                workflow = data
+                source = "official"
+                for tpl in _load_official_index():
+                    if tpl.get("name") == lookup:
+                        metadata = {
+                            "models": tpl.get("models", []),
+                            "io": tpl.get("io", {}),
+                        }
+                        break
 
         if workflow is None:
             return json.dumps({

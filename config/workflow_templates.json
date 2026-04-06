@@ -1,4 +1,5 @@
 {
+  "templates-1_click_multiple_character_angles-v1.0": "Upload an image of your character and get multiple views of that image from different angles.",
   "api_bfl_flux1_expand_image": "Upload an image to expand its canvas using Flux.1. Generate an outpainted image with extended content.",
   "api_bfl_flux_1_kontext_max_image": "Edit images with Flux.1 Kontext max image.",
   "api_bfl_flux_1_kontext_multiple_images_input": "Input multiple images and edit them with Flux.1 Kontext.",
