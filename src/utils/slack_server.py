@@ -518,25 +518,12 @@ def _handle_message_async(content, channel: str, thread_ts: str, user: str):
                 else:
                     last_was_text = False
 
-        # Run the async stream in a new event loop (we're in a thread).
-        # Suppress the SlackConsoleForwarder while streaming: the streaming
-        # handler posts the agent text via chat_update itself, so we must
-        # not also forward the same text from stdout (would cause duplication).
-        try:
-            from src.tools.slack_tools import set_forwarder_suppressed
-            set_forwarder_suppressed(True)
-        except Exception:
-            pass
+        # Run the async stream in a new event loop (we're in a thread)
         loop = asyncio.new_event_loop()
         try:
             loop.run_until_complete(_stream())
         finally:
             loop.close()
-            try:
-                from src.tools.slack_tools import set_forwarder_suppressed
-                set_forwarder_suppressed(False)
-            except Exception:
-                pass
 
         # -- Step 3: Append token-usage summary then finalise ----------- #
         try:

@@ -63,14 +63,6 @@ from src.tools.shell import run_script  # noqa: F401
 from strands_tools import file_read  # noqa: F401
 from strands_tools import calculator  # noqa: F401
 from strands_tools import stop  # noqa: F401
-from strands_tools import handoff_to_user  # noqa: F401
-
-# ---------------------------------------------------------------------------
-# Triage tools – minimal set for intent classification + user handoff.
-# ---------------------------------------------------------------------------
-TRIAGE_TOOLS: list = [
-    handoff_to_user,
-]
 
 # ---------------------------------------------------------------------------
 # Info-agent tools – read-only; answers questions about capabilities/models/workflows.
