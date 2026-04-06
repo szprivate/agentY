@@ -297,6 +297,15 @@ class Pipeline:
                 print("[pipeline] info_query → Info agent")
             return str(self._info_agent(user_text))
 
+        if handler == "needs_image":
+            if self._verbose:
+                print("[pipeline] needs_image → handoff to user (missing image)")
+            self._record_chat_summary(user_text, triage_result, status="needs_image")
+            return triage_result.response or (
+                "It looks like your request requires an input image, but I don't see one attached. "
+                "Please share the image you'd like me to work with and I'll get started!"
+            )
+
         if handler == "brain":
             # Follow-up: skip Researcher, send directly to Brain
             self._ensure_clean_history()
@@ -395,6 +404,17 @@ class Pipeline:
                 print("[pipeline:stream] info_query → Info agent (streamed)")
             async for event in self._info_agent.stream_async(user_text):
                 yield event
+            return
+
+        if handler == "needs_image":
+            if self._verbose:
+                print("[pipeline:stream] needs_image → handoff to user (missing image)")
+            self._record_chat_summary(user_text, triage_result, status="needs_image")
+            message = triage_result.response or (
+                "It looks like your request requires an input image, but I don't see one attached. "
+                "Please share the image you'd like me to work with and I'll get started!"
+            )
+            yield {"data": message}
             return
 
         if handler == "brain":

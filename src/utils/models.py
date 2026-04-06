@@ -18,6 +18,7 @@ class MessageIntent(str, Enum):
     feedback     = "feedback"       # qualitative feedback / correction on the generated output
     new_request  = "new_request"    # fresh generation request
     info_query   = "info_query"     # question about capabilities / workflows / models
+    needs_image  = "needs_image"    # request requires an image input that the user forgot to attach
 
 
 class ChatSummary(BaseModel):

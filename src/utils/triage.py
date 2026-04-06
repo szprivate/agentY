@@ -128,6 +128,18 @@ async def triage(
             confidence=confidence,
         )
 
+    # When an image is required but missing, carry a user-facing response so the
+    # pipeline can return it directly without starting the Researcher or Brain.
+    if intent == MessageIntent.needs_image:
+        return TriageResult(
+            intent=intent,
+            response=(
+                "It looks like your request requires an input image, but I don't see one attached. "
+                "Please share the image you'd like me to work with and I'll get started!"
+            ),
+            confidence=confidence,
+        )
+
     return TriageResult(intent=intent, response=None, confidence=confidence)
 
 
@@ -137,7 +149,7 @@ def route(result: TriageResult) -> str:
     Returns
     -------
     str
-        One of ``"researcher"`` | ``"brain"`` | ``"answer"`` | ``"log_warning"``.
+        One of ``"researcher"`` | ``"brain"`` | ``"answer"`` | ``"needs_image"`` | ``"log_warning"``.
     """
     if result.confidence < 0.6:
         return "log_warning"
@@ -145,6 +157,8 @@ def route(result: TriageResult) -> str:
     match result.intent:
         case MessageIntent.info_query:
             return "answer"
+        case MessageIntent.needs_image:
+            return "needs_image"
         case MessageIntent.param_tweak | MessageIntent.chain | MessageIntent.feedback:
             return "brain"
         case MessageIntent.new_request:
