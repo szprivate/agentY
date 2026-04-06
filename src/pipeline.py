@@ -285,6 +285,7 @@ class Pipeline:
         - ``log_warning`` (low-confidence fallback): treat as new_request
         """
         user_text = self._extract_text(user_input)
+        user_text = self._annotate_attachments(user_input, user_text)
         triage_result = asyncio.run(_triage(user_text, self._session, self._info_context, self._triage_agent))
         handler = _route(triage_result)
 
@@ -392,6 +393,7 @@ class Pipeline:
         """
         # Stage 0 – Triage (classify intent before any agent is called)
         user_text = self._extract_text(user_input)
+        user_text = self._annotate_attachments(user_input, user_text)
         triage_result = await _triage(user_text, self._session, self._info_context, self._triage_agent)
         handler = _route(triage_result)
 
@@ -561,6 +563,27 @@ class Pipeline:
         if isinstance(user_input, list):
             return "\n".join(block["text"] for block in user_input if "text" in block)
         return str(user_input)
+
+    @staticmethod
+    def _annotate_attachments(user_input: Any, user_text: str) -> str:
+        """Append an attachment hint to *user_text* so triage knows images are present.
+
+        Triage only receives the plain-text portion of the request, so without
+        this hint it would classify image-edit requests as ``needs_image`` even
+        when the caller already attached image content blocks.
+        """
+        if not isinstance(user_input, list):
+            return user_text
+        img_count = sum(1 for b in user_input if "image" in b)
+        vid_count = sum(1 for b in user_input if "video" in b)
+        parts = []
+        if img_count:
+            parts.append(f"{img_count} image{'s' if img_count > 1 else ''}")
+        if vid_count:
+            parts.append(f"{vid_count} video{'s' if vid_count > 1 else ''}")
+        if parts:
+            return user_text + f"\n[Attached: {', '.join(parts)}]"
+        return user_text
 
     def _build_followup_prompt(self, user_text: str, triage_result: TriageResult) -> str:
         """Prompt for Brain when handling a follow-up (no Researcher pass needed).
