@@ -11,17 +11,18 @@ Classify the incoming user message into **exactly one** of the following intents
 | `info_query` | Question about capabilities, templates, or models — not a generation request. |
 
 ## Typical examples of user message and matching intents
+- "Create an image of a lumber jack" -> `new_request`
+- "That didnt work, use a different template" -> `new_request`
+- "That went wrong, use [modelname] instead" -> `new_request`
+- "Turn this person image into a chimp" -> `new_request`
+- "Can you make 5 versions of this image?" -> `new_request`
 - "Extend this image to 16:9" -> `chain` 
 - "Take this image, make it 16:9" -> `chain` 
 - "rerun but change the resolution to 1920x1080" -> `param_tweak`
-- "Create an image of a lumber jack" -> `new_request`
-- "Turn this person image into a chimp" -> `new_request`
 - "What templates do you have access to?" ->  `info_query`
 - "The face looks off" -> `feedback`
 - "Make the sky blue" -> `feedback`
 - "Make the sky blue, but keep everything else the same" -> `chain`
-- "That didnt work, use a different template" -> `new_request`
-. "That went wrong, use [modelname] instead" -> `new_request`
 
 ## Rules
 
