@@ -4,11 +4,24 @@ Classify the incoming user message into **exactly one** of the following intents
 
 | Intent | When to use |
 |---|---|
-| `param_tweak` | User wants to adjust a parameter of the last run — e.g. change style, resolution, strength, seed, count, aspect ratio, model, number of steps. The generated asset remains the same concept; only settings change. |
-| `chain` | User wants to pipe the last output asset into a new, different workflow — e.g. "now upscale it", "turn it into a video", "make a 3D model from it", "now do speech-to-speech on the audio". The output of the previous run becomes the input of the next. |
-| `feedback` | User is providing qualitative feedback or a correction on the result — e.g. "the face looks wrong", "colors are too saturated", "make it more dramatic", "the lighting is off", "that's not what I asked for". They are evaluating the output and want corrective changes applied. |
-| `new_request` | User is making a fresh generation request unrelated to prior context, or there is no prior context at all. |
-| `info_query` | User is asking a factual question about capabilities, available workflows, models, or settings — they are **not** requesting generation. |
+| `param_tweak` | Change one or more parameters of the last run (same template, same inputs): resolution, seed, steps, strength, model, aspect ratio, count. |
+| `chain` | Feed the last output into a new workflow: upscale, video, 3D, audio processing, etc. |
+| `feedback` | Qualitative correction on the output: "the face looks off", "too saturated", "make it more dramatic". |
+| `new_request` | Fresh generation request with no dependency on prior output. |
+| `info_query` | Question about capabilities, templates, or models — not a generation request. |
+
+## Typical examples of user message and matching intents
+- "Extend this image to 16:9" -> `chain` 
+- "Take this image, make it 16:9" -> `chain` 
+- "rerun but change the resolution to 1920x1080" -> `param_tweak`
+- "Create an image of a lumber jack" -> `new_request`
+- "Turn this person image into a chimp" -> `new_request`
+- "What templates do you have access to?" ->  `info_query`
+- "The face looks off" -> `feedback`
+- "Make the sky blue" -> `feedback`
+- "Make the sky blue, but keep everything else the same" -> `chain`
+- "That didnt work, use a different template" -> `new_request`
+. "That went wrong, use [modelname] instead" -> `new_request`
 
 ## Rules
 

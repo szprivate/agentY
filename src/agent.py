@@ -265,8 +265,9 @@ class TokenUsageHookProvider:
     real time.
     """
 
-    def __init__(self, role: str = "agent") -> None:
+    def __init__(self, role: str = "agent", is_ollama: bool = False) -> None:
         self._role = role
+        self._is_ollama = is_ollama
         self._prev_in = 0
         self._prev_out = 0
         self._prev_cache_read = 0
@@ -306,11 +307,12 @@ class TokenUsageHookProvider:
                 total_parts.append(f"{cache_read:,} cache hit")
             if cache_write:
                 total_parts.append(f"{cache_write:,} cache write")
-            cost = _compute_cost(in_tok, out_tok, cache_read, cache_write)
-            total_parts.append(f"~${cost:.4f}")
+            if not self._is_ollama:
+                cost = _compute_cost(in_tok, out_tok, cache_read, cache_write)
+                total_parts.append(f"~${cost:.4f}")
 
             print(
-                f"\U0001fa99 [{self._role}] after {tool_name}: "
+                f"\n\U0001fa99 [{self._role}] after {tool_name}: "
                 f"{' / '.join(delta_parts)}  "
                 f"(total: {' / '.join(total_parts)})"
             )
@@ -380,7 +382,7 @@ def _make_agent(
         "system_prompt": system_prompt,
         "tools": tools,
         "conversation_manager": SlidingWindowConversationManager(window_size=window_size),
-        "hooks": [TokenUsageHookProvider(role=role)],
+        "hooks": [TokenUsageHookProvider(role=role, is_ollama=(llm == "ollama"))],
     }
     if plugins:
         agent_kwargs["plugins"] = plugins
