@@ -77,6 +77,8 @@ INFO_TOOLS: list = [
     read_text_file,
     file_read,
     stop,
+    analyze_image,
+    get_image_resolution,
 ]
 
 # ---------------------------------------------------------------------------

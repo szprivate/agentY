@@ -28,6 +28,7 @@ Classify the incoming user message into **exactly one** of the following intents
 - "Upscale this" (no image attached, no prior session output) -> `needs_image`
 - "Remove the background" (no image attached, no prior session output) -> `needs_image`
 - "Make me look younger in this picture" (no image attached, no prior session output) -> `needs_image`
+- Describe this image -> `info_query`
 
 ## Rules
 
