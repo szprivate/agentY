@@ -15,6 +15,7 @@ An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanony
 - **Multiple LLM backends** — Claude and Ollama, configurable per pipeline stage.
 - **50+ workflow templates** — from Comfy-Org, loaded and patched automatically.
 - **Skills system** — drop shell/Python scripts into `skills/` and they become agent-callable tools.
+- **ComfyUI extension** — a companion custom node ([agentY-comfyui-extension](https://github.com/szprivate/agentY-comfyui-extension)) lets you send images directly from ComfyUI to agentY and receive responses in real time.
 
 ---
 
@@ -228,6 +229,9 @@ agentY/
 ├── requirements.txt
 └── run_agent.ps1               Windows launcher script
 ```
+
+> The ComfyUI custom node lives in its own repo: **[agentY-comfyui-extension](https://github.com/szprivate/agentY-comfyui-extension)**.
+> Clone it into `ComfyUI/custom_nodes/agentY_bridge` to get the Send to agentY node.
 
 ---
 
