@@ -59,6 +59,7 @@ from src.tools.huggingface import (  # noqa: F401
     download_hf_model,
 )
 from src.tools.file_tools import read_text_file, write_text_file  # noqa: F401
+from src.tools.iterate import iterate  # noqa: F401
 from src.tools.shell import run_script  # noqa: F401
 from strands_tools import file_read  # noqa: F401
 from strands_tools import calculator  # noqa: F401
@@ -93,6 +94,7 @@ RESEARCHER_TOOLS: list = [
     get_image_resolution,
     analyze_image,
     run_script,  # needed for skills (e.g. image-downsize)
+    iterate,
     calculator,
     stop,
 ]
@@ -124,6 +126,8 @@ BRAIN_TOOLS: list = [
     duplicate_workflow,
     # Script execution (for skills, e.g. image-downsize)
     run_script,
+    # Iteration utility
+    iterate,
     # Slack – DM only, for reporting assembly errors / blockers
     slack_send_dm,
     slack_send_json,
