@@ -10,6 +10,11 @@
   },
   "input_images": [
     {
+      "filename": "..."
+    }
+  ],
+  "input_nodes": [
+    {
       "node_id": "25",
       "filename": "...",
       "role": "master_image | reference_image | mask | depth_map | control_image",

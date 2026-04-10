@@ -40,8 +40,13 @@ from src.executor import execute_workflow as _execute_workflow, execute_workflow
 # Brainbriefing schema (Pydantic) — mirrors config/brainbrief_example.json
 # ---------------------------------------------------------------------------
 
+class BriefInputImage(BaseModel):
+    """Lightweight reference to an input image (filename only)."""
+    filename: str = Field(description="Filename of the asset")
+
+
 class InputImage(BaseModel):
-    """A single input image/video asset referenced in the task."""
+    """A single input image/video asset with full ComfyUI node binding."""
     node_id: str = Field(description="Node ID in the workflow JSON (from io.inputs[].nodeId)")
     filename: str = Field(description="Filename of the asset")
     role: str = Field(description="Role: master_image | reference_image | mask | depth_map | control_image")
@@ -80,7 +85,8 @@ class BrainBriefing(BaseModel):
     blockers: List[str] = Field(default_factory=list, description="List of blocker descriptions")
     task: Task
     template: BriefTemplate
-    input_images: List[InputImage] = Field(default_factory=list)
+    input_images: List[BriefInputImage] = Field(default_factory=list, description="Lightweight list of input image assets (filename + path)")
+    input_nodes: List[InputImage] = Field(default_factory=list, description="Full ComfyUI node bindings for each input image")
     input_image_count: int = Field(default=0, description="Must equal len(input_images)")
     output_nodes: List[OutputNode] = Field(default_factory=list, description="Output nodes from the workflow with their save paths")
     resolution_width: Optional[Any] = Field(default=None, description="Image width in pixels")

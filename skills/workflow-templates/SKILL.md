@@ -12,10 +12,7 @@ Activate this skill when you need to choose a ComfyUI workflow template.
    - **Name match first**: normalise the user's phrasing to snake_case and check if a template key contains those words. Example: "Nano Banana Pro API" → `api_nano_banana_pro`. "Kling image to video" → `api_kling_i2v`. This catches most cases even when the user doesn't use the exact name.
    - **Description match**: if no name matches, look into the descriptions in `./config/workflow_templates.json` - see if they mention the user's requested features (e.g. "video interpolation", "uses Runway Gen-2", "text-to-video with LTX") or model names.
    - **Task-type fallback**: if still ambiguous, infer the task type (text-to-image, image-to-video, audio, 3D, etc.) and pick the most capable template for that type.
-3. Call `get_workflow_template(template_name)` with the exact name from the registry. This returns a **summary** (node list, models, I/O metadata) and a **`workflow_path`** pointing to the full workflow JSON on disk.
-4. Use `file_read(workflow_path)` to load the full workflow JSON when you need to patch nodes.
-5. After patching, use `save_workflow(modified_json)` to persist the changes and get a new file path.
-6. Proceed to validate and submit using the file path.
+3. Call `get_workflow_template` with the exact name from the registry. This returns a **summary** (node list, models, I/O metadata) and a **`workflow_path`** pointing to the full workflow JSON on disk.
 
 ## Matching tips
 - if you don't find a matching template, check if there's a template with a similar name (e.g. "Nano Banana Pro API" → api_nano_banana_pro). DO NEVER INVENT NEW TEMPLATES. 

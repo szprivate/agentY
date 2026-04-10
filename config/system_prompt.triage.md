@@ -16,14 +16,14 @@ Classify the incoming user message into **exactly one** of the following intents
 - "That didnt work, use a different template" -> `new_request`
 - "That went wrong, use [modelname] instead" -> `new_request`
 - "Turn this person image into a chimp" -> `new_request`
+- "Put the person from the first image into the environment in the second image" -> `new_request`
+- "Replace objects in this image" -> `new_request`
 - "Can you make 5 versions of this image?" -> `new_request`
 - "Extend this image to 16:9" -> `chain` 
 - "Take this image, make it 16:9" -> `chain` 
 - "rerun but change the resolution to 1920x1080" -> `param_tweak`
 - "What templates do you have access to?" ->  `info_query`
 - "The face looks off" -> `feedback`
-- "Make the sky blue" -> `feedback`
-- "Make the sky blue, but keep everything else the same" -> `chain`
 - "Edit this photo to make it look like a painting" (no image attached, no prior session output) -> `needs_image`
 - "Upscale this" (no image attached, no prior session output) -> `needs_image`
 - "Remove the background" (no image attached, no prior session output) -> `needs_image`

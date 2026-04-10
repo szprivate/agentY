@@ -107,7 +107,7 @@ def upload_image(
     image_type: str = "input",
     overwrite: bool = False,
 ) -> dict:
-    """Upload an image file to ComfyUI for use in workflows.
+    """Upload an image file to the ComfyUI input directory for use in workflows.
 
     Args:
         file_path: Local path to the image file.
@@ -137,7 +137,7 @@ def view_image(
     subfolder: str = "",
     image_type: str = "output",
 ) -> str:
-    """Download an image from ComfyUI and save it to a local path.
+    """Download an image from the ComfyUI output directory and save it to a local path.
 
     After saving, use analyze_image(file_path=save_to) to inspect the image
     contents. Use slack_send_image(file_path=save_to) to post it to Slack.
