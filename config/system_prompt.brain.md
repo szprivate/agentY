@@ -28,11 +28,12 @@ Follow these steps:
    - Use `add_workflow_node()` / `remove_workflow_node()` for structural changes.
    - NEVER call `save_workflow()` with the full JSON — use `patch_workflow()` instead.
      `save_workflow()` is only for building entirely new workflows from scratch.
-   - GeminiImage2Node / GeminiNanoBanana2 with >1 input image: wire inputs through a `BatchImagesNode`, then connect its output to the image input.
-   - GeminiImage2Node / GeminiNanoBanana2 with exactly 1 input image and a `BatchImagesNode` already present in the template: **remove the `BatchImagesNode` immediately** and wire the LoadImage node directly to the generator's `images` input. Do not attempt to keep or reconfigure it — it requires multiple inputs and will always fail validation with a single image.
+ 
+   - **Nano Banana 2 / Nanao Banana Pro workflows** for all `NanoBanana2` and `NanoBananaPro` templates: activate `NanoBanana` skill.
+ 
    - **Variations batch** if (`count_iter > 1` AND `variations == true`):
      Activate the `image-batch` skill. It will generate `count_iter` distinct prompts and
-     save them to `output/_workflows/multiprompt.json`. 
+     save them to `output/_workflows/multiprompt.json`.
 
 5. **Validate** — `validate_workflow(path)`:
    - Fix any validation errors, then re-validate — do not skip this step.
