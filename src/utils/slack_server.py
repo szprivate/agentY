@@ -330,24 +330,30 @@ def _build_content_blocks(text: str, files: list) -> list:
             if not data:
                 continue
 
+            # Prefix with the Slack file ID so that two images with the same
+            # filename (e.g. both called "image.png", common for screenshots)
+            # are saved to distinct paths and neither overwrites the other.
+            file_id = f.get("id", "")
+            stem = Path(name).stem
+            suffix = Path(name).suffix or f".{img_fmt}"
+            unique_stem = f"{file_id}_{stem}" if file_id else stem
+            unique_name = f"{unique_stem}{suffix}"
+
             # Save ORIGINAL bytes to disk — ComfyUI needs full resolution.
-            save_path = os.path.join(_slack_downloads_dir(), name)
+            save_path = os.path.join(_slack_downloads_dir(), unique_name)
             with open(save_path, "wb") as fp:
                 fp.write(data)
 
-            # Downsize in-memory to check if this image exceeds API limits.
-            small_data = _downsize_image_bytes(data, img_fmt)  # no disk write yet
-            if small_data != data:
-                # Image was too large — save the smaller copy so the Researcher
-                # can reference it if the user explicitly wants a smaller input.
-                stem = Path(name).stem
-                suffix = Path(name).suffix or f".{img_fmt}"
-                small_name = f"{stem}_small{suffix}"
-                small_path = os.path.join(_slack_downloads_dir(), small_name)
-                with open(small_path, "wb") as fp:
-                    fp.write(small_data)
-            else:
-                small_path = ""
+            # Always save a _small copy for every image so every image has a
+            # consistent ORIGINAL + downsized pair in the file listing.
+            # This prevents the info agent from confusing the _small entry of
+            # one image with a second attached image when only one of N images
+            # actually needed downsizing.
+            small_data = _downsize_image_bytes(data, img_fmt)
+            small_name = f"{unique_stem}_small{suffix}"
+            small_path = os.path.join(_slack_downloads_dir(), small_name)
+            with open(small_path, "wb") as fp:
+                fp.write(small_data)
 
             saved_files.append({"original": save_path, "small": small_path, "type": "image"})
 
@@ -360,6 +366,7 @@ def _build_content_blocks(text: str, files: list) -> list:
             media_count += 1
             logger.info("Downloaded image '%s' (%s, %d bytes) -> %s", name, img_fmt, len(data), save_path)
             continue
+
 
         # --- Try video ------------------------------------------------- #
         vid_fmt = _VIDEO_EXTENSIONS.get(filetype)
