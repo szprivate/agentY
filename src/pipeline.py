@@ -205,7 +205,15 @@ def _apply_multiprompt_variations(
 # ---------------------------------------------------------------------------
 
 def _extract_json(text: str) -> str | None:
-    """Pull the first JSON object out of *text*, even if wrapped in a code fence."""
+    """Pull the first JSON object out of *text*, even if wrapped in a code fence.
+
+    Strips ``<think>…</think>`` reasoning blocks emitted by Ollama models
+    (e.g. qwen3) before scanning for JSON, so that JSON examples that appear
+    inside the thinking block are never mistaken for the brainbriefing payload.
+    """
+    # Remove <think>...</think> blocks (qwen3 / DeepSeek reasoning traces)
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if fenced:
         return fenced.group(1).strip()

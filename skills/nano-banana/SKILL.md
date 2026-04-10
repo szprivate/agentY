@@ -6,14 +6,36 @@ allowed-tools: add_workflow_node, remove_workflow_node
 
 
 # ALWAYS APPLY: NanoBanana Workflow Assembly Instructions
-- unless requested otherwise by the user, ALWAYS set `resolution` in the generator node to "1K" 
+- **RESOLUTION** set `resolution` in the generator / Nano Banana / Nano Banana Pro / Nano Banana 2 node to `1K` 
 
 
 ***GeminiImage2Node / GeminiNanoBanana2 / Nano Banana 2 / Nano Banana Pro template WITH MORE THAN ONE INPUT IMAGE:***
 
 - use `add_workflow_node` to add a `LoadImage` node for every input image
 - use `add_workflow_node` to add a `BatchImagesNode`, 
-- connect the output of each LoadImage node to the correct BatchImagesNode inputs (output of 1st LoadImage → `images.image0` input of BatchImagesNode, output of 2nd LoadImage → `images.image1` input of BatchImagesNode, etc.). DONT CONNECT AN ARRAY INPUT TO THE BATCHIMAGESNODE (e.g. `images`) — ALWAYS CONNECT TO THE EXPLICITLY NUMBERED INPUTS (e.g. `images.image0`, `images.image1` etc.)
+- use this JSON schema to connect
+- connect the output of each LoadImage node to the correct BatchImagesNode inputs, use this JSON schema to connect:
+```json
+{
+    "node_id_BatchImagesNode": {
+    "inputs": {
+      "images.image0": [
+        "node_id_LoadImage1",
+        0
+      ],
+      "images.image1": [
+        "node_id_LoadImage2",
+        0
+      ],
+      "images.image2": [
+        "node_id_LoadImage3",
+        0
+      ]
+    },
+  }, 
+}
+```
+
 - then connect the BatchImagesNode output to the generator's input.
 
 
