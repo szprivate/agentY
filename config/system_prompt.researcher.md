@@ -22,6 +22,8 @@ Execute every step. Stop on failure.
    - Priority: name match > similar names > task-type match > model-family match
    - Normalise the user's phrasing to snake_case and check if a template key contains those words (e.g. "Nano Banana Pro API" → `api_nano_banana_pro`). Use the workflow-templates skill for full matching guidance.
    - `workflow-templates` skill will retrieve the full `workflow`, `name` of the workflow, used `model` and input / output nodes as `io` key
+   - **if no workflow can be found that matches the user request:** - set the workflow name to `build_new`
+   - **if user specificly requests to build a new workflow:** - set the workflow name to `build_new`
 
 3. **Input nodes** - identify all input nodes in the selected workflow template:
    - The `io` key returned by `get_workflow_template` lists input nodes under `io.inputs` — use those `nodeId` values as `node_id` for each input image entry

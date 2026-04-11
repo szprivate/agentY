@@ -7,31 +7,24 @@ Be concise. Use a humorous tone but still be precise. Report errors clearly. Inc
 
 Follow these steps:
 
-1. **Receive** — read the `brainbriefing` JSON:
+1. **Receive briefing** - read the `brainbriefing` JSON:
    - Fields: `task_id`, `template_name`, `prompt`, `negative_prompt`, `resolution`, `models`, `input_images`, `input_nodes`, `input_image_count`, `sampler`, `seed`, `steps`, `cfg`, `output_nodes`
    - Include `task_id` in all status messages so the user can correlate logs.
 
-2. **Load template** — `get_workflow_template(brainbriefing.template_name)` → record file path.
-
-4. **Assemble** — patch the workflow file:
-   - Use `patch_workflow(workflow_path, patches)`, give it a JSON array of targeted edits.
-     Each patch targets a single node input: `{"node_id": "6", "input_name": "text", "value": "new prompt"}`
-   - In the workflow, patch: input nodes, output nodes, prompt, negative prompt, resolution.
-   - Input image nodes:
-     - find the `input_nodes` in the brainbriefing JSON
-     - replace the `path` keys with the filenames in the `input_images` key in the brainbriefing JSON 
-     - if `input_image_count` < number of image load nodes → remove the excessive load nodes.
-     - if `input_image_count` > number of image load nodes → add nodes and wire them. 
-   - `width`, `height` come from `brainbriefing.resolution` — never guess.
-   - Use `add_workflow_node()` / `remove_workflow_node()` to add or remove nodes in the workflow.
-   - NEVER call `save_workflow()` with the full JSON — use `patch_workflow()` instead.
-     `save_workflow()` is only for building entirely new workflows from scratch.
- 
-   - for all **Nano Banana / Nano Banana 2 / Nanao Banana Pro templates** - activate `nano-banana` skill.
- 
-   - **Variations batch** if (`count_iter > 1` AND `variations == true`):
-     Activate the `image-batch` skill. It will generate `count_iter` distinct prompts and
-     save them to `output/_workflows/multiprompt.json`.
+2. **Assemble from template** - if researcher selected a template, follow these steps:
+  1. Load the template - `get_workflow_template(brainbriefing.template_name)` → record file path.
+  2. Use `patch_workflow(workflow_path, patches)`, give it a JSON array of targeted edits. Each patch targets a single node input: `{"node_id": "6", "input_name": "text", "value": "new prompt"}`
+    - In the workflow, patch: input nodes, output nodes, prompt, negative prompt, resolution.
+    - Input image nodes:
+      - find the `input_nodes` in the brainbriefing JSON
+      - replace the `path` keys with the filenames in the `input_images` key in the brainbriefing JSON 
+      - if `input_image_count` < number of image load nodes → remove the excessive load nodes.
+      - if `input_image_count` > number of image load nodes → add nodes and wire them. 
+    - `width`, `height` come from `brainbriefing.resolution` — never guess.
+    - Use `add_workflow_node()` / `remove_workflow_node()` to add or remove nodes in the workflow.
+    - NEVER call `save_workflow()` with the full JSON — use `patch_workflow()` instead. `save_workflow()` is only for building entirely new workflows from scratch.
+    - if selected template name contains names like: **Nano Banana / Nano Banana 2 / Nanao Banana Pro** - activate `nano-banana` skill!
+    - **Variations batch** if (`count_iter > 1` AND `variations == true`): Activate the `image-batch` skill! It will generate `count_iter` distinct prompts and save them to `output/_workflows/multiprompt.json`.
 
 5. **Validate** — `validate_workflow(path)`:
    - Fix any validation errors, then re-validate — do not skip this step.
