@@ -4,10 +4,9 @@ Classify the incoming user message into **exactly one** of the following intents
 
 | Intent | When to use |
 |---|---|
-| `param_tweak` | get one or more parameters of the last run (same template, same inputs): resolution, seed, steps, strength, model, aspect ratio, count. |
-| `chain` | Feed the last output into a new workflow: upscale, video, 3D, audio processing, etc. |
-| `feedback` | Qualitative correction on the output: "the face looks off", "too saturated", "make it more dramatic". |
 | `new_request` | Fresh generation request with no dependency on prior output. |
+| `chain` | Feed the last sessions output (if no image annotated), OR the annotated image / video into a new workflow: upscale, video, 3D, audio processing, etc. |
+| `feedback` | Qualitative correction on the output: "the face looks off", "too saturated", "make it more dramatic". |
 | `info_query` | Question about capabilities, templates, or models — not a generation request. |
 | `needs_image` | The request clearly requires an input image (edit, style transfer, upscale, face swap, img2img, etc.) but no image has been provided by the user and there is no prior output image in the session to chain from. |
 
@@ -19,9 +18,10 @@ Classify the incoming user message into **exactly one** of the following intents
 - "Put the person from the first image into the environment in the second image" -> `new_request`
 - "Replace objects in this image" -> `new_request`
 - "Can you make 5 versions of this image?" -> `new_request`
+- "Create a depth image from this image: [path_to_image or annotated_image]" -> `chain`
+- "Upscale this image" -Y `chain`
 - "Extend this image to 16:9" -> `chain` 
 - "Take this image, make it 16:9" -> `chain` 
-- "rerun but change the resolution to 1920x1080" -> `param_tweak`
 - "What templates do you have access to?" ->  `info_query`
 - "The face looks off" -> `feedback`
 - "Edit this photo to make it look like a painting" (no image attached, no prior session output) -> `needs_image`
