@@ -71,7 +71,7 @@
       "force_rate": 0,
       "custom_width": 0,
       "custom_height": 0,
-      "frame_load_cap": 1,
+      "frame_load_cap": 0,
       "skip_first_frames": 0,
       "select_every_nth": 1,
       "format": "AnimateDiff"
@@ -213,7 +213,7 @@
   "134": {
     "inputs": {
       "images.image0": [
-        "71",
+        "181",
         0
       ],
       "images.image1": [
@@ -250,6 +250,21 @@
     "class_type": "bEpicReformat",
     "_meta": {
       "title": "bEpic Nuke Reformat"
+    }
+  },
+  "181": {
+    "inputs": {
+      "indexes": "0",
+      "err_if_missing": true,
+      "err_if_empty": true,
+      "image": [
+        "71",
+        0
+      ]
+    },
+    "class_type": "VHS_SelectImages",
+    "_meta": {
+      "title": "Select Images 🎥🅥🅗🅢"
     }
   }
 }
