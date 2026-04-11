@@ -1,0 +1,45 @@
+[
+  {
+    "templates": [
+      {
+        "name": "qwen2511_imageEdit",
+        "models": [
+          "qwen_image_edit_2511_bf16",
+          "Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16",
+          "qwen_2.5_vl_7b_fp8_scaled",
+          "qwen_image_vae"
+        ],
+        "io": {
+          "inputs": [
+            {
+              "nodeId": 1,
+              "nodeType": "LoadImage",
+              "file": "",
+              "mediaType": "image"
+            },
+            {
+              "nodeId": 2,
+              "nodeType": "LoadImage",
+              "file": "",
+              "mediaType": "image"
+            },
+            {
+              "nodeId": 16,
+              "nodeType": "Image Load",
+              "file": "",
+              "mediaType": "image"
+            }
+          ],
+          "outputs": [
+            {
+              "nodeId": 27,
+              "nodeType": "SaveImage",
+              "file": "",
+              "mediaType": "image"
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

@@ -24,8 +24,6 @@ from src.utils.comfyui_client import get_client
 
 # Workflow files are saved to disk and referenced by path to avoid bloating
 # the LLM's sliding-window context with full JSON.
-_WORKFLOW_DIR = Path(__file__).parent.parent.parent / "output" / "_workflows"
-
 # patch_workflow failure guard
 _PATCH_FAIL_LIMIT: int = 3
 _patch_fail_count: int = 0
@@ -106,6 +104,13 @@ def _custom_templates_dir() -> Path:
         "./comfyui_workflows_templates_custom/",
     )
     return (_project_root() / ct_dir).resolve()
+
+
+def _workflows_dir() -> Path:
+    """Return the directory where generated/patched workflow JSON files are saved."""
+    cfg = _load_config()
+    wd = cfg.get("output_workflows_dir", "./output/_workflows/")
+    return (_project_root() / wd).resolve()
 
 
 def _load_index() -> list:
@@ -217,9 +222,10 @@ def _fetch_template(name: str) -> dict | None:
 
 def _save_workflow(workflow: dict, name: str = "") -> str:
     """Save *workflow* dict to a JSON file and return the absolute path."""
-    _WORKFLOW_DIR.mkdir(parents=True, exist_ok=True)
+    wd = _workflows_dir()
+    wd.mkdir(parents=True, exist_ok=True)
     stem = name or uuid.uuid4().hex[:8]
-    path = _WORKFLOW_DIR / f"{stem}.json"
+    path = wd / f"{stem}.json"
     path.write_text(json.dumps(workflow, indent=2), encoding="utf-8")
     return str(path.resolve())
 

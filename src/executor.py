@@ -42,7 +42,24 @@ from typing import AsyncGenerator
 
 logger = logging.getLogger("agentY.executor")
 
-_OUTPUT_DIR = Path(__file__).parent.parent / "output"
+
+def _project_root() -> Path:
+    return Path(__file__).parent.parent.resolve()
+
+
+def _load_config() -> dict:
+    config_path = _project_root() / "config" / "settings.json"
+    if config_path.exists():
+        with open(config_path, encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+
+def _output_dir() -> Path:
+    """Return the directory where ComfyUI output files are downloaded."""
+    cfg = _load_config()
+    od = cfg.get("output_dir", "./output/")
+    return (_project_root() / od).resolve()
 
 
 # ---------------------------------------------------------------------------
@@ -133,8 +150,8 @@ def _download_output(filename: str, subfolder: str = "", image_type: str = "outp
     resp = client.get("/view", params=params, raw=True)
     image_bytes: bytes = resp.content  # type: ignore[attr-defined]
 
-    _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    dest = _OUTPUT_DIR / filename
+    _output_dir().mkdir(parents=True, exist_ok=True)
+    dest = _output_dir() / filename
     dest.write_bytes(image_bytes)
     logger.info("executor: saved output → %s (%d bytes)", dest, len(image_bytes))
     return dest

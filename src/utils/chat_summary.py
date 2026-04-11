@@ -29,6 +29,15 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
 
+
+def _load_config() -> dict:
+    """Load config/settings.json."""
+    config_path = _PROJECT_ROOT / "config" / "settings.json"
+    if config_path.exists():
+        with open(config_path, encoding="utf-8") as _f:
+            return json.load(_f)
+    return {}
+
 _MSG_HISTORY_LOG = str(_PROJECT_ROOT / "logs" / "message_history.log")
 os.makedirs(os.path.dirname(_MSG_HISTORY_LOG), exist_ok=True)
 
@@ -359,7 +368,7 @@ def _archive_workflow(workflow_path: str | None, template_name: str | None) -> s
         logger.warning("_archive_workflow: source not found: %s", workflow_path)
         return None
 
-    archive_dir = _PROJECT_ROOT / "output" / "_workflows"
+    archive_dir = (_PROJECT_ROOT / _load_config().get("output_workflows_dir", "./output/_workflows/")).resolve()
     archive_dir.mkdir(parents=True, exist_ok=True)
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
