@@ -22,8 +22,6 @@
   "api_wan2_6_t2v": "Generate high-quality videos from text prompts with enhanced image quality, smoother motion, 1080P resolution support, and improved prompt understanding for natural, professional results.",
   "image_flux2_klein_image_edit_9b_distilled": "BFL distilled model. Outstanding quality at sub-second speed. Great for real-time generation while retaining quality. Marketing launch will focus on this model.",
   "image_flux2_klein_text_to_image": "BFL distilled model. Outstanding quality at sub-second speed. Great for real-time generation while retaining quality. Marketing launch will focus on this model.",
-  "image_qwen_Image_2512": "Text-to-image model with enhanced human realism, finer natural details for landscapes and animal fur, and improved text rendering with accurate layout and multimodal composition.",
-  "image_qwen_Image_2512_controlnet": "Upload an image and select a control type from Canny, HED, Depth, Pose, MLSD, Scribble, or Grayscale. Generate a new image guided by the chosen structural condition.",
   "image_z_image_turbo": "An Efficient Image Generation Foundation Model with Single-Stream Diffusion Transformer, supports English & Chinese.",
   "image_z_image_turbo_fun_union_controlnet": "Multi-control ControlNet supporting Canny, HED, Depth, Pose, and MLSD for Z-Image-Turbo.",
   "video_ltx2_3_flf2v": "Upload a starting image to generate a video sequence. The workflow creates a short video with consistent style and motion, beginning with your provided frame.",
