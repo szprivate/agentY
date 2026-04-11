@@ -1,0 +1,255 @@
+{
+  "3": {
+    "inputs": {
+      "value": "You are an image analysis and prompt compiler for NanoBanana 2 (Gemini Flash Image) workflows.\n\nYou will receive multiple images in this fixed order:\n- @img1 — the base image. PRIMARY. The output must be a direct edit of @img1. Its composition, layout, camera angle, and all object positions are the output. @img1 will also be provided again as the second-to-last image to reinforce its primacy.\n- @img2 — the style reference. SECONDARY palette source only. Extract material properties, surface textures, color palette, and lighting mood. Do not reproduce its composition, framing, or spatial content in any way.\n- @img3 onwards — specific object references. Material and appearance source for one identified object only. Do not use their composition or framing.\n- LAST IMAGE — the exterior environment reference. This image provides the scene visible through the windows of @img1 only. Extract its sky, landscape, cityscape, or environmental content and apply it to the exterior view seen through the windows. Do not use its composition, lighting, or any other property beyond the exterior scene content itself.\n\nYour first task is visual analysis:\n\nFROM @img1: identify the camera angle, all surfaces, all furniture, all objects, any hero objects, window openings and what is currently visible through them, and the complete spatial structure. You will describe this content positively in the output — what IS there — to anchor the generation.\n\nFROM @img2: identify material palette, surface textures, color cast, and lighting mood only. Do not analyse its composition or spatial layout.\n\nFROM @img3 onwards (excluding the last image): identify which object in @img1 each image corresponds to. Use it as the material reference for that object only, overriding @img2 for that element.\n\nFROM THE LAST IMAGE: identify the exterior environment it depicts — sky, city, landscape, atmosphere. This will be applied to the window views in @img1 only.\n\nYour output is a single plain-text image generation prompt. No JSON, no markdown, no headers, no bullet points, no explanation. Only the prompt text.\n\nStructure the prompt in this exact order:\n\n1. ANCHOR — one sentence asserting @img1 as the output: what it shows, its camera angle, and that it must be reproduced exactly. Name @img1 explicitly.\n\n2. BASE DESCRIPTION — two to three sentences describing what is in @img1 positively. Camera angle, surfaces, objects, spatial arrangement, window openings. This gives the model a strong positive target for the output composition.\n\n3. GEOMETRY LOCK — one sentence. State that all positions, layout, geometry, and camera angle from @img1 are locked and must not change.\n\n4. STYLE ROLE — one sentence. State that @img2 provides material and lighting properties only and must not influence the composition or framing.\n\n5. MATERIAL TRANSFERS — one sentence per surface. \"Replace [surface] with [material from @img2 or @imgN].\" For any object with a dedicated reference image, cite it: \"using @imgN as reference.\"\n\n6. OBJECT POPULATION — one sentence. List desk objects to add, their placement rules, and variation requirement.\n\n7. LIGHTING — one sentence describing the lighting to apply, sourced from @img2.\n\n8. EXTERIOR — one sentence. \"Through the windows visible in the back in @img1, show the exterior environment from the last reference image — [brief description of what that image contains]. The window geometry and frames remain exactly as in @img1.\"\n\n9. NEGATIVE CLAUSE — one sentence beginning \"Do not\". Cover: do not reproduce @img2, do not reproduce the last image, do not change layout, do not shift perspective, do not reposition objects, do not redesign, do not add floating objects, do not alter window geometry.\n\nKeep the total prompt under 220 words. Plain prose only. Output nothing except the prompt text."
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "String (Multiline)"
+    }
+  },
+  "12": {
+    "inputs": {
+      "image": "V:\\0193_Never_Stop_Dreaming_Spec\\02_build\\assets\\Environment\\office\\render\\renderAiMain\\v007\\0193_office_renderAiMain_v007.png",
+      "custom_width": 0,
+      "custom_height": 0
+    },
+    "class_type": "VHS_LoadImagePath",
+    "_meta": {
+      "title": "look-ref"
+    }
+  },
+  "20": {
+    "inputs": {
+      "prompt": [
+        "3",
+        0
+      ],
+      "model": "gemini-3-1-pro",
+      "seed": 154806755399435,
+      "system_prompt": "",
+      "images": [
+        "164",
+        0
+      ]
+    },
+    "class_type": "GeminiNode",
+    "_meta": {
+      "title": "Google Gemini"
+    }
+  },
+  "22": {
+    "inputs": {
+      "preview_markdown": "",
+      "preview_text": "",
+      "previewMode": null,
+      "source": [
+        "20",
+        0
+      ]
+    },
+    "class_type": "PreviewAny",
+    "_meta": {
+      "title": "Preview as Text"
+    }
+  },
+  "33": {
+    "inputs": {
+      "images": [
+        "164",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "71": {
+    "inputs": {
+      "video": "V:\\0193_Never_Stop_Dreaming_Spec\\03_sequences\\spec\\spec_0350\\render\\renderLightEnv\\v004\\0193_spec_0350_renderLightEnv_v004_png_h264.mp4",
+      "force_rate": 0,
+      "custom_width": 0,
+      "custom_height": 0,
+      "frame_load_cap": 1,
+      "skip_first_frames": 0,
+      "select_every_nth": 1,
+      "format": "AnimateDiff"
+    },
+    "class_type": "VHS_LoadVideoPath",
+    "_meta": {
+      "title": "layout-ref"
+    }
+  },
+  "78": {
+    "inputs": {
+      "image": "V:\\0193_Never_Stop_Dreaming_Spec\\02_build\\assets\\Environment\\office\\render\\renderAiMain\\v004\\0193_office_renderAiMain_v004.png",
+      "custom_width": 0,
+      "custom_height": 0
+    },
+    "class_type": "VHS_LoadImagePath",
+    "_meta": {
+      "title": "Load Image (Path) 🎥🅥🅗🅢"
+    }
+  },
+  "81": {
+    "inputs": {
+      "image": "V:\\0193_Never_Stop_Dreaming_Spec\\02_build\\assets\\Environment\\office\\render\\renderAiMain\\v006\\0193_office_renderAiMain_v006.png",
+      "custom_width": 0,
+      "custom_height": 0
+    },
+    "class_type": "VHS_LoadImagePath",
+    "_meta": {
+      "title": "Load Image (Path) 🎥🅥🅗🅢"
+    }
+  },
+  "89": {
+    "inputs": {
+      "image": "V:\\0193_Never_Stop_Dreaming_Spec\\02_build\\assets\\Environment\\office\\render\\renderAiMain\\v003\\0193_office_renderAiMain_v003.png",
+      "custom_width": 0,
+      "custom_height": 0
+    },
+    "class_type": "VHS_LoadImagePath",
+    "_meta": {
+      "title": "exterior-ref"
+    }
+  },
+  "100": {
+    "inputs": {
+      "filename_prefix": "",
+      "images": [
+        "115",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "115": {
+    "inputs": {
+      "prompt": [
+        "20",
+        0
+      ],
+      "model": "Nano Banana 2 (Gemini 3.1 Flash Image)",
+      "seed": 958170882387393,
+      "aspect_ratio": "auto",
+      "resolution": "1K",
+      "response_modalities": "IMAGE",
+      "system_prompt": "You are an expert image-generation engine. You must ALWAYS produce an image.\nInterpret all user input—regardless of format, intent, or abstraction—as literal visual directives for image composition.\nIf a prompt is conversational or lacks specific visual details, you must creatively invent a concrete visual scenario that depicts the concept.\nPrioritize generating the visual representation above any text, formatting, or conversational requests.",
+      "images": [
+        "134",
+        0
+      ]
+    },
+    "class_type": "GeminiImage2Node",
+    "_meta": {
+      "title": "Nano Banana Pro (Google Gemini Image)"
+    }
+  },
+  "120": {
+    "inputs": {
+      "image": "V:\\0193_Never_Stop_Dreaming_Spec\\02_build\\assets\\Prop\\DeskLamp\\image\\imageViews\\v001\\0193_DeskLamp_imageViews_v001.png",
+      "custom_width": 0,
+      "custom_height": 0
+    },
+    "class_type": "VHS_LoadImagePath",
+    "_meta": {
+      "title": "Load Image (Path) 🎥🅥🅗🅢"
+    }
+  },
+  "121": {
+    "inputs": {
+      "image": "V:\\0193_Never_Stop_Dreaming_Spec\\02_build\\assets\\Prop\\NonHeroDeskChair\\image\\imageViews\\v001\\0193_NonHeroDeskChair_imageViews_v001.png",
+      "custom_width": 0,
+      "custom_height": 0
+    },
+    "class_type": "VHS_LoadImagePath",
+    "_meta": {
+      "title": "Load Image (Path) 🎥🅥🅗🅢"
+    }
+  },
+  "130": {
+    "inputs": {
+      "images.image0": [
+        "78",
+        0
+      ],
+      "images.image1": [
+        "81",
+        0
+      ],
+      "images.image2": [
+        "131",
+        0
+      ],
+      "images.image3": [
+        "120",
+        0
+      ],
+      "images.image4": [
+        "121",
+        0
+      ]
+    },
+    "class_type": "BatchImagesNode",
+    "_meta": {
+      "title": "Batch Images"
+    }
+  },
+  "131": {
+    "inputs": {
+      "image": "V:\\0193_Never_Stop_Dreaming_Spec\\02_build\\assets\\Prop\\iMacDisplay\\image\\imageViews\\v001\\0193_iMacDisplay_imageViews_v001.png",
+      "custom_width": 0,
+      "custom_height": 0
+    },
+    "class_type": "VHS_LoadImagePath",
+    "_meta": {
+      "title": "Load Image (Path) 🎥🅥🅗🅢"
+    }
+  },
+  "134": {
+    "inputs": {
+      "images.image0": [
+        "71",
+        0
+      ],
+      "images.image1": [
+        "12",
+        0
+      ],
+      "images.image2": [
+        "130",
+        0
+      ],
+      "images.image3": [
+        "89",
+        0
+      ]
+    },
+    "class_type": "BatchImagesNode",
+    "_meta": {
+      "title": "Batch Images"
+    }
+  },
+  "164": {
+    "inputs": {
+      "format": "720p",
+      "width": 1024,
+      "height": 1024,
+      "resize_type": "to_format",
+      "filter": "bilinear",
+      "divisible_by": 0,
+      "image": [
+        "134",
+        0
+      ]
+    },
+    "class_type": "bEpicReformat",
+    "_meta": {
+      "title": "bEpic Nuke Reformat"
+    }
+  }
+}

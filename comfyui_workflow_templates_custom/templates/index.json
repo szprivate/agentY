@@ -2,6 +2,80 @@
   {
     "templates": [
       {
+        "name": "styletransfer_NanoBananaPro",
+        "models": [],
+        "io": {
+          "inputs": [
+            {
+              "nodeId": 12,
+              "nodeType": "VHS_LoadImagePath",
+              "file": "V:\\0193_Never_Stop_Dreaming_Spec\\02_build\\assets\\Environment\\office\\render\\renderAiMain\\v007\\0193_office_renderAiMain_v007.png",
+              "mediaType": "image"
+            },
+            {
+              "nodeId": 71,
+              "nodeType": "VHS_LoadVideoPath",
+              "file": "V:\\0193_Never_Stop_Dreaming_Spec\\03_sequences\\spec\\spec_0350\\render\\renderLightEnv\\v004\\0193_spec_0350_renderLightEnv_v004_png_h264.mp4",
+              "mediaType": "video"
+            },
+            {
+              "nodeId": 78,
+              "nodeType": "VHS_LoadImagePath",
+              "file": "V:\\0193_Never_Stop_Dreaming_Spec\\02_build\\assets\\Environment\\office\\render\\renderAiMain\\v004\\0193_office_renderAiMain_v004.png",
+              "mediaType": "image"
+            },
+            {
+              "nodeId": 81,
+              "nodeType": "VHS_LoadImagePath",
+              "file": "V:\\0193_Never_Stop_Dreaming_Spec\\02_build\\assets\\Environment\\office\\render\\renderAiMain\\v006\\0193_office_renderAiMain_v006.png",
+              "mediaType": "image"
+            },
+            {
+              "nodeId": 89,
+              "nodeType": "VHS_LoadImagePath",
+              "file": "V:\\0193_Never_Stop_Dreaming_Spec\\02_build\\assets\\Environment\\office\\render\\renderAiMain\\v003\\0193_office_renderAiMain_v003.png",
+              "mediaType": "image"
+            },
+            {
+              "nodeId": 120,
+              "nodeType": "VHS_LoadImagePath",
+              "file": "V:\\0193_Never_Stop_Dreaming_Spec\\02_build\\assets\\Prop\\DeskLamp\\image\\imageViews\\v001\\0193_DeskLamp_imageViews_v001.png",
+              "mediaType": "image"
+            },
+            {
+              "nodeId": 121,
+              "nodeType": "VHS_LoadImagePath",
+              "file": "V:\\0193_Never_Stop_Dreaming_Spec\\02_build\\assets\\Prop\\NonHeroDeskChair\\image\\imageViews\\v001\\0193_NonHeroDeskChair_imageViews_v001.png",
+              "mediaType": "image"
+            },
+            {
+              "nodeId": 131,
+              "nodeType": "VHS_LoadImagePath",
+              "file": "V:\\0193_Never_Stop_Dreaming_Spec\\02_build\\assets\\Prop\\iMacDisplay\\image\\imageViews\\v001\\0193_iMacDisplay_imageViews_v001.png",
+              "mediaType": "image"
+            }
+          ],
+          "outputs": [
+            {
+              "nodeId": 33,
+              "nodeType": "PreviewImage",
+              "file": "",
+              "mediaType": "image"
+            },
+            {
+              "nodeId": 100,
+              "nodeType": "SaveImage",
+              "file": "",
+              "mediaType": "image"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "templates": [
+      {
         "name": "qwen2511_imageEdit",
         "models": [
           "qwen_image_edit_2511_bf16",
@@ -26,7 +100,7 @@
             {
               "nodeId": 16,
               "nodeType": "Image Load",
-              "file": "",
+              "file": "W:\\0190_O2_betterthanyouthink\\02_build\\comfy\\outputs\\sub_1100\\ref\\freepik__create-an-image-of-a-black-longsleeve-in-front-of-__20913.png",
               "mediaType": "image"
             }
           ],
