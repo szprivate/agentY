@@ -11,7 +11,7 @@
   "comfyui_custom_templates_dir": "./comfyui_workflow_templates_custom/templates/",
   "output_dir": "./output_images/",
   "output_workflows_dir": "./output_workflows/",
-  "comfyui_poll_interval_s": 0.5,
+  "comfyui_poll_interval_s": 1,
   "comfyui_poll_timeout_s": 1800,
 
   "slack": {

@@ -16,4 +16,5 @@ slack_downloads/
 #Logs and outputs 
 logs/
 input_slack/
-output/
+output_images/
+output_workflows/

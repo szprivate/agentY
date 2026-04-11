@@ -34,5 +34,6 @@
   "video_wan_vace_14B_v2v": "Generate videos by controlling input videos and reference images using Wan VACE.",
   "video_wan_vace_flf2v": "Generate smooth video transitions by defining start and end frames. Supports custom keyframe sequences.",
   "video_wan_vace_outpainting": "Generate extended videos by expanding video size using Wan VACE outpainting.",
-  "qwen2511_imageEdit": "Image Editing workflow using QWEN-Image-Edit-2511-Lightning model. Upload up to three images. Supports control using depth and canny edge images as inputs."
+  "qwen2511_imageEdit": "Image Editing workflow using QWEN-Image-Edit-2511-Lightning model. Upload up to three images. Supports control using depth and canny edge images as inputs.",
+  "styletransfer_NanoBananaPro": "Style Transfer workflow using Nano-Banana Pro. Upload a video as layout reference (will take first frame), an image as style reference, and several images for the look of any hero elements. It will then transfer the look of the style reference to the first frame of the video, and will also integrate the references hero elements."
 }
