@@ -584,10 +584,28 @@ class Pipeline:
 
         Triage only receives the plain-text portion of the request, so without
         this hint it would classify image-edit requests as ``needs_image`` even
-        when the caller already attached image content blocks.
+        when the caller already attached image content blocks or embedded a file
+        path directly in their CLI message.
         """
+        _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif"}
+        _VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+
         if not isinstance(user_input, list):
+            # CLI / plain-text mode: scan for image/video file paths in the message.
+            # Extract tokens that could be paths (quoted or unquoted).
+            tokens = re.findall(r'"([^"]+)"|\'([^\']+)\'|(\S+)', user_text)
+            flat = [t for group in tokens for t in group if t]
+            img_paths = [t for t in flat if Path(t).suffix.lower() in _IMAGE_EXTS and os.path.isfile(t)]
+            vid_paths = [t for t in flat if Path(t).suffix.lower() in _VIDEO_EXTS and os.path.isfile(t)]
+            parts: list[str] = []
+            if img_paths:
+                parts.append(f"{len(img_paths)} image{'s' if len(img_paths) > 1 else ''}")
+            if vid_paths:
+                parts.append(f"{len(vid_paths)} video{'s' if len(vid_paths) > 1 else ''}")
+            if parts:
+                return user_text + f"\n[Attached: {', '.join(parts)}]"
             return user_text
+
         img_count = sum(1 for b in user_input if "image" in b)
         vid_count = sum(1 for b in user_input if "video" in b)
         parts = []
