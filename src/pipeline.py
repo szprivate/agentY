@@ -26,7 +26,7 @@ from typing import Any, List, Optional
 from pydantic import BaseModel, Field, ValidationError
 from strands import Agent
 
-from src.agent import create_brain_agent, create_info_agent, create_researcher_agent, create_triage_agent, _settings
+from src.agent import create_brain_agent, create_info_agent, create_planner_agent, create_researcher_agent, create_triage_agent, _settings
 from src.utils.chat_summary import summarize_conversation
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
 from src.utils.comfyui_poller import poll_comfyui_job as _poll_comfyui_job
@@ -255,6 +255,7 @@ class Pipeline:
         *,
         info_agent: Agent | None = None,
         triage_agent: Agent | None = None,
+        planner_agent: Agent | None = None,
         verbose: bool = True,
         skip_brain: bool = False,
         info_context: dict | None = None,
@@ -264,6 +265,7 @@ class Pipeline:
         self._brain = brain
         self._info_agent: Agent = info_agent or create_info_agent()
         self._triage_agent: Agent = triage_agent or create_triage_agent()
+        self._planner_agent: Agent = planner_agent or create_planner_agent()
         self._verbose = verbose
         self._skip_brain = skip_brain
         self._info_context: dict = info_context or {}
@@ -348,6 +350,9 @@ class Pipeline:
             if self._verbose:
                 print("[pipeline] Brain (follow-up) finished.")
             return brain_response
+
+        if handler == "planner":
+            return self._run_planned_request(user_text, triage_result)
 
         # handler == "researcher" or "log_warning" → full Researcher → Brain flow
         raw_json, error, researcher_output = self._run_researcher(user_input)
@@ -467,6 +472,11 @@ class Pipeline:
             await self._compress_brain_history(extra_output_paths=executor_paths_fu)
             return
 
+        if handler == "planner":
+            async for event in self._stream_planned_request(user_text, triage_result):
+                yield event
+            return
+
         # handler == "researcher" or "log_warning" → full Researcher → Brain flow
         # Stage 1 – Researcher (synchronous; fast pattern-matching turn)
         if self._verbose:
@@ -568,6 +578,263 @@ class Pipeline:
             ]
 
     # ── Internal helpers ─────────────────────────────────────────────── #
+
+    # ── Planner helpers ──────────────────────────────────────────────── #
+
+    def _run_planner(self, user_text: str) -> list[dict[str, str]]:
+        """Call the Planner agent to decompose *user_text* into ordered steps.
+
+        Returns a list of ``{"request": str, "description": str}`` dicts on
+        success, or an empty list when parsing fails (the caller falls back to
+        treating the request as a plain ``new_request``).
+        """
+        raw: str = str(self._planner_agent(user_text))
+        # Reset single-turn history immediately.
+        try:
+            self._planner_agent.conversation_manager.messages.clear()
+        except AttributeError:
+            try:
+                self._planner_agent.conversation_manager._messages.clear()  # noqa: SLF001
+            except AttributeError:
+                pass
+
+        json_str = _extract_json(raw) or raw
+        try:
+            parsed = json.loads(json_str)
+            steps = parsed.get("steps", [])
+            if not isinstance(steps, list) or len(steps) < 2:
+                if self._verbose:
+                    print(f"[planner] WARNING: plan has {len(steps)} step(s) — need ≥ 2. "
+                          "Falling back to researcher.")
+                return []
+            # Validate each step has at least a 'request' field.
+            validated: list[dict[str, str]] = []
+            for s in steps:
+                if isinstance(s, dict) and "request" in s:
+                    validated.append({
+                        "request": str(s["request"]),
+                        "description": str(s.get("description", f"Step {len(validated) + 1}")),
+                    })
+            if len(validated) < 2:
+                if self._verbose:
+                    print("[planner] WARNING: could not validate ≥ 2 steps. Falling back.")
+                return []
+            return validated
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            if self._verbose:
+                print(f"[planner] WARNING: plan parse failed ({exc}). Falling back to researcher.")
+            return []
+
+    def _inject_context_into_step(self, step_request: str, step_index: int) -> str:
+        """Prepend previous-step output paths into *step_request* when available.
+
+        Steps 2+ that reference "the previous step" will have the actual
+        output file paths injected so the Researcher can resolve them directly.
+        """
+        if step_index == 0 or not self._session.current_output_paths:
+            return step_request
+        paths_hint = ", ".join(self._session.current_output_paths)
+        return (
+            f"{step_request}\n"
+            f"[Previous step output(s): {paths_hint}]"
+        )
+
+    def _run_planned_request(self, user_text: str, triage_result: TriageResult) -> str:
+        """Execute a multi-step plan synchronously; return a combined summary string."""
+        if self._verbose:
+            print("[pipeline] Planner — decomposing multi-step request …")
+        steps = self._run_planner(user_text)
+
+        # Fallback: treat as a plain new_request when planning fails.
+        if not steps:
+            if self._verbose:
+                print("[pipeline] Planner fallback → researcher path")
+            raw_json, error, researcher_output = self._run_researcher(user_text)
+            if error:
+                self._record_chat_summary(user_text, triage_result, status="error")
+                return error
+            self._last_brainbriefing_json = raw_json
+            if self._should_skip_brain():
+                return researcher_output
+            self._ensure_clean_history()
+            brain_response = str(self._brain(self._build_brain_prompt(raw_json)))
+            wf = _get_workflow_signal()
+            wf = self._expand_variations(wf, raw_json)
+            ep: list[str] = []
+            if wf:
+                _, ep = asyncio.run(self._drain_executor_batch(wf, raw_json))
+                if ep:
+                    self._session.current_output_paths[:] = ep
+            self._record_chat_summary(user_text, triage_result, status="completed", raw_json=raw_json)
+            asyncio.run(self._compress_brain_history(extra_output_paths=ep))
+            return brain_response
+
+        total = len(steps)
+        if self._verbose:
+            print(f"[pipeline] Plan has {total} step(s):")
+            for i, s in enumerate(steps, 1):
+                print(f"  {i}. {s['description']}")
+
+        step_results: list[str] = []
+
+        for idx, step in enumerate(steps):
+            description = step["description"]
+            step_req = self._inject_context_into_step(step["request"], idx)
+
+            if self._verbose:
+                print(f"\n[pipeline] ── Plan step {idx + 1}/{total}: {description} ──")
+
+            raw_json, error, researcher_output = self._run_researcher(step_req)
+            if error:
+                msg = f"Step {idx + 1} ({description}) failed: {error}"
+                if self._verbose:
+                    print(f"[pipeline] {msg}")
+                step_results.append(msg)
+                # Abort remaining steps when the researcher fails.
+                break
+
+            self._last_brainbriefing_json = raw_json
+
+            if self._should_skip_brain():
+                step_results.append(f"Step {idx + 1}: {researcher_output}")
+                continue
+
+            self._ensure_clean_history()
+            brain_response = str(self._brain(self._build_brain_prompt(raw_json)))
+            wf_paths = _get_workflow_signal()
+            wf_paths = self._expand_variations(wf_paths, raw_json)
+            exec_paths: list[str] = []
+            if wf_paths:
+                count = len(wf_paths)
+                if self._verbose:
+                    tag = f"{count} workflows (batch)" if count > 1 else wf_paths[0]
+                    print(f"[pipeline] Step {idx + 1} Brain signaled {tag} ready.")
+                exec_lines, exec_paths = asyncio.run(
+                    self._drain_executor_batch(wf_paths, raw_json)
+                )
+                if exec_paths:
+                    self._session.current_output_paths[:] = exec_paths
+                if exec_lines:
+                    brain_response = brain_response + "\n\n" + "\n".join(exec_lines)
+
+            self._record_chat_summary(step_req, triage_result, status="completed", raw_json=raw_json)
+            asyncio.run(self._compress_brain_history(extra_output_paths=exec_paths))
+
+            step_results.append(f"**Step {idx + 1} — {description}**\n{brain_response}")
+
+            if self._verbose:
+                print(f"[pipeline] Step {idx + 1}/{total} finished.")
+
+        combined = "\n\n---\n\n".join(step_results)
+        if self._verbose:
+            print(f"[pipeline] Planned execution complete ({total} step(s)).")
+        return combined
+
+    async def _stream_planned_request(
+        self,
+        user_text: str,
+        triage_result: TriageResult,
+    ):
+        """Stream a multi-step plan; yields Strands-compatible event dicts."""
+        if self._verbose:
+            print("[pipeline:stream] Planner — decomposing multi-step request …")
+        steps = self._run_planner(user_text)
+
+        # Fallback: treat as a plain researcher path when planning fails.
+        if not steps:
+            if self._verbose:
+                print("[pipeline:stream] Planner fallback → researcher path")
+            raw_json, error, researcher_output = self._run_researcher(user_text)
+            if error:
+                self._record_chat_summary(user_text, triage_result, status="error")
+                yield {"data": error}
+                return
+            self._last_brainbriefing_json = raw_json
+            if self._should_skip_brain():
+                yield {"data": researcher_output}
+                return
+            self._ensure_clean_history()
+            async for event in self._brain.stream_async(self._build_brain_prompt(raw_json)):
+                yield event
+            wf = _get_workflow_signal()
+            wf = self._expand_variations(wf, raw_json)
+            ep: list[str] = []
+            if wf:
+                slack_channel_id, slack_thread_ts = self._get_slack_context()
+                yield {"data": "\n\n_⚙️ Handing off to executor…_"}
+                async for line in _execute_workflows_batch(
+                    wf, raw_json,
+                    slack_channel_id=slack_channel_id,
+                    slack_thread_ts=slack_thread_ts,
+                    verbose=self._verbose,
+                    collected_paths=ep,
+                ):
+                    yield {"data": f"\n{line}"}
+                if ep:
+                    self._session.current_output_paths[:] = ep
+            self._record_chat_summary(user_text, triage_result, status="completed", raw_json=raw_json)
+            await self._compress_brain_history(extra_output_paths=ep)
+            return
+
+        total = len(steps)
+        yield {"data": f"_🗂️ Plan ready — {total} step(s) to execute._\n"}
+        if self._verbose:
+            print(f"[pipeline:stream] Plan has {total} step(s):")
+            for i, s in enumerate(steps, 1):
+                print(f"  {i}. {s['description']}")
+
+        for idx, step in enumerate(steps):
+            description = step["description"]
+            step_req = self._inject_context_into_step(step["request"], idx)
+
+            yield {"data": f"\n\n**Step {idx + 1}/{total} — {description}**\n"}
+            if self._verbose:
+                print(f"\n[pipeline:stream] ── Plan step {idx + 1}/{total}: {description} ──")
+
+            raw_json, error, researcher_output = self._run_researcher(step_req)
+            if error:
+                yield {"data": f"\n❌ Step {idx + 1} failed: {error}"}
+                if self._verbose:
+                    print(f"[pipeline:stream] Step {idx + 1} researcher error: {error}")
+                break
+
+            self._last_brainbriefing_json = raw_json
+
+            if self._should_skip_brain():
+                yield {"data": researcher_output}
+                continue
+
+            self._ensure_clean_history()
+            async for event in self._brain.stream_async(self._build_brain_prompt(raw_json)):
+                yield event
+
+            wf_paths = _get_workflow_signal()
+            wf_paths = self._expand_variations(wf_paths, raw_json)
+            exec_paths: list[str] = []
+            if wf_paths:
+                count = len(wf_paths)
+                hdr = f"batch of {count} workflows" if count > 1 else "workflow"
+                yield {"data": f"\n\n_⚙️ Handing off to executor ({hdr})…_"}
+                slack_channel_id, slack_thread_ts = self._get_slack_context()
+                async for line in _execute_workflows_batch(
+                    wf_paths, raw_json,
+                    slack_channel_id=slack_channel_id,
+                    slack_thread_ts=slack_thread_ts,
+                    verbose=self._verbose,
+                    collected_paths=exec_paths,
+                ):
+                    yield {"data": f"\n{line}"}
+                if exec_paths:
+                    self._session.current_output_paths[:] = exec_paths
+
+            self._record_chat_summary(step_req, triage_result, status="completed", raw_json=raw_json)
+            await self._compress_brain_history(extra_output_paths=exec_paths)
+
+            if self._verbose:
+                print(f"[pipeline:stream] Step {idx + 1}/{total} finished.")
+
+        if self._verbose:
+            print(f"[pipeline:stream] Planned execution complete ({total} step(s)).")
 
     # ── Triage helpers ───────────────────────────────────────────────── #
 
@@ -1051,6 +1318,9 @@ def create_pipeline(
     triage_llm: str | None = None,
     triage_ollama_model: str | None = None,
     triage_anthropic_model: str | None = None,
+    planner_llm: str | None = None,
+    planner_ollama_model: str | None = None,
+    planner_anthropic_model: str | None = None,
     verbose: bool = True,
     skip_brain: bool = False,
     info_context: dict | None = None,
@@ -1076,6 +1346,11 @@ def create_pipeline(
         TRIAGE_OLLAMA_MODEL     = (model from settings, then llm.pipeline.llm_functions)
         TRIAGE_ANTHROPIC_MODEL  (if llm=claude)
 
+    Planner defaults:
+        PLANNER_LLM             = (inherits from triage settings)
+        PLANNER_OLLAMA_MODEL    = (model from settings, then llm.pipeline.llm_functions)
+        PLANNER_ANTHROPIC_MODEL (if llm=claude)
+
     Args:
         researcher_llm: LLM backend for the Researcher (``'ollama'`` or ``'claude'``).
         researcher_ollama_model: Ollama model override for the Researcher.
@@ -1086,6 +1361,9 @@ def create_pipeline(
         triage_llm: LLM backend for the Triage agent (``'ollama'`` or ``'claude'``).
         triage_ollama_model: Ollama model override for the Triage agent.
         triage_anthropic_model: Anthropic model override for the Triage agent.
+        planner_llm: LLM backend for the Planner agent (``'ollama'`` or ``'claude'``).
+        planner_ollama_model: Ollama model override for the Planner agent.
+        planner_anthropic_model: Anthropic model override for the Planner agent.
         verbose: Print stage-transition log lines (default True).
     """
     researcher = create_researcher_agent(
@@ -1104,11 +1382,17 @@ def create_pipeline(
         ollama_model=triage_ollama_model,
         anthropic_model=triage_anthropic_model,
     )
+    planner_agent = create_planner_agent(
+        llm=planner_llm,
+        ollama_model=planner_ollama_model,
+        anthropic_model=planner_anthropic_model,
+    )
     return Pipeline(
         researcher,
         brain,
         info_agent=info_agent,
         triage_agent=triage_agent,
+        planner_agent=planner_agent,
         verbose=verbose,
         skip_brain=skip_brain,
         info_context=info_context,

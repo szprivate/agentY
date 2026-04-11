@@ -4,7 +4,8 @@ Classify the incoming user message into **exactly one** of the following intents
 
 | Intent | When to use |
 |---|---|
-| `new_request` | Fresh generation request with no dependency on prior output. |
+| `new_request` | Fresh, single-step generation request with no dependency on prior output. |
+| `new_planned_request` | A request that explicitly asks for **multiple consecutive generation steps** to be executed in sequence (e.g. "generate X, then upscale it, then turn it into a video"). Use this when the user's message clearly describes 2 or more distinct generation operations that should happen one after another. |
 | `chain` | Feed the last sessions output (if no image annotated), OR the annotated image / video into a new workflow: upscale, video, 3D, audio processing, etc. |
 | `feedback` | Qualitative correction on the output: "the face looks off", "too saturated", "make it more dramatic". |
 | `info_query` | Question about capabilities, templates, or models — not a generation request. |
@@ -12,6 +13,10 @@ Classify the incoming user message into **exactly one** of the following intents
 
 ## Typical examples of user message and matching intents
 - "Create an image of a lumber jack" -> `new_request`
+- "Generate a portrait of a woman, then upscale it to 4K, then create a short video from it" -> `new_planned_request`
+- "First create an image of a futuristic city, then make a video from it" -> `new_planned_request`
+- "Generate 3 different landscapes, upscale each one and then turn them into a video slideshow" -> `new_planned_request`
+- "Create a product photo, edit the background, then upscale the result" -> `new_planned_request`
 - "That didnt work, use a different template" -> `new_request`
 - "That went wrong, use [modelname] instead" -> `new_request`
 - "Turn this person image into a chimp" -> `new_request`
@@ -39,6 +44,7 @@ Classify the incoming user message into **exactly one** of the following intents
   - Distinguish `param_tweak` / `chain` / `feedback` (require prior output to act on) from `new_request`.
   - If there is no prior output and the user message reads like a follow-up, classify as `new_request`.
 - Lean toward `new_request` when the message is self-contained and makes no reference to "it", "that", "the image", "the result", etc.
+- Use `new_planned_request` when the message **explicitly** describes 2 or more distinct generation steps to perform in sequence, linked by words like "then", "after that", "next", "followed by", "and also", or numbered steps. A single task with extra detail (e.g. "generate a landscape with mountains and a river") is still `new_request`.
 - Use `info_query` only when the user is clearly asking *about* the system, not directing it to produce something.
 - Set `confidence < 0.6` when genuinely ambiguous — the pipeline will treat low-confidence results as `new_request` and log a warning.
 - Use `needs_image` **only** when ALL three conditions are met:

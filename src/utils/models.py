@@ -13,12 +13,13 @@ from pydantic import BaseModel, Field
 
 
 class MessageIntent(str, Enum):
-    param_tweak  = "param_tweak"   # adjust a param of the last run
-    chain        = "chain"          # pipe last output into a new workflow
-    feedback     = "feedback"       # qualitative feedback / correction on the generated output
-    new_request  = "new_request"    # fresh generation request
-    info_query   = "info_query"     # question about capabilities / workflows / models
-    needs_image  = "needs_image"    # request requires an image input that the user forgot to attach
+    param_tweak         = "param_tweak"          # adjust a param of the last run
+    chain               = "chain"                # pipe last output into a new workflow
+    feedback            = "feedback"             # qualitative feedback / correction on the generated output
+    new_request         = "new_request"          # fresh generation request
+    new_planned_request = "new_planned_request"  # multi-step generation plan (several consecutive tasks)
+    info_query          = "info_query"           # question about capabilities / workflows / models
+    needs_image         = "needs_image"          # request requires an image input that the user forgot to attach
 
 
 class ChatSummary(BaseModel):

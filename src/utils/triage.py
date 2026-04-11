@@ -161,6 +161,8 @@ def route(result: TriageResult) -> str:
             return "needs_image"
         case MessageIntent.param_tweak | MessageIntent.chain | MessageIntent.feedback:
             return "brain"
+        case MessageIntent.new_planned_request:
+            return "planner"
         case MessageIntent.new_request:
             return "researcher"
         case _:

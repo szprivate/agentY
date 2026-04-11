@@ -175,6 +175,7 @@ _SYSTEM_PROMPT_FILE: dict[str, str] = {
     "researcher": "system_prompt.researcher",
     "brain": "system_prompt.brain",
     "triage": "system_prompt.triage",
+    "planner": "system_prompt.planner",
 }
 
 
@@ -431,6 +432,79 @@ def create_researcher_agent(
         anthropic_model=resolved_anthropic,
         **kwargs,
     )
+
+
+def create_planner_agent(
+    llm: str | None = None,
+    ollama_model: str | None = None,
+    anthropic_model: str | None = None,
+    **kwargs,
+) -> Agent:
+    """Create the Planner agent — a stateless, tool-free multi-step decomposer.
+
+    The Planner receives a complex multi-step user request and breaks it into
+    a sequence of atomic generation tasks expressed as individual user requests.
+    It outputs a JSON object ``{"steps": [{"request": "...", "description": "..."}]}``.
+
+    Reads ``llm.pipeline.planner`` from settings.json (format: ``'provider,model'``).
+    Env var ``PLANNER_LLM`` overrides the full setting; ``PLANNER_OLLAMA_MODEL``
+    or ``PLANNER_ANTHROPIC_MODEL`` override just the model.
+
+    Defaults to the same backend/model as the Triage agent.
+
+    Args:
+        llm: ``'ollama'`` or ``'claude'``. Falls back to ``PLANNER_LLM`` env var.
+        ollama_model: Ollama model override (e.g. ``'qwen3:0.6b'``).
+        anthropic_model: Anthropic model override (e.g. ``'claude-haiku-4-5'``).
+        **kwargs: Forwarded to the Strands Agent constructor.
+    """
+    if ollama_model and llm is None:
+        llm = "ollama"
+
+    # Read combined 'provider,model' from settings (env var PLANNER_LLM still wins).
+    # Falls back to the triage setting so no extra config is required.
+    _raw = str(_cfg("PLANNER_LLM", "pipeline", "planner",
+                    default=str(_cfg("TRIAGE_LLM", "pipeline", "triage", default="ollama"))))
+    _settings_llm, _settings_model = _parse_llm_setting(_raw)
+    resolved_llm = llm or _settings_llm or "ollama"
+
+    if resolved_llm == "ollama":
+        resolved_ollama = (
+            ollama_model
+            or os.environ.get("PLANNER_OLLAMA_MODEL")
+            or _settings_model
+            or str(_cfg("LLM_FUNCTIONS_MODEL", "pipeline", "llm_functions", default="qwen3.5:9b"))
+        )
+        resolved_anthropic = (
+            anthropic_model
+            or os.environ.get("PLANNER_ANTHROPIC_MODEL")
+            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
+        )
+    else:  # claude
+        resolved_anthropic = (
+            anthropic_model
+            or os.environ.get("PLANNER_ANTHROPIC_MODEL")
+            or _settings_model
+            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
+        )
+        resolved_ollama = (
+            ollama_model
+            or str(_cfg("LLM_FUNCTIONS_MODEL", "pipeline", "llm_functions", default="qwen3.5:9b"))
+        )
+
+    system_prompt = _load_system_prompt("planner")
+    agent = _make_agent(
+        role="planner",
+        llm=resolved_llm,
+        system_prompt=system_prompt,
+        tools=[],
+        ollama_model=resolved_ollama,
+        anthropic_model=resolved_anthropic,
+        **kwargs,
+    )
+    # Planner is single-turn and stateless.
+    agent.conversation_manager = SlidingWindowConversationManager(window_size=2)
+    return agent
 
 
 def create_info_agent(
