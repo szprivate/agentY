@@ -218,8 +218,8 @@ agentY/
 │   ├── models.json             Model shortname → path table (injected into system prompts)
 │   ├── workflow_templates.json Workflow template metadata
 │   ├── workflow_types.json     Task type definitions
-│   ├── system_prompt.researcher.md
-│   ├── system_prompt.brain.md
+│   ├── system_prompt.*.md      System prompt templates (filenames configurable via the
+│   │                            `system_prompts` mapping in `config/settings.json`)
 │   └── brainbrief_example.json Example BrainBriefing for prompt injection
 ├── comfyui_workflows/          Custom workflow JSON files
 ├── comfyui_workflow_templates_official/  Comfy-Org template library (git-ignored)

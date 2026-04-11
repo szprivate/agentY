@@ -1,11 +1,17 @@
 {
   "comfyui_url": "http://127.0.0.1:8188",
+  "system_prompts": {
+    "researcher": "system_prompt.researcher.md",
+    "brain": "system_prompt.brain.md",
+    "triage": "system_prompt.triage.md",
+    "planner": "system_prompt.planner.md"
+  },
   "comfyui_workflows_dir": "./comfyui_workflows/",
   "comfyui_templates_dir": "./comfyui_workflow_templates_official/templates/",
   "comfyui_custom_templates_dir": "./comfyui_workflow_templates_custom/templates/",
-  "output_dir": "./output/",
-  "output_workflows_dir": "./output/_workflows/",
-  "comfyui_poll_interval_s": 1,
+  "output_dir": "./output_images/",
+  "output_workflows_dir": "./output_workflows/",
+  "comfyui_poll_interval_s": 0.5,
   "comfyui_poll_timeout_s": 1800,
 
   "slack": {

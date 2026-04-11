@@ -18,7 +18,7 @@ Execute every step. Stop on failure.
    - **Batch detection, multiple runs** — if the user asks for multiple runs in one request (phrases like *"batch of 5"*, *"generate 4 times"*, *"run it 6x"*, *"make 10 images"*), extract the count and set `count_iter` to that number (minimum 1, maximum 20). Default is `1` (single run). 
    - **Batch detection, multiple variations** — if the user asks for multiple *distinct* results in one request (phrases like *"3 variations"*, *"5 versions"*, *"give me 4 different styles"*), extract the count and set `count_iter` to that number (minimum 1, maximum 20). Default is `1` (single run). Also set `variations` to `true` (boolean). Default is `false`.
 
-2. **Template** - choose a ComfyUI workflow based on the user request
+1. **Template** - choose a ComfyUI workflow based on the user request
    - Priority: name match > similar names > task-type match > model-family match
    - Normalise the user's phrasing to snake_case and check if a template key contains those words (e.g. "Nano Banana Pro API" → `api_nano_banana_pro`). Use the workflow-templates skill for full matching guidance.
    - `workflow-templates` skill will retrieve the full `workflow`, `name` of the workflow, used `model` and input / output nodes as `io` key

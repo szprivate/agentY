@@ -79,11 +79,8 @@ def _load_config() -> dict:
     return {}
 
 
-def _user_workflows_dir() -> Path:
-    """Return the path to the user's ad-hoc custom workflow storage directory."""
-    cfg = _load_config()
-    wf_dir = cfg.get("comfyui_workflows_dir", "./comfyui_workflows/")
-    return (_project_root() / wf_dir).resolve()
+# NOTE: `_user_workflows_dir` intentionally removed. Use `_custom_templates_dir()`
+# instead — user ad-hoc workflows are stored with the custom templates.
 
 
 def _templates_dir() -> Path:
@@ -886,8 +883,8 @@ def get_workflow_template(template_name: str) -> str:
         source = ""
         metadata: dict = {}
 
-        # Try user ad-hoc workflows first
-        tdir = _user_workflows_dir()
+        # Try user ad-hoc workflows first (stored alongside custom templates)
+        tdir = _custom_templates_dir()
         for candidate in [tdir / f"{lookup}.json", tdir / template_name]:
             if candidate.exists():
                 with open(candidate, encoding="utf-8") as f:

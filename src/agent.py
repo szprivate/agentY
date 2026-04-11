@@ -181,8 +181,29 @@ _SYSTEM_PROMPT_FILE: dict[str, str] = {
 
 def _load_system_prompt(llm: str) -> str:
     """Load the system prompt for *llm* and inject the model table."""
-    stem = _SYSTEM_PROMPT_FILE.get(llm, f"system_prompt.{llm}")
-    path = Path(__file__).parent.parent / "config" / f"{stem}.md"
+    # Allow override of system prompt filenames from config/settings.json.
+    # Settings may provide exact filenames (with or without .md) under
+    # the `system_prompts` mapping. Fall back to the built-in stems.
+    cfg_map = _settings().get("system_prompts", {})
+    configured = cfg_map.get(llm)
+    if configured:
+        stem = configured
+    else:
+        stem = _SYSTEM_PROMPT_FILE.get(llm, f"system_prompt.{llm}")
+
+    # Accept either 'name' or 'name.md' in settings and normalize to a path.
+    if stem.endswith(".md"):
+        filename = stem
+    else:
+        filename = f"{stem}.md"
+    config_dir = Path(__file__).parent.parent / "config"
+    prompts_dir = config_dir / "system_prompts"
+    # Prefer prompts in ./config/system_prompts/, fall back to ./config/ directly.
+    candidate = prompts_dir / filename
+    if candidate.exists():
+        path = candidate
+    else:
+        path = config_dir / filename
     print(f"[agentY] System prompt: {path.resolve()}")
     text = path.read_text(encoding="utf-8")
     if "{{MODEL_TABLE}}" in text:

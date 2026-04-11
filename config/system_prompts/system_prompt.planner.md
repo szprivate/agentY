@@ -37,35 +37,3 @@ User: "Generate a portrait of a woman, then upscale it to 4K, then create a 5-se
   ]
 }
 ```
-
-User: "Create a futuristic cityscape, then edit it to add a sunset sky, then turn the result into a looping video"
-
-```json
-{
-  "steps": [
-    {
-      "request": "Generate a futuristic cityscape with skyscrapers and neon lights",
-      "description": "Generate futuristic cityscape"
-    },
-    {
-      "request": "Take the output from the previous step and edit it to replace the sky with a dramatic sunset",
-      "description": "Add sunset sky to cityscape"
-    },
-    {
-      "request": "Take the output from the previous step and create a looping 4-second video from it",
-      "description": "Animate cityscape into loop"
-    }
-  ]
-}
-```
-
-## Output format
-
-```json
-{
-  "steps": [
-    {"request": "<full standalone user request>", "description": "<one-line label>"},
-    ...
-  ]
-}
-```
