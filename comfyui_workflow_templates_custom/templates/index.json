@@ -2,6 +2,49 @@
   {
     "templates": [
       {
+        "name": "qwen2511_imageEdit",
+        "models": [
+          "qwen_image_edit_2511_bf16",
+          "Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16",
+          "qwen_2.5_vl_7b_fp8_scaled",
+          "qwen_image_vae"
+        ],
+        "io": {
+          "inputs": [
+            {
+              "nodeId": 1,
+              "nodeType": "LoadImage",
+              "file": "",
+              "mediaType": "image"
+            },
+            {
+              "nodeId": 2,
+              "nodeType": "LoadImage",
+              "file": "",
+              "mediaType": "image"
+            },
+            {
+              "nodeId": 16,
+              "nodeType": "Image Load",
+              "file": "W:\\0190_O2_betterthanyouthink\\02_build\\comfy\\outputs\\sub_1100\\ref\\freepik__create-an-image-of-a-black-longsleeve-in-front-of-__20913.png",
+              "mediaType": "image"
+            }
+          ],
+          "outputs": [
+            {
+              "nodeId": 27,
+              "nodeType": "SaveImage",
+              "file": "",
+              "mediaType": "image"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "templates": [
+      {
         "name": "styletransfer_NanoBananaPro",
         "models": [],
         "io": {
@@ -64,49 +107,6 @@
             },
             {
               "nodeId": 100,
-              "nodeType": "SaveImage",
-              "file": "",
-              "mediaType": "image"
-            }
-          ]
-        }
-      }
-    ]
-  },
-  {
-    "templates": [
-      {
-        "name": "qwen2511_imageEdit",
-        "models": [
-          "qwen_image_edit_2511_bf16",
-          "Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16",
-          "qwen_2.5_vl_7b_fp8_scaled",
-          "qwen_image_vae"
-        ],
-        "io": {
-          "inputs": [
-            {
-              "nodeId": 1,
-              "nodeType": "LoadImage",
-              "file": "",
-              "mediaType": "image"
-            },
-            {
-              "nodeId": 2,
-              "nodeType": "LoadImage",
-              "file": "",
-              "mediaType": "image"
-            },
-            {
-              "nodeId": 16,
-              "nodeType": "Image Load",
-              "file": "W:\\0190_O2_betterthanyouthink\\02_build\\comfy\\outputs\\sub_1100\\ref\\freepik__create-an-image-of-a-black-longsleeve-in-front-of-__20913.png",
-              "mediaType": "image"
-            }
-          ],
-          "outputs": [
-            {
-              "nodeId": 27,
               "nodeType": "SaveImage",
               "file": "",
               "mediaType": "image"

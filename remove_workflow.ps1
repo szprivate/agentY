@@ -5,29 +5,22 @@ param(
     [string]$IndexPath = ""
 )
 
-# Resolve repository root (script is expected to live in repo root)
-$RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+# Run from the repository root so relative config paths resolve correctly.
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+Set-Location $ScriptDir
 
-function Write-And-RunPython {
-    param($pySource, $args)
-    $tmp = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), [System.IO.Path]::GetRandomFileName() + '.py')
-    $pySource | Out-File -FilePath $tmp -Encoding utf8
-    try {
-        $cmd = @('python', $tmp) + $args
-        $proc = & $cmd 2>&1
-        $exit = $LASTEXITCODE
-        return @{ Exit = $exit; Output = $proc }
-    } finally {
-        Remove-Item -Force -ErrorAction SilentlyContinue $tmp
-    }
+if (-not $Name) {
+    Write-Error "Template name is required"
+    exit 2
 }
 
-# Python snippet to import and call workflow_remove
+# Create a temporary python file that will call workflow_remove
+$tmp = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), [System.IO.Path]::GetRandomFileName() + '.py')
+$RepoRoot = $ScriptDir -replace '\\','\\\\'
 $py = @"
 import sys
 from pathlib import Path
-# Ensure repo root is on sys.path so 'src' can be imported
-sys.path.insert(0, r"$RepoRoot")
+sys.path.insert(0, r"$ScriptDir")
 from src.utils.workflow_parser import workflow_remove
 name = sys.argv[1]
 index_path = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2] else None
@@ -35,13 +28,16 @@ result = workflow_remove(name, index_path=index_path)
 print(result)
 "@
 
-$args = @($Name)
-if ($IndexPath -ne "") { $args += $IndexPath }
+$py | Out-File -FilePath $tmp -Encoding utf8
 
-$res = Write-And-RunPython -pySource $py -args $args
-if ($res.Exit -ne 0) {
-    Write-Error "Python exited with code $($res.Exit). Output:`n$($res.Output -join "`n")"
-    exit $res.Exit
-} else {
-    Write-Output $res.Output
+$pyArgs = @($tmp, $Name)
+if ($IndexPath -ne "") { $pyArgs += $IndexPath }
+
+Write-Host "Running: python $($pyArgs -join ' ')"
+& python @pyArgs
+$exit = $LASTEXITCODE
+Remove-Item -Force -ErrorAction SilentlyContinue $tmp
+if ($exit -ne 0) {
+    Write-Error "remove_workflow.ps1: python exited with code $exit"
 }
+exit $exit
