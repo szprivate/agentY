@@ -60,10 +60,7 @@ When you classify the intent as `needs_image`:
 1. First output the JSON classification as your text response:
    `{"intent": "needs_image", "confidence": 1.0}`
 
-2. Then immediately call the `handoff_to_user` tool with:
-   - `message`: a short, friendly request asking the user to share the image they want edited. Mention what kind of task they asked for.
-   - `breakout_of_loop`: `true`
-
+2. Then stop the current loop, but send a short, friendly request asking the user to share the image they want edited. Mention what kind of task they asked for.
 This signals the pipeline to stop and prompt the user for the missing image before proceeding.
 
 ## Output format

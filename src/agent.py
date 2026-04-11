@@ -21,7 +21,7 @@ from strands.agent.conversation_manager import SlidingWindowConversationManager
 from strands.hooks.registry import HookRegistry
 from strands.hooks.events import AfterToolCallEvent
 
-from strands_tools import handoff_to_user
+# Removed `handoff_to_user` tool registration — not used by agents anymore.
 
 from src.utils.comfyui_interrupt_hook import ComfyUIInterruptHook
 
@@ -596,7 +596,7 @@ def create_triage_agent(
         role="triage",
         llm=resolved_llm,
         system_prompt=system_prompt,
-        tools=[handoff_to_user],
+        tools=[],
         ollama_model=resolved_ollama,
         anthropic_model=resolved_anthropic,
         **kwargs,
