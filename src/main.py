@@ -187,7 +187,7 @@ def main() -> None:
             print(f"🪙 Tokens: {' / '.join(parts)}\n")
             try:
                 cost_val, total_tokens = compute_cost_from_usage(usage, agent)
-                print(f"💵 Cost: ${cost_val:.6f} (total {total_tokens:,} tokens)\n")
+                print(f"💵 Cost: ${cost_val:.2f} (total {total_tokens:,} tokens)\n")
             except Exception:
                 pass
         except Exception:

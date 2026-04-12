@@ -552,10 +552,59 @@ def _handle_message_async(content, channel: str, thread_ts: str, user: str):
             # Compute cost for the run and append to the streamed reply.
             try:
                 cost_val, total_tokens = compute_cost_from_usage(usage, _agent_ref)
-                cost_str = f"\n\n_💵 Cost: ${cost_val:.6f} (total {total_tokens:,} tokens)_"
+                cost_str = f"\n\n_💵 Cost: ${cost_val:.2f} (total {total_tokens:,} tokens)_"
             except Exception:
                 cost_str = ""
-            accumulated.append(f"\n\n_🪙 {' / '.join(parts)}_{cost_str}")
+
+            # Attempt to detect the most-recent tool / skill name from metrics
+            tool_display = "tool"
+            try:
+                traces = getattr(_agent_ref.event_loop_metrics, "traces", []) or []
+                # Walk traces in reverse to find a tool trace with metadata
+                import re as _re
+
+                found = False
+                for tr in reversed(traces):
+                    md = getattr(tr, "metadata", {}) or {}
+                    tn = md.get("tool_name")
+                    if not tn:
+                        continue
+                    # Try to get the most recent tool_use from tool_metrics
+                    try:
+                        tm = _agent_ref.event_loop_metrics.tool_metrics.get(tn)
+                        tool_use = getattr(tm, "tool", None) if tm is not None else None
+                    except Exception:
+                        tool_use = None
+
+                    skill_name = None
+                    if tool_use:
+                        inp = tool_use.get("input") or tool_use.get("arguments") or ""
+                        cmd = ""
+                        if isinstance(inp, dict):
+                            cmd = inp.get("command") or ""
+                        elif isinstance(inp, str):
+                            cmd = inp
+                        else:
+                            try:
+                                cmd = str(inp)
+                            except Exception:
+                                cmd = ""
+                        m = _re.search(r"skills[\\/](?P<name>[a-z0-9\-]+)", cmd, _re.I)
+                        if m:
+                            skill_name = m.group("name")
+
+                    if skill_name:
+                        tool_display = f"{tn} (skill:{skill_name})"
+                    else:
+                        tool_display = tn
+                    found = True
+                    break
+                if not found:
+                    tool_display = "tool"
+            except Exception:
+                tool_display = "tool"
+
+            accumulated.append(f"\n\n_🪙 after {tool_display}: {' / '.join(parts)}{cost_str}_")
         except Exception as _tok_exc:
             logger.debug("Could not read token usage: %s", _tok_exc)
 

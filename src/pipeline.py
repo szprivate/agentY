@@ -30,6 +30,7 @@ from src.agent import create_brain_agent, create_info_agent, create_planner_agen
 from src.utils.chat_summary import summarize_conversation
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
 from src.utils.comfyui_poller import poll_comfyui_job as _poll_comfyui_job
+from src.utils.costs import compute_cost_from_usage
 from src.utils.models import AgentSession, ChatSummary, MessageIntent, TriageResult
 from src.utils.triage import triage as _triage, route as _route
 from src.utils.workflow_signal import clear_and_get as _get_workflow_signal
@@ -1012,8 +1013,30 @@ class Pipeline:
             self._brain.messages.clear()
             return
 
-        if self._verbose:
-            print(f"[pipeline] Chat summary:\n{summary}\n")
+        # Append token-usage and cost lines to the summary
+        try:
+            usage = self._brain.event_loop_metrics.accumulated_usage
+            in_tok = usage.get("inputTokens", 0)
+            out_tok = usage.get("outputTokens", 0)
+            cache_read = usage.get("cacheReadInputTokens", 0)
+            cache_write = usage.get("cacheWriteInputTokens", 0)
+            token_parts = [f"{in_tok:,} in", f"{out_tok:,} out"]
+            if cache_read:
+                token_parts.append(f"{cache_read:,} cache hit")
+            if cache_write:
+                token_parts.append(f"{cache_write:,} cache write")
+            cost_val, total_tokens = compute_cost_from_usage(usage, self._brain)
+            cost_lines = (
+                f"TOKENS: {' / '.join(token_parts)} (total: {total_tokens:,})\n"
+                f"COST: ${cost_val:.2f}"
+            )
+        except Exception:
+            cost_lines = ""
+
+        if cost_lines:
+            summary = summary.rstrip() + "\n" + cost_lines
+
+        print(f"[pipeline] Chat summary:\n{summary}\n")
 
         # Replace the entire history with a single summary message.
         # Using an "assistant" message so the agent treats it as its own

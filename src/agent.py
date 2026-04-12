@@ -25,6 +25,7 @@ from strands.hooks.events import AfterToolCallEvent
 # Removed `handoff_to_user` tool registration — not used by agents anymore.
 
 from src.utils.comfyui_interrupt_hook import ComfyUIInterruptHook
+from src.utils.costs import compute_cost_from_usage
 
 from src.tools import RESEARCHER_TOOLS, BRAIN_TOOLS, INFO_TOOLS, reset_patch_workflow_guard
 
@@ -302,6 +303,31 @@ class TokenUsageHookProvider:
 
             tool_name = event.tool_use.get("name", "?")
 
+            # Detect skill name for script-based skills (run_script)
+            tool_display = tool_name
+            try:
+                import re as _re
+
+                if "run_script" in (tool_name or "").lower():
+                    tool_input = event.tool_use.get("input") or event.tool_use.get("arguments") or ""
+                    cmd = ""
+                    if isinstance(tool_input, dict):
+                        cmd = tool_input.get("command") or ""
+                    elif isinstance(tool_input, str):
+                        cmd = tool_input
+                    else:
+                        try:
+                            cmd = str(tool_input)
+                        except Exception:
+                            cmd = ""
+
+                    m = _re.search(r"skills[\\/](?P<name>[a-z0-9\-]+)", cmd, _re.I)
+                    if m:
+                        skill_name = m.group("name")
+                        tool_display = f"{tool_name} (skill:{skill_name})"
+            except Exception:
+                tool_display = tool_name
+
             delta_parts = [f"+{d_in:,} in", f"+{d_out:,} out"]
             if d_cr:
                 delta_parts.append(f"+{d_cr:,} cache hit")
@@ -313,12 +339,21 @@ class TokenUsageHookProvider:
                 total_parts.append(f"{cache_read:,} cache hit")
             if cache_write:
                 total_parts.append(f"{cache_write:,} cache write")
-            # Cost estimation intentionally omitted; only token counts shown.
+
+            # Compute delta cost for this tool call
+            cost_display = ""
+            if not self._is_ollama:
+                try:
+                    _delta_usage = {"inputTokens": d_in, "outputTokens": d_out}
+                    _dcost, _ = compute_cost_from_usage(_delta_usage, event.agent)
+                    cost_display = f"  💵 +${_dcost:.2f}"
+                except Exception:
+                    pass
 
             summary_line = (
-                f"\U0001fa99 [{self._role}] after {tool_name}: "
+                f"\U0001fa99 [{self._role}] after {tool_display}: "
                 f"{' / '.join(delta_parts)}  "
-                f"(total: {' / '.join(total_parts)})"
+                f"(total: {' / '.join(total_parts)}){cost_display}"
             )
             print(f"\n{summary_line}")
 
@@ -326,11 +361,19 @@ class TokenUsageHookProvider:
             try:
                 self._log_path.parent.mkdir(parents=True, exist_ok=True)
                 ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                # Try to compute cost for this accumulated usage; ignore failures
+                cost_str = ""
+                try:
+                    cost_val, total_tokens = compute_cost_from_usage(usage, event.agent)
+                    cost_str = f" cost=${cost_val:.2f}/tokens={total_tokens}"
+                except Exception:
+                    cost_str = ""
+
                 log_entry = (
-                    f"{ts} [{self._role}] tool={tool_name} "
+                    f"{ts} [{self._role}] tool={tool_display} "
                     f"delta=+{d_in}in/+{d_out}out/+{d_cr}cache_read/+{d_cw}cache_write"
                     f"  total={in_tok}in/{out_tok}out/{cache_read}cache_read/{cache_write}cache_write"
-                    + "\n"
+                    f"{cost_str}\n"
                 )
                 with self._log_path.open("a", encoding="utf-8") as f:
                     f.write(log_entry)
