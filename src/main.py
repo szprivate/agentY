@@ -35,7 +35,6 @@ from src.utils.secrets import get_secret  # noqa: E402
 from src.utils.slack_server import start_slack_server  # noqa: E402
 from src.tools.slack_tools import install_console_forwarder  # noqa: E402
 from src.tools.agent_control import is_restart_command, restart_process  # noqa: E402
-from src.utils.agentY_server import start_agentY_server  # noqa: E402
 
 
 def main() -> None:
@@ -134,13 +133,6 @@ def main() -> None:
     print("[agentY] Mode: pipeline (Researcher → Brain)")
     if args.skip_brain:
         print("[agentY] SkipBrain is activated: Brain stage will be bypassed and Researcher output will be returned.")
-
-    # ── Start agentY ComfyUI bridge server ────────────────────────────── #
-    ok = start_agentY_server(agent, host="127.0.0.1", port=5000)
-    if ok:
-        print("[agentY] ComfyUI bridge server active on http://127.0.0.1:5000")
-    else:
-        print("[agentY] WARNING: ComfyUI bridge server failed to start (flask missing?).")
 
     # ── Start Slack Socket Mode listener ──────────────────────────────── #
     if slack_token and slack_app_token:
