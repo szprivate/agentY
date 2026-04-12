@@ -340,7 +340,11 @@ class Pipeline:
                     tag = f"{count} workflows (batch)" if count > 1 else workflow_paths[0]
                     print(f"[pipeline] Brain (follow-up) signaled {tag} ready.")
                 executor_lines, executor_paths = asyncio.run(
-                    self._drain_executor_batch(workflow_paths, self._last_brainbriefing_json or "")
+                    self._drain_executor_batch(
+                        workflow_paths,
+                        self._last_brainbriefing_json or "",
+                        user_message=user_text,
+                    )
                 )
                 if executor_paths:
                     self._session.current_output_paths[:] = executor_paths
@@ -381,7 +385,11 @@ class Pipeline:
                 tag = f"{count} workflows (batch)" if count > 1 else workflow_paths_r[0]
                 print(f"[pipeline] Brain signaled {tag} ready.")
             executor_lines_r, executor_paths_r = asyncio.run(
-                self._drain_executor_batch(workflow_paths_r, raw_json)
+                self._drain_executor_batch(
+                    workflow_paths_r,
+                    raw_json,
+                    user_message=user_text,
+                )
             )
             if executor_paths_r:
                 self._session.current_output_paths[:] = executor_paths_r
@@ -461,6 +469,7 @@ class Pipeline:
                 async for line in _execute_workflows_batch(
                     workflow_paths_fu,
                     self._last_brainbriefing_json or "",
+                    user_message=user_text,
                     slack_channel_id=slack_channel_id,
                     slack_thread_ts=slack_thread_ts,
                     verbose=self._verbose,
@@ -541,6 +550,7 @@ class Pipeline:
                     async for line in _execute_workflows_batch(
                         workflow_paths_s,
                         raw_json,
+                        user_message=user_text,
                         slack_channel_id=slack_channel_id,
                         slack_thread_ts=slack_thread_ts,
                         verbose=self._verbose,
@@ -663,7 +673,9 @@ class Pipeline:
             wf = self._expand_variations(wf, raw_json)
             ep: list[str] = []
             if wf:
-                _, ep = asyncio.run(self._drain_executor_batch(wf, raw_json))
+                _, ep = asyncio.run(
+                    self._drain_executor_batch(wf, raw_json, user_message=user_text)
+                )
                 if ep:
                     self._session.current_output_paths[:] = ep
             self._record_chat_summary(user_text, triage_result, status="completed", raw_json=raw_json)
@@ -711,7 +723,9 @@ class Pipeline:
                     tag = f"{count} workflows (batch)" if count > 1 else wf_paths[0]
                     print(f"[pipeline] Step {idx + 1} Brain signaled {tag} ready.")
                 exec_lines, exec_paths = asyncio.run(
-                    self._drain_executor_batch(wf_paths, raw_json)
+                    self._drain_executor_batch(
+                        wf_paths, raw_json, user_message=step_req
+                    )
                 )
                 if exec_paths:
                     self._session.current_output_paths[:] = exec_paths
@@ -765,6 +779,7 @@ class Pipeline:
                 yield {"data": "\n\n_⚙️ Handing off to executor…_"}
                 async for line in _execute_workflows_batch(
                     wf, raw_json,
+                    user_message=user_text,
                     slack_channel_id=slack_channel_id,
                     slack_thread_ts=slack_thread_ts,
                     verbose=self._verbose,
@@ -819,6 +834,7 @@ class Pipeline:
                 slack_channel_id, slack_thread_ts = self._get_slack_context()
                 async for line in _execute_workflows_batch(
                     wf_paths, raw_json,
+                    user_message=step_req,
                     slack_channel_id=slack_channel_id,
                     slack_thread_ts=slack_thread_ts,
                     verbose=self._verbose,
@@ -1241,17 +1257,22 @@ class Pipeline:
         brainbriefing_json: str,
         slack_channel_id: str = "",
         slack_thread_ts: str = "",
+        user_message: str = "",
     ) -> tuple[list[str], list[str]]:
         """Submit all workflows then poll + process each; return ``(status_lines, output_paths)``.
 
         Uses ``execute_workflows_batch`` (submit-all-then-poll) for any number
         of workflows, including a single one.
+
+        ``user_message`` is forwarded to the Vision QA agent as the ground-truth
+        reference.  It never enters any agent's context window or history.
         """
         lines: list[str] = []
         output_paths: list[str] = []
         async for line in _execute_workflows_batch(
             workflow_paths,
             brainbriefing_json,
+            user_message=user_message,
             slack_channel_id=slack_channel_id,
             slack_thread_ts=slack_thread_ts,
             verbose=self._verbose,

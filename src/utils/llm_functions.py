@@ -148,6 +148,7 @@ class LLMFunctions:
         image_bytes: bytes,
         *,
         system: str = "",
+        extra_images: "list[bytes] | None" = None,
     ) -> str:
         """Send *image_bytes* plus a text *prompt* to an Ollama multimodal model.
 
@@ -161,9 +162,13 @@ class LLMFunctions:
         prompt:
             Text instruction / question about the image.
         image_bytes:
-            Raw bytes of the image (PNG, JPEG, etc.).
+            Raw bytes of the primary image (PNG, JPEG, etc.).
         system:
             Optional system message injected before the user turn.
+        extra_images:
+            Optional list of additional image bytes to include in the same
+            message (e.g. the original input image for an editing task).
+            All images are passed in the Ollama ``images`` field together.
 
         Returns
         -------
@@ -177,11 +182,12 @@ class LLMFunctions:
         """
         import base64
 
-        b64 = base64.b64encode(image_bytes).decode("ascii")
+        all_images = [image_bytes] + (extra_images or [])
+        encoded = [base64.b64encode(b).decode("ascii") for b in all_images]
         messages: list[dict] = []
         if system:
             messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt, "images": [b64]})
+        messages.append({"role": "user", "content": prompt, "images": encoded})
 
         payload: dict[str, Any] = {
             "model": self.model,

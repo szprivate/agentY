@@ -62,6 +62,33 @@ def _output_dir() -> Path:
     return (_project_root() / od).resolve()
 
 
+def _load_qa_prompts() -> dict[str, str]:
+    """Parse ``config/system_prompts/system_prompt.qaChecker.md`` into sections.
+
+    The file is divided by ``## <section_name>`` headings.  Returns a dict
+    mapping section name → stripped content.  Falls back to empty strings so
+    callers always get a valid (possibly empty) value.
+
+    Expected sections: ``system``, ``question_edit``, ``question_generation``.
+    """
+    path = _project_root() / "config" / "system_prompts" / "system_prompt.qaChecker.md"
+    if not path.exists():
+        logger.warning("executor: QA prompt file not found: %s", path)
+        return {}
+
+    import re
+
+    text = path.read_text(encoding="utf-8")
+    sections: dict[str, str] = {}
+    # Split on lines that start with '## '
+    parts = re.split(r"^##\s+(.+)$", text, flags=re.MULTILINE)
+    # parts = ['', 'section_name', 'body', 'section_name', 'body', ...]
+    it = iter(parts[1:])  # skip leading empty string
+    for name, body in zip(it, it):
+        sections[name.strip()] = body.strip()
+    return sections
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -160,37 +187,70 @@ def _download_output(filename: str, subfolder: str = "", image_type: str = "outp
 async def _vision_qa(
     image_path: Path,
     brainbriefing: dict,
+    *,
+    user_message: str = "",
+    input_image_path: Path | None = None,
 ) -> str:
-    """Ask an Ollama vision model whether *image_path* satisfies the brief.
+    """Run a QA pass comparing *image_path* against the user's original request.
 
-    Returns a short QA verdict string.  Never raises — returns an error
-    description on failure so the pipeline can continue.
+    Uses *user_message* (the raw text the user sent) as the ground-truth
+    reference.  When *input_image_path* is supplied (image-editing task) the
+    input image is sent alongside the output so the model can judge edit
+    fidelity.
+
+    This is a standalone Ollama call that does NOT touch any agent's context
+    window or conversation history.  The model used is defined by
+    ``llm.pipeline.executor_vision_model`` in settings.json.
+
+    Returns a short verdict string (PASS / FAIL + explanation).
+    Never raises — returns an error description on failure.
     """
     from src.utils.llm_functions import LLMFunctions
 
     try:
         llm = LLMFunctions.for_vision()
-        image_bytes = image_path.read_bytes()
+        output_bytes = image_path.read_bytes()
 
-        task_desc = brainbriefing.get("task", {}).get("description", "")
-        positive_prompt = brainbriefing.get("prompt", {}).get("positive", "")
-        brief_summary = (
-            f"Task: {task_desc}\n"
-            f"Prompt: {positive_prompt}"
-        ).strip()
+        # Build the reference description – prefer the raw user message; fall
+        # back to the brainbriefing task/prompt fields so the QA still works
+        # even when user_message was not forwarded.
+        reference = user_message.strip()
+        if not reference:
+            task_desc = brainbriefing.get("task", {}).get("description", "")
+            positive_prompt = brainbriefing.get("prompt", {}).get("positive", "")
+            reference = f"Task: {task_desc}\nPrompt: {positive_prompt}".strip()
 
-        system = (
-            "You are a visual QA analyst for AI-generated images. "
-            "Be concise — max 3 sentences. Focus on whether the image matches "
-            "the brief and note any obvious artifacts or failures."
+        is_edit = input_image_path is not None
+        extra_images: list[bytes] = []
+        if is_edit:
+            try:
+                extra_images = [input_image_path.read_bytes()]
+            except Exception as read_exc:
+                logger.warning(
+                    "executor: could not read input image %s — %s",
+                    input_image_path, read_exc,
+                )
+                is_edit = False  # degrade gracefully
+
+        qa_prompts = _load_qa_prompts()
+        system = qa_prompts.get("system", "You are a visual QA analyst for AI-generated images.")
+
+        template_key = "question_edit" if is_edit else "question_generation"
+        question = qa_prompts.get(template_key, "").replace("{{REFERENCE}}", reference)
+        if not question:
+            # Minimal inline fallback if the file is missing
+            question = (
+                f'The user\'s original request was:\n"{reference}"\n\n'
+                "Does this generated image satisfy that request?\n"
+                "Reply with: PASS or FAIL, followed by a brief explanation."
+            )
+
+        verdict = await llm.vision_chat(
+            question,
+            output_bytes,
+            system=system,
+            extra_images=extra_images or None,
         )
-        question = (
-            f"Does this generated image satisfy the following brief?\n\n"
-            f"{brief_summary}\n\n"
-            "Reply with: PASS or FAIL, followed by a brief explanation."
-        )
-
-        verdict = await llm.vision_chat(question, image_bytes, system=system)
         logger.info("executor: vision QA for %s → %s", image_path.name, verdict[:120])
         return verdict.strip()
 
@@ -229,6 +289,7 @@ async def _process_completed_job(
     prompt_id: str,
     brainbriefing: dict,
     *,
+    user_message: str = "",
     slack_channel_id: str,
     slack_thread_ts: str,
     verbose: bool,
@@ -240,8 +301,31 @@ async def _process_completed_job(
     Yields one-line status strings.  ``label`` is an optional prefix like
     ``"[2/5] "`` used in batch runs so the user knows which iteration each
     message belongs to.
+
+    ``user_message`` is the raw text the user originally sent; it is passed
+    straight to ``_vision_qa`` and never enters any agent's context window.
+    The input image path (for edit-task fidelity checks) is derived from the
+    ``input_nodes`` field of the brainbriefing automatically.
     """
     pfx = label  # e.g. "[2/5] " or ""
+
+    # Resolve the first input image path from the brainbriefing (edit fidelity check).
+    input_image_path: Path | None = None
+    try:
+        input_nodes = brainbriefing.get("input_nodes", [])
+        if input_nodes and isinstance(input_nodes, list):
+            first_node = input_nodes[0]
+            raw_path = first_node.get("path", "")
+            if raw_path:
+                candidate = Path(raw_path)
+                if candidate.exists():
+                    input_image_path = candidate
+                else:
+                    logger.debug(
+                        "executor: input_node path does not exist on disk: %s", raw_path
+                    )
+    except Exception as exc:
+        logger.debug("executor: could not resolve input image path from brainbriefing — %s", exc)
 
     output_files = _extract_output_files(history)
     if not output_files:
@@ -269,9 +353,14 @@ async def _process_completed_job(
         return
 
     # Vision QA
-    yield f"{pfx}🔍 Running Vision QA with Ollama…"
+    yield f"{pfx}🔍 Running Vision QA…"
     for path in saved_paths:
-        verdict = await _vision_qa(path, brainbriefing)
+        verdict = await _vision_qa(
+            path,
+            brainbriefing,
+            user_message=user_message,
+            input_image_path=input_image_path,
+        )
         yield f"{pfx}🔍 QA `{path.name}` → {verdict}"
 
     # Post to Slack
@@ -315,6 +404,7 @@ async def execute_workflow(
     workflow_path: str,
     brainbriefing_json: str,
     *,
+    user_message: str = "",
     slack_channel_id: str = "",
     slack_thread_ts: str = "",
     verbose: bool = True,
@@ -328,7 +418,10 @@ async def execute_workflow(
     Args:
         workflow_path:      Absolute path to the validated workflow JSON.
         brainbriefing_json: The Researcher's brainbriefing as a JSON string,
-                            used to compare the output against the original brief.
+                            used to extract input image paths for QA comparison.
+        user_message:       The raw text the user originally sent.  Forwarded
+                            to the Vision QA agent as the ground-truth reference.
+                            Never added to any agent's conversation history.
         slack_channel_id:   Slack channel to post results to (empty = no Slack).
         slack_thread_ts:    Slack thread timestamp for replies (empty = new thread).
         verbose:            Log progress to stdout when True.
@@ -370,6 +463,7 @@ async def execute_workflow(
         history,
         prompt_id,
         brainbriefing,
+        user_message=user_message,
         slack_channel_id=slack_channel_id,
         slack_thread_ts=slack_thread_ts,
         verbose=verbose,
@@ -386,6 +480,7 @@ async def execute_workflows_batch(
     workflow_paths: list[str],
     brainbriefing_json: str,
     *,
+    user_message: str = "",
     slack_channel_id: str = "",
     slack_thread_ts: str = "",
     verbose: bool = True,
@@ -401,6 +496,9 @@ async def execute_workflows_batch(
     Args:
         workflow_paths:     Ordered list of absolute workflow JSON file paths.
         brainbriefing_json: Researcher brainbriefing (for Vision QA).
+        user_message:       The raw text the user originally sent.  Forwarded
+                            to the Vision QA agent as the ground-truth reference.
+                            Never added to any agent's conversation history.
         slack_channel_id:   Slack channel (empty = no Slack).
         slack_thread_ts:    Slack thread ts for replies.
         verbose:            Log progress to stdout when True.
@@ -459,6 +557,7 @@ async def execute_workflows_batch(
             history,
             prompt_id,
             brainbriefing,
+            user_message=user_message,
             slack_channel_id=slack_channel_id,
             slack_thread_ts=slack_thread_ts,
             verbose=verbose,
