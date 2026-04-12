@@ -15,9 +15,6 @@ Known secrets
 -------------
     COMFYUI_API_KEY     – ComfyUI / Comfy.org API key
     HF_TOKEN            – Hugging Face access token
-    SLACK_BOT_TOKEN     – Slack Bot User OAuth Token (xoxb-…)
-    SLACK_APP_TOKEN     – Slack App-Level Token (xapp-…)
-    SLACK_MEMBER_ID     – Slack member ID used for DMs
     COMFYUI_MODELS_DIR  – Local ComfyUI models directory override
 """
 

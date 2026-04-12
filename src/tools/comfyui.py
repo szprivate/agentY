@@ -573,8 +573,7 @@ def signal_workflow_ready(workflow_path: str) -> str:
 
     Call this as your **final step** once ``update_workflow()`` returns ``status: "ok"``.
     The pipeline will automatically handle ComfyUI submission, completion
-    polling, Vision QA (via Ollama), saving outputs to ``./output``, and posting
-    results to Slack.
+    polling, Vision QA (via Ollama), and saving outputs to ``./output``.
 
     For **batch runs** (``count_iter > 1``): call this tool once for every
     workflow file produced by ``duplicate_workflow()``.  Each call appends to
@@ -601,7 +600,7 @@ def signal_workflow_ready(workflow_path: str) -> str:
         "message": (
             "Workflow has been added to the execution queue. "
             "The pipeline will submit it to ComfyUI, run Vision QA, "
-            "save outputs to ./output, and post results to Slack automatically. "
+            "and save outputs to ./output automatically. "
             "For batch runs, call signal_workflow_ready for each duplicate workflow; "
             "otherwise your work here is done — no further tool calls are needed."
         ),

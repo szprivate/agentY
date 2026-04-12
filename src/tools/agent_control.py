@@ -27,7 +27,7 @@ def restart_process(delay: float = 0.0) -> None:
 
     Args:
         delay: Seconds to wait before replacing the process (allows callers
-               to flush output / send a final Slack message first).
+               to flush output before replacing the process.
     """
     def _do_restart() -> None:
         logger.info("Restarting agent process: %s %s", sys.executable, sys.argv)

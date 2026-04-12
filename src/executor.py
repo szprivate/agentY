@@ -14,22 +14,17 @@ After the Brain assembles and validates a ComfyUI workflow it calls
 3. Downloads every output image to ``./output/<filename>``.
 4. Runs a Vision QA pass with an Ollama multimodal model, comparing the
    output against the original brainbriefing.
-5. Sends each image to Slack (using the active channel context).
 
 Usage
 -----
-    async for status_line in execute_workflow(path, brainbriefing_json,
-                                              slack_channel_id=cid,
-                                              slack_thread_ts=ts):
+    async for status_line in execute_workflow(path, brainbriefing_json):
         print(status_line)
 
-    async for status_line in execute_workflows_batch(paths, brainbriefing_json,
-                                                     slack_channel_id=cid,
-                                                     slack_thread_ts=ts):
+    async for status_line in execute_workflows_batch(paths, brainbriefing_json):
         print(status_line)
 
 Both functions are ``AsyncGenerator[str, None]`` so the pipeline can forward
-each status update to Slack in real time.
+each status update to the UI in real time.
 """
 
 from __future__ import annotations
@@ -259,27 +254,6 @@ async def _vision_qa(
         return f"Vision QA unavailable: {exc}"
 
 
-def _send_to_slack(
-    image_path: Path,
-    *,
-    channel_id: str,
-    thread_ts: str,
-    caption: str = "",
-) -> None:
-    """Upload *image_path* to the Slack channel using the existing slack_tools."""
-    from src.tools.slack_tools import slack_send_image, set_slack_channel_context
-
-    if channel_id:
-        set_slack_channel_context(channel_id, thread_ts)
-
-    # slack_send_image is a @tool but is fully callable as a plain function.
-    result_raw = slack_send_image(
-        file_path=str(image_path),
-        initial_comment=caption or image_path.name,
-    )
-    logger.info("executor: Slack upload result for %s → %s", image_path.name, result_raw)
-
-
 # ---------------------------------------------------------------------------
 # Shared post-processing helper
 # ---------------------------------------------------------------------------
@@ -290,13 +264,11 @@ async def _process_completed_job(
     brainbriefing: dict,
     *,
     user_message: str = "",
-    slack_channel_id: str,
-    slack_thread_ts: str,
     verbose: bool,
     collected_paths: list[str] | None,
     label: str = "",
 ) -> AsyncGenerator[str, None]:
-    """Download outputs, run Vision QA, and post to Slack for one finished job.
+    """Download outputs, run Vision QA, and collect outputs for one finished job.
 
     Yields one-line status strings.  ``label`` is an optional prefix like
     ``"[2/5] "`` used in batch runs so the user knows which iteration each
@@ -363,30 +335,6 @@ async def _process_completed_job(
         )
         yield f"{pfx}🔍 QA `{path.name}` → {verdict}"
 
-    # Post to Slack
-    if slack_channel_id or os.environ.get("SLACK_BOT_TOKEN"):
-        for path in saved_paths:
-            try:
-                size_bytes = path.stat().st_size
-                target_path = path
-                if size_bytes > 5 * 1024 * 1024:
-                    yield f"{pfx}⚠️ `{path.name}` is {size_bytes / 1024 / 1024:.1f} MB — downsizing…"
-                    target_path = _downsize_for_slack(path)
-                    if target_path is None:
-                        yield f"{pfx}⚠️ Downsize failed for `{path.name}` — skipping Slack upload."
-                        continue
-                _send_to_slack(
-                    target_path,
-                    channel_id=slack_channel_id,
-                    thread_ts=slack_thread_ts,
-                )
-                yield f"{pfx}📤 Sent `{path.name}` to Slack."
-            except Exception as exc:
-                yield f"{pfx}⚠️ Slack upload failed for `{path.name}`: {exc}"
-                logger.warning("executor: slack upload failed for %s — %s", path.name, exc)
-    else:
-        yield f"{pfx}ℹ️ No Slack token configured — skipping Slack upload."
-
     output_summary = ", ".join(f"`{p.name}`" for p in saved_paths)
     yield f"{pfx}✅ Done. Outputs: {output_summary}"
     if verbose:
@@ -405,15 +353,13 @@ async def execute_workflow(
     brainbriefing_json: str,
     *,
     user_message: str = "",
-    slack_channel_id: str = "",
-    slack_thread_ts: str = "",
     verbose: bool = True,
     collected_paths: list[str] | None = None,
 ) -> AsyncGenerator[str, None]:
-    """Submit the validated workflow, poll ComfyUI, QA outputs, post to Slack.
+    """Submit the validated workflow, poll ComfyUI, run QA, and collect outputs.
 
     This is an ``AsyncGenerator[str, None]`` — each yielded string is a one-line
-    status update that the pipeline can forward to Slack as a streaming event.
+    status update that the pipeline can forward to the UI as a streaming event.
 
     Args:
         workflow_path:      Absolute path to the validated workflow JSON.
@@ -422,8 +368,6 @@ async def execute_workflow(
         user_message:       The raw text the user originally sent.  Forwarded
                             to the Vision QA agent as the ground-truth reference.
                             Never added to any agent's conversation history.
-        slack_channel_id:   Slack channel to post results to (empty = no Slack).
-        slack_thread_ts:    Slack thread timestamp for replies (empty = new thread).
         verbose:            Log progress to stdout when True.
     """
     from src.utils.comfyui_poller import poll_comfyui_job
@@ -464,8 +408,6 @@ async def execute_workflow(
         prompt_id,
         brainbriefing,
         user_message=user_message,
-        slack_channel_id=slack_channel_id,
-        slack_thread_ts=slack_thread_ts,
         verbose=verbose,
         collected_paths=collected_paths,
     ):
@@ -481,8 +423,6 @@ async def execute_workflows_batch(
     brainbriefing_json: str,
     *,
     user_message: str = "",
-    slack_channel_id: str = "",
-    slack_thread_ts: str = "",
     verbose: bool = True,
     collected_paths: list[str] | None = None,
 ) -> AsyncGenerator[str, None]:
@@ -499,8 +439,6 @@ async def execute_workflows_batch(
         user_message:       The raw text the user originally sent.  Forwarded
                             to the Vision QA agent as the ground-truth reference.
                             Never added to any agent's conversation history.
-        slack_channel_id:   Slack channel (empty = no Slack).
-        slack_thread_ts:    Slack thread ts for replies.
         verbose:            Log progress to stdout when True.
     """
     from src.utils.comfyui_poller import poll_comfyui_job
@@ -558,48 +496,8 @@ async def execute_workflows_batch(
             prompt_id,
             brainbriefing,
             user_message=user_message,
-            slack_channel_id=slack_channel_id,
-            slack_thread_ts=slack_thread_ts,
             verbose=verbose,
             collected_paths=collected_paths,
             label=label,
         ):
             yield line
-
-
-def _downsize_for_slack(source: Path) -> Path | None:
-    """Downsize *source* image to < 5 MB for Slack using Pillow.
-
-    Saves the result next to the original with a ``_slack`` suffix.
-    Returns the downsized path, or ``None`` on failure.
-    """
-    try:
-        from PIL import Image
-        import io
-
-        dest = source.with_stem(source.stem + "_slack")
-        img = Image.open(source)
-        long_edge = max(img.width, img.height)
-        target_long_edge = 2048
-
-        if long_edge > target_long_edge:
-            ratio = target_long_edge / long_edge
-            img = img.resize((int(img.width * ratio), int(img.height * ratio)), Image.LANCZOS)
-
-        if img.mode == "RGBA":
-            img = img.convert("RGB")
-
-        buf = io.BytesIO()
-        for quality in range(90, 19, -10):
-            buf.seek(0)
-            buf.truncate()
-            img.save(buf, format="JPEG", quality=quality, optimize=True)
-            if buf.tell() <= 5 * 1024 * 1024:
-                break
-
-        dest.write_bytes(buf.getvalue())
-        logger.info("executor: downsized %s → %s (%d bytes)", source.name, dest.name, buf.tell())
-        return dest
-    except Exception as exc:
-        logger.warning("executor: downsize failed for %s — %s", source.name, exc)
-        return None

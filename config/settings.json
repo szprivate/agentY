@@ -14,10 +14,6 @@
   "comfyui_poll_interval_s": 1,
   "comfyui_poll_timeout_s": 1800,
 
-  "slack": {
-    "startup_channel": ""
-  },
-
   "llm": {
     
     "pipeline": {

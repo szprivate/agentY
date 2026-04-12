@@ -47,12 +47,6 @@ from src.tools.image_handling import (  # noqa: F401
     get_image_resolution,
     analyze_image,
 )
-from src.tools.slack_tools import (  # noqa: F401
-    slack_send_dm,
-    slack_send_image,
-    slack_send_video,
-    slack_send_json,
-)
 from src.tools.huggingface import (  # noqa: F401
     search_huggingface_models,
     get_model_info,
@@ -102,7 +96,7 @@ RESEARCHER_TOOLS: list = [
 
 # ---------------------------------------------------------------------------
 # Brain tools – workflow assembly only (steps 1-5 + handoff).
-# Execution, polling, Vision QA, and Slack are handled by the Executor.
+# Execution, polling, and Vision QA are handled by the Executor.
 # ---------------------------------------------------------------------------
 BRAIN_TOOLS: list = [
     # Models / nodes
@@ -126,9 +120,6 @@ BRAIN_TOOLS: list = [
     run_script,
     # Iteration utility
     iterate,
-    # Slack – DM only, for reporting assembly errors / blockers
-    slack_send_dm,
-    slack_send_json,
     # Hugging Face model management
     search_huggingface_models,
     get_model_info,

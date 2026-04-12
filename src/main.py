@@ -32,8 +32,6 @@ load_dotenv(os.path.join(_project_root, ".env"))
 
 from src.pipeline import create_pipeline  # noqa: E402
 from src.utils.secrets import get_secret  # noqa: E402
-from src.utils.slack_server import start_slack_server  # noqa: E402
-from src.tools.slack_tools import install_console_forwarder  # noqa: E402
 from src.tools.agent_control import is_restart_command, restart_process  # noqa: E402
 from src.utils.costs import compute_cost_from_usage  # noqa: E402
 
@@ -110,16 +108,6 @@ def main() -> None:
     if not hf_token:
         print("[agentY] No HF_TOKEN set - gated model downloads will fail.")
 
-    slack_token = os.environ.get("SLACK_BOT_TOKEN", "")
-    slack_app_token = os.environ.get("SLACK_APP_TOKEN", "")
-    slack_member = os.environ.get("SLACK_MEMBER_ID", "")
-    if slack_token and slack_app_token:
-        print("[agentY] Slack integration enabled (Socket Mode).")
-    else:
-        if slack_token:
-            print("[agentY] SLACK_APP_TOKEN missing – Slack Socket Mode unavailable.")
-        else:
-            print("[agentY] Slack env vars missing - Slack tools will be unavailable.")
 
     # ── Build callable agent / pipeline ───────────────────────────────── #
     agent = create_pipeline(
@@ -135,19 +123,6 @@ def main() -> None:
     if args.skip_brain:
         print("[agentY] SkipBrain is activated: Brain stage will be bypassed and Researcher output will be returned.")
 
-    # ── Start Slack Socket Mode listener ──────────────────────────────── #
-    if slack_token and slack_app_token:
-        ok = start_slack_server(agent)
-        if ok:
-            print("[agentY] Slack Socket Mode listener active.")
-            print("[agentY] Slack server logs → output/slack_server.log")
-            install_console_forwarder()
-        else:
-            print("[agentY] WARNING: Slack Socket Mode failed to start.")
-            print("[agentY]   Check SLACK_BOT_TOKEN and SLACK_APP_TOKEN in .env")
-            print("[agentY]   Ensure 'connections:write' scope on the App-Level Token.")
-    else:
-        print("[agentY] Skipping Slack listener (missing SLACK_BOT_TOKEN or SLACK_APP_TOKEN).")
 
     print("\n=== agentY - ComfyUI Agent ===")
     print("Type your message (or 'quit' / 'exit' to stop).\n")

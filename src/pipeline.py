@@ -465,13 +465,10 @@ class Pipeline:
                     print(f"[pipeline:stream] Brain (follow-up) signaled {tag} ready.")
                 hdr = f"batch of {count} workflows" if count > 1 else "workflow"
                 yield {"data": f"\n\n_⚙️ Handing off to executor ({hdr})…_"}
-                slack_channel_id, slack_thread_ts = self._get_slack_context()
                 async for line in _execute_workflows_batch(
                     workflow_paths_fu,
                     self._last_brainbriefing_json or "",
                     user_message=user_text,
-                    slack_channel_id=slack_channel_id,
-                    slack_thread_ts=slack_thread_ts,
                     verbose=self._verbose,
                     collected_paths=executor_paths_fu,
                 ):
@@ -546,13 +543,10 @@ class Pipeline:
                         print(f"[pipeline:stream] Brain signaled {tag} ready.")
                     hdr = f"batch of {count} workflows" if count > 1 else "workflow"
                     yield {"data": f"\n\n_⚙️ Handing off to executor ({hdr})…_"}
-                    slack_channel_id, slack_thread_ts = self._get_slack_context()
                     async for line in _execute_workflows_batch(
                         workflow_paths_s,
                         raw_json,
                         user_message=user_text,
-                        slack_channel_id=slack_channel_id,
-                        slack_thread_ts=slack_thread_ts,
                         verbose=self._verbose,
                         collected_paths=executor_paths_s,
                     ):
@@ -775,13 +769,10 @@ class Pipeline:
             wf = self._expand_variations(wf, raw_json)
             ep: list[str] = []
             if wf:
-                slack_channel_id, slack_thread_ts = self._get_slack_context()
                 yield {"data": "\n\n_⚙️ Handing off to executor…_"}
                 async for line in _execute_workflows_batch(
                     wf, raw_json,
                     user_message=user_text,
-                    slack_channel_id=slack_channel_id,
-                    slack_thread_ts=slack_thread_ts,
                     verbose=self._verbose,
                     collected_paths=ep,
                 ):
@@ -831,12 +822,9 @@ class Pipeline:
                 count = len(wf_paths)
                 hdr = f"batch of {count} workflows" if count > 1 else "workflow"
                 yield {"data": f"\n\n_⚙️ Handing off to executor ({hdr})…_"}
-                slack_channel_id, slack_thread_ts = self._get_slack_context()
                 async for line in _execute_workflows_batch(
                     wf_paths, raw_json,
                     user_message=step_req,
-                    slack_channel_id=slack_channel_id,
-                    slack_thread_ts=slack_thread_ts,
                     verbose=self._verbose,
                     collected_paths=exec_paths,
                 ):
@@ -1255,8 +1243,6 @@ class Pipeline:
         self,
         workflow_paths: list[str],
         brainbriefing_json: str,
-        slack_channel_id: str = "",
-        slack_thread_ts: str = "",
         user_message: str = "",
     ) -> tuple[list[str], list[str]]:
         """Submit all workflows then poll + process each; return ``(status_lines, output_paths)``.
@@ -1273,8 +1259,6 @@ class Pipeline:
             workflow_paths,
             brainbriefing_json,
             user_message=user_message,
-            slack_channel_id=slack_channel_id,
-            slack_thread_ts=slack_thread_ts,
             verbose=self._verbose,
             collected_paths=output_paths,
         ):
@@ -1336,16 +1320,6 @@ class Pipeline:
         if self._verbose and len(expanded) > 1:
             print(f"[pipeline] Variation expansion: 1 base → {len(expanded)} workflows.")
         return expanded
-
-    @staticmethod
-    def _get_slack_context() -> tuple[str, str]:
-        """Return ``(channel_id, thread_ts)`` from the active Slack contextvar."""
-        try:
-            from src.tools.slack_tools import _ctx_channel_id, _ctx_thread_ts
-            return _ctx_channel_id.get() or "", _ctx_thread_ts.get() or ""
-        except Exception:
-            return "", ""
-
 
 # ---------------------------------------------------------------------------
 # Public factory

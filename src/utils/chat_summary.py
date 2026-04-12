@@ -96,8 +96,7 @@ _MAX_CONVERSATION_CHARS = 24_000
 # Recognised output-sending tool names whose file_path / save_to inputs are
 # treated as generated output paths.
 _OUTPUT_TOOLS: frozenset[str] = frozenset({
-    "slack_send_image", "slack_send_video", "view_image",
-    "slack_send_file", "slack_send_json",
+    "view_image",
 })
 
 

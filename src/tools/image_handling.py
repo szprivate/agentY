@@ -140,7 +140,7 @@ def view_image(
     """Download an image from the ComfyUI output directory and save it to a local path.
 
     After saving, use analyze_image(file_path=save_to) to inspect the image
-    contents. Use slack_send_image(file_path=save_to) to post it to Slack.
+    contents.
 
     Args:
         filename: Image filename on the server e.g. 'ComfyUI_00001_.png'.
