@@ -7,6 +7,7 @@ Two-agent pipeline:
   • Brain       – Claude (default) or any LLM; workflow assembly, execution, QA.
 """
 
+import datetime
 import json
 import os
 import subprocess
@@ -260,12 +261,15 @@ def _ensure_ollama_model(model_id: str, host: str) -> None:
 # ---------------------------------------------------------------------------
 
 class TokenUsageHookProvider:
-    """Prints a token-usage summary line after every tool call.
+    """Prints a token-usage summary line after every tool call and appends to
+    ./logs/tokens_usage.log.
 
     Shows the delta (tokens consumed since the last report) and the
     running accumulated total so the operator can monitor costs in
     real time.
     """
+
+    _log_path: Path = Path(__file__).parent.parent / "logs" / "tokens_usage.log"
 
     def __init__(self, role: str = "agent", is_ollama: bool = False) -> None:
         self._role = role
@@ -311,11 +315,31 @@ class TokenUsageHookProvider:
                 total_parts.append(f"{cache_write:,} cache write")
             # Cost estimation intentionally omitted; only token counts shown.
 
-            print(
-                f"\n\U0001fa99 [{self._role}] after {tool_name}: "
+            summary_line = (
+                f"\U0001fa99 [{self._role}] after {tool_name}: "
                 f"{' / '.join(delta_parts)}  "
                 f"(total: {' / '.join(total_parts)})"
             )
+            print(f"\n{summary_line}")
+
+            # ── Append to log file ────────────────────────────────────────
+            try:
+                self._log_path.parent.mkdir(parents=True, exist_ok=True)
+                ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                log_entry = (
+                    f"{ts} [{self._role}] tool={tool_name} "
+                    f"delta=+{d_in}in/+{d_out}out"
+                    + (f"/+{d_cr}cache_read" if d_cr else "")
+                    + (f"/+{d_cw}cache_write" if d_cw else "")
+                    + f"  total={in_tok}in/{out_tok}out"
+                    + (f"/{cache_read}cache_read" if cache_read else "")
+                    + (f"/{cache_write}cache_write" if cache_write else "")
+                    + "\n"
+                )
+                with self._log_path.open("a", encoding="utf-8") as f:
+                    f.write(log_entry)
+            except Exception:
+                pass  # Never break the agent loop for file I/O errors
         except Exception:
             pass  # Never break the agent loop for cosmetic output
 

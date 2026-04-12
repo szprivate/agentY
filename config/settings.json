@@ -21,7 +21,7 @@
   "llm": {
     
     "pipeline": {
-      "researcher": "ollama,qwen3.5:9b",
+      "researcher": "ollama,qwen3.5:27b",
       "brain": "claude,claude-haiku-4-5",
       "triage": "ollama,qwen3.5:9b",
       "planner": "ollama,qwen3.5:9b",
