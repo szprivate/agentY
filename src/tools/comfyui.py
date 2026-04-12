@@ -571,8 +571,8 @@ def submit_prompt(workflow_path: str, client_id: str = "") -> str:
 def signal_workflow_ready(workflow_path: str) -> str:
     """Signal that the workflow is fully assembled and validated, ready for execution.
 
-    Call this as your **final step** once ``validate_workflow()`` passes without
-    errors.  The pipeline will automatically handle ComfyUI submission, completion
+    Call this as your **final step** once ``update_workflow()`` returns ``status: "ok"``.
+    The pipeline will automatically handle ComfyUI submission, completion
     polling, Vision QA (via Ollama), saving outputs to ``./output``, and posting
     results to Slack.
 
@@ -585,7 +585,7 @@ def signal_workflow_ready(workflow_path: str) -> str:
     Args:
         workflow_path: File path to the validated workflow JSON
                        (the same path returned by ``get_workflow_template`` or
-                       ``save_workflow`` and used in ``patch_workflow``).
+                       ``save_workflow`` and used in ``update_workflow``).
     """
     from src.utils.workflow_signal import append_workflow_path
 
@@ -1097,6 +1097,244 @@ def patch_workflow(workflow_path: str, patches: str) -> str:
         "applied": applied,
         "errors": errors,
         "patch_count": len(applied),
+    })
+
+
+@tool
+def update_workflow(
+    workflow_path: str,
+    patches: str = "[]",
+    add_nodes: str = "[]",
+    remove_nodes: str = "[]",
+) -> str:
+    """Add/remove nodes, patch inputs, and validate a workflow in one atomic step.
+
+    Use this instead of calling add_workflow_node / remove_workflow_node,
+    patch_workflow, and validate_workflow separately.  Returns status "ok" when
+    the workflow is valid and ready to hand off, or "error" with a full list of
+    problems to fix.
+
+    Execution order: remove nodes → add nodes → apply patches → validate.
+
+    Args:
+        workflow_path: File path to the workflow JSON (from get_workflow_template).
+        patches: JSON array of patch objects (same format as patch_workflow).
+            Each: {"node_id": "6", "input_name": "text", "value": "..."}
+            Optional per-patch fields: widget_values_index, class_type.
+            Pass "[]" (default) to skip patching.
+        add_nodes: JSON array of node-add specs.
+            Each: {"node_id": "200", "class_type": "LoadImage",
+                   "inputs": {"image": "file.png"}, "meta_title": "My Node"}
+            Pass "[]" (default) to add nothing.
+        remove_nodes: JSON array of node ID strings to remove.
+            Example: ["42", "55"]
+            Pass "[]" (default) to remove nothing.
+    """
+    # ── Load ──────────────────────────────────────────────────────────────────
+    try:
+        workflow = _load_workflow(workflow_path)
+    except (json.JSONDecodeError, FileNotFoundError, OSError) as e:
+        return json.dumps({"status": "error", "error": f"Cannot load workflow: {e}"})
+
+    try:
+        remove_list: list = json.loads(remove_nodes) if isinstance(remove_nodes, str) else remove_nodes
+        add_list: list = json.loads(add_nodes) if isinstance(add_nodes, str) else add_nodes
+        patch_list: list = json.loads(patches) if isinstance(patches, str) else patches
+    except json.JSONDecodeError as e:
+        return json.dumps({"status": "error", "error": f"Invalid JSON argument: {e}"})
+
+    removed: list[str] = []
+    added: list[str] = []
+    applied: list[str] = []
+    node_errors: list[str] = []
+    cleaned_links: int = 0
+
+    # ── Remove nodes ──────────────────────────────────────────────────────────
+    for nid in (str(x) for x in remove_list):
+        if nid not in workflow:
+            node_errors.append(f"remove: node '{nid}' not found.")
+            continue
+        del workflow[nid]
+        removed.append(nid)
+
+    # Clean dangling links pointing to removed nodes
+    removed_set = set(removed)
+    for _nid, node in workflow.items():
+        if not isinstance(node, dict):
+            continue
+        inputs_dict = node.get("inputs", {})
+        for inp_name, inp_val in list(inputs_dict.items()):
+            if isinstance(inp_val, list) and len(inp_val) == 2 and str(inp_val[0]) in removed_set:
+                del inputs_dict[inp_name]
+                cleaned_links += 1
+
+    # ── Add nodes ─────────────────────────────────────────────────────────────
+    for spec in add_list:
+        nid = str(spec.get("node_id", ""))
+        cls = spec.get("class_type", "")
+        if not nid or not cls:
+            node_errors.append(f"add: spec missing node_id or class_type — {spec}")
+            continue
+        if nid in workflow:
+            node_errors.append(f"add: node '{nid}' already exists.")
+            continue
+        raw_inputs = spec.get("inputs", {})
+        node_inputs = json.loads(raw_inputs) if isinstance(raw_inputs, str) else raw_inputs
+        new_node: dict = {"class_type": cls, "inputs": node_inputs}
+        if spec.get("meta_title"):
+            new_node["_meta"] = {"title": spec["meta_title"]}
+        workflow[nid] = new_node
+        added.append(nid)
+
+    # ── Patch ─────────────────────────────────────────────────────────────────
+    if not isinstance(patch_list, list):
+        return json.dumps({"status": "error", "error": "patches must be a JSON array of patch objects."})
+
+    for i, patch in enumerate(patch_list):
+        nid = str(patch.get("node_id", ""))
+        if nid not in workflow:
+            node_errors.append(f"patch {i}: node '{nid}' not found in workflow.")
+            continue
+
+        node = workflow[nid]
+
+        if "class_type" in patch:
+            node["class_type"] = patch["class_type"]
+            applied.append(f"Node {nid}: class_type → {patch['class_type']}")
+
+        if "widget_values_index" in patch:
+            idx = int(patch["widget_values_index"])
+            wv = node.get("widget_values", node.get("widgets_values"))
+            wv_key = "widget_values" if "widget_values" in node else "widgets_values"
+            if isinstance(wv, list) and 0 <= idx < len(wv):
+                wv[idx] = patch["value"]
+                node[wv_key] = wv
+                applied.append(f"Node {nid}: {wv_key}[{idx}] → {patch['value']!r}")
+            else:
+                node_errors.append(f"patch {i}: node '{nid}' has no {wv_key}[{idx}].")
+            continue
+
+        inp_name = patch.get("input_name")
+        if inp_name:
+            if "inputs" not in node:
+                node["inputs"] = {}
+            node["inputs"][inp_name] = patch["value"]
+            val_repr = repr(patch["value"])
+            if len(val_repr) > 80:
+                val_repr = val_repr[:77] + "..."
+            applied.append(f"Node {nid}.inputs.{inp_name} → {val_repr}")
+
+    # ── Save ──────────────────────────────────────────────────────────────────
+    path = _save_workflow(workflow, name=Path(workflow_path).stem)
+
+    # Update patch failure guard
+    global _patch_fail_count, _patch_last_workflow_path
+    _patch_last_workflow_path = path
+
+    if node_errors:
+        _patch_fail_count += 1
+        print(
+            f"[update_workflow] Failure {_patch_fail_count}/{_PATCH_FAIL_LIMIT}: "
+            f"{len(node_errors)} error(s)."
+        )
+        if _patch_fail_count >= _PATCH_FAIL_LIMIT:
+            debug_name = f"{Path(workflow_path).stem}_update_debug"
+            debug_path = _save_workflow(workflow, name=debug_name)
+            print(f"[update_workflow] LIMIT REACHED — debug snapshot: {debug_path}")
+            return json.dumps({
+                "status": "error",
+                "workflow_path": path,
+                "removed_nodes": removed,
+                "added_nodes": added,
+                "applied_patches": applied,
+                "node_errors": node_errors,
+                "valid": False,
+                "local_errors": [],
+                "server_errors": {},
+                "patch_failure_limit_reached": True,
+                "debug_workflow_path": debug_path,
+                "message": (
+                    f"update_workflow has failed {_PATCH_FAIL_LIMIT} times. "
+                    f"Debug snapshot saved to: {debug_path}. "
+                    "STOP — do not call update_workflow again. "
+                    "Report the debug_workflow_path to the user and ask for guidance."
+                ),
+            })
+    else:
+        _patch_fail_count = 0
+
+    # ── Validate ──────────────────────────────────────────────────────────────
+    local_errors: list[str] = []
+    server_errors: dict = {}
+
+    try:
+        all_nodes = _get_object_info()
+    except Exception:
+        all_nodes = {}
+
+    node_ids = set(workflow.keys())
+
+    for nid, node in workflow.items():
+        cls = node.get("class_type", "")
+        if not cls:
+            local_errors.append(f"Node {nid}: missing 'class_type'.")
+            continue
+        if all_nodes and cls not in all_nodes:
+            local_errors.append(f"Node {nid}: unknown class_type '{cls}'.")
+            continue
+        node_info = all_nodes.get(cls, {})
+        required = node_info.get("input", {}).get("required", {})
+        node_inputs = node.get("inputs", {})
+        for req_name in required:
+            if req_name not in node_inputs:
+                local_errors.append(f"Node {nid} ({cls}): missing required input '{req_name}'.")
+        for inp_name, inp_val in node_inputs.items():
+            if isinstance(inp_val, list) and len(inp_val) == 2:
+                src_id = str(inp_val[0])
+                if src_id not in node_ids:
+                    local_errors.append(
+                        f"Node {nid} ({cls}): input '{inp_name}' references "
+                        f"non-existent node '{src_id}'."
+                    )
+
+    try:
+        result = get_client().post("/prompt", json_data={"prompt": workflow})
+        if isinstance(result, dict):
+            if "error" in result:
+                server_errors = {
+                    "error": result.get("error"),
+                    "node_errors": result.get("node_errors", {}),
+                }
+            elif "prompt_id" in result:
+                try:
+                    get_client().post("/interrupt", json_data={})
+                    get_client().post("/queue", json_data={"clear": True})
+                except Exception:
+                    pass
+    except Exception as e:
+        err_str = str(e)
+        if hasattr(e, "response"):
+            try:
+                server_errors = e.response.json()
+            except Exception:
+                server_errors = {"error": err_str}
+        else:
+            server_errors = {"error": err_str}
+
+    is_valid = len(local_errors) == 0 and len(server_errors) == 0
+    all_errors = node_errors + local_errors
+
+    return json.dumps({
+        "status": "ok" if (is_valid and not node_errors) else "error",
+        "workflow_path": path,
+        "removed_nodes": removed,
+        "cleaned_links": cleaned_links,
+        "added_nodes": added,
+        "applied_patches": applied,
+        "node_errors": node_errors,
+        "valid": is_valid,
+        "local_errors": local_errors,
+        "server_errors": server_errors,
     })
 
 

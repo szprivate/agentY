@@ -35,6 +35,7 @@ from src.tools.comfyui import (  # noqa: F401
     patch_workflow,
     add_workflow_node,
     remove_workflow_node,
+    update_workflow,
     # Workflow validation
     validate_workflow,
     # Public helpers
@@ -112,14 +113,11 @@ BRAIN_TOOLS: list = [
     # Upload input images
     upload_image,
     get_image_resolution,
-    # Workflow assembly & validation
+    # Workflow assembly, modification & validation
     get_workflow_template,
-    patch_workflow,
-    add_workflow_node,
-    remove_workflow_node,
+    update_workflow,
     save_workflow,
     search_nodes,
-    validate_workflow,
     # Handoff to executor (replaces submit_prompt)
     signal_workflow_ready,
     # Batch: duplicate workflow for each iteration

@@ -252,7 +252,7 @@ def _extract_paths_from_messages(messages: list[dict]) -> dict:
                 tool_name: str = tu.get("name", "")
                 inp: dict = tu.get("input", {}) if isinstance(tu.get("input"), dict) else {}
 
-                if tool_name == "patch_workflow":
+                if tool_name in ("patch_workflow", "update_workflow"):
                     wp = inp.get("workflow_path")
                     if isinstance(wp, str) and wp:
                         workflow_path = wp  # keep last (most recent) patch target

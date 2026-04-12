@@ -328,12 +328,8 @@ class TokenUsageHookProvider:
                 ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 log_entry = (
                     f"{ts} [{self._role}] tool={tool_name} "
-                    f"delta=+{d_in}in/+{d_out}out"
-                    + (f"/+{d_cr}cache_read" if d_cr else "")
-                    + (f"/+{d_cw}cache_write" if d_cw else "")
-                    + f"  total={in_tok}in/{out_tok}out"
-                    + (f"/{cache_read}cache_read" if cache_read else "")
-                    + (f"/{cache_write}cache_write" if cache_write else "")
+                    f"delta=+{d_in}in/+{d_out}out/+{d_cr}cache_read/+{d_cw}cache_write"
+                    f"  total={in_tok}in/{out_tok}out/{cache_read}cache_read/{cache_write}cache_write"
                     + "\n"
                 )
                 with self._log_path.open("a", encoding="utf-8") as f:
