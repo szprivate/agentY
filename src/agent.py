@@ -411,7 +411,17 @@ def _make_agent(
     if plugins:
         agent_kwargs["plugins"] = plugins
     agent_kwargs.update(kwargs)
-    return Agent(**agent_kwargs)
+    agent = Agent(**agent_kwargs)
+    # Attach light-weight cost metadata so callers can compute run cost.
+    try:
+        agent._cost_meta = {
+            "provider": llm,
+            "model_id": model_id,
+            "is_ollama": (llm == "ollama"),
+        }
+    except Exception:
+        pass
+    return agent
 
 
 # ---------------------------------------------------------------------------

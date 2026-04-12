@@ -35,6 +35,7 @@ import requests as http_requests
 from PIL import Image
 
 from src.utils.secrets import get_secret
+from src.utils.costs import compute_cost_from_usage
 
 # ---------------------------------------------------------------------------
 # Set up module logger – writes to output/slack_server.log (not the console)
@@ -548,8 +549,13 @@ def _handle_message_async(content, channel: str, thread_ts: str, user: str):
                 parts.append(f"{cache_read:,} cache hit")
             if cache_write:
                 parts.append(f"{cache_write:,} cache write")
-            # Cost estimation intentionally omitted; only token counts shown.
-            accumulated.append(f"\n\n_🪙 {' / '.join(parts)}_")
+            # Compute cost for the run and append to the streamed reply.
+            try:
+                cost_val, total_tokens = compute_cost_from_usage(usage, _agent_ref)
+                cost_str = f"\n\n_💵 Cost: ${cost_val:.6f} (total {total_tokens:,} tokens)_"
+            except Exception:
+                cost_str = ""
+            accumulated.append(f"\n\n_🪙 {' / '.join(parts)}_{cost_str}")
         except Exception as _tok_exc:
             logger.debug("Could not read token usage: %s", _tok_exc)
 

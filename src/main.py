@@ -35,6 +35,7 @@ from src.utils.secrets import get_secret  # noqa: E402
 from src.utils.slack_server import start_slack_server  # noqa: E402
 from src.tools.slack_tools import install_console_forwarder  # noqa: E402
 from src.tools.agent_control import is_restart_command, restart_process  # noqa: E402
+from src.utils.costs import compute_cost_from_usage  # noqa: E402
 
 
 def main() -> None:
@@ -184,6 +185,11 @@ def main() -> None:
             if cache_write:
                 parts.append(f"{cache_write:,} cache write")
             print(f"🪙 Tokens: {' / '.join(parts)}\n")
+            try:
+                cost_val, total_tokens = compute_cost_from_usage(usage, agent)
+                print(f"💵 Cost: ${cost_val:.6f} (total {total_tokens:,} tokens)\n")
+            except Exception:
+                pass
         except Exception:
             pass
 
