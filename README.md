@@ -1,6 +1,6 @@
 # agentY
 
-An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanonymous/ComfyUI) workflows through natural language. Built on the [Strands Agents SDK](https://github.com/strands-agents/sdk-python), it supports Claude and Ollama as LLM backends and integrates with Slack as a conversational interface.
+An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanonymous/ComfyUI) workflows through natural language. Built on the [Strands Agents SDK](https://github.com/strands-agents/sdk-python), it supports Claude and Ollama as LLM backends and provides a Chainlit web GUI as conversational interface.
 
 ---
 
@@ -11,7 +11,7 @@ An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanony
 - **Image editing** — reference-based editing, inpainting, upscaling, and more.
 - **Two-agent pipeline** — a lightweight Researcher (Ollama by default) resolves templates, model paths, and sampler settings; the Brain (Claude by default) assembles the workflow, executes it, and runs vision QA.
 - **Hugging Face model management** — search, check local availability, and download models on demand.
-- **Slack integration** — runs as a Slack bot via Socket Mode; send a DM and get images/videos back directly.
+- **Chainlit web GUI** — interact via a browser-based chat UI; images and videos are delivered inline.
 - **Multiple LLM backends** — Claude and Ollama, configurable per pipeline stage.
 - **50+ workflow templates** — from Comfy-Org, loaded and patched automatically.
 - **Skills system** — drop shell/Python scripts into `skills/` and they become agent-callable tools.
@@ -24,7 +24,7 @@ An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanony
 - **Python 3.11+**
 - A running **ComfyUI** instance (default: `http://127.0.0.1:8188`)
 - An **Anthropic API key** (for Claude) _and/or_ a local **Ollama** installation
-- (Optional) Slack app credentials for the bot interface
+- (Optional) Chainlit credentials (`CHAINLIT_USERNAME` / `CHAINLIT_PASSWORD` in `.env`)
 
 ---
 
@@ -63,11 +63,10 @@ Edit `.env`:
 
 ```dotenv
 HF_TOKEN=hf_...
-SLACK_APP_TOKEN=xapp-...
-SLACK_BOT_TOKEN=xoxb-...
-SLACK_SIGNING_SECRET=
 ANTHROPIC_API_KEY=sk-ant-...
 COMFYUI_API_KEY=comfyui-...
+CHAINLIT_USERNAME=yourname
+CHAINLIT_PASSWORD=yourpassword
 ```
 
 ### 4. Configure defaults
@@ -98,17 +97,20 @@ The `"researcher"` and `"brain"` values use the format `"provider,model"`.
 The script creates the virtual environment and installs dependencies automatically on first run.
 
 ```powershell
-# Default — uses LLMs from settings.json
+# Default — uses LLMs from settings.json, opens GUI on http://localhost:8000
 .\run_agent.ps1
 
-# Override the Researcher
+# Custom port
+.\run_agent.ps1 -Port 8080
+
+# Auto-reload on source changes (dev mode)
+.\run_agent.ps1 -Watch
+
+# Override the Researcher LLM
 .\run_agent.ps1 -LlmResearcher "ollama,qwen3-coder:32b"
 
-# Override the Brain
+# Override the Brain LLM
 .\run_agent.ps1 -LlmBrain "claude,claude-sonnet-4-5"
-
-# Skip the Brain stage (return Researcher output directly)
-.\run_agent.ps1 -SkipBrain
 
 # Show help
 .\run_agent.ps1 -Help
@@ -148,9 +150,9 @@ User request
   • resolve model paths                 │ • patch & validate    │
   • resolve sampler settings            │ • submit & poll       │
   • produce BrainBriefing               │ • vision QA           │
-                                        │ • deliver to Slack    │
+                                        │ • deliver via Chainlit│
                                         ▼                      ▼
-                                     output/              Slack DM
+                                     output_images/    Chainlit GUI
 ```
 
 1. **Researcher** receives the user request and produces a validated **BrainBriefing** JSON (template, input images, model paths, prompts, resolution).
@@ -169,27 +171,17 @@ Each value is resolved in order — first match wins:
 
 ---
 
-## Slack Integration
+## Chainlit Web GUI
 
-agentY uses **Slack Socket Mode** (WebSocket-based, no public HTTP endpoint needed).
+The web GUI is the primary interface. Launch it with:
 
-### Prerequisites
+```powershell
+.\run_agent.ps1
+```
 
-| Credential | Where to get it |
-|---|---|
-| `SLACK_BOT_TOKEN` (xoxb-…) | App → OAuth & Permissions → Bot User OAuth Token |
-| `SLACK_APP_TOKEN` (xapp-…) | App → Basic Information → App-Level Tokens (scope: `connections:write`) |
+Then open [http://localhost:8000](http://localhost:8000) in your browser. Log in with the `CHAINLIT_USERNAME` / `CHAINLIT_PASSWORD` values from `.env` (defaults: `yourname` / `yourpassword`).
 
-### Slack app setup
-
-1. Create a Slack app at [api.slack.com/apps](https://api.slack.com/apps) → **Create New App → From scratch**.
-2. **OAuth & Permissions → Bot Token Scopes** — add: `chat:write`, `im:history`, `im:read`, `im:write`, `files:read`, `files:write`.
-3. **Basic Information → App-Level Tokens** — generate a token with the `connections:write` scope.
-4. **Socket Mode** — enable it.
-5. **Event Subscriptions** — enable, subscribe to `message.im` under **bot events**.
-6. **Install to Workspace** and copy the Bot token.
-7. Add `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` to your `.env`.
-8. Start the agent — Socket Mode activates automatically when both tokens are present.
+You can attach images directly in the chat — they are forwarded to ComfyUI as input assets.
 
 ---
 
@@ -203,16 +195,15 @@ agentY/
 │   ├── pipeline.py             Researcher → Brain pipeline and BrainBriefing schema
 │   ├── tools/
 │   │   ├── comfyui.py          Workflow template loading/patching, node inspection, prompt submission
-│   │   ├── file_tools.py       Plain-text file reader
+│   │   ├── file_tools.py       Plain-text file reader/writer
 │   │   ├── huggingface.py      HF Hub: model search, info, local check, download
 │   │   ├── image_handling.py   Image upload/download, resolution detection, visual analysis
-│   │   ├── shell.py            Cross-platform shell execution for skill scripts
-│   │   └── slack_tools.py      Slack messaging and file upload
+│   │   └── shell.py            Cross-platform shell execution for skill scripts
 │   └── utils/
 │       ├── comfyui_client.py   Singleton HTTP client for the ComfyUI REST API
 │       ├── comfyui_interrupt_hook.py  Halts agent loop after submit_prompt for async polling
-│       ├── secrets.py          Reads .env via dotenv_values (never injects into os.environ)
-│       └── slack_server.py     Slack Socket Mode server
+│       ├── agentY_server.py    Lightweight Flask bridge for ComfyUI extension callbacks
+│       └── secrets.py          Reads .env via dotenv_values (never injects into os.environ)
 ├── config/
 │   ├── settings.json           ComfyUI URL, LLM defaults, polling intervals
 │   ├── models.json             Model shortname → path table (injected into system prompts)
@@ -224,10 +215,11 @@ agentY/
 ├── comfyui_workflows/          Custom workflow JSON files
 ├── comfyui_workflow_templates_official/  Comfy-Org template library (git-ignored)
 ├── skills/                     Drop-in skill scripts (shell/Python)
-├── output/                     Generated outputs
+├── output_images/              Generated outputs
+├── output_workflows/           Archived workflow JSON files
 ├── .env_example                Template for .env secrets
 ├── requirements.txt
-└── run_agent.ps1               Windows launcher script
+└── run_agent.ps1               Windows launcher (starts Chainlit GUI)
 ```
 
 > The ComfyUI custom node lives in its own repo: **[agentY-comfyui-extension](https://github.com/szprivate/agentY-comfyui-extension)**.

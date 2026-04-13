@@ -1,6 +1,6 @@
 ---
 name: nano-banana
-description: Follow these detailed instructions to build and patch NanoBanana-based workflows according to the `brainbriefing` specifications. This skill is responsible for all interactions with NanoBanana templates, including structural changes, node edits, and validation fixes.
+description: Whenever researcher selected a Nano Banana / Nano Banana 2 / Nano Banana Pro template: Follow these detailed instructions to build and patch NanoBanana-based workflows according to the `brainbriefing` specifications. 
 allowed-tools: add_workflow_node, remove_workflow_node
 ---
 
@@ -14,7 +14,7 @@ allowed-tools: add_workflow_node, remove_workflow_node
 - use `add_workflow_node` to add a `LoadImage` node for every input image
 - use `add_workflow_node` to add a `BatchImagesNode`, 
 - use this JSON schema to connect
-- connect the output of each LoadImage node to the correct BatchImagesNode inputs, use this JSON schema to connect:
+- IMPORTANT! connect the output of each LoadImage node to the correct BatchImagesNode inputs, use this JSON schema to connect:
 ```json
 {
     "node_id_BatchImagesNode": {

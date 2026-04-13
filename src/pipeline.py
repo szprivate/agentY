@@ -104,7 +104,7 @@ class BrainBriefing(BaseModel):
 # ---------------------------------------------------------------------------
 
 # Canonical path where the image-batch skill writes variation prompts.
-_MULTIPROMPT_PATH = Path("output/_workflows/multiprompt.json")
+_MULTIPROMPT_PATH = Path("output_workflows/multiprompt.json")
 
 
 def _apply_multiprompt_variations(
@@ -116,7 +116,7 @@ def _apply_multiprompt_variations(
     """Expand one base workflow into N per-variation copies using multiprompt.json.
 
     When ``count_iter > 1`` **and** ``variations == True``, the image-batch
-    skill writes ``output/_workflows/multiprompt.json`` with one key per
+    skill writes ``output_workflows/multiprompt.json`` with one key per
     prompt (``prompt1`` … ``promptN``).  This helper:
 
     1. Reads that file.
@@ -243,10 +243,10 @@ class Pipeline:
     The Researcher runs once per call (stateless); the Brain keeps
     a sliding-window conversation so multi-turn interactions work.
 
-    ``stream_async`` is also supported so the Slack server can update
-    its placeholder message in real-time from the Brain stage.
+    ``stream_async`` is also supported so Chainlit can update
+    its message in real-time from the Brain stage.
     ``event_loop_metrics`` delegates to the Brain agent so token-usage
-    reporting in Slack continues to work.
+    reporting in Chainlit continues to work.
     """
 
     def __init__(
@@ -282,11 +282,11 @@ class Pipeline:
             "1", "true", "yes", "on"
         )
 
-    # The Slack server and main.py both do:  response = agent(user_input)
+    # Chainlit and main.py both do:  response = agent(user_input)
     def __call__(self, user_input, **kwargs: Any) -> str:
         return self.run(user_input, **kwargs)
 
-    # Delegate metric access to the Brain so the Slack server can read
+    # Delegate metric access to the Brain so Chainlit can read
     # token usage summaries just as it would from a plain Strands Agent.
     @property
     def event_loop_metrics(self):  # noqa: ANN201
@@ -404,11 +404,11 @@ class Pipeline:
         return brain_response
 
     async def stream_async(self, user_input):  # noqa: ANN201
-        """Async generator compatible with the Slack server's streaming loop.
+        """Async generator compatible with Chainlit's streaming loop.
 
         Runs the Researcher synchronously (it's a single-turn spec dump),
-        then transparently streams the Brain's token output so Slack can
-        update its placeholder message in real time.
+        then transparently streams the Brain's token output so Chainlit can
+        update its message in real time.
 
         When the Brain is interrupted by ``ComfyUIInterruptHook`` (i.e. a
         ``submit_prompt`` call was just made), this method:
@@ -460,7 +460,7 @@ class Pipeline:
             self._session.follow_up_count += 1
             async for event in self._brain.stream_async(brain_prompt):
                 yield event
-            # Executor handoff: stream execution events back to Slack
+            # Executor handoff: stream execution events back to Chainlit
             workflow_paths_fu = _get_workflow_signal()
             workflow_paths_fu = self._expand_variations(workflow_paths_fu, self._last_brainbriefing_json or "")
             executor_paths_fu: list[str] = []
@@ -529,7 +529,7 @@ class Pipeline:
             interrupt_result = None
 
             async for event in self._brain.stream_async(current_input):
-                yield event  # forward all events to Slack verbatim
+                yield event  # forward all events to Chainlit verbatim
 
                 # Detect agent interrupt: the final event before the loop stops
                 # is AgentResultEvent = {"result": AgentResult(...)}
@@ -544,7 +544,7 @@ class Pipeline:
 
             if interrupt_result is None:
                 # Normal Brain completion — no ComfyUI interrupt pending.
-                # Stage 3 – Executor: submit, poll, QA, Slack, save
+                # Stage 3 – Executor: submit, poll, QA, save
                 workflow_paths_s = _get_workflow_signal()
                 workflow_paths_s = self._expand_variations(workflow_paths_s, raw_json)
                 executor_paths_s: list[str] = []
@@ -1170,7 +1170,7 @@ class Pipeline:
         ``_MAX_RESEARCHER_RETRIES`` correction rounds before giving up.
 
         ``user_input`` may be a plain string *or* a list of Strands content
-        blocks (the multimodal format produced by the Slack server when the
+        blocks (the multimodal format produced by Chainlit when the
         user attaches images/videos).  When it is a list, the image/video
         blocks are forwarded to the Researcher intact so it can visually
         inspect the attachments via its ``analyze_image`` tool.
@@ -1194,7 +1194,7 @@ class Pipeline:
 
         # Always pass only the text prompt to the Researcher.
         # When user_input is a multimodal list, the text block already contains
-        # the on-disk paths of any attached files (added by slack_server._build_content_blocks).
+        # the on-disk paths of any attached files (added by _build_content in chainlit_app.py).
         # The Researcher can call analyze_image(file_path=...) if it needs to inspect
         # an image — much cheaper than embedding raw bytes in every LLM call.
         first_attempt_input: Any = researcher_prompt_text
@@ -1272,31 +1272,8 @@ class Pipeline:
             Assemble and validate the ComfyUI workflow from this spec, then call
             `signal_workflow_ready(workflow_path)` as your final step.
             The pipeline will handle ComfyUI submission, completion polling,
-            Vision QA (via Ollama), saving outputs to ./output, and Slack.
+            Vision QA (via Ollama) and saving outputs to ./output_images.
         """).strip()
-
-    async def _drain_executor(
-        self,
-        workflow_path: str,
-        brainbriefing_json: str,
-        slack_channel_id: str = "",
-        slack_thread_ts: str = "",
-    ) -> tuple[list[str], list[str]]:
-        """Drain the executor for a single workflow; return ``(status_lines, output_paths)``."""
-        lines: list[str] = []
-        output_paths: list[str] = []
-        async for line in _execute_workflow(
-            workflow_path,
-            brainbriefing_json,
-            slack_channel_id=slack_channel_id,
-            slack_thread_ts=slack_thread_ts,
-            verbose=self._verbose,
-            collected_paths=output_paths,
-        ):
-            lines.append(line)
-            if self._verbose:
-                print(f"[executor] {line}")
-        return lines, output_paths
 
     async def _drain_executor_batch(
         self,
@@ -1339,7 +1316,7 @@ class Pipeline:
         - The brainbriefing has ``variations: true`` and ``count_iter > 1``.
         - ``positive_prompt_node_id`` is set so the pipeline knows which node
           to patch with each variation prompt.
-        - ``output/_workflows/multiprompt.json`` exists (written by image-batch skill).
+        - ``output_workflows/multiprompt.json`` exists (written by image-batch skill).
 
         When all conditions are met the single base workflow path is expanded to
         N paths (one per prompt in multiprompt.json).  If any condition fails the

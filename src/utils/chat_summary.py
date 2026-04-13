@@ -355,7 +355,7 @@ def _extract_paths_from_messages(messages: list[dict]) -> dict:
 
 
 def _archive_workflow(workflow_path: str | None, template_name: str | None) -> str | None:
-    """Copy the final patched workflow JSON to ``./output/_workflows/`` for archival.
+    """Copy the final patched workflow JSON to ``./output_workflows/`` for archival.
 
     Returns the destination path, or ``None`` if the source file is missing or
     ``workflow_path`` is not provided.
@@ -367,7 +367,7 @@ def _archive_workflow(workflow_path: str | None, template_name: str | None) -> s
         logger.warning("_archive_workflow: source not found: %s", workflow_path)
         return None
 
-    archive_dir = (_PROJECT_ROOT / _load_config().get("output_workflows_dir", "./output/_workflows/")).resolve()
+    archive_dir = (_PROJECT_ROOT / _load_config().get("output_workflows_dir", "./output_workflows/")).resolve()
     archive_dir.mkdir(parents=True, exist_ok=True)
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -398,7 +398,7 @@ async def summarize_conversation(
 
         TASK: image edit, then upscale
         TEMPLATE: image_editing_for_still_images_using_references.model_qwen
-        WORKFLOW_FILE: ./output/_workflows/20260404_123456_image_editing.json
+        WORKFLOW_FILE: ./output_workflows/20260404_123456_image_editing.json
         INPUT_PATHS: /path/to/input.jpg
         OUTPUT_PATHS: ./output/result.png
         PATCHES: Node 6.text → 'a photograph of ...', Node 190.image → 'input.png'

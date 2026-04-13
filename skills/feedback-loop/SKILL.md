@@ -31,7 +31,7 @@ The user wants to adjust one or more parameters of the last run (style, resoluti
    - Do NOT reload the template from scratch — patch the existing archived workflow.
 4. Call `validate_workflow(WORKFLOW_FILE)` and fix any errors.
 5. Call `submit_prompt(WORKFLOW_FILE)` → `get_prompt_status_by_id(prompt_id)` once.
-6. Vision QA → post result to Slack.
+6. Vision QA runs automatically via the pipeline executor.
 
 **Example tweaks:**
 - "make it more saturated" → adjust cfg or prompt
@@ -53,7 +53,7 @@ The user wants to pipe the last output into a new workflow (e.g., "now upscale i
 4. Call `get_workflow_template(template_name)` to get the new workflow file path.
 5. Upload input files and assemble the new workflow as normal (follow the Brain's main steps 3–8).
    - Set INPUT_PATHS from `OUTPUT_PATHS` of the prior round.
-6. Vision QA → post result to Slack.
+6. Vision QA runs automatically via the pipeline executor.
 
 **No Researcher pass is needed** — the task is unambiguous from context.
 
@@ -70,9 +70,9 @@ The user is correcting a mistake the agent made (wrong template, wrong model, ba
    - **Wrong template** → re-select with **workflow-templates** skill and restart from step 2 of the Brain's main flow.
    - **Patch/validation error** → re-patch `WORKFLOW_FILE` with corrected parameters → re-validate → re-submit.
    - **Quality failure** → re-run with different seed or adjusted parameters.
-   - **Slack / QA failure** → retry from step 7 (Vision QA) using `OUTPUT_PATHS`.
+   - **QA failure** → retry from step 7 (Vision QA) using `OUTPUT_PATHS`.
 3. Apply the minimum fix — do not redo steps that succeeded.
-4. Vision QA → post result to Slack.
+4. Vision QA runs automatically via the pipeline executor.
 
 ---
 

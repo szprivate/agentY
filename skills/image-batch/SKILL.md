@@ -10,14 +10,14 @@ Activate this skill when the brainbriefing contains **both** `count_iter > 1` **
 
 ## Your responsibility
 
-Generate `count_iter` distinct, creative variations if the `prompt` from brainbriefing and write them to `output/_workflows/multiprompt.json` using the `write_text_file` tool.
+Generate `count_iter` distinct, creative variations if the `prompt` from brainbriefing and write them to `output_workflows/multiprompt.json` using the `write_text_file` tool.
 
 
 ## How to write the file
 
 Call `write_text_file` exactly once:
 
-- `path`: `output/_workflows/multiprompt.json`
+- `path`: `output_workflows/multiprompt.json`
 - `content`: a JSON string with keys `prompt1` ... `promptN` (count equals `count_iter`)
 
 Example for count_iter=3:

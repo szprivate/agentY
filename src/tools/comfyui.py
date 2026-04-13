@@ -106,7 +106,7 @@ def _custom_templates_dir() -> Path:
 def _workflows_dir() -> Path:
     """Return the directory where generated/patched workflow JSON files are saved."""
     cfg = _load_config()
-    wd = cfg.get("output_workflows_dir", "./output/_workflows/")
+    wd = cfg.get("output_workflows_dir", "./output_workflows/")
     return (_project_root() / wd).resolve()
 
 

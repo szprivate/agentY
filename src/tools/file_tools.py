@@ -47,7 +47,7 @@ def write_text_file(path: str, content: str) -> str:
 
     Args:
         path: Absolute path, OR a path relative to the agentY workspace root
-              (e.g. ``output/_workflows/multiprompt.json``).
+              (e.g. ``output_workflows/multiprompt.json``).
         content: The text to write.  Must already be a string; pass
                  ``json.dumps(data, indent=2)`` for JSON payloads.
 

@@ -415,7 +415,7 @@ async def execute_workflow(
 
     yield "✅ ComfyUI execution complete — collecting outputs…"
 
-    # ── 3-5. Download, QA, Slack ───────────────────────────────────────────
+    # ── 3-5. Download, QA ─────────────────────────────────────────────────
     async for line in _process_completed_job(
         history,
         prompt_id,
