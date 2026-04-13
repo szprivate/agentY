@@ -170,10 +170,26 @@ async def on_message(message: cl.Message) -> None:
             ).send()
             sent_paths.update(new)
 
+    # Buffer tokens and flush in batches to reduce WebSocket round-trips.
+    # Flushing every _STREAM_FLUSH_CHARS characters keeps latency low while
+    # dramatically cutting the number of individual async sends vs. flushing
+    # on every single token (which is what made Chainlit lag behind the CLI).
+    _STREAM_FLUSH_CHARS = 12
+    _token_buf: list[str] = []
+    _token_buf_len: int = 0
+
+    async def _flush_token_buf() -> None:
+        nonlocal _token_buf, _token_buf_len
+        if _token_buf:
+            await response_msg.stream_token("".join(_token_buf))
+            _token_buf = []
+            _token_buf_len = 0
+
     try:
         async for event in pipeline.stream_async(content):
             # ── QA failure from a new_planned_request step ────────────────
             if isinstance(event, dict) and event.get("qa_fail"):
+                await _flush_token_buf()
                 await response_msg.update()
 
                 # Send images produced by the failed step.
@@ -217,12 +233,18 @@ async def on_message(message: cl.Message) -> None:
             if isinstance(event, dict):
                 chunk = event.get("data", "") or ""
             if chunk:
-                await response_msg.stream_token(chunk)
-                # Check for newly saved images after every chunk that looks like
-                # a save/executor line so we don't poll on every token.
-                if "💾" in chunk or "Saved" in chunk or "executor" in chunk.lower():
-                    await _flush_new_images()
+                _token_buf.append(chunk)
+                _token_buf_len += len(chunk)
+                # Flush when buffer is full enough, or immediately on lines
+                # that signal image saves so the UI updates promptly.
+                if _token_buf_len >= _STREAM_FLUSH_CHARS or "💾" in chunk or "Saved" in chunk or "executor" in chunk.lower():
+                    await _flush_token_buf()
+                    if "💾" in chunk or "Saved" in chunk or "executor" in chunk.lower():
+                        await _flush_new_images()
+        # Flush any remaining buffered tokens.
+        await _flush_token_buf()
     except Exception as exc:
+        await _flush_token_buf()
         await response_msg.stream_token(f"\n\n❌ Pipeline error: {exc}")
 
     await response_msg.update()

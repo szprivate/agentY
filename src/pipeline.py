@@ -426,12 +426,15 @@ class Pipeline:
         handler = _route(triage_result)
 
         if self._verbose:
-            print(f"[pipeline:stream] Triage → intent={triage_result.intent.value},"
-                  f" confidence={triage_result.confidence:.2f}, handler={handler}")
+            _msg = (f"[pipeline:stream] Triage → intent={triage_result.intent.value},"
+                    f" confidence={triage_result.confidence:.2f}, handler={handler}")
+            print(_msg)
+            yield {"data": f"\n_{_msg}_"}
 
         if handler == "answer":
             if self._verbose:
                 print("[pipeline:stream] info_query → Info agent (streamed)")
+                yield {"data": "\n_[pipeline:stream] info_query → Info agent (streamed)_"}
             async for event in self._info_agent.stream_async(user_text):
                 yield event
             return
@@ -439,6 +442,7 @@ class Pipeline:
         if handler == "needs_image":
             if self._verbose:
                 print("[pipeline:stream] needs_image → handoff to user (missing image)")
+                yield {"data": "\n_[pipeline:stream] needs_image → handoff to user (missing image)_"}
             self._record_chat_summary(user_text, triage_result, status="needs_image")
             message = triage_result.response or (
                 "It looks like your request requires an input image, but I don't see one attached. "
@@ -463,6 +467,7 @@ class Pipeline:
                 if self._verbose:
                     tag = f"{count} workflows (batch)" if count > 1 else workflow_paths_fu[0]
                     print(f"[pipeline:stream] Brain (follow-up) signaled {tag} ready.")
+                    yield {"data": f"\n_[pipeline:stream] Brain (follow-up) signaled {tag} ready._"}
                 hdr = f"batch of {count} workflows" if count > 1 else "workflow"
                 yield {"data": f"\n\n_⚙️ Handing off to executor ({hdr})…_"}
                 async for line in _execute_workflows_batch(
@@ -488,6 +493,7 @@ class Pipeline:
         # Stage 1 – Researcher (synchronous; fast pattern-matching turn)
         if self._verbose:
             print("[pipeline:stream] Stage 1 – Researcher resolving spec …")
+            yield {"data": "\n_[pipeline:stream] Stage 1 – Researcher resolving spec …_"}
         raw_json, error, researcher_output = self._run_researcher(user_input)
         if error:
             self._record_chat_summary(user_text, triage_result, status="error")
@@ -499,12 +505,14 @@ class Pipeline:
         if self._should_skip_brain():
             if self._verbose:
                 print("[pipeline:stream] Skipping Brain stage; returning Researcher output.")
+                yield {"data": "\n_[pipeline:stream] Skipping Brain stage; returning Researcher output._"}
             yield {"data": researcher_output}
             return
 
         # Stage 2 – Brain (streamed, with optional ComfyUI interrupt handling)
         if self._verbose:
             print("[pipeline:stream] Stage 2 – Brain streaming …")
+            yield {"data": "\n_[pipeline:stream] Stage 2 – Brain streaming …_"}
         self._ensure_clean_history()
         brain_prompt = self._build_brain_prompt(raw_json)
 
@@ -541,6 +549,7 @@ class Pipeline:
                     if self._verbose:
                         tag = f"{count} workflows (batch)" if count > 1 else workflow_paths_s[0]
                         print(f"[pipeline:stream] Brain signaled {tag} ready.")
+                        yield {"data": f"\n_[pipeline:stream] Brain signaled {tag} ready._"}
                     hdr = f"batch of {count} workflows" if count > 1 else "workflow"
                     yield {"data": f"\n\n_⚙️ Handing off to executor ({hdr})…_"}
                     async for line in _execute_workflows_batch(
@@ -557,12 +566,14 @@ class Pipeline:
                 await self._compress_brain_history(extra_output_paths=executor_paths_s)
                 if self._verbose:
                     print("[pipeline:stream] Brain finished.")
+                    yield {"data": "\n_[pipeline:stream] Brain finished._"}
                 break
 
             # ── ComfyUI interrupt: poll cheaply, then resume ───────── #
             prompt_id: str = interrupt_result.reason
             if self._verbose:
                 print(f"[pipeline:stream] ComfyUI interrupt — polling prompt_id={prompt_id}")
+                yield {"data": f"\n_[pipeline:stream] ComfyUI interrupt — polling prompt_id={prompt_id}_"}
 
             yield {"data": f"\n\n_⏳ ComfyUI job queued (`{prompt_id}`). Waiting for completion…_"}
 
@@ -571,6 +582,7 @@ class Pipeline:
             yield {"data": "\n_✅ ComfyUI job finished — resuming…_"}
             if self._verbose:
                 print(f"[pipeline:stream] ComfyUI job {prompt_id} finished. Resuming Brain.")
+                yield {"data": f"\n_[pipeline:stream] ComfyUI job {prompt_id} finished. Resuming Brain._"}
 
             # Resume the agent: supply the polled history as the interrupt response.
             current_input = [
@@ -747,12 +759,14 @@ class Pipeline:
         """Stream a multi-step plan; yields Strands-compatible event dicts."""
         if self._verbose:
             print("[pipeline:stream] Planner — decomposing multi-step request …")
+            yield {"data": "\n_[pipeline:stream] Planner — decomposing multi-step request …_"}
         steps = self._run_planner(user_text)
 
         # Fallback: treat as a plain researcher path when planning fails.
         if not steps:
             if self._verbose:
                 print("[pipeline:stream] Planner fallback → researcher path")
+                yield {"data": "\n_[pipeline:stream] Planner fallback → researcher path_"}
             raw_json, error, researcher_output = self._run_researcher(user_text)
             if error:
                 self._record_chat_summary(user_text, triage_result, status="error")
@@ -789,6 +803,8 @@ class Pipeline:
             print(f"[pipeline:stream] Plan has {total} step(s):")
             for i, s in enumerate(steps, 1):
                 print(f"  {i}. {s['description']}")
+            _steps_list = "\n".join(f"  {i}. {s['description']}" for i, s in enumerate(steps, 1))
+            yield {"data": f"\n_[pipeline:stream] Plan has {total} step(s):_\n{_steps_list}\n"}
 
         for idx, step in enumerate(steps):
             description = step["description"]
@@ -797,6 +813,7 @@ class Pipeline:
             yield {"data": f"\n\n**Step {idx + 1}/{total} — {description}**\n"}
             if self._verbose:
                 print(f"\n[pipeline:stream] ── Plan step {idx + 1}/{total}: {description} ──")
+                yield {"data": f"\n_[pipeline:stream] ── Plan step {idx + 1}/{total}: {description} ──_"}
 
             raw_json, error, researcher_output = self._run_researcher(step_req)
             if error:
@@ -842,6 +859,7 @@ class Pipeline:
                 self._record_chat_summary(step_req, triage_result, status="qa_failed", raw_json=raw_json)
                 if self._verbose:
                     print(f"[pipeline:stream] Step {idx + 1}/{total} QA failed — aborting plan.")
+                    yield {"data": f"\n_[pipeline:stream] Step {idx + 1}/{total} QA failed — aborting plan._"}
                 break  # stop processing further steps
 
             self._record_chat_summary(step_req, triage_result, status="completed", raw_json=raw_json)
@@ -849,10 +867,11 @@ class Pipeline:
 
             if self._verbose:
                 print(f"[pipeline:stream] Step {idx + 1}/{total} finished.")
+                yield {"data": f"\n_[pipeline:stream] Step {idx + 1}/{total} finished._"}
 
         if self._verbose:
             print(f"[pipeline:stream] Planned execution complete ({total} step(s)).")
-
+            yield {"data": f"\n_[pipeline:stream] Planned execution complete ({total} step(s))._"}
     # ── Triage helpers ───────────────────────────────────────────────── #
 
     @staticmethod
