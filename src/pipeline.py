@@ -818,6 +818,7 @@ class Pipeline:
             wf_paths = _get_workflow_signal()
             wf_paths = self._expand_variations(wf_paths, raw_json)
             exec_paths: list[str] = []
+            qa_step_failed = False
             if wf_paths:
                 count = len(wf_paths)
                 hdr = f"batch of {count} workflows" if count > 1 else "workflow"
@@ -828,9 +829,20 @@ class Pipeline:
                     verbose=self._verbose,
                     collected_paths=exec_paths,
                 ):
+                    if isinstance(line, dict) and line.get("qa_fail"):
+                        # Forward the QA failure event up to the UI layer.
+                        yield line
+                        qa_step_failed = True
+                        break
                     yield {"data": f"\n{line}"}
                 if exec_paths:
                     self._session.current_output_paths[:] = exec_paths
+
+            if qa_step_failed:
+                self._record_chat_summary(step_req, triage_result, status="qa_failed", raw_json=raw_json)
+                if self._verbose:
+                    print(f"[pipeline:stream] Step {idx + 1}/{total} QA failed — aborting plan.")
+                break  # stop processing further steps
 
             self._record_chat_summary(step_req, triage_result, status="completed", raw_json=raw_json)
             await self._compress_brain_history(extra_output_paths=exec_paths)

@@ -326,6 +326,7 @@ async def _process_completed_job(
 
     # Vision QA
     yield f"{pfx}🔍 Running Vision QA…"
+    qa_failures: list[dict] = []
     for path in saved_paths:
         verdict = await _vision_qa(
             path,
@@ -334,14 +335,26 @@ async def _process_completed_job(
             input_image_path=input_image_path,
         )
         yield f"{pfx}🔍 QA `{path.name}` → {verdict}"
+        if "FAIL" in verdict.upper():
+            qa_failures.append({"path": str(path), "verdict": verdict})
+
+    # Always register paths so the caller session is up to date.
+    if collected_paths is not None:
+        collected_paths.extend(str(p) for p in saved_paths)
+
+    if qa_failures:
+        # Signal the pipeline layer to pause and ask the user.
+        yield {
+            "qa_fail": True,
+            "image_paths": [str(p) for p in saved_paths],
+            "fail_details": qa_failures,
+        }
+        return
 
     output_summary = ", ".join(f"`{p.name}`" for p in saved_paths)
     yield f"{pfx}✅ Done. Outputs: {output_summary}"
     if verbose:
         print(f"[executor] {pfx}Finished. Outputs: {[str(p) for p in saved_paths]}")
-
-    if collected_paths is not None:
-        collected_paths.extend(str(p) for p in saved_paths)
 
 
 # ---------------------------------------------------------------------------

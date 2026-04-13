@@ -114,13 +114,13 @@ name = "agentY"
 # default_chat_settings_open = false
 
 # Whether to prompt user confirmation on clicking 'New Chat'
-confirm_new_chat = true
+confirm_new_chat = false
 
 # Description of the assistant. This is used for HTML tags.
 # description = ""
 
 # Chain of Thought (CoT) display mode. Can be "hidden", "tool_call" or "full".
-cot = "full"
+cot = "tool_call"
 
 # Specify a CSS file that can be used to customize the user interface.
 # The CSS file can be served from the public directory or via an external link.
@@ -153,10 +153,10 @@ alert_style = "classic"
 # custom_meta_image_url = "https://chainlit-cloud.s3.eu-west-3.amazonaws.com/logo/chainlit_banner.png"
 
 # Load assistant logo directly from URL.
-logo_file_url = "/public/logo_light.png"
+logo_file_url = "/public/logo_dark.png"
 
 # Load assistant avatar image directly from URL.
-default_avatar_file_url = "/public/logo_light.png"
+default_avatar_file_url = "/public/logo_dark_small.png"
 
 # Avatar size in pixels (default: 20).
 # avatar_size = 20

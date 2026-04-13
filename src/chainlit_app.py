@@ -27,9 +27,37 @@ from dotenv import load_dotenv
 load_dotenv(_project_root / ".env")
 
 import chainlit as cl
+try:
+    import chainlit.data as cl_data
+    from chainlit.data.sql_alchemy import SQLAlchemyDataLayer
+
+    _conninfo = os.environ.get("DATABASE_URL")
+    if _conninfo:
+        cl_data._data_layer = SQLAlchemyDataLayer(conninfo=_conninfo)
+    else:
+        print("[chainlit] DATABASE_URL not set; skipping SQLAlchemyDataLayer init")
+except Exception as _exc:  # pragma: no cover - non-critical init
+    print(f"[chainlit] Could not initialise SQLAlchemyDataLayer: {_exc}")
 
 from src.pipeline import create_pipeline
 from src.utils.costs import compute_cost_from_usage
+
+# ── Module-level pipeline singleton ──────────────────────────────────────────
+try:
+    _pipeline = create_pipeline()
+except Exception as _pipeline_exc:
+    print(f"[chainlit] Failed to create pipeline at startup: {_pipeline_exc}")
+    _pipeline = None
+
+
+# Simple password auth callback for Chainlit (adjust as needed)
+@cl.password_auth_callback
+def auth_callback(username: str, password: str):
+    _chainlit_user = os.environ.get("CHAINLIT_USERNAME", "yourname")
+    _chainlit_pass = os.environ.get("CHAINLIT_PASSWORD", "yourpassword")
+    if (username, password) == (_chainlit_user, _chainlit_pass):
+        return cl.User(identifier=_chainlit_user, metadata={"role": "admin"})
+    return None
 
 
 # ── Content builder ───────────────────────────────────────────────────────────
@@ -88,27 +116,15 @@ def _is_image_path(path: str) -> bool:
 
 @cl.on_chat_start
 async def on_chat_start() -> None:
-    """Initialise a fresh pipeline for each user session."""
-    await cl.Message(
-        content="_⚙️ Initialising agentY pipeline — this may take a moment…_",
-        author="system",
-    ).send()
-
-    try:
-        pipeline = create_pipeline()
-    except Exception as exc:
+    """Store the shared pipeline in the user session and greet the user."""
+    if _pipeline is None:
         await cl.Message(
-            content=f"❌ Failed to create pipeline:\n```\n{exc}\n```",
+            content=f"❌ Failed to create pipeline:\n```\n{_pipeline_exc}\n```",
             author="system",
         ).send()
         return
 
-    cl.user_session.set("pipeline", pipeline)
-    await cl.Message(
-        content="✅ **agentY** is ready! Describe what you'd like to create or edit. "
-                "You can attach images directly to your message.",
-        author="system",
-    ).send()
+    cl.user_session.set("pipeline", _pipeline)
 
 
 @cl.on_message
@@ -156,6 +172,47 @@ async def on_message(message: cl.Message) -> None:
 
     try:
         async for event in pipeline.stream_async(content):
+            # ── QA failure from a new_planned_request step ────────────────
+            if isinstance(event, dict) and event.get("qa_fail"):
+                await response_msg.update()
+
+                # Send images produced by the failed step.
+                image_paths_from_event: list[str] = event.get("image_paths", [])
+                new_qa_images = [
+                    p for p in image_paths_from_event
+                    if p not in sent_paths and os.path.isfile(p) and _is_image_path(p)
+                ]
+                if new_qa_images:
+                    elements = [
+                        cl.Image(path=p, name=Path(p).name, display="inline")
+                        for p in new_qa_images
+                    ]
+                    await cl.Message(
+                        content=f"🖼️ **Output from failed step ({len(new_qa_images)} image(s)):**",
+                        elements=elements,
+                    ).send()
+                    sent_paths.update(new_qa_images)
+
+                # Build a human-readable verdict summary.
+                fail_details: list[dict] = event.get("fail_details", [])
+                verdict_lines = "\n".join(
+                    f"- `{Path(d['path']).name}`: {d['verdict']}"
+                    for d in fail_details
+                )
+
+                await cl.Message(
+                    content=(
+                        "⚠️ **QA check failed for this step.**\n\n"
+                        + (verdict_lines + "\n\n" if verdict_lines else "")
+                        + "Remaining plan steps have been skipped.\n\n"
+                        "Reply **continue** to proceed with the next steps anyway, "
+                        "or describe what should be changed."
+                    ),
+                    author="system",
+                ).send()
+                break  # stop consuming the generator — plan is paused
+
+            # ── Normal streaming chunk ─────────────────────────────────────
             chunk: str = ""
             if isinstance(event, dict):
                 chunk = event.get("data", "") or ""
