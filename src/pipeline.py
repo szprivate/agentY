@@ -372,6 +372,8 @@ class Pipeline:
 
         self._last_brainbriefing_json = raw_json
         brain_prompt = self._build_brain_prompt(raw_json)
+        # New request → discard prior history entirely to save tokens.
+        self._brain.messages.clear()
         self._ensure_clean_history()
         brain_response = str(self._brain(brain_prompt))
         # Executor handoff: Brain signals the assembled workflow(s) are ready
@@ -510,6 +512,8 @@ class Pipeline:
             return
 
         # Stage 2 – Brain (streamed, with optional ComfyUI interrupt handling)
+        # New request → discard prior history entirely to save tokens.
+        self._brain.messages.clear()
         if self._verbose:
             print("[pipeline:stream] Stage 2 – Brain streaming …")
             yield {"data": "\n_[pipeline:stream] Stage 2 – Brain streaming …_"}
@@ -970,19 +974,24 @@ class Pipeline:
 
     @staticmethod
     def _sanitize_messages(messages: list[dict]) -> list[dict]:
-        """Ensure *messages* don't start with orphaned ``toolResult`` blocks.
+        """Ensure *messages* don't contain orphaned ``toolResult`` / ``toolUse`` blocks.
 
-        The Anthropic API requires every ``tool_result`` content block to have
-        a corresponding ``tool_use`` block in the immediately preceding
-        assistant message.  When we slice message history (e.g. fallback
-        ``messages[-4:]``), the slice may begin with a ``user`` message
-        carrying ``toolResult`` blocks whose matching ``toolUse`` was in an
-        earlier (now-discarded) assistant message.
+        The Anthropic API requires:
+        - Every ``tool_result`` content block to have a corresponding ``tool_use``
+          block in the immediately preceding assistant message.
+        - Every ``tool_use`` block in an assistant message to be followed by a
+          user message containing the matching ``tool_result`` blocks.
 
-        This helper trims leading messages until the first message no longer
-        contains orphaned ``toolResult`` (or ``toolUse`` without a following
-        ``toolResult``) blocks.
+        This helper trims messages from both ends:
+        - **Leading**: removes user messages whose first content block is a
+          ``toolResult`` with no preceding ``toolUse``, and assistant messages
+          whose ``toolUse`` has no following ``toolResult``.
+        - **Trailing**: removes assistant messages that end with unresolved
+          ``toolUse`` blocks (i.e. no following user message with ``toolResult``).
+          This is the main cause of HTTP 400 errors when a session is interrupted
+          mid-tool-call and the same brain agent is reused for the next session.
         """
+        # ── Trim leading orphaned toolResult / unresolved toolUse ────────────
         while messages:
             first = messages[0]
             content = first.get("content", [])
@@ -1007,6 +1016,25 @@ class Pipeline:
                         messages = messages[1:]
                         continue
             break
+
+        # ── Trim trailing unresolved toolUse (causes HTTP 400 on next call) ──
+        # If the last message is an assistant message that contains toolUse
+        # blocks, Anthropic expects a following user message with toolResult.
+        # When the session was interrupted before that result arrived, the next
+        # call will be rejected.  Remove such trailing assistant messages so the
+        # new user prompt can be appended cleanly.
+        while messages:
+            last = messages[-1]
+            last_content = last.get("content", [])
+            if last.get("role") == "assistant" and isinstance(last_content, list):
+                has_tool_use = any(
+                    isinstance(b, dict) and "toolUse" in b for b in last_content
+                )
+                if has_tool_use:
+                    messages = messages[:-1]
+                    continue
+            break
+
         return messages
 
     async def _compress_brain_history(self, extra_output_paths: list[str] | None = None) -> None:

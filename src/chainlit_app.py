@@ -124,6 +124,14 @@ async def on_chat_start() -> None:
         ).send()
         return
 
+    # Reset the brain agent's conversation history so each new Chainlit
+    # session starts with a clean slate.  Without this, any stale tool-use
+    # blocks left over from a previous (possibly crashed) session are
+    # forwarded to the Anthropic API and trigger HTTP 400 errors.
+    brain = getattr(_pipeline, "_brain", None)
+    if brain is not None and hasattr(brain, "messages"):
+        brain.messages.clear()
+
     cl.user_session.set("pipeline", _pipeline)
 
 
