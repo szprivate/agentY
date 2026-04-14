@@ -10,7 +10,7 @@ An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanony
 - **Image & video generation** — Flux, WAN2.1/2.2, Qwen, HunyuanVideo, and many other models.
 - **Image editing** — reference-based editing, inpainting, upscaling, and more.
 - **Multi-stage pipeline** — Triage routes requests; a lightweight Researcher (Ollama by default) resolves templates, model paths, and sampler settings; the Brain (Claude by default) assembles the workflow, executes it, and runs vision QA.
-- **Persistent chat history** — Chainlit SQLAlchemy datalayer stores conversation threads and messages in PostgreSQL.
+- **Persistent chat history** — Chainlit SQLAlchemy datalayer stores conversation threads and messages in PostgreSQL; uploaded files are persisted to a local MinIO S3 bucket.
 - **FAISS memory** — long-term memory via mem0 + local Ollama embeddings (`nomic-embed-text`).
 - **Hugging Face model management** — search, check local availability, and download models on demand.
 - **Chainlit web GUI** — interact via a browser-based chat UI; images and videos are delivered inline.
@@ -27,6 +27,7 @@ An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanony
 - A running **ComfyUI** instance (default: `http://127.0.0.1:8188`)
 - An **Anthropic API key** (for Claude) _and/or_ a local **Ollama** installation
 - **PostgreSQL** — required for the Chainlit datalayer (chat history persistence)
+- **Docker** — used to run PostgreSQL and MinIO via `docker-compose.yml` (or point to existing instances)
 - (Optional) Slack app credentials for Slack integration
 
 ---
@@ -74,7 +75,39 @@ Or point `DATABASE_URL` at any existing PostgreSQL instance you already have run
 
 Chainlit will create its tables automatically on first launch when `DATABASE_URL` is set.
 
-### 4. Configure secrets
+### 4. Set up MinIO (file storage)
+
+Uploaded files (images attached in chat) are persisted to **MinIO**, an S3-compatible object store that runs locally in Docker. The `docker-compose.yml` ships ready to use.
+
+**Start MinIO with Docker Compose:**
+
+```bash
+docker compose up -d minio createbuckets
+```
+
+This starts two short-lived services:
+
+| Service | Purpose |
+|---|---|
+| `minio` | S3-compatible API on port `9000`, web console on port `9001` |
+| `createbuckets` | One-shot init container that creates the `chainlit` bucket on first run |
+
+**Web console:** open [http://localhost:9001](http://localhost:9001) and log in with `minioadmin` / `minioadmin`.
+
+Default credentials (can be overridden with env vars — see step 5):
+
+| Env var | Default |
+|---|---|
+| `MINIO_ENDPOINT_URL` | `http://localhost:9000` |
+| `MINIO_ACCESS_KEY` | `minioadmin` |
+| `MINIO_SECRET_KEY` | `minioadmin` |
+| `MINIO_BUCKET` | `chainlit` |
+
+> **`run_agent.ps1` handles this automatically.** When Docker is available the script runs `docker compose up -d minio createbuckets` before launching Chainlit, so you normally don't need to start MinIO manually.
+
+---
+
+### 5. Configure secrets
 
 Copy the example env file and fill in your values:
 
@@ -104,6 +137,12 @@ CHAINLIT_PASSWORD=yourpassword
 # Chainlit auth secret — generate once with: chainlit create-secret
 CHAINLIT_AUTH_SECRET="your-generated-secret"
 
+# MinIO file storage (optional — defaults match docker-compose.yml)
+# MINIO_ENDPOINT_URL=http://localhost:9000
+# MINIO_ACCESS_KEY=minioadmin
+# MINIO_SECRET_KEY=minioadmin
+# MINIO_BUCKET=chainlit
+
 # Slack integration (optional)
 SLACK_APP_TOKEN=xapp-...
 SLACK_BOT_TOKEN=xoxb-...
@@ -118,7 +157,7 @@ chainlit create-secret
 
 Paste the output into `CHAINLIT_AUTH_SECRET` in your `.env`.
 
-### 5. Configure defaults
+### 6. Configure defaults
 
 Edit `config/settings.json` to point to your ComfyUI instance and set default LLMs:
 
@@ -245,7 +284,9 @@ You can attach images directly in the chat — they are forwarded to ComfyUI as 
 
 ### Datalayer (chat persistence)
 
-When `DATABASE_URL` is set, Chainlit automatically persists all conversation threads, messages, and uploaded files to PostgreSQL via `SQLAlchemyDataLayer`. Previous conversations are accessible from the sidebar in the Chainlit UI. Without `DATABASE_URL`, the app still works but history is not retained between restarts.
+When `DATABASE_URL` is set, Chainlit persists all conversation threads and messages to PostgreSQL via `SQLAlchemyDataLayer`. Uploaded files (images, etc.) are stored in **MinIO** via an S3-compatible storage client — both services are started automatically by `run_agent.ps1` when Docker is available.
+
+Previous conversations are accessible from the sidebar. Without `DATABASE_URL` the app still works but history is not retained between restarts. Without MinIO, file attachments are not persisted across sessions.
 
 ---
 

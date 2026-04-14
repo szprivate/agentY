@@ -107,6 +107,39 @@ try {
         }
     }
 
+    # ── Start MinIO (docker-compose) ─────────────────────────────────────────
+    $dockerAvailable = $null
+    try { $dockerAvailable = Get-Command docker -ErrorAction Stop } catch {}
+
+    if ($dockerAvailable) {
+        $composeFile = Join-Path $ProjectRoot "docker-compose.yml"
+        if (Test-Path $composeFile) {
+            Write-Host "[run_agent] Starting MinIO storage service..." -ForegroundColor Cyan
+            # Use 'docker compose' (v2 plugin) with fallback to 'docker-compose' (v1 standalone)
+            $usePluginCompose = $false
+            try {
+                docker compose version 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) { $usePluginCompose = $true }
+            } catch {}
+
+            if ($usePluginCompose) {
+                docker compose -f $composeFile up -d minio createbuckets 2>&1 | Write-Host
+            } else {
+                docker-compose -f $composeFile up -d minio createbuckets 2>&1 | Write-Host
+            }
+
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "[run_agent] MinIO ready  ->  API: http://localhost:9000  Console: http://localhost:9001" -ForegroundColor Green
+            } else {
+                Write-Host "[run_agent] WARNING: docker-compose returned a non-zero exit code. Continuing anyway..." -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host "[run_agent] docker-compose.yml not found - skipping MinIO startup." -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "[run_agent] Docker not found - skipping MinIO startup. File uploads will not persist." -ForegroundColor Yellow
+    }
+
     # Build chainlit arguments
     $ChainlitArgs = @("run", "src/chainlit_app.py", "--port", $Port)
     if ($Watch) { $ChainlitArgs += "-w" }
