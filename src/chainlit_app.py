@@ -41,6 +41,7 @@ except Exception as _exc:  # pragma: no cover - non-critical init
 
 from src.pipeline import create_pipeline
 from src.utils.costs import compute_cost_from_usage
+from src.utils.models import AgentSession
 from src.utils.triage import triage as _run_triage, route as _route_intent
 
 
@@ -167,6 +168,30 @@ def _is_image_path(path: str) -> bool:
 
 # ── Chainlit lifecycle ────────────────────────────────────────────────────────
 
+def _reset_pipeline_state(pipeline) -> None:
+    """Wipe all per-conversation state from the shared pipeline singleton.
+
+    Called whenever Chainlit starts or resumes a thread so that no history
+    from a previous chat leaks into the new one.  Clears:
+    - brain.messages         – in-memory LLM conversation history
+    - pipeline._session      – AgentSession (chat_summaries, output paths, …)
+    - pipeline._last_brainbriefing_json – cached researcher output
+    """
+    brain = getattr(pipeline, "_brain", None)
+    if brain is not None and hasattr(brain, "messages"):
+        brain.messages.clear()
+
+    # Reset the AgentSession so triage no longer sees stale chat_summaries
+    # from the previous thread, which would cause wrong follow-up routing.
+    existing_session = getattr(pipeline, "_session", None)
+    session_id = getattr(existing_session, "session_id", "default") if existing_session else "default"
+    pipeline._session = AgentSession(session_id=session_id)  # noqa: SLF001
+
+    # Clear the cached researcher JSON so the brain never inherits a
+    # brainbriefing from an earlier thread.
+    pipeline._last_brainbriefing_json = None  # noqa: SLF001
+
+
 @cl.on_chat_start
 async def on_chat_start() -> None:
     """Store the shared pipeline in the user session and greet the user."""
@@ -177,13 +202,26 @@ async def on_chat_start() -> None:
         ).send()
         return
 
-    # Reset the brain agent's conversation history so each new Chainlit
-    # session starts with a clean slate.  Without this, any stale tool-use
-    # blocks left over from a previous (possibly crashed) session are
-    # forwarded to the Anthropic API and trigger HTTP 400 errors.
-    brain = getattr(_pipeline, "_brain", None)
-    if brain is not None and hasattr(brain, "messages"):
-        brain.messages.clear()
+    # Reset all per-conversation state so each new thread starts clean.
+    _reset_pipeline_state(_pipeline)
+
+    cl.user_session.set("pipeline", _pipeline)
+    cl.user_session.set("awaiting_answer", False)
+
+
+@cl.on_chat_resume
+async def on_chat_resume(thread) -> None:  # noqa: ARG001
+    """Called when the user navigates to an existing thread from the sidebar.
+
+    Because the pipeline is a module-level singleton it cannot hold state for
+    multiple threads simultaneously.  Reset everything to a clean slate so the
+    resumed thread starts fresh rather than inheriting context from whatever
+    was last active.
+    """
+    if _pipeline is None:
+        return
+
+    _reset_pipeline_state(_pipeline)
 
     cl.user_session.set("pipeline", _pipeline)
     cl.user_session.set("awaiting_answer", False)
@@ -206,9 +244,7 @@ async def on_message(message: cl.Message) -> None:
             return
         cl.user_session.set("pipeline", new_pipeline)
         cl.user_session.set("awaiting_answer", False)
-        brain = getattr(new_pipeline, "_brain", None)
-        if brain is not None and hasattr(brain, "messages"):
-            brain.messages.clear()
+        _reset_pipeline_state(new_pipeline)
         await cl.Message(content="✅ Agent restarted successfully.", author="system").send()
         return
 
