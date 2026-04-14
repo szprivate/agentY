@@ -13,6 +13,7 @@ Classify the incoming user message into **exactly one** of the following intents
 
 ## Typical examples of user message and matching intents
 - "Create an image of a lumber jack" -> `new_request`
+- "Make a character sheet from this image" -> `new_request`
 - "Generate a portrait of a woman, then upscale it to 4K, then create a short video from it" -> `new_planned_request`
 - "First create an image of a futuristic city, then make a video from it" -> `new_planned_request`
 - "Generate 3 different landscapes, upscale each one and then turn them into a video slideshow" -> `new_planned_request`

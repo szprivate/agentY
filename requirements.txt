@@ -11,3 +11,6 @@ chainlit>=2.0.0
 asyncpg>=0.31.0
 psycopg2>=2.9.11
 sqlalchemy>=2.0.49
+# Local FAISS memory layer (mem0 + nomic-embed-text via Ollama)
+mem0ai>=1.0.0
+faiss-cpu>=1.7.0

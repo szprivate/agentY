@@ -178,6 +178,7 @@ _SYSTEM_PROMPT_FILE: dict[str, str] = {
     "brain": "system_prompt.brain",
     "triage": "system_prompt.triage",
     "planner": "system_prompt.planner",
+    "learnings": "system_prompt.learnings",
 }
 
 
@@ -781,4 +782,69 @@ def create_brain_agent(
         **kwargs,
     )
 
+
+def create_learnings_agent(
+    llm: str | None = None,
+    ollama_model: str | None = None,
+    anthropic_model: str | None = None,
+    **kwargs,
+) -> Agent:
+    """Create the Learnings agent — a stateless pattern-analyser.
+
+    The Learnings agent receives a Brain session transcript and extracts
+    concise actionable learnings from repeated failure→fix patterns.
+    It is typically invoked asynchronously after tasks where the Brain used
+    more than 5 tool calls.
+
+    Reads ``llm.pipeline.learnings`` from settings.json (format: ``'provider,model'``).
+    Env var ``LEARNINGS_LLM`` overrides the full setting.
+    Defaults to ``'ollama,qwen3.5:9b'``.
+
+    Args:
+        llm: ``'ollama'`` or ``'claude'``. Falls back to ``LEARNINGS_LLM`` env var.
+        ollama_model: Ollama model override.
+        anthropic_model: Anthropic model override.
+        **kwargs: Forwarded to the Strands Agent constructor.
+    """
+    if ollama_model and llm is None:
+        llm = "ollama"
+
+    _raw = str(_cfg("LEARNINGS_LLM", "pipeline", "learnings", default="ollama,qwen3.5:9b"))
+    _settings_llm, _settings_model = _parse_llm_setting(_raw)
+    resolved_llm = llm or _settings_llm or "ollama"
+
+    if resolved_llm == "ollama":
+        resolved_ollama = (
+            ollama_model
+            or os.environ.get("LEARNINGS_OLLAMA_MODEL")
+            or _settings_model
+            or "qwen3.5:9b"
+        )
+        resolved_anthropic = (
+            anthropic_model
+            or os.environ.get("LEARNINGS_ANTHROPIC_MODEL")
+            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
+        )
+    else:  # claude
+        resolved_anthropic = (
+            anthropic_model
+            or os.environ.get("LEARNINGS_ANTHROPIC_MODEL")
+            or _settings_model
+            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
+        )
+        resolved_ollama = ollama_model or "qwen3.5:9b"
+
+    system_prompt = _load_system_prompt("learnings")
+    agent = _make_agent(
+        role="learnings",
+        llm=resolved_llm,
+        system_prompt=system_prompt,
+        tools=[],
+        ollama_model=resolved_ollama,
+        anthropic_model=resolved_anthropic,
+        **kwargs,
+    )
+    # Learnings agent is single-turn and stateless.
+    agent.conversation_manager = SlidingWindowConversationManager(window_size=2)
+    return agent
 

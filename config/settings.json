@@ -21,6 +21,7 @@
       "brain": "claude,claude-haiku-4-5",
       "triage": "ollama,qwen3.5:9b",
       "planner": "ollama,qwen3.5:9b",
+      "learnings": "ollama,qwen3.5:9b",
       "llm_functions": "qwen3.5:9b",
       "executor_vision_model": "qwen3.5:9b"
     },

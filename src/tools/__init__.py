@@ -56,6 +56,7 @@ from src.tools.huggingface import (  # noqa: F401
 from src.tools.file_tools import read_text_file, write_text_file  # noqa: F401
 from src.tools.iterate import iterate  # noqa: F401
 from src.tools.shell import run_script  # noqa: F401
+from src.tools.memory_tools import memory_read, memory_write  # noqa: F401
 from strands_tools import file_read  # noqa: F401
 from strands_tools import calculator  # noqa: F401
 from strands_tools import stop  # noqa: F401
@@ -64,6 +65,7 @@ from strands_tools import stop  # noqa: F401
 # Info-agent tools – read-only; answers questions about capabilities/models/workflows.
 # ---------------------------------------------------------------------------
 INFO_TOOLS: list = [
+    memory_read,
     get_workflow_catalog,
     get_workflow_template,
     get_model_types,
@@ -91,6 +93,8 @@ RESEARCHER_TOOLS: list = [
     run_script,  # needed for skills (e.g. image-downsize)
     iterate,
     calculator,
+    memory_read,
+    memory_write,
     stop,
 ]
 
@@ -129,5 +133,8 @@ BRAIN_TOOLS: list = [
     file_read,
     read_text_file,
     write_text_file,
+    # Long-term memory (local FAISS + nomic-embed-text)
+    memory_read,
+    memory_write,
     stop,
 ]

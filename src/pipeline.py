@@ -35,6 +35,9 @@ from src.utils.models import AgentSession, ChatSummary, MessageIntent, TriageRes
 from src.utils.triage import triage as _triage, route as _route
 from src.utils.workflow_signal import clear_and_get as _get_workflow_signal
 from src.executor import execute_workflow as _execute_workflow, execute_workflows_batch as _execute_workflows_batch
+from src.utils.memory import format_memories, memory_add, memory_search
+from src.tools.memory_tools import set_session_id as _set_memory_session_id
+from src.utils.learnings import count_tool_calls, maybe_run_learnings
 
 
 # ---------------------------------------------------------------------------
@@ -274,6 +277,9 @@ class Pipeline:
         # Brainbriefing JSON from the most recent Researcher run; used by the
         # Executor for Vision QA comparison in follow-up / feedback-loop rounds.
         self._last_brainbriefing_json: str | None = None
+        # Bind the memory tools module-level session so memory_read / memory_write
+        # always operate on the correct per-session namespace.
+        _set_memory_session_id(session_id)
 
     def _should_skip_brain(self) -> bool:
         if self._skip_brain:
@@ -1050,10 +1056,21 @@ class Pipeline:
         appear in the Brain's message history (the executor runs outside the
         Brain loop).  They are injected into the summary so the next round
         can reference the generated outputs.
+
+        Before compressing, the message history is checked for repeated tool
+        calls.  If the Brain used more than 5 tool calls in this session the
+        learnings agent is started in a background thread to extract and
+        persist any actionable learnings.
         """
         messages = self._brain.messages
         if not messages:
             return
+
+        # ── Self-learning check (fire-and-forget background thread) ─────────
+        tool_call_count = count_tool_calls(messages)
+        if self._verbose:
+            print(f"[pipeline] Brain used {tool_call_count} tool call(s) in this session.")
+        maybe_run_learnings(messages, session_id=self._session.session_id)
 
         if self._verbose:
             msg_count = len(messages)
@@ -1155,6 +1172,67 @@ class Pipeline:
                 status=status,
             )
         )
+        # Auto-persist a memory when a request completed with a known workflow so
+        # future sessions can recall template/model preferences.
+        if status == "completed" and raw_json:
+            self._auto_save_memory(user_text, raw_json)
+
+    # ── Memory helpers ───────────────────────────────────────────────── #
+
+    def _get_memory_context(self, user_text: str) -> str:
+        """Return a formatted memory block for *user_text*, or an empty string.
+
+        Searches the local FAISS store for facts relevant to the user\'s
+        current request and formats them as a Markdown section that can be
+        prepended to any agent prompt.
+        """
+        try:
+            results = memory_search(user_text, session_id=self._session.session_id, limit=5)
+            return format_memories(results)
+        except Exception as exc:
+            if self._verbose:
+                print(f"[memory] context retrieval error: {exc}")
+            return ""
+
+    def _auto_save_memory(self, user_text: str, raw_json: str) -> None:
+        """Distil a compact memory from a completed researcher→brain run.
+
+        Builds a brief, self-contained sentence from the task description and
+        selected template name, then calls ``memory_add`` so future sessions
+        can recall the user\'s workflow preferences.  Runs synchronously but
+        is entirely best-effort — any error is swallowed.
+        """
+        try:
+            data = json.loads(raw_json)
+            task_desc = data.get("task", {}).get("description", "")
+            template_name = data.get("template", {}).get("name") or ""
+            positive_prompt = data.get("prompt", {}).get("positive", "")
+            width = data.get("resolution_width")
+            height = data.get("resolution_height")
+
+            parts: list[str] = []
+            if task_desc:
+                parts.append(task_desc)
+            if template_name:
+                parts.append(f"using template '{template_name}'")
+            if width and height:
+                parts.append(f"at {width}x{height}")
+            if positive_prompt:
+                short_prompt = positive_prompt[:120].rstrip()
+                if len(positive_prompt) > 120:
+                    short_prompt += "…"
+                parts.append(f"| prompt: {short_prompt}")
+
+            if not parts:
+                return
+
+            memory_text = "User requested: " + ", ".join(parts) + "."
+            memory_add(memory_text, session_id=self._session.session_id)
+            if self._verbose:
+                print(f"[memory] Saved: {memory_text[:100]}")
+        except Exception as exc:
+            if self._verbose:
+                print(f"[memory] auto-save error: {exc}")
 
     _MAX_RESEARCHER_RETRIES = 2  # up to 2 correction rounds after the first attempt
 
@@ -1191,6 +1269,12 @@ class Pipeline:
 
             Resolve all fields and output the brainbriefing JSON.
         """).strip()
+
+        # Prepend relevant long-term memories so the Researcher can apply
+        # the user's past style preferences and template choices.
+        memory_ctx = self._get_memory_context(user_text)
+        if memory_ctx:
+            researcher_prompt_text = memory_ctx + "\n\n" + researcher_prompt_text
 
         # Always pass only the text prompt to the Researcher.
         # When user_input is a multimodal list, the text block already contains

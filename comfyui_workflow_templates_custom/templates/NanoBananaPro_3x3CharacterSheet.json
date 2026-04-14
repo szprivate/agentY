@@ -1,0 +1,74 @@
+{
+  "2": {
+    "inputs": {
+      "prompt": [
+        "5",
+        0
+      ],
+      "model": "gemini-2.5-pro",
+      "seed": 49610246996883,
+      "system_prompt": "You are an expert image generation prompt engineer. When a user describes an image, transform it into a vivid, optimized prompt for AI image generators (Midjourney, DALL·E, Stable Diffusion, Flux, or Firefly). Every prompt should address: subject and action, setting, lighting (the most impactful element), mood, art style or medium, color palette, composition/camera angle, and quality tags (e.g. 8K, sharp focus, octane render). Always deliver the final prompt in a code block for easy copying, offer a brief variation when useful, and use specific cinematic language over generic adjectives. \n",
+      "images": [
+        "9",
+        0
+      ]
+    },
+    "class_type": "GeminiNode",
+    "_meta": {
+      "title": "Google Gemini"
+    }
+  },
+  "5": {
+    "inputs": {
+      "value": "Create a prompt for a character sheet, that is arranged as a evenly split 3x3 grid, 9 images in total. The single images should contain these poses:\nStanding tall, one hand on hip, chin slightly lifted, weight shifted to one leg — shot from a low angle looking up, elongating the figure dramatically\nWalking forward mid-stride, shoulders back, one arm swinging naturally — straight-on front view, eye level, dynamic forward motion\nSide profile stand, arms relaxed, head turned toward camera over shoulder — pure 90° side profile, camera at shoulder height\nSeated on the floor, legs extended to one side, one arm propped up for support — high overhead bird's-eye view, looking straight down\nStanding with both hands in pockets, slight contrapposto, gaze forward — slight 3/4 angle from the left, eye level, relaxed and natural\nLeaning forward slightly at the waist, hands clasped in front, confident stare — extreme close crop from the waist up, low camera tilted upward\nBack to viewer, head turned 3/4 over one shoulder, one hand resting on hip — rear 3/4 angle from behind-right, eye level\nArms crossed high on chest, feet planted wide, strong power stance — wide low-angle shot, camera at knee height looking up, imposing and strong\nOne leg forward in a subtle lunge, arms loosely at sides, elongated neck — high diagonal angle from above-left, 45° down toward the figure\n\nEach of the 9 images should show the model from a different camera angle: Front view, half turn, side profile, back view, angles from a high camera position, angles from a low camera position. \nFull-body shots, all white background.\n\nShow each of the 9 poses only a single time, NO DUPLICATIONS!\nImportant: the face should be taken from image 2! Vary the facial expressions: serious, laughing, smiling, etc.  Each image should have it's own facial expression. Also, lighting and background need to be the same as in image 1.\n\nOnly export the pure prompt itself, no additional introduction, no formatting at all, just plain text.\n\n"
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "prompt grid body"
+    }
+  },
+  "6": {
+    "inputs": {
+      "prompt": [
+        "2",
+        0
+      ],
+      "model": "gemini-3-pro-image-preview",
+      "seed": 227641167550690,
+      "aspect_ratio": "16:9",
+      "resolution": "2K",
+      "response_modalities": "IMAGE+TEXT",
+      "system_prompt": "You are an expert image-generation engine. You must ALWAYS produce an image.\nInterpret all user input—regardless of format, intent, or abstraction—as literal visual directives for image composition.\nIf a prompt is conversational or lacks specific visual details, you must creatively invent a concrete visual scenario that depicts the concept.\nPrioritize generating the visual representation above any text, formatting, or conversational requests.",
+      "images": [
+        "9",
+        0
+      ]
+    },
+    "class_type": "GeminiImage2Node",
+    "_meta": {
+      "title": "Nano Banana Pro (Google Gemini Image)"
+    }
+  },
+  "8": {
+    "inputs": {
+      "filename_prefix": "./SLX_0200/keyframes/qwen_",
+      "images": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "9": {
+    "inputs": {
+      "image": "2875b7cd-5300-462d-8db2-59aac56995c1.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  }
+}

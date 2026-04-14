@@ -41,6 +41,7 @@ except Exception as _exc:  # pragma: no cover - non-critical init
 
 from src.pipeline import create_pipeline
 from src.utils.costs import compute_cost_from_usage
+from src.utils.triage import triage as _run_triage, route as _route_intent
 
 # ── Module-level pipeline singleton ──────────────────────────────────────────
 try:
@@ -133,11 +134,32 @@ async def on_chat_start() -> None:
         brain.messages.clear()
 
     cl.user_session.set("pipeline", _pipeline)
+    cl.user_session.set("awaiting_answer", False)
 
 
 @cl.on_message
 async def on_message(message: cl.Message) -> None:
     """Handle an incoming user message, optionally with image attachments."""
+    # ── Built-in commands ─────────────────────────────────────────────────
+    _text = (message.content or "").strip()
+    if _text.lower() in {"restart", "/restart"}:
+        await cl.Message(content="🔄 Restarting agent…", author="system").send()
+        try:
+            new_pipeline = create_pipeline()
+        except Exception as _exc:
+            await cl.Message(
+                content=f"❌ Failed to restart pipeline:\n```\n{_exc}\n```",
+                author="system",
+            ).send()
+            return
+        cl.user_session.set("pipeline", new_pipeline)
+        cl.user_session.set("awaiting_answer", False)
+        brain = getattr(new_pipeline, "_brain", None)
+        if brain is not None and hasattr(brain, "messages"):
+            brain.messages.clear()
+        await cl.Message(content="✅ Agent restarted successfully.", author="system").send()
+        return
+
     pipeline = cl.user_session.get("pipeline")
     if pipeline is None:
         await cl.Message(
@@ -145,6 +167,30 @@ async def on_message(message: cl.Message) -> None:
             author="system",
         ).send()
         return
+
+    # ── Context continuation: triage-aware history management ─────────────
+    # If the agent posed a question in its last response, check whether the
+    # user is answering it (follow-up) or starting a new request entirely.
+    # For follow-ups the pipeline keeps brain.messages intact automatically;
+    # for new requests we clear it here as well so the state is consistent.
+    _awaiting_answer: bool = cl.user_session.get("awaiting_answer", False)
+    if _awaiting_answer:
+        _triage_agent = getattr(pipeline, "_triage_agent", None)
+        _pip_session  = getattr(pipeline, "_session",      None)
+        if _triage_agent is not None and _pip_session is not None:
+            try:
+                _tr      = await _run_triage(_text, _pip_session, {}, _triage_agent)
+                _handler = _route_intent(_tr)
+                if _handler in ("researcher", "planner"):
+                    # User switched to a new topic → wipe stale history now.
+                    # The pipeline will also clear it, but doing it here keeps
+                    # the Chainlit layer's view of the session self-consistent.
+                    _brain = getattr(pipeline, "_brain", None)
+                    if _brain is not None and hasattr(_brain, "messages"):
+                        _brain.messages.clear()
+                    cl.user_session.set("awaiting_answer", False)
+            except Exception as _tr_exc:
+                print(f"[chainlit] Triage continuation check failed: {_tr_exc}")
 
     # ── Collect uploaded image paths ──────────────────────────────────────
     image_paths: list[str] = []
@@ -185,6 +231,7 @@ async def on_message(message: cl.Message) -> None:
     _STREAM_FLUSH_CHARS = 12
     _token_buf: list[str] = []
     _token_buf_len: int = 0
+    _full_response_parts: list[str] = []  # accumulates all chunks for post-response analysis
 
     async def _flush_token_buf() -> None:
         nonlocal _token_buf, _token_buf_len
@@ -242,6 +289,7 @@ async def on_message(message: cl.Message) -> None:
                 chunk = event.get("data", "") or ""
             if chunk:
                 _token_buf.append(chunk)
+                _full_response_parts.append(chunk)
                 _token_buf_len += len(chunk)
                 # Flush when buffer is full enough, or immediately on lines
                 # that signal image saves so the UI updates promptly.
@@ -256,6 +304,13 @@ async def on_message(message: cl.Message) -> None:
         await response_msg.stream_token(f"\n\n❌ Pipeline error: {exc}")
 
     await response_msg.update()
+
+    # ── Update awaiting_answer for the next turn ──────────────────────────
+    # If the brain's response contains a question in its closing section the
+    # next user message is likely an answer rather than a brand-new request.
+    _full_response = "".join(_full_response_parts)
+    _tail = _full_response[-300:] if len(_full_response) > 300 else _full_response
+    cl.user_session.set("awaiting_answer", "?" in _tail)
 
     # Final flush — catches any images that arrived with the last event.
     await _flush_new_images()
