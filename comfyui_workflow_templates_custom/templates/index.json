@@ -141,5 +141,47 @@
         }
       }
     ]
+  },
+  {
+    "templates": [
+      {
+        "name": "Wan22Vace_VID2VID",
+        "models": [
+          "wan_2.1_vae",
+          "umt5_xxl_fp8_e4m3fn_scaled",
+          "lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank256_bf16"
+        ],
+        "io": {
+          "inputs": [
+            {
+              "nodeId": 995,
+              "nodeType": "LoadImage",
+              "file": "2875b7cd-5300-462d-8db2-59aac56995c1.png",
+              "mediaType": "image"
+            },
+            {
+              "nodeId": 996,
+              "nodeType": "LoadImage",
+              "file": "2875b7cd-5300-462d-8db2-59aac56995c1.png",
+              "mediaType": "image"
+            },
+            {
+              "nodeId": 997,
+              "nodeType": "LoadVideo",
+              "file": "",
+              "mediaType": "video"
+            }
+          ],
+          "outputs": [
+            {
+              "nodeId": 999,
+              "nodeType": "SaveVideo",
+              "file": "",
+              "mediaType": "video"
+            }
+          ]
+        }
+      }
+    ]
   }
 ]

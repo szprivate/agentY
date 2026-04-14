@@ -39,5 +39,19 @@ $exit = $LASTEXITCODE
 Remove-Item -Force -ErrorAction SilentlyContinue $tmp
 if ($exit -ne 0) {
     Write-Error "remove_workflow.ps1: python exited with code $exit"
+} else {
+    # Update config/workflow_templates.json — remove entry with exact stem match
+    $templatesJson = Join-Path $ScriptDir "config\workflow_templates.json"
+    if (Test-Path $templatesJson) {
+        $obj = Get-Content -Raw $templatesJson | ConvertFrom-Json
+        if ($obj.PSObject.Properties.Name -contains $Name) {
+            $obj.PSObject.Properties.Remove($Name)
+            $json = ($obj | ConvertTo-Json -Depth 5) + "`n"
+            [System.IO.File]::WriteAllText($templatesJson, $json, (New-Object System.Text.UTF8Encoding $false))
+            Write-Host "Removed '$Name' from config/workflow_templates.json"
+        } else {
+            Write-Host "Entry '$Name' not found in config/workflow_templates.json"
+        }
+    }
 }
 exit $exit
