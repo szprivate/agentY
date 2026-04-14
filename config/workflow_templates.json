@@ -1,7 +1,5 @@
 {
     "api_bytedance_seedream_5_0_lite_image_edit":  "Upload an image and a text prompt to edit it. Generate a modified image where the details align with your instructions.",
-    "api_google_nano_banana2_image_edit":  "Upload an image and a text prompt to edit it. Generate a new image that modifies the original based on your instructions, maintaining subject consistency and high visual fidelity.",
-    "api_nano_banana_pro":  "Nano-banana Pro (Gemini 3.0 Pro Image) - Studio-quality 4K image generation and editing with enhanced text rendering and character consistency.",
     "api_ideogram_v3_t2i":  "Generate professional-quality images with excellent prompt alignment, photorealism, and text rendering using Ideogram V3.",
     "api_kling_o3_flf2v":  "Upload reference images or specify start and end frames. Generate a video with precise semantic control, longer duration, and improved narrative coherence.",
     "api_kling_o3_i2v":  "Upload a reference image and optional audio or text prompt. Generate a character-consistent video with native audio output and precise storyboard control.",
@@ -37,5 +35,7 @@
     "qwen2511_imageEdit":  "Image Editing workflow using QWEN-Image-Edit-2511-Lightning model. Upload up to three images. Supports control using depth and canny edge images as inputs.",
     "styletransfer_NanoBananaPro":  "Style Transfer workflow using Nano-Banana Pro. Upload a video as layout reference (will take first frame), an image as style reference, and several images for the look of any hero elements. It will then transfer the look of the style reference to the first frame of the video, and will also integrate the references hero elements.",
     "NanoBananaPro_3x3CharacterSheet":  "Nano Banana Pro workflow to generate a 3x3 character sheet. Upload a single image for the character, the template will then create a prompt for an LLM call, which will in turn generate a prompt for the character sheet.",
-    "Wan22Vace_VID2VID":  "Wan 2.2 VACE video-to-video workflow. Upload a video and two reference images, the workflow will then generate a new video that applies the style of the reference images to the input video while maintaining motion consistency, using the two images as start and end keyframes. The input video needds to be either a depth, canny edge or pose control video."
+    "Wan22Vace_VID2VID":  "Wan 2.2 VACE video-to-video workflow. Upload a video and two reference images, the workflow will then generate a new video that applies the style of the reference images to the input video while maintaining motion consistency, using the two images as start and end keyframes. The input video needds to be either a depth, canny edge or pose control video.",
+    "imageEdit_nano_banana_pro":  "Nano-banana Pro (Gemini 3.0 Pro Image) - Studio-quality 4K image generation and editing with enhanced text rendering and character consistency.",
+    "imageEdit_nano_banana2":  "Upload an image and a text prompt to edit it. Generate a new image that modifies the original based on your instructions, maintaining subject consistency and high visual fidelity."
 }
