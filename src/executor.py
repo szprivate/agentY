@@ -105,29 +105,11 @@ def _submit_workflow(workflow_path: str) -> str:
     if client.api_key:
         payload["extra_data"] = {"api_key_comfy_org": client.api_key}
 
-    # Best-effort: ask the Ollama server to unload the vision/LLM model
-    # before submitting large workflows to ComfyUI so GPUs can be freed.
+    # Best-effort: unload Ollama models from VRAM before submitting large
+    # workflows to ComfyUI so the GPU can be freed for image generation.
     try:
-        from src.utils.llm_functions import LLMFunctions
-        import httpx
-
-        llm_vis = LLMFunctions.for_vision()
-        model = llm_vis.model
-        host = llm_vis.host.rstrip("/")
-
-        # Try several plausible Ollama unload endpoints; ignore failures.
-        unload_paths = [
-            f"{host}/api/models/{model}:unload",
-            f"{host}/api/models/{model}:stop",
-            f"{host}/api/models/{model}/unload",
-        ]
-        for url in unload_paths:
-            try:
-                httpx.post(url, timeout=5.0)
-                logger.info("executor: requested Ollama unload -> %s", url)
-                break
-            except Exception:
-                continue
+        from src.tools.agent_control import unload_ollama_models
+        unload_ollama_models()
     except Exception:
         # Non-fatal: proceed with submission even if unload attempt fails.
         logger.debug("executor: Ollama unload attempt skipped/failed")

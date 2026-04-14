@@ -248,6 +248,29 @@ async def on_message(message: cl.Message) -> None:
         await cl.Message(content="✅ Agent restarted successfully.", author="system").send()
         return
 
+    if _text.lower() in {"unload", "/unload", "unload models", "!unload"}:
+        await cl.Message(content="⏏️ Unloading Ollama models from VRAM…", author="system").send()
+        try:
+            from src.tools.agent_control import unload_ollama_models
+            unloaded = unload_ollama_models()
+            if unloaded:
+                names = ", ".join(f"`{m}`" for m in unloaded)
+                await cl.Message(
+                    content=f"✅ Unloaded: {names}",
+                    author="system",
+                ).send()
+            else:
+                await cl.Message(
+                    content="⚠️ No models were unloaded (Ollama unreachable or no models loaded).",
+                    author="system",
+                ).send()
+        except Exception as _exc:
+            await cl.Message(
+                content=f"❌ Unload failed:\n```\n{_exc}\n```",
+                author="system",
+            ).send()
+        return
+
     pipeline = cl.user_session.get("pipeline")
     if pipeline is None:
         await cl.Message(

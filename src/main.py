@@ -32,7 +32,7 @@ load_dotenv(os.path.join(_project_root, ".env"))
 
 from src.pipeline import create_pipeline  # noqa: E402
 from src.utils.secrets import get_secret  # noqa: E402
-from src.tools.agent_control import is_restart_command, restart_process  # noqa: E402
+from src.tools.agent_control import is_restart_command, restart_process, is_unload_command, unload_ollama_models  # noqa: E402
 from src.utils.costs import compute_cost_from_usage  # noqa: E402
 
 
@@ -143,6 +143,14 @@ def main() -> None:
             print("[agentY] Restarting...")
             restart_process()
             break  # restart_process replaces the process; break is a safety net
+        if is_unload_command(user_input):
+            print("[agentY] Unloading Ollama models from VRAM...")
+            unloaded = unload_ollama_models()
+            if unloaded:
+                print(f"[agentY] Unloaded: {', '.join(unloaded)}")
+            else:
+                print("[agentY] No models were unloaded (Ollama unreachable or none loaded).")
+            continue
 
         response = agent(user_input)
         print(f"\nagentY: {response}\n")
