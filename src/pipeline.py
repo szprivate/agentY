@@ -498,11 +498,20 @@ class Pipeline:
             return
 
         # handler == "researcher" or "log_warning" → full Researcher → Brain flow
-        # Stage 1 – Researcher (synchronous; fast pattern-matching turn)
+        # Stage 1 – Researcher (streamed)
         if self._verbose:
             print("[pipeline:stream] Stage 1 – Researcher resolving spec …")
             yield {"data": "\n_[pipeline:stream] Stage 1 – Researcher resolving spec …_"}
-        raw_json, error, researcher_output = self._run_researcher(user_input)
+        raw_json: str | None = None
+        error: str | None = None
+        researcher_output: str = ""
+        async for _r_ev in self._arun_researcher(user_input):
+            if isinstance(_r_ev, dict) and "_researcher_done" in _r_ev:
+                raw_json = _r_ev["raw_json"]
+                error = _r_ev["error"]
+                researcher_output = _r_ev["researcher_output"]
+            else:
+                yield _r_ev
         if error:
             self._record_chat_summary(user_text, triage_result, status="error")
             yield {"data": error}
@@ -777,7 +786,14 @@ class Pipeline:
             if self._verbose:
                 print("[pipeline:stream] Planner fallback → researcher path")
                 yield {"data": "\n_[pipeline:stream] Planner fallback → researcher path_"}
-            raw_json, error, researcher_output = self._run_researcher(user_text)
+            raw_json = error = researcher_output = None
+            async for _r_ev in self._arun_researcher(user_text):
+                if isinstance(_r_ev, dict) and "_researcher_done" in _r_ev:
+                    raw_json = _r_ev["raw_json"]
+                    error = _r_ev["error"]
+                    researcher_output = _r_ev["researcher_output"]
+                else:
+                    yield _r_ev
             if error:
                 self._record_chat_summary(user_text, triage_result, status="error")
                 yield {"data": error}
@@ -825,7 +841,14 @@ class Pipeline:
                 print(f"\n[pipeline:stream] ── Plan step {idx + 1}/{total}: {description} ──")
                 yield {"data": f"\n_[pipeline:stream] ── Plan step {idx + 1}/{total}: {description} ──_"}
 
-            raw_json, error, researcher_output = self._run_researcher(step_req)
+            raw_json = error = researcher_output = None
+            async for _r_ev in self._arun_researcher(step_req):
+                if isinstance(_r_ev, dict) and "_researcher_done" in _r_ev:
+                    raw_json = _r_ev["raw_json"]
+                    error = _r_ev["error"]
+                    researcher_output = _r_ev["researcher_output"]
+                else:
+                    yield _r_ev
             if error:
                 yield {"data": f"\n❌ Step {idx + 1} failed: {error}"}
                 if self._verbose:
@@ -1235,6 +1258,102 @@ class Pipeline:
                 print(f"[memory] auto-save error: {exc}")
 
     _MAX_RESEARCHER_RETRIES = 2  # up to 2 correction rounds after the first attempt
+
+    async def _arun_researcher(self, user_input):
+        """Async-generator variant of _run_researcher.
+
+        Streams the Researcher's token output (including tool-use events) so
+        Chainlit can display it in real time.  Yields standard Strands event
+        dicts followed by a single sentinel::
+
+            {"_researcher_done": True, "raw_json": str|None,
+             "error": str|None, "researcher_output": str}
+
+        Callers must consume the stream, watch for the sentinel, then act on
+        its ``raw_json`` / ``error`` fields.
+        """
+        if isinstance(user_input, list):
+            text_parts = [block["text"] for block in user_input if "text" in block]
+            user_text = "\n".join(text_parts)
+        else:
+            user_text = str(user_input)
+
+        researcher_prompt_text = textwrap.dedent(f"""
+            User request:
+            {user_text}
+
+            Resolve all fields and output the brainbriefing JSON.
+        """).strip()
+
+        memory_ctx = self._get_memory_context(user_text)
+        if memory_ctx:
+            researcher_prompt_text = memory_ctx + "\n\n" + researcher_prompt_text
+
+        last_error: str | None = None
+
+        for attempt in range(1 + self._MAX_RESEARCHER_RETRIES):
+            if attempt == 0:
+                prompt = researcher_prompt_text
+            else:
+                if self._verbose:
+                    print(f"[pipeline] Researcher retry {attempt}/{self._MAX_RESEARCHER_RETRIES} …")
+                    yield {"data": f"\n_[pipeline] Researcher retry {attempt}/{self._MAX_RESEARCHER_RETRIES} …_"}
+                prompt = textwrap.dedent(f"""
+                    Your previous brainbriefing output failed JSON/schema validation:
+                    {last_error}
+
+                    Please output ONLY the corrected brainbriefing JSON with all
+                    required fields correctly typed. No prose, no markdown fences.
+                """).strip()
+
+            chunks: list[str] = []
+            async for event in self._researcher.stream_async(prompt):
+                if isinstance(event, dict):
+                    chunk = event.get("data", "")
+                    if chunk:
+                        chunks.append(chunk)
+                yield event
+
+            last_response = "".join(chunks)
+            label = "initial" if attempt == 0 else f"retry {attempt}"
+            if self._verbose:
+                print(f"[pipeline] Researcher finished ({label}). Extracting brainbriefing …")
+
+            raw_json = _extract_json(last_response)
+            if raw_json is None:
+                last_error = "No JSON object found in the output."
+                continue
+
+            try:
+                data = json.loads(raw_json)
+                briefing = BrainBriefing.model_validate(data)
+            except (json.JSONDecodeError, ValidationError) as exc:
+                last_error = str(exc)
+                if self._verbose:
+                    print(f"[pipeline] Researcher ({label}) validation failed: {last_error}")
+                continue
+
+            raw_json = briefing.model_dump_json(indent=2)
+            if self._verbose:
+                if attempt > 0:
+                    print(f"[pipeline] Brainbriefing recovered after {attempt} retry(ies).")
+                print(
+                    f"[pipeline] Brainbriefing OK ({label}) — "
+                    f"status={briefing.status}, task={briefing.task.description!r}, "
+                    f"template={briefing.template.name!r}"
+                )
+            yield {"_researcher_done": True, "raw_json": raw_json, "error": None, "researcher_output": raw_json}
+            return
+
+        yield {
+            "_researcher_done": True,
+            "raw_json": None,
+            "error": (
+                f"Brainbriefing validation failed after {1 + self._MAX_RESEARCHER_RETRIES} attempts: "
+                f"{last_error}"
+            ),
+            "researcher_output": "",
+        }
 
     def _run_researcher(self, user_input) -> tuple[str | None, str | None, str]:
         """Run the Researcher and return ``(raw_json, error_message, researcher_output)``.

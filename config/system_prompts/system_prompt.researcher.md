@@ -33,7 +33,7 @@ Execute every step. Stop on failure.
    - Include every input node as an entry in `input_nodes` in the brainbriefing JSON
 
 4. **Upload input images to ComfyUI** 
-   - for every input image in the user request, call `upload_image()` with base64 + filename to store the image in the ComfyUI input directory
+   - for every input image in the user request, ALWAYS call `upload_image()` with base64 + filename to store the image in the ComfyUI input directory
    - list the names of the uploaded images in the brainbriefing JSON under `input_images`
 
 5. **Positive prompt node** - identify the workflow node that receives the positive text prompt:

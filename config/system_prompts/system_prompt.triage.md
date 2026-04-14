@@ -25,6 +25,7 @@ Classify the incoming user message into **exactly one** of the following intents
 - "Replace objects in this image" -> `new_request`
 - "Can you make 5 versions of this image?" -> `new_request`
 - "Create a depth image from this image: [path_to_image or annotated_image]" -> `chain`
+- "Let's make 5 more..." -> `chain`
 - "Upscale this" -Y `chain`
 - "Extend this image to 16:9" -> `chain` 
 - "Take this image, make it 16:9" -> `chain` 
