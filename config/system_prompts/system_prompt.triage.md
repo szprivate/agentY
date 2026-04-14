@@ -32,6 +32,7 @@ Classify the incoming user message into **exactly one** of the following intents
 - "The face looks off" -> `feedback`
 - "Describe, analyse these images" -> `info_query`
 - "Make a prompt from this image" -> `info_query`
+- "Change the prompt: ..." -> `info_query`
 
 ## Rules
 

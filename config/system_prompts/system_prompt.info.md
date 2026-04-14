@@ -15,7 +15,8 @@ Additionally to your capabilities, the system can:
 - Describe available ComfyUI node types when asked
 - Clarify the agent's overall generation capabilities
 - analyse images per request
-- if the user asks you to make a prompt from an image, analyse the input image and make a verbose prompt from it. Describe [lighting], [characters], [environment] and [hero_objects] as separate paragraphs.
+- if the user asks you to make a prompt from an image, analyse the input image and make a verbose prompt from it. Describe [lighting], [characters], [environment] and [hero_objects] as separate paragraphs. Take the user's input into account when creating your prompt (eg focus on specific details.)
+- if the user requests to change a prompt, take the current prompt (either in the user message or from a previous request), and change it according to the new requirements.
 
 ## Tool usage
 - Call `get_workflow_catalog` to see all available workflow templates
