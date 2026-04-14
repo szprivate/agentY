@@ -43,6 +43,58 @@ from src.pipeline import create_pipeline
 from src.utils.costs import compute_cost_from_usage
 from src.utils.triage import triage as _run_triage, route as _route_intent
 
+
+# ── Unload Ollama models before pipeline startup ──────────────────────────────
+
+def _unload_ollama_models() -> None:
+    """Send keep_alive=0 to Ollama for every model listed in config/settings.json."""
+    import json as _json
+    import urllib.request as _urlreq
+    import urllib.error as _urlerr
+
+    try:
+        _cfg_path = _project_root / "config" / "settings.json"
+        with open(_cfg_path, "r", encoding="utf-8") as _f:
+            # Strip JSONC-style single-line comments before parsing.
+            _lines = [ln for ln in _f if not ln.lstrip().startswith("//")]
+            _cfg = _json.loads("".join(_lines))
+
+        _llm = _cfg.get("llm", {})
+        _host: str = _llm.get("ollama", {}).get("host", "http://localhost:11434")
+        _pipeline_cfg: dict = _llm.get("pipeline", {})
+
+        # Collect unique Ollama model names.
+        # Values prefixed with "ollama," → strip prefix.
+        # Bare values (no comma) → treat as Ollama model names.
+        _models: set[str] = set()
+        for _val in _pipeline_cfg.values():
+            if not isinstance(_val, str):
+                continue
+            if _val.startswith("ollama,"):
+                _models.add(_val.split(",", 1)[1])
+            elif "," not in _val and _val:
+                _models.add(_val)
+
+        _url = f"{_host.rstrip('/')}/api/generate"
+        for _model in sorted(_models):
+            try:
+                _payload = _json.dumps({"model": _model, "keep_alive": 0}).encode()
+                _req = _urlreq.Request(
+                    _url, data=_payload, method="POST",
+                    headers={"Content-Type": "application/json"},
+                )
+                with _urlreq.urlopen(_req, timeout=5):
+                    pass
+                print(f"[chainlit] Unloaded Ollama model: {_model}")
+            except _urlerr.URLError as _exc:
+                print(f"[chainlit] Could not unload Ollama model '{_model}': {_exc}")
+    except Exception as _exc:
+        print(f"[chainlit] Ollama model unload skipped: {_exc}")
+
+
+_unload_ollama_models()
+
+
 # ── Module-level pipeline singleton ──────────────────────────────────────────
 try:
     _pipeline = create_pipeline()
