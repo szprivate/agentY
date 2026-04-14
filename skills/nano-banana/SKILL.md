@@ -37,6 +37,7 @@ allowed-tools: add_workflow_node, remove_workflow_node
 ```
 
 - then connect the BatchImagesNode output to the generator's input.
+- in the prompt, ALWAYS refer to the input images as @img1 for the first image, @img2 for the second, etc.
 
 
 ***GeminiImage2Node / GeminiNanoBanana2 / Nano Banana 2 / Nano Banana Pro template with exactly 1 input image and a `BatchImagesNode` already present in the template:***

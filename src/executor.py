@@ -184,14 +184,17 @@ async def _vision_qa(
     brainbriefing: dict,
     *,
     user_message: str = "",
-    input_image_path: Path | None = None,
+    input_image_paths: list[Path] | None = None,
 ) -> str:
     """Run a QA pass comparing *image_path* against the user's original request.
 
     Uses *user_message* (the raw text the user sent) as the ground-truth
-    reference.  When *input_image_path* is supplied (image-editing task) the
-    input image is sent alongside the output so the model can judge edit
-    fidelity.
+    reference.  When *input_image_paths* is supplied (image-editing task) the
+    input images are sent alongside the output so the model can judge edit
+    fidelity.  Supports any number of input images.
+
+    Image ordering sent to the model: all input images first (IMAGE 1 … N),
+    then the generated output as the last image (IMAGE N+1).
 
     This is a standalone Ollama call that does NOT touch any agent's context
     window or conversation history.  The model used is defined by
@@ -215,23 +218,48 @@ async def _vision_qa(
             positive_prompt = brainbriefing.get("prompt", {}).get("positive", "")
             reference = f"Task: {task_desc}\nPrompt: {positive_prompt}".strip()
 
-        is_edit = input_image_path is not None
-        extra_images: list[bytes] = []
-        if is_edit:
-            try:
-                extra_images = [input_image_path.read_bytes()]
-            except Exception as read_exc:
-                logger.warning(
-                    "executor: could not read input image %s — %s",
-                    input_image_path, read_exc,
-                )
-                is_edit = False  # degrade gracefully
+        # Load each input image; skip any that cannot be read.
+        input_bytes_list: list[bytes] = []
+        if input_image_paths:
+            for inp_path in input_image_paths:
+                try:
+                    input_bytes_list.append(inp_path.read_bytes())
+                except Exception as read_exc:
+                    logger.warning(
+                        "executor: could not read input image %s — %s",
+                        inp_path, read_exc,
+                    )
+
+        is_edit = bool(input_bytes_list)
 
         qa_prompts = _load_qa_prompts()
         system = qa_prompts.get("system", "You are a visual QA analyst for AI-generated images.")
 
-        template_key = "question_edit" if is_edit else "question_generation"
-        question = qa_prompts.get(template_key, "").replace("{{REFERENCE}}", reference)
+        if is_edit:
+            n_inputs = len(input_bytes_list)
+            output_img_num = n_inputs + 1
+            if n_inputs == 1:
+                image_description = (
+                    f"TWO images: IMAGE 1 is the ORIGINAL input image, "
+                    f"IMAGE 2 is the GENERATED output image."
+                )
+            else:
+                input_labels = ", ".join(f"IMAGE {i + 1}" for i in range(n_inputs))
+                image_description = (
+                    f"{n_inputs + 1} images: {input_labels} are the ORIGINAL input images "
+                    f"(in the order provided), IMAGE {output_img_num} is the GENERATED output image."
+                )
+            template_key = "question_edit"
+            question = (
+                qa_prompts.get(template_key, "")
+                .replace("{{REFERENCE}}", reference)
+                .replace("{{IMAGE_DESCRIPTION}}", image_description)
+                .replace("{{OUTPUT_IMAGE_NUM}}", str(output_img_num))
+            )
+        else:
+            template_key = "question_generation"
+            question = qa_prompts.get(template_key, "").replace("{{REFERENCE}}", reference)
+
         if not question:
             # Minimal inline fallback if the file is missing
             question = (
@@ -240,9 +268,20 @@ async def _vision_qa(
                 "Reply with: PASS or FAIL, followed by a brief explanation."
             )
 
+        # Send images to the model: inputs first (IMAGE 1…N), output last (IMAGE N+1).
+        # vision_chat prepends image_bytes as the first image, so we pass the first
+        # input (or the output for generation tasks) as the primary argument and
+        # append the remainder.
+        if is_edit:
+            primary_bytes = input_bytes_list[0]
+            extra_images: list[bytes] = input_bytes_list[1:] + [output_bytes]
+        else:
+            primary_bytes = output_bytes
+            extra_images = []
+
         verdict = await llm.vision_chat(
             question,
-            output_bytes,
+            primary_bytes,
             system=system,
             extra_images=extra_images or None,
         )
@@ -281,23 +320,23 @@ async def _process_completed_job(
     """
     pfx = label  # e.g. "[2/5] " or ""
 
-    # Resolve the first input image path from the brainbriefing (edit fidelity check).
-    input_image_path: Path | None = None
+    # Resolve all input image paths from the brainbriefing (edit fidelity check).
+    input_image_paths: list[Path] = []
     try:
         input_nodes = brainbriefing.get("input_nodes", [])
         if input_nodes and isinstance(input_nodes, list):
-            first_node = input_nodes[0]
-            raw_path = first_node.get("path", "")
-            if raw_path:
-                candidate = Path(raw_path)
-                if candidate.exists():
-                    input_image_path = candidate
-                else:
-                    logger.debug(
-                        "executor: input_node path does not exist on disk: %s", raw_path
-                    )
+            for node in input_nodes:
+                raw_path = node.get("path", "") if isinstance(node, dict) else ""
+                if raw_path:
+                    candidate = Path(raw_path)
+                    if candidate.exists():
+                        input_image_paths.append(candidate)
+                    else:
+                        logger.debug(
+                            "executor: input_node path does not exist on disk: %s", raw_path
+                        )
     except Exception as exc:
-        logger.debug("executor: could not resolve input image path from brainbriefing — %s", exc)
+        logger.debug("executor: could not resolve input image paths from brainbriefing — %s", exc)
 
     output_files = _extract_output_files(history)
     if not output_files:
@@ -332,7 +371,7 @@ async def _process_completed_job(
             path,
             brainbriefing,
             user_message=user_message,
-            input_image_path=input_image_path,
+            input_image_paths=input_image_paths or None,
         )
         yield f"{pfx}🔍 QA `{path.name}` → {verdict}"
         if "FAIL" in verdict.upper():
