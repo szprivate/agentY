@@ -28,6 +28,7 @@ from src.utils.comfyui_interrupt_hook import ComfyUIInterruptHook
 from src.utils.costs import compute_cost_from_usage
 
 from src.tools import RESEARCHER_TOOLS, BRAIN_TOOLS, INFO_TOOLS, reset_patch_workflow_guard
+from src.steering import get_brain_steering_handlers, get_researcher_steering_handlers
 
 
 # ---------------------------------------------------------------------------
@@ -518,6 +519,19 @@ def create_researcher_agent(
         resolved_ollama = ollama_model or "qwen3-coder:32b"
 
     system_prompt = _load_system_prompt("researcher")
+
+    # Load skills from the project-level skills/ directory.
+    researcher_skill_plugins: list = []
+    if _SKILLS_DIR.is_dir():
+        skills_plugin = AgentSkills(skills=str(_SKILLS_DIR))
+        researcher_skill_plugins.append(skills_plugin)
+        loaded = [s.name for s in skills_plugin.get_available_skills()]
+        if loaded:
+            print(f"[agentY:researcher] Loaded skills: {', '.join(loaded)}")
+
+    # Merge steering handlers with skill plugins.
+    researcher_plugins = researcher_skill_plugins + get_researcher_steering_handlers()
+
     return _make_agent(
         role="researcher",
         llm=resolved_llm,
@@ -525,6 +539,7 @@ def create_researcher_agent(
         tools=RESEARCHER_TOOLS,
         ollama_model=resolved_ollama,
         anthropic_model=resolved_anthropic,
+        plugins=researcher_plugins or None,
         **kwargs,
     )
 
@@ -763,6 +778,9 @@ def create_brain_agent(
         if loaded:
             print(f"[agentY:brain] Loaded skills: {', '.join(loaded)}")
 
+    # Merge skills plugins with steering handlers.
+    brain_plugins = skills_plugins + get_brain_steering_handlers()
+
     # Merge the ComfyUI interrupt hook with any caller-supplied hooks so we
     # don't silently drop the TokenUsageHookProvider built by _make_agent.
     # We pass the combined list via kwargs; _make_agent's agent_kwargs.update()
@@ -777,7 +795,7 @@ def create_brain_agent(
         tools=BRAIN_TOOLS,
         ollama_model=resolved_ollama,
         anthropic_model=resolved_anthropic,
-        plugins=skills_plugins or None,
+        plugins=brain_plugins or None,
         hooks=brain_hooks,
         **kwargs,
     )
