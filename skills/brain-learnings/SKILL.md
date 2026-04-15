@@ -1,5 +1,5 @@
 ---
-name: selfLearning-brain
+name: brain-learnings
 description: Auto-populated learnings from past high-iteration problem-solving sessions. Activate this skill when you notice you are making repeated tool calls to solve the same sub-problem, or when the same error keeps appearing. The entries below document past problems and proven solutions — consult them before retrying a failing pattern.
 allowed-tools: 
 ---

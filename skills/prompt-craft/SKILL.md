@@ -1,11 +1,10 @@
-```skill
----
+﻿---
 name: prompt-craft
 description: Model-family-specific prompt writing rules. Activate this skill whenever the Researcher is composing the generation prompt in step 7.
 allowed-tools: analyze_image
 ---
 
-# Prompt Craft — Model-Family Rules
+# Prompt Craft â€” Model-Family Rules
 
 Follow these rules **exactly** for the active model family. The model family is determined by the template selected in step 2 or the model shortname from `get_workflow_template`.
 
@@ -15,8 +14,8 @@ Follow these rules **exactly** for the active model family. The model family is 
 
 - Write **natural sentences**, not comma-separated tag lists.
 - Be **specific**: include lighting conditions, material textures, camera angle/lens, mood, colour palette.
-- Length: match complexity — 2–4 sentences for simple subjects, up to 8 for complex scenes.
-- **Negative prompt → `null`** (Flux ignores negative prompts).
+- Length: match complexity â€” 2â€“4 sentences for simple subjects, up to 8 for complex scenes.
+- **Negative prompt â†’ `null`** (Flux ignores negative prompts).
 
 **Example:**  
 `"A close-up portrait of a weathered lighthouse keeper, warm golden-hour sidelighting, coarse linen jacket, shallow depth of field with a bokeh harbour background, desaturated teal tones."`
@@ -28,15 +27,15 @@ Follow these rules **exactly** for the active model family. The model family is 
 Use the Kontext master/change format:
 
 ```
-"master image — [description of what to keep]. change: [description of the edit]"
+"master image â€” [description of what to keep]. change: [description of the edit]"
 ```
 
 - Keep description: describe the subject and key elements to preserve.
-- Change description: describe the edit precisely — avoid vague verbs like "make it better".
-- **Negative prompt → `null`**.
+- Change description: describe the edit precisely â€” avoid vague verbs like "make it better".
+- **Negative prompt â†’ `null`**.
 
 **Example:**  
-`"master image — a woman in a red dress standing in a park. change: replace the background with a snowy mountain landscape, maintain the subject's position and pose"`
+`"master image â€” a woman in a red dress standing in a park. change: replace the background with a snowy mountain landscape, maintain the subject's position and pose"`
 
 ---
 
@@ -44,9 +43,9 @@ Use the Kontext master/change format:
 
 - Describe **motion** first: what moves, how it moves, speed/rhythm.
 - Include **camera movement** if relevant: pan, zoom, tracking shot, static.
-- Describe **start → end states** for key elements if they change.
+- Describe **start â†’ end states** for key elements if they change.
 - Include ambient details: lighting changes, environmental motion (wind, water).
-- **Negative prompt → `null`**.
+- **Negative prompt â†’ `null`**.
 
 **Example:**  
 `"A lone tree sways gently in a summer breeze, its leaves shimmering in dappled afternoon light. Slow pan left, revealing a distant mountain range. The sky transitions from clear blue to a faint orange glow."`
@@ -56,8 +55,8 @@ Use the Kontext master/change format:
 ## SD 1.5 / SDXL (cyberrealistic, juggernaut, photon, sdxl-base, epicrealism-xl)
 
 - Tag-style prompts are acceptable: quality tags up front, subject, then modifiers.
-- Quality tokens: `masterpiece, best quality, 8k uhd` — place these first.
-- Negative prompt: **active** — include common artefact suppressors:  
+- Quality tokens: `masterpiece, best quality, 8k uhd` â€” place these first.
+- Negative prompt: **active** â€” include common artefact suppressors:  
   `ugly, blurry, low quality, deformed, extra limbs, watermark, text`
 - SDXL: slightly longer positive prompts work better than SD 1.5.
 
@@ -71,10 +70,10 @@ Use the Kontext master/change format:
 
 ## Nano Banana / Gemini (api_nano_banana_*, api_google_*, GeminiNanoBanana, IdeogramV3, api_bytedance_*)
 
-- These models use a **single combined text input** — no separate negative prompt.
+- These models use a **single combined text input** â€” no separate negative prompt.
 - Write as **imperative instructions** describing the desired output directly.
-- Be concise and direct. Do not use artistic prose — these are API models, not diffusion models.
-- **Negative prompt → `null`**.
+- Be concise and direct. Do not use artistic prose â€” these are API models, not diffusion models.
+- **Negative prompt â†’ `null`**.
 - If multiple input images: refer to them as `@img1`, `@img2`, etc. in the prompt.
 
 **Example:**  
@@ -91,4 +90,3 @@ Use the Kontext master/change format:
 - **Match length to complexity**: a simple portrait doesn't need 10 sentences.
 - **Mirror user's style reference**: if the user specifies an artistic style ("oil painting", "cyberpunk", "Studio Ghibli"), incorporate it naturally.
 - **Flag assumptions**: if you assumed a style or mood not explicitly requested, add a WARNING to `blockers`.
-```

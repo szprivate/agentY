@@ -14,5 +14,6 @@ comfyui_workflow_templates_official/
 logs/
 output_images/
 output_workflows/
-/memory/
-/.files/
+/.files
+/files
+/memory

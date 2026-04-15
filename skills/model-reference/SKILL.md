@@ -1,11 +1,10 @@
-```skill
----
+﻿---
 name: model-reference
 description: Pre-validated model reference table. Activate during step 8 (Resolve parameters) to look up model shortnames and paths without calling list_models. Also includes the resolution procedure for unknown models.
 allowed-tools: get_model_types, get_models_in_folder
 ---
 
-# Model Reference — Known Pre-Validated Models
+# Model Reference â€” Known Pre-Validated Models
 
 Model paths are relative to the external model directory configured on the ComfyUI server.
 
@@ -15,9 +14,9 @@ Model paths are relative to the external model directory configured on the Comfy
 
 ## Resolution procedure
 
-1. **Check this table** → if the shortname is listed, use the path directly. No tool call needed.
-2. **Not in table** → call `get_models_in_folder` or `get_model_types` to verify the path on the server.
-3. **Still not found** → do NOT fabricate a path. Note the model as unverified in the brainbriefing. Flag as BLOCKER if no fallback exists.
+1. **Check this table** â†’ if the shortname is listed, use the path directly. No tool call needed.
+2. **Not in table** â†’ call `get_models_in_folder` or `get_model_types` to verify the path on the server.
+3. **Still not found** â†’ do NOT fabricate a path. Note the model as unverified in the brainbriefing. Flag as BLOCKER if no fallback exists.
 
 ---
 
@@ -105,4 +104,3 @@ Model paths are relative to the external model directory configured on the Comfy
 | wan22-lightx2v-64            | WAN22/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors       |
 | wan22-i2v-lightx2v-high      | WAN22/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors               |
 | wan22-i2v-lightx2v-low       | WAN22/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors                |
-```

@@ -1,17 +1,16 @@
-```skill
----
+﻿---
 name: batch-handoff
 description: Step-by-step procedure for handing off multi-iteration batch workflows to the Executor. Activate in Brain step 3 (Handoff) when count_iter > 1.
 allowed-tools: duplicate_workflow, update_workflow, signal_workflow_ready, read_text_file
 ---
 
-# Batch Handoff — Multi-Iteration Procedure
+# Batch Handoff â€” Multi-Iteration Procedure
 
 Activate this skill when `count_iter > 1` in the brainbriefing.
 
 There are two batch modes. Determine the mode from the brainbriefing:
-- `variations == true` AND `count_iter > 1` → **Variations mode**
-- `variations == false` AND `count_iter > 1` → **Identical mode**
+- `variations == true` AND `count_iter > 1` â†’ **Variations mode**
+- `variations == false` AND `count_iter > 1` â†’ **Identical mode**
 
 ---
 
@@ -25,16 +24,16 @@ Each iteration gets a **unique prompt** from `output_workflows/multiprompt.json`
    - Activate the `image-batch` skill to generate `count_iter` distinct prompts.
    - Prompts are saved to `output_workflows/multiprompt.json` as `{"prompt1": "...", "prompt2": "...", ...}`.
 
-2. **Iteration 1 — base workflow**:
+2. **Iteration 1 â€” base workflow**:
    - Read `output_workflows/multiprompt.json` via `read_text_file`.
    - Call `update_workflow(base_workflow_path, patches=[{"node_id": "<positive_prompt_node_id>", "input_name": "text", "value": "<prompt1>"}])`.
-   - If `status: "error"` → fix patches and retry.
+   - If `status: "error"` â†’ fix patches and retry.
    - Call `signal_workflow_ready(base_workflow_path)`.
 
-3. **Iterations 2 … N** (for each `promptN` where N = 2 to count_iter):
-   - Call `duplicate_workflow(base_workflow_path)` → record `new_path`.
+3. **Iterations 2 â€¦ N** (for each `promptN` where N = 2 to count_iter):
+   - Call `duplicate_workflow(base_workflow_path)` â†’ record `new_path`.
    - Call `update_workflow(new_path, patches=[{"node_id": "<positive_prompt_node_id>", "input_name": "text", "value": "<promptN>"}])`.
-   - If `status: "error"` → fix patches and retry.
+   - If `status: "error"` â†’ fix patches and retry.
    - Call `signal_workflow_ready(new_path)`.
 
 4. **Final call**: `signal_workflow_ready` on the last iteration MUST be your last tool call.
@@ -47,13 +46,13 @@ All iterations use the **same** assembled workflow. Seeds are randomised automat
 
 ### Step-by-step
 
-1. **Iteration 1 — base workflow**:
+1. **Iteration 1 â€” base workflow**:
    - `update_workflow` should already have been called with `status: "ok"` in step 2.
    - Call `signal_workflow_ready(base_workflow_path)`.
 
-2. **Iterations 2 … N** (for N = 2 to count_iter):
-   - Call `duplicate_workflow(base_workflow_path)` → record `new_path`.
-   - Call `update_workflow(new_path)` to validate the duplicate. If `status: "error"` → fix and retry.
+2. **Iterations 2 â€¦ N** (for N = 2 to count_iter):
+   - Call `duplicate_workflow(base_workflow_path)` â†’ record `new_path`.
+   - Call `update_workflow(new_path)` to validate the duplicate. If `status: "error"` â†’ fix and retry.
    - Call `signal_workflow_ready(new_path)`.
 
 3. **Final call**: `signal_workflow_ready` on the last iteration MUST be your last tool call.
@@ -62,8 +61,7 @@ All iterations use the **same** assembled workflow. Seeds are randomised automat
 
 ## Rules (both modes)
 
-- You MUST NOT call `submit_prompt` — the Executor handles submission automatically after each `signal_workflow_ready`.
-- You MUST NOT skip any iteration — every `count_iter` must result in a `signal_workflow_ready` call.
-- If `duplicate_workflow` fails → report with `task_id` and stop. Do not guess an alternative path.
-- If `update_workflow` repeatedly returns errors on a duplicated workflow → report the error with `task_id` and stop after 3 retries.
-```
+- You MUST NOT call `submit_prompt` â€” the Executor handles submission automatically after each `signal_workflow_ready`.
+- You MUST NOT skip any iteration â€” every `count_iter` must result in a `signal_workflow_ready` call.
+- If `duplicate_workflow` fails â†’ report with `task_id` and stop. Do not guess an alternative path.
+- If `update_workflow` repeatedly returns errors on a duplicated workflow â†’ report the error with `task_id` and stop after 3 retries.

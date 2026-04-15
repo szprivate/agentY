@@ -27,6 +27,7 @@ from strands.types.content import Message
 from strands.vended_plugins.steering import (
     Guide,
     LLMSteeringHandler,
+    LedgerAfterToolCall,
     LedgerProvider,
     ModelSteeringAction,
     Proceed,
@@ -34,6 +35,77 @@ from strands.vended_plugins.steering import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Safe LedgerProvider — strips non-JSON-serializable values from tool results
+# ---------------------------------------------------------------------------
+
+def _sanitize_for_json(obj: Any, _depth: int = 0) -> Any:
+    """Recursively replace non-JSON-serializable values with a safe placeholder.
+
+    LedgerAfterToolCall stores tool result content verbatim. Tools like
+    analyze_image may return raw bytes (e.g. base64-decoded image data),
+    which crash strands' json_dict validator. This function converts:
+      - bytes  → "<binary: N bytes>"
+      - any other non-serializable type → str(obj)
+    """
+    if _depth > 20:  # guard against pathological nesting
+        return "<truncated>"
+    if isinstance(obj, bytes):
+        return f"<binary: {len(obj)} bytes>"
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v, _depth + 1) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_for_json(item, _depth + 1) for item in obj]
+    try:
+        json.dumps(obj)
+        return obj
+    except (TypeError, ValueError):
+        return str(obj)
+
+
+class _SanitizedLedgerAfterToolCall(LedgerAfterToolCall):
+    """LedgerAfterToolCall that sanitizes tool result content before storing.
+
+    Inherits the full ledger entry structure but replaces any non-JSON-
+    serializable values (bytes, etc.) in the result content with safe strings.
+    This prevents crashes when tools like analyze_image return binary data.
+    """
+
+    def __call__(self, event: Any, steering_context: Any, **kwargs: Any) -> None:
+        # Sanitize the result content before delegating to the parent writer.
+        # We patch event.result temporarily to avoid mutating the live object.
+        try:
+            content = event.result.get("content")
+            if content is not None:
+                sanitized = _sanitize_for_json(content)
+                original_result = event.result
+                patched: dict = {**original_result, "content": sanitized}
+                event.result = patched
+                try:
+                    super().__call__(event, steering_context, **kwargs)
+                finally:
+                    event.result = original_result
+                return
+        except Exception:
+            pass  # Fall back to raw parent call if patching fails.
+        super().__call__(event, steering_context, **kwargs)
+
+
+class _SanitizedLedgerProvider(LedgerProvider):
+    """LedgerProvider that uses _SanitizedLedgerAfterToolCall instead of the
+    default LedgerAfterToolCall, preventing JSON serialization crashes from
+    tools that return binary content (e.g. analyze_image).
+    """
+
+    def context_providers(self, **kwargs: Any) -> list:  # type: ignore[override]
+        providers = super().context_providers(**kwargs)
+        return [
+            _SanitizedLedgerAfterToolCall() if isinstance(p, LedgerAfterToolCall) else p
+            for p in providers
+        ]
+
 
 # ---------------------------------------------------------------------------
 # Handler 3: JSON output enforcer (rule-based)
@@ -208,6 +280,8 @@ def get_researcher_steering_handlers(model=None) -> list:
         ModelHallucinationGuard(
             system_prompt=_HALLUCINATION_GUARD_SYSTEM_PROMPT,
             model=model,  # None → reuse agent's model (local Qwen — free)
-            # LedgerProvider is injected by LLMSteeringHandler by default.
+            # Use _SanitizedLedgerProvider so tools that return binary content
+            # (e.g. analyze_image) don't crash the steering context serialiser.
+            context_providers=[_SanitizedLedgerProvider()],
         ),
     ]

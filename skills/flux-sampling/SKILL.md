@@ -1,11 +1,10 @@
-```skill
----
+﻿---
 name: flux-sampling
 description: ModelSamplingFlux node patch requirements. Activate in Brain step 2 (Patch and validate) whenever the workflow contains a ModelSamplingFlux node.
 allowed-tools: update_workflow
 ---
 
-# Flux Sampling — ModelSamplingFlux Patch Requirements
+# Flux Sampling â€” ModelSamplingFlux Patch Requirements
 
 When a workflow contains a `ModelSamplingFlux` node, all **four inputs** are required. Omitting any one will cause a ComfyUI validation failure.
 
@@ -51,6 +50,5 @@ If it is not in `io.nodes`, inspect the full workflow JSON for a node with `clas
 ## Rules
 
 - You MUST include all four inputs in every `update_workflow` call that patches a ModelSamplingFlux node.
-- Values are **not optional** — ComfyUI will reject the workflow if any of the four are absent.
-- `width` and `height` MUST come from `brainbriefing.resolution_width` / `brainbriefing.resolution_height` — never hard-code or guess them.
-```
+- Values are **not optional** â€” ComfyUI will reject the workflow if any of the four are absent.
+- `width` and `height` MUST come from `brainbriefing.resolution_width` / `brainbriefing.resolution_height` â€” never hard-code or guess them.
