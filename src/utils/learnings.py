@@ -41,9 +41,9 @@ _MAX_HISTORY_CHARS = 20_000
 def count_tool_calls(messages: list[dict]) -> int:
     """Return the number of tool-use blocks in *messages*.
 
-    Counts ``{"type": "tool_use"}`` items inside assistant message content
-    lists.  Works for both the Anthropic format (list-of-dicts content) and
-    the plain text fallback.
+    Handles both the Strands/Bedrock Converse format (``{"toolUse": {...}}``) and
+    the Anthropic native format (``{"type": "tool_use", ...}``), plus a plain-text
+    fallback for serialised message strings.
     """
     count = 0
     for msg in messages:
@@ -52,10 +52,17 @@ def count_tool_calls(messages: list[dict]) -> int:
         content = msg.get("content", [])
         if isinstance(content, list):
             for item in content:
-                if isinstance(item, dict) and item.get("type") == "tool_use":
+                if not isinstance(item, dict):
+                    continue
+                # Strands/Bedrock Converse format
+                if "toolUse" in item:
+                    count += 1
+                # Anthropic native format
+                elif item.get("type") == "tool_use":
                     count += 1
         # Plain-text fallback: check if a serialised tool_use marker exists
-        elif isinstance(content, str) and '"type": "tool_use"' in content:
+        elif isinstance(content, str):
+            count += content.count('"toolUse"')
             count += content.count('"type": "tool_use"')
     return count
 
@@ -75,7 +82,30 @@ def _text_from_content(content: Any) -> str:
                 parts.append(str(item))
                 continue
             t = item.get("type", "")
-            if t == "text":
+            # ── Strands/Bedrock Converse format ───────────────────────────
+            if "toolUse" in item:
+                tu = item["toolUse"]
+                name = tu.get("name", "?")
+                inp = tu.get("input", {})
+                try:
+                    inp_str = json.dumps(inp, ensure_ascii=False)[:600]
+                except Exception:
+                    inp_str = str(inp)[:600]
+                parts.append(f"[TOOL CALL → {name}] {inp_str}")
+            elif "toolResult" in item:
+                tr = item["toolResult"]
+                status = tr.get("status", "")
+                rc = tr.get("content", "")
+                if isinstance(rc, list):
+                    result_str = " ".join(
+                        c.get("text", str(c)) if isinstance(c, dict) else str(c)
+                        for c in rc
+                    )[:800]
+                else:
+                    result_str = str(rc)[:800]
+                parts.append(f"[TOOL RESULT:{status}] {result_str}")
+            # ── Anthropic native format ───────────────────────────────────
+            elif t == "text":
                 parts.append(item.get("text", ""))
             elif t == "tool_use":
                 name = item.get("name", "?")
@@ -96,6 +126,8 @@ def _text_from_content(content: Any) -> str:
                 else:
                     result_str = str(result_content)[:800]
                 parts.append(f"[TOOL RESULT] {result_str}")
+            elif not t:
+                parts.append(item.get("text", str(item)))
             else:
                 parts.append(str(item))
         return "\n".join(p for p in parts if p.strip())
