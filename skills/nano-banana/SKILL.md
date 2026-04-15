@@ -1,6 +1,6 @@
 ---
 name: nano-banana
-description: Whenever researcher selected a Nano Banana / Nano Banana 2 / Nano Banana Pro template: Follow these detailed instructions to build and patch NanoBanana-based workflows according to the `brainbriefing` specifications. 
+description: "Whenever researcher selected a Nano Banana / Nano Banana 2 / Nano Banana Pro template: Follow these detailed instructions to build and patch NanoBanana-based workflows according to the `brainbriefing` specifications."
 allowed-tools: add_workflow_node, remove_workflow_node
 ---
 

@@ -1,4 +1,4 @@
-﻿---
+---
 name: prompt-craft
 description: Model-family-specific prompt writing rules. Activate this skill whenever the Researcher is composing the generation prompt in step 7.
 allowed-tools: analyze_image

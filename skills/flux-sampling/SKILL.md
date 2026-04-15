@@ -1,4 +1,4 @@
-﻿---
+---
 name: flux-sampling
 description: ModelSamplingFlux node patch requirements. Activate in Brain step 2 (Patch and validate) whenever the workflow contains a ModelSamplingFlux node.
 allowed-tools: update_workflow

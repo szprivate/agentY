@@ -9,13 +9,14 @@ Handler 1 — ForbiddenToolHandler (rule-based, no LLM)
     This handler guards save_workflow, which IS registered but should only
     be used when the Brain is building a workflow from scratch, not patching.
 
-Handler 2 — ModelSamplingFluxHandler (LLM-based)
-    Before an update_workflow call, checks that any ModelSamplingFlux node in
-    the patches includes all four required inputs (max_shift, base_shift,
-    width, height). Guides the agent to add missing inputs if needed.
+Handler 2 — ModelSamplingFluxHandler (rule-based, no LLM)
+    Before an update_workflow call, parses the patches / add_nodes JSON and
+    checks whether any ModelSamplingFlux node is being patched or added.  If
+    so, verifies that all four required inputs (max_shift, base_shift, width,
+    height) are present.  Guides the agent to add missing inputs if needed.
     Falls back gracefully — update_workflow's own validation will also catch
-    this error, so if the steering LLM misreads the patches JSON, the worst
-    outcome is a validation error from update_workflow.
+    this error, so if the rule misreads the JSON the worst outcome is a
+    validation error from update_workflow.
 """
 
 from __future__ import annotations
@@ -25,11 +26,9 @@ import logging
 from typing import Any
 
 from strands import Agent
-from strands.types.content import Message
 from strands.types.tools import ToolUse
 from strands.vended_plugins.steering import (
     Guide,
-    LLMSteeringHandler,
     Proceed,
     SteeringHandler,
     ToolSteeringAction,
@@ -69,43 +68,77 @@ class BrainForbiddenToolHandler(SteeringHandler):
 
 
 # ---------------------------------------------------------------------------
-# Handler 2: ModelSamplingFlux patch validator (LLM-based)
+# Handler 2: ModelSamplingFlux patch validator (rule-based, no LLM)
 # ---------------------------------------------------------------------------
 
-_FLUX_SAMPLING_SYSTEM_PROMPT = """\
-You are a guardrail monitor for a ComfyUI workflow patching agent.
+# The four inputs that ModelSamplingFlux always requires.
+_FLUX_REQUIRED_INPUTS = frozenset({"max_shift", "base_shift", "width", "height"})
 
-Your only job: when the agent calls update_workflow, inspect the patches array.
-If ANY patch targets a node whose inputs suggest it is a ModelSamplingFlux node
-(inputs like max_shift, base_shift, or the node is identified by type), verify
-that ALL FOUR of these inputs are present somewhere in the patches OR in the
-existing tool session history:
-  - max_shift  (recommended value: 1.15)
-  - base_shift (recommended value: 0.5)
-  - width      (from brainbriefing.resolution)
-  - height     (from brainbriefing.resolution)
-
-Decision rules:
-- If update_workflow is being called and there is a ModelSamplingFlux node in
-  the patches but one or more of the four required inputs are missing:
-  → decision: "guide"
-  → reason: explain exactly which inputs are missing and that all four are
-    required for ModelSamplingFlux (max_shift=1.15, base_shift=0.5, width, height).
-- In all other cases (no ModelSamplingFlux involved, or all four inputs present):
-  → decision: "proceed"
-
-Only assess what is present in the steering context. Do not speculate about nodes
-not mentioned in the patches.
-"""
+# Heuristic markers — if a patch touches any of these input names it is
+# likely targeting a ModelSamplingFlux node.
+_FLUX_MARKER_INPUTS = frozenset({"max_shift", "base_shift"})
 
 
-class ModelSamplingFluxHandler(LLMSteeringHandler):
-    """LLM-based guard that ensures ModelSamplingFlux patches include all four required inputs.
+def _parse_json_arg(val: Any) -> list:
+    """Parse a tool argument that may be a JSON string or already a list."""
+    if isinstance(val, str):
+        try:
+            parsed = json.loads(val)
+            return parsed if isinstance(parsed, list) else []
+        except (json.JSONDecodeError, TypeError):
+            return []
+    return val if isinstance(val, list) else []
 
-    Uses LLM evaluation against the patches JSON in the tool call.
-    If the steering LLM misreads the patches, update_workflow's own validation
-    will still catch the error on the next call — this handler is a best-effort
-    early warning.
+
+def _collect_flux_inputs(patches: list, add_nodes: list) -> tuple[bool, set[str]]:
+    """Scan *patches* and *add_nodes* for ModelSamplingFlux references.
+
+    Returns ``(is_flux_involved, found_inputs)`` where *found_inputs* is the
+    set of flux-relevant input names present across all matching entries.
+    """
+    found: set[str] = set()
+    is_flux = False
+
+    # -- patches: [{"node_id": ..., "input_name": ..., "value": ...}, ...]
+    for patch in patches:
+        if not isinstance(patch, dict):
+            continue
+        input_name = patch.get("input_name", "")
+        class_type = str(patch.get("class_type", "")).lower()
+        if input_name in _FLUX_REQUIRED_INPUTS or "modelsamplingflux" in class_type:
+            is_flux = True
+            if input_name in _FLUX_REQUIRED_INPUTS:
+                found.add(input_name)
+
+    # -- add_nodes: [{"class_type": ..., "inputs": {...}}, ...]
+    for spec in add_nodes:
+        if not isinstance(spec, dict):
+            continue
+        class_type = str(spec.get("class_type", "")).lower()
+        if "modelsamplingflux" in class_type:
+            is_flux = True
+            inputs = spec.get("inputs", {})
+            if isinstance(inputs, str):
+                try:
+                    inputs = json.loads(inputs)
+                except (json.JSONDecodeError, TypeError):
+                    inputs = {}
+            if isinstance(inputs, dict):
+                found.update(k for k in inputs if k in _FLUX_REQUIRED_INPUTS)
+
+    return is_flux, found
+
+
+class ModelSamplingFluxHandler(SteeringHandler):
+    """Rule-based guard that ensures ModelSamplingFlux patches include all four required inputs.
+
+    Parses the ``patches`` and ``add_nodes`` JSON arguments of update_workflow
+    calls and checks for ModelSamplingFlux references.  No LLM call is made —
+    this is a fast, deterministic string/key check.
+
+    If the rule misreads the JSON, update_workflow's own validation will still
+    catch the error on the next call — this handler is a best-effort early
+    warning.
     """
 
     name: str = "model_sampling_flux_guard"
@@ -116,8 +149,29 @@ class ModelSamplingFluxHandler(LLMSteeringHandler):
         tool_name = tool_use.get("name", "")
         if tool_name != "update_workflow":
             return Proceed(reason="not an update_workflow call")
-        # Delegate to LLM evaluation only for update_workflow calls.
-        return await super().steer_before_tool(agent=agent, tool_use=tool_use, **kwargs)
+
+        tool_input = tool_use.get("input") or {}
+        patches = _parse_json_arg(tool_input.get("patches", "[]"))
+        add_nodes = _parse_json_arg(tool_input.get("add_nodes", "[]"))
+
+        is_flux, found = _collect_flux_inputs(patches, add_nodes)
+
+        if not is_flux:
+            return Proceed(reason="no ModelSamplingFlux nodes in patches")
+
+        missing = _FLUX_REQUIRED_INPUTS - found
+        if not missing:
+            return Proceed(reason="all ModelSamplingFlux inputs present")
+
+        logger.debug("model_sampling_flux_guard: missing inputs %s", missing)
+        return Guide(
+            reason=(
+                f"ModelSamplingFlux patch is missing required inputs: {', '.join(sorted(missing))}. "
+                "All four inputs are required: max_shift (recommended: 1.15), "
+                "base_shift (recommended: 0.5), width, height (from brainbriefing resolution). "
+                "Add the missing inputs to your update_workflow patches."
+            )
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -129,17 +183,13 @@ def get_brain_steering_handlers(model=None) -> list:
     """Return the list of steering handler plugins for the Brain agent.
 
     Args:
-        model: Optional Strands Model instance for the LLM-based handlers.
-               Defaults to None, which reuses the Brain agent's own model
-               (claude-haiku-4-5 by default — cheapest Anthropic option).
+        model: Unused — retained for API compatibility.  Both handlers are
+               now rule-based and make zero LLM calls.
 
     Returns:
         List of SteeringHandler instances ready to pass as ``plugins=``.
     """
     return [
         BrainForbiddenToolHandler(),
-        ModelSamplingFluxHandler(
-            system_prompt=_FLUX_SAMPLING_SYSTEM_PROMPT,
-            model=model,  # None → reuse agent's model (haiku-4-5)
-        ),
+        ModelSamplingFluxHandler(),
     ]

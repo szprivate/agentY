@@ -1,4 +1,4 @@
-﻿---
+---
 name: batch-handoff
 description: Step-by-step procedure for handing off multi-iteration batch workflows to the Executor. Activate in Brain step 3 (Handoff) when count_iter > 1.
 allowed-tools: duplicate_workflow, update_workflow, signal_workflow_ready, read_text_file

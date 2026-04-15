@@ -1,4 +1,4 @@
-﻿---
+---
 name: model-reference
 description: Pre-validated model reference table. Activate during step 8 (Resolve parameters) to look up model shortnames and paths without calling list_models. Also includes the resolution procedure for unknown models.
 allowed-tools: get_model_types, get_models_in_folder

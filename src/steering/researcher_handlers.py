@@ -7,12 +7,16 @@ Handler 3 — JsonOutputEnforcer (rule-based, no LLM)
     is valid JSON with no surrounding prose or markdown fences. If not,
     returns Guide instructing the agent to output raw JSON only.
 
-Handler 4 — ModelHallucinationGuard (LLM-based, uses LedgerProvider)
-    After the Researcher produces its final response, checks whether any model
-    paths in the brainbriefing output were returned by get_workflow_template or
-    list_models calls in the session ledger. If fabricated paths are found,
-    guides the agent to verify via get_models_in_folder / get_model_types or
-    mark paths as unverified.
+Handler 4 — BriefingHallucinationGuard (rule-based, no LLM, uses LedgerProvider)
+    After the Researcher produces its final response, performs two checks:
+    a) Extracts model file paths from the brainbriefing JSON and verifies each
+       was returned by get_workflow_template, get_models_in_folder, or
+       get_model_types tool calls recorded in the session ledger.
+    b) Extracts input image filenames from input_images / input_nodes and
+       verifies each against file paths used in analyze_image,
+       get_image_resolution, or upload_image tool calls, plus any file paths
+       visible in the original user message stored in the agent conversation.
+    If fabricated/mistyped paths are found, guides the agent to correct them.
 """
 
 from __future__ import annotations
@@ -26,7 +30,6 @@ from strands import Agent
 from strands.types.content import Message
 from strands.vended_plugins.steering import (
     Guide,
-    LLMSteeringHandler,
     LedgerAfterToolCall,
     LedgerProvider,
     ModelSteeringAction,
@@ -196,47 +199,188 @@ class JsonOutputEnforcer(SteeringHandler):
 
 
 # ---------------------------------------------------------------------------
-# Handler 4: Model path hallucination guard (LLM-based, uses LedgerProvider)
+# Handler 4: Briefing hallucination guard (rule-based, uses LedgerProvider)
 # ---------------------------------------------------------------------------
 
-_HALLUCINATION_GUARD_SYSTEM_PROMPT = """\
-You are a guardrail monitor for a ComfyUI workflow resolution agent.
+# File extensions that indicate model weight files.
+_MODEL_EXTENSIONS = re.compile(
+    r"\.(safetensors|ckpt|pt|pth|bin|onnx|gguf)$", re.IGNORECASE
+)
 
-Your job: after the Researcher produces its final brainbriefing JSON, check
-whether any model file paths in that JSON were actually returned by
-get_workflow_template or get_models_in_folder or get_model_types tool calls
-visible in the session ledger.
+# File extensions that indicate image/video files.
+_IMAGE_EXTENSIONS = re.compile(
+    r"\.(png|jpe?g|gif|webp|bmp|tiff?|mp4|mov|avi|mkv|webm)$", re.IGNORECASE
+)
 
-Decision rules:
-1. Parse the final response JSON (the brainbriefing). Look for any string
-   values that appear to be file paths — they typically contain directory
-   separators (/ or \\) and end in .safetensors, .ckpt, .pt, or similar.
-2. Compare each such path against the tool call results recorded in the ledger
-   (look in ledger.tool_calls for tool_name in [get_workflow_template,
-   get_models_in_folder, get_model_types] and their results).
-3. If a model path in the brainbriefing was NOT returned by any of those tool
-   calls AND is not a well-known path that appears in prior session messages:
-   → decision: "guide"
-   → reason: list the suspect paths and instruct the agent to verify them via
-     get_models_in_folder / get_model_types, or note them as unverified in the
-     brainbriefing.
-4. If all model paths can be traced to a tool call result, OR if no file paths
-   are present in the brainbriefing:
-   → decision: "proceed"
+# Tool names whose results contain authoritative model/file paths.
+_PATH_SOURCE_TOOLS = frozenset({
+    "get_workflow_template",
+    "get_models_in_folder",
+    "get_model_types",
+})
 
-Important: only flag paths that look like filesystem paths to model files.
-Do not flag template names, workflow filenames, or image output paths.
-"""
+# Tool names whose *arguments* contain authoritative image file paths.
+_IMAGE_ARG_TOOLS = frozenset({
+    "analyze_image",
+    "get_image_resolution",
+    "upload_image",
+})
 
 
-class ModelHallucinationGuard(LLMSteeringHandler):
-    """LLM-based guard that detects fabricated model file paths in the brainbriefing.
+def _extract_model_paths(obj: Any, _depth: int = 0) -> set[str]:
+    """Recursively extract strings that look like model file paths."""
+    if _depth > 30:
+        return set()
+    paths: set[str] = set()
+    if isinstance(obj, str):
+        # Must contain a path separator and end with a model extension.
+        if ("/" in obj or "\\" in obj) and _MODEL_EXTENSIONS.search(obj):
+            paths.add(obj)
+    elif isinstance(obj, dict):
+        for v in obj.values():
+            paths.update(_extract_model_paths(v, _depth + 1))
+    elif isinstance(obj, list):
+        for item in obj:
+            paths.update(_extract_model_paths(item, _depth + 1))
+    return paths
 
-    Uses LedgerProvider (injected by default into LLMSteeringHandler) to access
-    the tool call history and compare model paths against returned values.
+
+def _extract_ledger_known_strings(ledger: dict) -> set[str]:
+    """Collect all string fragments from relevant tool call results in the ledger.
+
+    We flatten every result from ``_PATH_SOURCE_TOOLS`` into a set of strings
+    so that a simple substring check can verify each model path.
+    """
+    known: set[str] = set()
+    for call in ledger.get("tool_calls", []):
+        if call.get("tool_name") not in _PATH_SOURCE_TOOLS:
+            continue
+        result = call.get("result")
+        if result is None:
+            continue
+        # Flatten the result into individual strings.
+        _collect_strings(result, known)
+    return known
+
+
+def _extract_ledger_image_filenames(ledger: dict) -> set[str]:
+    """Collect authoritative image filenames from tool call arguments in the ledger.
+
+    When the Researcher calls ``analyze_image(file_path=...)``,
+    ``get_image_resolution(image_path=...)``, or ``upload_image(file_path=...)``,
+    the file paths are recorded in the ledger's ``tool_args``.  We extract the
+    basename of each to build a set of known-good image filenames.
+    """
+    filenames: set[str] = set()
+    for call in ledger.get("tool_calls", []):
+        tool_name = call.get("tool_name", "")
+        if tool_name not in _IMAGE_ARG_TOOLS:
+            continue
+        args = call.get("tool_args") or {}
+        for key in ("file_path", "image_path", "image_url"):
+            val = args.get(key, "")
+            if val and isinstance(val, str):
+                # Store both the full path and just the basename.
+                filenames.add(val)
+                basename = val.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+                if basename:
+                    filenames.add(basename)
+    return filenames
+
+
+def _extract_conversation_filenames(agent: Agent) -> set[str]:
+    """Extract image/video filenames from the agent's conversation messages.
+
+    The pipeline injects on-disk file paths into the user message text
+    (e.g. ``files/chainlit_uploads/937ade92-…-ec9d.jpg``).  We scan user
+    messages for tokens that look like image file paths and collect the
+    basenames.
+    """
+    filenames: set[str] = set()
+    try:
+        messages = agent.messages
+    except Exception:
+        return filenames
+    for msg in messages:
+        if msg.get("role") != "user":
+            continue
+        content = msg.get("content", "")
+        texts: list[str] = []
+        if isinstance(content, str):
+            texts.append(content)
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    texts.append(block.get("text", ""))
+                elif isinstance(block, str):
+                    texts.append(block)
+        for text in texts:
+            # Find tokens that look like file paths with image extensions.
+            for token in re.findall(r'["\']?([^\s"\',]+\.[a-zA-Z0-9]+)["\']?', text):
+                if _IMAGE_EXTENSIONS.search(token):
+                    filenames.add(token)
+                    basename = token.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+                    if basename:
+                        filenames.add(basename)
+    return filenames
+
+
+def _extract_briefing_image_filenames(briefing: dict) -> set[str]:
+    """Extract image filenames from input_images and input_nodes in a brainbriefing."""
+    filenames: set[str] = set()
+    for entry in briefing.get("input_images", []):
+        if isinstance(entry, dict):
+            fn = entry.get("filename", "")
+            if fn:
+                filenames.add(fn)
+    for entry in briefing.get("input_nodes", []):
+        if isinstance(entry, dict):
+            fn = entry.get("filename", "")
+            if fn:
+                filenames.add(fn)
+            path = entry.get("path", "")
+            if path:
+                filenames.add(path)
+                basename = path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+                if basename:
+                    filenames.add(basename)
+    return filenames
+
+
+def _collect_strings(obj: Any, acc: set[str], _depth: int = 0) -> None:
+    """Recursively collect all string values from a nested structure."""
+    if _depth > 30:
+        return
+    if isinstance(obj, str):
+        acc.add(obj)
+    elif isinstance(obj, dict):
+        for v in obj.values():
+            _collect_strings(v, acc, _depth + 1)
+    elif isinstance(obj, list):
+        for item in obj:
+            _collect_strings(item, acc, _depth + 1)
+
+
+class BriefingHallucinationGuard(SteeringHandler):
+    """Rule-based guard that detects fabricated model paths AND mistyped image filenames.
+
+    Uses LedgerProvider (via context_providers) to record tool call history
+    during the Researcher session.  On the final ``end_turn``:
+
+    1. **Model paths** — extracts file paths ending in model-weight extensions
+       from the brainbriefing and verifies each against strings returned by
+       authoritative tools (get_workflow_template, get_models_in_folder,
+       get_model_types).
+    2. **Image filenames** — extracts ``input_images[].filename`` and
+       ``input_nodes[].filename`` / ``.path`` from the brainbriefing and
+       verifies each against file paths that appeared in tool call arguments
+       (analyze_image, get_image_resolution, upload_image) and in the original
+       user message.
+
+    No LLM call is made — pure string matching.
     """
 
-    name: str = "model_hallucination_guard"
+    name: str = "briefing_hallucination_guard"
 
     async def steer_after_model(
         self,
@@ -253,10 +397,73 @@ class ModelHallucinationGuard(LLMSteeringHandler):
         if stop_reason != "end_turn":
             return Proceed(reason="not a final response turn")
 
-        # Delegate to LLM evaluation.
-        return await super().steer_after_model(
-            agent=agent, message=message, stop_reason=stop_reason, **kwargs
-        )
+        text = _extract_text(message).strip()
+        if not text:
+            return Proceed(reason="empty response")
+
+        # Parse the brainbriefing JSON.
+        try:
+            briefing = json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            return Proceed(reason="response is not JSON — let JsonOutputEnforcer handle it")
+
+        ledger = self.steering_context.data.get("ledger") or {}
+        issues: list[str] = []
+
+        # ---- Check 1: model file paths --------------------------------
+        model_paths = _extract_model_paths(briefing)
+        if model_paths:
+            known_strings = _extract_ledger_known_strings(ledger)
+            if known_strings:
+                suspect_models: list[str] = []
+                for path in model_paths:
+                    if any(path in s or s in path for s in known_strings if len(s) > 5):
+                        continue
+                    basename = path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+                    if any(basename in s for s in known_strings if len(s) > 5):
+                        continue
+                    suspect_models.append(path)
+                if suspect_models:
+                    issues.append(
+                        "Model file paths not verified against any "
+                        "get_workflow_template / get_models_in_folder / get_model_types "
+                        "tool result: " + ", ".join(suspect_models)
+                        + ". Verify via get_models_in_folder / get_model_types or correct them."
+                    )
+
+        # ---- Check 2: input image filenames ---------------------------
+        briefing_images = _extract_briefing_image_filenames(briefing)
+        if briefing_images:
+            # Build the set of known-good image filenames from tool args + conversation.
+            known_images = _extract_ledger_image_filenames(ledger)
+            known_images.update(_extract_conversation_filenames(agent))
+
+            if known_images:
+                suspect_images: list[str] = []
+                for img in briefing_images:
+                    basename = img.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+                    # Exact match on full string or basename.
+                    if img in known_images or basename in known_images:
+                        continue
+                    # Substring match (known path contains the filename or vice-versa).
+                    if any(img in k or basename in k for k in known_images if len(k) > 3):
+                        continue
+                    suspect_images.append(img)
+                if suspect_images:
+                    issues.append(
+                        "Input image filenames not found in any tool call argument or "
+                        "user message: " + ", ".join(suspect_images)
+                        + ". These may be mistyped. Check the exact filenames from "
+                        "the user's attached files or from analyze_image / "
+                        "get_image_resolution results and correct them in the brainbriefing."
+                    )
+
+        if not issues:
+            logger.debug("briefing_hallucination_guard: all paths verified")
+            return Proceed(reason="all model paths and image filenames verified")
+
+        logger.debug("briefing_hallucination_guard: issues found: %s", issues)
+        return Guide(reason=" | ".join(issues))
 
 
 # ---------------------------------------------------------------------------
@@ -268,18 +475,15 @@ def get_researcher_steering_handlers(model=None) -> list:
     """Return the list of steering handler plugins for the Researcher agent.
 
     Args:
-        model: Optional Strands Model instance for the LLM-based handlers.
-               Defaults to None, which reuses the Researcher agent's own model
-               (local Qwen via Ollama by default — cheapest / free option).
+        model: Unused — retained for API compatibility.  Both handlers are
+               now rule-based and make zero LLM calls.
 
     Returns:
         List of SteeringHandler instances ready to pass as ``plugins=``.
     """
     return [
         JsonOutputEnforcer(),
-        ModelHallucinationGuard(
-            system_prompt=_HALLUCINATION_GUARD_SYSTEM_PROMPT,
-            model=model,  # None → reuse agent's model (local Qwen — free)
+        BriefingHallucinationGuard(
             # Use _SanitizedLedgerProvider so tools that return binary content
             # (e.g. analyze_image) don't crash the steering context serialiser.
             context_providers=[_SanitizedLedgerProvider()],
