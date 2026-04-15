@@ -122,11 +122,14 @@ try {
                 if ($LASTEXITCODE -eq 0) { $usePluginCompose = $true }
             } catch {}
 
+            $prevEAP = $ErrorActionPreference
+            $ErrorActionPreference = 'SilentlyContinue'
             if ($usePluginCompose) {
-                docker compose -f $composeFile up -d minio createbuckets 2>&1 | Write-Host
+                docker compose -f $composeFile up -d minio createbuckets 2>&1 | ForEach-Object { Write-Host "$_" }
             } else {
-                docker-compose -f $composeFile up -d minio createbuckets 2>&1 | Write-Host
+                docker-compose -f $composeFile up -d minio createbuckets 2>&1 | ForEach-Object { Write-Host "$_" }
             }
+            $ErrorActionPreference = $prevEAP
 
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "[run_agent] MinIO ready  ->  API: http://localhost:9000  Console: http://localhost:9001" -ForegroundColor Green

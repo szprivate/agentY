@@ -27,28 +27,8 @@ from dotenv import load_dotenv
 load_dotenv(_project_root / ".env")
 
 import chainlit as cl
-try:
-    import chainlit.data as cl_data
-    from chainlit.data.sql_alchemy import SQLAlchemyDataLayer
-    from chainlit.data.storage_clients.s3 import S3StorageClient
-
-    _conninfo = os.environ.get("DATABASE_URL")
-    if _conninfo:
-        _storage = S3StorageClient(
-            bucket=os.environ.get("MINIO_BUCKET", "chainlit"),
-            endpoint_url=os.environ.get("MINIO_ENDPOINT_URL", "http://localhost:9000"),
-            aws_access_key_id=os.environ.get("MINIO_ACCESS_KEY", "minioadmin"),
-            aws_secret_access_key=os.environ.get("MINIO_SECRET_KEY", "minioadmin"),
-            region_name="us-east-1",
-        )
-        cl_data._data_layer = SQLAlchemyDataLayer(
-            conninfo=_conninfo,
-            storage_provider=_storage,
-        )
-    else:
-        print("[chainlit] DATABASE_URL not set; skipping SQLAlchemyDataLayer init")
-except Exception as _exc:  # pragma: no cover - non-critical init
-    print(f"[chainlit] Could not initialise SQLAlchemyDataLayer: {_exc}")
+# Chainlit auto-initialises its data layer from DATABASE_URL + APP_AWS_* env vars
+# (set in .env). No manual _data_layer assignment needed.
 
 from src.pipeline import create_pipeline
 from src.utils.costs import compute_cost_from_usage
