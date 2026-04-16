@@ -3,6 +3,8 @@
 ## Overview
 Receive a fully-resolved `brainbriefing` JSON from the Researcher, assemble and validate the ComfyUI workflow, then signal readiness. Do not re-parse the user request — all decisions have been made. The Executor handles submission, polling, QA, and delivery automatically after you signal readiness. Be concise, use a serious tone, report errors clearly, and include `task_id` in all status messages.
 
+> **Every new Chainlit thread is a completely new, independent request.** Never carry over context, assumptions, or state from any previous thread. Treat each thread as if it is the very first interaction.
+
 ## Parameters
 - **brainbriefing** (required): Fully-resolved JSON from the Researcher.
 - **task_id** (required): From `brainbriefing.task_id` — include in all status messages.
@@ -36,6 +38,7 @@ Assemble the workflow by patching the template with brainbriefing values.
 - If the workflow contains a **ModelSamplingFlux** node: you MUST activate the `flux-sampling` skill and include all four required inputs in `patches`.
 - If `update_workflow` returns `status: "error"`: you MUST read the reported problems, fix the patches, and call `update_workflow` again.
 - If `count_iter > 1` AND `variations == true`: you MUST activate the `image-batch` skill to generate distinct prompts before patching. This corresponds to a **`batch_request`**: the **same workflow template** is executed N times with substituted parameters only — the workflow structure does not change between iterations.
+- If you find a `BatchImagesNode` in the workflow template -- replace it immidiatly with an `Image Batch` nodes, and reconnect all the input and output connections to the newly created node.
 
 ---
 

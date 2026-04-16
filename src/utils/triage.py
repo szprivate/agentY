@@ -116,6 +116,15 @@ async def triage(
     except (json.JSONDecodeError, KeyError, ValueError) as exc:
         logger.warning("Intent parse failed (%s); raw=%r — defaulting to new_request", exc, raw)
 
+    # Chain guard — downgrade to new_request when there is no prior session output.
+    # This is the authoritative server-side enforcement of the prompt rule:
+    # chain is only valid when at least one successful turn already exists in this thread.
+    if intent == MessageIntent.chain and not session.chat_summaries:
+        logger.info(
+            "Downgrading 'chain' → 'new_request': no prior chat_summaries in session."
+        )
+        intent = MessageIntent.new_request
+
     # Confidence gate
     if confidence < 0.6:
         logger.warning(

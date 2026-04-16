@@ -30,3 +30,9 @@ If a matching entry exists, **apply the documented solution directly** instead o
 2026-04-15 | update_workflow fails validation if reference images not in ComfyUI input directory | Upload images using upload_image before patching workflow inputs to ensure files exist for node validation steps.
 2026-04-15 | Template aspect_ratio defaults to 'auto' conflicting with specific user ratio requests | Always patch generator node aspect_ratio input to specific value like '16:9' to override 'auto' default.
 2026-04-15 | Nano Banana 2 node requires resolution strings like '2K' instead of raw pixel dimensions | Map requested pixel dimensions to standard resolution strings like '2K' before patching generator resolution input.
+
+2026-04-16 | workflow validation fails when reference images not uploaded to ComfyUI input | Always upload reference images before calling update_workflow; images must be in ComfyUI input directory for validation to pass.
+
+2026-04-16 | Template node KlingOmniProImageToVideoNode not found in ComfyUI install | Search for available nodes using search_nodes and use KlingCameraControlI2VNode instead to avoid missing_node_type errors.
+2026-04-16 | Unused BatchImagesNode and Note nodes cause validation errors immediately after template load | Remove unused nodes like BatchImagesNode and Note immediately after loading template if they are not required.
+2026-04-16 | Kling i2v workflow fails without connecting LoadImage output to reference_images input | Connect LoadImage node output explicitly to the reference_images input of the Kling video generation node to avoid missing input errors.
