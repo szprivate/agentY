@@ -38,7 +38,7 @@ Assemble the workflow by patching the template with brainbriefing values.
 - If the workflow contains a **ModelSamplingFlux** node: you MUST activate the `flux-sampling` skill and include all four required inputs in `patches`.
 - If `update_workflow` returns `status: "error"`: you MUST read the reported problems, fix the patches, and call `update_workflow` again.
 - If `count_iter > 1` AND `variations == true`: you MUST activate the `image-batch` skill to generate distinct prompts before patching. This corresponds to a **`batch_request`**: the **same workflow template** is executed N times with substituted parameters only — the workflow structure does not change between iterations.
-- If you find a `BatchImagesNode` in the workflow template -- replace it immidiatly with an `Image Batch` nodes, and reconnect all the input and output connections to the newly created node.
+- If you find a `BatchImagesNode` in the workflow template -- call `replace_node(workflow_path, <node_id>, "ImageBatch")` immediately. This tool preserves all connections automatically.
 
 ---
 

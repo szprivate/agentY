@@ -1338,6 +1338,76 @@ def update_workflow(
 
 
 @tool
+def replace_node(workflow_path: str, old_node_id: str, new_class_type: str, new_node_id: str = "", meta_title: str = "") -> str:
+    """Replace a node with a different class_type while preserving all connections.
+
+    Copies every input entry (including link arrays) from the old node to the new
+    node, rewrites every other node's inputs that referenced the old node ID to
+    point at the new node ID instead, then removes the old node.
+
+    Args:
+        workflow_path: File path to the workflow JSON.
+        old_node_id: ID of the node to remove.
+        new_class_type: class_type for the replacement node.
+        new_node_id: ID for the new node.  Defaults to old_node_id (in-place swap).
+        meta_title: Optional display title for the new node.
+    """
+    try:
+        workflow = _load_workflow(workflow_path)
+    except (json.JSONDecodeError, FileNotFoundError, OSError) as e:
+        return json.dumps({"status": "error", "error": f"Cannot load workflow: {e}"})
+
+    old_id = str(old_node_id)
+    if old_id not in workflow:
+        return json.dumps({"status": "error", "error": f"Node '{old_id}' not found in workflow."})
+
+    new_id = str(new_node_id) if new_node_id else old_id
+
+    if new_id != old_id and new_id in workflow:
+        return json.dumps({"status": "error", "error": f"Node ID '{new_id}' already exists."})
+
+    old_node = workflow[old_id]
+
+    # Build the replacement node, inheriting all inputs from the old node.
+    import copy
+    new_node: dict = {
+        "class_type": new_class_type,
+        "inputs": copy.deepcopy(old_node.get("inputs", {})),
+    }
+    if meta_title:
+        new_node["_meta"] = {"title": meta_title}
+    elif "_meta" in old_node:
+        new_node["_meta"] = copy.deepcopy(old_node["_meta"])
+
+    # Insert the new node (if new_id == old_id this temporarily overwrites it).
+    if new_id != old_id:
+        del workflow[old_id]
+    workflow[new_id] = new_node
+
+    # Rewrite outgoing links: any node whose input is [old_id, slot] → [new_id, slot].
+    rewritten: list[str] = []
+    if new_id != old_id:
+        for nid, node in workflow.items():
+            if not isinstance(node, dict):
+                continue
+            for inp_name, inp_val in node.get("inputs", {}).items():
+                if isinstance(inp_val, list) and len(inp_val) == 2 and str(inp_val[0]) == old_id:
+                    inp_val[0] = new_id
+                    rewritten.append(f"{nid}.inputs.{inp_name}")
+
+    path = _save_workflow(workflow, name=Path(workflow_path).stem)
+    return json.dumps({
+        "status": "ok",
+        "workflow_path": path,
+        "old_node_id": old_id,
+        "new_node_id": new_id,
+        "new_class_type": new_class_type,
+        "inherited_inputs": list(new_node["inputs"].keys()),
+        "rewired_downstream": rewritten,
+    })
+
+
+@tool
 def add_workflow_node(workflow_path: str, node_id: str, class_type: str, inputs: str = "{}", meta_title: str = "") -> str:
     """Add a new node to an existing workflow file.
 
