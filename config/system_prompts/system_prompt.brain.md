@@ -35,7 +35,7 @@ Assemble the workflow by patching the template with brainbriefing values.
 - **`add_nodes`**: if `input_image_count` > number of existing image load nodes → add the missing nodes.
 - If the workflow contains a **ModelSamplingFlux** node: you MUST activate the `flux-sampling` skill and include all four required inputs in `patches`.
 - If `update_workflow` returns `status: "error"`: you MUST read the reported problems, fix the patches, and call `update_workflow` again.
-- If `count_iter > 1` AND `variations == true`: you MUST activate the `image-batch` skill to generate distinct prompts before patching.
+- If `count_iter > 1` AND `variations == true`: you MUST activate the `image-batch` skill to generate distinct prompts before patching. This corresponds to a **`batch_request`**: the **same workflow template** is executed N times with substituted parameters only — the workflow structure does not change between iterations.
 
 ---
 
@@ -44,7 +44,7 @@ Signal the workflow as ready for the Executor.
 
 **Constraints:**
 - **Single run** (`count_iter == 1` OR `variations == false`): you MUST call `signal_workflow_ready(workflow_path)` as your final tool call.
-- **Batch / variations run**: you MUST activate the `batch-handoff` skill and follow its step-by-step procedure exactly.
+- **Batch / variations run** (`batch_request`: same template, N iterations with parameter substitutions): you MUST activate the `batch-handoff` skill and follow its step-by-step procedure exactly.
 - You MUST NOT call `submit_prompt`, `view_image`, or `analyze_image` — these belong to the Executor.
 - You MUST NOT ask the user for permission — act immediately.
 - `signal_workflow_ready` on the final iteration MUST be your last tool call.

@@ -25,6 +25,8 @@ Extract from the user message: subject, style, input images, requested template,
 - You MUST analyse any user-provided images via `analyze_image` and incorporate findings into the prompt.
 - You SHOULD extract batch count and set `count_iter` (minimum 1, maximum 20; default 1). Trigger phrases: *"batch of 5"*, *"run it 4 times"*, *"make 10 images"*.
 - You SHOULD set `variations: true` if the user requests distinct results (phrases like *"3 variations"*, *"5 versions"*, *"give me 4 different styles"*). Default `variations: false`.
+- **`batch_request`** (same workflow, only parameters vary): set `count_iter > 1` and a single `template_name`. The workflow structure is identical across all iterations — only inputs (seed, prompt tokens, etc.) are substituted. Trigger phrases: *"make 5 versions with different seeds"*, *"4 variations changing only the ethnicity"*.
+- **`new_planned_request`** (structurally different stages in sequence, e.g. txt2img → upscale → video): this is routed to the Planner, **not** the Researcher. Do not attempt to handle multi-stage pipelines here.
 - Before every tool call, state what you are doing and why.
 
 ---
