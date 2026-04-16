@@ -36,3 +36,7 @@ If a matching entry exists, **apply the documented solution directly** instead o
 2026-04-16 | Template node KlingOmniProImageToVideoNode not found in ComfyUI install | Search for available nodes using search_nodes and use KlingCameraControlI2VNode instead to avoid missing_node_type errors.
 2026-04-16 | Unused BatchImagesNode and Note nodes cause validation errors immediately after template load | Remove unused nodes like BatchImagesNode and Note immediately after loading template if they are not required.
 2026-04-16 | Kling i2v workflow fails without connecting LoadImage output to reference_images input | Connect LoadImage node output explicitly to the reference_images input of the Kling video generation node to avoid missing input errors.
+
+2026-04-17 | Missing reference_images input caused validation failure on Kling video node | Add explicit reference_images patch linking LoadImage output to the video node input.
+2026-04-17 | LoadImage node rejected local file path during validation | Upload input images to ComfyUI input directory before assembling the workflow.
+2026-04-17 | Template contained unknown Note node type causing validation failure | Remove unknown node types from template before workflow validation to avoid type errors.

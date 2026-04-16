@@ -304,6 +304,12 @@ async def on_message(message: cl.Message) -> None:
             if path and os.path.isfile(path):
                 image_paths.append(path)
 
+    # ── Persist uploaded image paths in session for future triage turns ───
+    if image_paths:
+        _pip_session = getattr(pipeline, "_session", None)
+        if _pip_session is not None:
+            _pip_session.last_user_input_images = image_paths
+
     # ── Build Strands-compatible content ──────────────────────────────────
     content = _build_content(message.content or "", image_paths)
 

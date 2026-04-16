@@ -37,6 +37,7 @@ class AgentSession(BaseModel):
     last_agent: str = "brain"  # "brain" | "info" | "researcher" — tracks which agent handled the most recent turn
     last_researcher_request: str | None = None  # original user text stored when researcher returned status=blocked
     last_researcher_blockers: list[str] = Field(default_factory=list)  # blocker strings from the last blocked brainbriefing
+    last_user_input_images: list[str] = Field(default_factory=list)  # paths of images uploaded by the user, persisted across turns
 
 
 class TriageResult(BaseModel):
