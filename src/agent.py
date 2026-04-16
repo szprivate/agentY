@@ -618,33 +618,71 @@ def create_planner_agent(
 
 
 def create_info_agent(
+    llm: str | None = None,
     ollama_model: str | None = None,
+    anthropic_model: str | None = None,
     **kwargs,
 ) -> Agent:
-    """Create the Info agent — a lightweight Ollama agent that answers questions
+    """Create the Info agent — a lightweight agent that answers questions
     about available ComfyUI workflows, models, and capabilities.
 
-    Defaults to the same Ollama model used by ``llm_functions``
-    (``llm.pipeline.llm_functions`` in settings.json).
-    Override with ``INFO_OLLAMA_MODEL`` env var or *ollama_model*.
+    Reads ``llm.pipeline.info`` from settings.json (format: ``'provider,model'``),
+    e.g. ``'ollama,qwen3.5:9b'`` or ``'claude,claude-haiku-4-5'``. Env var
+    ``INFO_LLM`` overrides the combined setting; ``INFO_OLLAMA_MODEL`` or
+    ``INFO_ANTHROPIC_MODEL`` override the provider-specific model.
 
     Args:
+        llm: ``'ollama'`` or ``'claude'``. Falls back to ``INFO_LLM`` env/settings.
         ollama_model: Ollama model override (e.g. ``'qwen3.5:9b'``).
+        anthropic_model: Anthropic model override (e.g. ``'claude-haiku-4-5'``).
         **kwargs: Forwarded to the Strands Agent constructor.
     """
-    resolved_model = (
-        ollama_model
-        or os.environ.get("INFO_OLLAMA_MODEL")
-        or str(_cfg("INFO_OLLAMA_MODEL", "pipeline", "info", default=""))
-        or str(_cfg("LLM_FUNCTIONS_MODEL", "pipeline", "llm_functions", default="qwen3.5:9b"))
+    if ollama_model and llm is None:
+        llm = "ollama"
+
+    # Read combined 'provider,model' from settings (env var INFO_LLM still wins).
+    _raw = str(
+        _cfg(
+            "INFO_LLM",
+            "pipeline",
+            "info",
+            default=str(_cfg("LLM_FUNCTIONS_MODEL", "pipeline", "llm_functions", default="qwen3.5:9b")),
+        )
     )
+    _settings_llm, _settings_model = _parse_llm_setting(_raw)
+    resolved_llm = llm or _settings_llm or "ollama"
+
     system_prompt = _load_system_prompt("info")
+
+    if resolved_llm == "ollama":
+        resolved_ollama = (
+            ollama_model
+            or os.environ.get("INFO_OLLAMA_MODEL")
+            or _settings_model
+            or str(_cfg("LLM_FUNCTIONS_MODEL", "pipeline", "llm_functions", default="qwen3.5:9b"))
+        )
+        return _make_agent(
+            role="info",
+            llm="ollama",
+            system_prompt=system_prompt,
+            tools=INFO_TOOLS,
+            ollama_model=resolved_ollama,
+            **kwargs,
+        )
+
+    # Otherwise use Anthropic/Claude
+    resolved_anthropic = (
+        anthropic_model
+        or os.environ.get("INFO_ANTHROPIC_MODEL")
+        or _settings_model
+        or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
+    )
     return _make_agent(
         role="info",
-        llm="ollama",
+        llm="claude",
         system_prompt=system_prompt,
         tools=INFO_TOOLS,
-        ollama_model=resolved_model,
+        anthropic_model=resolved_anthropic,
         **kwargs,
     )
 

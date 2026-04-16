@@ -433,7 +433,10 @@ async def on_message(message: cl.Message) -> None:
         summary = f"🪙 Tokens: {' | '.join(parts)}"
 
         try:
-            cost_val, total_tokens = compute_cost_from_usage(usage, pipeline)
+            if hasattr(pipeline, "compute_turn_cost"):
+                cost_val, total_tokens = pipeline.compute_turn_cost()
+            else:
+                cost_val, total_tokens = compute_cost_from_usage(usage, pipeline)
             summary += f"  —  💵 ${cost_val:.4f}  ({total_tokens:,} total)"
         except Exception:
             pass

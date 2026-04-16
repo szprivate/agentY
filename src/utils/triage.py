@@ -88,7 +88,8 @@ async def triage(
         last = session.chat_summaries[-1]
         session_hint = (
             f"[SESSION CONTEXT: last_workflow='{last.workflow_name}', "
-            f"status='{last.status}', follow_up_count={session.follow_up_count}]\n\n"
+            f"status='{last.status}', follow_up_count={session.follow_up_count}, "
+            f"last_agent='{session.last_agent}']\n\n"
         )
 
     classify_input = f"{session_hint}{user_message}"

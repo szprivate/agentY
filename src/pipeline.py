@@ -236,6 +236,31 @@ def _extract_json(text: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Per-turn aggregated metrics helper
+# ---------------------------------------------------------------------------
+
+class _TurnMetrics:
+    """Aggregates token-usage dicts from all agents that ran in a single turn.
+
+    Exposes ``accumulated_usage`` so that callers that do
+    ``pipeline.event_loop_metrics.accumulated_usage`` receive a combined
+    picture instead of only the Brain's tokens.
+    """
+
+    def __init__(self, usages: list) -> None:
+        aggregated: dict[str, int] = {
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "cacheReadInputTokens": 0,
+            "cacheWriteInputTokens": 0,
+        }
+        for usage, _ in usages:
+            for k in aggregated:
+                aggregated[k] += int(usage.get(k, 0) or 0)
+        self.accumulated_usage: dict[str, int] = aggregated
+
+
+# ---------------------------------------------------------------------------
 # Pipeline callable
 # ---------------------------------------------------------------------------
 
@@ -280,6 +305,9 @@ class Pipeline:
         # Bind the memory tools module-level session so memory_read / memory_write
         # always operate on the correct per-session namespace.
         _set_memory_session_id(session_id)
+        # Per-turn usage tracking: list of (delta_usage_dict, agent_obj) for every
+        # agent that contributed tokens this turn. Reset at the start of each turn.
+        self._last_turn_usages: list = []
 
     def _should_skip_brain(self) -> bool:
         if self._skip_brain:
@@ -292,11 +320,63 @@ class Pipeline:
     def __call__(self, user_input, **kwargs: Any) -> str:
         return self.run(user_input, **kwargs)
 
-    # Delegate metric access to the Brain so Chainlit can read
-    # token usage summaries just as it would from a plain Strands Agent.
+    # Aggregate token usage from ALL agents that contributed to the last turn.
+    # Callers that do ``pipeline.event_loop_metrics.accumulated_usage`` see
+    # the combined picture (triage + researcher + brain + info, etc.) instead
+    # of only the Brain.
     @property
     def event_loop_metrics(self):  # noqa: ANN201
-        return self._brain.event_loop_metrics
+        return _TurnMetrics(self._last_turn_usages)
+
+    # ── Per-turn usage tracking helpers ─────────────────────────────── #
+
+    def _usage_snapshot(self, agent) -> dict:
+        """Return a copy of *agent*'s current accumulated usage, or {} on error."""
+        try:
+            return dict(agent.event_loop_metrics.accumulated_usage)
+        except Exception:  # noqa: BLE001
+            return {}
+
+    def _record_agent_usage(self, agent, before: dict) -> None:
+        """Compute the token delta for *agent* since *before* and store it.
+
+        Only appends an entry when the delta contains at least one positive
+        value (i.e. the agent actually issued LLM calls).
+        """
+        try:
+            after = dict(agent.event_loop_metrics.accumulated_usage)
+            delta = {
+                "inputTokens": int(after.get("inputTokens", 0) or 0) - int(before.get("inputTokens", 0) or 0),
+                "outputTokens": int(after.get("outputTokens", 0) or 0) - int(before.get("outputTokens", 0) or 0),
+                "cacheReadInputTokens": (
+                    int(after.get("cacheReadInputTokens", 0) or 0)
+                    - int(before.get("cacheReadInputTokens", 0) or 0)
+                ),
+                "cacheWriteInputTokens": (
+                    int(after.get("cacheWriteInputTokens", 0) or 0)
+                    - int(before.get("cacheWriteInputTokens", 0) or 0)
+                ),
+            }
+            if any(v > 0 for v in delta.values()):
+                self._last_turn_usages.append((delta, agent))
+        except Exception:  # noqa: BLE001
+            pass
+
+    def compute_turn_cost(self) -> tuple:
+        """Return ``(total_cost_usd, total_tokens)`` for the current turn.
+
+        Unlike ``compute_cost_from_usage(usage, pipeline)``, this method prices
+        each agent's delta with *that agent's* model rates, so e.g. Researcher
+        tokens billed at claude-haiku prices while Brain tokens at a different
+        rate, and Ollama agents contribute 0 cost regardless of token count.
+        """
+        total_cost = 0.0
+        total_tokens = 0
+        for usage, agent in self._last_turn_usages:
+            cost, tokens = compute_cost_from_usage(usage, agent)
+            total_cost += cost
+            total_tokens += tokens
+        return total_cost, total_tokens
 
     def run(self, user_input, **_: Any) -> str:
         """Run the full pipeline for *user_input* and return the Brain's response.
@@ -307,19 +387,83 @@ class Pipeline:
         - ``answer`` (info_query): return the triage answer directly
         - ``log_warning`` (low-confidence fallback): treat as new_request
         """
+        self._last_turn_usages = []
         user_text = self._extract_text(user_input)
         user_text = self._annotate_attachments(user_input, user_text)
+        _triage_snap = self._usage_snapshot(self._triage_agent)
         triage_result = asyncio.run(_triage(user_text, self._session, self._info_context, self._triage_agent))
+        self._record_agent_usage(self._triage_agent, _triage_snap)
         handler = _route(triage_result)
 
         if self._verbose:
             print(f"[pipeline] Triage → intent={triage_result.intent.value},"
                   f" confidence={triage_result.confidence:.2f}, handler={handler}")
 
+        # Context-dependent routing: researcher was previously blocked waiting for user input.
+        # Re-run the researcher with the original request + user's clarification before
+        # normal triage dispatch — regardless of how triage classified this message.
+        if self._session.last_agent == "researcher" and self._session.last_researcher_request:
+            if self._verbose:
+                print("[pipeline] Researcher was blocked — re-running with user clarification")
+            _bls = self._session.last_researcher_blockers
+            _blockers_ctx = (
+                "\n\nYou previously identified these blockers:\n" + "\n".join(f"- {b}" for b in _bls)
+                if _bls else ""
+            )
+            _enriched = (
+                f"{self._session.last_researcher_request}"
+                f"{_blockers_ctx}\n\n"
+                f"The user provided this clarification: {user_text}"
+            )
+            self._session.last_researcher_request = None
+            self._session.last_researcher_blockers = []
+            _r_json, _r_err, _ = self._run_researcher(_enriched)
+            if _r_err:
+                self._record_chat_summary(user_text, triage_result, status="error")
+                return _r_err
+            _question = self._researcher_blocked_question(_r_json)
+            if _question:
+                # Still blocked — store enriched context so the next reply continues the chain.
+                self._session.last_researcher_request = _enriched
+                try:
+                    self._session.last_researcher_blockers = json.loads(_r_json).get("blockers", [])
+                except Exception:
+                    pass
+                self._session.last_agent = "researcher"
+                self._record_chat_summary(user_text, triage_result, status="blocked")
+                return _question
+            # Researcher now ready — hand off to Brain.
+            self._last_brainbriefing_json = _r_json
+            self._brain.messages.clear()
+            self._ensure_clean_history()
+            _snap_b = self._usage_snapshot(self._brain)
+            _b_resp = str(self._brain(self._build_brain_prompt(_r_json)))
+            self._record_agent_usage(self._brain, _snap_b)
+            _wf = _get_workflow_signal()
+            _wf = self._expand_variations(_wf, _r_json)
+            _ex_paths: list[str] = []
+            if _wf:
+                _ex_lines, _ex_paths = asyncio.run(
+                    self._drain_executor_batch(_wf, _r_json, user_message=user_text)
+                )
+                if _ex_paths:
+                    self._session.current_output_paths[:] = _ex_paths
+                if _ex_lines:
+                    _b_resp += "\n\n" + "\n".join(_ex_lines)
+            self._record_chat_summary(user_text, triage_result, status="completed", raw_json=_r_json)
+            asyncio.run(self._compress_brain_history(extra_output_paths=_ex_paths))
+            self._session.last_agent = "brain"
+            return _b_resp
+
         if handler == "answer":
             if self._verbose:
                 print("[pipeline] info_query → Info agent")
-            return str(self._info_agent(user_text))
+            _info_snap = self._usage_snapshot(self._info_agent)
+            response = str(self._info_agent(user_text))
+            self._record_agent_usage(self._info_agent, _info_snap)
+            self._session.last_agent = "info"
+            self._record_chat_summary(user_text, triage_result, status="completed")
+            return response
 
         if handler == "needs_image":
             if self._verbose:
@@ -331,10 +475,24 @@ class Pipeline:
             )
 
         if handler == "brain":
+            # Context-dependent feedback routing: if the previous turn was handled by
+            # the Info agent (e.g. it created/refined a prompt), route feedback back to
+            # Info instead of the Brain, which has no knowledge of the prior prompt.
+            if triage_result.intent == MessageIntent.feedback and self._session.last_agent == "info":
+                if self._verbose:
+                    print("[pipeline] feedback on Info-agent output → routing back to Info agent")
+                _info_snap = self._usage_snapshot(self._info_agent)
+                response = str(self._info_agent(user_text))
+                self._record_agent_usage(self._info_agent, _info_snap)
+                self._session.last_agent = "info"
+                self._record_chat_summary(user_text, triage_result, status="completed")
+                return response
             # Follow-up: skip Researcher, send directly to Brain
             self._ensure_clean_history()
             brain_prompt = self._build_followup_prompt(user_text, triage_result)
+            _brain_snap = self._usage_snapshot(self._brain)
             brain_response = str(self._brain(brain_prompt))
+            self._record_agent_usage(self._brain, _brain_snap)
             self._session.follow_up_count += 1
             # Executor handoff: Brain signals a (re-)assembled workflow is ready
             workflow_paths = _get_workflow_signal()
@@ -358,6 +516,7 @@ class Pipeline:
                     brain_response = brain_response + "\n\n" + "\n".join(executor_lines)
             self._record_chat_summary(user_text, triage_result, status="completed")
             asyncio.run(self._compress_brain_history(extra_output_paths=executor_paths))
+            self._session.last_agent = "brain"
             if self._verbose:
                 print("[pipeline] Brain (follow-up) finished.")
             return brain_response
@@ -371,6 +530,18 @@ class Pipeline:
             self._record_chat_summary(user_text, triage_result, status="error")
             return error
 
+        # Check if the researcher needs user clarification before it can proceed.
+        question = self._researcher_blocked_question(raw_json)
+        if question:
+            self._session.last_researcher_request = user_text
+            try:
+                self._session.last_researcher_blockers = json.loads(raw_json).get("blockers", [])
+            except Exception:
+                self._session.last_researcher_blockers = []
+            self._session.last_agent = "researcher"
+            self._record_chat_summary(user_text, triage_result, status="blocked")
+            return question
+
         if self._should_skip_brain():
             if self._verbose:
                 print("[pipeline] Skipping Brain stage; returning Researcher output.")
@@ -381,7 +552,9 @@ class Pipeline:
         # New request → discard prior history entirely to save tokens.
         self._brain.messages.clear()
         self._ensure_clean_history()
+        _brain_snap = self._usage_snapshot(self._brain)
         brain_response = str(self._brain(brain_prompt))
+        self._record_agent_usage(self._brain, _brain_snap)
         # Executor handoff: Brain signals the assembled workflow(s) are ready
         workflow_paths_r = _get_workflow_signal()
         # Expand variation prompts from multiprompt.json if applicable
@@ -405,6 +578,7 @@ class Pipeline:
                 brain_response = brain_response + "\n\n" + "\n".join(executor_lines_r)
         self._record_chat_summary(user_text, triage_result, status="completed", raw_json=raw_json)
         asyncio.run(self._compress_brain_history(extra_output_paths=executor_paths_r))
+        self._session.last_agent = "brain"
         if self._verbose:
             print("[pipeline] Brain finished.")
         return brain_response
@@ -428,9 +602,12 @@ class Pipeline:
         Yields the same event dicts that a Strands Agent.stream_async would.
         """
         # Stage 0 – Triage (classify intent before any agent is called)
+        self._last_turn_usages = []
         user_text = self._extract_text(user_input)
         user_text = self._annotate_attachments(user_input, user_text)
+        _triage_snap = self._usage_snapshot(self._triage_agent)
         triage_result = await _triage(user_text, self._session, self._info_context, self._triage_agent)
+        self._record_agent_usage(self._triage_agent, _triage_snap)
         handler = _route(triage_result)
 
         if self._verbose:
@@ -439,12 +616,64 @@ class Pipeline:
             print(_msg)
             yield {"data": f"\n_{_msg}_"}
 
+        # Context-dependent routing: researcher was previously blocked waiting for user input.
+        if self._session.last_agent == "researcher" and self._session.last_researcher_request:
+            if self._verbose:
+                print("[pipeline:stream] Researcher was blocked — re-running with user clarification")
+                yield {"data": "\n_[pipeline:stream] Researcher was blocked — re-running with user clarification_"}
+            _bls_s = self._session.last_researcher_blockers
+            _blockers_ctx_s = (
+                "\n\nYou previously identified these blockers:\n" + "\n".join(f"- {b}" for b in _bls_s)
+                if _bls_s else ""
+            )
+            _enriched_s = (
+                f"{self._session.last_researcher_request}"
+                f"{_blockers_ctx_s}\n\n"
+                f"The user provided this clarification: {user_text}"
+            )
+            self._session.last_researcher_request = None
+            self._session.last_researcher_blockers = []
+            _r_json_s: str | None = None
+            _r_err_s: str | None = None
+            async for _ev in self._arun_researcher(_enriched_s):
+                if isinstance(_ev, dict) and "_researcher_done" in _ev:
+                    _r_json_s = _ev["raw_json"]
+                    _r_err_s = _ev["error"]
+                else:
+                    yield _ev
+            if _r_err_s:
+                self._record_chat_summary(user_text, triage_result, status="error")
+                yield {"data": _r_err_s}
+                return
+            _question_r = self._researcher_blocked_question(_r_json_s)
+            if _question_r:
+                self._session.last_researcher_request = _enriched_s
+                try:
+                    self._session.last_researcher_blockers = json.loads(_r_json_s).get("blockers", [])
+                except Exception:
+                    pass
+                self._session.last_agent = "researcher"
+                self._record_chat_summary(user_text, triage_result, status="blocked")
+                yield {"data": _question_r}
+                return
+            # Researcher now ready — stream Brain stage.
+            if self._verbose:
+                print("[pipeline:stream] Researcher (retry) resolved — handing off to Brain …")
+                yield {"data": "\n_[pipeline:stream] Researcher (retry) resolved — handing off to Brain …_"}
+            async for event in self._astream_brain_stage(_r_json_s, user_text, triage_result):
+                yield event
+            return
+
         if handler == "answer":
             if self._verbose:
                 print("[pipeline:stream] info_query → Info agent (streamed)")
                 yield {"data": "\n_[pipeline:stream] info_query → Info agent (streamed)_"}
+            _info_snap = self._usage_snapshot(self._info_agent)
             async for event in self._info_agent.stream_async(user_text):
                 yield event
+            self._record_agent_usage(self._info_agent, _info_snap)
+            self._session.last_agent = "info"
+            self._record_chat_summary(user_text, triage_result, status="completed")
             return
 
         if handler == "needs_image":
@@ -460,12 +689,28 @@ class Pipeline:
             return
 
         if handler == "brain":
+            # Context-dependent feedback routing: if the previous turn was handled by
+            # the Info agent (e.g. it created/refined a prompt), route feedback back to
+            # Info instead of the Brain, which has no knowledge of the prior prompt.
+            if triage_result.intent == MessageIntent.feedback and self._session.last_agent == "info":
+                if self._verbose:
+                    print("[pipeline:stream] feedback on Info-agent output → routing back to Info agent")
+                    yield {"data": "\n_[pipeline:stream] feedback on Info-agent output → routing back to Info agent_"}
+                _info_snap = self._usage_snapshot(self._info_agent)
+                async for event in self._info_agent.stream_async(user_text):
+                    yield event
+                self._record_agent_usage(self._info_agent, _info_snap)
+                self._session.last_agent = "info"
+                self._record_chat_summary(user_text, triage_result, status="completed")
+                return
             # Follow-up: skip Researcher, send directly to Brain (streamed)
             self._ensure_clean_history()
             brain_prompt = self._build_followup_prompt(user_text, triage_result)
             self._session.follow_up_count += 1
+            _brain_snap_fu = self._usage_snapshot(self._brain)
             async for event in self._brain.stream_async(brain_prompt):
                 yield event
+            self._record_agent_usage(self._brain, _brain_snap_fu)
             # Executor handoff: stream execution events back to Chainlit
             workflow_paths_fu = _get_workflow_signal()
             workflow_paths_fu = self._expand_variations(workflow_paths_fu, self._last_brainbriefing_json or "")
@@ -490,6 +735,7 @@ class Pipeline:
                 self._session.current_output_paths[:] = executor_paths_fu
             self._record_chat_summary(user_text, triage_result, status="completed")
             await self._compress_brain_history(extra_output_paths=executor_paths_fu)
+            self._session.last_agent = "brain"
             return
 
         if handler == "planner":
@@ -517,6 +763,19 @@ class Pipeline:
             yield {"data": error}
             return
 
+        # Check if the researcher needs user clarification before it can proceed.
+        _question_first = self._researcher_blocked_question(raw_json)
+        if _question_first:
+            self._session.last_researcher_request = user_text
+            try:
+                self._session.last_researcher_blockers = json.loads(raw_json).get("blockers", [])
+            except Exception:
+                self._session.last_researcher_blockers = []
+            self._session.last_agent = "researcher"
+            self._record_chat_summary(user_text, triage_result, status="blocked")
+            yield {"data": _question_first}
+            return
+
         self._last_brainbriefing_json = raw_json
 
         if self._should_skip_brain():
@@ -527,91 +786,11 @@ class Pipeline:
             return
 
         # Stage 2 – Brain (streamed, with optional ComfyUI interrupt handling)
-        # New request → discard prior history entirely to save tokens.
-        self._brain.messages.clear()
         if self._verbose:
             print("[pipeline:stream] Stage 2 – Brain streaming …")
             yield {"data": "\n_[pipeline:stream] Stage 2 – Brain streaming …_"}
-        self._ensure_clean_history()
-        brain_prompt = self._build_brain_prompt(raw_json)
-
-        # Brain input for the first invocation is the brain_prompt string;
-        # subsequent invocations (after a ComfyUI interrupt) supply the
-        # interruptResponse list.
-        current_input: Any = brain_prompt
-
-        while True:
-            interrupt_result = None
-
-            async for event in self._brain.stream_async(current_input):
-                yield event  # forward all events to Chainlit verbatim
-
-                # Detect agent interrupt: the final event before the loop stops
-                # is AgentResultEvent = {"result": AgentResult(...)}
-                if "result" in event:
-                    agent_result = event["result"]
-                    if getattr(agent_result, "stop_reason", None) == "interrupt":
-                        interrupts = getattr(agent_result, "interrupts", [])
-                        for intr in interrupts:
-                            if getattr(intr, "name", None) == INTERRUPT_NAME:
-                                interrupt_result = intr
-                                break
-
-            if interrupt_result is None:
-                # Normal Brain completion — no ComfyUI interrupt pending.
-                # Stage 3 – Executor: submit, poll, QA, save
-                workflow_paths_s = _get_workflow_signal()
-                workflow_paths_s = self._expand_variations(workflow_paths_s, raw_json)
-                executor_paths_s: list[str] = []
-                if workflow_paths_s:
-                    count = len(workflow_paths_s)
-                    if self._verbose:
-                        tag = f"{count} workflows (batch)" if count > 1 else workflow_paths_s[0]
-                        print(f"[pipeline:stream] Brain signaled {tag} ready.")
-                        yield {"data": f"\n_[pipeline:stream] Brain signaled {tag} ready._"}
-                    hdr = f"batch of {count} workflows" if count > 1 else "workflow"
-                    yield {"data": f"\n\n_⚙️ Handing off to executor ({hdr})…_"}
-                    async for line in _execute_workflows_batch(
-                        workflow_paths_s,
-                        raw_json,
-                        user_message=user_text,
-                        verbose=self._verbose,
-                        collected_paths=executor_paths_s,
-                    ):
-                        yield {"data": f"\n{line}"}
-                if executor_paths_s:
-                    self._session.current_output_paths[:] = executor_paths_s
-                self._record_chat_summary(user_text, triage_result, status="completed", raw_json=raw_json)
-                await self._compress_brain_history(extra_output_paths=executor_paths_s)
-                if self._verbose:
-                    print("[pipeline:stream] Brain finished.")
-                    yield {"data": "\n_[pipeline:stream] Brain finished._"}
-                break
-
-            # ── ComfyUI interrupt: poll cheaply, then resume ───────── #
-            prompt_id: str = interrupt_result.reason
-            if self._verbose:
-                print(f"[pipeline:stream] ComfyUI interrupt — polling prompt_id={prompt_id}")
-                yield {"data": f"\n_[pipeline:stream] ComfyUI interrupt — polling prompt_id={prompt_id}_"}
-
-            yield {"data": f"\n\n_⏳ ComfyUI job queued (`{prompt_id}`). Waiting for completion…_"}
-
-            history_result = await _poll_comfyui_job(prompt_id)
-
-            yield {"data": "\n_✅ ComfyUI job finished — resuming…_"}
-            if self._verbose:
-                print(f"[pipeline:stream] ComfyUI job {prompt_id} finished. Resuming Brain.")
-                yield {"data": f"\n_[pipeline:stream] ComfyUI job {prompt_id} finished. Resuming Brain._"}
-
-            # Resume the agent: supply the polled history as the interrupt response.
-            current_input = [
-                {
-                    "interruptResponse": {
-                        "interruptId": interrupt_result.id,
-                        "response": json.dumps(history_result),
-                    }
-                }
-            ]
+        async for event in self._astream_brain_stage(raw_json, user_text, triage_result):
+            yield event
 
     # ── Internal helpers ─────────────────────────────────────────────── #
 
@@ -624,7 +803,10 @@ class Pipeline:
         success, or an empty list when parsing fails (the caller falls back to
         treating the request as a plain ``new_request``).
         """
-        raw: str = str(self._planner_agent(user_text))
+        raw: str
+        _planner_snap = self._usage_snapshot(self._planner_agent)
+        raw = str(self._planner_agent(user_text))
+        self._record_agent_usage(self._planner_agent, _planner_snap)
         # Reset single-turn history immediately.
         try:
             self._planner_agent.conversation_manager.messages.clear()
@@ -693,7 +875,9 @@ class Pipeline:
             if self._should_skip_brain():
                 return researcher_output
             self._ensure_clean_history()
+            _brain_snap_pfb = self._usage_snapshot(self._brain)
             brain_response = str(self._brain(self._build_brain_prompt(raw_json)))
+            self._record_agent_usage(self._brain, _brain_snap_pfb)
             wf = _get_workflow_signal()
             wf = self._expand_variations(wf, raw_json)
             ep: list[str] = []
@@ -738,7 +922,9 @@ class Pipeline:
                 continue
 
             self._ensure_clean_history()
+            _brain_snap_ps = self._usage_snapshot(self._brain)
             brain_response = str(self._brain(self._build_brain_prompt(raw_json)))
+            self._record_agent_usage(self._brain, _brain_snap_ps)
             wf_paths = _get_workflow_signal()
             wf_paths = self._expand_variations(wf_paths, raw_json)
             exec_paths: list[str] = []
@@ -803,8 +989,10 @@ class Pipeline:
                 yield {"data": researcher_output}
                 return
             self._ensure_clean_history()
+            _brain_snap_pfb = self._usage_snapshot(self._brain)
             async for event in self._brain.stream_async(self._build_brain_prompt(raw_json)):
                 yield event
+            self._record_agent_usage(self._brain, _brain_snap_pfb)
             wf = _get_workflow_signal()
             wf = self._expand_variations(wf, raw_json)
             ep: list[str] = []
@@ -862,8 +1050,10 @@ class Pipeline:
                 continue
 
             self._ensure_clean_history()
+            _brain_snap_ps = self._usage_snapshot(self._brain)
             async for event in self._brain.stream_async(self._build_brain_prompt(raw_json)):
                 yield event
+            self._record_agent_usage(self._brain, _brain_snap_ps)
 
             wf_paths = _get_workflow_signal()
             wf_paths = self._expand_variations(wf_paths, raw_json)
@@ -1290,6 +1480,7 @@ class Pipeline:
             researcher_prompt_text = memory_ctx + "\n\n" + researcher_prompt_text
 
         last_error: str | None = None
+        _researcher_snap = self._usage_snapshot(self._researcher)
 
         for attempt in range(1 + self._MAX_RESEARCHER_RETRIES):
             if attempt == 0:
@@ -1343,8 +1534,10 @@ class Pipeline:
                     f"template={briefing.template.name!r}"
                 )
             yield {"_researcher_done": True, "raw_json": raw_json, "error": None, "researcher_output": raw_json}
+            self._record_agent_usage(self._researcher, _researcher_snap)
             return
 
+        self._record_agent_usage(self._researcher, _researcher_snap)
         yield {
             "_researcher_done": True,
             "raw_json": None,
@@ -1403,6 +1596,7 @@ class Pipeline:
         first_attempt_input: Any = researcher_prompt_text
 
         last_error: str | None = None
+        _researcher_snap = self._usage_snapshot(self._researcher)
 
         for attempt in range(1 + self._MAX_RESEARCHER_RETRIES):
             if attempt == 0:
@@ -1450,13 +1644,114 @@ class Pipeline:
                     f"status={briefing.status}, task={briefing.task.description!r}, "
                     f"template={briefing.template.name!r}"
                 )
+            self._record_agent_usage(self._researcher, _researcher_snap)
             return raw_json, None, raw_json
 
         # All attempts exhausted
+        self._record_agent_usage(self._researcher, _researcher_snap)
         return None, (
             f"Brainbriefing validation failed after {1 + self._MAX_RESEARCHER_RETRIES} attempts: "
             f"{last_error}"
         ), ""
+
+    def _researcher_blocked_question(self, raw_json: str | None) -> str | None:
+        """Return a user-facing question string if the brainbriefing status is 'blocked', else None."""
+        if not raw_json:
+            return None
+        try:
+            data = json.loads(raw_json)
+            if data.get("status") == "blocked":
+                blockers = data.get("blockers") or []
+                if blockers:
+                    items = "\n".join(f"- {b}" for b in blockers)
+                    return f"I need a bit more information before I can proceed:\n\n{items}"
+                return "I need more information before I can continue."
+        except Exception:
+            pass
+        return None
+
+    async def _astream_brain_stage(
+        self,
+        raw_json: str,
+        user_text: str,
+        triage_result: TriageResult,
+    ):
+        """Async generator: stream the full Brain stage (assembly → executor) for a given brainbriefing.
+
+        Clears brain history, builds the brain prompt, streams token output and
+        handles ComfyUI interrupts transparently.  Shared by the normal
+        Researcher→Brain flow and the blocked-researcher resume path.
+        """
+        self._brain.messages.clear()
+        self._ensure_clean_history()
+        brain_prompt = self._build_brain_prompt(raw_json)
+        current_input: Any = brain_prompt
+        _brain_snap = self._usage_snapshot(self._brain)
+
+        while True:
+            interrupt_result = None
+
+            async for event in self._brain.stream_async(current_input):
+                yield event
+                if "result" in event:
+                    agent_result = event["result"]
+                    if getattr(agent_result, "stop_reason", None) == "interrupt":
+                        for intr in getattr(agent_result, "interrupts", []):
+                            if getattr(intr, "name", None) == INTERRUPT_NAME:
+                                interrupt_result = intr
+                                break
+
+            if interrupt_result is None:
+                # Normal completion — Stage 3: Executor
+                workflow_paths_b = _get_workflow_signal()
+                workflow_paths_b = self._expand_variations(workflow_paths_b, raw_json)
+                executor_paths_b: list[str] = []
+                if workflow_paths_b:
+                    count = len(workflow_paths_b)
+                    if self._verbose:
+                        tag = f"{count} workflows (batch)" if count > 1 else workflow_paths_b[0]
+                        print(f"[pipeline:stream] Brain signaled {tag} ready.")
+                        yield {"data": f"\n_[pipeline:stream] Brain signaled {tag} ready._"}
+                    hdr = f"batch of {count} workflows" if count > 1 else "workflow"
+                    yield {"data": f"\n\n_⚙️ Handing off to executor ({hdr})…_"}
+                    async for line in _execute_workflows_batch(
+                        workflow_paths_b,
+                        raw_json,
+                        user_message=user_text,
+                        verbose=self._verbose,
+                        collected_paths=executor_paths_b,
+                    ):
+                        yield {"data": f"\n{line}"}
+                if executor_paths_b:
+                    self._session.current_output_paths[:] = executor_paths_b
+                self._record_chat_summary(user_text, triage_result, status="completed", raw_json=raw_json)
+                await self._compress_brain_history(extra_output_paths=executor_paths_b)
+                self._record_agent_usage(self._brain, _brain_snap)
+                self._session.last_agent = "brain"
+                if self._verbose:
+                    print("[pipeline:stream] Brain finished.")
+                    yield {"data": "\n_[pipeline:stream] Brain finished._"}
+                break
+
+            # ── ComfyUI interrupt: poll cheaply, then resume ───────── #
+            prompt_id_b: str = interrupt_result.reason
+            if self._verbose:
+                print(f"[pipeline:stream] ComfyUI interrupt — polling prompt_id={prompt_id_b}")
+                yield {"data": f"\n_[pipeline:stream] ComfyUI interrupt — polling prompt_id={prompt_id_b}_"}
+            yield {"data": f"\n\n_⏳ ComfyUI job queued (`{prompt_id_b}`). Waiting for completion…_"}
+            history_result_b = await _poll_comfyui_job(prompt_id_b)
+            yield {"data": "\n_✅ ComfyUI job finished — resuming…_"}
+            if self._verbose:
+                print(f"[pipeline:stream] ComfyUI job {prompt_id_b} finished. Resuming Brain.")
+                yield {"data": f"\n_[pipeline:stream] ComfyUI job {prompt_id_b} finished. Resuming Brain._"}
+            current_input = [
+                {
+                    "interruptResponse": {
+                        "interruptId": interrupt_result.id,
+                        "response": json.dumps(history_result_b),
+                    }
+                }
+            ]
 
     def _build_brain_prompt(self, raw_json: str) -> str:
         """Format the Brain's input prompt from the resolved brainbriefing JSON."""

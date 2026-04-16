@@ -26,3 +26,7 @@ If a matching entry exists, **apply the documented solution directly** instead o
 
 <!-- The learnings agent automatically appends new entries below this line. -->
 <!-- Format: date | problem summary | solution (1–2 sentences) -->
+
+2026-04-15 | update_workflow fails validation if reference images not in ComfyUI input directory | Upload images using upload_image before patching workflow inputs to ensure files exist for node validation steps.
+2026-04-15 | Template aspect_ratio defaults to 'auto' conflicting with specific user ratio requests | Always patch generator node aspect_ratio input to specific value like '16:9' to override 'auto' default.
+2026-04-15 | Nano Banana 2 node requires resolution strings like '2K' instead of raw pixel dimensions | Map requested pixel dimensions to standard resolution strings like '2K' before patching generator resolution input.

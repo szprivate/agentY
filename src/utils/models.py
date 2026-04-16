@@ -34,6 +34,9 @@ class AgentSession(BaseModel):
     chat_summaries: list[ChatSummary] = Field(default_factory=list)
     current_output_paths: list[str] = Field(default_factory=list)
     follow_up_count: int = 0
+    last_agent: str = "brain"  # "brain" | "info" | "researcher" — tracks which agent handled the most recent turn
+    last_researcher_request: str | None = None  # original user text stored when researcher returned status=blocked
+    last_researcher_blockers: list[str] = Field(default_factory=list)  # blocker strings from the last blocked brainbriefing
 
 
 class TriageResult(BaseModel):

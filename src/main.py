@@ -169,7 +169,10 @@ def main() -> None:
                 parts.append(f"{cache_write:,} cache write")
             print(f"🪙 Tokens: {' / '.join(parts)}\n")
             try:
-                cost_val, total_tokens = compute_cost_from_usage(usage, agent)
+                if hasattr(agent, "compute_turn_cost"):
+                    cost_val, total_tokens = agent.compute_turn_cost()
+                else:
+                    cost_val, total_tokens = compute_cost_from_usage(usage, agent)
                 print(f"💵 Cost: ${cost_val:.2f} (total {total_tokens:,} tokens)\n")
             except Exception:
                 pass
