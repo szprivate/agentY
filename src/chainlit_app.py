@@ -239,6 +239,12 @@ async def on_message(message: cl.Message) -> None:
         await cl.Message(content="✅ Agent restarted successfully.", author="system").send()
         return
 
+    if _text.lower() in {"stop", "/stop", "!stop", "shutdown", "/shutdown"}:
+        await cl.Message(content="🛑 Stopping agent…", author="system").send()
+        import os, signal
+        os.kill(os.getpid(), signal.SIGTERM)
+        return
+
     if _text.lower() in {"unload", "/unload", "unload models", "!unload"}:
         await cl.Message(content="⏏️ Unloading Ollama models from VRAM…", author="system").send()
         try:

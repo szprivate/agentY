@@ -462,6 +462,7 @@ class Pipeline:
             response = str(self._info_agent(user_text))
             self._record_agent_usage(self._info_agent, _info_snap)
             self._session.last_agent = "info"
+            self._session.last_info_response = response
             self._record_chat_summary(user_text, triage_result, status="completed")
             return response
 
@@ -669,10 +670,16 @@ class Pipeline:
                 print("[pipeline:stream] info_query → Info agent (streamed)")
                 yield {"data": "\n_[pipeline:stream] info_query → Info agent (streamed)_"}
             _info_snap = self._usage_snapshot(self._info_agent)
+            _info_chunks: list[str] = []
             async for event in self._info_agent.stream_async(user_text):
+                if isinstance(event, dict):
+                    _chunk = event.get("data", "")
+                    if _chunk:
+                        _info_chunks.append(_chunk)
                 yield event
             self._record_agent_usage(self._info_agent, _info_snap)
             self._session.last_agent = "info"
+            self._session.last_info_response = "".join(_info_chunks) or None
             self._record_chat_summary(user_text, triage_result, status="completed")
             return
 
@@ -1487,6 +1494,16 @@ class Pipeline:
                 for p in self._session.last_user_input_images
             )
             researcher_prompt_text += f"\n\nInput image(s) from earlier in this thread:\n{_paths_hint}"
+
+        # If the previous turn was handled by the Info agent (e.g. it crafted a prompt),
+        # pass only the key output as a compact hint so the Researcher can reuse it.
+        if self._session.last_agent == "info" and self._session.last_info_response:
+            _trimmed = self._session.last_info_response[:2000]  # hard cap — keeps tokens low
+            researcher_prompt_text += (
+                f"\n\nThe Info agent produced the following output in the previous turn "
+                f"(use any prompt text or details from it):\n{_trimmed}"
+            )
+            self._session.last_info_response = None  # consume once
 
         last_error: str | None = None
         _researcher_snap = self._usage_snapshot(self._researcher)
