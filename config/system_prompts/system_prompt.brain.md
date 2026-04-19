@@ -15,14 +15,17 @@ Receive a fully-resolved `brainbriefing` JSON from the Researcher, assemble and 
 
 
 ### 1. Determine whether the researcher selected a template:
-Check the brainbriefing JSON for a template name. If a template name is present, follow these steps:
+Check the brainbriefing JSON for a template name. ONLY if a template name is present, follow step 1.1
+If NO template is present, follow step 1.2
 
-### 1.1 Patch and validate
+### 1.1 Patch workflow template and validate
 Acivate the assemble-from-template skill - this will take assemble the workflow by patching the template with brainbriefing values.
 
+### 1.2 Create new workflow from scratch and validate
+Activate the assemble-new-workflow skill - this will create a new workflow from scratch, using the info from the brainbriefing.
 ---
 
-### 3. Handoff
+### 2. Handoff
 Signal the workflow as ready for the Executor.
 
 **Constraints:**
