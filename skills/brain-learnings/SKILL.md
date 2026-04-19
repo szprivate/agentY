@@ -40,3 +40,10 @@ If a matching entry exists, **apply the documented solution directly** instead o
 2026-04-17 | Missing reference_images input caused validation failure on Kling video node | Add explicit reference_images patch linking LoadImage output to the video node input.
 2026-04-17 | LoadImage node rejected local file path during validation | Upload input images to ComfyUI input directory before assembling the workflow.
 2026-04-17 | Template contained unknown Note node type causing validation failure | Remove unknown node types from template before workflow validation to avoid type errors.
+
+2026-04-17 | ModelSamplingFlux validation fails with missing shift inputs | Always include base_shift (0.5), max_shift (1.15), width, height when patching workflows containing ModelSamplingFlux nodes. Omitting any causes error.
+2026-04-17 | Template references custom node class not in ComfyUI installation | Verify all required custom nodes (e.g., LTXVideo extensions) are installed before using templates. Missing node class causes validation error.
+
+2026-04-17 | BatchImagesNode and Note nodes cause validation errors in Kling O3 templates | Always remove BatchImagesNode and Note nodes from Kling O3 templates before validation; they are not needed for single-run workflows and cause required input errors.
+2026-04-17 | KlingOmniProImageToVideoNode requires reference_images connection not value assignment | Connect reference_images input to LoadImage output using node ID and slot format, not as a literal value patch to avoid missing input errors.
+2026-04-17 | Input image paths in brainbriefing may reference non-existent files | Verify input files exist at specified paths before workflow assembly; do not attempt upload if file not found at brainbriefing location.

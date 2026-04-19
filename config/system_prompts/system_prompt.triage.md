@@ -65,11 +65,12 @@ Classify the incoming user message into **exactly one** of the following intents
 - Use `new_planned_request` ONLY when each step uses a **different workflow type** (e.g. txt2img → upscaler → video). If all steps are the same workflow type with varying parameters, use `batch_request` instead. Never classify "N variations of the same workflow" as `new_planned_request`.
 - Use `info_query` only when the user is clearly asking *about* the system, not directing it to produce something.
 - Set `confidence < 0.6` when genuinely ambiguous — the pipeline will treat low-confidence results as `new_request` and log a warning.
-- Use `needs_image` **only** when ALL three conditions are met:
+- Use `needs_image` **only** when ALL four conditions are met:
   1. The task is inherently image-to-image (edit, upscale, style transfer, background removal, face swap, inpainting, etc.)
   2. No image was attached to the current message.
   3. There is no prior session output that could be chained.
-  - If any one of those conditions is false, use another intent (e.g. `chain` when prior output exists, `new_request` for pure text-to-image).
+  4. `user_input_images` is **empty** (or absent) in `[SESSION CONTEXT]` — if it is non-empty, the user already provided an image earlier in this thread; use `new_request` instead and treat those paths as the input image.
+  - If any one of those conditions is false, use another intent (e.g. `chain` when prior output exists, `new_request` for pure text-to-image or when a prior user image is available).
 
 ## What to do when `needs_image`
 

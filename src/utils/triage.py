@@ -84,18 +84,22 @@ async def triage(
     # Build a compact session context prefix so the model can distinguish
     # follow-up intents (param_tweak / chain / feedback) from new_request.
     session_hint = ""
+    _img_hint = (
+        f", user_input_images={session.last_user_input_images}"
+        if session.last_user_input_images
+        else ""
+    )
     if session.chat_summaries:
         last = session.chat_summaries[-1]
-        _img_hint = (
-            f", user_input_images={session.last_user_input_images}"
-            if session.last_user_input_images
-            else ""
-        )
         session_hint = (
             f"[SESSION CONTEXT: last_workflow='{last.workflow_name}', "
             f"status='{last.status}', follow_up_count={session.follow_up_count}, "
             f"last_agent='{session.last_agent}'{_img_hint}]\n\n"
         )
+    elif session.last_user_input_images:
+        # No generations yet but user already uploaded images — surface them so
+        # triage won't mistakenly classify follow-up requests as needs_image.
+        session_hint = f"[SESSION CONTEXT: no_prior_generation=true{_img_hint}]\n\n"
 
     classify_input = f"{session_hint}{user_message}"
 

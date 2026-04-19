@@ -1479,6 +1479,15 @@ class Pipeline:
         if memory_ctx:
             researcher_prompt_text = memory_ctx + "\n\n" + researcher_prompt_text
 
+        # Inject paths from earlier uploads when the current message has no attachments.
+        current_has_images = isinstance(user_input, list) and any("image" in b for b in user_input)
+        if not current_has_images and self._session.last_user_input_images:
+            _paths_hint = "\n".join(
+                f"  - {p}  [image uploaded earlier in this thread, use as input]"
+                for p in self._session.last_user_input_images
+            )
+            researcher_prompt_text += f"\n\nInput image(s) from earlier in this thread:\n{_paths_hint}"
+
         last_error: str | None = None
         _researcher_snap = self._usage_snapshot(self._researcher)
 
@@ -1587,6 +1596,17 @@ class Pipeline:
         memory_ctx = self._get_memory_context(user_text)
         if memory_ctx:
             researcher_prompt_text = memory_ctx + "\n\n" + researcher_prompt_text
+
+        # If the current message has no image attachments but the user uploaded
+        # images earlier in this thread, surface those paths so the Researcher
+        # knows what input image(s) to use (e.g. "make a video from it").
+        current_has_images = isinstance(user_input, list) and any("image" in b for b in user_input)
+        if not current_has_images and self._session.last_user_input_images:
+            _paths_hint = "\n".join(
+                f"  - {p}  [image uploaded earlier in this thread, use as input]"
+                for p in self._session.last_user_input_images
+            )
+            researcher_prompt_text += f"\n\nInput image(s) from earlier in this thread:\n{_paths_hint}"
 
         # Always pass only the text prompt to the Researcher.
         # When user_input is a multimodal list, the text block already contains
