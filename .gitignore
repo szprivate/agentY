@@ -15,5 +15,7 @@ logs/
 output_images/
 output_workflows/
 /.files
-/files
 /memory
+
+#other
+.claude

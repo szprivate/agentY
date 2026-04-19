@@ -35,6 +35,9 @@ from src.utils.costs import compute_cost_from_usage
 from src.utils.models import AgentSession
 from src.utils.triage import triage as _run_triage, route as _route_intent
 
+# Agent factories imported lazily inside the switch_model handler to avoid
+# circular-import issues at module load time.
+
 
 # ── Unload Ollama models before pipeline startup ──────────────────────────────
 
@@ -335,6 +338,92 @@ async def on_message(message: cl.Message) -> None:
         except Exception as _exc:
             await cl.Message(
                 content=f"❌ Failed to clear history:\n```\n{_exc}\n```",
+                author="system",
+            ).send()
+        return
+
+    # ── /switch_model <agent> <provider,model> ────────────────────────────────
+    if _text.lower().startswith("/switch_model") or _text.lower().startswith("switch_model"):
+        _parts = _text.split(None, 2)  # [cmd, agent_name, provider,model]
+        _AGENTS = {"researcher", "brain", "info", "triage", "planner", "error_checker"}
+        if len(_parts) < 3:
+            await cl.Message(
+                content=(
+                    "⚠️ Usage: `/switch_model <agent> <provider,model>`\n\n"
+                    f"Agents: `{', '.join(sorted(_AGENTS))}`\n"
+                    "Examples:\n"
+                    "- `/switch_model brain claude,claude-opus-4-7`\n"
+                    "- `/switch_model researcher ollama,qwen3:14b`"
+                ),
+                author="system",
+            ).send()
+            return
+        _agent_name = _parts[1].lower()
+        _llm_spec = _parts[2].strip()
+        if _agent_name not in _AGENTS:
+            await cl.Message(
+                content=f"❌ Unknown agent `{_agent_name}`. Valid agents: `{', '.join(sorted(_AGENTS))}`",
+                author="system",
+            ).send()
+            return
+        _pipeline = cl.user_session.get("pipeline")
+        if _pipeline is None:
+            await cl.Message(content="⚠️ Pipeline not initialised. Please reload the page.", author="system").send()
+            return
+        _provider, _, _model = _llm_spec.partition(",")
+        _provider = _provider.strip().lower()
+        _model = _model.strip()
+        if _provider not in {"claude", "ollama"}:
+            await cl.Message(
+                content=f"❌ Unknown provider `{_provider}`. Use `claude` or `ollama`.",
+                author="system",
+            ).send()
+            return
+        await cl.Message(
+            content=f"🔄 Switching `{_agent_name}` to `{_provider},{_model}`…",
+            author="system",
+        ).send()
+        try:
+            from src.agent import (
+                create_researcher_agent,
+                create_brain_agent,
+                create_info_agent,
+                create_triage_agent,
+                create_planner_agent,
+                create_error_checker_agent,
+            )
+            _kwargs = {"llm": _provider}
+            if _model:
+                if _provider == "ollama":
+                    _kwargs["ollama_model"] = _model
+                else:
+                    _kwargs["anthropic_model"] = _model
+            _factory_map = {
+                "researcher":    create_researcher_agent,
+                "brain":         create_brain_agent,
+                "info":          create_info_agent,
+                "triage":        create_triage_agent,
+                "planner":       create_planner_agent,
+                "error_checker": create_error_checker_agent,
+            }
+            _new_agent = _factory_map[_agent_name](**_kwargs)
+            _attr_map = {
+                "researcher":    "_researcher",
+                "brain":         "_brain",
+                "info":          "_info_agent",
+                "triage":        "_triage_agent",
+                "planner":       "_planner_agent",
+                "error_checker": "_error_checker",
+            }
+            setattr(_pipeline, _attr_map[_agent_name], _new_agent)
+            _display = f"`{_provider},{_model}`" if _model else f"`{_provider}`"
+            await cl.Message(
+                content=f"✅ `{_agent_name}` now using {_display}.",
+                author="system",
+            ).send()
+        except Exception as _exc:
+            await cl.Message(
+                content=f"❌ Failed to switch model:\n```\n{_exc}\n```",
                 author="system",
             ).send()
         return
