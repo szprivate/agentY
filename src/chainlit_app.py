@@ -268,6 +268,29 @@ async def on_message(message: cl.Message) -> None:
             ).send()
         return
 
+    if _text.lower() in {"clear_vram", "/clear_vram", "clearvram", "/clearvram"}:
+        await cl.Message(content="🧹 Clearing VRAM…", author="system").send()
+        try:
+            from src.tools.comfyui import free_memory as _free_memory
+            import json as _json
+            _result = _json.loads(_free_memory())
+            if "error" not in _result:
+                await cl.Message(
+                    content="✅ VRAM cleared — models unloaded and GPU cache freed.",
+                    author="system",
+                ).send()
+            else:
+                await cl.Message(
+                    content=f"❌ Clear VRAM failed:\n```\n{_result.get('error')}\n```",
+                    author="system",
+                ).send()
+        except Exception as _exc:
+            await cl.Message(
+                content=f"❌ Clear VRAM failed:\n```\n{_exc}\n```",
+                author="system",
+            ).send()
+        return
+
     if _text.lower() in {"clearhistory", "/clearhistory", "clear history", "/clear history"}:
         from chainlit.data import get_data_layer
         from chainlit.types import Pagination, ThreadFilter
