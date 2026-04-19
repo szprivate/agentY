@@ -268,6 +268,54 @@ async def on_message(message: cl.Message) -> None:
             ).send()
         return
 
+    if _text.lower() in {"clearhistory", "/clearhistory", "clear history", "/clear history"}:
+        from chainlit.data import get_data_layer
+        from chainlit.types import Pagination, ThreadFilter
+
+        data_layer = get_data_layer()
+        if data_layer is None:
+            await cl.Message(
+                content="⚠️ No data layer configured — history is not persisted.",
+                author="system",
+            ).send()
+            return
+
+        try:
+            _user = cl.user_session.get("user")
+            _user_id: str | None = getattr(_user, "id", None) if _user else None
+
+            deleted_count = 0
+            cursor: str | None = None
+            while True:
+                page: object = await data_layer.list_threads(
+                    pagination=Pagination(first=100, cursor=cursor),
+                    filters=ThreadFilter(userId=_user_id),
+                )
+                threads = getattr(page, "data", []) or []
+                if not threads:
+                    break
+                for thread in threads:
+                    tid = thread.get("id") if isinstance(thread, dict) else getattr(thread, "id", None)
+                    if tid:
+                        await data_layer.delete_thread(tid)
+                        deleted_count += 1
+                next_cursor = getattr(getattr(page, "pageInfo", None), "endCursor", None)
+                has_next = getattr(getattr(page, "pageInfo", None), "hasNextPage", False)
+                if not has_next or not next_cursor:
+                    break
+                cursor = next_cursor
+
+            await cl.Message(
+                content=f"🗑️ Cleared {deleted_count} thread(s) from history. Refresh the page to see the updated sidebar.",
+                author="system",
+            ).send()
+        except Exception as _exc:
+            await cl.Message(
+                content=f"❌ Failed to clear history:\n```\n{_exc}\n```",
+                author="system",
+            ).send()
+        return
+
     pipeline = cl.user_session.get("pipeline")
     if pipeline is None:
         await cl.Message(
