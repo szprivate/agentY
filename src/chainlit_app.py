@@ -241,7 +241,7 @@ async def on_message(message: cl.Message) -> None:
 
     if _text.lower() in {"stop", "/stop", "!stop", "shutdown", "/shutdown"}:
         await cl.Message(content="🛑 Stopping agent…", author="system").send()
-        import os, signal
+        import signal
         os.kill(os.getpid(), signal.SIGTERM)
         return
 
