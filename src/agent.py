@@ -27,7 +27,7 @@ from strands.hooks.events import AfterToolCallEvent
 from src.utils.comfyui_interrupt_hook import ComfyUIInterruptHook
 from src.utils.costs import compute_cost_from_usage
 
-from src.tools import RESEARCHER_TOOLS, BRAIN_TOOLS, INFO_TOOLS, reset_patch_workflow_guard
+from src.tools import RESEARCHER_TOOLS, BRAIN_TOOLS, INFO_TOOLS, ERROR_CHECKER_TOOLS, reset_patch_workflow_guard
 from src.steering import get_brain_steering_handlers, get_researcher_steering_handlers
 
 
@@ -180,6 +180,7 @@ _SYSTEM_PROMPT_FILE: dict[str, str] = {
     "triage": "system_prompt.triage",
     "planner": "system_prompt.planner",
     "learnings": "system_prompt.learnings",
+    "error_checker": "system_prompt.error_checker",
 }
 
 
@@ -901,6 +902,82 @@ def create_learnings_agent(
         **kwargs,
     )
     # Learnings agent is single-turn and stateless.
+    agent.conversation_manager = SlidingWindowConversationManager(window_size=2)
+    return agent
+
+
+def create_error_checker_agent(
+    llm: str | None = None,
+    ollama_model: str | None = None,
+    anthropic_model: str | None = None,
+    **kwargs,
+) -> Agent:
+    """Create the Error Checker agent — a single-turn post-execution log analyser.
+
+    Runs after every ComfyUI workflow execution, fetches recent logs, and outputs
+    a JSON verdict: ``ok``, ``error_fixable`` (with a concrete fix plan for the
+    Brain), or ``error_unfixable`` (with a human-readable user message).
+
+    Reads ``llm.pipeline.error_checker`` from settings.json (format:
+    ``'provider,model'``).  Env var ``ERROR_CHECKER_LLM`` overrides the full
+    setting; ``ERROR_CHECKER_OLLAMA_MODEL`` / ``ERROR_CHECKER_ANTHROPIC_MODEL``
+    override just the model.  Defaults to the same model as the Brain.
+
+    Args:
+        llm: ``'claude'`` or ``'ollama'``. Falls back to ``ERROR_CHECKER_LLM`` env var.
+        ollama_model: Ollama model override.
+        anthropic_model: Anthropic model override.
+        **kwargs: Forwarded to the Strands Agent constructor.
+    """
+    if ollama_model and llm is None:
+        llm = "ollama"
+
+    # Fall back to the brain setting so no extra config is needed out of the box.
+    _brain_default = str(_cfg("BRAIN_LLM", "pipeline", "brain", default="claude,claude-haiku-4-5"))
+    _raw = str(_cfg("ERROR_CHECKER_LLM", "pipeline", "error_checker", default=_brain_default))
+    _settings_llm, _settings_model = _parse_llm_setting(_raw)
+    resolved_llm = llm or _settings_llm or "claude"
+
+    if resolved_llm == "claude":
+        resolved_anthropic = (
+            anthropic_model
+            or os.environ.get("ERROR_CHECKER_ANTHROPIC_MODEL")
+            or _settings_model
+            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
+        )
+        resolved_ollama = ollama_model or "qwen3.5:9b"
+    else:  # ollama
+        resolved_ollama = (
+            ollama_model
+            or os.environ.get("ERROR_CHECKER_OLLAMA_MODEL")
+            or _settings_model
+            or "qwen3.5:9b"
+        )
+        resolved_anthropic = (
+            anthropic_model
+            or os.environ.get("ERROR_CHECKER_ANTHROPIC_MODEL")
+            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
+        )
+
+    system_prompt = _load_system_prompt("error_checker")
+
+    # Load skills so the troubleshooting skill is available.
+    ec_plugins: list = []
+    if _SKILLS_DIR.is_dir():
+        skills_plugin = AgentSkills(skills=str(_SKILLS_DIR))
+        ec_plugins.append(skills_plugin)
+
+    agent = _make_agent(
+        role="error_checker",
+        llm=resolved_llm,
+        system_prompt=system_prompt,
+        tools=ERROR_CHECKER_TOOLS,
+        ollama_model=resolved_ollama,
+        anthropic_model=resolved_anthropic,
+        plugins=ec_plugins or None,
+        **kwargs,
+    )
+    # Single-turn — no persistent conversation history needed.
     agent.conversation_manager = SlidingWindowConversationManager(window_size=2)
     return agent
 

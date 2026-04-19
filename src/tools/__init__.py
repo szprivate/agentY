@@ -17,6 +17,9 @@ from src.tools.comfyui import (  # noqa: F401
     get_history,
     get_prompt_status_by_id,
     clear_history,
+    # Diagnostics
+    get_logs,
+    get_system_stats,
     # Prompt submission
     submit_prompt,
     # Workflow handoff (replaces submit_prompt for the Brain)
@@ -102,6 +105,14 @@ RESEARCHER_TOOLS: list = [
 # Brain tools – workflow assembly only (steps 1-5 + handoff).
 # Execution, polling, and Vision QA are handled by the Executor.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Error-checker tools – diagnostics only; no workflow modification.
+# ---------------------------------------------------------------------------
+ERROR_CHECKER_TOOLS: list = [
+    get_logs,
+    get_system_stats,
+]
+
 BRAIN_TOOLS: list = [
     # Models / nodes
     get_model_types,

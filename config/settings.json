@@ -4,7 +4,8 @@
     "researcher": "system_prompt.researcher.md",
     "brain": "system_prompt.brain.md",
     "triage": "system_prompt.triage.md",
-    "planner": "system_prompt.planner.md"
+    "planner": "system_prompt.planner.md",
+    "error_checker": "system_prompt.error_checker.md"
   },
   "comfyui_workflows_dir": "./comfyui_workflows/",
   "comfyui_templates_dir": "./comfyui_workflow_templates_official/templates/",
@@ -23,6 +24,7 @@
       "info": "claude,claude-haiku-4-5",
       "planner": "ollama,qwen3.5:9b",
       "learnings": "ollama,qwen3.5:9b",
+      "error_checker": "claude,claude-haiku-4-5",
       "llm_functions": "qwen3.5:9b",
       "executor_vision_model": "qwen3.5:9b"
     },
