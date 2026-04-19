@@ -534,6 +534,52 @@ def clear_history(prompt_id: str = "") -> str:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Tools: Diagnostics
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@tool
+def get_system_stats() -> str:
+    """Return ComfyUI system info: GPU, VRAM, Python version, PyTorch version, OS."""
+    try:
+        return json.dumps(get_client().get("/system_stats"))
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@tool
+def get_logs(keyword: str = "", max_lines: int = 100) -> str:
+    """Get ComfyUI server runtime logs. Useful for debugging errors, missing nodes, and tracebacks.
+
+    Args:
+        keyword: Filter log lines containing this string (case-insensitive). E.g. 'error', 'warning'.
+        max_lines: Max lines to return from the end (default 100).
+    """
+    try:
+        raw = get_client().get("/logs")
+        # Endpoint may return list of strings or a dict with a 'logs' key
+        if isinstance(raw, dict):
+            lines: list = raw.get("logs", raw.get("lines", []))
+        elif isinstance(raw, list):
+            lines = raw
+        else:
+            lines = str(raw).splitlines()
+
+        if keyword:
+            kw = keyword.lower()
+            lines = [l for l in lines if kw in str(l).lower()]
+
+        if len(lines) > max_lines:
+            lines = lines[-max_lines:]
+
+        # Strip ANSI codes for readability
+        import re as _re
+        clean = [_re.sub(r"\x1b\[[0-9;]*m", "", str(l)) for l in lines]
+        return json.dumps({"lines": clean, "count": len(clean)})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Tools: Prompt submission
 # ═══════════════════════════════════════════════════════════════════════════════
 

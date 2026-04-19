@@ -1,0 +1,41 @@
+---
+name: assemble-from-template
+description: Assembles a workfow on the basis of a brainbriefing JSON and a pre-selected template.
+allowed-tools: update_workflow, get_workflow_template
+---
+
+This skill is used whenever the brain agent needs to assemble and patch a workflow from a workflow template pre-selected by the researcher agent. Uses the brainbriefing JSON to retrieve input- and output nodes.
+
+**General constraints:**
+- Before every tool call, state what you are doing and why.
+
+Follow these steps:
+
+### 1. Load template
+Load the workflow template specified in the brainbriefing.
+**Constraints:**
+- You MUST call `get_workflow_template(brainbriefing.template_name)` and record the returned file path.
+- You MUST NOT proceed if the template fails to load — report the error with `task_id` and stop.
+- If the template is a **Nano Banana / Nano Banana 2 / Nano Banana Pro** variant: you MUST activate the `nano-banana` skill.
+
+### 2. Prepare updates and update the workflow template
+- Start preparing workflow patches that can be used by the `update_workflow` tool in a single tool call: 
+- provide a patch for every input node listed in the brainbriefing
+- provide a patch for every output node listed in the brainbriefing
+- provide a patch for positive prompt nodes, as described in the brainbriefing
+- provide patches for any other nodes that need to be changed from the template (eg to apply parameters changes)
+- the patches MUST follow the the format described by `update_workflow` doc string
+- excesss input node removal: if `input_image_count` < number of existing image load nodes → provide a list of the the excess node IDs.
+- add missing input nodes: if `input_image_count` > number of existing image load nodes → prepare a list of nodes to be added, match the format described by `update_workflow` tool's doc string.
+
+- Update the workflow using the `update_workflow` tool.
+
+**Constraints:**
+- You MUST call `update_workflow(workflow_path, patches, add_nodes, remove_nodes)`. Use this tool to update the template in a single 
+- You MUST NOT call `save_workflow()` — that tool is only for building entirely new workflows from scratch.
+- `patches` MUST cover: positive prompt, negative prompt, resolution (width/height), input image nodes, output nodes, sampler settings, seed, steps, cfg. Each patch: `{"node_id": "6", "input_name": "text", "value": "..."}`.
+  - `width` and `height` MUST come from `brainbriefing.resolution` — never guess.
+- If the workflow contains a **ModelSamplingFlux** node: you MUST activate the `flux-sampling` skill and include all four required inputs in `patches`.
+- If `update_workflow` returns `status: "error"`: you MUST read the reported problems, fix the patches, and call `update_workflow` again.
+- If `count_iter > 1` AND `variations == true`: you MUST activate the `image-batch` skill to generate distinct prompts before patching. This corresponds to a **`batch_request`**: the **same workflow template** is executed N times with substituted parameters only — the workflow structure does not change between iterations.
+- If you find a `BatchImagesNode` in the workflow template -- call `replace_node(workflow_path, <node_id>, "ImageBatch")` immediately. This tool preserves all connections automatically.

@@ -4,7 +4,7 @@ description: Step-by-step procedure for handing off multi-iteration batch workfl
 allowed-tools: duplicate_workflow, update_workflow, signal_workflow_ready, read_text_file
 ---
 
-# Batch Handoff â€” Multi-Iteration Procedure
+# Batch Handoff Multi-Iteration Procedure
 
 Activate this skill when `count_iter > 1` in the brainbriefing.
 

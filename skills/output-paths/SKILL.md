@@ -4,7 +4,7 @@ description: Static task-type â†’ output_path mapping for brainbriefing out
 allowed-tools: get_workflow_template
 ---
 
-# Output Paths â€” Task-Type Mapping
+# Output Paths / Task-Type Mapping
 
 Use this table to set `output_path` for each entry in `output_nodes`.
 
