@@ -120,7 +120,7 @@ def _build_content(text: str, image_paths: list[str]) -> list | str:
     if not image_paths:
         return text or "(no message)"
 
-    from src.tools.image_handling import _downsize, _detect_format  # noqa: PLC0415
+    from src.tools.image_handling import _downsize, _detect_format, _MAX_IMAGE_BYTES  # noqa: PLC0415
 
     blocks: list = []
     valid_paths: list[str] = []
@@ -129,7 +129,11 @@ def _build_content(text: str, image_paths: list[str]) -> list | str:
         try:
             raw = Path(path).read_bytes()
             img_fmt = _detect_format(path) or "png"
-            image_bytes = _downsize(raw, img_fmt)
+            image_bytes, img_fmt = _downsize(raw, img_fmt)
+            if len(image_bytes) > _MAX_IMAGE_BYTES:
+                raise ValueError(
+                    f"Image still {len(image_bytes):,} bytes after downsize — skipping"
+                )
             blocks.append({
                 "image": {
                     "format": img_fmt,

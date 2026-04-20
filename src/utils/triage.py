@@ -122,13 +122,12 @@ async def triage(
     raw: str = str(agent(classify_input))
 
     # Reset conversation history so prior exchanges never bleed into the next call.
+    # agent.messages is the actual list; conversation_manager does NOT own a messages
+    # attribute, so the old conversation_manager.messages.clear() was a no-op.
     try:
-        agent.conversation_manager.messages.clear()
-    except AttributeError:
-        try:
-            agent.conversation_manager._messages.clear()  # noqa: SLF001
-        except AttributeError:
-            pass  # Conversation accumulation is non-critical for a tiny classifier.
+        agent.messages.clear()
+    except Exception:
+        pass
 
     intent     = MessageIntent.new_request
     confidence = 0.0

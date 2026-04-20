@@ -53,19 +53,23 @@ def _detect_format(path_or_name: str, mime: str = "") -> Optional[str]:
     return None
 
 
-def _downsize(data: bytes, img_fmt: str) -> bytes:
+def _downsize(data: bytes, img_fmt: str) -> tuple[bytes, str]:
     """Downsize image in-memory to fit Claude API constraints.
 
     Caps long edge at 1568 px and enforces the 5 MB hard limit.
     Uses a small internal safety margin (_SAFE_IMAGE_BYTES) so images
     never land exactly on the boundary.
+
+    Returns:
+        (image_bytes, actual_format) where actual_format may differ from
+        img_fmt if the image was converted (e.g. PNG → JPEG) to meet size limits.
     """
     _SAFE_IMAGE_BYTES = _MAX_IMAGE_BYTES - 64 * 1024  # 5 MB - 64 KB headroom
 
     if len(data) <= _SAFE_IMAGE_BYTES:
         img = Image.open(io.BytesIO(data))
         if max(img.width, img.height) <= _OPTIMAL_LONG_EDGE:
-            return data
+            return data, img_fmt
 
     img = Image.open(io.BytesIO(data))
     long_edge = max(img.width, img.height)
@@ -85,14 +89,19 @@ def _downsize(data: bytes, img_fmt: str) -> bytes:
         buf.seek(0)
         buf.truncate()
         if pil_fmt == "JPEG":
+            if img.mode not in ("RGB", "L", "CMYK"):
+                img = img.convert("RGB")
             img.save(buf, format=pil_fmt, quality=quality, optimize=True)
         else:
             img.save(buf, format=pil_fmt, optimize=True)
-        if buf.tell() <= _SAFE_IMAGE_BYTES:
+        # Use len(getvalue()) — not buf.tell() — because PIL's optimize=True JPEG
+        # encoding performs a Huffman-table seek pass that can leave the cursor at
+        # a position other than end-of-file, making tell() an unreliable size proxy.
+        if len(buf.getvalue()) <= _SAFE_IMAGE_BYTES:
             break
         if pil_fmt == "PNG":
             pil_fmt = "JPEG"
-            if img.mode == "RGBA":
+            if img.mode not in ("RGB", "L", "CMYK"):
                 img = img.convert("RGB")
             continue
         quality -= 10
@@ -100,7 +109,7 @@ def _downsize(data: bytes, img_fmt: str) -> bytes:
     # Hard fallback: if the quality loop wasn't enough, halve dimensions
     # progressively until the image fits.  Converts to JPEG at quality=20
     # which is always far smaller than a lossless format at any resolution.
-    while buf.tell() > _SAFE_IMAGE_BYTES and max(img.width, img.height) >= 128:
+    while len(buf.getvalue()) > _SAFE_IMAGE_BYTES and max(img.width, img.height) >= 128:
         new_w = max(1, img.width // 2)
         new_h = max(1, img.height // 2)
         img = img.resize((new_w, new_h), Image.LANCZOS)
@@ -108,8 +117,22 @@ def _downsize(data: bytes, img_fmt: str) -> bytes:
             img = img.convert("RGB")
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=20, optimize=True)
+        pil_fmt = "JPEG"
 
-    return buf.getvalue()
+    result = buf.getvalue()
+    # Final safety net: if somehow still too large, return a guaranteed-small thumbnail.
+    if len(result) > _MAX_IMAGE_BYTES:
+        img = img.resize((max(1, img.width // 4), max(1, img.height // 4)), Image.LANCZOS)
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        emergency_buf = io.BytesIO()
+        img.save(emergency_buf, format="JPEG", quality=20, optimize=True)
+        result = emergency_buf.getvalue()
+        pil_fmt = "JPEG"
+
+    # Map PIL format name back to the Strands format string
+    actual_fmt = "jpeg" if pil_fmt == "JPEG" else "png"
+    return result, actual_fmt
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -270,7 +293,7 @@ def analyze_image(
 
     # Downsize if needed
     original_size = len(data)
-    data = _downsize(data, img_fmt)
+    data, img_fmt = _downsize(data, img_fmt)
     downsized = len(data) < original_size
 
     # Build multimodal ToolResult

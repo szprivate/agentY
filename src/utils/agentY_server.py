@@ -65,7 +65,7 @@ def _build_content(message: str, image_paths: list[str]) -> list | str:
     if not image_paths:
         return message or "(no message)"
 
-    from src.tools.image_handling import _downsize, _detect_format
+    from src.tools.image_handling import _downsize, _detect_format, _MAX_IMAGE_BYTES
 
     blocks: list = []
 
@@ -74,14 +74,18 @@ def _build_content(message: str, image_paths: list[str]) -> list | str:
             from pathlib import Path as _Path
             raw = _Path(path).read_bytes()
             img_fmt = _detect_format(path) or "png"
-            image_bytes = _downsize(raw, img_fmt)
+            image_bytes, img_fmt = _downsize(raw, img_fmt)
+            if len(image_bytes) > _MAX_IMAGE_BYTES:
+                raise ValueError(
+                    f"Image still {len(image_bytes):,} bytes after downsize — skipping"
+                )
+            logger.info("Loaded review image: %s (%d bytes, after downsize)", path, len(image_bytes))
             blocks.append({
                 "image": {
                     "format": img_fmt,
                     "source": {"bytes": image_bytes},
                 }
             })
-            logger.info("Loaded review image: %s (%d bytes, after downsize)", path, len(image_bytes))
         except Exception as exc:
             logger.warning("Could not load image %s: %s", path, exc)
 
