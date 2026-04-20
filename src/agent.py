@@ -275,9 +275,16 @@ class TokenUsageHookProvider:
     real time.
     """
 
+    @staticmethod
+    def _resolve_log_path() -> Path:
+        _project_root = Path(__file__).parent.parent
+        rel = _settings().get("tokens_usage_log", "./logs/tokens_usage.log").lstrip("./")
+        return _project_root / rel
+
     _log_path: Path = Path(__file__).parent.parent / "logs" / "tokens_usage.log"
 
     def __init__(self, role: str = "agent", is_ollama: bool = False) -> None:
+        self.__class__._log_path = self._resolve_log_path()
         self._role = role
         self._is_ollama = is_ollama
         self._prev_in = 0
