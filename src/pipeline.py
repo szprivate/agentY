@@ -638,6 +638,7 @@ class Pipeline:
             self._session.last_researcher_blockers = []
             _r_json_s: str | None = None
             _r_err_s: str | None = None
+            yield {"_researcher_start": True}
             async for _ev in self._arun_researcher(_enriched_s):
                 if isinstance(_ev, dict) and "_researcher_done" in _ev:
                     _r_json_s = _ev["raw_json"]
@@ -760,6 +761,7 @@ class Pipeline:
         raw_json: str | None = None
         error: str | None = None
         researcher_output: str = ""
+        yield {"_researcher_start": True}
         async for _r_ev in self._arun_researcher(user_input):
             if isinstance(_r_ev, dict) and "_researcher_done" in _r_ev:
                 raw_json = _r_ev["raw_json"]
@@ -981,6 +983,7 @@ class Pipeline:
             if self._verbose:
                 print("[pipeline:stream] Planner fallback → researcher path")
                 yield {"data": "\n_[pipeline:stream] Planner fallback → researcher path_"}
+            yield {"_researcher_start": True}
             raw_json = error = researcher_output = None
             async for _r_ev in self._arun_researcher(user_text):
                 if isinstance(_r_ev, dict) and "_researcher_done" in _r_ev:
@@ -1021,6 +1024,7 @@ class Pipeline:
             return
 
         total = len(steps)
+        yield {"_plan_ready": True, "steps": [{"description": s["description"]} for s in steps]}
         yield {"data": f"_🗂️ Plan ready — {total} step(s) to execute._\n"}
         if self._verbose:
             print(f"[pipeline:stream] Plan has {total} step(s):")
@@ -1033,11 +1037,13 @@ class Pipeline:
             description = step["description"]
             step_req = self._inject_context_into_step(step["request"], idx)
 
+            yield {"_step_start": True, "idx": idx, "total": total, "description": description}
             yield {"data": f"\n\n**Step {idx + 1}/{total} — {description}**\n"}
             if self._verbose:
                 print(f"\n[pipeline:stream] ── Plan step {idx + 1}/{total}: {description} ──")
                 yield {"data": f"\n_[pipeline:stream] ── Plan step {idx + 1}/{total}: {description} ──_"}
 
+            yield {"_researcher_start": True}
             raw_json = error = researcher_output = None
             async for _r_ev in self._arun_researcher(step_req):
                 if isinstance(_r_ev, dict) and "_researcher_done" in _r_ev:
@@ -1088,6 +1094,7 @@ class Pipeline:
                     self._session.current_output_paths[:] = exec_paths
 
             if qa_step_failed:
+                yield {"_step_done": True, "idx": idx, "failed": True}
                 self._record_chat_summary(step_req, triage_result, status="qa_failed", raw_json=raw_json)
                 if self._verbose:
                     print(f"[pipeline:stream] Step {idx + 1}/{total} QA failed — aborting plan.")
@@ -1097,6 +1104,7 @@ class Pipeline:
             self._record_chat_summary(step_req, triage_result, status="completed", raw_json=raw_json)
             await self._compress_brain_history(extra_output_paths=exec_paths)
 
+            yield {"_step_done": True, "idx": idx}
             if self._verbose:
                 print(f"[pipeline:stream] Step {idx + 1}/{total} finished.")
                 yield {"data": f"\n_[pipeline:stream] Step {idx + 1}/{total} finished._"}

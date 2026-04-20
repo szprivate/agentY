@@ -156,8 +156,62 @@ def _build_content(text: str, image_paths: list[str]) -> list | str:
 
 
 def _is_image_path(path: str) -> bool:
-    """Return True when *path* points to a supported image format."""
     return Path(path).suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+
+
+def _is_video_path(path: str) -> bool:
+    return Path(path).suffix.lower() in {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+
+
+def _is_file_output_path(path: str) -> bool:
+    return Path(path).suffix.lower() in {".json"}
+
+
+def _parse_think_chunk(chunk: str, state: dict) -> tuple[str, str]:
+    """Split *chunk* into (normal_text, think_text) tracking <think>...</think> state.
+
+    *state* is a mutable dict with keys ``in_think`` (bool) and ``buf`` (str
+    lookahead for tags that span chunk boundaries).  Modified in-place.
+    """
+    OPEN, CLOSE = "<think>", "</think>"
+    combined = state["buf"] + chunk
+    state["buf"] = ""
+    normal: list[str] = []
+    think: list[str] = []
+    while combined:
+        if not state["in_think"]:
+            idx = combined.find(OPEN)
+            if idx == -1:
+                for cut in range(min(len(OPEN) - 1, len(combined)), 0, -1):
+                    if OPEN[:cut] == combined[-cut:]:
+                        normal.append(combined[:-cut])
+                        state["buf"] = combined[-cut:]
+                        combined = ""
+                        break
+                else:
+                    normal.append(combined)
+                    combined = ""
+            else:
+                normal.append(combined[:idx])
+                combined = combined[idx + len(OPEN):]
+                state["in_think"] = True
+        else:
+            idx = combined.find(CLOSE)
+            if idx == -1:
+                for cut in range(min(len(CLOSE) - 1, len(combined)), 0, -1):
+                    if CLOSE[:cut] == combined[-cut:]:
+                        think.append(combined[:-cut])
+                        state["buf"] = combined[-cut:]
+                        combined = ""
+                        break
+                else:
+                    think.append(combined)
+                    combined = ""
+            else:
+                think.append(combined[:idx])
+                combined = combined[idx + len(CLOSE):]
+                state["in_think"] = False
+    return "".join(normal), "".join(think)
 
 
 # ── Chainlit lifecycle ────────────────────────────────────────────────────────
@@ -570,71 +624,87 @@ async def on_message(message: cl.Message) -> None:
     content = _build_content(message.content or "", image_paths)
 
     # ── Stream the pipeline response ──────────────────────────────────────
-    response_msg = cl.Message(content="")
-    await response_msg.send()
-
     session = getattr(pipeline, "_session", None)
     sent_paths: set[str] = set(getattr(session, "current_output_paths", []))
 
-    async def _flush_new_images() -> None:
-        """Send any image paths that appeared in session since last check."""
-        current: list[str] = list(getattr(session, "current_output_paths", []))
-        new = [p for p in current if p not in sent_paths and os.path.isfile(p) and _is_image_path(p)]
-        if new:
-            elements = [cl.Image(path=p, name=Path(p).name, display="inline") for p in new]
-            await cl.Message(
-                content=f"🖼️ **{len(new)} image(s) ready:**",
-                elements=elements,
-            ).send()
-            sent_paths.update(new)
+    # Response message created lazily so the researcher step appears above it.
+    response_msg: cl.Message | None = None
 
-    # Buffer tokens and flush in batches to reduce WebSocket round-trips.
-    # Flushing every _STREAM_FLUSH_CHARS characters keeps latency low while
-    # dramatically cutting the number of individual async sends vs. flushing
-    # on every single token (which is what made Chainlit lag behind the CLI).
+    async def _ensure_response_msg() -> cl.Message:
+        nonlocal response_msg
+        if response_msg is None:
+            response_msg = cl.Message(content="")
+            await response_msg.send()
+        return response_msg
+
+    async def _flush_new_outputs() -> None:
+        """Send new images, videos, and workflow files that appeared in session."""
+        current: list[str] = list(getattr(session, "current_output_paths", []))
+        new_paths = [p for p in current if p not in sent_paths and os.path.isfile(p)]
+        if not new_paths:
+            return
+        imgs  = [cl.Image(path=p, name=Path(p).name, display="inline") for p in new_paths if _is_image_path(p)]
+        vids  = [cl.Video(path=p, name=Path(p).name, display="inline") for p in new_paths if _is_video_path(p)]
+        files = [cl.File(path=p,  name=Path(p).name, display="inline") for p in new_paths if _is_file_output_path(p)]
+        if imgs:
+            await cl.Message(content=f"🖼️ **{len(imgs)} image(s) ready:**", elements=imgs).send()
+        if vids:
+            await cl.Message(content=f"🎬 **{len(vids)} video(s) ready:**", elements=vids).send()
+        if files:
+            await cl.Message(content=f"📄 **{len(files)} file(s) ready:**", elements=files).send()
+        sent_paths.update(new_paths)
+
     _STREAM_FLUSH_CHARS = 12
     _token_buf: list[str] = []
     _token_buf_len: int = 0
-    _full_response_parts: list[str] = []  # accumulates all chunks for post-response analysis
+    _full_response_parts: list[str] = []
 
     async def _flush_token_buf() -> None:
         nonlocal _token_buf, _token_buf_len
         if _token_buf:
-            await response_msg.stream_token("".join(_token_buf))
+            msg = await _ensure_response_msg()
+            await msg.stream_token("".join(_token_buf))
             _token_buf = []
             _token_buf_len = 0
 
+    # ── Researcher buffering ───────────────────────────────────────────────
+    _in_researcher: bool = False
+    _researcher_buf: list[str] = []
+
+    # ── Think-block parser state ───────────────────────────────────────────
+    _think_state: dict = {"in_think": False, "buf": ""}
+    _think_step: cl.Step | None = None
+
+    # ── Planner task list ──────────────────────────────────────────────────
+    _task_list: cl.TaskList | None = None
+    _tasks: list[cl.Task] = []
+
     try:
         async for event in pipeline.stream_async(content):
-            # ── QA failure from a new_planned_request step ────────────────
-            if isinstance(event, dict) and event.get("qa_fail"):
+            if not isinstance(event, dict):
+                continue
+
+            # ── QA failure ────────────────────────────────────────────────
+            if event.get("qa_fail"):
                 await _flush_token_buf()
-                await response_msg.update()
+                if response_msg:
+                    await response_msg.update()
 
-                # Send images produced by the failed step.
-                image_paths_from_event: list[str] = event.get("image_paths", [])
-                new_qa_images = [
-                    p for p in image_paths_from_event
-                    if p not in sent_paths and os.path.isfile(p) and _is_image_path(p)
-                ]
-                if new_qa_images:
-                    elements = [
-                        cl.Image(path=p, name=Path(p).name, display="inline")
-                        for p in new_qa_images
-                    ]
-                    await cl.Message(
-                        content=f"🖼️ **Output from failed step ({len(new_qa_images)} image(s)):**",
-                        elements=elements,
-                    ).send()
-                    sent_paths.update(new_qa_images)
+                fail_paths: list[str] = event.get("image_paths", [])
+                new_qa = [p for p in fail_paths if p not in sent_paths and os.path.isfile(p)]
+                if new_qa:
+                    imgs = [cl.Image(path=p, name=Path(p).name, display="inline") for p in new_qa if _is_image_path(p)]
+                    vids = [cl.Video(path=p, name=Path(p).name, display="inline") for p in new_qa if _is_video_path(p)]
+                    if imgs:
+                        await cl.Message(content=f"🖼️ **Output from failed step ({len(imgs)} image(s)):**", elements=imgs).send()
+                    if vids:
+                        await cl.Message(content=f"🎬 **Output from failed step ({len(vids)} video(s)):**", elements=vids).send()
+                    sent_paths.update(new_qa)
 
-                # Build a human-readable verdict summary.
                 fail_details: list[dict] = event.get("fail_details", [])
                 verdict_lines = "\n".join(
-                    f"- `{Path(d['path']).name}`: {d['verdict']}"
-                    for d in fail_details
+                    f"- `{Path(d['path']).name}`: {d['verdict']}" for d in fail_details
                 )
-
                 await cl.Message(
                     content=(
                         "⚠️ **QA check failed for this step.**\n\n"
@@ -645,39 +715,115 @@ async def on_message(message: cl.Message) -> None:
                     ),
                     author="system",
                 ).send()
-                break  # stop consuming the generator — plan is paused
+                break
 
-            # ── Normal streaming chunk ─────────────────────────────────────
-            chunk: str = ""
-            if isinstance(event, dict):
-                chunk = event.get("data", "") or ""
-            if chunk:
-                _token_buf.append(chunk)
-                _full_response_parts.append(chunk)
-                _token_buf_len += len(chunk)
-                # Flush when buffer is full enough, or immediately on lines
-                # that signal image saves so the UI updates promptly.
-                if _token_buf_len >= _STREAM_FLUSH_CHARS or "💾" in chunk or "Saved" in chunk or "executor" in chunk.lower():
+            # ── Researcher start — begin buffering ────────────────────────
+            if event.get("_researcher_start"):
+                _in_researcher = True
+                _researcher_buf.clear()
+                continue
+
+            # ── Researcher done — flush buffer to collapsed step ──────────
+            if event.get("_researcher_done"):
+                _in_researcher = False
+                content_str = "".join(_researcher_buf).strip()
+                if content_str:
+                    async with cl.Step(name="🔍 Researcher", type="tool") as _r_step:
+                        _r_step.output = content_str
+                _researcher_buf.clear()
+                continue
+
+            # ── Plan ready — create task list ─────────────────────────────
+            if event.get("_plan_ready"):
+                _task_list = cl.TaskList()
+                _task_list.status = "Running..."
+                _tasks = [
+                    cl.Task(title=s["description"], status=cl.TaskStatus.READY)
+                    for s in event.get("steps", [])
+                ]
+                for t in _tasks:
+                    await _task_list.add_task(t)
+                await _task_list.send()
+                continue
+
+            # ── Step start — mark task running ────────────────────────────
+            if event.get("_step_start"):
+                _idx = event["idx"]
+                if _task_list is not None and _idx < len(_tasks):
+                    _tasks[_idx].status = cl.TaskStatus.RUNNING
+                    await _task_list.send()
+                continue
+
+            # ── Step done — mark task complete ────────────────────────────
+            if event.get("_step_done"):
+                _idx = event["idx"]
+                _failed = event.get("failed", False)
+                if _task_list is not None and _idx < len(_tasks):
+                    _tasks[_idx].status = cl.TaskStatus.FAILED if _failed else cl.TaskStatus.DONE
+                    if _idx == len(_tasks) - 1 or _failed:
+                        _task_list.status = "Failed" if _failed else "Done"
+                    await _task_list.send()
+                continue
+
+            # ── Normal data chunk ─────────────────────────────────────────
+            chunk: str = event.get("data", "") or ""
+            if not chunk:
+                continue
+
+            if _in_researcher:
+                _researcher_buf.append(chunk)
+                continue
+
+            # Split out <think>…</think> blocks
+            _was_thinking = _think_state["in_think"]
+            normal_text, think_text = _parse_think_chunk(chunk, _think_state)
+            _now_thinking = _think_state["in_think"]
+
+            if think_text:
+                if _think_step is None:
+                    _think_step = cl.Step(name="💭 Thinking")
+                    await _think_step.send()
+                await _think_step.stream_token(think_text)
+
+            # Think block just closed — finalise step
+            if _was_thinking and not _now_thinking and _think_step is not None:
+                await _think_step.update()
+                _think_step = None
+
+            if normal_text:
+                _full_response_parts.append(normal_text)
+                _token_buf.append(normal_text)
+                _token_buf_len += len(normal_text)
+                _output_signal = any(kw in normal_text for kw in ("💾", "Saved", "executor"))
+                if _token_buf_len >= _STREAM_FLUSH_CHARS or _output_signal:
                     await _flush_token_buf()
-                    if "💾" in chunk or "Saved" in chunk or "executor" in chunk.lower():
-                        await _flush_new_images()
-        # Flush any remaining buffered tokens.
+                    if _output_signal:
+                        await _flush_new_outputs()
+
         await _flush_token_buf()
+        # Finalise any still-open think step (unclosed tag)
+        if _think_step is not None:
+            await _think_step.update()
+        # Mark task list done if all steps completed
+        if _task_list is not None and all(t.status == cl.TaskStatus.DONE for t in _tasks):
+            _task_list.status = "Done"
+            await _task_list.send()
+
     except Exception as exc:
         await _flush_token_buf()
-        await response_msg.stream_token(f"\n\n❌ Pipeline error: {exc}")
+        msg = await _ensure_response_msg()
+        await msg.stream_token(f"\n\n❌ Pipeline error: {exc}")
 
-    await response_msg.update()
+    if response_msg is not None:
+        await response_msg.update()
 
     # ── Update awaiting_answer for the next turn ──────────────────────────
-    # If the brain's response contains a question in its closing section the
-    # next user message is likely an answer rather than a brand-new request.
     _full_response = "".join(_full_response_parts)
     _tail = _full_response[-300:] if len(_full_response) > 300 else _full_response
     cl.user_session.set("awaiting_answer", "?" in _tail)
 
-    # Final flush — catches any images that arrived with the last event.
-    await _flush_new_images()
+    # Final flush — catches any outputs that arrived with the last event.
+    await _flush_new_outputs()
 
     # ── Token / cost summary ──────────────────────────────────────────────
     try:
