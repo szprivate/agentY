@@ -52,3 +52,6 @@ If a matching entry exists, **apply the documented solution directly** instead o
 
 2026-04-20 | BatchImagesNode COMFY_AUTOGROW_V3 rejects array format for 'images' input | Use dotted notation keys (images.image0, images.image1) at top-level inputs instead of array or nested dict wrapper.
 2026-04-20 | WAS Image Batch fails with TypeError unhashable type list when inputs have different dimensions | Resize reference image to match master image dimensions before batch processing; use ImageScale node with target width/height from master image.
+
+2026-04-20 | get_workflow_template failed for 'img2img_basic', hint suggests using get_workflow_catalog | Call get_workflow_catalog before attempting to load specific template names to avoid 'not found' assembly errors.
+2026-04-20 | search_nodes for 'qwen sampler' and 'qwen infer' failed repeatedly | Use standard samplers like EasyKSampler with QWEN encoders; QWEN inference pipelines do not require unique branded sampler nodes.

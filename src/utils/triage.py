@@ -192,8 +192,10 @@ def route(result: TriageResult) -> str:
             return "answer"
         case MessageIntent.needs_image:
             return "needs_image"
-        case MessageIntent.param_tweak | MessageIntent.chain | MessageIntent.feedback:
+        case MessageIntent.param_tweak | MessageIntent.feedback:
             return "brain"
+        case MessageIntent.chain:
+            return "researcher"
         case MessageIntent.new_planned_request:
             return "planner"
         case MessageIntent.new_request:

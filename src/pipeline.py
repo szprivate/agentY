@@ -382,8 +382,8 @@ class Pipeline:
         """Run the full pipeline for *user_input* and return the Brain's response.
 
         Triage runs first to classify intent, then routes to:
-        - ``researcher`` (new_request / low-confidence): full Researcher → Brain flow
-        - ``brain`` (param_tweak / chain / feedback): direct Brain follow-up
+        - ``researcher`` (new_request / chain / low-confidence): full Researcher → Brain flow
+        - ``brain`` (param_tweak / feedback): direct Brain follow-up
         - ``answer`` (info_query): return the triage answer directly
         - ``log_warning`` (low-confidence fallback): treat as new_request
         """
