@@ -25,7 +25,10 @@ from src.utils.comfyui_client import get_client
 # Constants
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_MAX_IMAGE_BYTES = 5 * 1024 * 1024   # 5 MB hard limit (Claude API)
+# Anthropic's API limit is 5 MB applied to the BASE64-ENCODED image.
+# Strands sends images as base64, which inflates raw bytes by ~33% (4/3 factor).
+# To stay safely under the 5 MB base64 limit: 5 MB * 0.72 ≈ 3.6 MB raw.
+_MAX_IMAGE_BYTES = int(5 * 1024 * 1024 * 0.72)   # ~3.6 MB raw → ~4.8 MB base64
 _OPTIMAL_LONG_EDGE = 1568            # Claude resizes beyond this anyway
 
 _FORMAT_MAP: dict[str, str] = {
@@ -64,7 +67,7 @@ def _downsize(data: bytes, img_fmt: str) -> tuple[bytes, str]:
         (image_bytes, actual_format) where actual_format may differ from
         img_fmt if the image was converted (e.g. PNG → JPEG) to meet size limits.
     """
-    _SAFE_IMAGE_BYTES = _MAX_IMAGE_BYTES - 64 * 1024  # 5 MB - 64 KB headroom
+    _SAFE_IMAGE_BYTES = _MAX_IMAGE_BYTES - 64 * 1024  # small headroom; _MAX_IMAGE_BYTES already base64-adjusted
 
     if len(data) <= _SAFE_IMAGE_BYTES:
         img = Image.open(io.BytesIO(data))
@@ -121,7 +124,8 @@ def _downsize(data: bytes, img_fmt: str) -> tuple[bytes, str]:
 
     result = buf.getvalue()
     # Final safety net: if somehow still too large, return a guaranteed-small thumbnail.
-    if len(result) > _MAX_IMAGE_BYTES:
+    # Use _SAFE_IMAGE_BYTES (not _MAX_IMAGE_BYTES) so we always enforce the conservative limit.
+    if len(result) > _SAFE_IMAGE_BYTES:
         img = img.resize((max(1, img.width // 4), max(1, img.height // 4)), Image.LANCZOS)
         if img.mode not in ("RGB", "L"):
             img = img.convert("RGB")
@@ -293,8 +297,21 @@ def analyze_image(
 
     # Downsize if needed
     original_size = len(data)
-    data, img_fmt = _downsize(data, img_fmt)
+    _safe_limit = _MAX_IMAGE_BYTES - 64 * 1024  # matches _downsize's _SAFE_IMAGE_BYTES
+    try:
+        data, img_fmt = _downsize(data, img_fmt)
+    except Exception as exc:
+        return {"status": "error", "content": [{"text": (
+            f"Could not process image from {source_name}: {exc}"
+        )}]}
     downsized = len(data) < original_size
+
+    # Hard guard: reject if still over the safe limit (belt-and-suspenders)
+    if len(data) > _safe_limit:
+        return {"status": "error", "content": [{"text": (
+            f"Image from {source_name} could not be reduced to under {_safe_limit:,} bytes "
+            f"(final size: {len(data):,} bytes). Try a smaller or simpler image."
+        )}]}
 
     # Build multimodal ToolResult
     info_parts = [
