@@ -672,6 +672,10 @@ async def on_message(message: cl.Message) -> None:
     _in_researcher: bool = False
     _researcher_step: cl.Step | None = None
 
+    # ── Brain streaming ────────────────────────────────────────────────────
+    _in_brain: bool = False
+    _brain_step: cl.Step | None = None
+
     # ── Think-block parser state ───────────────────────────────────────────
     _think_state: dict = {"in_think": False, "buf": ""}
     _think_step: cl.Step | None = None
@@ -733,6 +737,21 @@ async def on_message(message: cl.Message) -> None:
                     _researcher_step = None
                 continue
 
+            # ── Brain start — open streaming step ────────────────────────
+            if event.get("_brain_start"):
+                _in_brain = True
+                _brain_step = cl.Step(name="🧠 Brain", type="tool")
+                await _brain_step.send()
+                continue
+
+            # ── Brain done — finalise streaming step ──────────────────────
+            if event.get("_brain_done"):
+                _in_brain = False
+                if _brain_step is not None:
+                    await _brain_step.update()
+                    _brain_step = None
+                continue
+
             # ── Plan ready — create task list ─────────────────────────────
             if event.get("_plan_ready"):
                 _task_list = cl.TaskList()
@@ -771,6 +790,9 @@ async def on_message(message: cl.Message) -> None:
                 if _in_researcher:
                     if _researcher_step is not None:
                         await _researcher_step.stream_token(reasoning_text)
+                elif _in_brain:
+                    if _brain_step is not None:
+                        await _brain_step.stream_token(reasoning_text)
                 else:
                     if _think_step is None:
                         _think_step = cl.Step(name="💭 Thinking")
@@ -779,7 +801,7 @@ async def on_message(message: cl.Message) -> None:
                 continue
 
             # Reasoning block complete (signature marks end of thinking block)
-            if event.get("reasoning_signature") is not None and not _in_researcher:
+            if event.get("reasoning_signature") is not None and not _in_researcher and not _in_brain:
                 if _think_step is not None:
                     await _think_step.update()
                     _think_step = None
@@ -793,6 +815,11 @@ async def on_message(message: cl.Message) -> None:
             if _in_researcher:
                 if _researcher_step is not None:
                     await _researcher_step.stream_token(chunk)
+                continue
+
+            if _in_brain:
+                if _brain_step is not None:
+                    await _brain_step.stream_token(chunk)
                 continue
 
             # Split out <think>…</think> blocks
@@ -822,7 +849,9 @@ async def on_message(message: cl.Message) -> None:
                         await _flush_new_outputs()
 
         await _flush_token_buf()
-        # Finalise any still-open think step (unclosed tag)
+        # Finalise any still-open brain/think steps
+        if _brain_step is not None:
+            await _brain_step.update()
         if _think_step is not None:
             await _think_step.update()
         # Mark task list done if all steps completed
@@ -835,6 +864,9 @@ async def on_message(message: cl.Message) -> None:
         if _researcher_step is not None:
             await _researcher_step.update()
             _researcher_step = None
+        if _brain_step is not None:
+            await _brain_step.update()
+            _brain_step = None
         msg = await _ensure_response_msg()
         await msg.stream_token(f"\n\n❌ Pipeline error: {exc}")
 

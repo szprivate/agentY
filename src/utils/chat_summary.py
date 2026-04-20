@@ -39,7 +39,7 @@ def _load_config() -> dict:
     return {}
 
 _config = _load_config()
-_MSG_HISTORY_LOG = str(_PROJECT_ROOT / _config.get("message_history_log", "./logs/message_history.log").lstrip("./"))
+_MSG_HISTORY_LOG = str(_PROJECT_ROOT / _config.get("message_history_log", "./.logs/message_history.log"))
 os.makedirs(os.path.dirname(_MSG_HISTORY_LOG), exist_ok=True)
 
 _history_logger = logging.getLogger("agentY.message_history")

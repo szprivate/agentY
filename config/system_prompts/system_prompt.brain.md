@@ -19,9 +19,11 @@ Check the brainbriefing JSON for a template name. ONLY if a template name is pre
 If NO template is present, follow step 1.2
 
 ### 1.1 Patch workflow template and validate
-Acivate the assemble-from-template skill - this will take assemble the workflow by patching the template with brainbriefing values.
+Activate the assemble-from-template skill - this will assemble the workflow by patching the template with brainbriefing values.
+**This is the default path. You MUST use this whenever a template is available.**
 
 ### 1.2 Create new workflow from scratch and validate
+Only follow this step if the researcher explicitly confirmed no suitable template exists, OR if the user specifically requested a new workflow from scratch.
 Activate the assemble-new-workflow skill - this will create a new workflow from scratch, using the info from the brainbriefing.
 ---
 

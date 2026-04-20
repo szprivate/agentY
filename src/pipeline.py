@@ -737,8 +737,10 @@ class Pipeline:
             brain_prompt = self._build_followup_prompt(user_text, triage_result)
             self._session.follow_up_count += 1
             _brain_snap_fu = self._usage_snapshot(self._brain)
+            yield {"_brain_start": True}
             async for event in self._brain.stream_async(brain_prompt):
                 yield event
+            yield {"_brain_done": True}
             self._record_agent_usage(self._brain, _brain_snap_fu)
             # Executor handoff: stream execution events back to Chainlit
             workflow_paths_fu = _get_workflow_signal()
@@ -1786,6 +1788,7 @@ class Pipeline:
         while True:
             interrupt_result = None
 
+            yield {"_brain_start": True}
             async for event in self._brain.stream_async(current_input):
                 yield event
                 if "result" in event:
@@ -1795,6 +1798,7 @@ class Pipeline:
                             if getattr(intr, "name", None) == INTERRUPT_NAME:
                                 interrupt_result = intr
                                 break
+            yield {"_brain_done": True}
 
             if interrupt_result is None:
                 # Normal completion — Stage 3: Executor

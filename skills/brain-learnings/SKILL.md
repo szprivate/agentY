@@ -49,3 +49,6 @@ If a matching entry exists, **apply the documented solution directly** instead o
 2026-04-17 | Input image paths in brainbriefing may reference non-existent files | Verify input files exist at specified paths before workflow assembly; do not attempt upload if file not found at brainbriefing location.
 
 2026-04-20 | update_workflow validation fails when images are not in ComfyUI input directory | Upload images to ComfyUI input directory first using upload_image before applying patches with image references. This avoids "image - Invalid" validation errors.
+
+2026-04-20 | BatchImagesNode COMFY_AUTOGROW_V3 rejects array format for 'images' input | Use dotted notation keys (images.image0, images.image1) at top-level inputs instead of array or nested dict wrapper.
+2026-04-20 | WAS Image Batch fails with TypeError unhashable type list when inputs have different dimensions | Resize reference image to match master image dimensions before batch processing; use ImageScale node with target width/height from master image.
