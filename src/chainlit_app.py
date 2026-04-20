@@ -220,25 +220,64 @@ def _parse_think_chunk(chunk: str, state: dict) -> tuple[str, str]:
 def _reset_pipeline_state(pipeline) -> None:
     """Wipe all per-conversation state from the shared pipeline singleton.
 
-    Called whenever Chainlit starts or resumes a thread so that no history
-    from a previous chat leaks into the new one.  Clears:
-    - brain.messages         – in-memory LLM conversation history
-    - pipeline._session      – AgentSession (chat_summaries, output paths, …)
-    - pipeline._last_brainbriefing_json – cached researcher output
+    Called when a new thread starts so no history from a previous chat leaks
+    in.  Clears brain.messages, AgentSession, and cached researcher output.
     """
     brain = getattr(pipeline, "_brain", None)
     if brain is not None and hasattr(brain, "messages"):
         brain.messages.clear()
 
-    # Reset the AgentSession so triage no longer sees stale chat_summaries
-    # from the previous thread, which would cause wrong follow-up routing.
     existing_session = getattr(pipeline, "_session", None)
     session_id = getattr(existing_session, "session_id", "default") if existing_session else "default"
     pipeline._session = AgentSession(session_id=session_id)  # noqa: SLF001
-
-    # Clear the cached researcher JSON so the brain never inherits a
-    # brainbriefing from an earlier thread.
     pipeline._last_brainbriefing_json = None  # noqa: SLF001
+
+
+def _save_thread_state(pipeline) -> None:
+    """Snapshot the current pipeline state into Chainlit's per-thread session.
+
+    Called at the end of every on_message turn so the compressed brain summary
+    and session metadata survive thread navigation (on_chat_resume).
+    """
+    brain = getattr(pipeline, "_brain", None)
+    if brain is not None and hasattr(brain, "messages"):
+        cl.user_session.set("brain_messages", list(brain.messages))
+
+    session = getattr(pipeline, "_session", None)
+    if session is not None:
+        cl.user_session.set("agent_session", session.model_dump())
+
+    cl.user_session.set(
+        "last_brainbriefing_json",
+        getattr(pipeline, "_last_brainbriefing_json", None),
+    )
+
+
+def _restore_thread_state(pipeline) -> None:
+    """Restore pipeline state from Chainlit's per-thread session on resume.
+
+    If the thread has no saved state (e.g. the very first resume before any
+    message was processed), falls back to a clean reset.
+    """
+    brain_messages = cl.user_session.get("brain_messages")
+    if brain_messages is None:
+        _reset_pipeline_state(pipeline)
+        return
+
+    brain = getattr(pipeline, "_brain", None)
+    if brain is not None and hasattr(brain, "messages"):
+        brain.messages[:] = brain_messages
+
+    agent_session_data = cl.user_session.get("agent_session")
+    if agent_session_data is not None:
+        try:
+            pipeline._session = AgentSession(**agent_session_data)  # noqa: SLF001
+        except Exception:
+            pass
+
+    pipeline._last_brainbriefing_json = cl.user_session.get(  # noqa: SLF001
+        "last_brainbriefing_json"
+    )
 
 
 @cl.on_chat_start
@@ -262,18 +301,17 @@ async def on_chat_start() -> None:
 async def on_chat_resume(thread) -> None:  # noqa: ARG001
     """Called when the user navigates to an existing thread from the sidebar.
 
-    Because the pipeline is a module-level singleton it cannot hold state for
-    multiple threads simultaneously.  Reset everything to a clean slate so the
-    resumed thread starts fresh rather than inheriting context from whatever
-    was last active.
+    Restores the compressed brain summary and session state that were saved at
+    the end of the last turn in this thread, so the user can continue where
+    they left off without losing context.  Falls back to a clean reset if no
+    state was saved yet (e.g. a thread that was never completed).
     """
     if _pipeline is None:
         return
 
-    _reset_pipeline_state(_pipeline)
+    _restore_thread_state(_pipeline)
 
     cl.user_session.set("pipeline", _pipeline)
-    cl.user_session.set("awaiting_answer", False)
 
 
 @cl.on_message
@@ -490,7 +528,7 @@ async def on_message(message: cl.Message) -> None:
     # ── /switch_model <agent> <provider,model> ────────────────────────────────
     if _text.lower().startswith("/switch_model") or _text.lower().startswith("switch_model"):
         _parts = _text.split(None, 2)  # [cmd, agent_name, provider,model]
-        _AGENTS = {"researcher", "brain", "info", "triage", "planner", "error_checker"}
+        _AGENTS = {"researcher", "brain", "info", "triage", "planner"}
         if len(_parts) < 3:
             await cl.Message(
                 content=(
@@ -535,7 +573,6 @@ async def on_message(message: cl.Message) -> None:
                 create_info_agent,
                 create_triage_agent,
                 create_planner_agent,
-                create_error_checker_agent,
             )
             _kwargs = {"llm": _provider}
             if _model:
@@ -544,21 +581,19 @@ async def on_message(message: cl.Message) -> None:
                 else:
                     _kwargs["anthropic_model"] = _model
             _factory_map = {
-                "researcher":    create_researcher_agent,
-                "brain":         create_brain_agent,
-                "info":          create_info_agent,
-                "triage":        create_triage_agent,
-                "planner":       create_planner_agent,
-                "error_checker": create_error_checker_agent,
+                "researcher": create_researcher_agent,
+                "brain":      create_brain_agent,
+                "info":       create_info_agent,
+                "triage":     create_triage_agent,
+                "planner":    create_planner_agent,
             }
             _new_agent = _factory_map[_agent_name](**_kwargs)
             _attr_map = {
-                "researcher":    "_researcher",
-                "brain":         "_brain",
-                "info":          "_info_agent",
-                "triage":        "_triage_agent",
-                "planner":       "_planner_agent",
-                "error_checker": "_error_checker",
+                "researcher": "_researcher",
+                "brain":      "_brain",
+                "info":       "_info_agent",
+                "triage":     "_triage_agent",
+                "planner":    "_planner_agent",
             }
             setattr(_pipeline, _attr_map[_agent_name], _new_agent)
             _display = f"`{_provider},{_model}`" if _model else f"`{_provider}`"
@@ -880,6 +915,9 @@ async def on_message(message: cl.Message) -> None:
 
     # Final flush — catches any outputs that arrived with the last event.
     await _flush_new_outputs()
+
+    # ── Persist thread state so on_chat_resume can restore it ────────────
+    _save_thread_state(pipeline)
 
     # ── Token / cost summary ──────────────────────────────────────────────
     try:

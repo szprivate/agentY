@@ -26,7 +26,7 @@ from typing import Any, List, Optional
 from pydantic import BaseModel, Field, ValidationError
 from strands import Agent
 
-from src.agent import create_brain_agent, create_error_checker_agent, create_info_agent, create_planner_agent, create_researcher_agent, create_triage_agent, _settings
+from src.agent import create_brain_agent, create_info_agent, create_planner_agent, create_researcher_agent, create_triage_agent, _settings
 from src.utils.chat_summary import summarize_conversation
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
 from src.utils.comfyui_poller import poll_comfyui_job as _poll_comfyui_job
@@ -285,7 +285,6 @@ class Pipeline:
         info_agent: Agent | None = None,
         triage_agent: Agent | None = None,
         planner_agent: Agent | None = None,
-        error_checker_agent: Agent | None = None,
         verbose: bool = True,
         skip_brain: bool = False,
         info_context: dict | None = None,
@@ -296,7 +295,6 @@ class Pipeline:
         self._info_agent: Agent = info_agent or create_info_agent()
         self._triage_agent: Agent = triage_agent or create_triage_agent()
         self._planner_agent: Agent = planner_agent or create_planner_agent()
-        self._error_checker: Agent = error_checker_agent or create_error_checker_agent()
         self._verbose = verbose
         self._skip_brain = skip_brain
         self._info_context: dict = info_context or {}
@@ -1822,53 +1820,6 @@ class Pipeline:
                     ):
                         yield {"data": f"\n{line}"}
 
-                # ── Stage 4: Error Checker ─────────────────────────────────
-                if workflow_paths_b:
-                    try:
-                        task_desc = json.loads(raw_json).get("task", {}).get("description", "unknown")
-                    except Exception:
-                        task_desc = "unknown"
-                    if self._verbose:
-                        print("pipeline: Running Error Checker…")
-                        yield {"data": "\n_pipeline: Running Error Checker…_"}
-                    checker = await self._run_error_checker(task_desc)
-                    checker_status = checker.get("status", "ok")
-
-                    if checker_status == "error_fixable" and not _is_error_retry:
-                        user_msg = checker.get("user_message", "Execution errors detected.")
-                        yield {"data": f"\n\n⚠️ {user_msg}\n_Attempting auto-fix…_"}
-                        if self._verbose:
-                            print("pipeline: Error Checker: fixable — re-running Brain with fix prompt.")
-                        self._record_agent_usage(self._brain, _brain_snap)
-                        fix_prompt = self._build_error_fix_prompt(raw_json, checker)
-                        async for event in self._astream_brain_stage(
-                            raw_json, user_text, triage_result,
-                            _is_error_retry=True,
-                            _override_brain_prompt=fix_prompt,
-                        ):
-                            yield event
-                        # The recursive call handles its own compress/summary.
-                        return
-
-                    if checker_status == "error_unfixable":
-                        errors_text = "\n".join(checker.get("errors", []))
-                        user_msg = checker.get("user_message", "The workflow execution failed.")
-                        yield {
-                            "data": (
-                                f"\n\n❌ **Execution failed.**\n\n{user_msg}"
-                                + (f"\n\n**ComfyUI errors:**\n```\n{errors_text}\n```" if errors_text else "")
-                            )
-                        }
-                        if self._verbose:
-                            print(f"pipeline: Error Checker: unfixable — {user_msg}")
-                        if executor_paths_b:
-                            self._session.current_output_paths[:] = executor_paths_b
-                        self._record_chat_summary(user_text, triage_result, status="error", raw_json=raw_json)
-                        await self._compress_brain_history(extra_output_paths=executor_paths_b)
-                        self._record_agent_usage(self._brain, _brain_snap)
-                        self._session.last_agent = "brain"
-                        return
-
                 if executor_paths_b:
                     self._session.current_output_paths[:] = executor_paths_b
                 self._record_chat_summary(user_text, triage_result, status="completed", raw_json=raw_json)
@@ -1899,66 +1850,6 @@ class Pipeline:
                     }
                 }
             ]
-
-    async def _run_error_checker(self, task_description: str) -> dict:
-        """Invoke the Error Checker agent once and return its JSON verdict.
-
-        Always returns a dict with at least ``{"status": "ok"}``.  Any failure
-        inside the checker (agent crash, JSON parse error) is treated as "ok"
-        so it never blocks the normal pipeline flow.
-        """
-        prompt = (
-            f"Check ComfyUI logs for errors from the most recent workflow execution.\n"
-            f"Task: {task_description}"
-        )
-        try:
-            _before = self._usage_snapshot(self._error_checker)
-            loop = asyncio.get_event_loop()
-            raw = await loop.run_in_executor(None, lambda: str(self._error_checker(prompt)))
-            self._record_agent_usage(self._error_checker, _before)
-            # Clear single-turn history after each check.
-            try:
-                self._error_checker.messages.clear()
-            except Exception:
-                pass
-            json_str = _extract_json(raw) or raw
-            result: dict = json.loads(json_str)
-            if "status" not in result:
-                return {"status": "ok", "errors": [], "fix_plan": "", "user_message": ""}
-            return result
-        except Exception as exc:
-            if self._verbose:
-                print(f"pipeline: Error checker failed (ignored): {exc}")
-            return {"status": "ok", "errors": [], "fix_plan": "", "user_message": ""}
-
-    def _build_error_fix_prompt(self, raw_json: str, checker: dict) -> str:
-        """Build a Brain prompt that includes the original brainbriefing + error fix plan."""
-        errors_text = "\n".join(checker.get("errors", []))
-        fix_plan = checker.get("fix_plan", "")
-        try:
-            task_description = json.loads(raw_json).get("task", {}).get("description", "unknown")
-        except Exception:
-            task_description = "unknown"
-        return textwrap.dedent(f"""\
-            The previous ComfyUI execution failed with errors. Fix the workflow and signal it ready again.
-
-            Task: {task_description}
-
-            Errors from ComfyUI logs:
-            ```
-            {errors_text}
-            ```
-
-            Fix plan (from Error Checker):
-            {fix_plan}
-
-            Original brainbriefing:
-            ```json
-            {raw_json}
-            ```
-
-            Apply the fix plan, reassemble/patch the workflow, then call `signal_workflow_ready(workflow_path)`.
-        """).strip()
 
     def _build_brain_prompt(self, raw_json: str) -> str:
         """Format the Brain's input prompt from the resolved brainbriefing JSON."""
@@ -2080,9 +1971,6 @@ def create_pipeline(
     planner_llm: str | None = None,
     planner_ollama_model: str | None = None,
     planner_anthropic_model: str | None = None,
-    error_checker_llm: str | None = None,
-    error_checker_ollama_model: str | None = None,
-    error_checker_anthropic_model: str | None = None,
     verbose: bool = True,
     skip_brain: bool = False,
     info_context: dict | None = None,
@@ -2149,18 +2037,12 @@ def create_pipeline(
         ollama_model=planner_ollama_model,
         anthropic_model=planner_anthropic_model,
     )
-    error_checker_agent = create_error_checker_agent(
-        llm=error_checker_llm,
-        ollama_model=error_checker_ollama_model,
-        anthropic_model=error_checker_anthropic_model,
-    )
     return Pipeline(
         researcher,
         brain,
         info_agent=info_agent,
         triage_agent=triage_agent,
         planner_agent=planner_agent,
-        error_checker_agent=error_checker_agent,
         verbose=verbose,
         skip_brain=skip_brain,
         info_context=info_context,
