@@ -11,7 +11,7 @@ build/
 comfyui_workflow_templates_official/
 
 #Logs and outputs
-logs/
+.logs/
 output_images/
 output_workflows/
 /.files
