@@ -57,8 +57,12 @@ def _downsize(data: bytes, img_fmt: str) -> bytes:
     """Downsize image in-memory to fit Claude API constraints.
 
     Caps long edge at 1568 px and enforces the 5 MB hard limit.
+    Uses a small internal safety margin (_SAFE_IMAGE_BYTES) so images
+    never land exactly on the boundary.
     """
-    if len(data) <= _MAX_IMAGE_BYTES:
+    _SAFE_IMAGE_BYTES = _MAX_IMAGE_BYTES - 64 * 1024  # 5 MB - 64 KB headroom
+
+    if len(data) <= _SAFE_IMAGE_BYTES:
         img = Image.open(io.BytesIO(data))
         if max(img.width, img.height) <= _OPTIMAL_LONG_EDGE:
             return data
@@ -84,7 +88,7 @@ def _downsize(data: bytes, img_fmt: str) -> bytes:
             img.save(buf, format=pil_fmt, quality=quality, optimize=True)
         else:
             img.save(buf, format=pil_fmt, optimize=True)
-        if buf.tell() <= _MAX_IMAGE_BYTES:
+        if buf.tell() <= _SAFE_IMAGE_BYTES:
             break
         if pil_fmt == "PNG":
             pil_fmt = "JPEG"
@@ -92,6 +96,18 @@ def _downsize(data: bytes, img_fmt: str) -> bytes:
                 img = img.convert("RGB")
             continue
         quality -= 10
+
+    # Hard fallback: if the quality loop wasn't enough, halve dimensions
+    # progressively until the image fits.  Converts to JPEG at quality=20
+    # which is always far smaller than a lossless format at any resolution.
+    while buf.tell() > _SAFE_IMAGE_BYTES and max(img.width, img.height) >= 128:
+        new_w = max(1, img.width // 2)
+        new_h = max(1, img.height // 2)
+        img = img.resize((new_w, new_h), Image.LANCZOS)
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=20, optimize=True)
 
     return buf.getvalue()
 

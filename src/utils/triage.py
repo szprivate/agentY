@@ -55,7 +55,7 @@ def _extract_json(text: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 async def triage(
-    user_message: str,
+    user_message: str | list,
     session: AgentSession,
     info_context: dict,  # noqa: ARG001  — reserved for future use
     agent: Agent,
@@ -65,7 +65,8 @@ async def triage(
     Parameters
     ----------
     user_message:
-        Raw text from the user.
+        Raw text from the user, or a multimodal content-block list (str + image
+        blocks) when the caller wants the triage model to see attached images.
     session:
         Current agent session (used to inject prior context into the message).
     info_context:
@@ -101,7 +102,21 @@ async def triage(
         # triage won't mistakenly classify follow-up requests as needs_image.
         session_hint = f"[SESSION CONTEXT: no_prior_generation=true{_img_hint}]\n\n"
 
-    classify_input = f"{session_hint}{user_message}"
+    if isinstance(user_message, list):
+        # Multimodal input: prepend the session hint into the first text block.
+        classify_input: str | list
+        if session_hint:
+            blocks = list(user_message)
+            first_text_idx = next((i for i, b in enumerate(blocks) if "text" in b), None)
+            if first_text_idx is not None:
+                blocks[first_text_idx] = {"text": session_hint + blocks[first_text_idx]["text"]}
+            else:
+                blocks.insert(0, {"text": session_hint})
+            classify_input = blocks
+        else:
+            classify_input = user_message
+    else:
+        classify_input = f"{session_hint}{user_message}"
 
     # Call the triage agent — returns the full response string.
     raw: str = str(agent(classify_input))

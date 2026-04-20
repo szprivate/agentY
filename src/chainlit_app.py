@@ -115,23 +115,24 @@ def _build_content(text: str, image_paths: list[str]) -> list | str:
 
     Mirrors the pattern used by agentY_server.py so the pipeline handles
     both plain-text prompts and multimodal (text + image) inputs correctly.
+    Images are always downsized to satisfy Claude's 5 MB / 1568 px constraints.
     """
     if not image_paths:
         return text or "(no message)"
+
+    from src.tools.image_handling import _downsize, _detect_format  # noqa: PLC0415
 
     blocks: list = []
     valid_paths: list[str] = []
 
     for path in image_paths:
         try:
-            from PIL import Image as PILImage  # noqa: PLC0415
-            with PILImage.open(path) as img:
-                buf = io.BytesIO()
-                img.save(buf, format="PNG")
-                image_bytes = buf.getvalue()
+            raw = Path(path).read_bytes()
+            img_fmt = _detect_format(path) or "png"
+            image_bytes = _downsize(raw, img_fmt)
             blocks.append({
                 "image": {
-                    "format": "png",
+                    "format": img_fmt,
                     "source": {"bytes": image_bytes},
                 }
             })
@@ -667,9 +668,9 @@ async def on_message(message: cl.Message) -> None:
             _token_buf = []
             _token_buf_len = 0
 
-    # ── Researcher buffering ───────────────────────────────────────────────
+    # ── Researcher streaming ───────────────────────────────────────────────
     _in_researcher: bool = False
-    _researcher_buf: list[str] = []
+    _researcher_step: cl.Step | None = None
 
     # ── Think-block parser state ───────────────────────────────────────────
     _think_state: dict = {"in_think": False, "buf": ""}
@@ -717,20 +718,19 @@ async def on_message(message: cl.Message) -> None:
                 ).send()
                 break
 
-            # ── Researcher start — begin buffering ────────────────────────
+            # ── Researcher start — open streaming step ────────────────────
             if event.get("_researcher_start"):
                 _in_researcher = True
-                _researcher_buf.clear()
+                _researcher_step = cl.Step(name="🔍 Researcher", type="tool")
+                await _researcher_step.send()
                 continue
 
-            # ── Researcher done — flush buffer to collapsed step ──────────
+            # ── Researcher done — finalise streaming step ─────────────────
             if event.get("_researcher_done"):
                 _in_researcher = False
-                content_str = "".join(_researcher_buf).strip()
-                if content_str:
-                    async with cl.Step(name="🔍 Researcher", type="tool") as _r_step:
-                        _r_step.output = content_str
-                _researcher_buf.clear()
+                if _researcher_step is not None:
+                    await _researcher_step.update()
+                    _researcher_step = None
                 continue
 
             # ── Plan ready — create task list ─────────────────────────────
@@ -771,7 +771,8 @@ async def on_message(message: cl.Message) -> None:
                 continue
 
             if _in_researcher:
-                _researcher_buf.append(chunk)
+                if _researcher_step is not None:
+                    await _researcher_step.stream_token(chunk)
                 continue
 
             # Split out <think>…</think> blocks
@@ -811,6 +812,9 @@ async def on_message(message: cl.Message) -> None:
 
     except Exception as exc:
         await _flush_token_buf()
+        if _researcher_step is not None:
+            await _researcher_step.update()
+            _researcher_step = None
         msg = await _ensure_response_msg()
         await msg.stream_token(f"\n\n❌ Pipeline error: {exc}")
 

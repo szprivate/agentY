@@ -47,3 +47,5 @@ If a matching entry exists, **apply the documented solution directly** instead o
 2026-04-17 | BatchImagesNode and Note nodes cause validation errors in Kling O3 templates | Always remove BatchImagesNode and Note nodes from Kling O3 templates before validation; they are not needed for single-run workflows and cause required input errors.
 2026-04-17 | KlingOmniProImageToVideoNode requires reference_images connection not value assignment | Connect reference_images input to LoadImage output using node ID and slot format, not as a literal value patch to avoid missing input errors.
 2026-04-17 | Input image paths in brainbriefing may reference non-existent files | Verify input files exist at specified paths before workflow assembly; do not attempt upload if file not found at brainbriefing location.
+
+2026-04-20 | update_workflow validation fails when images are not in ComfyUI input directory | Upload images to ComfyUI input directory first using upload_image before applying patches with image references. This avoids "image - Invalid" validation errors.

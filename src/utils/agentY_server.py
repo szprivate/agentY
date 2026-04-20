@@ -58,26 +58,30 @@ def clear_preview_job(job_id: str) -> None:
 # ── Content builder ───────────────────────────────────────────────────────────
 
 def _build_content(message: str, image_paths: list[str]) -> list | str:
-    """Build a Strands-compatible content list from text + image file paths."""
+    """Build a Strands-compatible content list from text + image file paths.
+
+    Images are always downsized to satisfy Claude's 5 MB / 1568 px constraints.
+    """
     if not image_paths:
         return message or "(no message)"
+
+    from src.tools.image_handling import _downsize, _detect_format
 
     blocks: list = []
 
     for path in image_paths:
         try:
-            from PIL import Image as PILImage
-            with PILImage.open(path) as img:
-                buf = io.BytesIO()
-                img.save(buf, format="PNG")
-                image_bytes = buf.getvalue()
+            from pathlib import Path as _Path
+            raw = _Path(path).read_bytes()
+            img_fmt = _detect_format(path) or "png"
+            image_bytes = _downsize(raw, img_fmt)
             blocks.append({
                 "image": {
-                    "format": "png",
+                    "format": img_fmt,
                     "source": {"bytes": image_bytes},
                 }
             })
-            logger.info("Loaded review image: %s (%d bytes)", path, len(image_bytes))
+            logger.info("Loaded review image: %s (%d bytes, after downsize)", path, len(image_bytes))
         except Exception as exc:
             logger.warning("Could not load image %s: %s", path, exc)
 

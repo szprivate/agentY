@@ -470,6 +470,7 @@ def _make_agent(
             "model_id": model_id,
             "is_ollama": (llm == "ollama"),
         }
+        agent._is_claude = (llm != "ollama")
     except Exception:
         pass
     return agent

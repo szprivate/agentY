@@ -139,14 +139,14 @@ def _apply_multiprompt_variations(
     mp_file = _MULTIPROMPT_PATH
     if not mp_file.exists():
         if verbose:
-            print(f"[pipeline] multiprompt.json not found at {mp_file} — skipping variation expansion.")
+            print(f"pipeline: multiprompt.json not found at {mp_file} — skipping variation expansion.")
         return [base_workflow_path]
 
     try:
         prompts_data: dict = json.loads(mp_file.read_text(encoding="utf-8"))
     except Exception as exc:
         if verbose:
-            print(f"[pipeline] WARNING: could not parse multiprompt.json — {exc}")
+            print(f"pipeline: WARNING: could not parse multiprompt.json — {exc}")
         return [base_workflow_path]
 
     # Support both formats:
@@ -159,11 +159,11 @@ def _apply_multiprompt_variations(
 
     if len(prompts) < 2:
         if verbose:
-            print("[pipeline] multiprompt.json has < 2 entries — skipping variation expansion.")
+            print("pipeline: multiprompt.json has < 2 entries — skipping variation expansion.")
         return [base_workflow_path]
 
     if verbose:
-        print(f"[pipeline] Expanding {len(prompts)} variation prompts onto workflows …")
+        print(f"pipeline: Expanding {len(prompts)} variation prompts onto workflows …")
 
     base = Path(base_workflow_path)
     all_paths: list[str] = []
@@ -182,16 +182,16 @@ def _apply_multiprompt_variations(
             node = data.get(str(positive_prompt_node_id))
             if node is None:
                 if verbose:
-                    print(f"[pipeline] WARNING: prompt node '{positive_prompt_node_id}' not found "
+                    print(f"pipeline: WARNING: prompt node '{positive_prompt_node_id}' not found "
                           f"in {target.name} — skipping prompt patch for variation {idx}.")
             else:
                 node.setdefault("inputs", {})["text"] = prompt_text
                 target.write_text(json.dumps(data, indent=2), encoding="utf-8")
                 if verbose:
-                    print(f"[pipeline] variation {idx}/{len(prompts)} → {target.name}")
+                    print(f"pipeline: variation {idx}/{len(prompts)} → {target.name}")
         except Exception as exc:
             if verbose:
-                print(f"[pipeline] WARNING: could not patch variation {idx} — {exc}")
+                print(f"pipeline: WARNING: could not patch variation {idx} — {exc}")
 
         all_paths.append(str(target))
 
@@ -393,12 +393,21 @@ class Pipeline:
         user_text = self._extract_text(user_input)
         user_text = self._annotate_attachments(user_input, user_text)
         _triage_snap = self._usage_snapshot(self._triage_agent)
-        triage_result = asyncio.run(_triage(user_text, self._session, self._info_context, self._triage_agent))
+        _triage_input = (
+            user_input
+            if (
+                isinstance(user_input, list)
+                and any("image" in b for b in user_input)
+                and getattr(self._triage_agent, "_is_claude", False)
+            )
+            else user_text
+        )
+        triage_result = asyncio.run(_triage(_triage_input, self._session, self._info_context, self._triage_agent))
         self._record_agent_usage(self._triage_agent, _triage_snap)
         handler = _route(triage_result)
 
         if self._verbose:
-            print(f"[pipeline] Triage → intent={triage_result.intent.value},"
+            print(f"pipeline: Triage → intent={triage_result.intent.value},"
                   f" confidence={triage_result.confidence:.2f}, handler={handler}")
 
         # Context-dependent routing: researcher was previously blocked waiting for user input.
@@ -406,7 +415,7 @@ class Pipeline:
         # normal triage dispatch — regardless of how triage classified this message.
         if self._session.last_agent == "researcher" and self._session.last_researcher_request:
             if self._verbose:
-                print("[pipeline] Researcher was blocked — re-running with user clarification")
+                print("pipeline: Researcher was blocked — re-running with user clarification")
             _bls = self._session.last_researcher_blockers
             _blockers_ctx = (
                 "\n\nYou previously identified these blockers:\n" + "\n".join(f"- {b}" for b in _bls)
@@ -459,7 +468,7 @@ class Pipeline:
 
         if handler == "answer":
             if self._verbose:
-                print("[pipeline] info_query → Info agent")
+                print("pipeline: info_query → Info agent")
             _info_snap = self._usage_snapshot(self._info_agent)
             response = str(self._info_agent(user_text))
             self._record_agent_usage(self._info_agent, _info_snap)
@@ -470,7 +479,7 @@ class Pipeline:
 
         if handler == "needs_image":
             if self._verbose:
-                print("[pipeline] needs_image → handoff to user (missing image)")
+                print("pipeline: needs_image → handoff to user (missing image)")
             self._record_chat_summary(user_text, triage_result, status="needs_image")
             return triage_result.response or (
                 "It looks like your request requires an input image, but I don't see one attached. "
@@ -483,7 +492,7 @@ class Pipeline:
             # Info instead of the Brain, which has no knowledge of the prior prompt.
             if triage_result.intent == MessageIntent.feedback and self._session.last_agent == "info":
                 if self._verbose:
-                    print("[pipeline] feedback on Info-agent output → routing back to Info agent")
+                    print("pipeline: feedback on Info-agent output → routing back to Info agent")
                 _info_snap = self._usage_snapshot(self._info_agent)
                 response = str(self._info_agent(user_text))
                 self._record_agent_usage(self._info_agent, _info_snap)
@@ -505,7 +514,7 @@ class Pipeline:
                 count = len(workflow_paths)
                 if self._verbose:
                     tag = f"{count} workflows (batch)" if count > 1 else workflow_paths[0]
-                    print(f"[pipeline] Brain (follow-up) signaled {tag} ready.")
+                    print(f"pipeline: Brain (follow-up) signaled {tag} ready.")
                 executor_lines, executor_paths = asyncio.run(
                     self._drain_executor_batch(
                         workflow_paths,
@@ -521,7 +530,7 @@ class Pipeline:
             asyncio.run(self._compress_brain_history(extra_output_paths=executor_paths))
             self._session.last_agent = "brain"
             if self._verbose:
-                print("[pipeline] Brain (follow-up) finished.")
+                print("pipeline: Brain (follow-up) finished.")
             return brain_response
 
         if handler == "planner":
@@ -547,7 +556,7 @@ class Pipeline:
 
         if self._should_skip_brain():
             if self._verbose:
-                print("[pipeline] Skipping Brain stage; returning Researcher output.")
+                print("pipeline: Skipping Brain stage; returning Researcher output.")
             return researcher_output
 
         self._last_brainbriefing_json = raw_json
@@ -567,7 +576,7 @@ class Pipeline:
             count = len(workflow_paths_r)
             if self._verbose:
                 tag = f"{count} workflows (batch)" if count > 1 else workflow_paths_r[0]
-                print(f"[pipeline] Brain signaled {tag} ready.")
+                print(f"pipeline: Brain signaled {tag} ready.")
             executor_lines_r, executor_paths_r = asyncio.run(
                 self._drain_executor_batch(
                     workflow_paths_r,
@@ -583,7 +592,7 @@ class Pipeline:
         asyncio.run(self._compress_brain_history(extra_output_paths=executor_paths_r))
         self._session.last_agent = "brain"
         if self._verbose:
-            print("[pipeline] Brain finished.")
+            print("pipeline: Brain finished.")
         return brain_response
 
     async def stream_async(self, user_input):  # noqa: ANN201
@@ -609,12 +618,21 @@ class Pipeline:
         user_text = self._extract_text(user_input)
         user_text = self._annotate_attachments(user_input, user_text)
         _triage_snap = self._usage_snapshot(self._triage_agent)
-        triage_result = await _triage(user_text, self._session, self._info_context, self._triage_agent)
+        _triage_input = (
+            user_input
+            if (
+                isinstance(user_input, list)
+                and any("image" in b for b in user_input)
+                and getattr(self._triage_agent, "_is_claude", False)
+            )
+            else user_text
+        )
+        triage_result = await _triage(_triage_input, self._session, self._info_context, self._triage_agent)
         self._record_agent_usage(self._triage_agent, _triage_snap)
         handler = _route(triage_result)
 
         if self._verbose:
-            _msg = (f"[pipeline:stream] Triage → intent={triage_result.intent.value},"
+            _msg = (f"pipeline: Triage → intent={triage_result.intent.value},"
                     f" confidence={triage_result.confidence:.2f}, handler={handler}")
             print(_msg)
             yield {"data": f"\n_{_msg}_"}
@@ -622,8 +640,8 @@ class Pipeline:
         # Context-dependent routing: researcher was previously blocked waiting for user input.
         if self._session.last_agent == "researcher" and self._session.last_researcher_request:
             if self._verbose:
-                print("[pipeline:stream] Researcher was blocked — re-running with user clarification")
-                yield {"data": "\n_[pipeline:stream] Researcher was blocked — re-running with user clarification_"}
+                print("pipeline: Researcher was blocked — re-running with user clarification")
+                yield {"data": "\n_pipeline: Researcher was blocked — re-running with user clarification_"}
             _bls_s = self._session.last_researcher_blockers
             _blockers_ctx_s = (
                 "\n\nYou previously identified these blockers:\n" + "\n".join(f"- {b}" for b in _bls_s)
@@ -643,6 +661,7 @@ class Pipeline:
                 if isinstance(_ev, dict) and "_researcher_done" in _ev:
                     _r_json_s = _ev["raw_json"]
                     _r_err_s = _ev["error"]
+                    yield {"_researcher_done": True}
                 else:
                     yield _ev
             if _r_err_s:
@@ -662,16 +681,16 @@ class Pipeline:
                 return
             # Researcher now ready — stream Brain stage.
             if self._verbose:
-                print("[pipeline:stream] Researcher (retry) resolved — handing off to Brain …")
-                yield {"data": "\n_[pipeline:stream] Researcher (retry) resolved — handing off to Brain …_"}
+                print("pipeline: Researcher (retry) resolved — handing off to Brain …")
+                yield {"data": "\n_pipeline: Researcher (retry) resolved — handing off to Brain …_"}
             async for event in self._astream_brain_stage(_r_json_s, user_text, triage_result):
                 yield event
             return
 
         if handler == "answer":
             if self._verbose:
-                print("[pipeline:stream] info_query → Info agent (streamed)")
-                yield {"data": "\n_[pipeline:stream] info_query → Info agent (streamed)_"}
+                print("pipeline: info_query → Info agent (streamed)")
+                yield {"data": "\n_pipeline: info_query → Info agent (streamed)_"}
             _info_snap = self._usage_snapshot(self._info_agent)
             _info_chunks: list[str] = []
             async for event in self._info_agent.stream_async(user_text):
@@ -688,8 +707,8 @@ class Pipeline:
 
         if handler == "needs_image":
             if self._verbose:
-                print("[pipeline:stream] needs_image → handoff to user (missing image)")
-                yield {"data": "\n_[pipeline:stream] needs_image → handoff to user (missing image)_"}
+                print("pipeline: needs_image → handoff to user (missing image)")
+                yield {"data": "\n_pipeline: needs_image → handoff to user (missing image)_"}
             self._record_chat_summary(user_text, triage_result, status="needs_image")
             message = triage_result.response or (
                 "It looks like your request requires an input image, but I don't see one attached. "
@@ -704,8 +723,8 @@ class Pipeline:
             # Info instead of the Brain, which has no knowledge of the prior prompt.
             if triage_result.intent == MessageIntent.feedback and self._session.last_agent == "info":
                 if self._verbose:
-                    print("[pipeline:stream] feedback on Info-agent output → routing back to Info agent")
-                    yield {"data": "\n_[pipeline:stream] feedback on Info-agent output → routing back to Info agent_"}
+                    print("pipeline: feedback on Info-agent output → routing back to Info agent")
+                    yield {"data": "\n_pipeline: feedback on Info-agent output → routing back to Info agent_"}
                 _info_snap = self._usage_snapshot(self._info_agent)
                 async for event in self._info_agent.stream_async(user_text):
                     yield event
@@ -729,8 +748,8 @@ class Pipeline:
                 count = len(workflow_paths_fu)
                 if self._verbose:
                     tag = f"{count} workflows (batch)" if count > 1 else workflow_paths_fu[0]
-                    print(f"[pipeline:stream] Brain (follow-up) signaled {tag} ready.")
-                    yield {"data": f"\n_[pipeline:stream] Brain (follow-up) signaled {tag} ready._"}
+                    print(f"pipeline: Brain (follow-up) signaled {tag} ready.")
+                    yield {"data": f"\n_pipeline: Brain (follow-up) signaled {tag} ready._"}
                 hdr = f"batch of {count} workflows" if count > 1 else "workflow"
                 yield {"data": f"\n\n_⚙️ Handing off to executor ({hdr})…_"}
                 async for line in _execute_workflows_batch(
@@ -756,8 +775,8 @@ class Pipeline:
         # handler == "researcher" or "log_warning" → full Researcher → Brain flow
         # Stage 1 – Researcher (streamed)
         if self._verbose:
-            print("[pipeline:stream] Stage 1 – Researcher resolving spec …")
-            yield {"data": "\n_[pipeline:stream] Stage 1 – Researcher resolving spec …_"}
+            print("pipeline: Stage 1 – Researcher resolving spec …")
+            yield {"data": "\n_pipeline: Stage 1 – Researcher resolving spec …_"}
         raw_json: str | None = None
         error: str | None = None
         researcher_output: str = ""
@@ -767,6 +786,7 @@ class Pipeline:
                 raw_json = _r_ev["raw_json"]
                 error = _r_ev["error"]
                 researcher_output = _r_ev["researcher_output"]
+                yield {"_researcher_done": True}
             else:
                 yield _r_ev
         if error:
@@ -791,15 +811,15 @@ class Pipeline:
 
         if self._should_skip_brain():
             if self._verbose:
-                print("[pipeline:stream] Skipping Brain stage; returning Researcher output.")
-                yield {"data": "\n_[pipeline:stream] Skipping Brain stage; returning Researcher output._"}
+                print("pipeline: Skipping Brain stage; returning Researcher output.")
+                yield {"data": "\n_pipeline: Skipping Brain stage; returning Researcher output._"}
             yield {"data": researcher_output}
             return
 
         # Stage 2 – Brain (streamed, with optional ComfyUI interrupt handling)
         if self._verbose:
-            print("[pipeline:stream] Stage 2 – Brain streaming …")
-            yield {"data": "\n_[pipeline:stream] Stage 2 – Brain streaming …_"}
+            print("pipeline: Stage 2 – Brain streaming …")
+            yield {"data": "\n_pipeline: Stage 2 – Brain streaming …_"}
         async for event in self._astream_brain_stage(raw_json, user_text, triage_result):
             yield event
 
@@ -871,13 +891,13 @@ class Pipeline:
     def _run_planned_request(self, user_text: str, triage_result: TriageResult) -> str:
         """Execute a multi-step plan synchronously; return a combined summary string."""
         if self._verbose:
-            print("[pipeline] Planner — decomposing multi-step request …")
+            print("pipeline: Planner — decomposing multi-step request …")
         steps = self._run_planner(user_text)
 
         # Fallback: treat as a plain new_request when planning fails.
         if not steps:
             if self._verbose:
-                print("[pipeline] Planner fallback → researcher path")
+                print("pipeline: Planner fallback → researcher path")
             raw_json, error, researcher_output = self._run_researcher(user_text)
             if error:
                 self._record_chat_summary(user_text, triage_result, status="error")
@@ -904,7 +924,7 @@ class Pipeline:
 
         total = len(steps)
         if self._verbose:
-            print(f"[pipeline] Plan has {total} step(s):")
+            print(f"pipeline: Plan has {total} step(s):")
             for i, s in enumerate(steps, 1):
                 print(f"  {i}. {s['description']}")
 
@@ -915,13 +935,13 @@ class Pipeline:
             step_req = self._inject_context_into_step(step["request"], idx)
 
             if self._verbose:
-                print(f"\n[pipeline] ── Plan step {idx + 1}/{total}: {description} ──")
+                print(f"\npipeline: ── Plan step {idx + 1}/{total}: {description} ──")
 
             raw_json, error, researcher_output = self._run_researcher(step_req)
             if error:
                 msg = f"Step {idx + 1} ({description}) failed: {error}"
                 if self._verbose:
-                    print(f"[pipeline] {msg}")
+                    print(f"pipeline: {msg}")
                 step_results.append(msg)
                 # Abort remaining steps when the researcher fails.
                 break
@@ -943,7 +963,7 @@ class Pipeline:
                 count = len(wf_paths)
                 if self._verbose:
                     tag = f"{count} workflows (batch)" if count > 1 else wf_paths[0]
-                    print(f"[pipeline] Step {idx + 1} Brain signaled {tag} ready.")
+                    print(f"pipeline: Step {idx + 1} Brain signaled {tag} ready.")
                 exec_lines, exec_paths = asyncio.run(
                     self._drain_executor_batch(
                         wf_paths, raw_json, user_message=step_req
@@ -960,11 +980,11 @@ class Pipeline:
             step_results.append(f"**Step {idx + 1} — {description}**\n{brain_response}")
 
             if self._verbose:
-                print(f"[pipeline] Step {idx + 1}/{total} finished.")
+                print(f"pipeline: Step {idx + 1}/{total} finished.")
 
         combined = "\n\n---\n\n".join(step_results)
         if self._verbose:
-            print(f"[pipeline] Planned execution complete ({total} step(s)).")
+            print(f"pipeline: Planned execution complete ({total} step(s)).")
         return combined
 
     async def _stream_planned_request(
@@ -974,15 +994,15 @@ class Pipeline:
     ):
         """Stream a multi-step plan; yields Strands-compatible event dicts."""
         if self._verbose:
-            print("[pipeline:stream] Planner — decomposing multi-step request …")
-            yield {"data": "\n_[pipeline:stream] Planner — decomposing multi-step request …_"}
+            print("pipeline: Planner — decomposing multi-step request …")
+            yield {"data": "\n_pipeline: Planner — decomposing multi-step request …_"}
         steps = self._run_planner(user_text)
 
         # Fallback: treat as a plain researcher path when planning fails.
         if not steps:
             if self._verbose:
-                print("[pipeline:stream] Planner fallback → researcher path")
-                yield {"data": "\n_[pipeline:stream] Planner fallback → researcher path_"}
+                print("pipeline: Planner fallback → researcher path")
+                yield {"data": "\n_pipeline: Planner fallback → researcher path_"}
             yield {"_researcher_start": True}
             raw_json = error = researcher_output = None
             async for _r_ev in self._arun_researcher(user_text):
@@ -990,6 +1010,7 @@ class Pipeline:
                     raw_json = _r_ev["raw_json"]
                     error = _r_ev["error"]
                     researcher_output = _r_ev["researcher_output"]
+                    yield {"_researcher_done": True}
                 else:
                     yield _r_ev
             if error:
@@ -1027,11 +1048,11 @@ class Pipeline:
         yield {"_plan_ready": True, "steps": [{"description": s["description"]} for s in steps]}
         yield {"data": f"_🗂️ Plan ready — {total} step(s) to execute._\n"}
         if self._verbose:
-            print(f"[pipeline:stream] Plan has {total} step(s):")
+            print(f"pipeline: Plan has {total} step(s):")
             for i, s in enumerate(steps, 1):
                 print(f"  {i}. {s['description']}")
             _steps_list = "\n".join(f"  {i}. {s['description']}" for i, s in enumerate(steps, 1))
-            yield {"data": f"\n_[pipeline:stream] Plan has {total} step(s):_\n{_steps_list}\n"}
+            yield {"data": f"\n_pipeline: Plan has {total} step(s):_\n{_steps_list}\n"}
 
         for idx, step in enumerate(steps):
             description = step["description"]
@@ -1040,8 +1061,8 @@ class Pipeline:
             yield {"_step_start": True, "idx": idx, "total": total, "description": description}
             yield {"data": f"\n\n**Step {idx + 1}/{total} — {description}**\n"}
             if self._verbose:
-                print(f"\n[pipeline:stream] ── Plan step {idx + 1}/{total}: {description} ──")
-                yield {"data": f"\n_[pipeline:stream] ── Plan step {idx + 1}/{total}: {description} ──_"}
+                print(f"\npipeline: ── Plan step {idx + 1}/{total}: {description} ──")
+                yield {"data": f"\n_pipeline: ── Plan step {idx + 1}/{total}: {description} ──_"}
 
             yield {"_researcher_start": True}
             raw_json = error = researcher_output = None
@@ -1050,12 +1071,13 @@ class Pipeline:
                     raw_json = _r_ev["raw_json"]
                     error = _r_ev["error"]
                     researcher_output = _r_ev["researcher_output"]
+                    yield {"_researcher_done": True}
                 else:
                     yield _r_ev
             if error:
                 yield {"data": f"\n❌ Step {idx + 1} failed: {error}"}
                 if self._verbose:
-                    print(f"[pipeline:stream] Step {idx + 1} researcher error: {error}")
+                    print(f"pipeline: Step {idx + 1} researcher error: {error}")
                 break
 
             self._last_brainbriefing_json = raw_json
@@ -1097,8 +1119,8 @@ class Pipeline:
                 yield {"_step_done": True, "idx": idx, "failed": True}
                 self._record_chat_summary(step_req, triage_result, status="qa_failed", raw_json=raw_json)
                 if self._verbose:
-                    print(f"[pipeline:stream] Step {idx + 1}/{total} QA failed — aborting plan.")
-                    yield {"data": f"\n_[pipeline:stream] Step {idx + 1}/{total} QA failed — aborting plan._"}
+                    print(f"pipeline: Step {idx + 1}/{total} QA failed — aborting plan.")
+                    yield {"data": f"\n_pipeline: Step {idx + 1}/{total} QA failed — aborting plan._"}
                 break  # stop processing further steps
 
             self._record_chat_summary(step_req, triage_result, status="completed", raw_json=raw_json)
@@ -1106,12 +1128,12 @@ class Pipeline:
 
             yield {"_step_done": True, "idx": idx}
             if self._verbose:
-                print(f"[pipeline:stream] Step {idx + 1}/{total} finished.")
-                yield {"data": f"\n_[pipeline:stream] Step {idx + 1}/{total} finished._"}
+                print(f"pipeline: Step {idx + 1}/{total} finished.")
+                yield {"data": f"\n_pipeline: Step {idx + 1}/{total} finished._"}
 
         if self._verbose:
-            print(f"[pipeline:stream] Planned execution complete ({total} step(s)).")
-            yield {"data": f"\n_[pipeline:stream] Planned execution complete ({total} step(s))._"}
+            print(f"pipeline: Planned execution complete ({total} step(s)).")
+            yield {"data": f"\n_pipeline: Planned execution complete ({total} step(s))._"}
     # ── Triage helpers ───────────────────────────────────────────────── #
 
     @staticmethod
@@ -1168,7 +1190,24 @@ class Pipeline:
         For all other follow-up intents a compact context block is prepended.
         """
         if triage_result.intent == MessageIntent.feedback:
-            # The user's feedback message IS the new prompt for the Brain.
+            # Include last brainbriefing so Brain knows which template/workflow to modify.
+            context_parts: list[str] = []
+            if self._last_brainbriefing_json:
+                context_parts.append(
+                    f"Previous brainbriefing (reuse this template, apply feedback below):\n"
+                    f"```json\n{self._last_brainbriefing_json}\n```"
+                )
+            if self._session.current_output_paths:
+                context_parts.append(
+                    f"Current outputs: {', '.join(self._session.current_output_paths)}"
+                )
+            if context_parts:
+                return (
+                    "\n\n".join(context_parts)
+                    + f"\n\nUser feedback: {user_text}\n\n"
+                    "Apply the feedback to the previous brainbriefing, keeping everything else the same. "
+                    "Assemble the updated workflow and call `signal_workflow_ready(workflow_path)`."
+                )
             return user_text
 
         context_lines: list[str] = []
@@ -1204,7 +1243,7 @@ class Pipeline:
         if len(cleaned) != len(msgs):
             if self._verbose:
                 removed = len(msgs) - len(cleaned)
-                print(f"[pipeline] Sanitized Brain history: removed {removed} "
+                print(f"pipeline: Sanitized Brain history: removed {removed} "
                       f"orphaned tool message(s).")
             self._brain.messages[:] = cleaned
 
@@ -1299,18 +1338,18 @@ class Pipeline:
         # ── Self-learning check (fire-and-forget background thread) ─────────
         tool_call_count = count_tool_calls(messages)
         if self._verbose:
-            print(f"[pipeline] Brain used {tool_call_count} tool call(s) in this session.")
+            print(f"pipeline: Brain used {tool_call_count} tool call(s) in this session.")
         maybe_run_learnings(messages, session_id=self._session.session_id)
 
         if self._verbose:
             msg_count = len(messages)
-            print(f"[pipeline] Compressing Brain history ({msg_count} messages) …")
+            print(f"pipeline: Compressing Brain history ({msg_count} messages) …")
 
         try:
             summary = await summarize_conversation(messages, extra_output_paths=extra_output_paths)
         except Exception as exc:
             if self._verbose:
-                print(f"[pipeline] WARNING: conversation summarisation failed ({exc}); "
+                print(f"pipeline: WARNING: conversation summarisation failed ({exc}); "
                       "keeping last 4 messages as fallback.")
             # Fallback: keep only the last few messages to cap token growth.
             # Sanitize to avoid orphaned toolResult blocks at the start.
@@ -1319,7 +1358,7 @@ class Pipeline:
 
         if not summary:
             if self._verbose:
-                print("[pipeline] Empty summary returned; clearing history.")
+                print("pipeline: Empty summary returned; clearing history.")
             self._brain.messages.clear()
             return
 
@@ -1346,7 +1385,7 @@ class Pipeline:
         if cost_lines:
             summary = summary.rstrip() + "\n" + cost_lines
 
-        print(f"[pipeline] Chat summary:\n{summary}\n")
+        print(f"pipeline: Chat summary:\n{summary}\n")
 
         # Replace the entire history with a single summary message.
         # Using an "assistant" message so the agent treats it as its own
@@ -1375,7 +1414,7 @@ class Pipeline:
         ]
 
         if self._verbose:
-            print(f"[pipeline] Brain history compressed → {len(summary)} chars summary.")
+            print(f"pipeline: Brain history compressed → {len(summary)} chars summary.")
 
     def _record_chat_summary(
         self,
@@ -1523,8 +1562,8 @@ class Pipeline:
                 prompt = researcher_prompt_text
             else:
                 if self._verbose:
-                    print(f"[pipeline] Researcher retry {attempt}/{self._MAX_RESEARCHER_RETRIES} …")
-                    yield {"data": f"\n_[pipeline] Researcher retry {attempt}/{self._MAX_RESEARCHER_RETRIES} …_"}
+                    print(f"pipeline: Researcher retry {attempt}/{self._MAX_RESEARCHER_RETRIES} …")
+                    yield {"data": f"\n_pipeline: Researcher retry {attempt}/{self._MAX_RESEARCHER_RETRIES} …_"}
                 prompt = textwrap.dedent(f"""
                     Your previous brainbriefing output failed JSON/schema validation:
                     {last_error}
@@ -1544,7 +1583,7 @@ class Pipeline:
             last_response = "".join(chunks)
             label = "initial" if attempt == 0 else f"retry {attempt}"
             if self._verbose:
-                print(f"[pipeline] Researcher finished ({label}). Extracting brainbriefing …")
+                print(f"pipeline: Researcher finished ({label}). Extracting brainbriefing …")
 
             raw_json = _extract_json(last_response)
             if raw_json is None:
@@ -1557,15 +1596,15 @@ class Pipeline:
             except (json.JSONDecodeError, ValidationError) as exc:
                 last_error = str(exc)
                 if self._verbose:
-                    print(f"[pipeline] Researcher ({label}) validation failed: {last_error}")
+                    print(f"pipeline: Researcher ({label}) validation failed: {last_error}")
                 continue
 
             raw_json = briefing.model_dump_json(indent=2)
             if self._verbose:
                 if attempt > 0:
-                    print(f"[pipeline] Brainbriefing recovered after {attempt} retry(ies).")
+                    print(f"pipeline: Brainbriefing recovered after {attempt} retry(ies).")
                 print(
-                    f"[pipeline] Brainbriefing OK ({label}) — "
+                    f"pipeline: Brainbriefing OK ({label}) — "
                     f"status={briefing.status}, task={briefing.task.description!r}, "
                     f"template={briefing.template.name!r}"
                 )
@@ -1652,7 +1691,7 @@ class Pipeline:
                 # Feed the validation error back so the model can self-correct
                 if self._verbose:
                     print(
-                        f"[pipeline] Researcher retry {attempt}/{self._MAX_RESEARCHER_RETRIES} …"
+                        f"pipeline: Researcher retry {attempt}/{self._MAX_RESEARCHER_RETRIES} …"
                     )
                 prompt = textwrap.dedent(f"""
                     Your previous brainbriefing output failed JSON/schema validation:
@@ -1665,7 +1704,7 @@ class Pipeline:
             last_response = str(self._researcher(prompt))
             label = "initial" if attempt == 0 else f"retry {attempt}"
             if self._verbose:
-                print(f"[pipeline] Researcher finished ({label}). Extracting brainbriefing …")
+                print(f"pipeline: Researcher finished ({label}). Extracting brainbriefing …")
 
             raw_json = _extract_json(last_response)
             if raw_json is None:
@@ -1678,16 +1717,16 @@ class Pipeline:
             except (json.JSONDecodeError, ValidationError) as exc:
                 last_error = str(exc)
                 if self._verbose:
-                    print(f"[pipeline] Researcher ({label}) validation failed: {last_error}")
+                    print(f"pipeline: Researcher ({label}) validation failed: {last_error}")
                 continue
 
             # Success — re-serialise from validated model so Brain always gets clean JSON
             raw_json = briefing.model_dump_json(indent=2)
             if self._verbose:
                 if attempt > 0:
-                    print(f"[pipeline] Brainbriefing recovered after {attempt} retry(ies).")
+                    print(f"pipeline: Brainbriefing recovered after {attempt} retry(ies).")
                 print(
-                    f"[pipeline] Brainbriefing OK ({label}) — "
+                    f"pipeline: Brainbriefing OK ({label}) — "
                     f"status={briefing.status}, task={briefing.task.description!r}, "
                     f"template={briefing.template.name!r}"
                 )
@@ -1766,8 +1805,8 @@ class Pipeline:
                     count = len(workflow_paths_b)
                     if self._verbose:
                         tag = f"{count} workflows (batch)" if count > 1 else workflow_paths_b[0]
-                        print(f"[pipeline:stream] Brain signaled {tag} ready.")
-                        yield {"data": f"\n_[pipeline:stream] Brain signaled {tag} ready._"}
+                        print(f"pipeline: Brain signaled {tag} ready.")
+                        yield {"data": f"\n_pipeline: Brain signaled {tag} ready._"}
                     hdr = f"batch of {count} workflows" if count > 1 else "workflow"
                     yield {"data": f"\n\n_⚙️ Handing off to executor ({hdr})…_"}
                     async for line in _execute_workflows_batch(
@@ -1786,8 +1825,8 @@ class Pipeline:
                     except Exception:
                         task_desc = "unknown"
                     if self._verbose:
-                        print("[pipeline:stream] Running Error Checker…")
-                        yield {"data": "\n_[pipeline:stream] Running Error Checker…_"}
+                        print("pipeline: Running Error Checker…")
+                        yield {"data": "\n_pipeline: Running Error Checker…_"}
                     checker = await self._run_error_checker(task_desc)
                     checker_status = checker.get("status", "ok")
 
@@ -1795,7 +1834,7 @@ class Pipeline:
                         user_msg = checker.get("user_message", "Execution errors detected.")
                         yield {"data": f"\n\n⚠️ {user_msg}\n_Attempting auto-fix…_"}
                         if self._verbose:
-                            print("[pipeline:stream] Error Checker: fixable — re-running Brain with fix prompt.")
+                            print("pipeline: Error Checker: fixable — re-running Brain with fix prompt.")
                         self._record_agent_usage(self._brain, _brain_snap)
                         fix_prompt = self._build_error_fix_prompt(raw_json, checker)
                         async for event in self._astream_brain_stage(
@@ -1817,7 +1856,7 @@ class Pipeline:
                             )
                         }
                         if self._verbose:
-                            print(f"[pipeline:stream] Error Checker: unfixable — {user_msg}")
+                            print(f"pipeline: Error Checker: unfixable — {user_msg}")
                         if executor_paths_b:
                             self._session.current_output_paths[:] = executor_paths_b
                         self._record_chat_summary(user_text, triage_result, status="error", raw_json=raw_json)
@@ -1833,21 +1872,21 @@ class Pipeline:
                 self._record_agent_usage(self._brain, _brain_snap)
                 self._session.last_agent = "brain"
                 if self._verbose:
-                    print("[pipeline:stream] Brain finished.")
-                    yield {"data": "\n_[pipeline:stream] Brain finished._"}
+                    print("pipeline: Brain finished.")
+                    yield {"data": "\n_pipeline: Brain finished._"}
                 break
 
             # ── ComfyUI interrupt: poll cheaply, then resume ───────── #
             prompt_id_b: str = interrupt_result.reason
             if self._verbose:
-                print(f"[pipeline:stream] ComfyUI interrupt — polling prompt_id={prompt_id_b}")
-                yield {"data": f"\n_[pipeline:stream] ComfyUI interrupt — polling prompt_id={prompt_id_b}_"}
+                print(f"pipeline: ComfyUI interrupt — polling prompt_id={prompt_id_b}")
+                yield {"data": f"\n_pipeline: ComfyUI interrupt — polling prompt_id={prompt_id_b}_"}
             yield {"data": f"\n\n_⏳ ComfyUI job queued (`{prompt_id_b}`). Waiting for completion…_"}
             history_result_b = await _poll_comfyui_job(prompt_id_b)
             yield {"data": "\n_✅ ComfyUI job finished — resuming…_"}
             if self._verbose:
-                print(f"[pipeline:stream] ComfyUI job {prompt_id_b} finished. Resuming Brain.")
-                yield {"data": f"\n_[pipeline:stream] ComfyUI job {prompt_id_b} finished. Resuming Brain._"}
+                print(f"pipeline: ComfyUI job {prompt_id_b} finished. Resuming Brain.")
+                yield {"data": f"\n_pipeline: ComfyUI job {prompt_id_b} finished. Resuming Brain._"}
             current_input = [
                 {
                     "interruptResponse": {
@@ -1885,7 +1924,7 @@ class Pipeline:
             return result
         except Exception as exc:
             if self._verbose:
-                print(f"[pipeline] Error checker failed (ignored): {exc}")
+                print(f"pipeline: Error checker failed (ignored): {exc}")
             return {"status": "ok", "errors": [], "fix_plan": "", "user_message": ""}
 
     def _build_error_fix_prompt(self, raw_json: str, checker: dict) -> str:
@@ -1998,13 +2037,13 @@ class Pipeline:
         node_id = briefing.get("positive_prompt_node_id")
         if not node_id:
             if self._verbose:
-                print("[pipeline] variations=true but positive_prompt_node_id is missing — "
+                print("pipeline: variations=true but positive_prompt_node_id is missing — "
                       "skipping multiprompt expansion.")
             return workflow_paths
 
         if not _MULTIPROMPT_PATH.exists():
             if self._verbose:
-                print("[pipeline] variations=true but multiprompt.json not found — "
+                print("pipeline: variations=true but multiprompt.json not found — "
                       "running base workflow as-is.")
             return workflow_paths
 
@@ -2016,7 +2055,7 @@ class Pipeline:
             verbose=self._verbose,
         )
         if self._verbose and len(expanded) > 1:
-            print(f"[pipeline] Variation expansion: 1 base → {len(expanded)} workflows.")
+            print(f"pipeline: Variation expansion: 1 base → {len(expanded)} workflows.")
         return expanded
 
 # ---------------------------------------------------------------------------
