@@ -179,8 +179,10 @@ _SYSTEM_PROMPT_FILE: dict[str, str] = {
     "brain": "system_prompt.brain",
     "triage": "system_prompt.triage",
     "planner": "system_prompt.planner",
+    "info": "system_prompt.info",
     "learnings": "system_prompt.learnings",
     "error_checker": "system_prompt.error_checker",
+    "qa_checker": "system_prompt.qaChecker",
 }
 
 

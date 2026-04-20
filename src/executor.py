@@ -58,7 +58,7 @@ def _output_dir() -> Path:
 
 
 def _load_qa_prompts() -> dict[str, str]:
-    """Parse ``config/system_prompts/system_prompt.qaChecker.md`` into sections.
+    """Parse the qa_checker system prompt file into sections.
 
     The file is divided by ``## <section_name>`` headings.  Returns a dict
     mapping section name → stripped content.  Falls back to empty strings so
@@ -66,7 +66,11 @@ def _load_qa_prompts() -> dict[str, str]:
 
     Expected sections: ``system``, ``question_edit``, ``question_generation``.
     """
-    path = _project_root() / "config" / "system_prompts" / "system_prompt.qaChecker.md"
+    cfg = _load_config()
+    filename = cfg.get("system_prompts", {}).get("qa_checker", "system_prompt.qaChecker.md")
+    config_dir = _project_root() / "config"
+    candidate = config_dir / "system_prompts" / filename
+    path = candidate if candidate.exists() else config_dir / filename
     if not path.exists():
         logger.warning("executor: QA prompt file not found: %s", path)
         return {}
