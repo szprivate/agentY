@@ -44,7 +44,7 @@ def _load_settings() -> dict:
             return _settings_cache
         if _SETTINGS_PATH.exists():
             try:
-                _settings_cache = json.loads(_SETTINGS_PATH.read_text(encoding="utf-8"))
+                _settings_cache = json.loads("".join(ln for ln in _SETTINGS_PATH.read_text(encoding="utf-8").splitlines(keepends=True) if not ln.lstrip().startswith("//")))
             except Exception:
                 _settings_cache = {}
         return _settings_cache

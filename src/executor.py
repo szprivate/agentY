@@ -46,7 +46,7 @@ def _load_config() -> dict:
     config_path = _project_root() / "config" / "settings.json"
     if config_path.exists():
         with open(config_path, encoding="utf-8") as f:
-            return json.load(f)
+            return json.loads("".join(ln for ln in f if not ln.lstrip().startswith("//")))
     return {}
 
 

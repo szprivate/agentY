@@ -2,12 +2,14 @@
   'use strict';
 
   const COMMANDS = [
-    { name: '/restart',      description: 'Restart the agent pipeline' },
-    { name: '/stop',         description: 'Stop and shut down the agent' },
-    { name: '/unload',       description: 'Unload Ollama models from VRAM' },
-    { name: '/clear_vram',   description: 'Clear ComfyUI GPU VRAM' },
-    { name: '/clearhistory', description: 'Delete all conversation history' },
-    { name: '/switch_model', description: 'Switch agent LLM — usage: /switch_model <agent> <provider,model>' },
+    { name: '/restart',       description: 'Restart the agent pipeline' },
+    { name: '/stop',          description: 'Stop and shut down the agent' },
+    { name: '/unload',        description: 'Unload Ollama models from VRAM' },
+    { name: '/clear_vram',    description: 'Clear ComfyUI GPU VRAM' },
+    { name: '/clearhistory',  description: 'Delete all conversation history' },
+    { name: '/switch_model',  description: 'Switch agent LLM — usage: /switch_model <agent> <provider,model>' },
+    { name: '/add_workflow',  description: 'Add a ComfyUI workflow — usage: /add_workflow <path/to/workflow.json>' },
+    { name: '/remove_workflow', description: 'Remove a workflow by name — usage: /remove_workflow <template_name>' },
   ];
 
   let popup = null;
@@ -34,9 +36,8 @@
       fontFamily: 'system-ui, -apple-system, sans-serif',
     });
 
-    // Single delegated mousedown on the container — survives innerHTML re-renders
     div.addEventListener('mousedown', function (e) {
-      e.preventDefault(); // keep textarea focused
+      e.preventDefault();
       var item = e.target.closest('.slash-cmd-item');
       if (item) {
         var idx = parseInt(item.dataset.index, 10);
@@ -44,7 +45,6 @@
       }
     });
 
-    // Hover via mouseover delegation — no per-item listeners needed
     div.addEventListener('mouseover', function (e) {
       var item = e.target.closest('.slash-cmd-item');
       if (item) {
@@ -52,7 +52,7 @@
         if (idx !== selectedIndex) {
           selectedIndex = idx;
           renderPopup();
-          positionPopup();
+          positionPopupAt(null);
         }
       }
     });
@@ -88,10 +88,12 @@
       }).join('');
   }
 
-  function positionPopup() {
-    if (!currentInput) return;
+  // anchor: DOM element to position relative to; falls back to currentInput
+  function positionPopupAt(anchor) {
+    var el = anchor || currentInput;
+    if (!el) return;
     const p = getPopup();
-    const rect = currentInput.getBoundingClientRect();
+    const rect = el.getBoundingClientRect();
     const popupH = p.offsetHeight || filteredCommands.length * 40 + 30;
     if (rect.top > popupH || rect.top > window.innerHeight - rect.bottom) {
       p.style.bottom = (window.innerHeight - rect.top + 6) + 'px';
@@ -103,7 +105,7 @@
     p.style.left = rect.left + 'px';
   }
 
-  function showPopup(query) {
+  function showPopup(query, anchor) {
     filteredCommands = query
       ? COMMANDS.filter(function (c) { return c.name.slice(1).startsWith(query); })
       : COMMANDS.slice();
@@ -112,7 +114,7 @@
     const p = getPopup();
     p.style.display = 'block';
     renderPopup();
-    positionPopup();
+    positionPopupAt(anchor || null);
   }
 
   function hidePopup() {
@@ -134,9 +136,8 @@
     hidePopup();
     if (!textarea) return;
     textarea.focus();
-    // Commands that require arguments get a trailing space so the user can
-    // continue typing without manually pressing space first.
-    var value = cmd.name.indexOf('switch_model') !== -1 ? cmd.name + ' ' : cmd.name;
+    var needsArgs = ['switch_model', 'add_workflow', 'remove_workflow'].some(function (s) { return cmd.name.indexOf(s) !== -1; });
+    var value = needsArgs ? cmd.name + ' ' : cmd.name;
     setReactInputValue(textarea, value);
   }
 
@@ -159,11 +160,11 @@
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       selectedIndex = (selectedIndex + 1) % filteredCommands.length;
-      renderPopup(); positionPopup();
+      renderPopup(); positionPopupAt(null);
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       selectedIndex = (selectedIndex - 1 + filteredCommands.length) % filteredCommands.length;
-      renderPopup(); positionPopup();
+      renderPopup(); positionPopupAt(null);
     } else if (e.key === 'Tab') {
       if (filteredCommands.length > 0) { e.preventDefault(); selectCommand(filteredCommands[selectedIndex]); }
     } else if (e.key === 'Escape') {
@@ -180,9 +181,85 @@
     textarea.addEventListener('blur', function () { setTimeout(hidePopup, 200); });
   }
 
+  // ── "/" toolbar button ───────────────────────────────────────────────────────
+
+  function findFileUploadEl() {
+    // Most reliable: find the hidden file input and walk up to its label/button
+    var inp = document.querySelector('input[type="file"]');
+    if (inp) {
+      var label = inp.closest('label');
+      if (label) return label;
+      var btn = inp.closest('button,[role="button"]');
+      if (btn) return btn;
+      if (inp.parentElement) return inp.parentElement;
+    }
+    // Fallbacks by common Chainlit attribute patterns
+    return (
+      document.querySelector('label[for^="cl-upload"]') ||
+      document.querySelector('label[for*="upload"]') ||
+      null
+    );
+  }
+
+  function injectSlashButton() {
+    if (document.getElementById('slash-cmd-btn')) return;
+    var anchor = findFileUploadEl();
+    if (!anchor) return;
+
+    var btn = document.createElement('button');
+    btn.id = 'slash-cmd-btn';
+    btn.type = 'button';
+    btn.title = 'Slash commands';
+    btn.textContent = '/';
+    Object.assign(btn.style, {
+      background: 'none',
+      border: 'none',
+      cursor: 'pointer',
+      color: '#ffffff',
+      fontFamily: 'monospace',
+      fontSize: '17px',
+      fontWeight: '700',
+      // Match the size/padding of Chainlit's own icon buttons
+      width: '32px',
+      height: '32px',
+      padding: '0',
+      margin: '0 2px',
+      borderRadius: '6px',
+      lineHeight: '1',
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      verticalAlign: 'middle',
+      flexShrink: '0',
+      transition: 'background 0.15s',
+    });
+
+    btn.addEventListener('mouseenter', function () { btn.style.background = '#2d2d50'; });
+    btn.addEventListener('mouseleave', function () { btn.style.background = 'none'; });
+
+    btn.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var p = getPopup();
+      if (p.style.display !== 'none') {
+        hidePopup();
+        return;
+      }
+      var textarea = document.querySelector('textarea');
+      if (textarea) currentInput = textarea;
+      showPopup('', btn);
+    });
+
+    // Insert immediately AFTER the file-upload element
+    anchor.parentNode.insertBefore(btn, anchor.nextSibling);
+  }
+
+  // ── Bootstrap ────────────────────────────────────────────────────────────────
+
   function findAndAttach() {
     var ta = document.querySelector('textarea');
     if (ta) attachToInput(ta);
+    injectSlashButton();
   }
 
   var observer = new MutationObserver(findAndAttach);

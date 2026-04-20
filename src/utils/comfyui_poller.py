@@ -23,7 +23,7 @@ def _load_poll_settings() -> tuple[float, float]:
     cfg: dict = {}
     if path.exists():
         try:
-            cfg = json.loads(path.read_text(encoding="utf-8"))
+            cfg = json.loads("".join(ln for ln in path.read_text(encoding="utf-8").splitlines(keepends=True) if not ln.lstrip().startswith("//")))
         except Exception:
             pass
     interval = float(cfg.get("comfyui_poll_interval_s", 1))

@@ -29,7 +29,7 @@ class ComfyUIClient:
         config_path = Path(__file__).parent.parent / "config" / "settings.json"
         if config_path.exists():
             with open(config_path, encoding="utf-8") as f:
-                config = json.load(f)
+                config = json.loads("".join(ln for ln in f if not ln.lstrip().startswith("//")))
             return config.get("comfyui_url", _DEFAULT_COMFYUI_URL)
         return _DEFAULT_COMFYUI_URL
 

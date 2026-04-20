@@ -342,6 +342,96 @@ async def on_message(message: cl.Message) -> None:
             ).send()
         return
 
+    # ── /add_workflow <path_to_workflow.json> ─────────────────────────────────
+    if _text.lower().startswith("/add_workflow"):
+        _parts = _text.split(None, 1)
+        if len(_parts) < 2:
+            await cl.Message(
+                content="⚠️ Usage: `/add_workflow <path_to_workflow.json>`",
+                author="system",
+            ).send()
+            return
+        _wf_path = Path(_parts[1].strip())
+        if not _wf_path.exists():
+            await cl.Message(
+                content=f"❌ File not found: `{_wf_path}`",
+                author="system",
+            ).send()
+            return
+        try:
+            import json as _json
+            from src.utils.workflow_parser import parse_workflow as _parse_workflow, _custom_index_path
+            with open(_wf_path, encoding="utf-8") as _f:
+                _wf_data = _json.load(_f)
+            _stem = _wf_path.stem
+            _entry = _parse_workflow(_wf_data, name=_stem, update_index=True)
+            # Update config/workflow_templates.json
+            _templates_path = _project_root / "config" / "workflow_templates.json"
+            if _templates_path.exists():
+                _tpl = _json.loads(_templates_path.read_text(encoding="utf-8"))
+            else:
+                _tpl = {}
+            if _stem not in _tpl:
+                _tpl[_stem] = ""
+                _templates_path.write_text(
+                    _json.dumps(_tpl, indent=4, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+                _tpl_msg = f" Added `{_stem}` to `config/workflow_templates.json`."
+            else:
+                _tpl_msg = f" `{_stem}` already present in `config/workflow_templates.json`."
+            _idx = _custom_index_path()
+            await cl.Message(
+                content=f"✅ Workflow `{_stem}` added to `{_idx}`.{_tpl_msg}",
+                author="system",
+            ).send()
+        except Exception as _exc:
+            await cl.Message(
+                content=f"❌ Failed to add workflow:\n```\n{_exc}\n```",
+                author="system",
+            ).send()
+        return
+
+    # ── /remove_workflow <name> ───────────────────────────────────────────────
+    if _text.lower().startswith("/remove_workflow"):
+        _parts = _text.split(None, 1)
+        if len(_parts) < 2:
+            await cl.Message(
+                content="⚠️ Usage: `/remove_workflow <template_name>`",
+                author="system",
+            ).send()
+            return
+        _wf_name = _parts[1].strip()
+        try:
+            import json as _json
+            from src.utils.workflow_parser import workflow_remove as _workflow_remove, _custom_index_path
+            _idx = _workflow_remove(_wf_name)
+            # Update config/workflow_templates.json
+            _templates_path = _project_root / "config" / "workflow_templates.json"
+            if _templates_path.exists():
+                _tpl = _json.loads(_templates_path.read_text(encoding="utf-8"))
+                if _wf_name in _tpl:
+                    del _tpl[_wf_name]
+                    _templates_path.write_text(
+                        _json.dumps(_tpl, indent=4, ensure_ascii=False) + "\n",
+                        encoding="utf-8",
+                    )
+                    _tpl_msg = f" Removed `{_wf_name}` from `config/workflow_templates.json`."
+                else:
+                    _tpl_msg = f" `{_wf_name}` not found in `config/workflow_templates.json`."
+            else:
+                _tpl_msg = ""
+            await cl.Message(
+                content=f"✅ Workflow `{_wf_name}` removed from `{_idx}`.{_tpl_msg}",
+                author="system",
+            ).send()
+        except Exception as _exc:
+            await cl.Message(
+                content=f"❌ Failed to remove workflow:\n```\n{_exc}\n```",
+                author="system",
+            ).send()
+        return
+
     # ── /switch_model <agent> <provider,model> ────────────────────────────────
     if _text.lower().startswith("/switch_model") or _text.lower().startswith("switch_model"):
         _parts = _text.split(None, 2)  # [cmd, agent_name, provider,model]

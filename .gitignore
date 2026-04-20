@@ -19,3 +19,4 @@ output_workflows/
 
 #other
 .claude
+/config/workflow_templates_old.json

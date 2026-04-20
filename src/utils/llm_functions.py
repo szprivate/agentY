@@ -35,7 +35,7 @@ def _load_settings() -> dict:
     path = Path(__file__).parent.parent.parent / "config" / "settings.json"
     if path.exists():
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            return json.loads("".join(ln for ln in path.read_text(encoding="utf-8").splitlines(keepends=True) if not ln.lstrip().startswith("//")))
         except Exception:
             pass
     return {}

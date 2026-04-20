@@ -68,7 +68,7 @@ def _models_base_dir() -> Path:
     if config_path.exists():
         try:
             with open(config_path, encoding="utf-8") as f:
-                config = json.load(f)
+                config = json.loads("".join(ln for ln in f if not ln.lstrip().startswith("//")))
             d = config.get("comfyui_models_dir")
             if d:
                 return Path(d)
