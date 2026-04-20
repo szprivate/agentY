@@ -765,6 +765,26 @@ async def on_message(message: cl.Message) -> None:
                     await _task_list.send()
                 continue
 
+            # ── Extended thinking (Anthropic reasoning blocks) ─────────────
+            reasoning_text: str = event.get("reasoningText") or ""
+            if reasoning_text:
+                if _in_researcher:
+                    if _researcher_step is not None:
+                        await _researcher_step.stream_token(reasoning_text)
+                else:
+                    if _think_step is None:
+                        _think_step = cl.Step(name="💭 Thinking")
+                        await _think_step.send()
+                    await _think_step.stream_token(reasoning_text)
+                continue
+
+            # Reasoning block complete (signature marks end of thinking block)
+            if event.get("reasoning_signature") is not None and not _in_researcher:
+                if _think_step is not None:
+                    await _think_step.update()
+                    _think_step = None
+                continue
+
             # ── Normal data chunk ─────────────────────────────────────────
             chunk: str = event.get("data", "") or ""
             if not chunk:
