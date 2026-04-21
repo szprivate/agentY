@@ -12,7 +12,6 @@ import os
 import uuid
 from pathlib import Path
 
-import requests
 from strands import tool
 
 from src.utils.comfyui_client import get_client
@@ -32,12 +31,7 @@ _patch_last_workflow_path: str | None = None
 # /object_info cache – the full node database doesn't change during a session.
 _object_info_cache: dict | None = None
 
-# GitHub source for the official Comfy-Org workflow templates.
-_GITHUB_TEMPLATES_BASE = (
-    "https://raw.githubusercontent.com/Comfy-Org/workflow_templates/main/templates"
-)
-
-# In-memory caches for GitHub-fetched data (reset on process restart).
+# In-memory caches for template data (reset on process restart).
 _index_cache: list | None = None
 _template_cache: dict[str, dict] = {}
 
@@ -83,16 +77,6 @@ def _load_config() -> dict:
 # instead — user ad-hoc workflows are stored with the custom templates.
 
 
-def _templates_dir() -> Path:
-    """Return the path to the official Comfy-Org workflow templates directory."""
-    cfg = _load_config()
-    ot_dir = cfg.get(
-        "comfyui_templates_dir",
-        "./comfyui_workflow_templates_official/templates/",
-    )
-    return (_project_root() / ot_dir).resolve()
-
-
 def _custom_templates_dir() -> Path:
     """Return the path to the custom workflow templates directory (has its own index.json)."""
     cfg = _load_config()
@@ -111,58 +95,26 @@ def _workflows_dir() -> Path:
 
 
 def _load_index() -> list:
-    """Return the combined templates index as a flat list.
+    """Return the templates index as a flat list from the custom templates directory.
 
-    Loads from GitHub (official) and the local custom templates directory.
-    Falls back to the local official copy if the network request fails.
     Result is cached for the lifetime of the process.
     """
     global _index_cache
     if _index_cache is not None:
         return _index_cache
 
-    raw: list | None = None
-
-    # 1. Try GitHub for official templates
-    try:
-        resp = requests.get(
-            f"{_GITHUB_TEMPLATES_BASE}/index.json",
-            timeout=15,
-        )
-        if resp.status_code == 200:
-            raw = resp.json()
-    except Exception:
-        pass
-
-    # 2. Fall back to local official copy
-    if raw is None:
-        index_path = _templates_dir() / "index.json"
-        if index_path.exists():
+    flat: list[dict] = []
+    index_path = _custom_templates_dir() / "index.json"
+    if index_path.exists():
+        try:
             with open(index_path, encoding="utf-8") as f:
                 raw = json.load(f)
-
-    flat: list[dict] = []
-    for group in (raw or []):
-        group_category = group.get("title", group.get("category", ""))
-        group_media = group.get("type", "")
-        for tpl in group.get("templates", []):
-            tpl["_group_category"] = group_category
-            tpl["_group_media"] = group_media
-            flat.append(tpl)
-
-    # 3. Also load custom templates index
-    custom_index_path = _custom_templates_dir() / "index.json"
-    if custom_index_path.exists():
-        try:
-            with open(custom_index_path, encoding="utf-8") as f:
-                custom_raw = json.load(f)
-            for group in (custom_raw or []):
+            for group in (raw or []):
                 group_category = group.get("title", group.get("category", ""))
                 group_media = group.get("type", "")
                 for tpl in group.get("templates", []):
                     tpl["_group_category"] = group_category
                     tpl["_group_media"] = group_media
-                    tpl["_source"] = "custom"
                     flat.append(tpl)
         except Exception:
             pass
@@ -172,45 +124,21 @@ def _load_index() -> list:
 
 
 def _fetch_template(name: str) -> dict | None:
-    """Load a single template JSON by name.
+    """Load a single template JSON by name from the custom templates directory.
 
-    Checks the custom templates directory first, then GitHub, then the local
-    official directory.  Returns the parsed dict, or None if not found anywhere.
+    Returns the parsed dict, or None if not found.
     Results are cached.
     """
     if name in _template_cache:
         return _template_cache[name]
 
     data: dict | None = None
-
-    # 1. Try custom templates directory
     ct_dir = _custom_templates_dir()
     for candidate in [ct_dir / f"{name}.json", ct_dir / name]:
         if candidate.exists():
             with open(candidate, encoding="utf-8") as f:
                 data = json.load(f)
             break
-
-    # 2. Try GitHub
-    if data is None:
-        for filename in [f"{name}.json", name]:
-            try:
-                url = f"{_GITHUB_TEMPLATES_BASE}/{filename}"
-                resp = requests.get(url, timeout=15)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    break
-            except Exception:
-                pass
-
-    # 3. Fall back to local official copy
-    if data is None:
-        ot_dir = _templates_dir()
-        for candidate in [ot_dir / f"{name}.json", ot_dir / name]:
-            if candidate.exists():
-                with open(candidate, encoding="utf-8") as f:
-                    data = json.load(f)
-                break
 
     if data is not None:
         _template_cache[name] = data

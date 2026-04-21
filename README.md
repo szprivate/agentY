@@ -353,7 +353,6 @@ agentY/
 │       ├── system_prompt.learnings.md
 │       ├── system_prompt.qaChecker.md
 │       └── system_prompt.info.md
-├── comfyui_workflow_templates_official/   Comfy-Org template library (git-ignored)
 ├── comfyui_workflow_templates_custom/     Your custom workflow templates
 ├── skills/                     Drop-in skill scripts (shell/Python)
 ├── memory/                     FAISS index for long-term agent memory
