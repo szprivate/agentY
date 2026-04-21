@@ -11,7 +11,10 @@ After the Brain assembles and validates a ComfyUI workflow it calls
 2. Polls until execution completes (zero LLM tokens burned during the wait).
    Batch: polls each prompt_id in submission order; earlier jobs are
    typically already done by the time we reach them.
-3. Downloads every output image to ``./output/<filename>``.
+3. Copies every output file from ComfyUI's configured output directory to
+   the path specified in the researcher's brainbriefing (``output_nodes[].output_path``).
+   Falls back to downloading via ``/view`` when the output directory cannot be
+   determined from the ComfyUI API.
 4. Runs a Vision QA pass with an Ollama multimodal model, comparing the
    output against the original brainbriefing.
 
@@ -51,10 +54,51 @@ def _load_config() -> dict:
 
 
 def _output_dir() -> Path:
-    """Return the directory where ComfyUI output files are downloaded."""
+    """Return the fallback directory where ComfyUI output files are saved."""
     cfg = _load_config()
     od = cfg.get("output_dir", "./output/")
     return (_project_root() / od).resolve()
+
+
+def _get_comfyui_output_dir() -> Path | None:
+    """Query ComfyUI's /system_stats endpoint to find its configured output directory.
+
+    Mirrors the logic in test.py: looks for ``--output-directory=<path>`` in the
+    server's argv.  Returns ``None`` if the API is unreachable or the flag is absent.
+    """
+    try:
+        from src.utils.comfyui_client import get_client
+
+        client = get_client()
+        stats = client.get("/system_stats")
+        if isinstance(stats, dict):
+            argv = stats.get("system", {}).get("argv", [])
+            for arg in argv:
+                if isinstance(arg, str) and arg.startswith("--output-directory="):
+                    return Path(arg.split("=", 1)[1]).resolve()
+    except Exception as exc:
+        logger.debug("executor: could not query ComfyUI output dir — %s", exc)
+    return None
+
+
+def _resolve_brainbriefing_output_dir(brainbriefing: dict) -> Path | None:
+    """Return the output directory specified by the researcher's brainbriefing.
+
+    Reads the first ``output_nodes[].output_path`` value and resolves it
+    relative to ComfyUI's configured ``--output-directory`` (from ``/system_stats``).
+    Falls back to the agent project root when the ComfyUI output dir is unavailable.
+    Returns ``None`` when no output_path is set in the brainbriefing.
+    """
+    try:
+        nodes = brainbriefing.get("output_nodes", [])
+        if nodes and isinstance(nodes, list):
+            output_path = nodes[0].get("output_path", "") if isinstance(nodes[0], dict) else ""
+            if output_path:
+                base = _get_comfyui_output_dir() or _project_root()
+                return (base / output_path).resolve()
+    except Exception as exc:
+        logger.debug("executor: could not resolve brainbriefing output_path — %s", exc)
+    return None
 
 
 def _load_qa_prompts() -> dict[str, str]:
@@ -146,8 +190,42 @@ def _extract_output_files(history: dict) -> list[dict]:
     return files
 
 
-def _download_output(filename: str, subfolder: str = "", image_type: str = "output") -> Path:
-    """Download *filename* from ComfyUI to ``./output/`` and return the local path."""
+def _copy_output(
+    filename: str,
+    subfolder: str = "",
+    image_type: str = "output",
+    *,
+    dest_dir: Path | None = None,
+) -> Path:
+    """Copy *filename* from ComfyUI's output directory to *dest_dir* and return the local path.
+
+    Resolution order for the source:
+      1. ComfyUI's configured ``--output-directory`` (queried via ``/system_stats``).
+      2. Falls back to downloading via ``/view`` when the directory cannot be determined
+         or the file is not found on disk.
+
+    Resolution order for the destination:
+      1. *dest_dir* argument (from the brainbriefing's ``output_nodes[].output_path``).
+      2. Falls back to the agent's ``output_dir`` from settings.json.
+    """
+    import shutil
+
+    # --- determine destination -------------------------------------------------
+    effective_dest_dir = dest_dir if dest_dir is not None else _output_dir()
+    effective_dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = effective_dest_dir / filename
+
+    # --- try copy from ComfyUI output dir on disk ------------------------------
+    comfy_out = _get_comfyui_output_dir()
+    if comfy_out is not None:
+        src = comfy_out / subfolder / filename if subfolder else comfy_out / filename
+        if src.exists():
+            shutil.copy2(src, dest)
+            logger.info("executor: copied output %s → %s (%d bytes)", src, dest, dest.stat().st_size)
+            return dest
+        logger.debug("executor: file not found in ComfyUI output dir (%s), falling back to /view", src)
+
+    # --- fallback: download via /view ------------------------------------------
     from src.utils.comfyui_client import get_client
 
     params: dict = {"filename": filename, "type": image_type}
@@ -157,11 +235,8 @@ def _download_output(filename: str, subfolder: str = "", image_type: str = "outp
     client = get_client()
     resp = client.get("/view", params=params, raw=True)
     image_bytes: bytes = resp.content  # type: ignore[attr-defined]
-
-    _output_dir().mkdir(parents=True, exist_ok=True)
-    dest = _output_dir() / filename
     dest.write_bytes(image_bytes)
-    logger.info("executor: saved output → %s (%d bytes)", dest, len(image_bytes))
+    logger.info("executor: downloaded output → %s (%d bytes)", dest, len(image_bytes))
     return dest
 
 
@@ -331,6 +406,11 @@ async def _process_completed_job(
         logger.warning("executor: no output files in history for prompt_id=%s", prompt_id)
         return
 
+    # Resolve the destination directory from the brainbriefing output_nodes.
+    bb_dest_dir = _resolve_brainbriefing_output_dir(brainbriefing)
+    if bb_dest_dir is None:
+        logger.debug("executor: no output_path in brainbriefing, using fallback output_dir")
+
     saved_paths: list[Path] = []
     for item in output_files:
         filename = item.get("filename", "")
@@ -339,12 +419,12 @@ async def _process_completed_job(
         if not filename:
             continue
         try:
-            dest = _download_output(filename, subfolder, file_type)
+            dest = _copy_output(filename, subfolder, file_type, dest_dir=bb_dest_dir)
             saved_paths.append(dest)
             yield f"{pfx}💾 Saved `{filename}` → `{dest}`"
         except Exception as exc:
-            yield f"{pfx}⚠️ Could not download `{filename}`: {exc}"
-            logger.warning("executor: download failed for %s — %s", filename, exc)
+            yield f"{pfx}⚠️ Could not save `{filename}`: {exc}"
+            logger.warning("executor: save failed for %s — %s", filename, exc)
 
     if not saved_paths:
         yield f"{pfx}❌ All output downloads failed."
