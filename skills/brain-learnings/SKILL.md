@@ -55,3 +55,8 @@ If a matching entry exists, **apply the documented solution directly** instead o
 
 2026-04-20 | get_workflow_template failed for 'img2img_basic', hint suggests using get_workflow_catalog | Call get_workflow_catalog before attempting to load specific template names to avoid 'not found' assembly errors.
 2026-04-20 | search_nodes for 'qwen sampler' and 'qwen infer' failed repeatedly | Use standard samplers like EasyKSampler with QWEN encoders; QWEN inference pipelines do not require unique branded sampler nodes.
+
+2026-04-21 | workflow validation fails with prompt_outputs_failed_validation when input images not in ComfyUI folder | Upload all reference/master images to ComfyUI input directory before calling update_workflow to avoid validation errors.
+2026-04-21 | template shows node 23 but patches target node 26 which isn't visible initially | Verify all target node IDs exist in loaded template before applying patches; node IDs may differ from initial template view.
+
+2026-04-21 | Workflow validation fails when referenced images not in ComfyUI input directory | Upload all referenced images to ComfyUI's input directory before patching or validating. Use image_type: 'input' when calling upload_image to ensure proper placement.
