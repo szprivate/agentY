@@ -302,6 +302,8 @@ class Pipeline:
         # Brainbriefing JSON from the most recent Researcher run; used by the
         # Executor for Vision QA comparison in follow-up / feedback-loop rounds.
         self._last_brainbriefing_json: str | None = None
+        # Whether the current turn requested an explicit Vision QA pass.
+        self._run_qa: bool = False
         # Bind the memory tools module-level session so memory_read / memory_write
         # always operate on the correct per-session namespace.
         _set_memory_session_id(session_id)
@@ -402,6 +404,7 @@ class Pipeline:
         )
         triage_result = asyncio.run(_triage(_triage_input, self._session, self._info_context, self._triage_agent))
         self._record_agent_usage(self._triage_agent, _triage_snap)
+        self._run_qa = triage_result.run_qa
         handler = _route(triage_result)
 
         if self._verbose:
@@ -1893,6 +1896,7 @@ class Pipeline:
             user_message=user_message,
             verbose=self._verbose,
             collected_paths=output_paths,
+            run_qa=self._run_qa,
         ):
             lines.append(line)
             if self._verbose:

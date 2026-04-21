@@ -131,11 +131,13 @@ async def triage(
 
     intent     = MessageIntent.new_request
     confidence = 0.0
+    run_qa     = False
     try:
         json_str = _extract_json(raw) or raw
         parsed   = json.loads(json_str)
         intent   = MessageIntent(parsed["intent"])
         confidence = float(parsed.get("confidence", 0.5))
+        run_qa   = bool(parsed.get("run_qa", False))
     except (json.JSONDecodeError, KeyError, ValueError) as exc:
         logger.warning("Intent parse failed (%s); raw=%r — defaulting to new_request", exc, raw)
 
@@ -159,6 +161,7 @@ async def triage(
             intent=MessageIntent.new_request,
             response=None,
             confidence=confidence,
+            run_qa=run_qa,
         )
 
     # When an image is required but missing, carry a user-facing response so the
@@ -171,9 +174,10 @@ async def triage(
                 "Please share the image you'd like me to work with and I'll get started!"
             ),
             confidence=confidence,
+            run_qa=run_qa,
         )
 
-    return TriageResult(intent=intent, response=None, confidence=confidence)
+    return TriageResult(intent=intent, response=None, confidence=confidence, run_qa=run_qa)
 
 
 def route(result: TriageResult) -> str:

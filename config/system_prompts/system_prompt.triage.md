@@ -82,8 +82,18 @@ When you classify the intent as `needs_image`:
 2. Then stop the current loop, but send a short, friendly request asking the user to share the image they want edited. Mention what kind of task they asked for.
 This signals the pipeline to stop and prompt the user for the missing image before proceeding.
 
+## QA pass detection
+
+Add `"run_qa": true` to your output **only** when the user explicitly asks for a QA agent pass in the **same message** — phrases such as:
+- "run a qa agent pass at the end"
+- "do a qa pass"
+- "qa check this"
+- "run qa on the result"
+
+In all other cases omit the field or set it to `false`.
+
 ## Output format
 
 ```json
-{"intent": "<intent>", "confidence": <float>}
+{"intent": "<intent>", "confidence": <float>, "run_qa": false}
 ```

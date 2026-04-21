@@ -184,8 +184,14 @@
   // ── "/" toolbar button ───────────────────────────────────────────────────────
 
   function findFileUploadEl() {
-    // Most reliable: find the hidden file input and walk up to its label/button
-    var inp = document.querySelector('input[type="file"]');
+    // Scope the search to the chat input area so we don't accidentally pick up
+    // a file input that belongs to a different part of the page.
+    var ta = document.querySelector('textarea');
+    var scope = ta
+      ? (ta.closest('form') || ta.closest('[class*="input"]') || ta.closest('[class*="chat"]') || ta.parentElement || document.body)
+      : document.body;
+
+    var inp = scope.querySelector('input[type="file"]') || document.querySelector('input[type="file"]');
     if (inp) {
       var label = inp.closest('label');
       if (label) return label;

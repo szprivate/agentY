@@ -292,6 +292,7 @@ async def _process_completed_job(
     verbose: bool,
     collected_paths: list[str] | None,
     label: str = "",
+    run_qa: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Download outputs, run Vision QA, and collect outputs for one finished job.
 
@@ -349,19 +350,20 @@ async def _process_completed_job(
         yield f"{pfx}❌ All output downloads failed."
         return
 
-    # Vision QA
-    yield f"{pfx}🔍 Running Vision QA…"
+    # Vision QA — only when explicitly requested by the user.
     qa_failures: list[dict] = []
-    for path in saved_paths:
-        verdict = await _vision_qa(
-            path,
-            brainbriefing,
-            user_message=user_message,
-            input_image_paths=input_image_paths or None,
-        )
-        yield f"{pfx}🔍 QA `{path.name}` → {verdict}"
-        if "FAIL" in verdict.upper():
-            qa_failures.append({"path": str(path), "verdict": verdict})
+    if run_qa:
+        yield f"{pfx}🔍 Running Vision QA…"
+        for path in saved_paths:
+            verdict = await _vision_qa(
+                path,
+                brainbriefing,
+                user_message=user_message,
+                input_image_paths=input_image_paths or None,
+            )
+            yield f"{pfx}🔍 QA `{path.name}` → {verdict}"
+            if "FAIL" in verdict.upper():
+                qa_failures.append({"path": str(path), "verdict": verdict})
 
     # Always register paths so the caller session is up to date.
     if collected_paths is not None:
@@ -393,6 +395,7 @@ async def execute_workflow(
     user_message: str = "",
     verbose: bool = True,
     collected_paths: list[str] | None = None,
+    run_qa: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Submit the validated workflow, poll ComfyUI, run QA, and collect outputs.
 
@@ -448,6 +451,7 @@ async def execute_workflow(
         user_message=user_message,
         verbose=verbose,
         collected_paths=collected_paths,
+        run_qa=run_qa,
     ):
         yield line
 
@@ -463,6 +467,7 @@ async def execute_workflows_batch(
     user_message: str = "",
     verbose: bool = True,
     collected_paths: list[str] | None = None,
+    run_qa: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Submit ALL workflows to ComfyUI first, then poll + process each in order.
 
@@ -537,5 +542,6 @@ async def execute_workflows_batch(
             verbose=verbose,
             collected_paths=collected_paths,
             label=label,
+            run_qa=run_qa,
         ):
             yield line

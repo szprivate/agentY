@@ -45,3 +45,4 @@ class TriageResult(BaseModel):
     intent: MessageIntent
     response: str | None = None   # populated only for info_query
     confidence: float
+    run_qa: bool = False          # True only when user explicitly requests a QA pass
