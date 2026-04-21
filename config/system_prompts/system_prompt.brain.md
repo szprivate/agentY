@@ -19,7 +19,9 @@ Check the brainbriefing JSON for a template name. ONLY if a template name is pre
 If NO template is present, follow step 1.2
 
 ### 1.1 Patch workflow template and validate
-Activate the assemble-from-template skill - this will assemble the workflow by patching the template with brainbriefing values.
+- If `brainbriefing.template.name == "Kling3_multiShot"`: you MUST activate the `kling-multishot` skill and follow its **Brain — Template patching** section. Do NOT use the generic `assemble-from-template` patch procedure for this template.
+- Otherwise: activate the `assemble-from-template` skill — this will assemble the workflow by patching the template with brainbriefing values.
+
 **This is the default path. You MUST use this whenever a template is available.**
 
 ### 1.2 Create new workflow from scratch and validate

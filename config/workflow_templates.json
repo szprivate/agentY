@@ -1,9 +1,9 @@
 {
     "api_bytedance_seedream_5_0_lite_image_edit": "API image editing via ByteDance Seedream 5.0 Lite. 2 image inputs + text prompt → 1 image output. Modifies a source image based on prompt instructions, using a second image as additional reference.",
     "api_ideogram_v3_t2i": "API text-to-image via Ideogram V3. Text prompt only → 1 image output. Generates professional-quality images with excellent prompt alignment, photorealism, and text rendering.",
-    "api_kling_o3_flf2v": "API first-last-frame-to-video via Kling O3. Up to 4 reference/keyframe images → 1 video output. Generates videos with precise semantic control, longer duration, and improved narrative coherence.",
-    "api_kling_o3_i2v": "API image-to-video via Kling O3. 1 reference image (+ optional audio/text prompt) → 1 video output. Generates character-consistent video with native audio output and precise storyboard control.",
-    "api_kling_o3_image": "API image generation/editing via Kling O3. Up to 10 reference images (2 in template) → 1 image output. Synthesizes a new image guided by your visual reference inputs.",
+    "api_kling_o3_flf2v": "API first-last-frame-to-video via Kling O3 (Kling 3.0). Up to 4 reference/keyframe images → 1 video output. Generates videos with precise semantic control, longer duration, and improved narrative coherence.",
+    "api_kling_o3_i2v": "API image-to-video via Kling O3 (Kling 3.0). 1 reference image (+ optional audio/text prompt) → 1 video output. Generates character-consistent video with native audio output and precise storyboard control.",
+    "api_kling_o3_image": "API image generation/editing via Kling O3 (Kling 3.0). Up to 10 reference images (2 in template) → 1 image output. Synthesizes a new image guided by your visual reference inputs.",
     "api_kling_o3_video_edit": "API video editing via Kling O3. 1 video + 1 reference image → 1 edited video output. Enables precise subject editing and scene composition with native audio-visual synchronization.",
     "api_ltxv_image_to_video": "API image-to-video via Lightricks LTX-2 Pro. 1 image → 1 video output. Generates cinematic video with natural motion, synchronized audio, up to 4K resolution at 50fps.",
     "api_ltxv_text_to_video": "API text-to-video via Lightricks LTX-2. Text prompt only → 1 video output. Generates high-quality video with synchronized audio, up to 4K at 50fps. Offers Fast, Pro, and Ultra quality modes.",
@@ -37,5 +37,6 @@
     "Wan22Vace_VID2VID": "Local video-to-video via Wan 2.2 VACE. 1 control video (depth/canny/pose) + 2 reference images (start/end keyframes) → 1 video output. Applies the style of the reference images to the input video while preserving motion consistency.",
     "imageEdit_nano_banana_pro": "Local image editing/generation via Nano-Banana Pro (Gemini 3.0 Pro). 2 image inputs → 1 image output. Studio-quality 4K generation and editing with enhanced text rendering and character consistency.",
     "imageEdit_nano_banana2": "Local image editing/generation via Nano-Banana 2. Up to 6 reference images + text prompt → 1 image output. Edits images while maintaining subject consistency, or uses references as style guides for new image generation.",
-    "NanoBananaPro_3x3CharacterSheet_closeups": "Local character sheet generation FOR FACE CLOSEUPS via Nano-Banana Pro. 1 character image → 1 image output (3x3 sheet). Uses an LLM call to generate a prompt from the reference, then renders 9 character views with varying facial expressions in a single sheet."
+    "NanoBananaPro_3x3CharacterSheet_closeups": "Local character sheet generation FOR FACE CLOSEUPS via Nano-Banana Pro. 1 character image → 1 image output (3x3 sheet). Uses an LLM call to generate a prompt from the reference, then renders 9 character views with varying facial expressions in a single sheet.",
+    "Kling3_multiShot": ""
 }

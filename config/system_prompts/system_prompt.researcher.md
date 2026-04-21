@@ -88,7 +88,8 @@ Identify all output nodes in the selected workflow template.
 Compose the generation prompt for the selected model family.
 
 **Constraints:**
-- You MUST activate the `prompt-craft` skill and follow its model-family rules exactly.
+- If the selected template is `Kling3_multiShot`: you MUST activate the `kling-multishot` skill and follow its **Researcher — Prompt composition** section instead of the rules below. Do NOT use `prompt-craft` for this template.
+- You MUST activate the `prompt-craft` skill and follow its model-family rules exactly (all other templates).
 - You MUST NOT pad prompts with filler phrases or generic quality tokens.
 - You SHOULD flag any sections inferred without evidence as WARNINGs in `blockers`.
 

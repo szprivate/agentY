@@ -101,6 +101,48 @@ Write like a film director giving scene instructions, not like an image prompt.
 
 ---
 
+### Kling 3.0 — Multishot
+**Prompt formula per shot:** `[CHARACTER LOCK] + [ENVIRONMENT] + [TRANSITION CUE] + [SUBJECT MOTION] + [CAMERA MOVE] + [END STATE] + [STYLE]`  
+Label shots explicitly: `Shot 1: … Shot 2: …` up to 6 shots per generation.
+
+**Character lock:** Paste the **exact same** character description at the start of every shot. Never paraphrase — Kling anchors identity to this string.
+
+**Transition cues (shot 2+):** Open each shot with one of: `Continuous from previous shot:` / `Immediately following:` / `Moments later:` / `Reverse angle:`
+
+**Motion rules:**
+- Write subject motion and camera motion as separate sentences.
+- Be specific: `"she slowly raises her right hand"` not `"she moves"`.
+- One gesture OR one camera move per 5s shot — not both.
+
+**Camera vocabulary:** `slow push-in` · `pull-back reveal` · `static locked` · `orbit/arc shot` · `crane up` · `handheld drift` · `rack focus`
+
+**End-frame handoff:** Describe the subject's final position at the end of each shot. Open the next shot referencing that state — this is what creates continuity across separate generations.
+
+**Settings:**
+
+| Parameter | Value |
+|---|---|
+| Duration | 5s (10s accumulates more drift) |
+| CFG | 0.5–0.6 |
+| Motion strength | Medium |
+| First frame | Last frame of previous shot |
+| Aspect ratio | Pick one, never mix across sequence |
+
+**Negative prompt (apply to all shots):** `blurry, deformed hands, morphing face, identity change, flickering, jerky motion, warped background, two people`
+
+**Failure modes:**
+
+| Problem | Fix |
+|---|---|
+| Face changes between shots | Verbatim character lock + use last-frame input image |
+| Camera drifts on locked shot | Add `"camera does not move under any circumstances"` |
+| Lighting inconsistency | Copy-paste lighting string — don't paraphrase it |
+| Motion doesn't complete | One action per shot; extend to 8–10s if needed |
+| Shots feel disconnected | Missing end-frame handoff |
+| Accessories disappear | Name them in the character lock phrase every shot |
+
+---
+
 ### Qwen Image Edit (2511 / fp8)
 This model takes an **instruction** rather than a descriptive prompt. It uses dual encoding (Qwen2.5-VL semantic + VAE appearance), so it understands both high-level meaning and low-level pixel appearance.
 

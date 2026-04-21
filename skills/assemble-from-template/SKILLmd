@@ -17,6 +17,7 @@ Load the workflow template specified in the brainbriefing.
 - You MUST call `get_workflow_template(brainbriefing.template_name)` and record the returned file path.
 - You MUST NOT proceed if the template fails to load — report the error with `task_id` and stop.
 - If the template is a **Nano Banana / Nano Banana 2 / Nano Banana Pro** variant: you MUST activate the `nano-banana` skill.
+- If the template is **`Kling3_multiShot`**: you MUST activate the `kling-multishot` skill and follow its Brain assembly steps instead of the standard step 2 patch procedure below.
 
 ### 2. Prepare updates and update the workflow template
 - Start preparing workflow patches that can be used by the `update_workflow` tool in a single tool call: 

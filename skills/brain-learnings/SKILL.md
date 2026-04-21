@@ -60,3 +60,12 @@ If a matching entry exists, **apply the documented solution directly** instead o
 2026-04-21 | template shows node 23 but patches target node 26 which isn't visible initially | Verify all target node IDs exist in loaded template before applying patches; node IDs may differ from initial template view.
 
 2026-04-21 | Workflow validation fails when referenced images not in ComfyUI input directory | Upload all referenced images to ComfyUI's input directory before patching or validating. Use image_type: 'input' when calling upload_image to ensure proper placement.
+
+2026-04-21 | KlingVideoNode prompts stored in multi_shot.storyboard_N_prompt fields, not separate nodes | Before patching prompts, read the template structure first to confirm prompt storage location. Prompts are embedded directly in the KlingVideoNode, not separate Text nodes.
+2026-04-21 | reference image must be uploaded separately before workflow validation | Call upload_image with file_path and type='input' before signal_workflow_ready to ensure image is available to ComfyUI.
+2026-04-21 | multi_shot.storyboard_N_duration should be set as integer 1, not string "1" | When patching duration inputs, use integer value (1) not string representation to match workflow schema expectations.
+2026-04-21 | template may have fewer nodes than assumed, causing node not found errors | Always inspect actual workflow structure via read_text_file before removing or patching nodes with assumed IDs.
+
+2026-04-21 | Removing non-existent nodes from workflow caused errors | Verify node IDs exist before removing. Omit remove_nodes if template structure is unverified.
+2026-04-21 | Kling3 model node rejects custom pixel resolution strings | Use preset resolution values like '1080p' or '720p' instead of '1024x1024' in model inputs.
+2026-04-21 | Workflow inputs failed to reference file until uploaded first | Use upload_image tool to register files before patching workflow inputs with their file paths.

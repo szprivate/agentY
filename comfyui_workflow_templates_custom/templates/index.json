@@ -273,5 +273,31 @@
         }
       }
     ]
+  },
+  {
+    "templates": [
+      {
+        "name": "Kling3_multiShot",
+        "models": [],
+        "io": {
+          "inputs": [
+            {
+              "nodeId": 14,
+              "nodeType": "LoadImage",
+              "file": "._00001_.png",
+              "mediaType": "image"
+            }
+          ],
+          "outputs": [
+            {
+              "nodeId": 22,
+              "nodeType": "VHS_VideoCombine",
+              "file": "",
+              "mediaType": "video"
+            }
+          ]
+        }
+      }
+    ]
   }
 ]

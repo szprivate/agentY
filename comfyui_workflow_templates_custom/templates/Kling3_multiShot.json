@@ -1,0 +1,82 @@
+{
+  "12": {
+    "inputs": {
+      "multi_shot": "6 storyboards",
+      "multi_shot.storyboard_1_prompt": "",
+      "multi_shot.storyboard_1_duration": 1,
+      "multi_shot.storyboard_2_prompt": "",
+      "multi_shot.storyboard_2_duration": 1,
+      "multi_shot.storyboard_3_prompt": "",
+      "multi_shot.storyboard_3_duration": 1,
+      "multi_shot.storyboard_4_prompt": "",
+      "multi_shot.storyboard_4_duration": 1,
+      "multi_shot.storyboard_5_prompt": "",
+      "multi_shot.storyboard_5_duration": 1,
+      "multi_shot.storyboard_6_prompt": "",
+      "multi_shot.storyboard_6_duration": 1,
+      "generate_audio": false,
+      "model": "kling-v3",
+      "model.resolution": "720p",
+      "model.aspect_ratio": "16:9",
+      "seed": 0,
+      "start_frame": [
+        "14",
+        0
+      ]
+    },
+    "class_type": "KlingVideoNode",
+    "_meta": {
+      "title": "Kling 3.0 Video"
+    }
+  },
+  "14": {
+    "inputs": {
+      "image": "._00001_.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "22": {
+    "inputs": {
+      "frame_rate": [
+        "23",
+        2
+      ],
+      "loop_count": 0,
+      "filename_prefix": "AnimateDiff",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "23",
+        0
+      ],
+      "audio": [
+        "23",
+        1
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Video Combine 🎥🅥🅗🅢"
+    }
+  },
+  "23": {
+    "inputs": {
+      "video": [
+        "12",
+        0
+      ]
+    },
+    "class_type": "GetVideoComponents",
+    "_meta": {
+      "title": "Get Video Components"
+    }
+  }
+}
