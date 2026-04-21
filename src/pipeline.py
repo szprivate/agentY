@@ -26,7 +26,7 @@ from typing import Any, List, Optional
 from pydantic import BaseModel, Field, ValidationError
 from strands import Agent
 
-from src.agent import create_brain_agent, create_info_agent, create_planner_agent, create_researcher_agent, create_triage_agent, _settings
+from src.agent import create_brain_agent, create_error_checker_agent, create_info_agent, create_planner_agent, create_researcher_agent, create_triage_agent, _settings
 from src.utils.chat_summary import summarize_conversation
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
 from src.utils.comfyui_poller import poll_comfyui_job as _poll_comfyui_job
@@ -285,6 +285,7 @@ class Pipeline:
         info_agent: Agent | None = None,
         triage_agent: Agent | None = None,
         planner_agent: Agent | None = None,
+        error_checker_agent: Agent | None = None,
         verbose: bool = True,
         skip_brain: bool = False,
         info_context: dict | None = None,
@@ -295,6 +296,7 @@ class Pipeline:
         self._info_agent: Agent = info_agent or create_info_agent()
         self._triage_agent: Agent = triage_agent or create_triage_agent()
         self._planner_agent: Agent = planner_agent or create_planner_agent()
+        self._error_checker_agent: Agent = error_checker_agent or create_error_checker_agent()
         self._verbose = verbose
         self._skip_brain = skip_brain
         self._info_context: dict = info_context or {}
@@ -877,19 +879,105 @@ class Pipeline:
                 print(f"[planner] WARNING: plan parse failed ({exc}). Falling back to researcher.")
             return []
 
-    def _inject_context_into_step(self, step_request: str, step_index: int) -> str:
-        """Prepend previous-step output paths into *step_request* when available.
+    def _inject_context_into_step(
+        self,
+        step_request: str,
+        step_index: int,
+        prev_brainbriefing: dict | None = None,
+    ) -> str:
+        """Prepend previous-step context into *step_request* when available.
 
-        Steps 2+ that reference "the previous step" will have the actual
-        output file paths injected so the Researcher can resolve them directly.
+        Steps 2+ receive:
+          • The actual output file paths from the previous step, and
+          • A compact brainbriefing snippet (template, task type, resolution,
+            abbreviated positive prompt) so the Researcher doesn't start
+            completely blind when making decisions that must be compatible
+            with the prior step's output.
+
+        This avoids passing full message histories (agents-as-tools style)
+        which would accumulate tokens across every step.
         """
-        if step_index == 0 or not self._session.current_output_paths:
+        if step_index == 0:
             return step_request
-        paths_hint = ", ".join(self._session.current_output_paths)
+        hints: list[str] = []
+        if self._session.current_output_paths:
+            paths = ", ".join(self._session.current_output_paths)
+            hints.append(f"Previous step output file(s): {paths}")
+        if prev_brainbriefing:
+            ctx: dict = {}
+            tmpl = (prev_brainbriefing.get("template") or {}).get("name")
+            if tmpl:
+                ctx["template"] = tmpl
+            task_type = (prev_brainbriefing.get("task") or {}).get("type")
+            if task_type:
+                ctx["task_type"] = task_type
+            w = prev_brainbriefing.get("resolution_width")
+            h = prev_brainbriefing.get("resolution_height")
+            if w and h:
+                ctx["resolution"] = f"{w}x{h}"
+            pos = (prev_brainbriefing.get("prompt") or {}).get("positive", "")
+            if pos:
+                ctx["prompt_positive"] = pos[:200]
+            if ctx:
+                hints.append(f"Previous step brainbriefing context: {json.dumps(ctx)}")
+        if not hints:
+            return step_request
+        return step_request + "\n" + "\n".join(f"[{h}]" for h in hints)
+
+    def _clear_error_checker_history(self) -> None:
+        """Reset the error-checker agent's single-turn conversation history."""
+        try:
+            self._error_checker_agent.conversation_manager.messages.clear()
+        except AttributeError:
+            try:
+                self._error_checker_agent.conversation_manager._messages.clear()  # noqa: SLF001
+            except AttributeError:
+                pass
+
+    def _build_fix_prompt(self, fix_plan: str, attempt: int) -> str:
+        """Build a Brain prompt asking it to apply a fix from error-checker output."""
         return (
-            f"{step_request}\n"
-            f"[Previous step output(s): {paths_hint}]"
+            f"[Error-checker] The ComfyUI workflow just failed (fix attempt {attempt}/3).\n\n"
+            f"Fix plan:\n{fix_plan}\n\n"
+            "Apply the fix to the current workflow. Re-validate every change, then call "
+            "`signal_workflow_ready(workflow_path)` with the corrected workflow once it is ready."
         )
+
+    def _run_error_check(self, task_description: str) -> dict:
+        """Invoke the error-checker agent and return a parsed verdict dict.
+
+        The agent reads ComfyUI logs and returns JSON with keys:
+        ``status`` (ok | error_fixable | error_unfixable), ``errors``,
+        ``fix_plan``, ``user_message``.
+
+        On any failure the method returns ``{"status": "ok", ...}``
+        (fail-open) so a transient error doesn't abort the plan.
+        """
+        _snap = self._usage_snapshot(self._error_checker_agent)
+        raw = ""
+        try:
+            raw = str(self._error_checker_agent(task_description))
+            self._record_agent_usage(self._error_checker_agent, _snap)
+        except Exception as exc:
+            if self._verbose:
+                print(f"[error_checker] WARNING: agent call failed — {exc}")
+            return {"status": "ok", "errors": [], "fix_plan": "", "user_message": ""}
+        finally:
+            self._clear_error_checker_history()
+        json_str = _extract_json(raw) or raw
+        try:
+            verdict = json.loads(json_str)
+            if not isinstance(verdict, dict):
+                return {"status": "ok", "errors": [], "fix_plan": "", "user_message": ""}
+            verdict.setdefault("status", "ok")
+            verdict.setdefault("errors", [])
+            verdict.setdefault("fix_plan", "")
+            verdict.setdefault("user_message", "")
+            return verdict
+        except (json.JSONDecodeError, TypeError):
+            if self._verbose:
+                print("[error_checker] WARNING: could not parse verdict JSON — treating as ok.")
+            return {"status": "ok", "errors": [], "fix_plan": "", "user_message": ""}
 
     def _run_planned_request(self, user_text: str, triage_result: TriageResult) -> str:
         """Execute a multi-step plan synchronously; return a combined summary string."""
@@ -932,10 +1020,11 @@ class Pipeline:
                 print(f"  {i}. {s['description']}")
 
         step_results: list[str] = []
+        prev_brainbriefing: dict | None = None  # compact context forwarded step-to-step
 
         for idx, step in enumerate(steps):
             description = step["description"]
-            step_req = self._inject_context_into_step(step["request"], idx)
+            step_req = self._inject_context_into_step(step["request"], idx, prev_brainbriefing)
 
             if self._verbose:
                 print(f"\npipeline: ── Plan step {idx + 1}/{total}: {description} ──")
@@ -949,7 +1038,25 @@ class Pipeline:
                 # Abort remaining steps when the researcher fails.
                 break
 
+            # Check for a soft blocker (researcher status=blocked) — stop the plan.
+            blocked_question = self._researcher_blocked_question(raw_json)
+            if blocked_question:
+                msg = (
+                    f"🚫 Plan stopped at step {idx + 1}/{total} — **{description}** — "
+                    f"the researcher needs more information before it can continue:\n\n"
+                    f"{blocked_question}"
+                )
+                if self._verbose:
+                    print(f"pipeline: Researcher blocked at step {idx + 1}: {blocked_question}")
+                step_results.append(msg)
+                break
+
             self._last_brainbriefing_json = raw_json
+            # Stash brainbriefing for the next step's context injection.
+            try:
+                prev_brainbriefing = json.loads(raw_json) if raw_json else None
+            except (json.JSONDecodeError, TypeError):
+                prev_brainbriefing = None
 
             if self._should_skip_brain():
                 step_results.append(f"Step {idx + 1}: {researcher_output}")
@@ -962,6 +1069,8 @@ class Pipeline:
             wf_paths = _get_workflow_signal()
             wf_paths = self._expand_variations(wf_paths, raw_json)
             exec_paths: list[str] = []
+            step_error_abort = False
+            verdict: dict = {"status": "ok", "errors": [], "fix_plan": "", "user_message": ""}
             if wf_paths:
                 count = len(wf_paths)
                 if self._verbose:
@@ -976,6 +1085,56 @@ class Pipeline:
                     self._session.current_output_paths[:] = exec_paths
                 if exec_lines:
                     brain_response = brain_response + "\n\n" + "\n".join(exec_lines)
+
+                # ── Error check + fix-retry loop ─────────────────────────── #
+                _MAX_FIX_ATTEMPTS = 3
+                for _fix_attempt in range(1, _MAX_FIX_ATTEMPTS + 1):
+                    verdict = self._run_error_check(description)
+                    if verdict["status"] == "ok":
+                        break
+                    if self._verbose:
+                        print(
+                            f"[error_checker] Step {idx + 1} attempt {_fix_attempt}: "
+                            f"{verdict['status']} — {verdict.get('errors', [])[:1]}"
+                        )
+                    if verdict["status"] == "error_unfixable" or _fix_attempt == _MAX_FIX_ATTEMPTS:
+                        step_error_abort = True
+                        if self._verbose:
+                            print(
+                                f"pipeline: Step {idx + 1} aborted after "
+                                f"{_fix_attempt} error-check attempt(s)."
+                            )
+                        break
+                    # Fixable error — ask Brain to fix and rerun.
+                    _brain_snap_fix = self._usage_snapshot(self._brain)
+                    fix_response = str(self._brain(self._build_fix_prompt(verdict["fix_plan"], _fix_attempt)))
+                    self._record_agent_usage(self._brain, _brain_snap_fix)
+                    wf_paths_fix = _get_workflow_signal()
+                    wf_paths_fix = self._expand_variations(wf_paths_fix, raw_json)
+                    exec_paths = []
+                    if wf_paths_fix:
+                        exec_lines_fix, exec_paths = asyncio.run(
+                            self._drain_executor_batch(wf_paths_fix, raw_json, user_message=step_req)
+                        )
+                        if exec_paths:
+                            self._session.current_output_paths[:] = exec_paths
+                        if exec_lines_fix:
+                            brain_response = fix_response + "\n\n" + "\n".join(exec_lines_fix)
+                    else:
+                        # Brain could not produce a fixed workflow.
+                        step_error_abort = True
+                        break
+                # ── end error-check retry loop ───────────────────────────── #
+
+            if step_error_abort:
+                err_msg = (
+                    verdict.get("user_message")
+                    or f"Step {idx + 1} failed after {_MAX_FIX_ATTEMPTS} retry attempt(s)."
+                )
+                if self._verbose:
+                    print(f"pipeline: Step {idx + 1} permanently failed: {err_msg}")
+                step_results.append(f"**Step {idx + 1} — {description}**: ❌ {err_msg}")
+                break  # abort remaining steps
 
             self._record_chat_summary(step_req, triage_result, status="completed", raw_json=raw_json)
             asyncio.run(self._compress_brain_history(extra_output_paths=exec_paths))
@@ -1057,9 +1216,11 @@ class Pipeline:
             _steps_list = "\n".join(f"  {i}. {s['description']}" for i, s in enumerate(steps, 1))
             yield {"data": f"\n_pipeline: Plan has {total} step(s):_\n{_steps_list}\n"}
 
+        prev_brainbriefing: dict | None = None  # compact context forwarded step-to-step
+
         for idx, step in enumerate(steps):
             description = step["description"]
-            step_req = self._inject_context_into_step(step["request"], idx)
+            step_req = self._inject_context_into_step(step["request"], idx, prev_brainbriefing)
 
             yield {"_step_start": True, "idx": idx, "total": total, "description": description}
             yield {"data": f"\n\n**Step {idx + 1}/{total} — {description}**\n"}
@@ -1083,7 +1244,25 @@ class Pipeline:
                     print(f"pipeline: Step {idx + 1} researcher error: {error}")
                 break
 
+            # Check for a soft blocker (researcher status=blocked) — stop the plan.
+            blocked_question = self._researcher_blocked_question(raw_json)
+            if blocked_question:
+                block_msg = (
+                    f"\n\n🚫 **Plan stopped at step {idx + 1}/{total} — {description}**\n\n"
+                    f"The researcher needs more information before it can continue:\n\n"
+                    f"{blocked_question}"
+                )
+                yield {"data": block_msg}
+                if self._verbose:
+                    print(f"pipeline: Researcher blocked at step {idx + 1}: {blocked_question}")
+                break
+
             self._last_brainbriefing_json = raw_json
+            # Stash brainbriefing for the next step's context injection.
+            try:
+                prev_brainbriefing = json.loads(raw_json) if raw_json else None
+            except (json.JSONDecodeError, TypeError):
+                prev_brainbriefing = None
 
             if self._should_skip_brain():
                 yield {"data": researcher_output}
@@ -1099,6 +1278,8 @@ class Pipeline:
             wf_paths = self._expand_variations(wf_paths, raw_json)
             exec_paths: list[str] = []
             qa_step_failed = False
+            step_error_abort = False
+            verdict: dict = {"status": "ok", "errors": [], "fix_plan": "", "user_message": ""}
             if wf_paths:
                 count = len(wf_paths)
                 hdr = f"batch of {count} workflows" if count > 1 else "workflow"
@@ -1118,6 +1299,69 @@ class Pipeline:
                 if exec_paths:
                     self._session.current_output_paths[:] = exec_paths
 
+                # ── Error check + fix-retry loop ─────────────────────────── #
+                if not qa_step_failed:
+                    _MAX_FIX_ATTEMPTS = 3
+                    for _fix_attempt in range(1, _MAX_FIX_ATTEMPTS + 1):
+                        verdict = self._run_error_check(description)
+                        if verdict["status"] == "ok":
+                            break
+                        if self._verbose:
+                            print(
+                                f"[error_checker] Step {idx + 1} attempt {_fix_attempt}: "
+                                f"{verdict['status']} — {verdict.get('errors', [])[:1]}"
+                            )
+                            yield {"data": (
+                                f"\n_[error_checker] Step {idx + 1} attempt {_fix_attempt}: "
+                                f"{verdict['status']}_"
+                            )}
+                        if verdict["status"] == "error_unfixable" or _fix_attempt == _MAX_FIX_ATTEMPTS:
+                            step_error_abort = True
+                            if self._verbose:
+                                print(
+                                    f"pipeline: Step {idx + 1} aborted after "
+                                    f"{_fix_attempt} error-check attempt(s)."
+                                )
+                                yield {"data": (
+                                    f"\n_pipeline: Step {idx + 1} aborted — "
+                                    f"{verdict.get('user_message', 'workflow error')}_"
+                                )}
+                            break
+                        # Fixable error — ask Brain to fix (streamed) and rerun.
+                        yield {"data": f"\n_🔧 Fixing step {idx + 1} (attempt {_fix_attempt}/{_MAX_FIX_ATTEMPTS})…_"}
+                        _brain_snap_fix = self._usage_snapshot(self._brain)
+                        async for event in self._brain.stream_async(
+                            self._build_fix_prompt(verdict["fix_plan"], _fix_attempt)
+                        ):
+                            yield event
+                        self._record_agent_usage(self._brain, _brain_snap_fix)
+                        wf_paths_fix = _get_workflow_signal()
+                        wf_paths_fix = self._expand_variations(wf_paths_fix, raw_json)
+                        exec_paths = []
+                        if wf_paths_fix:
+                            hdr_fix = f"batch of {len(wf_paths_fix)} workflows" if len(wf_paths_fix) > 1 else "workflow"
+                            yield {"data": f"\n\n_⚙️ Re-submitting to executor ({hdr_fix})…_"}
+                            async for line in _execute_workflows_batch(
+                                wf_paths_fix, raw_json,
+                                user_message=step_req,
+                                verbose=self._verbose,
+                                collected_paths=exec_paths,
+                            ):
+                                if isinstance(line, dict) and line.get("qa_fail"):
+                                    yield line
+                                    qa_step_failed = True
+                                    break
+                                yield {"data": f"\n{line}"}
+                            if exec_paths:
+                                self._session.current_output_paths[:] = exec_paths
+                        else:
+                            # Brain could not produce a fixed workflow.
+                            step_error_abort = True
+                            break
+                        if qa_step_failed:
+                            break
+                # ── end error-check retry loop ───────────────────────────── #
+
             if qa_step_failed:
                 yield {"_step_done": True, "idx": idx, "failed": True}
                 self._record_chat_summary(step_req, triage_result, status="qa_failed", raw_json=raw_json)
@@ -1125,6 +1369,18 @@ class Pipeline:
                     print(f"pipeline: Step {idx + 1}/{total} QA failed — aborting plan.")
                     yield {"data": f"\n_pipeline: Step {idx + 1}/{total} QA failed — aborting plan._"}
                 break  # stop processing further steps
+
+            if step_error_abort:
+                err_msg = (
+                    verdict.get("user_message")
+                    or f"Step {idx + 1} failed after {_MAX_FIX_ATTEMPTS} retry attempt(s)."
+                )
+                yield {"_step_done": True, "idx": idx, "failed": True}
+                self._record_chat_summary(step_req, triage_result, status="error", raw_json=raw_json)
+                yield {"data": f"\n\n❌ **Step {idx + 1} — {description}**: {err_msg}"}
+                if self._verbose:
+                    print(f"pipeline: Step {idx + 1} permanently failed — aborting plan.")
+                break  # abort remaining steps
 
             self._record_chat_summary(step_req, triage_result, status="completed", raw_json=raw_json)
             await self._compress_brain_history(extra_output_paths=exec_paths)

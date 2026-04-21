@@ -247,5 +247,31 @@
         }
       }
     ]
+  },
+  {
+    "templates": [
+      {
+        "name": "NanoBananaPro_3x3CharacterSheet_closeups",
+        "models": [],
+        "io": {
+          "inputs": [
+            {
+              "nodeId": 9,
+              "nodeType": "LoadImage",
+              "file": "2875b7cd-5300-462d-8db2-59aac56995c1.png",
+              "mediaType": "image"
+            }
+          ],
+          "outputs": [
+            {
+              "nodeId": 8,
+              "nodeType": "SaveImage",
+              "file": "",
+              "mediaType": "image"
+            }
+          ]
+        }
+      }
+    ]
   }
 ]
