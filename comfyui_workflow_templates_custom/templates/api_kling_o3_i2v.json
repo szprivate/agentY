@@ -1,0 +1,86 @@
+{
+  "17": {
+    "inputs": {
+      "image": "chasing_the_light.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "21": {
+    "inputs": {
+      "model_name": "kling-v3-omni",
+      "prompt": "Wide shot of a free‑spirited young woman running toward the camera through a sun‑drenched field, white birds exploding upward all around her like symbols of freedom. Her hair and dress are caught by the wind, captured with crisp focus on her face and light motion blur in the foreground flowers and wings. Vivid colors, bright clear sky, optimistic, uplifting cinematic tone.\n",
+      "aspect_ratio": "16:9",
+      "duration": 5,
+      "resolution": "720p",
+      "storyboards": "disabled",
+      "generate_audio": true,
+      "seed": 0,
+      "reference_images": [
+        "27",
+        0
+      ]
+    },
+    "class_type": "KlingOmniProImageToVideoNode",
+    "_meta": {
+      "title": "Kling 3.0 Omni Image to Video"
+    }
+  },
+  "27": {
+    "inputs": {
+      "inputcount": 6,
+      "Update inputs": null,
+      "image_1": [
+        "17",
+        0
+      ]
+    },
+    "class_type": "ImageBatchMulti",
+    "_meta": {
+      "title": "Image Batch Multi"
+    }
+  },
+  "28": {
+    "inputs": {
+      "video": [
+        "21",
+        0
+      ]
+    },
+    "class_type": "GetVideoComponents",
+    "_meta": {
+      "title": "Get Video Components"
+    }
+  },
+  "29": {
+    "inputs": {
+      "frame_rate": [
+        "28",
+        2
+      ],
+      "loop_count": 0,
+      "filename_prefix": "AnimateDiff",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "28",
+        0
+      ],
+      "audio": [
+        "28",
+        1
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Video Combine 🎥🅥🅗🅢"
+    }
+  }
+}

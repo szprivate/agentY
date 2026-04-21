@@ -1,0 +1,57 @@
+{
+  "1": {
+    "inputs": {
+      "model": "LTX-2 (Pro)",
+      "prompt": "A towering wave crashes against jagged cliffs, spray exploding into the air while gulls scream overhead and the rumble of water shakes the rocks.",
+      "duration": 8,
+      "resolution": "1920x1080",
+      "fps": 50,
+      "generate_audio": true
+    },
+    "class_type": "LtxvApiTextToVideo",
+    "_meta": {
+      "title": "LTXV Text To Video"
+    }
+  },
+  "46": {
+    "inputs": {
+      "video": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "GetVideoComponents",
+    "_meta": {
+      "title": "Get Video Components"
+    }
+  },
+  "47": {
+    "inputs": {
+      "frame_rate": [
+        "46",
+        2
+      ],
+      "loop_count": 0,
+      "filename_prefix": "AnimateDiff",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "46",
+        0
+      ],
+      "audio": [
+        "46",
+        1
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Video Combine 🎥🅥🅗🅢"
+    }
+  }
+}

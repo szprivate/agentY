@@ -1,0 +1,48 @@
+{
+  "1": {
+    "inputs": {
+      "model": "Reimagine",
+      "prompt": "Enhance this vintage black-and-white photograph of a girl with fairy cutouts in a natural, wooded setting. Increase sharpness, preserve the vintage film grain texture, and enhance the details of the fairy figures, the girl’s facial features, and the surrounding foliage. Maintain the historical aesthetic while making the image clearer and more defined.",
+      "subject_detection": "All",
+      "face_enhancement": true,
+      "face_enhancement_creativity": 0,
+      "face_enhancement_strength": 1,
+      "crop_to_fill": false,
+      "output_width": 0,
+      "output_height": 0,
+      "creativity": 3,
+      "face_preservation": true,
+      "color_preservation": false,
+      "image": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "TopazImageEnhance",
+    "_meta": {
+      "title": "Topaz Image Enhance"
+    }
+  },
+  "2": {
+    "inputs": {
+      "image": "api_topaz_image_enhance_input_image.webp"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "3": {
+    "inputs": {
+      "filename_prefix": "Topaz",
+      "images": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  }
+}

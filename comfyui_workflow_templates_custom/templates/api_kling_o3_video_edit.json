@@ -1,0 +1,82 @@
+{
+  "17": {
+    "inputs": {
+      "image": "giant_trees_sky_pyramid.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "23": {
+    "inputs": {
+      "model_name": "kling-v3-omni",
+      "prompt": "Keep the character (the man) and the ornate bird character (covered in jewelry and exquisite details) in the reference video completely unchanged—including their actions, postures, and all decorative details. Replace the original desert background in the video with the background environment from the reference image (the scene with giant trees, castles, and a blue sky). Adjust the lighting and color tone of the man and the ornate bird to match the new background for a natural, cohesive visual effect. ",
+      "keep_original_sound": true,
+      "resolution": "720p",
+      "seed": 0,
+      "video": [
+        "25",
+        0
+      ],
+      "reference_images": [
+        "17",
+        0
+      ]
+    },
+    "class_type": "KlingOmniProEditVideoNode",
+    "_meta": {
+      "title": "Kling 3.0 Omni Edit Video"
+    }
+  },
+  "25": {
+    "inputs": {
+      "file": "kling_o3_video_input.mp4"
+    },
+    "class_type": "LoadVideo",
+    "_meta": {
+      "title": "Load Video"
+    }
+  },
+  "32": {
+    "inputs": {
+      "video": [
+        "23",
+        0
+      ]
+    },
+    "class_type": "GetVideoComponents",
+    "_meta": {
+      "title": "Get Video Components"
+    }
+  },
+  "33": {
+    "inputs": {
+      "frame_rate": [
+        "32",
+        2
+      ],
+      "loop_count": 0,
+      "filename_prefix": "AnimateDiff",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "32",
+        0
+      ],
+      "audio": [
+        "32",
+        1
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Video Combine 🎥🅥🅗🅢"
+    }
+  }
+}

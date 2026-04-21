@@ -1,0 +1,61 @@
+{
+  "59": {
+    "inputs": {
+      "model": "wan2.6-t2v",
+      "prompt": "Edge light, side light, soft light, medium close-up, dusk, sunset, central composition, warm tones with low saturation, telephoto lens. A woman with voluminous brown curly hair stands elegantly in front of a magnificent stained glass window. She is wearing a flowing white dress, her hair neatly combed back, and her soft facial contours are gently illuminated by the colorful light filtering through the window from outside. The woman is talking to someone outside the frame, yet there is a hint of sadness in her eyes, adding a layer of depth to her mysterious temperament. The background is dim, with strong light and shadow contrast, further highlighting the tension of the character's emotions. The stained glass, bathed in the afterglow of the setting sun, casts colorful light and shadows, enhancing the artistic sense and atmosphere of the overall picture.",
+      "negative_prompt": "low quality, blurry, out of focus, jittery camera, excessive shake, warped car body, deformed wheels, extra wheels, bad reflections, artifacts, banding, flicker, text, watermark, logo, oversaturated, noisy",
+      "size": "720p: 16:9 (1280x720)",
+      "duration": 5,
+      "seed": 1007000307,
+      "generate_audio": true,
+      "prompt_extend": true,
+      "watermark": false,
+      "shot_type": "single"
+    },
+    "class_type": "WanTextToVideoApi",
+    "_meta": {
+      "title": "Wan Text to Video"
+    }
+  },
+  "60": {
+    "inputs": {
+      "video": [
+        "59",
+        0
+      ]
+    },
+    "class_type": "GetVideoComponents",
+    "_meta": {
+      "title": "Get Video Components"
+    }
+  },
+  "61": {
+    "inputs": {
+      "frame_rate": [
+        "60",
+        2
+      ],
+      "loop_count": 0,
+      "filename_prefix": "AnimateDiff",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "60",
+        0
+      ],
+      "audio": [
+        "60",
+        1
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Video Combine 🎥🅥🅗🅢"
+    }
+  }
+}

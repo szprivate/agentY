@@ -1,0 +1,45 @@
+{
+  "1": {
+    "inputs": {
+      "prompt": "A photo from the 1950s in New York City of a woman sitting casually at the bus stand",
+      "scale_factor": "4x",
+      "optimized_for": "standard",
+      "creativity": 2,
+      "hdr": 3,
+      "resemblance": 1,
+      "fractality": 0,
+      "engine": "automatic",
+      "auto_downscale": true,
+      "image": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "MagnificImageUpscalerCreativeNode",
+    "_meta": {
+      "title": "Magnific Image Upscale (Creative)"
+    }
+  },
+  "2": {
+    "inputs": {
+      "image": "1950_new_york.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "3": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "images": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  }
+}

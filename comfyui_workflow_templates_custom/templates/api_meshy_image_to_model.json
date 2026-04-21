@@ -1,0 +1,61 @@
+{
+  "7": {
+    "inputs": {
+      "model": "latest",
+      "should_remesh": "true",
+      "should_remesh.topology": "triangle",
+      "should_remesh.target_polycount": 300000,
+      "symmetry_mode": "auto",
+      "should_texture": "true",
+      "should_texture.enable_pbr": true,
+      "should_texture.texture_prompt": "",
+      "pose_mode": "",
+      "seed": 795649874,
+      "image": [
+        "8",
+        0
+      ]
+    },
+    "class_type": "MeshyImageToModelNode",
+    "_meta": {
+      "title": "Meshy: Image to Model"
+    }
+  },
+  "8": {
+    "inputs": {
+      "image": "robot-warrior.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "11": {
+    "inputs": {
+      "filename_prefix": "3d/meshy_image2model",
+      "image": "",
+      "mesh": [
+        "7",
+        2
+      ]
+    },
+    "class_type": "SaveGLB",
+    "_meta": {
+      "title": "Save 3D Model"
+    }
+  },
+  "12": {
+    "inputs": {
+      "filename_prefix": "3d/meshy_image2model",
+      "image": "",
+      "mesh": [
+        "7",
+        3
+      ]
+    },
+    "class_type": "SaveGLB",
+    "_meta": {
+      "title": "Save 3D Model"
+    }
+  }
+}

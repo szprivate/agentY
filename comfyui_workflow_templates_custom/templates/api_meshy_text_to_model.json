@@ -1,0 +1,47 @@
+{
+  "5": {
+    "inputs": {
+      "model": "latest",
+      "prompt": "Death Knight",
+      "style": "realistic",
+      "should_remesh": "true",
+      "should_remesh.topology": "triangle",
+      "should_remesh.target_polycount": 300000,
+      "symmetry_mode": "auto",
+      "pose_mode": "T-pose",
+      "seed": 410207901
+    },
+    "class_type": "MeshyTextToModelNode",
+    "_meta": {
+      "title": "Meshy: Text to Model"
+    }
+  },
+  "7": {
+    "inputs": {
+      "filename_prefix": "3d/meshy_text2model",
+      "image": "",
+      "mesh": [
+        "5",
+        2
+      ]
+    },
+    "class_type": "SaveGLB",
+    "_meta": {
+      "title": "Save 3D Model"
+    }
+  },
+  "8": {
+    "inputs": {
+      "filename_prefix": "3d/meshy_text2model",
+      "image": "",
+      "mesh": [
+        "5",
+        3
+      ]
+    },
+    "class_type": "SaveGLB",
+    "_meta": {
+      "title": "Save 3D Model"
+    }
+  }
+}

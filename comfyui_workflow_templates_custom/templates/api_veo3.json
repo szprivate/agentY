@@ -1,0 +1,47 @@
+{
+  "1": {
+    "inputs": {
+      "prompt": "A humanoid lizard man riding a rugged dirt bike across a vast desert under the bright midday sun. \nGolden sand dunes stretch endlessly in the background, heat waves shimmering in the distance. \nThe lizard man wears desert-appropriate gear: light tactical armor, goggles, and a scarf fluttering in the wind. \nThe dirt bike is dusty, with off-road tires kicking up sand as it speeds forward. \nDynamic camera angles follow the chase across dunes, creating a sense of speed and intensity. \nRealistic lighting, dramatic motion, and an adventurous cinematic atmosphere.\n",
+      "aspect_ratio": "16:9",
+      "negative_prompt": "",
+      "duration_seconds": 8,
+      "enhance_prompt": true,
+      "person_generation": "ALLOW",
+      "seed": 2421696867,
+      "model": "veo-3.0-fast-generate-001",
+      "generate_audio": false,
+      "image": [
+        "11",
+        0
+      ]
+    },
+    "class_type": "Veo3VideoGenerationNode",
+    "_meta": {
+      "title": "Google Veo 3 Video Generation"
+    }
+  },
+  "10": {
+    "inputs": {
+      "filename_prefix": "video/ComfyUI",
+      "format": "auto",
+      "codec": "auto",
+      "video": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "Save Video"
+    }
+  },
+  "11": {
+    "inputs": {
+      "image": "api_veo3_input_image.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  }
+}

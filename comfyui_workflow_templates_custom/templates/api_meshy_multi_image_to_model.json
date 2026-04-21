@@ -1,0 +1,87 @@
+{
+  "8": {
+    "inputs": {
+      "image": "joker_front.jpg"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "11": {
+    "inputs": {
+      "model": "latest",
+      "should_remesh": "true",
+      "should_remesh.topology": "triangle",
+      "should_remesh.target_polycount": 300000,
+      "symmetry_mode": "auto",
+      "should_texture": "true",
+      "should_texture.enable_pbr": true,
+      "should_texture.texture_prompt": "",
+      "pose_mode": "",
+      "seed": 1527063586,
+      "images.image0": [
+        "8",
+        0
+      ],
+      "images.image1": [
+        "12",
+        0
+      ],
+      "images.image2": [
+        "13",
+        0
+      ]
+    },
+    "class_type": "MeshyMultiImageToModelNode",
+    "_meta": {
+      "title": "Meshy: Multi-Image to Model"
+    }
+  },
+  "12": {
+    "inputs": {
+      "image": "joker_back.jpg"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "13": {
+    "inputs": {
+      "image": "joker_side.jpg"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "14": {
+    "inputs": {
+      "filename_prefix": "3d/meshy_image2model",
+      "image": "",
+      "mesh": [
+        "11",
+        2
+      ]
+    },
+    "class_type": "SaveGLB",
+    "_meta": {
+      "title": "Save 3D Model"
+    }
+  },
+  "15": {
+    "inputs": {
+      "filename_prefix": "3d/meshy_image2model",
+      "image": "",
+      "mesh": [
+        "11",
+        3
+      ]
+    },
+    "class_type": "SaveGLB",
+    "_meta": {
+      "title": "Save 3D Model"
+    }
+  }
+}

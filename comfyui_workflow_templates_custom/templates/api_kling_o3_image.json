@@ -1,0 +1,69 @@
+{
+  "29": {
+    "inputs": {
+      "filename_prefix": "kling_o3_image",
+      "images": [
+        "30",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "30": {
+    "inputs": {
+      "model_name": "kling-v3-omni",
+      "prompt": "A candid, high-fashion photograph of two stylish women captured mid-motion in a bustling Parisian courtyard. The woman in the pink ruffled blouse laughs softly, turning her head slightly, while the woman in the tweed blazer adjusts her sunglasses, both radiating effortless confidence. The lighting is soft, golden-hour light, with a shallow depth of field blurring the background, creating a sense of movement and spontaneity. Shot with a 35mm prime lens, hyper-detailed, photorealistic, fashion magazine cover quality.",
+      "resolution": "1K",
+      "aspect_ratio": "16:9",
+      "series_amount": "disabled",
+      "seed": 0,
+      "reference_images": [
+        "34",
+        0
+      ]
+    },
+    "class_type": "KlingOmniProImageNode",
+    "_meta": {
+      "title": "Kling 3.0 Omni Image"
+    }
+  },
+  "31": {
+    "inputs": {
+      "image": "vintage_portrait.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "32": {
+    "inputs": {
+      "image": "Urban_Fashion.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "34": {
+    "inputs": {
+      "inputcount": 10,
+      "Update inputs": null,
+      "image_1": [
+        "31",
+        0
+      ],
+      "image_2": [
+        "32",
+        0
+      ]
+    },
+    "class_type": "ImageBatchMulti",
+    "_meta": {
+      "title": "Image Batch Multi"
+    }
+  }
+}

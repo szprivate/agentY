@@ -1,0 +1,70 @@
+{
+  "36": {
+    "inputs": {
+      "model": "LTX-2 (Pro)",
+      "prompt": "A laundromat full of spinning machines, performers sitting on washing machines rap verses while others casually fold clothes in rhythm to the beat",
+      "duration": 8,
+      "resolution": "1920x1080",
+      "fps": 25,
+      "generate_audio": true,
+      "image": [
+        "47",
+        0
+      ]
+    },
+    "class_type": "LtxvApiImageToVideo",
+    "_meta": {
+      "title": "LTXV Image To Video"
+    }
+  },
+  "47": {
+    "inputs": {
+      "image": "api_ltxv_image_to_video_input_image.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "49": {
+    "inputs": {
+      "video": [
+        "36",
+        0
+      ]
+    },
+    "class_type": "GetVideoComponents",
+    "_meta": {
+      "title": "Get Video Components"
+    }
+  },
+  "50": {
+    "inputs": {
+      "frame_rate": [
+        "49",
+        2
+      ],
+      "loop_count": 0,
+      "filename_prefix": "AnimateDiff",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "49",
+        0
+      ],
+      "audio": [
+        "49",
+        1
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Video Combine 🎥🅥🅗🅢"
+    }
+  }
+}

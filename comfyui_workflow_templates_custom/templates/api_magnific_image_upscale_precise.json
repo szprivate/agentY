@@ -1,0 +1,42 @@
+{
+  "2": {
+    "inputs": {
+      "image": "young_woman_portrait.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "3": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "images": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "5": {
+    "inputs": {
+      "scale_factor": "2x",
+      "flavor": "photo",
+      "sharpen": 7,
+      "smart_grain": 7,
+      "ultra_detail": 30,
+      "auto_downscale": true,
+      "image": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "MagnificImageUpscalerPreciseV2Node",
+    "_meta": {
+      "title": "Magnific Image Upscale (Precise V2)"
+    }
+  }
+}

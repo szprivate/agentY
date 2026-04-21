@@ -1,0 +1,74 @@
+{
+  "41": {
+    "inputs": {
+      "model": "wan2.6-i2v",
+      "prompt": "A cinematic low-angle tracking shot follows a glossy red supercar speeding along a winding road at golden hour. The camera rides inches above the asphalt near the front wheel, locked to the car as trees and scenery streak into smooth motion blur, intense parallax and lens flare from the setting sun. The car body reflections flow like liquid, wheel spin blur, sharp subject with shallow depth of field, realistic lighting, 4K, 60fps, speed ramp, premium car commercial style.\n",
+      "negative_prompt": "low quality, blurry, out of focus, jittery camera, excessive shake, warped car body, deformed wheels, extra wheels, bad reflections, artifacts, banding, flicker, text, watermark, logo, oversaturated, noisy",
+      "resolution": "720P",
+      "duration": 5,
+      "seed": 212259147,
+      "generate_audio": true,
+      "prompt_extend": true,
+      "watermark": false,
+      "shot_type": "single",
+      "image": [
+        "42",
+        0
+      ]
+    },
+    "class_type": "WanImageToVideoApi",
+    "_meta": {
+      "title": "Wan Image to Video"
+    }
+  },
+  "42": {
+    "inputs": {
+      "image": "red_car.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "58": {
+    "inputs": {
+      "video": [
+        "41",
+        0
+      ]
+    },
+    "class_type": "GetVideoComponents",
+    "_meta": {
+      "title": "Get Video Components"
+    }
+  },
+  "59": {
+    "inputs": {
+      "frame_rate": [
+        "58",
+        2
+      ],
+      "loop_count": 0,
+      "filename_prefix": "AnimateDiff",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "58",
+        0
+      ],
+      "audio": [
+        "58",
+        1
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Video Combine 🎥🅥🅗🅢"
+    }
+  }
+}

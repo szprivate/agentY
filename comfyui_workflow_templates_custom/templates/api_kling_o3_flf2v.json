@@ -1,0 +1,111 @@
+{
+  "17": {
+    "inputs": {
+      "image": "ivory_rider_right_front_view.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "First Frame"
+    }
+  },
+  "32": {
+    "inputs": {
+      "model_name": "kling-v3-omni",
+      "prompt": "A graceful pale-haired girl in an ivory lace outfit and orange-tinted sunglasses rides a majestic white horse. The scene transitions from a calm, intimate close-up (first frame) to a dynamic, sweeping gallop across a sun-drenched desert (end frame). The horse’s mane flows with motion, and the desert landscape shifts from a soft, ethereal close-up to a vast, open expanse. The transition is smooth, maintaining the character’s and horse’s consistent appearance and style, with cinematic lighting and a dreamlike, otherworldly atmosphere.\n",
+      "duration": 5,
+      "resolution": "1080p",
+      "storyboards": "disabled",
+      "generate_audio": false,
+      "seed": 0,
+      "first_frame": [
+        "17",
+        0
+      ],
+      "end_frame": [
+        "34",
+        0
+      ],
+      "reference_images": [
+        "41",
+        0
+      ]
+    },
+    "class_type": "KlingOmniProFirstLastFrameNode",
+    "_meta": {
+      "title": "Kling 3.0 Omni First-Last-Frame to Video"
+    }
+  },
+  "34": {
+    "inputs": {
+      "image": "ivory_rider.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "End Frame"
+    }
+  },
+  "41": {
+    "inputs": {
+      "inputcount": 6,
+      "Update inputs": null,
+      "image_1": [
+        "42",
+        0
+      ]
+    },
+    "class_type": "ImageBatchMulti",
+    "_meta": {
+      "title": "Image Batch Multi"
+    }
+  },
+  "42": {
+    "inputs": {
+      "image": "ComfyUI_00003_.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "43": {
+    "inputs": {
+      "frame_rate": [
+        "44",
+        2
+      ],
+      "loop_count": 0,
+      "filename_prefix": "AnimateDiff",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "44",
+        0
+      ],
+      "audio": [
+        "44",
+        1
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Video Combine 🎥🅥🅗🅢"
+    }
+  },
+  "44": {
+    "inputs": {
+      "video": [
+        "32",
+        0
+      ]
+    },
+    "class_type": "GetVideoComponents",
+    "_meta": {
+      "title": "Get Video Components"
+    }
+  }
+}
