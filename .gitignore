@@ -9,6 +9,8 @@ build/
 
 # Official Comfy-Org workflow templates (cloned repo — large)
 comfyui_workflow_templates_official/
+comfyui_workflow_templates_official_deprecated/
+
 
 #Logs and outputs
 .logs/

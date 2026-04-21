@@ -76,3 +76,5 @@ If a matching entry exists, **apply the documented solution directly** instead o
 2026-04-21 | Kling3_multiShot validation fails until input images are uploaded to ComfyUI input directory | Upload input images to ComfyUI input directory before running update_workflow to ensure validation passes.
 
 2026-04-21 | Input images specified by path are inaccessible to ComfyUI nodes unless uploaded first. | Invoke upload_image tool for each input image path before validation or execution to ensure accessibility.
+
+2026-04-21 | update_workflow returns error status for Kling3_multiShot until input images are uploaded | Upload input images to ComfyUI input directory before calling update_workflow to ensure path validation
