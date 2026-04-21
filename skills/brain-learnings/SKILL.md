@@ -69,3 +69,6 @@ If a matching entry exists, **apply the documented solution directly** instead o
 2026-04-21 | Removing non-existent nodes from workflow caused errors | Verify node IDs exist before removing. Omit remove_nodes if template structure is unverified.
 2026-04-21 | Kling3 model node rejects custom pixel resolution strings | Use preset resolution values like '1080p' or '720p' instead of '1024x1024' in model inputs.
 2026-04-21 | Workflow inputs failed to reference file until uploaded first | Use upload_image tool to register files before patching workflow inputs with their file paths.
+
+2026-04-21 | LoadImage validation fails with filename only if image not uploaded to ComfyUI inputs | Always upload images to ComfyUI input directory via upload_image before setting custom filenames in LoadImage node; validation will reject filenames referencing local paths that dont exist in the input folder.
+2026-04-21 | multi_shot.storyboard_x_duration fields pre-populate with default count (6), must override only needed ones | When setting multi_shot durations for fewer shots than default, patch all fields including unused ones to a minimal value like 0 or keep default; validation may reject partial duration overrides.
