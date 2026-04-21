@@ -764,7 +764,7 @@ async def on_message(message: cl.Message) -> None:
             # ── Researcher start — open streaming step ────────────────────
             if event.get("_researcher_start"):
                 _in_researcher = True
-                _researcher_step = cl.Step(name="🔍 Researcher", type="tool")
+                _researcher_step = cl.Step(name="STEP 1: PREP: find template, gather inputs, nodes, parameters.", type="tool")
                 await _researcher_step.send()
                 continue
 
@@ -779,7 +779,7 @@ async def on_message(message: cl.Message) -> None:
             # ── Brain start — open streaming step ────────────────────────
             if event.get("_brain_start"):
                 _in_brain = True
-                _brain_step = cl.Step(name="🧠 Brain", type="tool")
+                _brain_step = cl.Step(name="STEP 2: building workflow", type="tool")
                 await _brain_step.send()
                 continue
 
