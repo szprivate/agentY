@@ -299,5 +299,31 @@
         }
       }
     ]
+  },
+  {
+    "templates": [
+      {
+        "name": "NanoBanana2_outpaintUpscale",
+        "models": [],
+        "io": {
+          "inputs": [
+            {
+              "nodeId": 5,
+              "nodeType": "LoadImage",
+              "file": "5609dfce-c4da-47a8-bb85-7908413f0c59.png",
+              "mediaType": "image"
+            }
+          ],
+          "outputs": [
+            {
+              "nodeId": 6,
+              "nodeType": "SaveImage",
+              "file": "",
+              "mediaType": "image"
+            }
+          ]
+        }
+      }
+    ]
   }
 ]

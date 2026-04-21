@@ -72,3 +72,7 @@ If a matching entry exists, **apply the documented solution directly** instead o
 
 2026-04-21 | LoadImage validation fails with filename only if image not uploaded to ComfyUI inputs | Always upload images to ComfyUI input directory via upload_image before setting custom filenames in LoadImage node; validation will reject filenames referencing local paths that dont exist in the input folder.
 2026-04-21 | multi_shot.storyboard_x_duration fields pre-populate with default count (6), must override only needed ones | When setting multi_shot durations for fewer shots than default, patch all fields including unused ones to a minimal value like 0 or keep default; validation may reject partial duration overrides.
+
+2026-04-21 | Kling3_multiShot validation fails until input images are uploaded to ComfyUI input directory | Upload input images to ComfyUI input directory before running update_workflow to ensure validation passes.
+
+2026-04-21 | Input images specified by path are inaccessible to ComfyUI nodes unless uploaded first. | Invoke upload_image tool for each input image path before validation or execution to ensure accessibility.

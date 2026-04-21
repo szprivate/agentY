@@ -26,6 +26,8 @@ Set `task.type` to `video i2v`.
 ### Prompt composition (replaces prompt-craft step 7)
 Count the number of shots the user asked for (max 6, default 2). Generate that many **DISTINCT** shot prompts following the formula below. Do not repeat the same prompt across shots.
 
+**Each individual shot prompt MUST NOT exceed 512 characters.** Count characters before finalising — trim adjectives or shorten camera descriptions if needed to stay within the limit.
+
 Store all shot prompts in the brainbriefing `prompt.positive` field as a **JSON array string**:
 ```
 ["<shot_1_prompt>", "<shot_2_prompt>", ...]
@@ -163,7 +165,7 @@ Shot 4: A tall woman with short copper hair, steel-blue lab coat, early 40s, sli
 | Motion doesn't complete | One action per shot; increase duration or simplify |
 | Shots feel disconnected | Missing end-frame handoff — add final position description |
 | Accessories disappear | Name them in character lock every shot |
-| Shot prompts ignored | Check `multi_shot` value matches shot count exactly, and that prompts are on `multi_shot.storyboard_N_prompt` inputs of node 12 |
+| `storyboard_N_prompt cannot be longer than 512 characters` | Researcher wrote a shot prompt that exceeds 512 characters. Shorten the affected shot prompt — trim camera description or style tags first — and re-patch node 12. |
 
 ---
 
