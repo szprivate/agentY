@@ -6,21 +6,17 @@
 #>
 
 # ---------------------------------------------------------------------------
-# PowerShell version guard  (must come before Set-StrictMode)
+# Step 0 — Re-launch with pwsh (PowerShell 7+) if running under Windows PowerShell 5
 # ---------------------------------------------------------------------------
 if ($PSVersionTable.PSVersion.Major -lt 7) {
-    Write-Host ""
-    Write-Host "  ERROR: This script requires PowerShell 7 or later." -ForegroundColor Red
-    Write-Host "  You are running PowerShell $($PSVersionTable.PSVersion)." -ForegroundColor Red
-    Write-Host ""
-    Write-Host "  How to upgrade:" -ForegroundColor Yellow
-    Write-Host "  - Windows (winget):  winget install --id Microsoft.PowerShell -e" -ForegroundColor White
-    Write-Host "  - Windows (manual):  https://aka.ms/install-powershell" -ForegroundColor White
-    Write-Host "  - macOS (brew):      brew install powershell" -ForegroundColor White
-    Write-Host ""
-    Write-Host "  After installing, relaunch with: pwsh .\install_agent.ps1" -ForegroundColor Cyan
-    Write-Host ""
-    exit 1
+    $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
+    if ($pwsh) {
+        & $pwsh.Source -File $PSCommandPath @args
+        exit $LASTEXITCODE
+    } else {
+        Write-Host "PowerShell 7+ (pwsh) is required. Install from https://aka.ms/powershell" -ForegroundColor Red
+        exit 1
+    }
 }
 
 Set-StrictMode -Version Latest
