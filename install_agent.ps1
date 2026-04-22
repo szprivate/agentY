@@ -1,9 +1,27 @@
-#Requires -Version 7
 <#
 .SYNOPSIS
     Cross-platform install script for the agentY project.
-    Works on Windows and macOS (pwsh 7+).
+    Works on Windows and macOS with PowerShell 7+.
+    On Windows PowerShell 5.1 the script exits early with upgrade instructions.
 #>
+
+# ---------------------------------------------------------------------------
+# PowerShell version guard  (must come before Set-StrictMode)
+# ---------------------------------------------------------------------------
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    Write-Host ""
+    Write-Host "  ERROR: This script requires PowerShell 7 or later." -ForegroundColor Red
+    Write-Host "  You are running PowerShell $($PSVersionTable.PSVersion)." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  How to upgrade:" -ForegroundColor Yellow
+    Write-Host "  - Windows (winget):  winget install --id Microsoft.PowerShell -e" -ForegroundColor White
+    Write-Host "  - Windows (manual):  https://aka.ms/install-powershell" -ForegroundColor White
+    Write-Host "  - macOS (brew):      brew install powershell" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  After installing, relaunch with: pwsh .\install_agent.ps1" -ForegroundColor Cyan
+    Write-Host ""
+    exit 1
+}
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -139,7 +157,9 @@ if (-not (Test-Path $VenvDir)) {
 }
 
 # Activate (cross-platform)
-if ($IsWindows) {
+# $IsWindows is a PS 7 automatic variable; fall back to OS detection for safety
+$onWindows = if (Test-Path Variable:\IsWindows) { $IsWindows } else { $true }
+if ($onWindows) {
     $ActivateScript = Join-Path $VenvDir "Scripts\Activate.ps1"
 } else {
     $ActivateScript = Join-Path $VenvDir "bin/Activate.ps1"
