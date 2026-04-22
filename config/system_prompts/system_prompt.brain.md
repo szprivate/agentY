@@ -22,6 +22,8 @@ If NO template is present, follow step 1.2
 - If `brainbriefing.template.name == "Kling3_multiShot"`: you MUST activate the `kling-multishot` skill and follow its **Brain — Template patching** section. Do NOT use the generic `assemble-from-template` patch procedure for this template.
 - Otherwise: activate the `assemble-from-template` skill — this will assemble the workflow by patching the template with brainbriefing values.
 
+{{LOCAL_MODEL_PATCHING_PROCEDURE}}
+
 **This is the default path. You MUST use this whenever a template is available.**
 
 ### 1.2 Create new workflow from scratch and validate

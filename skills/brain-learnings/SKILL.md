@@ -78,3 +78,5 @@ If a matching entry exists, **apply the documented solution directly** instead o
 2026-04-21 | Input images specified by path are inaccessible to ComfyUI nodes unless uploaded first. | Invoke upload_image tool for each input image path before validation or execution to ensure accessibility.
 
 2026-04-21 | update_workflow returns error status for Kling3_multiShot until input images are uploaded | Upload input images to ComfyUI input directory before calling update_workflow to ensure path validation
+
+2026-04-23 | update_workflow fails validation after patching with prompt_outputs_failed_validation error | When validation fails after patching, persist workflow JSON via write_text_file then call update_workflow with empty patches to reset state.

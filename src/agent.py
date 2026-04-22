@@ -766,6 +766,68 @@ def create_triage_agent(
     return agent
 
 
+# ---------------------------------------------------------------------------
+# Local-model patching procedure — injected into the Brain system prompt only
+# when the Brain is running on an Ollama (local) model.  The placeholder
+# {{LOCAL_MODEL_PATCHING_PROCEDURE}} in system_prompt.brain.md is replaced with
+# this text for Ollama sessions and removed (empty string) for Claude sessions.
+# ---------------------------------------------------------------------------
+_LOCAL_MODEL_PATCHING_PROCEDURE = """
+> **You are running as a local model. Ignore the `assemble-from-template` skill
+> reference above and follow the explicit procedure below instead.**
+
+## Template patching — follow this sequence exactly
+
+### Step 1: Load the template
+Call `get_workflow_template(brainbriefing.template.name)`.
+Note the returned `workflow_path` — use it in all subsequent calls.
+
+### Step 2: Patch input nodes
+For each entry in `brainbriefing.input_nodes`, call `update_workflow` with a single patch:
+- node_id: the entry's node_id (string)
+- input_name: the entry's slot field
+- value: the entry's path field (literal string — not a link array)
+
+### Step 3: Patch the positive prompt
+If `brainbriefing.positive_prompt_node_id` is not null, call `update_workflow`:
+- node_id: brainbriefing.positive_prompt_node_id
+- input_name: "text"
+- value: brainbriefing.prompt.positive
+
+### Step 4: Patch output nodes
+For each entry in `brainbriefing.output_nodes`:
+- If the node class is SaveImage: input_name is "filename_prefix"
+- Otherwise: input_name is "output_path"
+- value: the entry's output_path field
+
+### Step 5: Check validation result
+After every `update_workflow` call, read the response:
+- `"status": "ok"` and `"valid": true` → proceed
+- `"status": "error"` or any entries in `local_errors` or `server_errors` → read the
+  error messages, fix the identified node_id and input_name, retry immediately.
+  Do NOT call `signal_workflow_ready` until status is "ok".
+
+### Step 6: Signal ready
+Call `signal_workflow_ready(workflow_path)` as your final tool call.
+
+---
+
+## Critical: literal values vs. link arrays
+
+The template already has correct node connections. Do NOT modify them.
+
+- A **literal value** is a string, number, or boolean you set directly:
+  `{"node_id": "16", "input_name": "image", "value": "photo.png"}`
+
+- A **link array** `[src_node_id, slot_index]` connects one node's output to
+  another node's input. These are already set in the template.
+
+You are ONLY setting literal values from the brainbriefing.
+Never pass a link array as a patch value unless explicitly constructing a new connection.
+Never modify any node that is not listed in brainbriefing.input_nodes or brainbriefing.output_nodes.
+""".strip()
+
+
 def create_brain_agent(
     llm: str | None = None,
     ollama_model: str | None = None,
@@ -817,6 +879,10 @@ def create_brain_agent(
             or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
         )
     system_prompt = _load_system_prompt("brain")
+    # Inject explicit patching procedure for local (Ollama) models; remove the
+    # placeholder entirely for Claude so the skill-based instructions apply.
+    local_procedure = _LOCAL_MODEL_PATCHING_PROCEDURE if resolved_llm == "ollama" else ""
+    system_prompt = system_prompt.replace("{{LOCAL_MODEL_PATCHING_PROCEDURE}}", local_procedure)
 
     # Load skills from the project-level skills/ directory.
     skills_plugins: list = []
