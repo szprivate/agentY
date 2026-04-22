@@ -41,7 +41,34 @@ git clone https://github.com/szprivate/agentY.git
 cd agentY
 ```
 
-### 2. Create a virtual environment and install dependencies
+### 2. Run the install script (recommended)
+
+`install_agent.ps1` is a cross-platform PowerShell 7 script that handles the full setup in one step. It works on both Windows and macOS (`pwsh`).
+
+```powershell
+.\install_agent.ps1
+```
+
+What it does, in order:
+
+1. Preflight checks - verifies `uv`, Docker (CLI + daemon), Node.js, and `docker-compose.yml` are present
+2. Creates a `.venv` with `uv venv` if one does not already exist, then activates it
+3. Installs Python dependencies from `requirements.txt` plus `asyncpg` and `boto3`
+4. Copies `.env_example` to `.env` if no `.env` exists yet
+5. Prompts for a Chainlit username and password (masked input), generates a `CHAINLIT_AUTH_SECRET` via `chainlit create-secret`, and writes all three into `.env`
+6. Runs `docker compose up -d` and waits for MinIO and PostgreSQL to be healthy (up to 30 s each)
+7. Runs `npx prisma migrate deploy` to apply database migrations
+8. Prints a final summary with next steps
+
+Requirements: [uv](https://docs.astral.sh/uv/getting-started/installation/), Docker Desktop, Node.js, PowerShell 7+.
+
+---
+
+### Manual setup
+
+If you prefer to set things up step by step, continue below.
+
+### 3. Create a virtual environment and install dependencies
 
 ```bash
 python -m venv .venv
@@ -53,9 +80,10 @@ python -m venv .venv
 source .venv/bin/activate
 
 pip install -r requirements.txt
+pip install asyncpg boto3
 ```
 
-### 3. Set up PostgreSQL (Chainlit datalayer)
+### 4. Set up PostgreSQL (Chainlit datalayer)
 
 Chainlit uses a SQLAlchemy datalayer to persist conversation threads, messages, and file attachments. A running PostgreSQL instance is required.
 
@@ -75,7 +103,7 @@ Or point `DATABASE_URL` at any existing PostgreSQL instance you already have run
 
 Chainlit will create its tables automatically on first launch when `DATABASE_URL` is set.
 
-### 4. Set up MinIO (file storage)
+### 5. Set up MinIO (file storage)
 
 Uploaded files (images attached in chat) are persisted to **MinIO**, an S3-compatible object store that runs locally in Docker. The `docker-compose.yml` ships ready to use.
 
@@ -94,7 +122,7 @@ This starts two short-lived services:
 
 **Web console:** open [http://localhost:9001](http://localhost:9001) and log in with `minioadmin` / `minioadmin`.
 
-Default credentials (can be overridden with env vars — see step 5):
+Default credentials (can be overridden with env vars - see step 6):
 
 | Env var | Default |
 |---|---|
@@ -107,7 +135,7 @@ Default credentials (can be overridden with env vars — see step 5):
 
 ---
 
-### 5. Configure secrets
+### 6. Configure secrets
 
 Copy the example env file and fill in your values:
 
@@ -157,7 +185,9 @@ chainlit create-secret
 
 Paste the output into `CHAINLIT_AUTH_SECRET` in your `.env`.
 
-### 6. Configure defaults
+> `install_agent.ps1` handles steps 4-6 automatically, including secret generation and `.env` population.
+
+### 7. Configure defaults (optional)
 
 Edit `config/settings.json` to point to your ComfyUI instance and set default LLMs:
 
@@ -282,6 +312,16 @@ Then open [http://localhost:8000](http://localhost:8000) in your browser. Log in
 
 You can attach images directly in the chat — they are forwarded to ComfyUI as input assets.
 
+### Custom theme and UI
+
+The Chainlit UI ships with a custom dark/light theme and a global CSS override:
+
+- `public/theme.json` - defines the color palette (near-black backgrounds, blue accent) and sets **JetBrains Mono** as the UI font for both dark and light modes.
+- `public/stylesheet.css` - flattens all heading sizes to match body text (bold only, no size jump) and locks the entire UI to JetBrains Mono at 13 px.
+- `.chainlit/config.toml` - loads the stylesheet via `custom_css = "/public/stylesheet.css"` and the JS slash-commands helper via `custom_js = "/public/slash_commands.js"`.
+
+To change the theme, edit `public/theme.json`. The color values follow CSS HSL notation without the `hsl()` wrapper.
+
 ### Datalayer (chat persistence)
 
 When `DATABASE_URL` is set, Chainlit persists all conversation threads and messages to PostgreSQL via `SQLAlchemyDataLayer`. Uploaded files (images, etc.) are stored in **MinIO** via an S3-compatible storage client — both services are started automatically by `run_agent.ps1` when Docker is available.
@@ -358,10 +398,14 @@ agentY/
 ├── memory/                     FAISS index for long-term agent memory
 ├── output_images/              Generated outputs
 ├── output_workflows/           Archived workflow JSON files
-├── public/                     Static assets served by Chainlit
+├── public/
+│   ├── theme.json              Custom Chainlit dark/light theme (JetBrains Mono, blue accent)
+│   ├── stylesheet.css          Global CSS overrides (flattened headings, monospace UI)
+│   └── slash_commands.js       Slash-command definitions for the chat composer
 ├── chainlit.md                 Chainlit welcome screen content
 ├── .env_example                Template for .env secrets
 ├── requirements.txt
+├── install_agent.ps1           Cross-platform automated install script (pwsh 7+)
 ├── run_agent.ps1               Windows launcher (starts Chainlit GUI)
 ├── add_workflow.ps1            Register a custom workflow template
 └── remove_workflow.ps1         Remove a registered workflow template

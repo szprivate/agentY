@@ -1,0 +1,20 @@
+/* Flatten all headings to match body — bold only, no size jump */
+h1, h2, h3, h4, h5, h6 {
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  line-height: 1.4 !important;
+  letter-spacing: 0 !important;
+}
+
+/* Lock everything to the same base size and typeface */
+*, *::before, *::after {
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 13px !important;
+}
+
+/* Restore relative sizing for things that need it */
+.text-xs, small { font-size: 11px !important; }
+
+/* Code blocks shouldn't double-up on monospace weirdness */
+pre, code, kbd { font-family: 'JetBrains Mono', monospace !important; }
