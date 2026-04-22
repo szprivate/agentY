@@ -1675,6 +1675,35 @@ class Pipeline:
         if self._verbose:
             print(f"pipeline: Brain history compressed → {len(summary)} chars summary.")
 
+        # Inject the output paths into the Researcher's history so that on the
+        # next chain/follow-up request the Researcher knows which files were
+        # produced (executor runs outside the Researcher loop, so they never
+        # appear in its messages otherwise).
+        _effective_out_paths = extra_output_paths or list(self._session.current_output_paths)
+        if _effective_out_paths:
+            _out_str = ", ".join(_effective_out_paths)
+            self._researcher.messages.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "text": (
+                                f"[Session output update] The executor produced the following "
+                                f"output file(s) in the last step: {_out_str}. "
+                                "If the user refers to 'last output', 'the result', or asks to "
+                                "chain/continue with the generated file, use these paths as input."
+                            )
+                        }
+                    ],
+                }
+            )
+            self._researcher.messages.append(
+                {
+                    "role": "assistant",
+                    "content": [{"text": f"Understood. I will use {_out_str} as input when the user refers to the previous output."}],
+                }
+            )
+
     def _record_chat_summary(
         self,
         user_text: str,
