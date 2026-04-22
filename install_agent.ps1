@@ -33,22 +33,22 @@ $ErrorActionPreference = "Stop"
 function Write-Header {
     param([string]$Text)
     Write-Host ""
-    Write-Host "━━━  $Text  ━━━" -ForegroundColor Cyan
+    Write-Host "---  $Text  ---" -ForegroundColor Cyan
 }
 
 function Write-Success {
     param([string]$Text)
-    Write-Host "  ✔  $Text" -ForegroundColor Green
+    Write-Host "  [ok] $Text" -ForegroundColor Green
 }
 
 function Write-Info {
     param([string]$Text)
-    Write-Host "  ℹ  $Text" -ForegroundColor Yellow
+    Write-Host "  [i]  $Text" -ForegroundColor Yellow
 }
 
 function Write-Fail {
     param([string]$Text)
-    Write-Host "  ✖  $Text" -ForegroundColor Red
+    Write-Host "  [!]  $Text" -ForegroundColor Red
 }
 
 function Exit-WithError {
@@ -357,12 +357,12 @@ Write-Header "8 / 8  Setup complete"
 Write-Host ""
 Write-Host "  agentY is ready to go!  Here's what was set up:" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  • Python .venv created and dependencies installed" -ForegroundColor White
-Write-Host "  • .env created and Chainlit auth credentials written" -ForegroundColor White
-Write-Host "  • MinIO and PostgreSQL containers are running" -ForegroundColor White
-Write-Host "  • Prisma migrations applied" -ForegroundColor White
+Write-Host "  * Python .venv created and dependencies installed" -ForegroundColor White
+Write-Host "  * .env created and Chainlit auth credentials written" -ForegroundColor White
+Write-Host "  * MinIO and PostgreSQL containers are running" -ForegroundColor White
+Write-Host "  * Prisma migrations applied" -ForegroundColor White
 Write-Host ""
-Write-Host "  ─── Next steps ──────────────────────────────────────────────" -ForegroundColor DarkGray
+Write-Host "  --- Next steps ---" -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "  1. Fill in remaining API keys in .env before the first run" -ForegroundColor Yellow
 Write-Host "     (HF_TOKEN, ANTHROPIC_API_KEY, COMFYUI_API_KEY, etc.)" -ForegroundColor DarkGray
@@ -375,5 +375,5 @@ Write-Host "     Credentials:    minioadmin / minioadmin" -ForegroundColor DarkG
 Write-Host ""
 Write-Host "  4. Prisma Studio:  npx prisma studio" -ForegroundColor Yellow
 Write-Host ""
-Write-Host "  ─────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
+Write-Host "  ------------------------------------------------------------" -ForegroundColor DarkGray
 Write-Host ""
