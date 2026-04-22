@@ -25,13 +25,13 @@
   "llm": {
     
     "pipeline": {
-      "researcher": "ollama,qwen3.6:27b",
-      "brain": "ollama,qwen3.6:27b",
-      "triage": "ollama,qwen3.6:27b",
-      "info": "ollama,qwen3.6:27b",
+      "researcher": "claude,claude-haiku-4-5",
+      "brain": "claude,claude-haiku-4-5",
+      "triage": "claude,claude-haiku-4-5",
+      "info": "claude,claude-haiku-4-5",
       "planner": "ollama,qwen3.5:9b",
       "learnings": "ollama,qwen3.5:9b",
-      "error_checker": "ollama,qwen3.6:27b",
+      "error_checker": "claude,claude-haiku-4-5",
       "llm_functions": "qwen3.5:9b",
       "executor_vision_model": "qwen3.5:9b"
     },
