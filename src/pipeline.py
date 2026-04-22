@@ -304,6 +304,11 @@ class Pipeline:
         # Brainbriefing JSON from the most recent Researcher run; used by the
         # Executor for Vision QA comparison in follow-up / feedback-loop rounds.
         self._last_brainbriefing_json: str | None = None
+        # Compressed summary text from the previous turn, cached so it can be
+        # injected into the Researcher on the NEXT turn regardless of triage intent.
+        # This is the authoritative source for OUTPUT_PATHS / INPUT_PATHS_USER_MESSAGE
+        # that bridges chained sessions even when triage says "new_request".
+        self._last_prior_summary: str | None = None
         # Whether the current turn requested an explicit Vision QA pass.
         self._run_qa: bool = False
         # Bind the memory tools module-level session so memory_read / memory_write
@@ -1605,7 +1610,11 @@ class Pipeline:
             print(f"pipeline: Compressing Brain history ({msg_count} messages) …")
 
         try:
-            summary = await summarize_conversation(messages, extra_output_paths=extra_output_paths)
+            summary = await summarize_conversation(
+                messages,
+                extra_output_paths=extra_output_paths,
+                user_message_image_paths=self._session.last_user_input_images or None,
+            )
         except Exception as exc:
             if self._verbose:
                 print(f"pipeline: WARNING: conversation summarisation failed ({exc}); "
@@ -1646,6 +1655,21 @@ class Pipeline:
 
         print(f"pipeline: Chat summary:\n{summary}\n")
 
+        # ── Log compressed summary to file ──────────────────────────────────
+        try:
+            import datetime
+            _log_dir = Path(".logs")
+            _log_dir.mkdir(parents=True, exist_ok=True)
+            _log_path = _log_dir / "message_history_compressed.log"
+            _timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with open(_log_path, "a", encoding="utf-8") as _lf:
+                _lf.write(f"\n{'='*80}\n[{_timestamp}] SESSION: {self._session.session_id}\n{'='*80}\n")
+                _lf.write(summary)
+                _lf.write("\n")
+        except Exception as _log_exc:
+            if self._verbose:
+                print(f"pipeline: WARNING: failed to write compressed log ({_log_exc})")
+
         # Replace the entire history with a single summary message.
         # Using an "assistant" message so the agent treats it as its own
         # prior context rather than a new user instruction.
@@ -1674,6 +1698,8 @@ class Pipeline:
 
         if self._verbose:
             print(f"pipeline: Brain history compressed → {len(summary)} chars summary.")
+        # Cache the summary so the Researcher can reference it next turn.
+        self._last_prior_summary = summary
 
     def _record_chat_summary(
         self,
@@ -1802,6 +1828,18 @@ class Pipeline:
                 for p in self._session.last_user_input_images
             )
             researcher_prompt_text += f"\n\nInput image(s) from earlier in this thread:\n{_paths_hint}"
+
+        # Inject the compressed summary from the previous turn so the Researcher
+        # can resolve OUTPUT_PATHS (prior generated files) as inputs for this turn.
+        # This bridges chained sessions regardless of how triage classified the intent.
+        if self._last_prior_summary:
+            researcher_prompt_text += (
+                f"\n\n[CONVERSATION SUMMARY FROM PRIOR ROUND]\n\n"
+                f"{self._last_prior_summary}\n\n"
+                f"[END OF SUMMARY — if this request refers to previously generated outputs, "
+                f"upload the file(s) from OUTPUT_PATHS via upload_image() and use the "
+                f"returned filename as the workflow input.]"
+            )
 
         # If the previous turn was handled by the Info agent (e.g. it crafted a prompt),
         # pass only the key output as a compact hint so the Researcher can reuse it.
@@ -1932,6 +1970,18 @@ class Pipeline:
                 for p in self._session.last_user_input_images
             )
             researcher_prompt_text += f"\n\nInput image(s) from earlier in this thread:\n{_paths_hint}"
+
+        # Inject the compressed summary from the previous turn so the Researcher
+        # can resolve OUTPUT_PATHS (prior generated files) as inputs for this turn.
+        # This bridges chained sessions regardless of how triage classified the intent.
+        if self._last_prior_summary:
+            researcher_prompt_text += (
+                f"\n\n[CONVERSATION SUMMARY FROM PRIOR ROUND]\n\n"
+                f"{self._last_prior_summary}\n\n"
+                f"[END OF SUMMARY — if this request refers to previously generated outputs, "
+                f"upload the file(s) from OUTPUT_PATHS via upload_image() and use the "
+                f"returned filename as the workflow input.]"
+            )
 
         # Always pass only the text prompt to the Researcher.
         # When user_input is a multimodal list, the text block already contains

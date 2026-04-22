@@ -61,6 +61,11 @@ Map user-provided image paths/filenames into the brainbriefing.
 **Constraints:**
 - You MUST list each input image filename under `input_images[].filename`.
 - `input_image_count` MUST equal the exact length of `input_images`.
+- **Prior-session outputs as inputs**: If the conversation summary (injected as `[CONVERSATION SUMMARY FROM PRIOR ROUND]`) contains an `OUTPUT_PATHS` line, and the current task requires one of those files as input (e.g. "use the image we just generated"), you MUST:
+  1. Call `upload_image(file_path=<full path from OUTPUT_PATHS>)` for each such file.
+  2. Use the `name` value returned by `upload_image` as the `filename` in `input_images` and `input_nodes`.
+  3. Set `path` in `input_nodes` to the original full path from `OUTPUT_PATHS`.
+  - **Never guess or fabricate filenames** — always upload and use the returned name.
 
 ---
 
@@ -78,9 +83,11 @@ Locate the workflow node that receives the positive text prompt.
 Identify all output nodes in the selected workflow template.
 
 **Constraints:**
-- You MUST use the `output-paths` skill for the correct `output_path` mapping per task type.
+- You MUST call `get_comfyui_dirs()` to obtain the server's `output_dir`.
 - Output nodes are those with `is_output_node: true` (e.g. `SaveImage`, `VHS_VideoCombine`, `SaveAudio`).
 - You MUST include every output node from `io.outputs` as an entry in the `output_nodes` array.
+- For each output node, set `output_path` to `<output_dir>/<task_subfolder>` where `task_subfolder` is a short, snake_case description of the task (e.g. `image_generation`, `video_i2v`, `image_edit`). This is the authoritative directory where ComfyUI will save results.
+- You MUST use the `output-paths` skill only for `task_subfolder` naming guidance — the base directory MUST always come from `get_comfyui_dirs().output_dir`.
 
 ---
 

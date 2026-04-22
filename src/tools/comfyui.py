@@ -475,6 +475,63 @@ def get_system_stats() -> str:
 
 
 @tool
+def get_comfyui_dirs() -> str:
+    """Return the authoritative ComfyUI server directory paths.
+
+    Queries ``/system_stats`` and extracts the ``--input-directory``,
+    ``--output-directory``, and ``--user-directory`` flags from the server's
+    argv.  Falls back to ComfyUI's compiled-in defaults when a flag is absent.
+
+    Use this tool to resolve:
+    - Where uploaded images land after ``upload_image()`` (input_dir).
+    - Where ComfyUI will save generated outputs (output_dir) — use this path
+      when populating ``output_nodes[].output_path`` in the brainbriefing.
+    - Where workflow JSON files are stored (user_dir/workflows/).
+
+    Returns a JSON object with keys ``input_dir``, ``output_dir``, ``user_dir``,
+    and ``source`` ("argv" when resolved from server flags, "default" otherwise).
+    """
+    try:
+        stats = get_client().get("/system_stats")
+        if not isinstance(stats, dict):
+            return json.dumps({"error": "Unexpected /system_stats response format"})
+
+        argv: list = stats.get("system", {}).get("argv", [])
+        result: dict[str, str] = {"source": "argv"}
+
+        for arg in argv:
+            if not isinstance(arg, str):
+                continue
+            if arg.startswith("--input-directory="):
+                result["input_dir"] = arg.split("=", 1)[1]
+            elif arg.startswith("--output-directory="):
+                result["output_dir"] = arg.split("=", 1)[1]
+            elif arg.startswith("--user-directory="):
+                result["user_dir"] = arg.split("=", 1)[1]
+
+        # Fill in missing dirs with ComfyUI's conventional defaults
+        # (relative to where the server was launched from, typically the ComfyUI root).
+        if "input_dir" not in result or "output_dir" not in result or "user_dir" not in result:
+            result["source"] = "partial_argv_with_defaults"
+            # Try to infer the ComfyUI root from the argv[0] path
+            comfy_root: str | None = None
+            if argv:
+                import os as _os
+                comfy_root = str(Path(argv[0]).parent.resolve()) if argv[0] else None
+
+            if "input_dir" not in result:
+                result["input_dir"] = str(Path(comfy_root) / "input") if comfy_root else "unknown"
+            if "output_dir" not in result:
+                result["output_dir"] = str(Path(comfy_root) / "output") if comfy_root else "unknown"
+            if "user_dir" not in result:
+                result["user_dir"] = str(Path(comfy_root) / "user") if comfy_root else "unknown"
+
+        return json.dumps(result)
+    except Exception as exc:
+        return json.dumps({"error": str(exc)})
+
+
+@tool
 def get_logs(keyword: str = "", max_lines: int = 100) -> str:
     """Get ComfyUI server runtime logs. Useful for debugging errors, missing nodes, and tracebacks.
 

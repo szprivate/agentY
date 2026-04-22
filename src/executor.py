@@ -102,35 +102,10 @@ def _get_comfyui_user_dir() -> Path | None:
     return None
 
 
-def _archive_input_images(input_image_paths: list[Path]) -> None:
-    """Copy input images to the ComfyUI output directory under the configured subfolder.
-
-    The subfolder name is read from ``input_archive_subdir`` in settings.json
-    (default ``"agentIn"``).  Silently skips files that cannot be copied.
-    Does nothing when the ComfyUI output directory cannot be resolved.
-    """
-    import shutil
-
-    if not input_image_paths:
-        return
-
-    comfy_out = _get_comfyui_output_dir()
-    if comfy_out is None:
-        logger.debug("executor: _archive_input_images: ComfyUI output dir unknown, skipping")
-        return
-
-    cfg = _load_config()
-    subdir_name = cfg.get("input_archive_subdir", "agentIn")
-    dest_dir = comfy_out / subdir_name
-    dest_dir.mkdir(parents=True, exist_ok=True)
-
-    for src in input_image_paths:
-        try:
-            dest = dest_dir / src.name
-            shutil.copy2(src, dest)
-            logger.info("executor: archived input image %s → %s", src, dest)
-        except Exception as exc:
-            logger.warning("executor: could not archive input image %s — %s", src, exc)
+# _archive_input_images removed: input files are uploaded to ComfyUI via the
+# upload_image tool and live in ComfyUI's --input-directory; no secondary copy
+# is needed.  The upload filename is captured in the conversation history and
+# summarised into INPUT_PATHS so subsequent sessions can reference it.
 
 
 def _copy_workflow_to_user_dir(workflow_path: str) -> None:
@@ -168,24 +143,9 @@ def _copy_workflow_to_user_dir(workflow_path: str) -> None:
         logger.warning("executor: could not copy workflow to user dir — %s", exc)
 
 
-def _resolve_brainbriefing_output_dir(brainbriefing: dict) -> Path | None:
-    """Return the output directory specified by the researcher's brainbriefing.
-
-    Reads the first ``output_nodes[].output_path`` value and resolves it
-    relative to ComfyUI's configured ``--output-directory`` (from ``/system_stats``).
-    Falls back to the agent project root when the ComfyUI output dir is unavailable.
-    Returns ``None`` when no output_path is set in the brainbriefing.
-    """
-    try:
-        nodes = brainbriefing.get("output_nodes", [])
-        if nodes and isinstance(nodes, list):
-            output_path = nodes[0].get("output_path", "") if isinstance(nodes[0], dict) else ""
-            if output_path:
-                base = _get_comfyui_output_dir() or _project_root()
-                return (base / output_path).resolve()
-    except Exception as exc:
-        logger.debug("executor: could not resolve brainbriefing output_path — %s", exc)
-    return None
+# _resolve_brainbriefing_output_dir removed: output files are now always kept
+# in ComfyUI's --output-directory; _resolve_output_path returns their
+# authoritative on-disk path directly from /system_stats without copying.
 
 
 def _load_qa_prompts() -> dict[str, str]:
@@ -277,43 +237,42 @@ def _extract_output_files(history: dict) -> list[dict]:
     return files
 
 
-def _copy_output(
+def _resolve_output_path(
     filename: str,
     subfolder: str = "",
     image_type: str = "output",
-    *,
-    dest_dir: Path | None = None,
 ) -> Path:
-    """Copy *filename* from ComfyUI's output directory to *dest_dir* and return the local path.
+    """Return the authoritative on-disk path for a ComfyUI output file.
 
-    Resolution order for the source:
-      1. ComfyUI's configured ``--output-directory`` (queried via ``/system_stats``).
-      2. Falls back to downloading via ``/view`` when the directory cannot be determined
-         or the file is not found on disk.
+    Files are **never copied**.  Resolution order:
 
-    Resolution order for the destination:
-      1. *dest_dir* argument (from the brainbriefing's ``output_nodes[].output_path``).
-      2. Falls back to the agent's ``output_dir`` from settings.json.
+    1. ComfyUI's configured ``--output-directory`` (queried via ``/system_stats``).
+       If the file exists there it is returned as-is so that ``collected_paths``
+       always reflects the real server location.
+    2. Falls back to downloading via ``/view`` into the agent's ``output_dir``
+       (from settings.json) when ComfyUI is remote or the file is not on disk.
+
+    This means ``OUTPUT_PATHS`` in the compressed summary are always real,
+    accessible paths that the next session's Researcher can pass directly to
+    ``upload_image()``.
     """
-    import shutil
-
-    # --- determine destination -------------------------------------------------
-    effective_dest_dir = dest_dir if dest_dir is not None else _output_dir()
-    effective_dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = effective_dest_dir / filename
-
-    # --- try copy from ComfyUI output dir on disk ------------------------------
+    # --- try the ComfyUI output dir on disk ------------------------------------
     comfy_out = _get_comfyui_output_dir()
     if comfy_out is not None:
         src = comfy_out / subfolder / filename if subfolder else comfy_out / filename
         if src.exists():
-            shutil.copy2(src, dest)
-            logger.info("executor: copied output %s → %s (%d bytes)", src, dest, dest.stat().st_size)
-            return dest
-        logger.debug("executor: file not found in ComfyUI output dir (%s), falling back to /view", src)
+            logger.info("executor: output located at %s (%d bytes)", src, src.stat().st_size)
+            return src
+        logger.debug(
+            "executor: %s not found in ComfyUI output dir, falling back to /view", src
+        )
 
-    # --- fallback: download via /view ------------------------------------------
+    # --- fallback: download via /view to local output_dir ---------------------
     from src.utils.comfyui_client import get_client
+
+    fallback_dir = _output_dir()
+    fallback_dir.mkdir(parents=True, exist_ok=True)
+    dest = fallback_dir / filename
 
     params: dict = {"filename": filename, "type": image_type}
     if subfolder:
@@ -488,20 +447,13 @@ async def _process_completed_job(
     except Exception as exc:
         logger.debug("executor: could not resolve input image paths from brainbriefing — %s", exc)
 
-    # Copy input images to ComfyUI's output directory for reference/archival.
-    _archive_input_images(input_image_paths)
-
     output_files = _extract_output_files(history)
     if not output_files:
         yield f"{pfx}⚠️ No output files found in ComfyUI history."
         logger.warning("executor: no output files in history for prompt_id=%s", prompt_id)
         return
 
-    # Resolve the destination directory from the brainbriefing output_nodes.
-    bb_dest_dir = _resolve_brainbriefing_output_dir(brainbriefing)
-    if bb_dest_dir is None:
-        logger.debug("executor: no output_path in brainbriefing, using fallback output_dir")
-
+    # Resolve each output file's authoritative on-disk path (no copying).
     saved_paths: list[Path] = []
     for item in output_files:
         filename = item.get("filename", "")
@@ -510,12 +462,12 @@ async def _process_completed_job(
         if not filename:
             continue
         try:
-            dest = _copy_output(filename, subfolder, file_type, dest_dir=bb_dest_dir)
-            saved_paths.append(dest)
-            yield f"{pfx}💾 Saved `{filename}` → `{dest}`"
+            output_path = _resolve_output_path(filename, subfolder, file_type)
+            saved_paths.append(output_path)
+            yield f"{pfx}💾 Output: `{output_path}`"
         except Exception as exc:
-            yield f"{pfx}⚠️ Could not save `{filename}`: {exc}"
-            logger.warning("executor: save failed for %s — %s", filename, exc)
+            yield f"{pfx}⚠️ Could not resolve `{filename}`: {exc}"
+            logger.warning("executor: resolve failed for %s — %s", filename, exc)
 
     if not saved_paths:
         yield f"{pfx}❌ All output downloads failed."

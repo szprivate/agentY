@@ -76,19 +76,20 @@ You will receive the full message history of an agent conversation (user
 requests, assistant actions, tool calls, tool results, etc.), plus a block
 of already-extracted metadata (authoritative — do not change those values).
 
-Your task: output EXACTLY six labeled lines, in this order:
+Your task: output EXACTLY seven labeled lines, in this order:
 
 TASK: <3–8 word production summary, e.g. "image edit, then upscale" | "image generation" | "video i2v" | "downsize, image edit, upscale">
 TEMPLATE: <value from extracted metadata — copy verbatim, do NOT change>
 WORKFLOW_FILE: <value from extracted metadata — copy verbatim, do NOT change>
 INPUT_PATHS: <value from extracted metadata — copy verbatim, do NOT change>
+INPUT_PATHS_USER_MESSAGE: <value from extracted metadata — copy verbatim, do NOT change>
 OUTPUT_PATHS: <value from extracted metadata — copy verbatim, do NOT change>
 PATCHES: <value from extracted metadata — copy verbatim, do NOT change>
 
 Rules:
-- Output ONLY the six labeled lines — no preamble, no markdown, no blank lines between them.
+- Output ONLY the seven labeled lines — no preamble, no markdown, no blank lines between them.
 - TASK: extremely brief (≤8 words). Describe the production pipeline, not internal steps.
-- TEMPLATE, WORKFLOW_FILE, INPUT_PATHS, OUTPUT_PATHS, PATCHES: always copy verbatim from the extracted metadata block."""
+- TEMPLATE, WORKFLOW_FILE, INPUT_PATHS, INPUT_PATHS_USER_MESSAGE, OUTPUT_PATHS, PATCHES: always copy verbatim from the extracted metadata block."""
 
 # Hard cap on raw conversation text fed to the summariser to avoid
 # blowing up the context window of the small Qwen model.
@@ -387,13 +388,14 @@ def _archive_workflow(workflow_path: str | None, template_name: str | None) -> s
 async def summarize_conversation(
     messages: list[dict],
     extra_output_paths: list[str] | None = None,
+    user_message_image_paths: list[str] | None = None,
 ) -> str:
     """Summarise a Strands Agent message list into a compact structured block.
 
     Uses the cheap Qwen model (configured in ``settings.json`` under
     ``llm.pipeline.llm_functions``) so this adds virtually no cost.
 
-    The summary is a six-line labelled block:
+    The summary is a seven-line labelled block:
 
     .. code-block:: text
 
@@ -401,6 +403,7 @@ async def summarize_conversation(
         TEMPLATE: image_editing_for_still_images_using_references.model_qwen
         WORKFLOW_FILE: ./output_workflows/20260404_123456_image_editing.json
         INPUT_PATHS: /path/to/input.jpg
+        INPUT_PATHS_USER_MESSAGE: /path/to/original_upload.jpg
         OUTPUT_PATHS: ./output/result.png
         PATCHES: Node 6.text → 'a photograph of ...', Node 190.image → 'input.png'
 
@@ -408,6 +411,12 @@ async def summarize_conversation(
     ----------
     messages:
         The full ``agent.messages`` list from a Strands Agent.
+    extra_output_paths:
+        Executor-produced file paths not visible in the Brain's message history.
+    user_message_image_paths:
+        Original file paths of images the user attached to their message
+        (from ``AgentSession.last_user_input_images``).  Always captured
+        verbatim so the next session can use them as authoritative input paths.
 
     Returns
     -------
@@ -433,6 +442,13 @@ async def summarize_conversation(
                 all_output_paths.append(p)
     output_paths_str = ", ".join(all_output_paths) if all_output_paths else "none"
 
+    # ── User-message image paths (authoritative, never extracted from tool calls) ─
+    user_img_paths_str = (
+        ", ".join(user_message_image_paths)
+        if user_message_image_paths
+        else "none"
+    )
+
     # ── Build hint block injected into the LLM prompt ────────────────────
     patches_str = ", ".join(extracted["patch_changes"]) if extracted["patch_changes"] else "none"
     input_paths_str = ", ".join(extracted["input_paths"]) if extracted["input_paths"] else "none"
@@ -450,6 +466,7 @@ async def summarize_conversation(
         f"TEMPLATE (authoritative): {template_display}",
         f"WORKFLOW_FILE (authoritative): {workflow_file}",
         f"INPUT_PATHS (authoritative): {input_paths_str}",
+        f"INPUT_PATHS_USER_MESSAGE (authoritative): {user_img_paths_str}",
         f"OUTPUT_PATHS (authoritative): {output_paths_str}",
         f"PATCHES (authoritative): {patches_str}",
     ]
@@ -490,6 +507,7 @@ async def summarize_conversation(
             f"TEMPLATE: {template_display}\n"
             f"WORKFLOW_FILE: {workflow_file}\n"
             f"INPUT_PATHS: {input_paths_str}\n"
+            f"INPUT_PATHS_USER_MESSAGE: {user_img_paths_str}\n"
             f"OUTPUT_PATHS: {output_paths_str}\n"
             f"PATCHES: {patches_str}"
         )

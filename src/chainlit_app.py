@@ -225,7 +225,8 @@ def _reset_pipeline_state(pipeline) -> None:
     """Wipe all per-conversation state from the shared pipeline singleton.
 
     Called when a new thread starts so no history from a previous chat leaks
-    in.  Clears brain.messages, AgentSession, and cached researcher output.
+    in.  Clears brain.messages, AgentSession, cached researcher output, and
+    the prior-session summary used to chain turns.
     """
     brain = getattr(pipeline, "_brain", None)
     if brain is not None and hasattr(brain, "messages"):
@@ -235,6 +236,7 @@ def _reset_pipeline_state(pipeline) -> None:
     session_id = getattr(existing_session, "session_id", "default") if existing_session else "default"
     pipeline._session = AgentSession(session_id=session_id)  # noqa: SLF001
     pipeline._last_brainbriefing_json = None  # noqa: SLF001
+    pipeline._last_prior_summary = None  # noqa: SLF001
 
 
 def _save_thread_state(pipeline) -> None:
@@ -254,6 +256,10 @@ def _save_thread_state(pipeline) -> None:
     cl.user_session.set(
         "last_brainbriefing_json",
         getattr(pipeline, "_last_brainbriefing_json", None),
+    )
+    cl.user_session.set(
+        "last_prior_summary",
+        getattr(pipeline, "_last_prior_summary", None),
     )
 
 
@@ -281,6 +287,9 @@ def _restore_thread_state(pipeline) -> None:
 
     pipeline._last_brainbriefing_json = cl.user_session.get(  # noqa: SLF001
         "last_brainbriefing_json"
+    )
+    pipeline._last_prior_summary = cl.user_session.get(  # noqa: SLF001
+        "last_prior_summary"
     )
 
 

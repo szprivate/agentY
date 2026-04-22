@@ -20,6 +20,7 @@ from src.tools.comfyui import (  # noqa: F401
     # Diagnostics
     get_logs,
     get_system_stats,
+    get_comfyui_dirs,
     # Prompt submission
     submit_prompt,
     # Workflow handoff (replaces submit_prompt for the Brain)
@@ -83,16 +84,17 @@ INFO_TOOLS: list = [
 ]
 
 # ---------------------------------------------------------------------------
-# Researcher tools – read-only resolution (template lookup, model listing).
-# No workflow execution or I/O side-effects.
+# Researcher tools – template lookup, asset upload, model resolution.
 # ---------------------------------------------------------------------------
 RESEARCHER_TOOLS: list = [
     get_workflow_catalog,
     get_workflow_template,
     get_model_types,
+    get_comfyui_dirs,
     read_text_file,
     get_image_resolution,
     analyze_image,
+    upload_image,  # needed to stage prior-session outputs as new inputs
     run_script,  # needed for skills (e.g. image-downsize)
     iterate,
     calculator,
@@ -119,6 +121,8 @@ BRAIN_TOOLS: list = [
     get_models_in_folder,
     get_node_schema,
     get_workflow_node_info,
+    # Server directories (resolve authoritative output path)
+    get_comfyui_dirs,
     # Upload input images
     upload_image,
     get_image_resolution,
