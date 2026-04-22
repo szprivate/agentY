@@ -5,6 +5,20 @@
     Works on Windows and macOS (pwsh 7+).
 #>
 
+# ---------------------------------------------------------------------------
+# Step 0 — Re-launch with pwsh (PowerShell 7+) if running under Windows PowerShell 5
+# ---------------------------------------------------------------------------
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
+    if ($pwsh) {
+        & $pwsh.Source -File $PSCommandPath @args
+        exit $LASTEXITCODE
+    } else {
+        Write-Host "PowerShell 7+ (pwsh) is required. Install from https://aka.ms/powershell" -ForegroundColor Red
+        exit 1
+    }
+}
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
