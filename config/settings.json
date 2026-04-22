@@ -12,8 +12,11 @@
   },
   "comfyui_workflows_dir": "./comfyui_workflows/",
   "comfyui_custom_templates_dir": "./comfyui_workflow_templates_custom/templates/",
+  // these three directories are fallback options, if no --output-directory and --user-directory is specified when running comfyui, the outputs and user data will be stored in these directories
   "output_dir": "./output_images/",
   "output_workflows_dir": "./output_workflows/",
+  "input_archive_subdir": "agentIn",
+  "comfyui_user_dir": "D:\\ai\\ComfyUI\\user\\default",
   "message_history_log": "./.logs/message_history.log",
   "tokens_usage_log": "./.logs/tokens_usage.log",
   "comfyui_poll_interval_s": 1,

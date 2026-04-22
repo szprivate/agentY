@@ -81,6 +81,93 @@ def _get_comfyui_output_dir() -> Path | None:
     return None
 
 
+def _get_comfyui_user_dir() -> Path | None:
+    """Query ComfyUI's /system_stats endpoint to find its configured user directory.
+
+    Mirrors the logic in test.py: looks for ``--user-directory=<path>`` in the
+    server's argv.  Returns ``None`` if the API is unreachable or the flag is absent.
+    """
+    try:
+        from src.utils.comfyui_client import get_client
+
+        client = get_client()
+        stats = client.get("/system_stats")
+        if isinstance(stats, dict):
+            argv = stats.get("system", {}).get("argv", [])
+            for arg in argv:
+                if isinstance(arg, str) and arg.startswith("--user-directory="):
+                    return Path(arg.split("=", 1)[1]).resolve()
+    except Exception as exc:
+        logger.debug("executor: could not query ComfyUI user dir — %s", exc)
+    return None
+
+
+def _archive_input_images(input_image_paths: list[Path]) -> None:
+    """Copy input images to the ComfyUI output directory under the configured subfolder.
+
+    The subfolder name is read from ``input_archive_subdir`` in settings.json
+    (default ``"agentIn"``).  Silently skips files that cannot be copied.
+    Does nothing when the ComfyUI output directory cannot be resolved.
+    """
+    import shutil
+
+    if not input_image_paths:
+        return
+
+    comfy_out = _get_comfyui_output_dir()
+    if comfy_out is None:
+        logger.debug("executor: _archive_input_images: ComfyUI output dir unknown, skipping")
+        return
+
+    cfg = _load_config()
+    subdir_name = cfg.get("input_archive_subdir", "agentIn")
+    dest_dir = comfy_out / subdir_name
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    for src in input_image_paths:
+        try:
+            dest = dest_dir / src.name
+            shutil.copy2(src, dest)
+            logger.info("executor: archived input image %s → %s", src, dest)
+        except Exception as exc:
+            logger.warning("executor: could not archive input image %s — %s", src, exc)
+
+
+def _copy_workflow_to_user_dir(workflow_path: str) -> None:
+    """Copy the finished workflow JSON to the ComfyUI user directory.
+
+    Destination: ``{user_dir}/workflows/``.
+    The user directory is resolved from the ``--user-directory=`` flag via
+    ``/system_stats``.  Falls back to ``comfyui_user_dir`` in settings.json.
+    Silently skips when the workflow file doesn't exist.
+    """
+    import shutil
+
+    src = Path(workflow_path)
+    if not src.exists():
+        logger.debug("executor: _copy_workflow_to_user_dir: source not found: %s", workflow_path)
+        return
+
+    user_dir = _get_comfyui_user_dir()
+    if user_dir is None:
+        cfg = _load_config()
+        fallback = cfg.get("comfyui_user_dir", "")
+        if fallback:
+            user_dir = Path(fallback).resolve()
+        else:
+            logger.debug("executor: _copy_workflow_to_user_dir: no user dir configured, skipping")
+            return
+
+    dest_dir = user_dir / "workflows"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / src.name
+    try:
+        shutil.copy2(src, dest)
+        logger.info("executor: workflow copied to user dir → %s", dest)
+    except Exception as exc:
+        logger.warning("executor: could not copy workflow to user dir — %s", exc)
+
+
 def _resolve_brainbriefing_output_dir(brainbriefing: dict) -> Path | None:
     """Return the output directory specified by the researcher's brainbriefing.
 
@@ -363,6 +450,7 @@ async def _process_completed_job(
     prompt_id: str,
     brainbriefing: dict,
     *,
+    workflow_path: str = "",
     user_message: str = "",
     verbose: bool,
     collected_paths: list[str] | None,
@@ -399,6 +487,9 @@ async def _process_completed_job(
                         )
     except Exception as exc:
         logger.debug("executor: could not resolve input image paths from brainbriefing — %s", exc)
+
+    # Copy input images to ComfyUI's output directory for reference/archival.
+    _archive_input_images(input_image_paths)
 
     output_files = _extract_output_files(history)
     if not output_files:
@@ -448,6 +539,10 @@ async def _process_completed_job(
     # Always register paths so the caller session is up to date.
     if collected_paths is not None:
         collected_paths.extend(str(p) for p in saved_paths)
+
+    # Copy the finished workflow to the ComfyUI user directory for easy reuse.
+    if workflow_path:
+        _copy_workflow_to_user_dir(workflow_path)
 
     if qa_failures:
         # Signal the pipeline layer to pause and ask the user.
@@ -527,8 +622,7 @@ async def execute_workflow(
     async for line in _process_completed_job(
         history,
         prompt_id,
-        brainbriefing,
-        user_message=user_message,
+        brainbriefing,        workflow_path=workflow_path,        user_message=user_message,
         verbose=verbose,
         collected_paths=collected_paths,
         run_qa=run_qa,
@@ -618,6 +712,7 @@ async def execute_workflows_batch(
             history,
             prompt_id,
             brainbriefing,
+            workflow_path=_wf_path,
             user_message=user_message,
             verbose=verbose,
             collected_paths=collected_paths,
