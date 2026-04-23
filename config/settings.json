@@ -25,13 +25,13 @@
   "llm": {
     
     "pipeline": {
-      "researcher": "ollama,qwen3.6:27b",
-      "brain": "ollama,qwen3.6:27b",
-      "triage": "ollama,qwen3.6:27b",
-      "info": "ollama,qwen3.6:27b",
-      "planner": "ollama,qwen3.6:27b",
-      "learnings": "ollama,qwen3.6:27b",
-      "error_checker": "ollama,qwen3.6:27b",
+      "researcher": "ollama,gemma4:26b",
+      "brain": "ollama,gemma4:26b",
+      "triage": "ollama,gemma4:26b",
+      "info": "ollama,gemma4:26b",
+      "planner": "ollama,gemma4:26b",
+      "learnings": "ollama,gemma4:26b",
+      "error_checker": "ollama,gemma4:26b",
       "llm_functions": "qwen3.5:9b",
       "executor_vision_model": "qwen3.5:9b"
     },
