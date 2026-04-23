@@ -80,3 +80,9 @@ If a matching entry exists, **apply the documented solution directly** instead o
 2026-04-21 | update_workflow returns error status for Kling3_multiShot until input images are uploaded | Upload input images to ComfyUI input directory before calling update_workflow to ensure path validation
 
 2026-04-23 | update_workflow fails validation after patching with prompt_outputs_failed_validation error | When validation fails after patching, persist workflow JSON via write_text_file then call update_workflow with empty patches to reset state.
+
+2026-04-23 | GeminiNanoBanana2 images input requires mixed format: string for loaded image, int for generation index | Format images as [\"node_id_string\", 0] for image-to-generate pattern. Avoid pure string or pure int arrays to prevent validation KeyError.
+2026-04-23 | update_workflow patching fails for certain node input validations | When update_workflow cannot fix node input validation errors, write_text_file with direct JSON content ensures workflow correctness.
+2026-04-23 | Single-image workflows require no multi-image batching nodes | For single input image, wire LoadImage directly to generator node. Remove ImageToList and ImageListToImageBatch nodes that are unnecessary.
+2026-04-23 | Node linking uses node_id as string for image input | When connecting LoadImage outputs to generator inputs, use node_id as string in images array for external images, integer index for generated outputs.
+2026-04-23 | Existing node updates should use patches, not add_nodes | When a node already exists, apply patches to modify inputs instead of using add_nodes which causes node_exists error.
