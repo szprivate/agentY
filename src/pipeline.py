@@ -837,12 +837,12 @@ class Pipeline:
 
     # ── Planner helpers ──────────────────────────────────────────────── #
 
-    def _run_planner(self, user_text: str) -> list[dict[str, str]]:
+    def _run_planner(self, user_text: str) -> tuple[list[dict[str, str]], str]:
         """Call the Planner agent to decompose *user_text* into ordered steps.
 
-        Returns a list of ``{"request": str, "description": str}`` dicts on
-        success, or an empty list when parsing fails (the caller falls back to
-        treating the request as a plain ``new_request``).
+        Returns a tuple of:
+          - list of ``{"request": str, "description": str}`` dicts (empty on failure)
+          - the raw agent response string (for display in the UI thinking block)
         """
         raw: str
         _planner_snap = self._usage_snapshot(self._planner_agent)
@@ -865,7 +865,7 @@ class Pipeline:
                 if self._verbose:
                     print(f"[planner] WARNING: plan has {len(steps)} step(s) — need ≥ 2. "
                           "Falling back to researcher.")
-                return []
+                return [], raw
             # Validate each step has at least a 'request' field.
             validated: list[dict[str, str]] = []
             for s in steps:
@@ -877,12 +877,12 @@ class Pipeline:
             if len(validated) < 2:
                 if self._verbose:
                     print("[planner] WARNING: could not validate ≥ 2 steps. Falling back.")
-                return []
-            return validated
+                return [], raw
+            return validated, raw
         except (json.JSONDecodeError, KeyError, TypeError) as exc:
             if self._verbose:
                 print(f"[planner] WARNING: plan parse failed ({exc}). Falling back to researcher.")
-            return []
+            return [], raw
 
     def _inject_context_into_step(
         self,
@@ -988,7 +988,7 @@ class Pipeline:
         """Execute a multi-step plan synchronously; return a combined summary string."""
         if self._verbose:
             print("pipeline: Planner — decomposing multi-step request …")
-        steps = self._run_planner(user_text)
+        steps, _planner_raw = self._run_planner(user_text)
 
         # Fallback: treat as a plain new_request when planning fails.
         if not steps:
@@ -1163,7 +1163,9 @@ class Pipeline:
         if self._verbose:
             print("pipeline: Planner — decomposing multi-step request …")
             yield {"data": "\n_pipeline: Planner — decomposing multi-step request …_"}
-        steps = self._run_planner(user_text)
+        yield {"_planner_start": True}
+        steps, _planner_raw = self._run_planner(user_text)
+        yield {"_planner_done": True, "raw": _planner_raw}
 
         # Fallback: treat as a plain researcher path when planning fails.
         if not steps:

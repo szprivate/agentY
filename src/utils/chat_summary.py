@@ -247,6 +247,15 @@ def _extract_paths_from_messages(messages: list[dict]) -> dict:
                                 if p:
                                     prior_summary_input_paths.append(p)
 
+                    op_match = re.search(r"^OUTPUT_PATHS:\s*(.+)$", text, re.MULTILINE)
+                    if op_match:
+                        val = op_match.group(1).strip()
+                        if val.lower() not in ("none", "unknown", ""):
+                            for p in val.split(","):
+                                p = p.strip()
+                                if p and p not in output_paths:
+                                    output_paths.append(p)
+
             # ── toolUse blocks ─────────────────────────────────────────
             elif "toolUse" in block:
                 tu = block["toolUse"]

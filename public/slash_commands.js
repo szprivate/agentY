@@ -17,6 +17,13 @@
   let currentInput = null;
   let filteredCommands = [];
 
+  // ── Message history ──────────────────────────────────────────────────────────
+
+  const MAX_HISTORY = 200;
+  let messageHistory = JSON.parse(sessionStorage.getItem('agentY_msgHistory') || '[]');
+  let historyIndex = -1;   // -1 = not browsing history
+  let draftValue = '';     // saves the live draft when the user starts browsing
+
   // ── Popup DOM ────────────────────────────────────────────────────────────────
 
   function createPopup() {
@@ -156,19 +163,57 @@
 
   function handleKeydown(e) {
     var p = getPopup();
-    if (p.style.display === 'none') return;
-    if (e.key === 'ArrowDown') {
+    var popupVisible = p.style.display !== 'none';
+
+    // ── Slash-command popup navigation ───────────────────────────────────────
+    if (popupVisible) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        selectedIndex = (selectedIndex + 1) % filteredCommands.length;
+        renderPopup(); positionPopupAt(null);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        selectedIndex = (selectedIndex - 1 + filteredCommands.length) % filteredCommands.length;
+        renderPopup(); positionPopupAt(null);
+      } else if (e.key === 'Tab') {
+        if (filteredCommands.length > 0) { e.preventDefault(); selectCommand(filteredCommands[selectedIndex]); }
+      } else if (e.key === 'Escape') {
+        hidePopup();
+      }
+      return;
+    }
+
+    // ── Message history navigation (popup closed) ─────────────────────────────
+    var textarea = e.target;
+    if (e.key === 'ArrowUp') {
+      if (messageHistory.length === 0) return;
+      // Allow on first line of textarea (single-line feel)
+      var firstNL = textarea.value.indexOf('\n');
+      var onFirstLine = firstNL === -1 || textarea.selectionStart <= firstNL;
+      if (!onFirstLine) return;
       e.preventDefault();
-      selectedIndex = (selectedIndex + 1) % filteredCommands.length;
-      renderPopup(); positionPopupAt(null);
-    } else if (e.key === 'ArrowUp') {
+      if (historyIndex === -1) {
+        draftValue = textarea.value;
+        historyIndex = messageHistory.length - 1;
+      } else if (historyIndex > 0) {
+        historyIndex--;
+      }
+      setReactInputValue(textarea, messageHistory[historyIndex]);
+      setTimeout(function () { textarea.selectionStart = textarea.selectionEnd = textarea.value.length; }, 0);
+    } else if (e.key === 'ArrowDown') {
+      if (historyIndex === -1) return;
       e.preventDefault();
-      selectedIndex = (selectedIndex - 1 + filteredCommands.length) % filteredCommands.length;
-      renderPopup(); positionPopupAt(null);
-    } else if (e.key === 'Tab') {
-      if (filteredCommands.length > 0) { e.preventDefault(); selectCommand(filteredCommands[selectedIndex]); }
-    } else if (e.key === 'Escape') {
-      hidePopup();
+      if (historyIndex < messageHistory.length - 1) {
+        historyIndex++;
+        setReactInputValue(textarea, messageHistory[historyIndex]);
+      } else {
+        historyIndex = -1;
+        setReactInputValue(textarea, draftValue);
+      }
+      setTimeout(function () { textarea.selectionStart = textarea.selectionEnd = textarea.value.length; }, 0);
+    } else if (e.key !== 'Shift' && e.key !== 'Control' && e.key !== 'Alt' && e.key !== 'Meta') {
+      // Any printable key resets browsing so next ArrowUp starts from newest
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') historyIndex = -1;
     }
   }
 
@@ -179,6 +224,21 @@
     textarea.addEventListener('input', handleInput);
     textarea.addEventListener('keydown', handleKeydown, true);
     textarea.addEventListener('blur', function () { setTimeout(hidePopup, 200); });
+
+    // ── Capture sent message via Enter key (capture phase, before React) ─────
+    // The MutationObserver below also captures messages as a fallback.
+    textarea.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        var msg = textarea.value.trim();
+        if (msg && messageHistory[messageHistory.length - 1] !== msg) {
+          messageHistory.push(msg);
+          if (messageHistory.length > MAX_HISTORY) messageHistory.shift();
+          sessionStorage.setItem('agentY_msgHistory', JSON.stringify(messageHistory));
+        }
+        historyIndex = -1;
+        draftValue = '';
+      }
+    }, true); // capture phase fires before React's own handler
   }
 
   // ── "/" toolbar button ───────────────────────────────────────────────────────
@@ -261,6 +321,40 @@
   }
 
   // ── Bootstrap ────────────────────────────────────────────────────────────────
+
+  function saveMessageFromDOM(node) {
+    // Chainlit renders user turns with a specific test-id or class; try several selectors.
+    var selectors = [
+      '[data-testid="user-message"]',
+      '.cl-user-message',
+      '[class*="userMessage"]',
+      '[class*="user-message"]',
+    ];
+    var found = null;
+    for (var i = 0; i < selectors.length; i++) {
+      if (node.matches && node.matches(selectors[i])) { found = node; break; }
+      var inner = node.querySelector && node.querySelector(selectors[i]);
+      if (inner) { found = inner; break; }
+    }
+    if (!found) return;
+    var text = (found.innerText || found.textContent || '').trim();
+    if (!text) return;
+    if (messageHistory[messageHistory.length - 1] === text) return; // no duplicate
+    messageHistory.push(text);
+    if (messageHistory.length > MAX_HISTORY) messageHistory.shift();
+    sessionStorage.setItem('agentY_msgHistory', JSON.stringify(messageHistory));
+    historyIndex = -1;
+    draftValue = '';
+  }
+
+  var domMsgObserver = new MutationObserver(function (mutations) {
+    mutations.forEach(function (m) {
+      m.addedNodes.forEach(function (node) {
+        if (node.nodeType === 1) saveMessageFromDOM(node);
+      });
+    });
+  });
+  domMsgObserver.observe(document.body, { childList: true, subtree: true });
 
   function findAndAttach() {
     var ta = document.querySelector('textarea');

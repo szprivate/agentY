@@ -728,6 +728,9 @@ async def on_message(message: cl.Message) -> None:
     _think_state: dict = {"in_think": False, "buf": ""}
     _think_step: cl.Step | None = None
 
+    # ── Planner thinking step ──────────────────────────────────────────────
+    _planner_step: cl.Step | None = None
+
     # ── Planner task list ──────────────────────────────────────────────────
     _task_list: cl.TaskList | None = None
     _tasks: list[cl.Task] = []
@@ -769,6 +772,20 @@ async def on_message(message: cl.Message) -> None:
                     author="system",
                 ).send()
                 break
+
+            # ── Planner start — open thinking step ───────────────────────
+            if event.get("_planner_start"):
+                _planner_step = cl.Step(name="🗂️ Planner: reasoning", type="tool")
+                await _planner_step.send()
+                continue
+
+            # ── Planner done — populate and finalise thinking step ────────
+            if event.get("_planner_done"):
+                if _planner_step is not None:
+                    _planner_step.output = event.get("raw", "")
+                    await _planner_step.update()
+                    _planner_step = None
+                continue
 
             # ── Researcher start — open streaming step ────────────────────
             if event.get("_researcher_start"):
@@ -897,7 +914,9 @@ async def on_message(message: cl.Message) -> None:
                         await _flush_new_outputs()
 
         await _flush_token_buf()
-        # Finalise any still-open brain/think steps
+        # Finalise any still-open planner/brain/think steps
+        if _planner_step is not None:
+            await _planner_step.update()
         if _brain_step is not None:
             await _brain_step.update()
         if _think_step is not None:
@@ -909,6 +928,9 @@ async def on_message(message: cl.Message) -> None:
 
     except Exception as exc:
         await _flush_token_buf()
+        if _planner_step is not None:
+            await _planner_step.update()
+            _planner_step = None
         if _researcher_step is not None:
             await _researcher_step.update()
             _researcher_step = None
