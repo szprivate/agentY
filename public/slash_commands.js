@@ -18,11 +18,30 @@
   let filteredCommands = [];
 
   // ── Message history ──────────────────────────────────────────────────────────
+  // Keeps up to MAX_HISTORY user messages in localStorage so they survive page
+  // reloads, tab closes, and agent restarts.  Arrow-up / Arrow-down in the chat
+  // input walks through history (bash-style).
 
   const MAX_HISTORY = 200;
-  let messageHistory = JSON.parse(sessionStorage.getItem('agentY_msgHistory') || '[]');
+  const HISTORY_KEY = 'agentY_msgHistory';
+  let messageHistory = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
   let historyIndex = -1;   // -1 = not browsing history
   let draftValue = '';     // saves the live draft when the user starts browsing
+
+  function pushHistory(msg) {
+    msg = (msg || '').trim();
+    if (!msg) return;
+    if (messageHistory[messageHistory.length - 1] === msg) return; // no dupes
+    messageHistory.push(msg);
+    if (messageHistory.length > MAX_HISTORY) messageHistory.shift();
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(messageHistory));
+    historyIndex = -1;
+    draftValue = '';
+  }
+
+  function getChatInput() {
+    return document.getElementById('chat-input') || document.querySelector('textarea');
+  }
 
   // ── Popup DOM ────────────────────────────────────────────────────────────────
 
@@ -226,19 +245,22 @@
     textarea.addEventListener('blur', function () { setTimeout(hidePopup, 200); });
 
     // ── Capture sent message via Enter key (capture phase, before React) ─────
-    // The MutationObserver below also captures messages as a fallback.
+    // Send-button clicks and IME-composed Enter are handled separately below.
     textarea.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        var msg = textarea.value.trim();
-        if (msg && messageHistory[messageHistory.length - 1] !== msg) {
-          messageHistory.push(msg);
-          if (messageHistory.length > MAX_HISTORY) messageHistory.shift();
-          sessionStorage.setItem('agentY_msgHistory', JSON.stringify(messageHistory));
-        }
-        historyIndex = -1;
-        draftValue = '';
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+        pushHistory(textarea.value);
       }
     }, true); // capture phase fires before React's own handler
+  }
+
+  // ── Hook the Send button so clicks (not just Enter) populate history ─────────
+  function attachToSendButton(btn) {
+    if (!btn || btn._slashCmdHistoryHooked) return;
+    btn._slashCmdHistoryHooked = true;
+    btn.addEventListener('click', function () {
+      var ta = getChatInput();
+      if (ta) pushHistory(ta.value);
+    }, true); // capture phase, before React's own click handler clears the input
   }
 
   // ── "/" toolbar button ───────────────────────────────────────────────────────
@@ -322,43 +344,10 @@
 
   // ── Bootstrap ────────────────────────────────────────────────────────────────
 
-  function saveMessageFromDOM(node) {
-    // Chainlit renders user turns with a specific test-id or class; try several selectors.
-    var selectors = [
-      '[data-testid="user-message"]',
-      '.cl-user-message',
-      '[class*="userMessage"]',
-      '[class*="user-message"]',
-    ];
-    var found = null;
-    for (var i = 0; i < selectors.length; i++) {
-      if (node.matches && node.matches(selectors[i])) { found = node; break; }
-      var inner = node.querySelector && node.querySelector(selectors[i]);
-      if (inner) { found = inner; break; }
-    }
-    if (!found) return;
-    var text = (found.innerText || found.textContent || '').trim();
-    if (!text) return;
-    if (messageHistory[messageHistory.length - 1] === text) return; // no duplicate
-    messageHistory.push(text);
-    if (messageHistory.length > MAX_HISTORY) messageHistory.shift();
-    sessionStorage.setItem('agentY_msgHistory', JSON.stringify(messageHistory));
-    historyIndex = -1;
-    draftValue = '';
-  }
-
-  var domMsgObserver = new MutationObserver(function (mutations) {
-    mutations.forEach(function (m) {
-      m.addedNodes.forEach(function (node) {
-        if (node.nodeType === 1) saveMessageFromDOM(node);
-      });
-    });
-  });
-  domMsgObserver.observe(document.body, { childList: true, subtree: true });
-
   function findAndAttach() {
-    var ta = document.querySelector('textarea');
+    var ta = getChatInput();
     if (ta) attachToInput(ta);
+    attachToSendButton(document.getElementById('chat-submit'));
     injectSlashButton();
   }
 
