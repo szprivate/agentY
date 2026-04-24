@@ -6,7 +6,7 @@
     "dark": {
       "--font-sans": "'JetBrains Mono', 'Fira Mono', monospace",
       "--font-mono": "'JetBrains Mono', monospace",
-      "--background": "0 0% 6%",
+      "--background": "0 0% 0%",
       "--foreground": "0 0% 91%",
       "--card": "0 0% 7%",
       "--card-foreground": "0 0% 91%",
@@ -26,7 +26,7 @@
       "--input": "0 0% 8%",
       "--ring": "217 84% 55%",
       "--radius": "0rem",
-      "--sidebar-background": "0 0% 4%",
+      "--sidebar-background": "0 0% 2%",
       "--sidebar-foreground": "0 0% 60%",
       "--sidebar-primary": "217 84% 55%",
       "--sidebar-primary-foreground": "0 0% 100%",
