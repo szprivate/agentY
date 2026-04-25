@@ -52,6 +52,15 @@ if not _history_logger.handlers:
     _history_logger.propagate = False
 
 
+class _BytesSafeEncoder(json.JSONEncoder):
+    """JSON encoder that replaces raw bytes with a placeholder string."""
+
+    def default(self, obj: object) -> object:
+        if isinstance(obj, (bytes, bytearray)):
+            return f"<bytes:{len(obj)}>"  # type: ignore[arg-type]
+        return super().default(obj)
+
+
 def _log_message_history(messages: list[dict]) -> None:
     """Append the full message list as JSON to logs/message_history.log."""
     sep = "=" * 80
@@ -60,9 +69,63 @@ def _log_message_history(messages: list[dict]) -> None:
         sep,
         len(messages),
         sep,
-        json.dumps(messages, indent=2, ensure_ascii=False),
+        json.dumps(messages, indent=2, ensure_ascii=False, cls=_BytesSafeEncoder),
         sep,
     )
+
+
+def log_agent_exchange(label: str, input_text: str | list | dict, output_text: str) -> None:
+    """Append a labeled agent input/output exchange to message_history.log.
+
+    Used for agents whose message history is cleared immediately after the
+    call (e.g. Triage) or where structured message logging is not needed.
+
+    Args:
+        label:       Section heading, e.g. ``'TRIAGE'`` or ``'RESEARCHER'``.
+        input_text:  The prompt or content sent to the agent.
+        output_text: The raw response returned by the agent.
+    """
+    sep = "=" * 80
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    input_repr = (
+        json.dumps(input_text, indent=2, ensure_ascii=False, cls=_BytesSafeEncoder)
+        if isinstance(input_text, (list, dict))
+        else str(input_text)
+    )
+    _history_logger.debug(
+        "%s\n[%s — %s]\n%s\n--- INPUT ---\n%s\n--- OUTPUT ---\n%s\n%s",
+        sep,
+        label,
+        ts,
+        sep,
+        input_repr,
+        output_text,
+        sep,
+    )
+
+
+def log_agent_messages(label: str, messages: list[dict]) -> None:
+    """Append a labeled agent message history to message_history.log.
+
+    Convenience wrapper around ``_log_message_history`` that adds a section
+    header with a timestamp, used for agents whose history is available after
+    the call (e.g. Researcher).
+
+    Args:
+        label:    Section heading, e.g. ``'RESEARCHER'``.
+        messages: Strands message list (list of dicts).
+    """
+    sep = "=" * 80
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    _history_logger.debug(
+        "%s\n[%s MESSAGES — %s — %d message(s)]\n%s",
+        sep,
+        label,
+        ts,
+        len(messages),
+        sep,
+    )
+    _log_message_history(messages)
 
 
 # ---------------------------------------------------------------------------

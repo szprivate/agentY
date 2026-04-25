@@ -302,3 +302,61 @@ def maybe_run_learnings(
     _run_learnings_in_thread(messages_snapshot, session_id)
     print(f"[learnings] {tool_count} tool calls — learnings agent started in background.")
     return True
+
+
+def record_user_advice_learning(
+    error_context: str,
+    user_advice: str,
+    session_id: str = "default",
+) -> None:
+    """Record a learning derived from a Brain failure that was resolved by user advice.
+
+    Fires in a background thread (fire-and-forget).  Calls the learnings agent
+    to produce a concise entry from the error and advice, then appends it to
+    ``skills/brain-learnings/SKILL.md`` and the FAISS memory store.
+
+    Args:
+        error_context: Short description of what the Brain failed to do.
+        user_advice:   The advice the user provided that led to success.
+        session_id:    Pipeline session ID (used for FAISS memory namespace).
+    """
+    import asyncio
+
+    async def _run() -> None:
+        try:
+            today = datetime.date.today().isoformat()
+            prompt = (
+                f"Today's date: {today}\n\n"
+                f"## Brain assembly failure resolved by user advice\n\n"
+                f"**Original error:** {error_context}\n\n"
+                f"**User's advice (that led to success):** {user_advice}\n\n"
+                f"Produce exactly one learning entry in this format:\n"
+                f"YYYY-MM-DD | <problem: ≤15 words> | <solution: 1–2 sentences, ≤40 words>\n"
+                f"Use today's date. Plain text only — no markdown, no preamble."
+            )
+            from src.agent import create_learnings_agent
+            agent = create_learnings_agent()
+            response = str(agent(prompt)).strip()
+            if not response or response == "NO_NEW_LEARNINGS":
+                return
+            _append_to_skill(response)
+            try:
+                from src.utils.memory import memory_add
+                for line in response.splitlines():
+                    line = line.strip()
+                    if line and line != "NO_NEW_LEARNINGS":
+                        memory_add(line, session_id="learnings_global", metadata={"source": "learnings_agent"})
+            except Exception as mem_exc:
+                print(f"[learnings] Warning: could not store user-advice learning in FAISS: {mem_exc}")
+        except Exception as exc:
+            print(f"[learnings] WARNING: record_user_advice_learning failed: {exc}")
+
+    def _target() -> None:
+        try:
+            asyncio.run(_run())
+        except Exception as exc:
+            print(f"[learnings] Background thread error (user-advice learning): {exc}")
+
+    thread = threading.Thread(target=_target, daemon=True, name="learnings-user-advice")
+    thread.start()
+    print("[learnings] User-advice learning agent started in background.")

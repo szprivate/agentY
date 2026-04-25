@@ -743,6 +743,29 @@ async def on_message(message: cl.Message) -> None:
             if not isinstance(event, dict):
                 continue
 
+            # ── Brain assembly failure — ask user for advice and retry ────
+            if event.get("brain_assembly_fail_ask"):
+                await _flush_token_buf()
+                if response_msg:
+                    await response_msg.update()
+
+                latest_wf: str = event.get("latest_workflow_path", "")
+                path_hint = f"\n\nLatest workflow JSON: `{latest_wf}`" if latest_wf else ""
+
+                ask_resp = await cl.AskUserMessage(
+                    content=(
+                        "⚠️ **The Brain failed to assemble a workflow** — "
+                        "`signal_workflow_ready` was never called."
+                        + path_hint
+                        + "\n\nPlease describe what the Brain should fix or try differently, "
+                        "and it will retry."
+                    ),
+                    timeout=300,
+                ).send()
+                advice = ask_resp["output"] if ask_resp else ""
+                await qa_reply_queue.put(advice)
+                continue
+
             # ── QA failure — ask user whether to retry ────────────────────
             if event.get("qa_fail_ask"):
                 await _flush_token_buf()

@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field, ValidationError
 from strands import Agent
 
 from src.agent import create_brain_agent, create_error_checker_agent, create_info_agent, create_planner_agent, create_researcher_agent, create_triage_agent, _settings
-from src.utils.chat_summary import summarize_conversation
+from src.utils.chat_summary import summarize_conversation, log_agent_messages
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
 from src.utils.comfyui_poller import poll_comfyui_job as _poll_comfyui_job
 from src.utils.costs import compute_cost_from_usage
@@ -108,6 +108,20 @@ class BrainBriefing(BaseModel):
 
 # Canonical path where the image-batch skill writes variation prompts.
 _MULTIPROMPT_PATH = Path("output_workflows/multiprompt.json")
+_OUTPUT_WORKFLOWS_DIR = Path("output_workflows")
+
+
+def _latest_output_workflow() -> str | None:
+    """Return the path of the most recently modified workflow JSON in output_workflows/."""
+    try:
+        jsons = sorted(
+            (f for f in _OUTPUT_WORKFLOWS_DIR.glob("*.json") if f.stem != "multiprompt"),
+            key=lambda f: f.stat().st_mtime,
+            reverse=True,
+        )
+        return str(jsons[0]) if jsons else None
+    except Exception:
+        return None
 
 
 def _apply_multiprompt_variations(
@@ -687,6 +701,7 @@ class Pipeline:
         )
         triage_result = await _triage(_triage_input, self._session, self._info_context, self._triage_agent)
         self._record_agent_usage(self._triage_agent, _triage_snap)
+        self._run_qa = triage_result.run_qa
         handler = _route(triage_result)
 
         if self._verbose:
@@ -1366,10 +1381,13 @@ class Pipeline:
 
             self._ensure_clean_history()
             qa_step_failed = False
+            _step_brain_prompt_override: str | None = None
             while True:  # ── QA retry loop ──────────────────────────────── #
+                _brain_prompt_for_step = _step_brain_prompt_override or self._build_brain_prompt(raw_json)
+                _step_brain_prompt_override = None  # consume once
                 _brain_snap_ps = self._usage_snapshot(self._brain)
                 self._ensure_clean_history()
-                async for event in self._brain.stream_async(self._build_brain_prompt(raw_json)):
+                async for event in self._brain.stream_async(_brain_prompt_for_step):
                     yield event
                 self._record_agent_usage(self._brain, _brain_snap_ps)
 
@@ -1465,8 +1483,18 @@ class Pipeline:
                         yield {"qa_fail_ask": True, **_qa_fail_event}
                         _answer = await qa_reply_queue.get()
                         if _is_affirmative(_answer):
-                            yield {"data": "\n_🔄 Retrying step…_"}
-                            continue  # re-run Brain + executor
+                            _qa_step_feedback_prompt = self._build_qa_feedback_prompt(
+                                self._build_brain_prompt(raw_json), step_req, _qa_fail_event
+                            )
+                            yield {"data": (
+                                "\n\n---\n"
+                                "🔍 **QA feedback sent to Brain:**\n\n"
+                                + _qa_step_feedback_prompt
+                                + "\n\n---\n"
+                            )}
+                            yield {"data": "\n_🔄 Retrying step with QA feedback…_"}
+                            _step_brain_prompt_override = _qa_step_feedback_prompt
+                            continue  # re-run Brain + executor with feedback
                     # No queue or user declined — mark failed and stop plan.
                     qa_step_failed = True
 
@@ -2010,10 +2038,12 @@ class Pipeline:
                     f"status={briefing.status}, task={briefing.task.description!r}, "
                     f"template={briefing.template.name!r}"
                 )
-            yield {"_researcher_done": True, "raw_json": raw_json, "error": None, "researcher_output": raw_json}
+            log_agent_messages("RESEARCHER", list(self._researcher.messages))
             self._record_agent_usage(self._researcher, _researcher_snap)
+            yield {"_researcher_done": True, "raw_json": raw_json, "error": None, "researcher_output": raw_json}
             return
 
+        log_agent_messages("RESEARCHER", list(self._researcher.messages))
         self._record_agent_usage(self._researcher, _researcher_snap)
         yield {
             "_researcher_done": True,
@@ -2144,10 +2174,12 @@ class Pipeline:
                     f"status={briefing.status}, task={briefing.task.description!r}, "
                     f"template={briefing.template.name!r}"
                 )
+            log_agent_messages("RESEARCHER", list(self._researcher.messages))
             self._record_agent_usage(self._researcher, _researcher_snap)
             return raw_json, None, raw_json
 
         # All attempts exhausted
+        log_agent_messages("RESEARCHER", list(self._researcher.messages))
         self._record_agent_usage(self._researcher, _researcher_snap)
         return None, (
             f"Brainbriefing validation failed after {1 + self._MAX_RESEARCHER_RETRIES} attempts: "
@@ -2198,6 +2230,10 @@ class Pipeline:
         current_input: Any = brain_prompt
         _brain_snap = self._usage_snapshot(self._brain)
 
+        # Track whether a brain-assembly failure was resolved via user advice.
+        _assembly_fail_error: str | None = None
+        _assembly_fail_advice: str | None = None
+
         while True:
             interrupt_result = None
 
@@ -2241,13 +2277,56 @@ class Pipeline:
                             break
                         yield {"data": f"\n{line}"}
 
+                if not workflow_paths_b:
+                    # Brain finished without signalling a workflow — assembly failed.
+                    latest_wf = _latest_output_workflow()
+                    if self._verbose:
+                        print(f"pipeline: Brain did not signal any workflow. Latest JSON: {latest_wf}")
+                    yield {
+                        "brain_assembly_fail_ask": True,
+                        "latest_workflow_path": latest_wf or "",
+                    }
+                    if qa_reply_queue is not None:
+                        _advice = await qa_reply_queue.get()
+                        if _advice and _advice.strip():
+                            yield {"data": "\n_🔄 Retrying with your advice…_"}
+                            _assembly_fail_error = (
+                                "Brain did not call signal_workflow_ready"
+                                + (f" (latest JSON: {latest_wf})" if latest_wf else "")
+                            )
+                            _assembly_fail_advice = _advice.strip()
+                            current_input = (
+                                f"The previous workflow assembly attempt failed — "
+                                f"`signal_workflow_ready` was never called.\n"
+                                f"The user reviewed the latest workflow JSON"
+                                + (f" ({latest_wf})" if latest_wf else "")
+                                + f" and provided this advice:\n\n{_advice}\n\n"
+                                f"Please fix the issue and try again. "
+                                f"Call `signal_workflow_ready(workflow_path)` when the workflow is ready.\n\n"
+                                f"Original brainbriefing:\n\n{brain_prompt}"
+                            )
+                            continue
+                    # No queue or empty advice — abort gracefully.
+                    self._record_chat_summary(user_text, triage_result, status="error", raw_json=raw_json)
+                    self._record_agent_usage(self._brain, _brain_snap)
+                    return
+
                 if _qa_fail_event_b:
                     if qa_reply_queue is not None:
                         yield {"qa_fail_ask": True, **_qa_fail_event_b}
                         _answer_b = await qa_reply_queue.get()
                         if _is_affirmative(_answer_b):
-                            yield {"data": "\n_🔄 Retrying…_"}
-                            current_input = brain_prompt  # restart from the original prompt
+                            _qa_feedback_prompt = self._build_qa_feedback_prompt(
+                                brain_prompt, user_text, _qa_fail_event_b
+                            )
+                            yield {"data": (
+                                "\n\n---\n"
+                                "🔍 **QA feedback sent to Brain:**\n\n"
+                                + _qa_feedback_prompt
+                                + "\n\n---\n"
+                            )}
+                            yield {"data": "\n_🔄 Retrying with QA feedback…_"}
+                            current_input = _qa_feedback_prompt
                             continue  # restart the while True loop
                     # No queue or user declined — abort.
                     self._record_chat_summary(user_text, triage_result, status="qa_failed", raw_json=raw_json)
@@ -2258,6 +2337,14 @@ class Pipeline:
                 self._schedule_compression(extra_output_paths=executor_paths_b)
                 self._record_agent_usage(self._brain, _brain_snap)
                 self._session.last_agent = "brain"
+                # If this run succeeded after a user-advice retry, record the learning.
+                if _assembly_fail_error and _assembly_fail_advice:
+                    from src.utils.learnings import record_user_advice_learning
+                    record_user_advice_learning(
+                        error_context=_assembly_fail_error,
+                        user_advice=_assembly_fail_advice,
+                        session_id=self._session.session_id,
+                    )
                 if self._verbose:
                     print("pipeline: Brain finished.")
                     yield {"data": "\n_pipeline: Brain finished._"}
@@ -2302,6 +2389,34 @@ class Pipeline:
             The pipeline will handle ComfyUI submission, completion polling,
             Vision QA (via Ollama) and saving outputs to ./output_images.
         """).strip()
+
+    def _build_qa_feedback_prompt(
+        self,
+        original_brain_prompt: str,
+        user_text: str,
+        qa_fail_event: dict,
+    ) -> str:
+        """Build a Brain retry prompt that incorporates Vision QA failure verdicts as feedback.
+
+        Instructs the Brain to revise the workflow or prompt parameters to better
+        satisfy the user's original request, using the QA agent's verdict as guidance.
+        """
+        fail_details: list[dict] = qa_fail_event.get("fail_details", [])
+        verdict_lines = "\n".join(
+            f"  - {Path(d['path']).name}: {d['verdict']}" for d in fail_details
+        )
+        return (
+            f"The Vision QA agent reviewed the previous output and determined it did NOT "
+            f"meet the user's original request.\n\n"
+            f"**User's original request:** {user_text}\n\n"
+            f"**QA verdicts:**\n{verdict_lines}\n\n"
+            f"Please revise the workflow or the prompt parameters to address these issues "
+            f"and better satisfy the user's original request. "
+            f"Keep the same workflow template and input images unless the QA verdict clearly "
+            f"indicates a fundamentally different approach is needed. "
+            f"Call `signal_workflow_ready(workflow_path)` when the revised workflow is ready.\n\n"
+            f"--- Original Brainbriefing ---\n\n{original_brain_prompt}"
+        )
 
     async def _drain_executor_batch(
         self,

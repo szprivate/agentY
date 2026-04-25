@@ -23,6 +23,7 @@ import re
 from strands import Agent
 
 from .models import AgentSession, MessageIntent, TriageResult
+from .chat_summary import log_agent_exchange
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,9 @@ async def triage(
 
     # Call the triage agent — returns the full response string.
     raw: str = str(agent(classify_input))
+
+    # Log triage input/output before messages are cleared.
+    log_agent_exchange("TRIAGE", classify_input, raw)
 
     # Reset conversation history so prior exchanges never bleed into the next call.
     # agent.messages is the actual list; conversation_manager does NOT own a messages
