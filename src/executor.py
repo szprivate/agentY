@@ -60,46 +60,55 @@ def _output_dir() -> Path:
     return (_project_root() / od).resolve()
 
 
-def _get_comfyui_output_dir() -> Path | None:
-    """Query ComfyUI's /system_stats endpoint to find its configured output directory.
+# --- ComfyUI dir cache -----------------------------------------------------
+# /system_stats returns ComfyUI's argv, which is constant for the lifetime of
+# the server process.  Both --output-directory and --user-directory are parsed
+# from a single response and memoised so per-output-file resolution doesn't
+# trigger a new HTTP roundtrip every call.  Reset via _reset_comfyui_dir_cache
+# (e.g. when the user restarts ComfyUI from the agent UI).
+_COMFYUI_DIR_CACHE_LOADED: bool = False
+_COMFYUI_OUTPUT_DIR: Path | None = None
+_COMFYUI_USER_DIR: Path | None = None
 
-    Mirrors the logic in test.py: looks for ``--output-directory=<path>`` in the
-    server's argv.  Returns ``None`` if the API is unreachable or the flag is absent.
-    """
+
+def _reset_comfyui_dir_cache() -> None:
+    global _COMFYUI_DIR_CACHE_LOADED, _COMFYUI_OUTPUT_DIR, _COMFYUI_USER_DIR
+    _COMFYUI_DIR_CACHE_LOADED = False
+    _COMFYUI_OUTPUT_DIR = None
+    _COMFYUI_USER_DIR = None
+
+
+def _load_comfyui_dirs() -> None:
+    global _COMFYUI_DIR_CACHE_LOADED, _COMFYUI_OUTPUT_DIR, _COMFYUI_USER_DIR
+    if _COMFYUI_DIR_CACHE_LOADED:
+        return
     try:
         from src.utils.comfyui_client import get_client
 
-        client = get_client()
-        stats = client.get("/system_stats")
-        if isinstance(stats, dict):
-            argv = stats.get("system", {}).get("argv", [])
-            for arg in argv:
-                if isinstance(arg, str) and arg.startswith("--output-directory="):
-                    return Path(arg.split("=", 1)[1]).resolve()
+        stats = get_client().get("/system_stats")
+        argv = stats.get("system", {}).get("argv", []) if isinstance(stats, dict) else []
+        for arg in argv:
+            if not isinstance(arg, str):
+                continue
+            if arg.startswith("--output-directory="):
+                _COMFYUI_OUTPUT_DIR = Path(arg.split("=", 1)[1]).resolve()
+            elif arg.startswith("--user-directory="):
+                _COMFYUI_USER_DIR = Path(arg.split("=", 1)[1]).resolve()
     except Exception as exc:
-        logger.debug("executor: could not query ComfyUI output dir — %s", exc)
-    return None
+        logger.debug("executor: could not query ComfyUI dirs — %s", exc)
+    _COMFYUI_DIR_CACHE_LOADED = True
+
+
+def _get_comfyui_output_dir() -> Path | None:
+    """Return ComfyUI's --output-directory (cached for the process lifetime)."""
+    _load_comfyui_dirs()
+    return _COMFYUI_OUTPUT_DIR
 
 
 def _get_comfyui_user_dir() -> Path | None:
-    """Query ComfyUI's /system_stats endpoint to find its configured user directory.
-
-    Mirrors the logic in test.py: looks for ``--user-directory=<path>`` in the
-    server's argv.  Returns ``None`` if the API is unreachable or the flag is absent.
-    """
-    try:
-        from src.utils.comfyui_client import get_client
-
-        client = get_client()
-        stats = client.get("/system_stats")
-        if isinstance(stats, dict):
-            argv = stats.get("system", {}).get("argv", [])
-            for arg in argv:
-                if isinstance(arg, str) and arg.startswith("--user-directory="):
-                    return Path(arg.split("=", 1)[1]).resolve()
-    except Exception as exc:
-        logger.debug("executor: could not query ComfyUI user dir — %s", exc)
-    return None
+    """Return ComfyUI's --user-directory (cached for the process lifetime)."""
+    _load_comfyui_dirs()
+    return _COMFYUI_USER_DIR
 
 
 # _archive_input_images removed: input files are uploaded to ComfyUI via the
@@ -200,19 +209,25 @@ def _submit_workflow(workflow_path: str) -> str:
     if client.api_key:
         payload["extra_data"] = {"api_key_comfy_org": client.api_key}
 
-    # Best-effort: unload Ollama models from VRAM before submitting large
-    # workflows to ComfyUI so the GPU can be freed for image generation.
-    try:
-        from src.tools.agent_control import unload_ollama_models
-        unload_ollama_models()
-    except Exception:
-        # Non-fatal: proceed with submission even if unload attempt fails.
-        logger.debug("executor: Ollama unload attempt skipped/failed")
-
     result = client.post("/prompt", json_data=payload)
     if isinstance(result, dict) and "prompt_id" in result:
         return result["prompt_id"]
     raise RuntimeError(f"Unexpected response from ComfyUI /prompt: {result!r}")
+
+
+def _free_vram_for_comfyui() -> None:
+    """Best-effort: ask Ollama to evict any resident models before ComfyUI runs.
+
+    Called once per executor invocation (single or batch) — *not* per workflow —
+    so a 5-iteration batch doesn't trigger 5 unload roundtrips.  ``/api/ps``
+    returns immediately when nothing is loaded, which is the common case for
+    pure-Anthropic sessions.
+    """
+    try:
+        from src.tools.agent_control import unload_ollama_models
+        unload_ollama_models()
+    except Exception as exc:
+        logger.debug("executor: Ollama unload attempt skipped/failed: %s", exc)
 
 
 def _extract_output_files(history: dict) -> list[dict]:
@@ -454,6 +469,9 @@ async def _process_completed_job(
         return
 
     # Resolve each output file's authoritative on-disk path (no copying).
+    # Each path is appended to ``collected_paths`` immediately so the caller
+    # (chainlit) can flush the image to the UI as soon as the "💾 Output:" line
+    # is yielded, instead of waiting for the whole batch to finish.
     saved_paths: list[Path] = []
     for item in output_files:
         filename = item.get("filename", "")
@@ -464,6 +482,8 @@ async def _process_completed_job(
         try:
             output_path = _resolve_output_path(filename, subfolder, file_type)
             saved_paths.append(output_path)
+            if collected_paths is not None:
+                collected_paths.append(str(output_path))
             yield f"{pfx}💾 Output: `{output_path}`"
         except Exception as exc:
             yield f"{pfx}⚠️ Could not resolve `{filename}`: {exc}"
@@ -487,10 +507,6 @@ async def _process_completed_job(
             yield f"{pfx}🔍 QA `{path.name}` → {verdict}"
             if "FAIL" in verdict.upper():
                 qa_failures.append({"path": str(path), "verdict": verdict})
-
-    # Always register paths so the caller session is up to date.
-    if collected_paths is not None:
-        collected_paths.extend(str(p) for p in saved_paths)
 
     # Copy the finished workflow to the ComfyUI user directory for easy reuse.
     if workflow_path:
@@ -546,6 +562,7 @@ async def execute_workflow(
         brainbriefing = {}
 
     # ── 1. Submit ──────────────────────────────────────────────────────────
+    _free_vram_for_comfyui()
     yield "🚀 Submitting workflow to ComfyUI…"
     try:
         prompt_id = _submit_workflow(workflow_path)
@@ -620,6 +637,7 @@ async def execute_workflows_batch(
     total = len(workflow_paths)
 
     # ── Phase 1: submit all ────────────────────────────────────────────────
+    _free_vram_for_comfyui()
     queued: list[tuple[str, str]] = []  # [(prompt_id, workflow_path), ...]
     for idx, wf_path in enumerate(workflow_paths, 1):
         yield f"🚀 Queuing iteration {idx}/{total}…"

@@ -15,11 +15,13 @@
   "output_dir": "./output_images/",
   "output_workflows_dir": "./output_workflows/",
   "input_archive_subdir": "agentIn",
+  "comfyui_base_dir": "D:\\ai\\ComfyUI",
+  "comfyui_models_dir": "L:\\software\\comfyui\\Models",
   "comfyui_user_dir": "D:\\ai\\ComfyUI\\user\\default",
   "chainlit_datalayer_dir": "D:\\ai\\chainlit-datalayer",
   "message_history_log": "./.logs/message_history.log",
   "tokens_usage_log": "./.logs/tokens_usage.log",
-  "comfyui_poll_interval_s": 1,
+  "comfyui_poll_interval_s": 0.25,
   "comfyui_poll_timeout_s": 1800,
 
   "llm": {

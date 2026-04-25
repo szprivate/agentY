@@ -13,6 +13,7 @@ The app reads model/pipeline configuration from config/settings.json and
 
 from __future__ import annotations
 
+import asyncio
 import io
 import os
 import sys
@@ -735,13 +736,15 @@ async def on_message(message: cl.Message) -> None:
     _task_list: cl.TaskList | None = None
     _tasks: list[cl.Task] = []
 
+    qa_reply_queue: asyncio.Queue = asyncio.Queue()
+
     try:
-        async for event in pipeline.stream_async(content):
+        async for event in pipeline.stream_async(content, qa_reply_queue=qa_reply_queue):
             if not isinstance(event, dict):
                 continue
 
-            # ── QA failure ────────────────────────────────────────────────
-            if event.get("qa_fail"):
+            # ── QA failure — ask user whether to retry ────────────────────
+            if event.get("qa_fail_ask"):
                 await _flush_token_buf()
                 if response_msg:
                     await response_msg.update()
@@ -761,17 +764,17 @@ async def on_message(message: cl.Message) -> None:
                 verdict_lines = "\n".join(
                     f"- `{Path(d['path']).name}`: {d['verdict']}" for d in fail_details
                 )
-                await cl.Message(
+                ask_resp = await cl.AskUserMessage(
                     content=(
-                        "⚠️ **QA check failed for this step.**\n\n"
+                        "⚠️ **QA check failed.**\n\n"
                         + (verdict_lines + "\n\n" if verdict_lines else "")
-                        + "Remaining plan steps have been skipped.\n\n"
-                        "Reply **continue** to proceed with the next steps anyway, "
-                        "or describe what should be changed."
+                        + "Reply **yes** to retry this step, or **no** to skip it."
                     ),
-                    author="system",
+                    timeout=300,
                 ).send()
-                break
+                answer = ask_resp["output"] if ask_resp else "no"
+                await qa_reply_queue.put(answer)
+                continue  # keep iterating — pipeline resumes from queue.get()
 
             # ── Planner start — open thinking step ───────────────────────
             if event.get("_planner_start"):

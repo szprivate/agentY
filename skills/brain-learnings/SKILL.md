@@ -86,3 +86,5 @@ If a matching entry exists, **apply the documented solution directly** instead o
 2026-04-23 | Single-image workflows require no multi-image batching nodes | For single input image, wire LoadImage directly to generator node. Remove ImageToList and ImageListToImageBatch nodes that are unnecessary.
 2026-04-23 | Node linking uses node_id as string for image input | When connecting LoadImage outputs to generator inputs, use node_id as string in images array for external images, integer index for generated outputs.
 2026-04-23 | Existing node updates should use patches, not add_nodes | When a node already exists, apply patches to modify inputs instead of using add_nodes which causes node_exists error.
+
+2026-04-25 | Initial skill 'assemble-from-template' not found, corrected to 'upscale-ultimateSD' | Always verify skill names from available skills list before calling. Correct to actual skill after error feedback.

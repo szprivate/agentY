@@ -72,6 +72,9 @@ def _models_base_dir() -> Path:
             d = config.get("comfyui_models_dir")
             if d:
                 return Path(d)
+            base = config.get("comfyui_base_dir")
+            if base:
+                return Path(base) / "models"
         except Exception:
             pass
 
