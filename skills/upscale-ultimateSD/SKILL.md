@@ -46,35 +46,13 @@ Note any non-default upscale factor, denoise, or tile size as a WARNING in `bloc
 
 **1. Ensure the diffusion checkpoint is on disk**
 
-This template loads `FLUX1\flux1-dev-fp8.safetensors` in node `4` (`CheckpointLoaderSimple`). If the file is not present on the ComfyUI models dir, `update_workflow` validation will pass but the prompt will fail at runtime with `checkpoint not found`. Always verify-then-download before patching.
-
-**1a. Check locally first (always required).**
-
-Call `check_local_model` with the bare filename. The tool searches the models base dir directly, then scans each known subfolder (including `FLUX1/`), then falls back to a recursive search:
+Before patching, verify `flux1-dev-fp8.safetensors` exists. The model ships under `FLUX1/`:
 
 ```
 check_local_model(filename="flux1-dev-fp8.safetensors")
 ```
 
-Parse the JSON response:
-- `{"ok": true, "found": true, "path": "…/FLUX1/flux1-dev-fp8.safetensors", "size_mb": 11895.7}` → file is present. Skip step 1b and move to step 2.
-- `{"ok": true, "found": false, "searched_base": "…"}` → file is missing. Proceed to step 1b.
-- `{"ok": false, "error": "…"}` → report the error to the user as a BLOCKER and stop. Do NOT assume the file is missing and trigger a 12 GB download on a transient error.
-
-Never call `download_hf_model` without first calling `check_local_model`. The downloader will skip an existing file, but checking first avoids an unnecessary network round-trip and makes the intent explicit in the log.
-
-**1b. Download from HuggingFace (only if step 1a reported `found: false`).**
-
-`download_hf_model` takes four args:
-
-| Arg                  | Value for this skill                         | Notes                                                                    |
-|----------------------|----------------------------------------------|--------------------------------------------------------------------------|
-| `model_id`           | `"Kijai/flux-fp8"`                           | HF repo hosting the pre-quantised fp8 weights.                           |
-| `filename`           | `"flux1-dev-fp8.safetensors"`                | Exact file in the repo root.                                             |
-| `destination_folder` | `"FLUX1"`                                    | Subfolder under the ComfyUI models base dir. MUST match the template.    |
-| `subfolder`          | *omit* (defaults to `""`)                    | File is at repo root — no `subfolder` needed.                            |
-
-Call:
+If the response reports the file is missing, download it from HuggingFace:
 
 ```
 download_hf_model(
@@ -84,34 +62,9 @@ download_hf_model(
 )
 ```
 
-What the tool does under the hood:
-- Creates `<models_base>/FLUX1/` if it does not exist.
-- If `<models_base>/FLUX1/flux1-dev-fp8.safetensors` already exists, it returns immediately with `message: "File already exists — skipping download."` — safe to re-run.
-- Streams the file in 8 MB chunks to `flux1-dev-fp8.safetensors.downloading`, then atomically renames to the final name. A crashed download leaves the `.downloading` partial, which the tool will overwrite cleanly on retry.
-- Reads `HF_TOKEN` from secrets automatically — no extra arg needed.
+If `check_local_model` is ambiguous, fall back to `get_models_in_folder(folder="checkpoints")` and look for `FLUX1/flux1-dev-fp8.safetensors`.
 
-The download is ~12 GB and can take **minutes**. Do not abort / retry on the assumption it has hung. The tool returns a single JSON response only after the file is fully written:
-
-```
-{"ok": true, "path": "…/FLUX1/flux1-dev-fp8.safetensors", "size_mb": 11895.7}
-```
-
-If the response is `{"ok": false, "error": "HTTP 401 …"}` or `"HTTP 403 …"`: the repo is gated and `HF_TOKEN` either is missing or the account has not accepted the licence. Report this as a BLOCKER with the exact error and stop — do not try to patch the workflow with a missing checkpoint.
-
-If the response is `{"ok": false, "error": "HTTP 404 …"}`: the `model_id` / `filename` combination is wrong. Do NOT guess alternatives — fall back to the user-requested-alternative flow (step 1c).
-
-**1c. (Optional) User requested a different Flux variant.**
-
-Only if the user explicitly asked for a non-default checkpoint (e.g. `flux1-schnell`, `flux1-dev` full-precision, a community finetune). The skill's default is `flux1-dev-fp8` and you should push back on switching unless the user gave a reason.
-
-1. `search_huggingface_models(query="<user description>", filter_tag="flux", limit=5)` to find candidate repos sorted by downloads.
-2. `get_model_info(model_id="<candidate>")` to list the files in the repo and verify the exact `filename` before downloading.
-3. Pick a file size that fits the user's VRAM (fp8 ≈ 12 GB, bf16 ≈ 23 GB) and confirm with the user before calling `download_hf_model`.
-4. When downloading, still send it to `destination_folder="FLUX1"`, and patch node `4` `ckpt_name` to `FLUX1\<new_filename>` so the workflow uses it.
-
-If `check_local_model` is ambiguous (e.g. two files with the same basename in different subfolders), use `get_models_in_folder(folder="checkpoints")` to list the `checkpoints` dir directly and confirm the exact path.
-
-Do not proceed to step 2 until the checkpoint is confirmed present on disk.
+Do not proceed to `update_workflow` until the file is confirmed present — LoadCheckpoint validation will fail otherwise.
 
 **2. Patch input node (node 8 LoadImage)**
 

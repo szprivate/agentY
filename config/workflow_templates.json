@@ -41,5 +41,5 @@
     "video_wan_vace_outpainting": "Local video outpainting via Wan VACE. 1 video → 1 expanded video output. Spatially extends video content by generating new content around the original frame boundaries.",
     "Wan22Vace_VID2VID": "Local video-to-video via Wan 2.2 VACE. 1 control video (depth/canny/pose) + 2 reference images (start/end keyframes) → 1 video output. Applies the style of the reference images to the input video while preserving motion consistency.",
     "upscale_using_model": "Local, simple image upscaling via specified ESRGAN model. 1 image → 1 upscaled image output. Supports various models.",
-    "upscale_ultimateSD": "Local, simple image upscaling using UltimateSD upscale node. Setup with Flux-1 dev fp8. 1 image → 1 upscaled image output. Supports various models."
+    "upscale_ultimateSD": "Local image upscaling using UltimateSD upscale node (this uses a diffusion model for the upscale process, allowing a creative upscale that invents details). Setup with Flux-1 dev fp8. 1 image → 1 upscaled image output."
 }
