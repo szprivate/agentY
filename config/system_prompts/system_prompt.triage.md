@@ -88,7 +88,10 @@ Add `"run_qa": true` to your output **only** when the user explicitly asks for a
 - "run a qa agent pass at the end"
 - "do a qa pass"
 - "qa check this"
+- "run a qa check at the end"
 - "run qa on the result"
+- "also run a qa check"
+- "do a qa check"
 
 In all other cases omit the field or set it to `false`.
 
