@@ -13,6 +13,7 @@ The app reads model/pipeline configuration from config/settings.json and
 
 from __future__ import annotations
 
+import asyncio
 import io
 import os
 import sys
@@ -225,7 +226,8 @@ def _reset_pipeline_state(pipeline) -> None:
     """Wipe all per-conversation state from the shared pipeline singleton.
 
     Called when a new thread starts so no history from a previous chat leaks
-    in.  Clears brain.messages, AgentSession, and cached researcher output.
+    in.  Clears brain.messages, AgentSession, cached researcher output, and
+    the prior-session summary used to chain turns.
     """
     brain = getattr(pipeline, "_brain", None)
     if brain is not None and hasattr(brain, "messages"):
@@ -235,6 +237,7 @@ def _reset_pipeline_state(pipeline) -> None:
     session_id = getattr(existing_session, "session_id", "default") if existing_session else "default"
     pipeline._session = AgentSession(session_id=session_id)  # noqa: SLF001
     pipeline._last_brainbriefing_json = None  # noqa: SLF001
+    pipeline._last_prior_summary = None  # noqa: SLF001
 
 
 def _save_thread_state(pipeline) -> None:
@@ -254,6 +257,10 @@ def _save_thread_state(pipeline) -> None:
     cl.user_session.set(
         "last_brainbriefing_json",
         getattr(pipeline, "_last_brainbriefing_json", None),
+    )
+    cl.user_session.set(
+        "last_prior_summary",
+        getattr(pipeline, "_last_prior_summary", None),
     )
 
 
@@ -281,6 +288,9 @@ def _restore_thread_state(pipeline) -> None:
 
     pipeline._last_brainbriefing_json = cl.user_session.get(  # noqa: SLF001
         "last_brainbriefing_json"
+    )
+    pipeline._last_prior_summary = cl.user_session.get(  # noqa: SLF001
+        "last_prior_summary"
     )
 
 
@@ -719,17 +729,45 @@ async def on_message(message: cl.Message) -> None:
     _think_state: dict = {"in_think": False, "buf": ""}
     _think_step: cl.Step | None = None
 
+    # ── Planner thinking step ──────────────────────────────────────────────
+    _planner_step: cl.Step | None = None
+
     # ── Planner task list ──────────────────────────────────────────────────
     _task_list: cl.TaskList | None = None
     _tasks: list[cl.Task] = []
 
+    qa_reply_queue: asyncio.Queue = asyncio.Queue()
+
     try:
-        async for event in pipeline.stream_async(content):
+        async for event in pipeline.stream_async(content, qa_reply_queue=qa_reply_queue):
             if not isinstance(event, dict):
                 continue
 
-            # ── QA failure ────────────────────────────────────────────────
-            if event.get("qa_fail"):
+            # ── Brain assembly failure — ask user for advice and retry ────
+            if event.get("brain_assembly_fail_ask"):
+                await _flush_token_buf()
+                if response_msg:
+                    await response_msg.update()
+
+                latest_wf: str = event.get("latest_workflow_path", "")
+                path_hint = f"\n\nLatest workflow JSON: `{latest_wf}`" if latest_wf else ""
+
+                ask_resp = await cl.AskUserMessage(
+                    content=(
+                        "⚠️ **The Brain failed to assemble a workflow** — "
+                        "`signal_workflow_ready` was never called."
+                        + path_hint
+                        + "\n\nPlease describe what the Brain should fix or try differently, "
+                        "and it will retry."
+                    ),
+                    timeout=300,
+                ).send()
+                advice = ask_resp["output"] if ask_resp else ""
+                await qa_reply_queue.put(advice)
+                continue
+
+            # ── QA failure — ask user whether to retry ────────────────────
+            if event.get("qa_fail_ask"):
                 await _flush_token_buf()
                 if response_msg:
                     await response_msg.update()
@@ -749,17 +787,31 @@ async def on_message(message: cl.Message) -> None:
                 verdict_lines = "\n".join(
                     f"- `{Path(d['path']).name}`: {d['verdict']}" for d in fail_details
                 )
-                await cl.Message(
+                ask_resp = await cl.AskUserMessage(
                     content=(
-                        "⚠️ **QA check failed for this step.**\n\n"
+                        "⚠️ **QA check failed.**\n\n"
                         + (verdict_lines + "\n\n" if verdict_lines else "")
-                        + "Remaining plan steps have been skipped.\n\n"
-                        "Reply **continue** to proceed with the next steps anyway, "
-                        "or describe what should be changed."
+                        + "Reply **yes** to retry this step, or **no** to skip it."
                     ),
-                    author="system",
+                    timeout=300,
                 ).send()
-                break
+                answer = ask_resp["output"] if ask_resp else "no"
+                await qa_reply_queue.put(answer)
+                continue  # keep iterating — pipeline resumes from queue.get()
+
+            # ── Planner start — open thinking step ───────────────────────
+            if event.get("_planner_start"):
+                _planner_step = cl.Step(name="🗂️ Planner: reasoning", type="tool")
+                await _planner_step.send()
+                continue
+
+            # ── Planner done — populate and finalise thinking step ────────
+            if event.get("_planner_done"):
+                if _planner_step is not None:
+                    _planner_step.output = event.get("raw", "")
+                    await _planner_step.update()
+                    _planner_step = None
+                continue
 
             # ── Researcher start — open streaming step ────────────────────
             if event.get("_researcher_start"):
@@ -888,7 +940,9 @@ async def on_message(message: cl.Message) -> None:
                         await _flush_new_outputs()
 
         await _flush_token_buf()
-        # Finalise any still-open brain/think steps
+        # Finalise any still-open planner/brain/think steps
+        if _planner_step is not None:
+            await _planner_step.update()
         if _brain_step is not None:
             await _brain_step.update()
         if _think_step is not None:
@@ -900,6 +954,9 @@ async def on_message(message: cl.Message) -> None:
 
     except Exception as exc:
         await _flush_token_buf()
+        if _planner_step is not None:
+            await _planner_step.update()
+            _planner_step = None
         if _researcher_step is not None:
             await _researcher_step.update()
             _researcher_step = None

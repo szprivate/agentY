@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field, ValidationError
 from strands import Agent
 
 from src.agent import create_brain_agent, create_error_checker_agent, create_info_agent, create_planner_agent, create_researcher_agent, create_triage_agent, _settings
-from src.utils.chat_summary import summarize_conversation
+from src.utils.chat_summary import summarize_conversation, log_agent_messages
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
 from src.utils.comfyui_poller import poll_comfyui_job as _poll_comfyui_job
 from src.utils.costs import compute_cost_from_usage
@@ -108,6 +108,20 @@ class BrainBriefing(BaseModel):
 
 # Canonical path where the image-batch skill writes variation prompts.
 _MULTIPROMPT_PATH = Path("output_workflows/multiprompt.json")
+_OUTPUT_WORKFLOWS_DIR = Path("output_workflows")
+
+
+def _latest_output_workflow() -> str | None:
+    """Return the path of the most recently modified workflow JSON in output_workflows/."""
+    try:
+        jsons = sorted(
+            (f for f in _OUTPUT_WORKFLOWS_DIR.glob("*.json") if f.stem != "multiprompt"),
+            key=lambda f: f.stat().st_mtime,
+            reverse=True,
+        )
+        return str(jsons[0]) if jsons else None
+    except Exception:
+        return None
 
 
 def _apply_multiprompt_variations(
@@ -261,6 +275,15 @@ class _TurnMetrics:
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _is_affirmative(text: str) -> bool:
+    """Return True when *text* looks like a yes/retry answer."""
+    return text.strip().lower() in {"y", "yes", "retry", "repeat", "yep", "yup", "sure", "ok"}
+
+
+# ---------------------------------------------------------------------------
 # Pipeline callable
 # ---------------------------------------------------------------------------
 
@@ -304,6 +327,11 @@ class Pipeline:
         # Brainbriefing JSON from the most recent Researcher run; used by the
         # Executor for Vision QA comparison in follow-up / feedback-loop rounds.
         self._last_brainbriefing_json: str | None = None
+        # Compressed summary text from the previous turn, cached so it can be
+        # injected into the Researcher on the NEXT turn regardless of triage intent.
+        # This is the authoritative source for OUTPUT_PATHS / INPUT_PATHS_USER_MESSAGE
+        # that bridges chained sessions even when triage says "new_request".
+        self._last_prior_summary: str | None = None
         # Whether the current turn requested an explicit Vision QA pass.
         self._run_qa: bool = False
         # Bind the memory tools module-level session so memory_read / memory_write
@@ -312,6 +340,40 @@ class Pipeline:
         # Per-turn usage tracking: list of (delta_usage_dict, agent_obj) for every
         # agent that contributed tokens this turn. Reset at the start of each turn.
         self._last_turn_usages: list = []
+        # Brain-history compression is moved off the critical path: the executor
+        # finishes, the final stream events flow to the UI, and only then this
+        # background task summarises the conversation.  The next user turn
+        # awaits it so the brain never sees uncompressed history.
+        self._pending_compression: asyncio.Task | None = None
+
+    async def _await_pending_compression(self) -> None:
+        """Block until any deferred brain-history compression has finished."""
+        task = self._pending_compression
+        if task is None:
+            return
+        self._pending_compression = None
+        try:
+            await task
+        except Exception as exc:  # noqa: BLE001
+            if self._verbose:
+                print(f"pipeline: deferred compression failed — {exc}")
+
+    def _schedule_compression(self, extra_output_paths: list[str] | None = None) -> None:
+        """Replace the previous deferred compression (if any) with a new one.
+
+        Snapshots ``extra_output_paths`` because the live session list may be
+        mutated by the next turn before the task runs.
+        """
+        snapshot = list(extra_output_paths) if extra_output_paths else None
+        prev = self._pending_compression
+        if prev is not None and not prev.done():
+            # Previous task hasn't started yet — safe to drop; new content
+            # supersedes it.  If it has run, _await_pending_compression already
+            # awaited it.
+            prev.cancel()
+        self._pending_compression = asyncio.create_task(
+            self._compress_brain_history(extra_output_paths=snapshot)
+        )
 
     def _should_skip_brain(self) -> bool:
         if self._skip_brain:
@@ -391,6 +453,10 @@ class Pipeline:
         - ``answer`` (info_query): return the triage answer directly
         - ``log_warning`` (low-confidence fallback): treat as new_request
         """
+        # Block until any deferred brain-history compression from the prior
+        # turn has finished, otherwise this turn would see uncompressed history.
+        if self._pending_compression is not None:
+            asyncio.run(self._await_pending_compression())
         self._last_turn_usages = []
         user_text = self._extract_text(user_input)
         user_text = self._annotate_attachments(user_input, user_text)
@@ -457,7 +523,7 @@ class Pipeline:
             _wf = self._expand_variations(_wf, _r_json)
             _ex_paths: list[str] = []
             if _wf:
-                _ex_lines, _ex_paths = asyncio.run(
+                _ex_lines, _ex_paths, _ = asyncio.run(
                     self._drain_executor_batch(_wf, _r_json, user_message=user_text)
                 )
                 if _ex_paths:
@@ -518,7 +584,7 @@ class Pipeline:
                 if self._verbose:
                     tag = f"{count} workflows (batch)" if count > 1 else workflow_paths[0]
                     print(f"pipeline: Brain (follow-up) signaled {tag} ready.")
-                executor_lines, executor_paths = asyncio.run(
+                executor_lines, executor_paths, _ = asyncio.run(
                     self._drain_executor_batch(
                         workflow_paths,
                         self._last_brainbriefing_json or "",
@@ -580,7 +646,7 @@ class Pipeline:
             if self._verbose:
                 tag = f"{count} workflows (batch)" if count > 1 else workflow_paths_r[0]
                 print(f"pipeline: Brain signaled {tag} ready.")
-            executor_lines_r, executor_paths_r = asyncio.run(
+            executor_lines_r, executor_paths_r, _ = asyncio.run(
                 self._drain_executor_batch(
                     workflow_paths_r,
                     raw_json,
@@ -598,7 +664,7 @@ class Pipeline:
             print("pipeline: Brain finished.")
         return brain_response
 
-    async def stream_async(self, user_input):  # noqa: ANN201
+    async def stream_async(self, user_input, *, qa_reply_queue: asyncio.Queue | None = None):  # noqa: ANN201
         """Async generator compatible with Chainlit's streaming loop.
 
         Runs the Researcher synchronously (it's a single-turn spec dump),
@@ -616,6 +682,9 @@ class Pipeline:
 
         Yields the same event dicts that a Strands Agent.stream_async would.
         """
+        # Block until any deferred brain-history compression from the prior
+        # turn has finished, otherwise this turn would see uncompressed history.
+        await self._await_pending_compression()
         # Stage 0 – Triage (classify intent before any agent is called)
         self._last_turn_usages = []
         user_text = self._extract_text(user_input)
@@ -632,6 +701,7 @@ class Pipeline:
         )
         triage_result = await _triage(_triage_input, self._session, self._info_context, self._triage_agent)
         self._record_agent_usage(self._triage_agent, _triage_snap)
+        self._run_qa = triage_result.run_qa
         handler = _route(triage_result)
 
         if self._verbose:
@@ -686,7 +756,9 @@ class Pipeline:
             if self._verbose:
                 print("pipeline: Researcher (retry) resolved — handing off to Brain …")
                 yield {"data": "\n_pipeline: Researcher (retry) resolved — handing off to Brain …_"}
-            async for event in self._astream_brain_stage(_r_json_s, user_text, triage_result):
+            async for event in self._astream_brain_stage(
+                _r_json_s, user_text, triage_result, qa_reply_queue=qa_reply_queue
+            ):
                 yield event
             return
 
@@ -748,7 +820,11 @@ class Pipeline:
             # Executor handoff: stream execution events back to Chainlit
             workflow_paths_fu = _get_workflow_signal()
             workflow_paths_fu = self._expand_variations(workflow_paths_fu, self._last_brainbriefing_json or "")
-            executor_paths_fu: list[str] = []
+            # Pass the session list directly so chainlit's mid-stream flush sees
+            # each output the moment the executor resolves it, instead of all at
+            # the end.
+            self._session.current_output_paths.clear()
+            executor_paths_fu = self._session.current_output_paths
             if workflow_paths_fu:
                 count = len(workflow_paths_fu)
                 if self._verbose:
@@ -765,15 +841,15 @@ class Pipeline:
                     collected_paths=executor_paths_fu,
                 ):
                     yield {"data": f"\n{line}"}
-            if executor_paths_fu:
-                self._session.current_output_paths[:] = executor_paths_fu
             self._record_chat_summary(user_text, triage_result, status="completed")
-            await self._compress_brain_history(extra_output_paths=executor_paths_fu)
+            self._schedule_compression(extra_output_paths=executor_paths_fu)
             self._session.last_agent = "brain"
             return
 
         if handler == "planner":
-            async for event in self._stream_planned_request(user_text, triage_result):
+            async for event in self._stream_planned_request(
+                user_text, triage_result, qa_reply_queue=qa_reply_queue
+            ):
                 yield event
             return
 
@@ -825,19 +901,21 @@ class Pipeline:
         if self._verbose:
             print("pipeline: Stage 2 – Brain streaming …")
             yield {"data": "\n_pipeline: Stage 2 – Brain streaming …_"}
-        async for event in self._astream_brain_stage(raw_json, user_text, triage_result):
+        async for event in self._astream_brain_stage(
+            raw_json, user_text, triage_result, qa_reply_queue=qa_reply_queue
+        ):
             yield event
 
     # ── Internal helpers ─────────────────────────────────────────────── #
 
     # ── Planner helpers ──────────────────────────────────────────────── #
 
-    def _run_planner(self, user_text: str) -> list[dict[str, str]]:
+    def _run_planner(self, user_text: str) -> tuple[list[dict[str, str]], str]:
         """Call the Planner agent to decompose *user_text* into ordered steps.
 
-        Returns a list of ``{"request": str, "description": str}`` dicts on
-        success, or an empty list when parsing fails (the caller falls back to
-        treating the request as a plain ``new_request``).
+        Returns a tuple of:
+          - list of ``{"request": str, "description": str}`` dicts (empty on failure)
+          - the raw agent response string (for display in the UI thinking block)
         """
         raw: str
         _planner_snap = self._usage_snapshot(self._planner_agent)
@@ -860,7 +938,7 @@ class Pipeline:
                 if self._verbose:
                     print(f"[planner] WARNING: plan has {len(steps)} step(s) — need ≥ 2. "
                           "Falling back to researcher.")
-                return []
+                return [], raw
             # Validate each step has at least a 'request' field.
             validated: list[dict[str, str]] = []
             for s in steps:
@@ -872,12 +950,12 @@ class Pipeline:
             if len(validated) < 2:
                 if self._verbose:
                     print("[planner] WARNING: could not validate ≥ 2 steps. Falling back.")
-                return []
-            return validated
+                return [], raw
+            return validated, raw
         except (json.JSONDecodeError, KeyError, TypeError) as exc:
             if self._verbose:
                 print(f"[planner] WARNING: plan parse failed ({exc}). Falling back to researcher.")
-            return []
+            return [], raw
 
     def _inject_context_into_step(
         self,
@@ -983,7 +1061,7 @@ class Pipeline:
         """Execute a multi-step plan synchronously; return a combined summary string."""
         if self._verbose:
             print("pipeline: Planner — decomposing multi-step request …")
-        steps = self._run_planner(user_text)
+        steps, _planner_raw = self._run_planner(user_text)
 
         # Fallback: treat as a plain new_request when planning fails.
         if not steps:
@@ -1004,7 +1082,7 @@ class Pipeline:
             wf = self._expand_variations(wf, raw_json)
             ep: list[str] = []
             if wf:
-                _, ep = asyncio.run(
+                _, ep, _ = asyncio.run(
                     self._drain_executor_batch(wf, raw_json, user_message=user_text)
                 )
                 if ep:
@@ -1062,69 +1140,99 @@ class Pipeline:
                 step_results.append(f"Step {idx + 1}: {researcher_output}")
                 continue
 
-            self._ensure_clean_history()
-            _brain_snap_ps = self._usage_snapshot(self._brain)
-            brain_response = str(self._brain(self._build_brain_prompt(raw_json)))
-            self._record_agent_usage(self._brain, _brain_snap_ps)
-            wf_paths = _get_workflow_signal()
-            wf_paths = self._expand_variations(wf_paths, raw_json)
-            exec_paths: list[str] = []
-            step_error_abort = False
-            verdict: dict = {"status": "ok", "errors": [], "fix_plan": "", "user_message": ""}
-            if wf_paths:
-                count = len(wf_paths)
-                if self._verbose:
-                    tag = f"{count} workflows (batch)" if count > 1 else wf_paths[0]
-                    print(f"pipeline: Step {idx + 1} Brain signaled {tag} ready.")
-                exec_lines, exec_paths = asyncio.run(
-                    self._drain_executor_batch(
-                        wf_paths, raw_json, user_message=step_req
-                    )
-                )
-                if exec_paths:
-                    self._session.current_output_paths[:] = exec_paths
-                if exec_lines:
-                    brain_response = brain_response + "\n\n" + "\n".join(exec_lines)
-
-                # ── Error check + fix-retry loop ─────────────────────────── #
-                _MAX_FIX_ATTEMPTS = 3
-                for _fix_attempt in range(1, _MAX_FIX_ATTEMPTS + 1):
-                    verdict = self._run_error_check(description)
-                    if verdict["status"] == "ok":
-                        break
+            qa_step_failed = False
+            while True:  # ── QA retry loop ──────────────────────────────── #
+                self._ensure_clean_history()
+                _brain_snap_ps = self._usage_snapshot(self._brain)
+                brain_response = str(self._brain(self._build_brain_prompt(raw_json)))
+                self._record_agent_usage(self._brain, _brain_snap_ps)
+                wf_paths = _get_workflow_signal()
+                wf_paths = self._expand_variations(wf_paths, raw_json)
+                exec_paths: list[str] = []
+                step_error_abort = False
+                verdict: dict = {"status": "ok", "errors": [], "fix_plan": "", "user_message": ""}
+                _qa_fail_event: dict | None = None
+                if wf_paths:
+                    count = len(wf_paths)
                     if self._verbose:
-                        print(
-                            f"[error_checker] Step {idx + 1} attempt {_fix_attempt}: "
-                            f"{verdict['status']} — {verdict.get('errors', [])[:1]}"
+                        tag = f"{count} workflows (batch)" if count > 1 else wf_paths[0]
+                        print(f"pipeline: Step {idx + 1} Brain signaled {tag} ready.")
+                    exec_lines, exec_paths, _qa_fail_event = asyncio.run(
+                        self._drain_executor_batch(
+                            wf_paths, raw_json, user_message=step_req
                         )
-                    if verdict["status"] == "error_unfixable" or _fix_attempt == _MAX_FIX_ATTEMPTS:
-                        step_error_abort = True
-                        if self._verbose:
-                            print(
-                                f"pipeline: Step {idx + 1} aborted after "
-                                f"{_fix_attempt} error-check attempt(s)."
-                            )
-                        break
-                    # Fixable error — ask Brain to fix and rerun.
-                    _brain_snap_fix = self._usage_snapshot(self._brain)
-                    fix_response = str(self._brain(self._build_fix_prompt(verdict["fix_plan"], _fix_attempt)))
-                    self._record_agent_usage(self._brain, _brain_snap_fix)
-                    wf_paths_fix = _get_workflow_signal()
-                    wf_paths_fix = self._expand_variations(wf_paths_fix, raw_json)
-                    exec_paths = []
-                    if wf_paths_fix:
-                        exec_lines_fix, exec_paths = asyncio.run(
-                            self._drain_executor_batch(wf_paths_fix, raw_json, user_message=step_req)
-                        )
-                        if exec_paths:
-                            self._session.current_output_paths[:] = exec_paths
-                        if exec_lines_fix:
-                            brain_response = fix_response + "\n\n" + "\n".join(exec_lines_fix)
-                    else:
-                        # Brain could not produce a fixed workflow.
-                        step_error_abort = True
-                        break
-                # ── end error-check retry loop ───────────────────────────── #
+                    )
+                    if exec_paths:
+                        self._session.current_output_paths[:] = exec_paths
+                    if exec_lines:
+                        brain_response = brain_response + "\n\n" + "\n".join(exec_lines)
+
+                    if not _qa_fail_event:
+                        # ── Error check + fix-retry loop ─────────────────── #
+                        _MAX_FIX_ATTEMPTS = 3
+                        for _fix_attempt in range(1, _MAX_FIX_ATTEMPTS + 1):
+                            verdict = self._run_error_check(description)
+                            if verdict["status"] == "ok":
+                                break
+                            if self._verbose:
+                                print(
+                                    f"[error_checker] Step {idx + 1} attempt {_fix_attempt}: "
+                                    f"{verdict['status']} — {verdict.get('errors', [])[:1]}"
+                                )
+                            if verdict["status"] == "error_unfixable" or _fix_attempt == _MAX_FIX_ATTEMPTS:
+                                step_error_abort = True
+                                if self._verbose:
+                                    print(
+                                        f"pipeline: Step {idx + 1} aborted after "
+                                        f"{_fix_attempt} error-check attempt(s)."
+                                    )
+                                break
+                            # Fixable error — ask Brain to fix and rerun.
+                            _brain_snap_fix = self._usage_snapshot(self._brain)
+                            fix_response = str(self._brain(self._build_fix_prompt(verdict["fix_plan"], _fix_attempt)))
+                            self._record_agent_usage(self._brain, _brain_snap_fix)
+                            wf_paths_fix = _get_workflow_signal()
+                            wf_paths_fix = self._expand_variations(wf_paths_fix, raw_json)
+                            exec_paths = []
+                            if wf_paths_fix:
+                                exec_lines_fix, exec_paths, _qa_fail_event = asyncio.run(
+                                    self._drain_executor_batch(wf_paths_fix, raw_json, user_message=step_req)
+                                )
+                                if exec_paths:
+                                    self._session.current_output_paths[:] = exec_paths
+                                if exec_lines_fix:
+                                    brain_response = fix_response + "\n\n" + "\n".join(exec_lines_fix)
+                                if _qa_fail_event:
+                                    break
+                            else:
+                                # Brain could not produce a fixed workflow.
+                                step_error_abort = True
+                                break
+                        # ── end error-check retry loop ───────────────────── #
+
+                if _qa_fail_event:
+                    # Vision QA failed — show result and ask whether to retry.
+                    _image_paths = _qa_fail_event.get("image_paths", [])
+                    _fail_details = _qa_fail_event.get("fail_details", [])
+                    print(f"\n⚠️  QA check failed for step {idx + 1}/{total} — {description}")
+                    for p in _image_paths:
+                        print(f"   📎 Output: {p}")
+                    for d in _fail_details:
+                        print(f"   • {Path(d['path']).name}: {d['verdict']}")
+                    try:
+                        _answer = input("\n🔁 Retry this step? [y/n]: ").strip()
+                    except (EOFError, KeyboardInterrupt):
+                        _answer = "n"
+                    if _is_affirmative(_answer):
+                        print("  ↩️  Retrying…\n")
+                        continue  # re-run Brain + executor
+                    qa_step_failed = True
+
+                break  # ── end QA retry loop ──────────────────────────────── #
+
+            if qa_step_failed:
+                step_results.append(f"**Step {idx + 1} — {description}**: ⚠️ QA failed, step skipped.")
+                break  # abort remaining steps
 
             if step_error_abort:
                 err_msg = (
@@ -1153,12 +1261,16 @@ class Pipeline:
         self,
         user_text: str,
         triage_result: TriageResult,
+        *,
+        qa_reply_queue: asyncio.Queue | None = None,
     ):
         """Stream a multi-step plan; yields Strands-compatible event dicts."""
         if self._verbose:
             print("pipeline: Planner — decomposing multi-step request …")
             yield {"data": "\n_pipeline: Planner — decomposing multi-step request …_"}
-        steps = self._run_planner(user_text)
+        yield {"_planner_start": True}
+        steps, _planner_raw = self._run_planner(user_text)
+        yield {"_planner_done": True, "raw": _planner_raw}
 
         # Fallback: treat as a plain researcher path when planning fails.
         if not steps:
@@ -1190,7 +1302,8 @@ class Pipeline:
             self._record_agent_usage(self._brain, _brain_snap_pfb)
             wf = _get_workflow_signal()
             wf = self._expand_variations(wf, raw_json)
-            ep: list[str] = []
+            self._session.current_output_paths.clear()
+            ep = self._session.current_output_paths
             if wf:
                 yield {"data": "\n\n_⚙️ Handing off to executor…_"}
                 async for line in _execute_workflows_batch(
@@ -1200,10 +1313,8 @@ class Pipeline:
                     collected_paths=ep,
                 ):
                     yield {"data": f"\n{line}"}
-                if ep:
-                    self._session.current_output_paths[:] = ep
             self._record_chat_summary(user_text, triage_result, status="completed", raw_json=raw_json)
-            await self._compress_brain_history(extra_output_paths=ep)
+            self._schedule_compression(extra_output_paths=ep)
             return
 
         total = len(steps)
@@ -1269,98 +1380,125 @@ class Pipeline:
                 continue
 
             self._ensure_clean_history()
-            _brain_snap_ps = self._usage_snapshot(self._brain)
-            async for event in self._brain.stream_async(self._build_brain_prompt(raw_json)):
-                yield event
-            self._record_agent_usage(self._brain, _brain_snap_ps)
-
-            wf_paths = _get_workflow_signal()
-            wf_paths = self._expand_variations(wf_paths, raw_json)
-            exec_paths: list[str] = []
             qa_step_failed = False
-            step_error_abort = False
-            verdict: dict = {"status": "ok", "errors": [], "fix_plan": "", "user_message": ""}
-            if wf_paths:
-                count = len(wf_paths)
-                hdr = f"batch of {count} workflows" if count > 1 else "workflow"
-                yield {"data": f"\n\n_⚙️ Handing off to executor ({hdr})…_"}
-                async for line in _execute_workflows_batch(
-                    wf_paths, raw_json,
-                    user_message=step_req,
-                    verbose=self._verbose,
-                    collected_paths=exec_paths,
-                ):
-                    if isinstance(line, dict) and line.get("qa_fail"):
-                        # Forward the QA failure event up to the UI layer.
-                        yield line
-                        qa_step_failed = True
-                        break
-                    yield {"data": f"\n{line}"}
-                if exec_paths:
-                    self._session.current_output_paths[:] = exec_paths
+            _step_brain_prompt_override: str | None = None
+            while True:  # ── QA retry loop ──────────────────────────────── #
+                _brain_prompt_for_step = _step_brain_prompt_override or self._build_brain_prompt(raw_json)
+                _step_brain_prompt_override = None  # consume once
+                _brain_snap_ps = self._usage_snapshot(self._brain)
+                self._ensure_clean_history()
+                async for event in self._brain.stream_async(_brain_prompt_for_step):
+                    yield event
+                self._record_agent_usage(self._brain, _brain_snap_ps)
 
-                # ── Error check + fix-retry loop ─────────────────────────── #
-                if not qa_step_failed:
-                    _MAX_FIX_ATTEMPTS = 3
-                    for _fix_attempt in range(1, _MAX_FIX_ATTEMPTS + 1):
-                        verdict = self._run_error_check(description)
-                        if verdict["status"] == "ok":
+                wf_paths = _get_workflow_signal()
+                wf_paths = self._expand_variations(wf_paths, raw_json)
+                self._session.current_output_paths.clear()
+                exec_paths = self._session.current_output_paths
+                step_error_abort = False
+                verdict: dict = {"status": "ok", "errors": [], "fix_plan": "", "user_message": ""}
+                _qa_fail_event: dict | None = None
+                if wf_paths:
+                    count = len(wf_paths)
+                    hdr = f"batch of {count} workflows" if count > 1 else "workflow"
+                    yield {"data": f"\n\n_⚙️ Handing off to executor ({hdr})…_"}
+                    async for line in _execute_workflows_batch(
+                        wf_paths, raw_json,
+                        user_message=step_req,
+                        verbose=self._verbose,
+                        collected_paths=exec_paths,
+                        run_qa=self._run_qa,
+                    ):
+                        if isinstance(line, dict) and line.get("qa_fail"):
+                            _qa_fail_event = line
                             break
-                        if self._verbose:
-                            print(
-                                f"[error_checker] Step {idx + 1} attempt {_fix_attempt}: "
-                                f"{verdict['status']} — {verdict.get('errors', [])[:1]}"
-                            )
-                            yield {"data": (
-                                f"\n_[error_checker] Step {idx + 1} attempt {_fix_attempt}: "
-                                f"{verdict['status']}_"
-                            )}
-                        if verdict["status"] == "error_unfixable" or _fix_attempt == _MAX_FIX_ATTEMPTS:
-                            step_error_abort = True
+                        yield {"data": f"\n{line}"}
+
+                    # ── Error check + fix-retry loop ─────────────────────── #
+                    if not _qa_fail_event:
+                        _MAX_FIX_ATTEMPTS = 3
+                        for _fix_attempt in range(1, _MAX_FIX_ATTEMPTS + 1):
+                            verdict = self._run_error_check(description)
+                            if verdict["status"] == "ok":
+                                break
                             if self._verbose:
                                 print(
-                                    f"pipeline: Step {idx + 1} aborted after "
-                                    f"{_fix_attempt} error-check attempt(s)."
+                                    f"[error_checker] Step {idx + 1} attempt {_fix_attempt}: "
+                                    f"{verdict['status']} — {verdict.get('errors', [])[:1]}"
                                 )
                                 yield {"data": (
-                                    f"\n_pipeline: Step {idx + 1} aborted — "
-                                    f"{verdict.get('user_message', 'workflow error')}_"
+                                    f"\n_[error_checker] Step {idx + 1} attempt {_fix_attempt}: "
+                                    f"{verdict['status']}_"
                                 )}
-                            break
-                        # Fixable error — ask Brain to fix (streamed) and rerun.
-                        yield {"data": f"\n_🔧 Fixing step {idx + 1} (attempt {_fix_attempt}/{_MAX_FIX_ATTEMPTS})…_"}
-                        _brain_snap_fix = self._usage_snapshot(self._brain)
-                        async for event in self._brain.stream_async(
-                            self._build_fix_prompt(verdict["fix_plan"], _fix_attempt)
-                        ):
-                            yield event
-                        self._record_agent_usage(self._brain, _brain_snap_fix)
-                        wf_paths_fix = _get_workflow_signal()
-                        wf_paths_fix = self._expand_variations(wf_paths_fix, raw_json)
-                        exec_paths = []
-                        if wf_paths_fix:
-                            hdr_fix = f"batch of {len(wf_paths_fix)} workflows" if len(wf_paths_fix) > 1 else "workflow"
-                            yield {"data": f"\n\n_⚙️ Re-submitting to executor ({hdr_fix})…_"}
-                            async for line in _execute_workflows_batch(
-                                wf_paths_fix, raw_json,
-                                user_message=step_req,
-                                verbose=self._verbose,
-                                collected_paths=exec_paths,
+                            if verdict["status"] == "error_unfixable" or _fix_attempt == _MAX_FIX_ATTEMPTS:
+                                step_error_abort = True
+                                if self._verbose:
+                                    print(
+                                        f"pipeline: Step {idx + 1} aborted after "
+                                        f"{_fix_attempt} error-check attempt(s)."
+                                    )
+                                    yield {"data": (
+                                        f"\n_pipeline: Step {idx + 1} aborted — "
+                                        f"{verdict.get('user_message', 'workflow error')}_"
+                                    )}
+                                break
+                            # Fixable error — ask Brain to fix (streamed) and rerun.
+                            yield {"data": f"\n_🔧 Fixing step {idx + 1} (attempt {_fix_attempt}/{_MAX_FIX_ATTEMPTS})…_"}
+                            _brain_snap_fix = self._usage_snapshot(self._brain)
+                            async for event in self._brain.stream_async(
+                                self._build_fix_prompt(verdict["fix_plan"], _fix_attempt)
                             ):
-                                if isinstance(line, dict) and line.get("qa_fail"):
-                                    yield line
-                                    qa_step_failed = True
-                                    break
-                                yield {"data": f"\n{line}"}
-                            if exec_paths:
-                                self._session.current_output_paths[:] = exec_paths
-                        else:
-                            # Brain could not produce a fixed workflow.
-                            step_error_abort = True
-                            break
-                        if qa_step_failed:
-                            break
-                # ── end error-check retry loop ───────────────────────────── #
+                                yield event
+                            self._record_agent_usage(self._brain, _brain_snap_fix)
+                            wf_paths_fix = _get_workflow_signal()
+                            wf_paths_fix = self._expand_variations(wf_paths_fix, raw_json)
+                            # Reset for the fix run so the chainlit "already-sent"
+                            # tracker treats fixed outputs as fresh.
+                            self._session.current_output_paths.clear()
+                            exec_paths = self._session.current_output_paths
+                            if wf_paths_fix:
+                                hdr_fix = f"batch of {len(wf_paths_fix)} workflows" if len(wf_paths_fix) > 1 else "workflow"
+                                yield {"data": f"\n\n_⚙️ Re-submitting to executor ({hdr_fix})…_"}
+                                async for line in _execute_workflows_batch(
+                                    wf_paths_fix, raw_json,
+                                    user_message=step_req,
+                                    verbose=self._verbose,
+                                    collected_paths=exec_paths,
+                                    run_qa=self._run_qa,
+                                ):
+                                    if isinstance(line, dict) and line.get("qa_fail"):
+                                        _qa_fail_event = line
+                                        break
+                                    yield {"data": f"\n{line}"}
+                            else:
+                                # Brain could not produce a fixed workflow.
+                                step_error_abort = True
+                                break
+                            if _qa_fail_event:
+                                break
+                    # ── end error-check retry loop ───────────────────────── #
+
+                if _qa_fail_event:
+                    if qa_reply_queue is not None:
+                        yield {"qa_fail_ask": True, **_qa_fail_event}
+                        _answer = await qa_reply_queue.get()
+                        if _is_affirmative(_answer):
+                            _qa_step_feedback_prompt = self._build_qa_feedback_prompt(
+                                self._build_brain_prompt(raw_json), step_req, _qa_fail_event
+                            )
+                            yield {"data": (
+                                "\n\n---\n"
+                                "🔍 **QA feedback sent to Brain:**\n\n"
+                                + _qa_step_feedback_prompt
+                                + "\n\n---\n"
+                            )}
+                            yield {"data": "\n_🔄 Retrying step with QA feedback…_"}
+                            _step_brain_prompt_override = _qa_step_feedback_prompt
+                            continue  # re-run Brain + executor with feedback
+                    # No queue or user declined — mark failed and stop plan.
+                    qa_step_failed = True
+
+                break  # ── end QA retry loop ──────────────────────────────── #
 
             if qa_step_failed:
                 yield {"_step_done": True, "idx": idx, "failed": True}
@@ -1605,7 +1743,11 @@ class Pipeline:
             print(f"pipeline: Compressing Brain history ({msg_count} messages) …")
 
         try:
-            summary = await summarize_conversation(messages, extra_output_paths=extra_output_paths)
+            summary = await summarize_conversation(
+                messages,
+                extra_output_paths=extra_output_paths,
+                user_message_image_paths=self._session.last_user_input_images or None,
+            )
         except Exception as exc:
             if self._verbose:
                 print(f"pipeline: WARNING: conversation summarisation failed ({exc}); "
@@ -1646,6 +1788,21 @@ class Pipeline:
 
         print(f"pipeline: Chat summary:\n{summary}\n")
 
+        # ── Log compressed summary to file ──────────────────────────────────
+        try:
+            import datetime
+            _log_dir = Path(".logs")
+            _log_dir.mkdir(parents=True, exist_ok=True)
+            _log_path = _log_dir / "message_history_compressed.log"
+            _timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with open(_log_path, "a", encoding="utf-8") as _lf:
+                _lf.write(f"\n{'='*80}\n[{_timestamp}] SESSION: {self._session.session_id}\n{'='*80}\n")
+                _lf.write(summary)
+                _lf.write("\n")
+        except Exception as _log_exc:
+            if self._verbose:
+                print(f"pipeline: WARNING: failed to write compressed log ({_log_exc})")
+
         # Replace the entire history with a single summary message.
         # Using an "assistant" message so the agent treats it as its own
         # prior context rather than a new user instruction.
@@ -1674,6 +1831,8 @@ class Pipeline:
 
         if self._verbose:
             print(f"pipeline: Brain history compressed → {len(summary)} chars summary.")
+        # Cache the summary so the Researcher can reference it next turn.
+        self._last_prior_summary = summary
 
         # Inject the output paths into the Researcher's history so that on the
         # next chain/follow-up request the Researcher knows which files were
@@ -1832,6 +1991,18 @@ class Pipeline:
             )
             researcher_prompt_text += f"\n\nInput image(s) from earlier in this thread:\n{_paths_hint}"
 
+        # Inject the compressed summary from the previous turn so the Researcher
+        # can resolve OUTPUT_PATHS (prior generated files) as inputs for this turn.
+        # This bridges chained sessions regardless of how triage classified the intent.
+        if self._last_prior_summary:
+            researcher_prompt_text += (
+                f"\n\n[CONVERSATION SUMMARY FROM PRIOR ROUND]\n\n"
+                f"{self._last_prior_summary}\n\n"
+                f"[END OF SUMMARY — if this request refers to previously generated outputs, "
+                f"upload the file(s) from OUTPUT_PATHS via upload_image() and use the "
+                f"returned filename as the workflow input.]"
+            )
+
         # If the previous turn was handled by the Info agent (e.g. it crafted a prompt),
         # pass only the key output as a compact hint so the Researcher can reuse it.
         if self._session.last_agent == "info" and self._session.last_info_response:
@@ -1896,10 +2067,12 @@ class Pipeline:
                     f"status={briefing.status}, task={briefing.task.description!r}, "
                     f"template={briefing.template.name!r}"
                 )
-            yield {"_researcher_done": True, "raw_json": raw_json, "error": None, "researcher_output": raw_json}
+            log_agent_messages("RESEARCHER", list(self._researcher.messages))
             self._record_agent_usage(self._researcher, _researcher_snap)
+            yield {"_researcher_done": True, "raw_json": raw_json, "error": None, "researcher_output": raw_json}
             return
 
+        log_agent_messages("RESEARCHER", list(self._researcher.messages))
         self._record_agent_usage(self._researcher, _researcher_snap)
         yield {
             "_researcher_done": True,
@@ -1962,6 +2135,18 @@ class Pipeline:
             )
             researcher_prompt_text += f"\n\nInput image(s) from earlier in this thread:\n{_paths_hint}"
 
+        # Inject the compressed summary from the previous turn so the Researcher
+        # can resolve OUTPUT_PATHS (prior generated files) as inputs for this turn.
+        # This bridges chained sessions regardless of how triage classified the intent.
+        if self._last_prior_summary:
+            researcher_prompt_text += (
+                f"\n\n[CONVERSATION SUMMARY FROM PRIOR ROUND]\n\n"
+                f"{self._last_prior_summary}\n\n"
+                f"[END OF SUMMARY — if this request refers to previously generated outputs, "
+                f"upload the file(s) from OUTPUT_PATHS via upload_image() and use the "
+                f"returned filename as the workflow input.]"
+            )
+
         # Always pass only the text prompt to the Researcher.
         # When user_input is a multimodal list, the text block already contains
         # the on-disk paths of any attached files (added by _build_content in chainlit_app.py).
@@ -2018,10 +2203,12 @@ class Pipeline:
                     f"status={briefing.status}, task={briefing.task.description!r}, "
                     f"template={briefing.template.name!r}"
                 )
+            log_agent_messages("RESEARCHER", list(self._researcher.messages))
             self._record_agent_usage(self._researcher, _researcher_snap)
             return raw_json, None, raw_json
 
         # All attempts exhausted
+        log_agent_messages("RESEARCHER", list(self._researcher.messages))
         self._record_agent_usage(self._researcher, _researcher_snap)
         return None, (
             f"Brainbriefing validation failed after {1 + self._MAX_RESEARCHER_RETRIES} attempts: "
@@ -2052,6 +2239,7 @@ class Pipeline:
         *,
         _is_error_retry: bool = False,
         _override_brain_prompt: str | None = None,
+        qa_reply_queue: asyncio.Queue | None = None,
     ):
         """Async generator: stream the full Brain stage (assembly → executor) for a given brainbriefing.
 
@@ -2070,6 +2258,10 @@ class Pipeline:
         brain_prompt = _override_brain_prompt or self._build_brain_prompt(raw_json)
         current_input: Any = brain_prompt
         _brain_snap = self._usage_snapshot(self._brain)
+
+        # Track whether a brain-assembly failure was resolved via user advice.
+        _assembly_fail_error: str | None = None
+        _assembly_fail_advice: str | None = None
 
         while True:
             interrupt_result = None
@@ -2090,7 +2282,9 @@ class Pipeline:
                 # Normal completion — Stage 3: Executor
                 workflow_paths_b = _get_workflow_signal()
                 workflow_paths_b = self._expand_variations(workflow_paths_b, raw_json)
-                executor_paths_b: list[str] = []
+                self._session.current_output_paths.clear()
+                executor_paths_b = self._session.current_output_paths
+                _qa_fail_event_b: dict | None = None
                 if workflow_paths_b:
                     count = len(workflow_paths_b)
                     if self._verbose:
@@ -2105,15 +2299,81 @@ class Pipeline:
                         user_message=user_text,
                         verbose=self._verbose,
                         collected_paths=executor_paths_b,
+                        run_qa=self._run_qa,
                     ):
+                        if isinstance(line, dict) and line.get("qa_fail"):
+                            _qa_fail_event_b = line
+                            break
                         yield {"data": f"\n{line}"}
 
-                if executor_paths_b:
-                    self._session.current_output_paths[:] = executor_paths_b
+                if not workflow_paths_b:
+                    # Brain finished without signalling a workflow — assembly failed.
+                    latest_wf = _latest_output_workflow()
+                    if self._verbose:
+                        print(f"pipeline: Brain did not signal any workflow. Latest JSON: {latest_wf}")
+                    yield {
+                        "brain_assembly_fail_ask": True,
+                        "latest_workflow_path": latest_wf or "",
+                    }
+                    if qa_reply_queue is not None:
+                        _advice = await qa_reply_queue.get()
+                        if _advice and _advice.strip():
+                            yield {"data": "\n_🔄 Retrying with your advice…_"}
+                            _assembly_fail_error = (
+                                "Brain did not call signal_workflow_ready"
+                                + (f" (latest JSON: {latest_wf})" if latest_wf else "")
+                            )
+                            _assembly_fail_advice = _advice.strip()
+                            current_input = (
+                                f"The previous workflow assembly attempt failed — "
+                                f"`signal_workflow_ready` was never called.\n"
+                                f"The user reviewed the latest workflow JSON"
+                                + (f" ({latest_wf})" if latest_wf else "")
+                                + f" and provided this advice:\n\n{_advice}\n\n"
+                                f"Please fix the issue and try again. "
+                                f"Call `signal_workflow_ready(workflow_path)` when the workflow is ready.\n\n"
+                                f"Original brainbriefing:\n\n{brain_prompt}"
+                            )
+                            continue
+                    # No queue or empty advice — abort gracefully.
+                    self._record_chat_summary(user_text, triage_result, status="error", raw_json=raw_json)
+                    self._record_agent_usage(self._brain, _brain_snap)
+                    return
+
+                if _qa_fail_event_b:
+                    if qa_reply_queue is not None:
+                        yield {"qa_fail_ask": True, **_qa_fail_event_b}
+                        _answer_b = await qa_reply_queue.get()
+                        if _is_affirmative(_answer_b):
+                            _qa_feedback_prompt = self._build_qa_feedback_prompt(
+                                brain_prompt, user_text, _qa_fail_event_b
+                            )
+                            yield {"data": (
+                                "\n\n---\n"
+                                "🔍 **QA feedback sent to Brain:**\n\n"
+                                + _qa_feedback_prompt
+                                + "\n\n---\n"
+                            )}
+                            yield {"data": "\n_🔄 Retrying with QA feedback…_"}
+                            current_input = _qa_feedback_prompt
+                            continue  # restart the while True loop
+                    # No queue or user declined — abort.
+                    self._record_chat_summary(user_text, triage_result, status="qa_failed", raw_json=raw_json)
+                    self._record_agent_usage(self._brain, _brain_snap)
+                    return
+
                 self._record_chat_summary(user_text, triage_result, status="completed", raw_json=raw_json)
-                await self._compress_brain_history(extra_output_paths=executor_paths_b)
+                self._schedule_compression(extra_output_paths=executor_paths_b)
                 self._record_agent_usage(self._brain, _brain_snap)
                 self._session.last_agent = "brain"
+                # If this run succeeded after a user-advice retry, record the learning.
+                if _assembly_fail_error and _assembly_fail_advice:
+                    from src.utils.learnings import record_user_advice_learning
+                    record_user_advice_learning(
+                        error_context=_assembly_fail_error,
+                        user_advice=_assembly_fail_advice,
+                        session_id=self._session.session_id,
+                    )
                 if self._verbose:
                     print("pipeline: Brain finished.")
                     yield {"data": "\n_pipeline: Brain finished._"}
@@ -2159,22 +2419,55 @@ class Pipeline:
             Vision QA (via Ollama) and saving outputs to ./output_images.
         """).strip()
 
+    def _build_qa_feedback_prompt(
+        self,
+        original_brain_prompt: str,
+        user_text: str,
+        qa_fail_event: dict,
+    ) -> str:
+        """Build a Brain retry prompt that incorporates Vision QA failure verdicts as feedback.
+
+        Instructs the Brain to revise the workflow or prompt parameters to better
+        satisfy the user's original request, using the QA agent's verdict as guidance.
+        """
+        fail_details: list[dict] = qa_fail_event.get("fail_details", [])
+        verdict_lines = "\n".join(
+            f"  - {Path(d['path']).name}: {d['verdict']}" for d in fail_details
+        )
+        return (
+            f"The Vision QA agent reviewed the previous output and determined it did NOT "
+            f"meet the user's original request.\n\n"
+            f"**User's original request:** {user_text}\n\n"
+            f"**QA verdicts:**\n{verdict_lines}\n\n"
+            f"Please revise the workflow or the prompt parameters to address these issues "
+            f"and better satisfy the user's original request. "
+            f"Keep the same workflow template and input images unless the QA verdict clearly "
+            f"indicates a fundamentally different approach is needed. "
+            f"Call `signal_workflow_ready(workflow_path)` when the revised workflow is ready.\n\n"
+            f"--- Original Brainbriefing ---\n\n{original_brain_prompt}"
+        )
+
     async def _drain_executor_batch(
         self,
         workflow_paths: list[str],
         brainbriefing_json: str,
         user_message: str = "",
-    ) -> tuple[list[str], list[str]]:
-        """Submit all workflows then poll + process each; return ``(status_lines, output_paths)``.
+    ) -> tuple[list[str], list[str], dict | None]:
+        """Submit all workflows then poll + process each; return ``(status_lines, output_paths, qa_fail_event)``.
 
         Uses ``execute_workflows_batch`` (submit-all-then-poll) for any number
         of workflows, including a single one.
 
         ``user_message`` is forwarded to the Vision QA agent as the ground-truth
         reference.  It never enters any agent's context window or history.
+
+        When QA fails the generator yields a ``{"qa_fail": True, ...}`` dict.
+        That event is returned as the third element instead of being appended to
+        ``lines`` (which is always strings).
         """
         lines: list[str] = []
         output_paths: list[str] = []
+        qa_fail_event: dict | None = None
         async for line in _execute_workflows_batch(
             workflow_paths,
             brainbriefing_json,
@@ -2183,10 +2476,13 @@ class Pipeline:
             collected_paths=output_paths,
             run_qa=self._run_qa,
         ):
-            lines.append(line)
+            if isinstance(line, dict) and line.get("qa_fail"):
+                qa_fail_event = line
+                break
+            lines.append(line if isinstance(line, str) else str(line))
             if self._verbose:
                 print(f"[executor] {line}")
-        return lines, output_paths
+        return lines, output_paths, qa_fail_event
 
     def _expand_variations(
         self,

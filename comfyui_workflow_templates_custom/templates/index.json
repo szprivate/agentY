@@ -944,5 +944,59 @@
         }
       }
     ]
+  },
+  {
+    "templates": [
+      {
+        "name": "upscale_using_model",
+        "models": [],
+        "io": {
+          "inputs": [
+            {
+              "nodeId": 1,
+              "nodeType": "LoadImage",
+              "file": "3cd9afac-a920-48b1-9e02-194b85bb63d8.jpg",
+              "mediaType": "image"
+            }
+          ],
+          "outputs": [
+            {
+              "nodeId": 4,
+              "nodeType": "SaveImage",
+              "file": "",
+              "mediaType": "image"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "templates": [
+      {
+        "name": "upscale_ultimateSD",
+        "models": [
+          "flux1-dev-fp8"
+        ],
+        "io": {
+          "inputs": [
+            {
+              "nodeId": 8,
+              "nodeType": "LoadImage",
+              "file": "photo.jpeg",
+              "mediaType": "image"
+            }
+          ],
+          "outputs": [
+            {
+              "nodeId": 7,
+              "nodeType": "SaveImage",
+              "file": "",
+              "mediaType": "image"
+            }
+          ]
+        }
+      }
+    ]
   }
 ]

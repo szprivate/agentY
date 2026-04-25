@@ -107,10 +107,53 @@ try {
         }
     }
 
-    # ── Start MinIO (docker-compose) ─────────────────────────────────────────
+    # ── Ensure chainlit-datalayer compose project is running ────────────────
     $dockerAvailable = $null
     try { $dockerAvailable = Get-Command docker -ErrorAction Stop } catch {}
 
+    if ($dockerAvailable) {
+        # Read chainlit_datalayer_dir from config/settings.json
+        $settingsPath = Join-Path $ProjectRoot "config/settings.json"
+        $dlComposeDir = ""
+        if (Test-Path $settingsPath) {
+            $settingsRaw = Get-Content $settingsPath -Raw
+            # Strip single-line comments (// ...) before parsing
+            $settingsClean = $settingsRaw -replace '(?m)//[^"\r\n]*', ''
+            try {
+                $settings = $settingsClean | ConvertFrom-Json
+                $dlComposeDir = $settings.chainlit_datalayer_dir
+            } catch {
+                Write-Host "[run_agent] WARNING: Could not parse settings.json for chainlit_datalayer_dir." -ForegroundColor Yellow
+            }
+        }
+        if (-not $dlComposeDir) {
+            Write-Host "[run_agent] WARNING: chainlit_datalayer_dir not set in config/settings.json - skipping datalayer startup." -ForegroundColor Yellow
+        }
+        $dlComposeFile = if ($dlComposeDir) { Join-Path $dlComposeDir "compose.yaml" } else { "" }
+
+        if ($dlComposeDir -and -not (Test-Path $dlComposeFile)) {
+            Write-Host "[run_agent] WARNING: chainlit-datalayer compose file not found at $dlComposeFile" -ForegroundColor Yellow
+        } elseif ($dlComposeDir) {
+            # Count running containers that belong to this compose project
+            $dlRunning = docker compose -f $dlComposeFile ps --status running --quiet 2>&1
+            if ($dlRunning -match '\S') {
+                Write-Host "[run_agent] chainlit-datalayer is already running." -ForegroundColor Green
+            } else {
+                Write-Host "[run_agent] Starting chainlit-datalayer compose project..." -ForegroundColor Cyan
+                $prevEAP = $ErrorActionPreference
+                $ErrorActionPreference = 'SilentlyContinue'
+                docker compose -f $dlComposeFile up -d 2>&1 | ForEach-Object { Write-Host "  $_" }
+                $ErrorActionPreference = $prevEAP
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "[run_agent] chainlit-datalayer started successfully." -ForegroundColor Green
+                } else {
+                    Write-Host "[run_agent] WARNING: Failed to start chainlit-datalayer." -ForegroundColor Yellow
+                }
+            }
+        }
+    }
+
+    # ── Start MinIO (docker-compose) ─────────────────────────────────────────
     if ($dockerAvailable) {
         $composeFile = Join-Path $ProjectRoot "docker-compose.yml"
         if (Test-Path $composeFile) {

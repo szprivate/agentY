@@ -176,7 +176,9 @@ def _build_model_table() -> str:
 # Map from resolved llm name → system-prompt markdown filename stem.
 _SYSTEM_PROMPT_FILE: dict[str, str] = {
     "researcher": "system_prompt.researcher",
+    "researcher.local": "system_prompt.researcher.local",
     "brain": "system_prompt.brain",
+    "brain.local": "system_prompt.brain.local",
     "triage": "system_prompt.triage",
     "planner": "system_prompt.planner",
     "info": "system_prompt.info",
@@ -529,7 +531,7 @@ def create_researcher_agent(
         )
         resolved_ollama = ollama_model or "qwen3-coder:32b"
 
-    system_prompt = _load_system_prompt("researcher")
+    system_prompt = _load_system_prompt("researcher.local" if resolved_llm == "ollama" else "researcher")
 
     # Load skills from the project-level skills/ directory.
     researcher_skill_plugins: list = []
@@ -816,7 +818,11 @@ def create_brain_agent(
             or os.environ.get("BRAIN_ANTHROPIC_MODEL")
             or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
         )
-    system_prompt = _load_system_prompt("brain")
+    # Use the local-model variant of the Brain system prompt for Ollama; the
+    # standard prompt for Claude.  The local variant contains explicit step-by-step
+    # patching instructions instead of skill-activation references.
+    brain_prompt_key = "brain.local" if resolved_llm == "ollama" else "brain"
+    system_prompt = _load_system_prompt(brain_prompt_key)
 
     # Load skills from the project-level skills/ directory.
     skills_plugins: list = []

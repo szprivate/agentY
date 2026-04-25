@@ -27,37 +27,53 @@ def is_unload_command(text: str) -> bool:
 
 
 def unload_ollama_models() -> list[str]:
-    """Unload all configured Ollama models from VRAM.
+    """Unload every Ollama model currently resident in VRAM.
 
-    Sends ``POST /api/generate`` with ``keep_alive=0`` to the Ollama server for
-    every model referenced in ``config/settings.json`` (vision + text).  This is
-    the documented Ollama mechanism for evicting a model from GPU memory.
+    Queries ``GET /api/ps`` to discover what is actually loaded, then sends
+    ``POST /api/generate`` with ``keep_alive=0`` for each one.  This is more
+    accurate than unloading the configured models statically — agents may load
+    other tags (e.g. via ``OllamaModel``), and previously-configured tags may
+    no longer be loaded.  When nothing is loaded the call is a single ``/api/ps``
+    HTTP request and returns immediately.
 
     Returns
     -------
     list[str]
         Names of models that were successfully unloaded.  Empty list if Ollama
-        is unreachable or no models are configured.
+        is unreachable or no models were resident.
     """
     import httpx
     from src.utils.llm_functions import LLMFunctions
 
-    llm_vis = LLMFunctions.for_vision()
-    llm_txt = LLMFunctions.from_settings()
-    host = llm_vis.host.rstrip("/")
+    host = LLMFunctions.from_settings().host.rstrip("/")
 
-    # Deduplicate – vision and text model might be the same tag.
-    models_to_unload = list(dict.fromkeys([llm_vis.model, llm_txt.model]))
+    try:
+        resp = httpx.get(f"{host}/api/ps", timeout=5.0)
+        resp.raise_for_status()
+        loaded_raw = resp.json().get("models", []) or []
+    except Exception as exc:
+        logger.debug("agent_control: /api/ps unreachable, skipping unload: %s", exc)
+        return []
+
+    loaded: list[str] = []
+    for entry in loaded_raw:
+        if isinstance(entry, dict):
+            name = entry.get("name") or entry.get("model")
+            if name and name not in loaded:
+                loaded.append(name)
+
+    if not loaded:
+        return []
+
     unloaded: list[str] = []
-
-    for model in models_to_unload:
+    for model in loaded:
         try:
-            resp = httpx.post(
+            r = httpx.post(
                 f"{host}/api/generate",
                 json={"model": model, "keep_alive": 0},
                 timeout=10.0,
             )
-            resp.raise_for_status()
+            r.raise_for_status()
             logger.info("agent_control: unloaded Ollama model '%s' from VRAM", model)
             unloaded.append(model)
         except Exception as exc:

@@ -17,6 +17,32 @@
   let currentInput = null;
   let filteredCommands = [];
 
+  // ── Message history ──────────────────────────────────────────────────────────
+  // Keeps up to MAX_HISTORY user messages in localStorage so they survive page
+  // reloads, tab closes, and agent restarts.  Arrow-up / Arrow-down in the chat
+  // input walks through history (bash-style).
+
+  const MAX_HISTORY = 200;
+  const HISTORY_KEY = 'agentY_msgHistory';
+  let messageHistory = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+  let historyIndex = -1;   // -1 = not browsing history
+  let draftValue = '';     // saves the live draft when the user starts browsing
+
+  function pushHistory(msg) {
+    msg = (msg || '').trim();
+    if (!msg) return;
+    if (messageHistory[messageHistory.length - 1] === msg) return; // no dupes
+    messageHistory.push(msg);
+    if (messageHistory.length > MAX_HISTORY) messageHistory.shift();
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(messageHistory));
+    historyIndex = -1;
+    draftValue = '';
+  }
+
+  function getChatInput() {
+    return document.getElementById('chat-input') || document.querySelector('textarea');
+  }
+
   // ── Popup DOM ────────────────────────────────────────────────────────────────
 
   function createPopup() {
@@ -156,19 +182,57 @@
 
   function handleKeydown(e) {
     var p = getPopup();
-    if (p.style.display === 'none') return;
-    if (e.key === 'ArrowDown') {
+    var popupVisible = p.style.display !== 'none';
+
+    // ── Slash-command popup navigation ───────────────────────────────────────
+    if (popupVisible) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        selectedIndex = (selectedIndex + 1) % filteredCommands.length;
+        renderPopup(); positionPopupAt(null);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        selectedIndex = (selectedIndex - 1 + filteredCommands.length) % filteredCommands.length;
+        renderPopup(); positionPopupAt(null);
+      } else if (e.key === 'Tab') {
+        if (filteredCommands.length > 0) { e.preventDefault(); selectCommand(filteredCommands[selectedIndex]); }
+      } else if (e.key === 'Escape') {
+        hidePopup();
+      }
+      return;
+    }
+
+    // ── Message history navigation (popup closed) ─────────────────────────────
+    var textarea = e.target;
+    if (e.key === 'ArrowUp') {
+      if (messageHistory.length === 0) return;
+      // Allow on first line of textarea (single-line feel)
+      var firstNL = textarea.value.indexOf('\n');
+      var onFirstLine = firstNL === -1 || textarea.selectionStart <= firstNL;
+      if (!onFirstLine) return;
       e.preventDefault();
-      selectedIndex = (selectedIndex + 1) % filteredCommands.length;
-      renderPopup(); positionPopupAt(null);
-    } else if (e.key === 'ArrowUp') {
+      if (historyIndex === -1) {
+        draftValue = textarea.value;
+        historyIndex = messageHistory.length - 1;
+      } else if (historyIndex > 0) {
+        historyIndex--;
+      }
+      setReactInputValue(textarea, messageHistory[historyIndex]);
+      setTimeout(function () { textarea.selectionStart = textarea.selectionEnd = textarea.value.length; }, 0);
+    } else if (e.key === 'ArrowDown') {
+      if (historyIndex === -1) return;
       e.preventDefault();
-      selectedIndex = (selectedIndex - 1 + filteredCommands.length) % filteredCommands.length;
-      renderPopup(); positionPopupAt(null);
-    } else if (e.key === 'Tab') {
-      if (filteredCommands.length > 0) { e.preventDefault(); selectCommand(filteredCommands[selectedIndex]); }
-    } else if (e.key === 'Escape') {
-      hidePopup();
+      if (historyIndex < messageHistory.length - 1) {
+        historyIndex++;
+        setReactInputValue(textarea, messageHistory[historyIndex]);
+      } else {
+        historyIndex = -1;
+        setReactInputValue(textarea, draftValue);
+      }
+      setTimeout(function () { textarea.selectionStart = textarea.selectionEnd = textarea.value.length; }, 0);
+    } else if (e.key !== 'Shift' && e.key !== 'Control' && e.key !== 'Alt' && e.key !== 'Meta') {
+      // Any printable key resets browsing so next ArrowUp starts from newest
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') historyIndex = -1;
     }
   }
 
@@ -179,6 +243,24 @@
     textarea.addEventListener('input', handleInput);
     textarea.addEventListener('keydown', handleKeydown, true);
     textarea.addEventListener('blur', function () { setTimeout(hidePopup, 200); });
+
+    // ── Capture sent message via Enter key (capture phase, before React) ─────
+    // Send-button clicks and IME-composed Enter are handled separately below.
+    textarea.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+        pushHistory(textarea.value);
+      }
+    }, true); // capture phase fires before React's own handler
+  }
+
+  // ── Hook the Send button so clicks (not just Enter) populate history ─────────
+  function attachToSendButton(btn) {
+    if (!btn || btn._slashCmdHistoryHooked) return;
+    btn._slashCmdHistoryHooked = true;
+    btn.addEventListener('click', function () {
+      var ta = getChatInput();
+      if (ta) pushHistory(ta.value);
+    }, true); // capture phase, before React's own click handler clears the input
   }
 
   // ── "/" toolbar button ───────────────────────────────────────────────────────
@@ -263,8 +345,9 @@
   // ── Bootstrap ────────────────────────────────────────────────────────────────
 
   function findAndAttach() {
-    var ta = document.querySelector('textarea');
+    var ta = getChatInput();
     if (ta) attachToInput(ta);
+    attachToSendButton(document.getElementById('chat-submit'));
     injectSlashButton();
   }
 
