@@ -61,3 +61,6 @@ If a matching entry exists, **apply the documented solution directly** instead o
 2026-04-23 | update_workflow fails validation after patching with prompt_outputs_failed_validation error | When validation fails after patching, persist workflow JSON via write_text_file then call update_workflow with empty patches to reset state.
 2026-04-23 | GeminiNanoBanana2 images input requires mixed format: string for loaded image, int for generation index | Format images as ["node_id_string", 0] for image-to-generate pattern. Avoid pure string or pure int arrays to prevent validation KeyError.
 2026-04-23 | Single-image workflows require no multi-image batching nodes | For single input image, wire LoadImage directly to generator node. Remove ImageToList and ImageListToImageBatch nodes that are unnecessary.
+2026-04-26 | Workflow failed to signal ready due to incorrect LoadImage node input paths | Ensure correct paths to input images are added to LoadImage nodes before signaling workflow ready to avoid errors.
+
+2026-04-26 | Validator flags missing ModelSamplingFlux inputs for ModelSamplingAuraFlow workflow nodes | Include required Flux inputs (base_shift, max_shift, width, height) in update_workflow patches to satisfy the validator error.
