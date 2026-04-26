@@ -192,8 +192,11 @@ def _load_qa_prompts() -> dict[str, str]:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _submit_workflow(workflow_path: str) -> str:
+def _submit_workflow(workflow_path: str, client_id: str = "") -> str:
     """Submit *workflow_path* to ComfyUI and return the ``prompt_id``.
+
+    When *client_id* is provided it is forwarded so the matching WebSocket
+    connection receives this prompt's progress events.
 
     Raises ``RuntimeError`` on failure.
     """
@@ -206,6 +209,8 @@ def _submit_workflow(workflow_path: str) -> str:
     workflow = json.loads(p.read_text(encoding="utf-8"))
     client = get_client()
     payload: dict = {"prompt": workflow}
+    if client_id:
+        payload["client_id"] = client_id
     if client.api_key:
         payload["extra_data"] = {"api_key_comfy_org": client.api_key}
 
@@ -554,7 +559,9 @@ async def execute_workflow(
                             Never added to any agent's conversation history.
         verbose:            Log progress to stdout when True.
     """
-    from src.utils.comfyui_poller import poll_comfyui_job
+    import uuid
+
+    from src.utils.comfyui_progress import stream_comfyui_job
 
     try:
         brainbriefing: dict = json.loads(brainbriefing_json)
@@ -564,25 +571,39 @@ async def execute_workflow(
     # ── 1. Submit ──────────────────────────────────────────────────────────
     _free_vram_for_comfyui()
     yield "🚀 Submitting workflow to ComfyUI…"
+    client_id = uuid.uuid4().hex
     try:
-        prompt_id = _submit_workflow(workflow_path)
+        prompt_id = _submit_workflow(workflow_path, client_id=client_id)
     except Exception as exc:
         error_msg = f"❌ ComfyUI submission failed: {exc}"
         logger.error("executor: %s", error_msg)
         yield error_msg
         return
 
-    yield f"✅ Queued · prompt_id=`{prompt_id}` — waiting for completion…"
+    yield f"✅ Queued · prompt_id=`{prompt_id}` — streaming progress…"
     if verbose:
         print(f"[executor] Queued prompt_id={prompt_id}")
 
-    # ── 2. Poll ────────────────────────────────────────────────────────────
-    history = await poll_comfyui_job(prompt_id)
+    # ── 2. Stream progress via WebSocket ───────────────────────────────────
+    history: dict | None = None
+    error_result: dict | None = None
+    async for event in stream_comfyui_job(prompt_id, client_id):
+        if isinstance(event, dict):
+            if "history" in event:
+                history = event["history"]
+            else:
+                error_result = event
+            break
+        yield event
 
-    if "error" in history:
-        error_msg = f"❌ ComfyUI execution error: {history['error']}"
+    if error_result is not None:
+        error_msg = f"❌ ComfyUI execution error: {error_result.get('error')}"
         logger.error("executor: %s", error_msg)
         yield error_msg
+        return
+
+    if history is None:
+        yield "❌ ComfyUI stream ended without a result."
         return
 
     yield "✅ ComfyUI execution complete — collecting outputs…"
@@ -627,7 +648,9 @@ async def execute_workflows_batch(
                             Never added to any agent's conversation history.
         verbose:            Log progress to stdout when True.
     """
-    from src.utils.comfyui_poller import poll_comfyui_job
+    import uuid
+
+    from src.utils.comfyui_progress import stream_comfyui_job
 
     try:
         brainbriefing: dict = json.loads(brainbriefing_json)
@@ -638,12 +661,15 @@ async def execute_workflows_batch(
 
     # ── Phase 1: submit all ────────────────────────────────────────────────
     _free_vram_for_comfyui()
-    queued: list[tuple[str, str]] = []  # [(prompt_id, workflow_path), ...]
+    # One client_id per prompt so each WebSocket subscription only receives
+    # events for its own job.
+    queued: list[tuple[str, str, str]] = []  # [(prompt_id, workflow_path, client_id), ...]
     for idx, wf_path in enumerate(workflow_paths, 1):
         yield f"🚀 Queuing iteration {idx}/{total}…"
+        cid = uuid.uuid4().hex
         try:
-            prompt_id = _submit_workflow(wf_path)
-            queued.append((prompt_id, wf_path))
+            prompt_id = _submit_workflow(wf_path, client_id=cid)
+            queued.append((prompt_id, wf_path, cid))
             yield f"✅ Iteration {idx}/{total} queued · prompt_id=`{prompt_id}`"
             if verbose:
                 print(f"[executor] Batch {idx}/{total} queued prompt_id={prompt_id}")
@@ -658,23 +684,36 @@ async def execute_workflows_batch(
 
     yield (
         f"⏳ All {len(queued)}/{total} workflows queued — "
-        f"waiting for ComfyUI to finish…"
+        f"streaming progress in submission order…"
     )
 
-    # ── Phase 2: poll + process each in submission order ───────────────────
-    for idx, (prompt_id, _wf_path) in enumerate(queued, 1):
+    # ── Phase 2: stream progress + process each in submission order ────────
+    for idx, (prompt_id, _wf_path, cid) in enumerate(queued, 1):
         label = f"[{idx}/{len(queued)}] "
-        yield f"{label}⏳ Waiting for ComfyUI (prompt_id=`{prompt_id}`)…"
+        yield f"{label}⏳ Streaming progress (prompt_id=`{prompt_id}`)…"
         if verbose:
-            print(f"[executor] Batch polling {idx}/{len(queued)} prompt_id={prompt_id}")
+            print(f"[executor] Batch streaming {idx}/{len(queued)} prompt_id={prompt_id}")
 
-        history = await poll_comfyui_job(prompt_id)
+        history: dict | None = None
+        error_result: dict | None = None
+        async for event in stream_comfyui_job(prompt_id, cid):
+            if isinstance(event, dict):
+                if "history" in event:
+                    history = event["history"]
+                else:
+                    error_result = event
+                break
+            yield f"{label}{event}"
 
-        if "error" in history:
-            error_msg = f"{label}❌ ComfyUI execution error: {history['error']}"
+        if error_result is not None:
+            error_msg = f"{label}❌ ComfyUI execution error: {error_result.get('error')}"
             logger.error("executor: %s", error_msg)
             yield error_msg
             continue  # move on to the next iteration, don't abort the whole batch
+
+        if history is None:
+            yield f"{label}❌ ComfyUI stream ended without a result."
+            continue
 
         yield f"{label}✅ Complete — collecting outputs…"
 

@@ -370,7 +370,7 @@ agentY/
 │       ├── chat_summary.py     Conversation summarisation utilities
 │       ├── comfyui_client.py   Singleton HTTP client for the ComfyUI REST API
 │       ├── comfyui_interrupt_hook.py  Halts agent loop after submit_prompt for async polling
-│       ├── comfyui_poller.py   Async polling loop for ComfyUI job completion
+│       ├── comfyui_progress.py WebSocket streamer for ComfyUI job progress / completion
 │       ├── costs.py            Token-cost computation helpers
 │       ├── learnings.py        Brain-learnings extraction and storage
 │       ├── llm_functions.py    Structured LLM call helpers (non-agent)

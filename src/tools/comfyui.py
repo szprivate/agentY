@@ -621,11 +621,14 @@ def get_logs(keyword: str = "", max_lines: int = 100) -> str:
 
 @tool
 def submit_prompt(workflow_path: str, client_id: str = "") -> str:
-    """Submit a workflow to the ComfyUI execution queue. Returns prompt_id on success.
+    """Submit a workflow to the ComfyUI execution queue. Returns prompt_id and client_id on success.
+
+    A WebSocket-compatible client_id is auto-generated if one is not supplied,
+    so progress events can be streamed for this prompt.
 
     Args:
         workflow_path: File path to the workflow JSON (from get_workflow_template or save_workflow).
-        client_id: Optional client identifier for tracking.
+        client_id: Optional client identifier for tracking; auto-generated when empty.
     """
     try:
         p = Path(workflow_path)
@@ -636,13 +639,18 @@ def submit_prompt(workflow_path: str, client_id: str = "") -> str:
             workflow = json.loads(workflow_path)
 
         client = get_client()
-        payload: dict = {"prompt": workflow}
-        if client_id:
-            payload["client_id"] = client_id
+        if not client_id:
+            client_id = uuid.uuid4().hex
+        payload: dict = {"prompt": workflow, "client_id": client_id}
         # Forward the ComfyUI API key so API/partner nodes receive it.
         if client.api_key:
             payload["extra_data"] = {"api_key_comfy_org": client.api_key}
-        return json.dumps(client.post("/prompt", json_data=payload))
+        result = client.post("/prompt", json_data=payload)
+        if isinstance(result, dict):
+            # Echo the client_id back so the caller (and the interrupt hook) can
+            # use it to subscribe to the matching WebSocket stream.
+            result.setdefault("client_id", client_id)
+        return json.dumps(result)
     except json.JSONDecodeError as e:
         return json.dumps({"error": f"Invalid JSON in workflow: {e}"})
     except Exception as e:

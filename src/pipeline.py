@@ -29,7 +29,7 @@ from strands import Agent
 from src.agent import create_brain_agent, create_error_checker_agent, create_info_agent, create_planner_agent, create_researcher_agent, create_triage_agent, _settings
 from src.utils.chat_summary import summarize_conversation, log_agent_messages
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
-from src.utils.comfyui_poller import poll_comfyui_job as _poll_comfyui_job
+from src.utils.comfyui_progress import stream_comfyui_job as _stream_comfyui_job
 from src.utils.costs import compute_cost_from_usage
 from src.utils.models import AgentSession, ChatSummary, MessageIntent, TriageResult
 from src.utils.triage import triage as _triage, route as _route
@@ -2379,13 +2379,37 @@ class Pipeline:
                     yield {"data": "\n_pipeline: Brain finished._"}
                 break
 
-            # ── ComfyUI interrupt: poll cheaply, then resume ───────── #
-            prompt_id_b: str = interrupt_result.reason
+            # ── ComfyUI interrupt: stream progress, then resume ────── #
+            # Reason is JSON-encoded {"prompt_id": ..., "client_id": ...}.
+            # Older callers may still send a bare prompt_id string, so handle both.
+            raw_reason = interrupt_result.reason or ""
+            prompt_id_b: str
+            client_id_b: str = ""
+            try:
+                _r = json.loads(raw_reason)
+                if isinstance(_r, dict):
+                    prompt_id_b = str(_r.get("prompt_id", ""))
+                    client_id_b = str(_r.get("client_id", "") or "")
+                else:
+                    prompt_id_b = str(_r)
+            except Exception:
+                prompt_id_b = raw_reason
+
             if self._verbose:
-                print(f"pipeline: ComfyUI interrupt — polling prompt_id={prompt_id_b}")
-                yield {"data": f"\n_pipeline: ComfyUI interrupt — polling prompt_id={prompt_id_b}_"}
-            yield {"data": f"\n\n_⏳ ComfyUI job queued (`{prompt_id_b}`). Waiting for completion…_"}
-            history_result_b = await _poll_comfyui_job(prompt_id_b)
+                print(f"pipeline: ComfyUI interrupt — streaming prompt_id={prompt_id_b}")
+                yield {"data": f"\n_pipeline: ComfyUI interrupt — streaming prompt_id={prompt_id_b}_"}
+            yield {"data": f"\n\n_⏳ ComfyUI job queued (`{prompt_id_b}`). Streaming progress…_"}
+
+            history_result_b: dict = {}
+            async for ev in _stream_comfyui_job(prompt_id_b, client_id_b):
+                if isinstance(ev, dict):
+                    if "history" in ev:
+                        history_result_b = ev["history"]
+                    else:
+                        history_result_b = ev  # error payload
+                    break
+                yield {"data": f"\n_{ev}_"}
+
             yield {"data": "\n_✅ ComfyUI job finished — resuming…_"}
             if self._verbose:
                 print(f"pipeline: ComfyUI job {prompt_id_b} finished. Resuming Brain.")

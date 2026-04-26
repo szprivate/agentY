@@ -42,8 +42,9 @@ class ComfyUIInterruptHook(HookProvider):
     the orchestrator, eliminating repeated agent turns during job execution."""
 
     def __init__(self) -> None:
-        # prompt_id that is pending an interrupt (set after submit_prompt)
+        # prompt_id / client_id that are pending an interrupt (set after submit_prompt)
         self._pending_prompt_id: str | None = None
+        self._pending_client_id: str | None = None
 
     # ------------------------------------------------------------------ #
     # HookProvider interface                                               #
@@ -71,9 +72,14 @@ class ComfyUIInterruptHook(HookProvider):
             text = content[0].get("text", "")
             data = json.loads(text)
             prompt_id: str | None = data.get("prompt_id")
+            client_id: str | None = data.get("client_id")
             if prompt_id:
                 self._pending_prompt_id = prompt_id
-                logger.info("ComfyUIInterruptHook: captured prompt_id=%s", prompt_id)
+                self._pending_client_id = client_id
+                logger.info(
+                    "ComfyUIInterruptHook: captured prompt_id=%s client_id=%s",
+                    prompt_id, client_id,
+                )
         except Exception as exc:
             logger.debug("ComfyUIInterruptHook: could not parse submit_prompt result: %s", exc)
 
@@ -90,7 +96,9 @@ class ComfyUIInterruptHook(HookProvider):
             return
 
         prompt_id = self._pending_prompt_id
+        client_id = self._pending_client_id or ""
         self._pending_prompt_id = None  # consume so we don't loop
+        self._pending_client_id = None
 
         logger.info(
             "ComfyUIInterruptHook: interrupting before tool '%s'; waiting for prompt_id=%s",
@@ -98,10 +106,13 @@ class ComfyUIInterruptHook(HookProvider):
             prompt_id,
         )
 
+        # Encode both ids in the reason so the orchestrator can stream WS progress.
+        reason = json.dumps({"prompt_id": prompt_id, "client_id": client_id})
+
         # event.interrupt() either:
         #   – raises InterruptException (first call → stops the agent loop), or
         #   – returns the resume response (subsequent call after orchestrator fed the result)
-        response = event.interrupt(INTERRUPT_NAME, reason=prompt_id)
+        response = event.interrupt(INTERRUPT_NAME, reason=reason)
 
         # If we reach here, the orchestrator has already polled and passed back
         # the ComfyUI result as the interrupt response.  The pending tool call
@@ -126,3 +137,4 @@ class ComfyUIInterruptHook(HookProvider):
                 self._pending_prompt_id,
             )
             self._pending_prompt_id = None
+            self._pending_client_id = None
