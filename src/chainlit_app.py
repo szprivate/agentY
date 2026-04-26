@@ -677,7 +677,7 @@ async def on_message(message: cl.Message) -> None:
     session = getattr(pipeline, "_session", None)
     sent_paths: set[str] = set(getattr(session, "current_output_paths", []))
 
-    # Response message created lazily so the researcher step appears above it.
+    # Main response message — created lazily on first non-step token.
     response_msg: cl.Message | None = None
 
     async def _ensure_response_msg() -> cl.Message:
@@ -704,38 +704,24 @@ async def on_message(message: cl.Message) -> None:
             await cl.Message(content=f"📄 **{len(files)} file(s) ready:**", elements=files).send()
         sent_paths.update(new_paths)
 
-    _STREAM_FLUSH_CHARS = 12
-    _token_buf: list[str] = []
-    _token_buf_len: int = 0
-    _full_response_parts: list[str] = []
+    # Collapsible Steps for long internal streams.
+    researcher_step: cl.Step | None = None
+    brain_step: cl.Step | None = None
+    planner_step: cl.Step | None = None
+    think_step: cl.Step | None = None
+    qa_step: cl.Step | None = None
 
-    async def _flush_token_buf() -> None:
-        nonlocal _token_buf, _token_buf_len
-        if _token_buf:
-            msg = await _ensure_response_msg()
-            await msg.stream_token("".join(_token_buf))
-            _token_buf = []
-            _token_buf_len = 0
+    # Markers that identify Vision-QA output coming from the executor.
+    QA_MARKERS = ("🔍 QA `", "🔍 Running Vision QA")
 
-    # ── Researcher streaming ───────────────────────────────────────────────
-    _in_researcher: bool = False
-    _researcher_step: cl.Step | None = None
+    # Planner task list.
+    task_list: cl.TaskList | None = None
+    tasks: list[cl.Task] = []
 
-    # ── Brain streaming ────────────────────────────────────────────────────
-    _in_brain: bool = False
-    _brain_step: cl.Step | None = None
+    # <think>...</think> parser state, only applied to main-message text.
+    think_state: dict = {"in_think": False, "buf": ""}
 
-    # ── Think-block parser state ───────────────────────────────────────────
-    _think_state: dict = {"in_think": False, "buf": ""}
-    _think_step: cl.Step | None = None
-
-    # ── Planner thinking step ──────────────────────────────────────────────
-    _planner_step: cl.Step | None = None
-
-    # ── Planner task list ──────────────────────────────────────────────────
-    _task_list: cl.TaskList | None = None
-    _tasks: list[cl.Task] = []
-
+    full_response_parts: list[str] = []
     qa_reply_queue: asyncio.Queue = asyncio.Queue()
 
     try:
@@ -745,7 +731,6 @@ async def on_message(message: cl.Message) -> None:
 
             # ── Brain assembly failure — ask user for advice and retry ────
             if event.get("brain_assembly_fail_ask"):
-                await _flush_token_buf()
                 if response_msg:
                     await response_msg.update()
 
@@ -768,7 +753,6 @@ async def on_message(message: cl.Message) -> None:
 
             # ── QA failure — ask user whether to retry ────────────────────
             if event.get("qa_fail_ask"):
-                await _flush_token_buf()
                 if response_msg:
                     await response_msg.update()
 
@@ -797,105 +781,91 @@ async def on_message(message: cl.Message) -> None:
                 ).send()
                 answer = ask_resp["output"] if ask_resp else "no"
                 await qa_reply_queue.put(answer)
-                continue  # keep iterating — pipeline resumes from queue.get()
+                continue
 
-            # ── Planner start — open thinking step ───────────────────────
+            # ── Planner step (collapsible) ────────────────────────────────
             if event.get("_planner_start"):
-                _planner_step = cl.Step(name="🗂️ Planner: reasoning", type="tool")
-                await _planner_step.send()
+                planner_step = cl.Step(name="🗂️ Planner", type="tool")
+                await planner_step.send()
                 continue
-
-            # ── Planner done — populate and finalise thinking step ────────
             if event.get("_planner_done"):
-                if _planner_step is not None:
-                    _planner_step.output = event.get("raw", "")
-                    await _planner_step.update()
-                    _planner_step = None
+                if planner_step is not None:
+                    planner_step.output = event.get("raw", "")
+                    await planner_step.update()
+                    planner_step = None
                 continue
 
-            # ── Researcher start — open streaming step ────────────────────
+            # ── Researcher step (collapsible) ─────────────────────────────
             if event.get("_researcher_start"):
-                _in_researcher = True
-                _researcher_step = cl.Step(name="STEP 1: PREP: find template, gather inputs, nodes, parameters.", type="tool")
-                await _researcher_step.send()
+                researcher_step = cl.Step(name="🔎 Researcher", type="tool")
+                await researcher_step.send()
                 continue
-
-            # ── Researcher done — finalise streaming step ─────────────────
             if event.get("_researcher_done"):
-                _in_researcher = False
-                if _researcher_step is not None:
-                    await _researcher_step.update()
-                    _researcher_step = None
+                if researcher_step is not None:
+                    await researcher_step.update()
+                    researcher_step = None
                 continue
 
-            # ── Brain start — open streaming step ────────────────────────
+            # ── Brain step (collapsible) ──────────────────────────────────
             if event.get("_brain_start"):
-                _in_brain = True
-                _brain_step = cl.Step(name="STEP 2: building workflow", type="tool")
-                await _brain_step.send()
+                brain_step = cl.Step(name="🧠 Brain", type="tool")
+                await brain_step.send()
                 continue
-
-            # ── Brain done — finalise streaming step ──────────────────────
             if event.get("_brain_done"):
-                _in_brain = False
-                if _brain_step is not None:
-                    await _brain_step.update()
-                    _brain_step = None
+                if brain_step is not None:
+                    await brain_step.update()
+                    brain_step = None
                 continue
 
             # ── Plan ready — create task list ─────────────────────────────
             if event.get("_plan_ready"):
-                _task_list = cl.TaskList()
-                _task_list.status = "Running..."
-                _tasks = [
+                task_list = cl.TaskList()
+                task_list.status = "Running..."
+                tasks = [
                     cl.Task(title=s["description"], status=cl.TaskStatus.READY)
                     for s in event.get("steps", [])
                 ]
-                for t in _tasks:
-                    await _task_list.add_task(t)
-                await _task_list.send()
+                for t in tasks:
+                    await task_list.add_task(t)
+                await task_list.send()
                 continue
 
-            # ── Step start — mark task running ────────────────────────────
             if event.get("_step_start"):
-                _idx = event["idx"]
-                if _task_list is not None and _idx < len(_tasks):
-                    _tasks[_idx].status = cl.TaskStatus.RUNNING
-                    await _task_list.send()
+                idx = event["idx"]
+                if task_list is not None and idx < len(tasks):
+                    tasks[idx].status = cl.TaskStatus.RUNNING
+                    await task_list.send()
                 continue
 
-            # ── Step done — mark task complete ────────────────────────────
             if event.get("_step_done"):
-                _idx = event["idx"]
-                _failed = event.get("failed", False)
-                if _task_list is not None and _idx < len(_tasks):
-                    _tasks[_idx].status = cl.TaskStatus.FAILED if _failed else cl.TaskStatus.DONE
-                    if _idx == len(_tasks) - 1 or _failed:
-                        _task_list.status = "Failed" if _failed else "Done"
-                    await _task_list.send()
+                idx = event["idx"]
+                failed = event.get("failed", False)
+                if task_list is not None and idx < len(tasks):
+                    tasks[idx].status = cl.TaskStatus.FAILED if failed else cl.TaskStatus.DONE
+                    if idx == len(tasks) - 1 or failed:
+                        task_list.status = "Failed" if failed else "Done"
+                    await task_list.send()
                 continue
 
-            # ── Extended thinking (Anthropic reasoning blocks) ─────────────
+            # ── Extended thinking (Anthropic reasoning blocks) ────────────
             reasoning_text: str = event.get("reasoningText") or ""
             if reasoning_text:
-                if _in_researcher:
-                    if _researcher_step is not None:
-                        await _researcher_step.stream_token(reasoning_text)
-                elif _in_brain:
-                    if _brain_step is not None:
-                        await _brain_step.stream_token(reasoning_text)
+                if researcher_step is not None:
+                    await researcher_step.stream_token(reasoning_text)
+                elif brain_step is not None:
+                    await brain_step.stream_token(reasoning_text)
                 else:
-                    if _think_step is None:
-                        _think_step = cl.Step(name="💭 Thinking")
-                        await _think_step.send()
-                    await _think_step.stream_token(reasoning_text)
+                    if think_step is None:
+                        think_step = cl.Step(name="💭 Thinking")
+                        await think_step.send()
+                    await think_step.stream_token(reasoning_text)
                 continue
 
-            # Reasoning block complete (signature marks end of thinking block)
-            if event.get("reasoning_signature") is not None and not _in_researcher and not _in_brain:
-                if _think_step is not None:
-                    await _think_step.update()
-                    _think_step = None
+            if (event.get("reasoning_signature") is not None
+                    and researcher_step is None and brain_step is None):
+                if think_step is not None:
+                    await think_step.update()
+                    think_step = None
                 continue
 
             # ── Normal data chunk ─────────────────────────────────────────
@@ -903,66 +873,62 @@ async def on_message(message: cl.Message) -> None:
             if not chunk:
                 continue
 
-            if _in_researcher:
-                if _researcher_step is not None:
-                    await _researcher_step.stream_token(chunk)
+            # Researcher / brain output goes into its collapsible step.
+            if researcher_step is not None:
+                await researcher_step.stream_token(chunk)
+                continue
+            if brain_step is not None:
+                full_response_parts.append(chunk)
+                await brain_step.stream_token(chunk)
                 continue
 
-            if _in_brain:
-                if _brain_step is not None:
-                    await _brain_step.stream_token(chunk)
+            # Vision-QA verdict lines → collapsed into a single Step.
+            if any(m in chunk for m in QA_MARKERS):
+                if qa_step is None:
+                    qa_step = cl.Step(name="🔍 Vision QA", type="tool")
+                    await qa_step.send()
+                await qa_step.stream_token(chunk)
                 continue
 
-            # Split out <think>…</think> blocks
-            _was_thinking = _think_state["in_think"]
-            normal_text, think_text = _parse_think_chunk(chunk, _think_state)
-            _now_thinking = _think_state["in_think"]
+            # Otherwise this is user-facing text — route to main message,
+            # peeling out any <think>…</think> spans into a Thinking step.
+            was_thinking = think_state["in_think"]
+            normal_text, think_text = _parse_think_chunk(chunk, think_state)
+            now_thinking = think_state["in_think"]
 
             if think_text:
-                if _think_step is None:
-                    _think_step = cl.Step(name="💭 Thinking")
-                    await _think_step.send()
-                await _think_step.stream_token(think_text)
+                if think_step is None:
+                    think_step = cl.Step(name="💭 Thinking")
+                    await think_step.send()
+                await think_step.stream_token(think_text)
 
-            # Think block just closed — finalise step
-            if _was_thinking and not _now_thinking and _think_step is not None:
-                await _think_step.update()
-                _think_step = None
+            if was_thinking and not now_thinking and think_step is not None:
+                await think_step.update()
+                think_step = None
 
             if normal_text:
-                _full_response_parts.append(normal_text)
-                _token_buf.append(normal_text)
-                _token_buf_len += len(normal_text)
-                _output_signal = any(kw in normal_text for kw in ("💾", "Saved", "executor"))
-                if _token_buf_len >= _STREAM_FLUSH_CHARS or _output_signal:
-                    await _flush_token_buf()
-                    if _output_signal:
-                        await _flush_new_outputs()
+                full_response_parts.append(normal_text)
+                msg = await _ensure_response_msg()
+                await msg.stream_token(normal_text)
+                if any(kw in normal_text for kw in ("💾", "Saved", "executor")):
+                    await _flush_new_outputs()
 
-        await _flush_token_buf()
-        # Finalise any still-open planner/brain/think steps
-        if _planner_step is not None:
-            await _planner_step.update()
-        if _brain_step is not None:
-            await _brain_step.update()
-        if _think_step is not None:
-            await _think_step.update()
-        # Mark task list done if all steps completed
-        if _task_list is not None and all(t.status == cl.TaskStatus.DONE for t in _tasks):
-            _task_list.status = "Done"
-            await _task_list.send()
+        # Finalise any still-open steps.
+        if researcher_step is not None:
+            await researcher_step.update()
+        if brain_step is not None:
+            await brain_step.update()
+        if planner_step is not None:
+            await planner_step.update()
+        if think_step is not None:
+            await think_step.update()
+        if qa_step is not None:
+            await qa_step.update()
+        if task_list is not None and all(t.status == cl.TaskStatus.DONE for t in tasks):
+            task_list.status = "Done"
+            await task_list.send()
 
     except Exception as exc:
-        await _flush_token_buf()
-        if _planner_step is not None:
-            await _planner_step.update()
-            _planner_step = None
-        if _researcher_step is not None:
-            await _researcher_step.update()
-            _researcher_step = None
-        if _brain_step is not None:
-            await _brain_step.update()
-            _brain_step = None
         msg = await _ensure_response_msg()
         await msg.stream_token(f"\n\n❌ Pipeline error: {exc}")
 
@@ -970,9 +936,9 @@ async def on_message(message: cl.Message) -> None:
         await response_msg.update()
 
     # ── Update awaiting_answer for the next turn ──────────────────────────
-    _full_response = "".join(_full_response_parts)
-    _tail = _full_response[-300:] if len(_full_response) > 300 else _full_response
-    cl.user_session.set("awaiting_answer", "?" in _tail)
+    full_response = "".join(full_response_parts)
+    tail = full_response[-300:] if len(full_response) > 300 else full_response
+    cl.user_session.set("awaiting_answer", "?" in tail)
 
     # Final flush — catches any outputs that arrived with the last event.
     await _flush_new_outputs()
