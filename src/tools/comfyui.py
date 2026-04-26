@@ -540,7 +540,7 @@ def get_logs(keyword: str = "", max_lines: int = 100) -> str:
         max_lines: Max lines to return from the end (default 100).
     """
     try:
-        raw = get_client().get("/api/logs")
+        raw = get_client().get("/logs")
         # Endpoint may return list of strings or a dict with a 'logs' key
         if isinstance(raw, dict):
             lines: list = raw.get("logs", raw.get("lines", []))

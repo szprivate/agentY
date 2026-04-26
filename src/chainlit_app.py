@@ -402,6 +402,7 @@ async def on_message(message: cl.Message) -> None:
         return
 
     if _text.lower() in {"clearhistory", "/clearhistory", "clear history", "/clear history"}:
+        from chainlit.context import context as _cl_context
         from chainlit.data import get_data_layer
         from chainlit.types import Pagination, ThreadFilter
 
@@ -417,6 +418,11 @@ async def on_message(message: cl.Message) -> None:
             _user = cl.user_session.get("user")
             _user_id: str | None = getattr(_user, "id", None) if _user else None
 
+            # Skip the active thread — deleting it makes the browser's resume
+            # attempt fail on reload ("Authorization for the thread failed" →
+            # "Session is disconnected"), which crashes the tab.
+            _current_tid = getattr(getattr(_cl_context, "session", None), "thread_id", None)
+
             deleted_count = 0
             cursor: str | None = None
             while True:
@@ -429,7 +435,7 @@ async def on_message(message: cl.Message) -> None:
                     break
                 for thread in threads:
                     tid = thread.get("id") if isinstance(thread, dict) else getattr(thread, "id", None)
-                    if tid:
+                    if tid and tid != _current_tid:
                         await data_layer.delete_thread(tid)
                         deleted_count += 1
                 next_cursor = getattr(getattr(page, "pageInfo", None), "endCursor", None)
@@ -439,7 +445,7 @@ async def on_message(message: cl.Message) -> None:
                 cursor = next_cursor
 
             await cl.Message(
-                content=f"🗑️ Cleared {deleted_count} thread(s) from history. Refresh the page to see the updated sidebar.",
+                content=f"🗑️ Cleared {deleted_count} thread(s) from history (current thread kept). Refresh the page to see the updated sidebar.",
                 author="system",
             ).send()
         except Exception as _exc:
