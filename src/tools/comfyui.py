@@ -533,33 +533,84 @@ def get_comfyui_dirs() -> str:
 
 @tool
 def get_logs(keyword: str = "", max_lines: int = 100) -> str:
-    """Get ComfyUI server runtime logs. Useful for debugging errors, missing nodes, and tracebacks.
+    """Get the latest ComfyUI error / exception block from the runtime log.
+
+    Scans /internal/logs/raw for lines matching known error markers
+    (Error, FAILED, Cannot import, Exception, Failed to initialize,
+    Error handling request) and returns ONLY the most recent error event
+    with ±5 lines of context.  Adjacent error-marker lines (within 20 lines
+    of each other) are treated as a single event so a multi-frame
+    traceback comes back as one block.
+
+    Returns the literal string "None" when no errors are found.
 
     Args:
-        keyword: Filter log lines containing this string (case-insensitive). E.g. 'error', 'warning'.
-        max_lines: Max lines to return from the end (default 100).
+        keyword: Optional further filter — restrict to errors whose marker
+                 line also contains this string (case-insensitive).
+        max_lines: Max lines to return (default 100).
     """
     try:
-        raw = get_client().get("/logs")
-        # Endpoint may return list of strings or a dict with a 'logs' key
-        if isinstance(raw, dict):
-            lines: list = raw.get("logs", raw.get("lines", []))
-        elif isinstance(raw, list):
-            lines = raw
-        else:
-            lines = str(raw).splitlines()
+        import re as _re
+
+        raw = get_client().get("/internal/logs/raw")
+        entries = raw.get("entries", []) if isinstance(raw, dict) else []
+
+        _ANSI = _re.compile(r"\x1b\[[0-9;]*m")
+        _TIME = _re.compile(r"(\d{2}:\d{2}:\d{2})")
+
+        def _fmt_ts(t) -> str:
+            s = str(t or "")
+            m = _TIME.search(s)
+            return f"[{m.group(1)}]" if m else (f"[{s}]" if s else "")
+
+        # Flatten entries → list of (timestamp_prefix, ansi_stripped_line)
+        items: list[tuple[str, str]] = []
+        for entry in entries:
+            ts = _fmt_ts(entry.get("t", ""))
+            for sub in str(entry.get("m", "")).splitlines():
+                if sub:
+                    items.append((ts, _ANSI.sub("", sub)))
+
+        error_markers = (
+            "Error", "FAILED", "Cannot import", "Exception",
+            "Failed to initialize", "Error handling request",
+        )
+        matches = [
+            i for i, (_, line) in enumerate(items)
+            if any(m in line for m in error_markers)
+        ]
 
         if keyword:
             kw = keyword.lower()
-            lines = [l for l in lines if kw in str(l).lower()]
+            matches = [i for i in matches if kw in items[i][1].lower()]
 
-        if len(lines) > max_lines:
-            lines = lines[-max_lines:]
+        if not matches:
+            return "None"
 
-        # Strip ANSI codes for readability
-        import re as _re
-        clean = [_re.sub(r"\x1b\[[0-9;]*m", "", str(l)) for l in lines]
-        return json.dumps({"lines": clean, "count": len(clean)})
+        # Cluster only the LATEST event: walk backwards from the last match
+        # collecting earlier matches while gaps stay within 20 lines.
+        CLUSTER_GAP = 20
+        last_event: list[int] = [matches[-1]]
+        for idx in reversed(matches[:-1]):
+            if last_event[-1] - idx <= CLUSTER_GAP:
+                last_event.append(idx)
+            else:
+                break
+        last_event.reverse()
+
+        # Expand ±5 lines of context.
+        first = max(0, last_event[0] - 5)
+        last = min(len(items) - 1, last_event[-1] + 5)
+        selected = list(range(first, last + 1))
+
+        if len(selected) > max_lines:
+            selected = selected[-max_lines:]
+
+        lines = [
+            f"{items[i][0]} {items[i][1]}".strip() if items[i][0] else items[i][1]
+            for i in selected
+        ]
+        return json.dumps({"lines": lines, "count": len(lines)})
     except Exception as e:
         return json.dumps({"error": str(e)})
 
