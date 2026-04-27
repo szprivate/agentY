@@ -527,11 +527,14 @@ async def on_message(message: cl.Message) -> None:
         _src_step_id = str(_first_user.get("id") or "")
 
         _src_elements = _src_thread.get("elements") or []
-        _attached = [
-            e for e in _src_elements
-            if str(e.get("forId") or "") == _src_step_id
-            and ((e.get("mime") or "").startswith("image/") or e.get("type") == "image")
-        ]
+        _attached = sorted(
+            (
+                e for e in _src_elements
+                if str(e.get("forId") or "") == _src_step_id
+                and ((e.get("mime") or "").startswith("image/") or e.get("type") == "image")
+            ),
+            key=lambda e: (e.get("createdAt") or e.get("created_at") or ""),
+        )
 
         _downloaded: list[str] = []
         for _el in _attached:
@@ -789,7 +792,19 @@ async def on_message(message: cl.Message) -> None:
     # ── Collect uploaded image paths ──────────────────────────────────────
     image_paths: list[str] = []
     if message.elements:
-        for element in message.elements:
+        # Sort elements to honour the order in which the user attached them.
+        # Chainlit preserves list order for direct uploads, but be defensive:
+        # prefer an explicit `order` field, then `createdAt`, then list index.
+        _sorted_elements = sorted(
+            enumerate(message.elements),
+            key=lambda _ie: (
+                getattr(_ie[1], "order", None) is None,          # None → last
+                getattr(_ie[1], "order", None) or 0,
+                getattr(_ie[1], "createdAt", None) or getattr(_ie[1], "created_at", None) or "",
+                _ie[0],                                           # original index as tiebreaker
+            ),
+        )
+        for _idx, element in _sorted_elements:
             # Chainlit attaches files as cl.File / cl.Image elements with a
             # `.path` attribute pointing to a server-side temp file.
             path: str | None = getattr(element, "path", None)
@@ -842,6 +857,7 @@ async def on_message(message: cl.Message) -> None:
     planner_step: cl.Step | None = None
     think_step: cl.Step | None = None
     qa_step: cl.Step | None = None
+    comfy_step: cl.Step | None = None  # live-updating ComfyUI progress bar step
 
     # Markers that identify Vision-QA output coming from the executor.
     QA_MARKERS = ("🔍 QA `", "🔍 Running Vision QA")
@@ -1014,6 +1030,16 @@ async def on_message(message: cl.Message) -> None:
                 await brain_step.stream_token(chunk)
                 continue
 
+            # ComfyUI progress bar lines → single live-updating Step.
+            if "🎨 [" in chunk:
+                stripped = chunk.strip().strip("_")
+                if comfy_step is None:
+                    comfy_step = cl.Step(name="⚙️ ComfyUI", type="tool")
+                    await comfy_step.send()
+                comfy_step.output = stripped
+                await comfy_step.update()
+                continue
+
             # Vision-QA verdict lines → collapsed into a single Step.
             if any(m in chunk for m in QA_MARKERS):
                 if qa_step is None:
@@ -1056,6 +1082,8 @@ async def on_message(message: cl.Message) -> None:
             await think_step.update()
         if qa_step is not None:
             await qa_step.update()
+        if comfy_step is not None:
+            await comfy_step.update()
         if task_list is not None and all(t.status == cl.TaskStatus.DONE for t in tasks):
             task_list.status = "Done"
             await task_list.send()

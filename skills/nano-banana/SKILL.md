@@ -12,8 +12,8 @@ allowed-tools: add_workflow_node, remove_workflow_node
 
 ***GeminiImage2Node / GeminiNanoBanana2 / Nano Banana 2 / Nano Banana Pro template WITH MORE THAN ONE INPUT IMAGE:***
 
-- use `add_workflow_node` to add a `LoadImage` node for every input image
-- connect the new LoadImage nodes to the AILab_ImageToList node in the template
+- use `add_workflow_node` to add a `LoadImage` node for EVERY input image (check input_image_count in the brainbriefing for the count of LoadImage nodes needed)
+- connect ALL the new LoadImage nodes to the AILab_ImageToList node in the template
 - in the prompt, ALWAYS refer to the input images as @img1 for the first image, @img2 for the second, etc.
 
 

@@ -192,6 +192,29 @@ def _load_qa_prompts() -> dict[str, str]:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+def _load_node_titles(workflow_path: str) -> dict[str, str]:
+    """Return a mapping of node_id -> display name for the given workflow.
+
+    The display name is ``_meta.title`` when present, otherwise ``class_type``.
+    Returns an empty dict on any error.
+    """
+    try:
+        p = Path(workflow_path)
+        if not p.exists():
+            return {}
+        data = json.loads(p.read_text(encoding="utf-8"))
+        titles: dict[str, str] = {}
+        for node_id, node_data in data.items():
+            if not isinstance(node_data, dict):
+                continue
+            title = node_data.get("_meta", {}).get("title", "") or node_data.get("class_type", "")
+            if title:
+                titles[str(node_id)] = title
+        return titles
+    except Exception:
+        return {}
+
+
 def _submit_workflow(workflow_path: str, client_id: str = "") -> str:
     """Submit *workflow_path* to ComfyUI and return the ``prompt_id``.
 
@@ -585,9 +608,10 @@ async def execute_workflow(
         print(f"[executor] Queued prompt_id={prompt_id}")
 
     # ── 2. Stream progress via WebSocket ───────────────────────────────────
+    node_titles = _load_node_titles(workflow_path)
     history: dict | None = None
     error_result: dict | None = None
-    async for event in stream_comfyui_job(prompt_id, client_id):
+    async for event in stream_comfyui_job(prompt_id, client_id, node_titles=node_titles):
         if isinstance(event, dict):
             if "history" in event:
                 history = event["history"]
@@ -696,7 +720,8 @@ async def execute_workflows_batch(
 
         history: dict | None = None
         error_result: dict | None = None
-        async for event in stream_comfyui_job(prompt_id, cid):
+        _node_titles = _load_node_titles(_wf_path)
+        async for event in stream_comfyui_job(prompt_id, cid, node_titles=_node_titles):
             if isinstance(event, dict):
                 if "history" in event:
                     history = event["history"]

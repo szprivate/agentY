@@ -58,13 +58,16 @@ async def stream_comfyui_job(
     client_id: str,
     *,
     timeout: float = 30 * 60,
+    node_titles: dict[str, str] | None = None,
 ) -> AsyncGenerator:
     """Stream live progress for *prompt_id* via the ComfyUI WebSocket.
 
     Args:
-        prompt_id: Returned by POST /prompt.
-        client_id: The same client_id passed to /prompt; used to subscribe.
-        timeout:   Hard cap on total wait time (seconds).
+        prompt_id:   Returned by POST /prompt.
+        client_id:   The same client_id passed to /prompt; used to subscribe.
+        timeout:     Hard cap on total wait time (seconds).
+        node_titles: Optional mapping of node_id -> display name, used to
+                     annotate progress messages with human-readable names.
 
     Yields:
         Progress strings, then a single terminal dict.
@@ -160,7 +163,9 @@ async def stream_comfyui_job(
                             return
                     else:
                         last_progress_pct = -1
-                        yield f"🎨 Running node {node}"
+                        _title = node_titles.get(str(node), "") if node_titles else ""
+                        _node_label = f" · {_title}" if _title else ""
+                        yield f"🎨 Running node {node}{_node_label}"
 
                 elif msg_type == "progress":
                     value = int(data.get("value", 0) or 0)
@@ -174,7 +179,11 @@ async def stream_comfyui_job(
                         big_jump = pct - last_progress_pct >= 10
                         time_due = loop_t - last_emit_loop_t >= 1.0
                         if is_endpoint or big_jump or time_due:
-                            node_label = f" — node {node}" if node else ""
+                            if node:
+                                _title = node_titles.get(str(node), "") if node_titles else ""
+                                node_label = f" — node {node}" + (f" · {_title}" if _title else "")
+                            else:
+                                node_label = ""
                             yield f"🎨 {_bar(value, max_v)}{node_label}"
                             last_progress_pct = pct
                             last_emit_loop_t = loop_t

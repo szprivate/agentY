@@ -23,6 +23,7 @@ Analyse the user request and all provided assets via tools, then output a single
 Extract from the user message: subject, style, input images, requested template, output constraints.
 
 **Constraints:**
+- **Annotation detection**: If the user attaches an annotated image (drawn on, circled, scribbled, or marked up) alongside their message, you MUST activate the `annotation` skill immediately and follow its steps instead of the normal template-selection and input-image steps (steps 2–4). Trigger signals: words like *annotation*, *annotated*, *I marked*, *I drew*, *I circled*, *my sketch*, *the scribble*, *indicated area*, or any image the user explicitly describes as a mark-up or drawing on a prior result.
 - You MUST set `input_image_count` to the exact count of input images in the request (0 if none).
 - You MUST analyse any user-provided images via `analyze_image` and incorporate findings into the prompt.
 - You SHOULD extract batch count and set `count_iter` (minimum 1, maximum 20; default 1). Trigger phrases: *"batch of 5"*, *"run it 4 times"*, *"make 10 images"*.

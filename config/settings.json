@@ -25,15 +25,15 @@
   "llm": {
     
     "pipeline": {
-      "researcher": "ollama,gemma4:26b",
-      "brain": "ollama,gemma4:26b",
+      "researcher": "claude,claude-haiku-4-5",
+      "brain": "claude,claude-haiku-4-5",
       "triage": "ollama,gemma4:26b",
       "info": "ollama,gemma4:26b",
       "planner": "ollama,gemma4:26b",
       "learnings": "ollama,gemma4:26b",
       "error_checker": "ollama,gemma4:26b",
-      "llm_functions": "qwen3.5:9b",
-      "executor_vision_model": "qwen3.5:9b"
+      "llm_functions": "gemma4:26b",
+      "executor_vision_model": "gemma4:26b"
     },
 
     "ollama": {

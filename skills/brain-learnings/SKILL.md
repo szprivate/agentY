@@ -64,3 +64,10 @@ If a matching entry exists, **apply the documented solution directly** instead o
 2026-04-26 | Workflow failed to signal ready due to incorrect LoadImage node input paths | Ensure correct paths to input images are added to LoadImage nodes before signaling workflow ready to avoid errors.
 
 2026-04-26 | Validator flags missing ModelSamplingFlux inputs for ModelSamplingAuraFlow workflow nodes | Include required Flux inputs (base_shift, max_shift, width, height) in update_workflow patches to satisfy the validator error.
+
+2026-04-27 | update_workflow fails when remove_nodes is passed as a list | Pass node IDs as a string instead of a list to prevent Pydantic validation errors.
+
+2026-04-27 | LoadImage fails when provided filename does not match directory contents | Use dir to confirm the exact filename in the working directory before patching LoadImage nodes.
+2026-04-27 | update_workflow remove_nodes parameter requires a string instead of a list | Pass remove_nodes as a JSON-formatted string to prevent Pydantic validation errors.
+
+2026-04-27 | update_workflow fails validation if LoadImage nodes are not all patched | When updating image paths, ensure all LoadImage nodes in the workflow are patched to avoid null value errors.
