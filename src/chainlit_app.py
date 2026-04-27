@@ -455,8 +455,134 @@ async def on_message(message: cl.Message) -> None:
             ).send()
         return
 
+    # ── /resend ───────────────────────────────────────────────────────────────
+    # Replays the first user message (text + image attachments) of the *current*
+    # thread as a fresh request, so the agent re-runs the original prompt.
+    # Errors out if the current thread has no prior user message (e.g. /resend
+    # was the very first thing typed). Triggered both manually and from the
+    # "Resend first message" item in the sidebar's three-dots menu (see
+    # public/slash_commands.js), which navigates to the target thread first.
+    if _text.lower().startswith("/resend"):
+        from chainlit.data import get_data_layer
+        from chainlit.context import context as _cl_context
+        import tempfile, urllib.request
+
+        _src_tid = getattr(
+            getattr(_cl_context, "session", None), "thread_id", None,
+        )
+        if not _src_tid:
+            await cl.Message(
+                content="❌ Could not determine the current thread id.",
+                author="system",
+            ).send()
+            return
+
+        _data_layer = get_data_layer()
+        if _data_layer is None:
+            await cl.Message(
+                content="⚠️ No data layer configured — cannot resend.",
+                author="system",
+            ).send()
+            return
+
+        try:
+            _src_thread = await _data_layer.get_thread(_src_tid)
+        except Exception as _exc:
+            await cl.Message(
+                content=f"❌ Failed to load current thread:\n```\n{_exc}\n```",
+                author="system",
+            ).send()
+            return
+        if not _src_thread:
+            await cl.Message(
+                content="❌ Current thread is empty — nothing to resend.",
+                author="system",
+            ).send()
+            return
+
+        _src_steps = _src_thread.get("steps") or []
+        # Exclude the just-submitted /resend message itself by id, so we find
+        # the *prior* first user message rather than echoing the command.
+        _self_id = str(getattr(message, "id", "") or "")
+        _first_user = next(
+            (
+                s for s in _src_steps
+                if s.get("type") == "user_message"
+                and str(s.get("id") or "") != _self_id
+            ),
+            None,
+        )
+        if _first_user is None:
+            await cl.Message(
+                content=(
+                    "❌ Nothing to resend — `/resend` was the first command in "
+                    "this thread. Navigate to a thread that already has a "
+                    "user message and try again."
+                ),
+                author="system",
+            ).send()
+            return
+
+        _orig_text: str = (_first_user.get("output") or _first_user.get("input") or "").strip()
+        _src_step_id = str(_first_user.get("id") or "")
+
+        _src_elements = _src_thread.get("elements") or []
+        _attached = [
+            e for e in _src_elements
+            if str(e.get("forId") or "") == _src_step_id
+            and ((e.get("mime") or "").startswith("image/") or e.get("type") == "image")
+        ]
+
+        _downloaded: list[str] = []
+        for _el in _attached:
+            _url = _el.get("url")
+            _name = _el.get("name") or "image"
+            if not _url:
+                continue
+            try:
+                with urllib.request.urlopen(_url, timeout=20) as _resp:
+                    _data = _resp.read()
+                _suffix = Path(_name).suffix or ".png"
+                _tf = tempfile.NamedTemporaryFile(
+                    prefix="resend_", suffix=_suffix, delete=False,
+                )
+                _tf.write(_data)
+                _tf.close()
+                _downloaded.append(_tf.name)
+            except Exception as _exc:
+                print(f"[chainlit] /resend: image fetch failed for {_url}: {_exc}")
+
+        # Echo what is being resent so the thread clearly shows the original
+        # prompt alongside the (auto-persisted) `/resend` user step.
+        _echo_body = _orig_text if _orig_text else "_(no text — images only)_"
+        await cl.Message(
+            content=f"🔁 Resending first message of this thread:\n\n{_echo_body}",
+            elements=[
+                cl.Image(path=p, name=Path(p).name, display="inline")
+                for p in _downloaded
+            ],
+            author="system",
+        ).send()
+
+        # Start fresh pipeline state so the resend behaves like a brand-new
+        # request even if /resend was invoked inside an existing thread.
+        _resend_pipeline = cl.user_session.get("pipeline")
+        if _resend_pipeline is not None:
+            _reset_pipeline_state(_resend_pipeline)
+        cl.user_session.set("awaiting_answer", False)
+
+        # Rewire the incoming Chainlit Message so the rest of on_message
+        # processes it as if the user had typed the original prompt with
+        # the original image attachments. Fresh cl.Image instances are used
+        # here purely as path carriers — they aren't sent to the UI again.
+        message.content = _orig_text
+        message.elements = [
+            cl.Image(path=p, name=Path(p).name, display="inline")
+            for p in _downloaded
+        ]
+        # Continue into the regular pipeline flow below.
     # ── /add_workflow <path_to_workflow.json> ─────────────────────────────────
-    if _text.lower().startswith("/add_workflow"):
+    elif _text.lower().startswith("/add_workflow"):
         _parts = _text.split(None, 1)
         if len(_parts) < 2:
             await cl.Message(

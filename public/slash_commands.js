@@ -9,7 +9,8 @@
     { name: '/clearhistory',  description: 'Delete all conversation history' },
     { name: '/switch_model',  description: 'Switch agent LLM — usage: /switch_model <agent> <provider,model>' },
     { name: '/add_workflow',  description: 'Add a ComfyUI workflow — usage: /add_workflow <path/to/workflow.json>' },
-    { name: '/remove_workflow', description: 'Remove a workflow by name — usage: /remove_workflow <template_name>' },
+    { name: '/resend',        description: 'Resend the first user message of the current thread' },
+    { name: '/remove_workflow', description: 'Remove a workflow by name — usage: /remove_workflow <template_name>' }
   ];
 
   let popup = null;
@@ -290,9 +291,16 @@
   }
 
   function injectSlashButton() {
-    if (document.getElementById('slash-cmd-btn')) return;
     var anchor = findFileUploadEl();
     if (!anchor) return;
+
+    var existing = document.getElementById('slash-cmd-btn');
+    // Re-inject if the button was detached from the DOM or is no longer the
+    // immediate next sibling of the attach-files element (React re-render).
+    if (existing) {
+      if (existing.isConnected && anchor.nextSibling === existing) return;
+      existing.remove();
+    }
 
     var btn = document.createElement('button');
     btn.id = 'slash-cmd-btn';
@@ -341,6 +349,153 @@
     // Insert immediately AFTER the file-upload element
     anchor.parentNode.insertBefore(btn, anchor.nextSibling);
   }
+
+  // ── "Resend first message" menu item ─────────────────────────────────────────
+  //
+  // Injects a "Resend first message" entry into the Radix dropdown that opens
+  // from the three-dot button on each thread in the sidebar history.  When
+  // clicked, it navigates to the target thread and submits `/resend` there so
+  // the backend (chainlit_app.py) replays the thread's original first user
+  // message + image attachments as a fresh request inside that same thread.
+  //
+  // We can't modify the Chainlit react bundle, so we hook the DOM:
+  //   1. Track the most recently-pressed thread three-dot button so we know
+  //      which thread the menu belongs to (Radix doesn't expose that on the
+  //      menu itself).
+  //   2. Watch for a Radix dropdown menu opening; if it contains the
+  //      Rename/Delete items it's the thread menu — clone one of its items,
+  //      rewrite the label, and append "Resend first message".
+  // ────────────────────────────────────────────────────────────────────────────
+
+  let lastThreadIdContext = null;
+
+  function findThreadIdForButton(btn) {
+    // Walk up looking for a sibling/descendant <a href="/thread/<id>">.
+    let cur = btn;
+    while (cur && cur !== document.body) {
+      var link = cur.querySelector ? cur.querySelector('a[href^="/thread/"]') : null;
+      if (link) {
+        var m = link.getAttribute('href').match(/\/thread\/([^?#/]+)/);
+        if (m) return m[1];
+      }
+      // Also try the element itself if it's an anchor
+      if (cur.tagName === 'A' && cur.getAttribute) {
+        var href = cur.getAttribute('href') || '';
+        var m2 = href.match(/^\/thread\/([^?#/]+)/);
+        if (m2) return m2[1];
+      }
+      cur = cur.parentElement;
+    }
+    return null;
+  }
+
+  document.addEventListener('mousedown', function (e) {
+    var btn = e.target.closest && e.target.closest('button');
+    if (!btn) return;
+    var tid = findThreadIdForButton(btn);
+    if (tid) lastThreadIdContext = tid;
+  }, true);
+
+  function delay(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  function findThreadAnchor(threadId) {
+    return document.querySelector('a[href="/thread/' + threadId + '"]') ||
+           document.querySelector('a[href^="/thread/' + threadId + '?"]') ||
+           document.querySelector('a[href^="/thread/' + threadId + '#"]');
+  }
+
+  async function resendInThread(threadId) {
+    if (!threadId) return;
+    // Navigate to the target thread if we aren't already there.
+    var alreadyThere = location.pathname === '/thread/' + threadId;
+    if (!alreadyThere) {
+      var anchor = findThreadAnchor(threadId);
+      if (anchor) {
+        anchor.click();
+      } else {
+        // Fallback: hard-navigate. Loses session but at least gets us there.
+        location.href = '/thread/' + threadId;
+        return;
+      }
+      // Wait for the route to swap and the textarea to remount.
+      for (var i = 0; i < 40; i++) {
+        await delay(80);
+        if (location.pathname === '/thread/' + threadId) break;
+      }
+    }
+    // Re-find the textarea (it may have re-mounted on route change).
+    var textarea = null;
+    for (var j = 0; j < 40; j++) {
+      textarea = getChatInput();
+      if (textarea) break;
+      await delay(80);
+    }
+    if (!textarea) return;
+    // Give Chainlit a beat to wire up its socket for the resumed thread.
+    await delay(150);
+    textarea.focus();
+    setReactInputValue(textarea, '/resend');
+    await delay(60);
+    // Submit. Prefer the explicit chat-submit button, fall back to Enter.
+    var sendBtn = document.getElementById('chat-submit') ||
+                  document.querySelector('button[type="submit"]') ||
+                  document.querySelector('button[aria-label*="Send" i]');
+    if (sendBtn && !sendBtn.disabled) {
+      sendBtn.click();
+    } else {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Enter', code: 'Enter', bubbles: true, cancelable: true,
+      }));
+    }
+  }
+
+  function injectResendIntoMenu(menu) {
+    if (!menu || menu._resendInjected) return;
+    var items = menu.querySelectorAll('[role="menuitem"]');
+    if (items.length === 0) return;
+    var labels = Array.from(items).map(function (it) { return (it.textContent || '').trim().toLowerCase(); });
+    // Only inject into the thread menu (Rename/Delete present). Avoids polluting
+    // unrelated dropdowns like the user-profile menu.
+    var isThreadMenu = labels.some(function (t) { return /^rename$/.test(t); }) &&
+                       labels.some(function (t) { return /^delete$/.test(t); });
+    if (!isThreadMenu) return;
+    var tid = lastThreadIdContext;
+    if (!tid) return;
+
+    // Clone the last item to inherit Radix styling, then rewrite label & icon.
+    var template = items[items.length - 1];
+    var newItem = template.cloneNode(true);
+    // Strip any svg icon node so the entry shows text only — easier than
+    // guessing which lucide-react icon to swap in.
+    newItem.querySelectorAll('svg').forEach(function (s) { s.remove(); });
+    // Replace text content of all leaf text-bearing children with our label.
+    // Easiest: clear and set a single span.
+    newItem.innerHTML = '';
+    var span = document.createElement('span');
+    span.textContent = 'Resend first message';
+    newItem.appendChild(span);
+
+    newItem.addEventListener('click', function (ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      var capturedTid = tid;
+      // Close the dropdown so the navigation/click isn't swallowed.
+      document.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Escape', code: 'Escape', bubbles: true,
+      }));
+      setTimeout(function () { resendInThread(capturedTid); }, 50);
+    }, true);
+
+    menu.appendChild(newItem);
+    menu._resendInjected = true;
+  }
+
+  var menuObserver = new MutationObserver(function () {
+    document.querySelectorAll('[role="menu"]').forEach(injectResendIntoMenu);
+  });
+  menuObserver.observe(document.body, {
+    childList: true, subtree: true, attributes: true, attributeFilter: ['data-state'],
+  });
 
   // ── Bootstrap ────────────────────────────────────────────────────────────────
 

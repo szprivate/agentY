@@ -15,31 +15,29 @@
   "output_dir": "./output_images/",
   "output_workflows_dir": "./output_workflows/",
   "input_archive_subdir": "agentIn",
-  "comfyui_base_dir": "D:\\ai\\ComfyUI",
-  "comfyui_models_dir": "L:\\software\\comfyui\\Models",
   "comfyui_user_dir": "D:\\ai\\ComfyUI\\user\\default",
   "chainlit_datalayer_dir": "D:\\ai\\chainlit-datalayer",
   "message_history_log": "./.logs/message_history.log",
   "tokens_usage_log": "./.logs/tokens_usage.log",
-  "comfyui_poll_interval_s": 0.25,
+  "comfyui_poll_interval_s": 1,
   "comfyui_poll_timeout_s": 1800,
 
   "llm": {
     
     "pipeline": {
-      "researcher": "claude,claude-haiku-4-5",
-      "brain": "claude,claude-haiku-4-5",
-      "triage": "claude,claude-haiku-4-5",
-      "info": "claude,claude-haiku-4-5",
-      "planner": "claude,claude-haiku-4-5",
-      "learnings": "ollama,qwen3.5:9b",
-      "error_checker": "claude,claude-haiku-4-5",
+      "researcher": "ollama,gemma4:26b",
+      "brain": "ollama,gemma4:26b",
+      "triage": "ollama,gemma4:26b",
+      "info": "ollama,gemma4:26b",
+      "planner": "ollama,gemma4:26b",
+      "learnings": "ollama,gemma4:26b",
+      "error_checker": "ollama,gemma4:26b",
       "llm_functions": "qwen3.5:9b",
       "executor_vision_model": "qwen3.5:9b"
     },
 
     "ollama": {
-      "host": "http://localhost:11434"
+      "host": "http://10.10.11.27:11434"
     },
 
     "anthropic": {
