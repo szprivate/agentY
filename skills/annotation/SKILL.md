@@ -1,4 +1,3 @@
-```skill
 ---
 name: annotation
 description: Handles user-provided annotated images. When the user submits a drawing or mark-up on top of an image alongside a message, this skill wires the last generated output as the primary edit target and the annotation as the second (control/reference) input, then selects an appropriate image-editing template.
@@ -65,4 +64,3 @@ When the brainbriefing contains an annotation-based task (`input_image_count == 
 - If the chosen template is a **Nano Banana / Nano Banana 2 / Nano Banana Pro** variant: activate the `nano-banana` skill. In the prompt, refer to the base image as `@img1` and the annotation as `@img2`. Add an instruction like: *"@img2 is a user annotation showing what to change — apply the indicated edit to @img1."*
 - If the chosen template is `qwen2511_imageEdit`: the template already expects up to 3 images; place the base image in the first LoadImage node and the annotation in the second LoadImage node.
 - Otherwise: proceed with standard `assemble-from-template` patching, ensuring both input nodes are populated.
-```
