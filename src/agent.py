@@ -27,7 +27,16 @@ from strands.hooks.events import AfterToolCallEvent
 from src.utils.comfyui_interrupt_hook import ComfyUIInterruptHook
 from src.utils.costs import compute_cost_from_usage
 
-from src.tools import RESEARCHER_TOOLS, BRAIN_TOOLS, INFO_TOOLS, ERROR_CHECKER_TOOLS, reset_patch_workflow_guard
+from src.tools import (
+    RESEARCHER_TOOLS,
+    BRAIN_TOOLS,
+    INFO_TOOLS,
+    ERROR_CHECKER_TOOLS,
+    PLANNER_TOOLS,
+    TRIAGE_TOOLS,
+    LEARNINGS_TOOLS,
+    reset_patch_workflow_guard,
+)
 from src.steering import get_brain_steering_handlers, get_researcher_steering_handlers
 
 
@@ -620,7 +629,7 @@ def create_planner_agent(
         role="planner",
         llm=resolved_llm,
         system_prompt=system_prompt,
-        tools=[],
+        tools=PLANNER_TOOLS,
         ollama_model=resolved_ollama,
         anthropic_model=resolved_anthropic,
         **kwargs,
@@ -757,7 +766,7 @@ def create_triage_agent(
         role="triage",
         llm=resolved_llm,
         system_prompt=system_prompt,
-        tools=[],
+        tools=TRIAGE_TOOLS,
         ollama_model=resolved_ollama,
         anthropic_model=resolved_anthropic,
         **kwargs,
@@ -912,7 +921,7 @@ def create_learnings_agent(
         role="learnings",
         llm=resolved_llm,
         system_prompt=system_prompt,
-        tools=[],
+        tools=LEARNINGS_TOOLS,
         ollama_model=resolved_ollama,
         anthropic_model=resolved_anthropic,
         **kwargs,

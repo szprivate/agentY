@@ -107,6 +107,40 @@ try {
         }
     }
 
+    # ── Ensure Docker Desktop is running ────────────────────────────────────
+    $dockerRunning = $false
+    try {
+        docker info 2>&1 | Out-Null
+        $dockerRunning = ($LASTEXITCODE -eq 0)
+    } catch {}
+
+    if (-not $dockerRunning) {
+        Write-Host "[run_agent] Docker Desktop does not appear to be running. Attempting to start it..." -ForegroundColor Yellow
+        $dockerDesktopExe = "$env:ProgramFiles\Docker\Docker\Docker Desktop.exe"
+        if (Test-Path $dockerDesktopExe) {
+            Start-Process $dockerDesktopExe
+            Write-Host "[run_agent] Waiting for Docker Desktop to become ready (up to 60 s)..." -ForegroundColor Yellow
+            $timeout = 60
+            $elapsed = 0
+            do {
+                Start-Sleep -Seconds 3
+                $elapsed += 3
+                try {
+                    docker info 2>&1 | Out-Null
+                    $dockerRunning = ($LASTEXITCODE -eq 0)
+                } catch {}
+            } while (-not $dockerRunning -and $elapsed -lt $timeout)
+
+            if ($dockerRunning) {
+                Write-Host "[run_agent] Docker Desktop is ready." -ForegroundColor Green
+            } else {
+                Write-Host "[run_agent] Docker Desktop did not start within $timeout seconds. Docker-dependent features may not work." -ForegroundColor Red
+            }
+        } else {
+            Write-Host "[run_agent] Docker Desktop executable not found at '$dockerDesktopExe'. Skipping Docker startup." -ForegroundColor Red
+        }
+    }
+
     # ── Ensure chainlit-datalayer compose project is running ────────────────
     $dockerAvailable = $null
     try { $dockerAvailable = Get-Command docker -ErrorAction Stop } catch {}

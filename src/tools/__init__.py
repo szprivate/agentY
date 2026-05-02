@@ -108,6 +108,21 @@ RESEARCHER_TOOLS: list = [
 # Execution, polling, and Vision QA are handled by the Executor.
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
+# Triage tools – stateless intent classifier; no tools needed.
+# ---------------------------------------------------------------------------
+TRIAGE_TOOLS: list = []
+
+# ---------------------------------------------------------------------------
+# Planner tools – stateless multi-step decomposer; no tools needed.
+# ---------------------------------------------------------------------------
+PLANNER_TOOLS: list = []
+
+# ---------------------------------------------------------------------------
+# Learnings tools – stateless pattern-analyser; no tools needed.
+# ---------------------------------------------------------------------------
+LEARNINGS_TOOLS: list = []
+
+# ---------------------------------------------------------------------------
 # Error-checker tools – diagnostics only; no workflow modification.
 # ---------------------------------------------------------------------------
 ERROR_CHECKER_TOOLS: list = [
@@ -126,7 +141,7 @@ BRAIN_TOOLS: list = [
     # Upload input images
     upload_image,
     get_image_resolution,
-    # Workflow assembly, modification & validation
+    # Workflow assembly, modification & validatione
     get_workflow_template,
     update_workflow,
     save_workflow,
