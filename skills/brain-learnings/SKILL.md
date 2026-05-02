@@ -71,3 +71,5 @@ If a matching entry exists, **apply the documented solution directly** instead o
 2026-04-27 | update_workflow remove_nodes parameter requires a string instead of a list | Pass remove_nodes as a JSON-formatted string to prevent Pydantic validation errors.
 
 2026-04-27 | update_workflow fails validation if LoadImage nodes are not all patched | When updating image paths, ensure all LoadImage nodes in the workflow are patched to avoid null value errors.
+
+2026-04-28 | update_workflow fails if LoadImage nodes reference files not yet uploaded | Always upload all input images using upload_image before updating or validating the workflow to ensure files exist on the server.
