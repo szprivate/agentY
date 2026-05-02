@@ -1,7 +1,8 @@
 """
 ComfyUI tools for the Strands agent.
 
-Exports tool lists for the Researcher and Brain agents.
+Exports tool lists for the Researcher, Brain, Info, Triage, Planner,
+Learnings, ErrorChecker, and VisionAgent agents.
 """
 
 from src.tools.comfyui import (  # noqa: F401
@@ -116,6 +117,12 @@ TRIAGE_TOOLS: list = []
 # Planner tools – stateless multi-step decomposer; no tools needed.
 # ---------------------------------------------------------------------------
 PLANNER_TOOLS: list = []
+
+# ---------------------------------------------------------------------------
+# Vision Agent tools – stateless, single-shot vision analyser.
+# Makes direct Ollama API calls; no Strands tools required.
+# ---------------------------------------------------------------------------
+VISION_AGENT_TOOLS: list = []
 
 # ---------------------------------------------------------------------------
 # Learnings tools – stateless pattern-analyser; no tools needed.

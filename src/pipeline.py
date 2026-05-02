@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field, ValidationError
 from strands import Agent
 
 from src.agent import create_brain_agent, create_error_checker_agent, create_info_agent, create_planner_agent, create_researcher_agent, create_triage_agent, create_vision_agent, _settings
-from src.tools.image_handling import set_vision_agent
+from src.tools.image_handling import set_vision_agent as _set_vision_agent
 from src.utils.chat_summary import summarize_conversation, log_agent_messages
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
 from src.utils.comfyui_progress import stream_comfyui_job as _stream_comfyui_job
@@ -338,6 +338,13 @@ class Pipeline:
         # Bind the memory tools module-level session so memory_read / memory_write
         # always operate on the correct per-session namespace.
         _set_memory_session_id(session_id)
+        # Initialise Vision Agent so analyze_image(mode='describe') works for
+        # all agents (Researcher, Info, etc.) in this pipeline.
+        try:
+            _set_vision_agent(create_vision_agent())
+        except Exception as _va_exc:
+            print(f"[agentY] WARNING: could not initialise VisionAgent ({_va_exc}). "
+                  "analyze_image will fall back to mode='full'.")
         # Per-turn usage tracking: list of (delta_usage_dict, agent_obj) for every
         # agent that contributed tokens this turn. Reset at the start of each turn.
         self._last_turn_usages: list = []
@@ -2631,13 +2638,6 @@ def create_pipeline(
         ollama_model=researcher_ollama_model,
         anthropic_model=researcher_anthropic_model,
     )
-    # Initialise Vision Agent so analyze_image(mode='describe') works.
-    try:
-        vision_agent = create_vision_agent()
-        set_vision_agent(vision_agent)
-    except Exception as _va_exc:
-        print(f"[agentY] WARNING: could not initialise VisionAgent ({_va_exc}). "
-              "analyze_image will fall back to mode='full'.")
     brain = create_brain_agent(
         llm=brain_llm,
         anthropic_model=brain_anthropic_model,

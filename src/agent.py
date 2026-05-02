@@ -35,6 +35,7 @@ from src.tools import (
     PLANNER_TOOLS,
     TRIAGE_TOOLS,
     LEARNINGS_TOOLS,
+    VISION_AGENT_TOOLS,
     reset_patch_workflow_guard,
 )
 from src.steering import get_brain_steering_handlers, get_researcher_steering_handlers
@@ -489,89 +490,77 @@ def _make_agent(
 
 
 # ---------------------------------------------------------------------------
-# Vision Agent – stateless, single-shot image analysis
-# ---------------------------------------------------------------------------
-
-class VisionAgent:
-    """Stateless vision agent that makes isolated Ollama vision calls.
-
-    Each call to :meth:`analyze` is completely independent – no conversation
-    history is kept between invocations, keeping token cost minimal (~10K
-    per call vs ~600K for full in-context analysis).
-    """
-
-    def __init__(self, model_id: str, ollama_host: str, system_prompt: str) -> None:
-        self._model_id = model_id
-        self._ollama_host = ollama_host.rstrip("/")
-        self._system_prompt = system_prompt
-
-    def analyze(self, data: bytes, img_fmt: str, question: str) -> str:
-        """Analyze *data* (raw image bytes) and return a text description.
-
-        Args:
-            data:      Raw image bytes (PNG / JPEG / GIF / WEBP).
-            img_fmt:   Image format string, e.g. ``'png'``, ``'jpeg'``.
-            question:  Specific question to answer about the image.
-
-        Returns:
-            Plain-text analysis produced by the vision model.
-
-        Raises:
-            requests.HTTPError: If the Ollama API request fails.
-        """
-        import base64 as _base64
-        b64 = _base64.b64encode(data).decode("ascii")
-
-        payload = {
-            "model": self._model_id,
-            "messages": [
-                {"role": "system", "content": self._system_prompt},
-                {
-                    "role": "user",
-                    "content": question or "Describe this image in detail.",
-                    "images": [b64],
-                },
-            ],
-            "stream": False,
-        }
-        print(f"[agentY:vision_agent] Calling {self._model_id} – question: {question[:80]!r}...")
-        resp = requests.post(
-            f"{self._ollama_host}/api/chat",
-            json=payload,
-            timeout=120,
-        )
-        resp.raise_for_status()
-        result = resp.json()
-        text: str = result["message"]["content"]
-        print(f"[agentY:vision_agent] Response length: {len(text):,} chars (~{len(text)//4:,} tokens est.)")
-        return text
-
-
-# ---------------------------------------------------------------------------
 # Public factory functions
 # ---------------------------------------------------------------------------
 
-def create_vision_agent() -> VisionAgent:
-    """Create the Vision Agent that performs stateless, single-shot image analysis.
+def create_vision_agent(
+    ollama_model: str | None = None,
+    anthropic_model: str | None = None,
+    **kwargs,
+) -> Agent:
+    """Create the Vision Agent – stateless, single-shot image analysis.
 
-    Uses the Ollama vision model configured under ``llm.pipeline.vision_agent``
-    (settings.json) or the ``VISION_AGENT_MODEL`` env var.  Falls back to
-    ``llm.pipeline.executor_vision_model`` when no dedicated setting exists.
-    The Ollama host is shared with the rest of the pipeline.
+    Returns a fully configured Strands :class:`~strands.Agent` using the same
+    Ollama vision model that the Executor uses for QA, but with no tools and
+    a minimal history window so every call is independent.
 
-    Returns:
-        A :class:`VisionAgent` ready for immediate use.
+    Configuration (in priority order):
+    1. ``VISION_AGENT_MODEL`` env var
+    2. ``llm.pipeline.vision_agent`` in settings.json (format: ``'provider,model'``)
+    3. ``llm.pipeline.executor_vision_model`` – the shared vision model fallback
+    4. Hard default: ``'gemma4:26b'``
+
+    Tools: :data:`src.tools.VISION_AGENT_TOOLS` (empty – vision agent is
+    stateless and performs no tool calls).
+
+    Args:
+        ollama_model:    Ollama model override.
+        anthropic_model: Anthropic model override (if using Claude for vision).
+        **kwargs:        Forwarded to the Strands Agent constructor.
     """
-    model_id = (
-        os.environ.get("VISION_AGENT_MODEL")
-        or str(_cfg("", "pipeline", "vision_agent", default=""))
-        or str(_cfg("", "pipeline", "executor_vision_model", default="gemma4:26b"))
-    )
-    ollama_host = str(_cfg("OLLAMA_HOST", "ollama", "host", default="http://localhost:11434"))
-    system_prompt = _load_system_prompt("vision_agent")
-    print(f"[agentY:vision_agent] Using Ollama — {model_id} @ {ollama_host}")
-    return VisionAgent(model_id=model_id, ollama_host=ollama_host, system_prompt=system_prompt)
+    # Read combined 'provider,model' from settings; VISION_AGENT_MODEL env var wins.
+    _env_model = os.environ.get("VISION_AGENT_MODEL", "")
+    _raw = str(_cfg("", "pipeline", "vision_agent", default=""))
+    if not _raw:
+        _raw = str(_cfg("", "pipeline", "executor_vision_model", default="ollama,gemma4:26b"))
+        if "," not in _raw:
+            _raw = f"ollama,{_raw}"
+    _settings_llm, _settings_model = _parse_llm_setting(_raw)
+    resolved_llm = _settings_llm or "ollama"
 
+    if resolved_llm == "ollama":
+        resolved_ollama = (
+            ollama_model
+            or _env_model
+            or _settings_model
+            or str(_cfg("", "pipeline", "executor_vision_model", default="gemma4:26b"))
+        )
+        resolved_anthropic = (
+            anthropic_model
+            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
+        )
+    else:  # claude
+        resolved_anthropic = (
+            anthropic_model
+            or _env_model
+            or _settings_model
+            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
+        )
+        resolved_ollama = ollama_model or "gemma4:26b"
+
+    system_prompt = _load_system_prompt("vision_agent")
+    agent = _make_agent(
+        role="vision_agent",
+        llm=resolved_llm,
+        system_prompt=system_prompt,
+        tools=VISION_AGENT_TOOLS,
+        ollama_model=resolved_ollama,
+        anthropic_model=resolved_anthropic,
+        **kwargs,
+    )
+    # Stateless: keep only the immediate exchange (mirrors Planner behaviour).
+    agent.conversation_manager = SlidingWindowConversationManager(window_size=2)
+    return agent
 
 def create_researcher_agent(
     llm: str | None = None,

@@ -16,23 +16,20 @@ from typing import TYPE_CHECKING, Literal, Optional
 
 import requests
 from PIL import Image
-from strands import tool
+from strands import Agent, tool
 
 from src.utils.comfyui_client import get_client
-
-if TYPE_CHECKING:
-    from src.agent import VisionAgent
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Vision agent registry – injected by the pipeline at startup
 # ─────────────────────────────────────────────────────────────────────────────
 
-_vision_agent: Optional["VisionAgent"] = None
+_vision_agent: Optional[Agent] = None
 
 
-def set_vision_agent(agent: "VisionAgent") -> None:
-    """Register the shared :class:`VisionAgent` used by :func:`analyze_image`.
+def set_vision_agent(agent: Agent) -> None:
+    """Register the shared Vision :class:`~strands.Agent` used by :func:`analyze_image`.
 
     Call this once during pipeline initialisation before any ``analyze_image``
     invocations that use ``mode='describe'``.
@@ -363,7 +360,24 @@ def analyze_image(
             )
         else:
             try:
-                vision_result = _vision_agent.analyze(data, img_fmt, question)
+                import base64 as _base64
+                b64 = _base64.b64encode(data).decode("ascii")
+                media_type = f"image/{'jpeg' if img_fmt == 'jpeg' else img_fmt}"
+                # Build a multimodal content message (Strands / Anthropic format).
+                user_message = [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": b64,
+                        },
+                    },
+                    {"type": "text", "text": question or "Describe this image in detail."},
+                ]
+                # Reset history so every call is fully independent.
+                _vision_agent.conversation_manager.messages = []
+                vision_result = str(_vision_agent(user_message))
                 print(f"[analyze_image] describe result length: {len(vision_result):,} chars")
                 label = source_name if source_name else "provided image"
                 return {
