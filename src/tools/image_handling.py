@@ -12,13 +12,33 @@ import io
 import json
 import os
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Literal, Optional
 
 import requests
 from PIL import Image
 from strands import tool
 
 from src.utils.comfyui_client import get_client
+
+if TYPE_CHECKING:
+    from src.agent import VisionAgent
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Vision agent registry – injected by the pipeline at startup
+# ─────────────────────────────────────────────────────────────────────────────
+
+_vision_agent: Optional["VisionAgent"] = None
+
+
+def set_vision_agent(agent: "VisionAgent") -> None:
+    """Register the shared :class:`VisionAgent` used by :func:`analyze_image`.
+
+    Call this once during pipeline initialisation before any ``analyze_image``
+    invocations that use ``mode='describe'``.
+    """
+    global _vision_agent
+    _vision_agent = agent
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -240,17 +260,32 @@ def analyze_image(
     file_path: str = "",
     image_url: str = "",
     question: str = "",
+    mode: Literal["describe", "full"] = "describe",
 ) -> dict:
-    """Load an image from a local file or URL and forward it to the model for visual analysis.
+    """Load an image from a local file or URL and analyse it.
 
     Supported formats: PNG, JPEG/JPG, GIF, WEBP.
     Images are automatically downsized to satisfy Claude's 5 MB / 1568 px constraints.
+
+    Two analysis modes are available:
+
+    * ``mode='describe'`` **(default, recommended)**: The image is sent to an
+      isolated Vision Agent call that returns a plain-text description.  No image
+      bytes enter the Researcher's context window (~10K tokens vs ~600K).
+    * ``mode='full'``: Legacy behaviour – returns the raw image bytes so the
+      Researcher can reason over pixels directly (~600K tokens).  Use only when
+      precise spatial or identity comparison is needed.
 
     Args:
         file_path: Absolute or relative path to a local image file.
                    Provide either this or ``image_url`` – not both.
         image_url: Public http/https URL of an image to download.
-        question:  Optional specific question about the image.
+        question:  Specific question or aspect to focus on when analysing the image.
+        mode:      ``'describe'`` (default) or ``'full'``.
+
+    Use ``mode='describe'`` unless you need pixel-level reasoning (e.g. comparing
+    two images for identical content, precise spatial positioning, or explicit
+    user request for raw pixel analysis).
     """
     data: Optional[bytes] = None
     source_name = ""
@@ -313,7 +348,46 @@ def analyze_image(
             f"(final size: {len(data):,} bytes). Try a smaller or simpler image."
         )}]}
 
-    # Build multimodal ToolResult
+    # ── describe mode: isolated Vision Agent call (token-efficient) ─────────
+    if mode == "describe":
+        print(
+            f"[analyze_image] mode=describe  src={source_name}  "
+            f"size={len(data):,}B  est_tokens=~{len(data)//400:,} (describe) "
+            f"vs ~{len(data)*4//100:,} (full)"
+        )
+        if _vision_agent is None:
+            # No vision agent registered – fall back to full mode with a warning.
+            print(
+                "[analyze_image] WARNING: no VisionAgent registered; "
+                "falling back to mode='full'. Call set_vision_agent() during pipeline init."
+            )
+        else:
+            try:
+                vision_result = _vision_agent.analyze(data, img_fmt, question)
+                print(f"[analyze_image] describe result length: {len(vision_result):,} chars")
+                label = source_name if source_name else "provided image"
+                return {
+                    "status": "success",
+                    "content": [
+                        {
+                            "text": (
+                                f"Image analysis for {label}:\n\n{vision_result}"
+                            )
+                        }
+                    ],
+                }
+            except Exception as exc:
+                print(
+                    f"[analyze_image] WARNING: VisionAgent call failed ({exc}); "
+                    "falling back to mode='full'."
+                )
+                # Fall through to full mode below.
+
+    # ── full mode (or fallback): return bytes in context ─────────────────────
+    print(
+        f"[analyze_image] mode=full  src={source_name}  "
+        f"size={len(data):,}B  est_tokens=~{len(data)*4//100:,}"
+    )
     info_parts = [
         f"Image loaded from: {source_name}",
         f"Format: {img_fmt.upper()}, Size: {len(data):,} bytes",

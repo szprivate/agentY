@@ -34,6 +34,28 @@ Extract from the user message: subject, style, input images, requested template,
 
 ---
 
+### Image Analysis Strategy
+
+When the user provides images, choose the appropriate analysis mode for `analyze_image`:
+
+**Use `mode="describe"` (default) when:**
+- Identifying content type (portrait, landscape, product, scene)
+- Determining style, aesthetic, or mood
+- Checking technical quality (blurry, noisy, overexposed)
+- Extracting visible text or watermarks
+- Single-image analysis for workflow selection
+- Color/lighting reference extraction (general description sufficient)
+
+**Use `mode="full"` ONLY when:**
+- Comparing multiple images for identity/consistency (e.g., "are these the same character?")
+- Precise spatial reasoning required (e.g., "position X exactly where Y is in the frame")
+- User explicitly requests detailed pixel-level analysis
+- Multi-image composition tasks requiring simultaneous pixel comparison
+
+**Default to `mode="describe"` unless you have a specific reason to use `mode="full"`.**
+
+---
+
 ### 2. Select template
 Choose a ComfyUI workflow that matches the user request.
 

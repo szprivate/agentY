@@ -194,6 +194,7 @@ _SYSTEM_PROMPT_FILE: dict[str, str] = {
     "learnings": "system_prompt.learnings",
     "error_checker": "system_prompt.error_checker",
     "qa_checker": "system_prompt.qaChecker",
+    "vision_agent": "system_prompt.vision_agent",
 }
 
 
@@ -488,8 +489,89 @@ def _make_agent(
 
 
 # ---------------------------------------------------------------------------
+# Vision Agent – stateless, single-shot image analysis
+# ---------------------------------------------------------------------------
+
+class VisionAgent:
+    """Stateless vision agent that makes isolated Ollama vision calls.
+
+    Each call to :meth:`analyze` is completely independent – no conversation
+    history is kept between invocations, keeping token cost minimal (~10K
+    per call vs ~600K for full in-context analysis).
+    """
+
+    def __init__(self, model_id: str, ollama_host: str, system_prompt: str) -> None:
+        self._model_id = model_id
+        self._ollama_host = ollama_host.rstrip("/")
+        self._system_prompt = system_prompt
+
+    def analyze(self, data: bytes, img_fmt: str, question: str) -> str:
+        """Analyze *data* (raw image bytes) and return a text description.
+
+        Args:
+            data:      Raw image bytes (PNG / JPEG / GIF / WEBP).
+            img_fmt:   Image format string, e.g. ``'png'``, ``'jpeg'``.
+            question:  Specific question to answer about the image.
+
+        Returns:
+            Plain-text analysis produced by the vision model.
+
+        Raises:
+            requests.HTTPError: If the Ollama API request fails.
+        """
+        import base64 as _base64
+        b64 = _base64.b64encode(data).decode("ascii")
+
+        payload = {
+            "model": self._model_id,
+            "messages": [
+                {"role": "system", "content": self._system_prompt},
+                {
+                    "role": "user",
+                    "content": question or "Describe this image in detail.",
+                    "images": [b64],
+                },
+            ],
+            "stream": False,
+        }
+        print(f"[agentY:vision_agent] Calling {self._model_id} – question: {question[:80]!r}...")
+        resp = requests.post(
+            f"{self._ollama_host}/api/chat",
+            json=payload,
+            timeout=120,
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        text: str = result["message"]["content"]
+        print(f"[agentY:vision_agent] Response length: {len(text):,} chars (~{len(text)//4:,} tokens est.)")
+        return text
+
+
+# ---------------------------------------------------------------------------
 # Public factory functions
 # ---------------------------------------------------------------------------
+
+def create_vision_agent() -> VisionAgent:
+    """Create the Vision Agent that performs stateless, single-shot image analysis.
+
+    Uses the Ollama vision model configured under ``llm.pipeline.vision_agent``
+    (settings.json) or the ``VISION_AGENT_MODEL`` env var.  Falls back to
+    ``llm.pipeline.executor_vision_model`` when no dedicated setting exists.
+    The Ollama host is shared with the rest of the pipeline.
+
+    Returns:
+        A :class:`VisionAgent` ready for immediate use.
+    """
+    model_id = (
+        os.environ.get("VISION_AGENT_MODEL")
+        or str(_cfg("", "pipeline", "vision_agent", default=""))
+        or str(_cfg("", "pipeline", "executor_vision_model", default="gemma4:26b"))
+    )
+    ollama_host = str(_cfg("OLLAMA_HOST", "ollama", "host", default="http://localhost:11434"))
+    system_prompt = _load_system_prompt("vision_agent")
+    print(f"[agentY:vision_agent] Using Ollama — {model_id} @ {ollama_host}")
+    return VisionAgent(model_id=model_id, ollama_host=ollama_host, system_prompt=system_prompt)
+
 
 def create_researcher_agent(
     llm: str | None = None,

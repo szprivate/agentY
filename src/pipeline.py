@@ -26,7 +26,8 @@ from typing import Any, List, Optional
 from pydantic import BaseModel, Field, ValidationError
 from strands import Agent
 
-from src.agent import create_brain_agent, create_error_checker_agent, create_info_agent, create_planner_agent, create_researcher_agent, create_triage_agent, _settings
+from src.agent import create_brain_agent, create_error_checker_agent, create_info_agent, create_planner_agent, create_researcher_agent, create_triage_agent, create_vision_agent, _settings
+from src.tools.image_handling import set_vision_agent
 from src.utils.chat_summary import summarize_conversation, log_agent_messages
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
 from src.utils.comfyui_progress import stream_comfyui_job as _stream_comfyui_job
@@ -2630,6 +2631,13 @@ def create_pipeline(
         ollama_model=researcher_ollama_model,
         anthropic_model=researcher_anthropic_model,
     )
+    # Initialise Vision Agent so analyze_image(mode='describe') works.
+    try:
+        vision_agent = create_vision_agent()
+        set_vision_agent(vision_agent)
+    except Exception as _va_exc:
+        print(f"[agentY] WARNING: could not initialise VisionAgent ({_va_exc}). "
+              "analyze_image will fall back to mode='full'.")
     brain = create_brain_agent(
         llm=brain_llm,
         anthropic_model=brain_anthropic_model,
