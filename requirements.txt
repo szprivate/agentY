@@ -1,3 +1,9 @@
+# Shared tool/util layer (ComfyUI, HuggingFace, web, file, batch). Single source
+# of truth, also consumed by the agentY-mcp server. Expects the agenty_core repo
+# checked out as a sibling of this one. Install from this repo's root with:
+#   uv pip install -e ../agenty_core   (or: pip install -r requirements.txt)
+-e ../agenty_core
+
 strands-agents>=0.1.0
 strands-agents-tools>=0.3.0
 requests>=2.31.0

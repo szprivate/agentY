@@ -367,6 +367,7 @@
     "frame_interpolation": [],
     "geometry_estimation": [],
     "optical_flow": [],
+    "detection": [],
     ".cache": [],
     "animatediff_models": [],
     "animatediff_motion_lora": [],
@@ -483,7 +484,9 @@
       "t5-v1_1-xxl-encoder-Q8_0.gguf"
     ],
     "kjnodes_fonts": [],
-    "rmbg": [],
+    "rmbg": [
+      "RMBG-2.0\\model.safetensors"
+    ],
     "LLM": [],
     "sharp": [],
     "VHS_video_formats": [],
