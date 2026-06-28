@@ -1,0 +1,707 @@
+[
+  {
+    "moduleName": "default",
+    "title": "Image Editing",
+    "blueprints": [
+      {
+        "name": "image_edit",
+        "title": "Image Edit",
+        "description": "Image Edit blueprint",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      }
+    ]
+  },
+  {
+    "moduleName": "default",
+    "title": "Audio",
+    "blueprints": [
+      {
+        "name": "audio_generation_stable_audio_3_medium",
+        "title": "Audio Generation (Stable Audio 3 Medium)",
+        "description": "Generates music, instrument loops, sound effects, and one-shots from text using Stable Audio 3 Medium, with optional Qwen 3.5 category-based prompt expansion (Music, Instrument, SFX, One-shot).",
+        "mediaType": "audio",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "audio_generation_stable_audio_3_medium_base",
+        "title": "Audio Generation (Stable Audio 3 Medium Base)",
+        "description": "Generates music, instrument loops, sound effects, and one-shots from text using the Stable Audio 3 Medium base checkpoint, with optional Qwen 3.5 category-based prompt expansion (Music, Instrument, SFX, One-shot).",
+        "mediaType": "audio",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "text_to_audio_ace_step_1_5",
+        "title": "Text to Audio (ACE-Step 1.5)",
+        "description": "Generates audio/music from text prompts using ACE-Step 1.5, a diffusion-based audio generation model.",
+        "mediaType": "audio",
+        "mediaSubtype": "webp"
+      }
+    ]
+  },
+  {
+    "moduleName": "default",
+    "title": "Image Tools",
+    "blueprints": [
+      {
+        "name": "brightness_and_contrast",
+        "title": "Brightness and Contrast",
+        "description": "Adjusts image brightness and contrast using a real-time GPU fragment shader.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "chromatic_aberration",
+        "title": "Chromatic Aberration",
+        "description": "Adds lens-style chromatic aberration (color fringing) using a real-time GPU fragment shader.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "color_adjustment",
+        "title": "Color Adjustment",
+        "description": "Adjusts saturation, temperature, tint, and vibrance using a real-time GPU fragment shader.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "color_balance",
+        "title": "Color Balance",
+        "description": "Balances colors across shadows, midtones, and highlights using a real-time GPU fragment shader.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "color_curves",
+        "title": "Color Curves",
+        "description": "Fine-tunes tone and color with per-channel curve adjustments using a real-time GPU fragment shader.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "crop_images_2x2",
+        "title": "Crop Images 2x2",
+        "description": "Splits an image into a 2\u00d72 grid of four equal tiles.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "crop_images_3x3",
+        "title": "Crop Images 3x3",
+        "description": "Splits an image into a 3\u00d73 grid of nine equal tiles.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "edge_preserving_blur",
+        "title": "Edge-Preserving Blur",
+        "description": "Applies bilateral (edge-preserving) blur to soften images while retaining detail.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "film_grain",
+        "title": "Film Grain",
+        "description": "Adds procedural film grain texture for a cinematic look via GPU fragment shader.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "glow",
+        "title": "Glow",
+        "description": "Adds a glow/bloom effect around bright image areas via GPU fragment shader.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "hue_and_saturation",
+        "title": "Hue and Saturation",
+        "description": "Adjusts hue, saturation, and lightness of an image using a real-time GPU fragment shader.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_blur",
+        "title": "Image Blur",
+        "description": "Applies Gaussian, Box, or Radial blur to soften images and create stylized depth or motion effects.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_captioning_gemini",
+        "title": "Image Captioning(Gemini)",
+        "description": "Generates descriptive captions for images using Google's Gemini multimodal LLM.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_channels",
+        "title": "Image Channels",
+        "description": "Manipulates individual RGBA channels for masking, compositing, and channel effects.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_levels",
+        "title": "Image Levels",
+        "description": "Adjusts black point, white point, and gamma for tonal range control via GPU shader.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "remove_background_birefnet",
+        "title": "Remove Background (BiRefNet)",
+        "description": "Removes or replaces image backgrounds using BiRefNet segmentation and alpha compositing.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "sharpen",
+        "title": "Sharpen",
+        "description": "Sharpens image details using a GPU fragment shader for enhanced clarity.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "split_image_grid_to_tiles",
+        "title": "Split Image Grid to Tiles",
+        "description": "Splits an image into a configurable columns\u00d7rows grid of equal tiles for tiled generation or processing.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "unsharp_mask",
+        "title": "Unsharp Mask",
+        "description": "Enhances edge contrast via unsharp masking for a sharper image appearance.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      }
+    ]
+  },
+  {
+    "moduleName": "default",
+    "title": "Image generation and editing",
+    "blueprints": [
+      {
+        "name": "canny_to_image_z_image_turbo",
+        "title": "Canny to Image (Z-Image-Turbo)",
+        "description": "Generates an image from a Canny edge map using Z-Image-Turbo, with text conditioning.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "controlnet_z_image_turbo",
+        "title": "ControlNet (Z-Image-Turbo)",
+        "description": "Generates images from a text prompt and ControlNet conditioning (e.g. depth, canny) using Z-Image-Turbo.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "depth_to_image_z_image_turbo",
+        "title": "Depth to Image (Z-Image-Turbo)",
+        "description": "Generates an image from a depth map using Z-Image-Turbo with text conditioning.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_edit_bernini_r",
+        "title": "Image Edit (Bernini-R)",
+        "description": "Edits a single image using a text prompt, leveraging Bernini-R's latent semantic planning for changes like object addition, removal, or style transfer. Ideal for creative edits requiring precise semantic understanding, such as adding a snowman to a scene or altering an object's appearance.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_edit_firered_image_edit_1_1",
+        "title": "Image Edit (FireRed Image Edit 1.1)",
+        "description": "Edits images via text instructions using FireRed Image Edit 1.1, a diffusion-based instruction-following editing model.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_edit_flux_2_dev",
+        "title": "Image Edit (Flux.2 Dev)",
+        "description": "Edits an image from text instructions using Flux.2 [dev], with guidance, schedulers, and optional Turbo LoRAs.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_edit_flux_2_klein_4b",
+        "title": "Image Edit (Flux.2 Klein 4B)",
+        "description": "Edits an input image via text instructions using FLUX.2 [klein] 4B.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_edit_longcat_image_edit",
+        "title": "Image Edit (LongCat Image Edit)",
+        "description": "Edits images via text instructions using LongCat Image Edit, an instruction-following image editing diffusion model.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_edit_qwen_2509",
+        "title": "Image Edit (Qwen 2509)",
+        "description": "Edits images from text instructions using Qwen-Image-Edit-2509 with optional Lightning LoRA for few-step sampling.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_edit_qwen_2511",
+        "title": "Image Edit (Qwen 2511)",
+        "description": "Edits images via text instructions using Qwen-Image-Edit-2511 with improved character consistency and integrated LoRA.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_inpainting_flux_1_fill_dev",
+        "title": "Image Inpainting (Flux.1 Fill Dev)",
+        "description": "Inpaints masked image regions using Flux.1 fill [dev], Black Forest Labs' inpainting/outpainting model.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_inpainting_qwen_image",
+        "title": "Image Inpainting (Qwen-image)",
+        "description": "Inpaints masked regions using Qwen-Image, extending its multilingual text rendering to inpainting tasks.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_outpainting_qwen_image",
+        "title": "Image Outpainting (Qwen-Image)",
+        "description": "Outpaints beyond image boundaries using Qwen-Image's outpainting capabilities.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_to_depth_map_lotus",
+        "title": "Image to Depth Map (Lotus)",
+        "description": "Image to Depth Map (Lotus) blueprint",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_to_layers_qwen_image_layered",
+        "title": "Image to Layers (Qwen-Image-Layered)",
+        "description": "Decomposes an image into variable-resolution RGBA layers for independent editing using Qwen-Image-Layered.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_upscale_z_image_turbo",
+        "title": "Image Upscale (Z-image-Turbo)",
+        "description": "Upscales images to higher resolution using Z-Image-Turbo.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "pose_to_image_z_image_turbo",
+        "title": "Pose to Image (Z-Image-Turbo)",
+        "description": "Generates an image from pose keypoints using Z-Image-Turbo with text conditioning.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "text_to_image",
+        "title": "Text to Image",
+        "description": "Generates images from text prompts using Z-Image-Turbo defaults with Qwen3 text encoder and VAE.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "text_to_image_anima",
+        "title": "Text to Image (Anima)",
+        "description": "This subgraph converts text prompts into non-photorealistic illustrations using a 2-billion-parameter model optimized for anime and artistic styles. It is ideal for generating concept art, character designs, or stylized illustrations where photorealism is not required. The model excels with anime and artistic content but performs poorly on realistic subjects.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "text_to_image_anima_base_1_0",
+        "title": "Text to Image (Anima Base 1.0)",
+        "description": "This subgraph generates non-photorealistic illustrations from text prompts using a 2-billion-parameter model optimized for anime concepts, characters, and styles. It is ideal for creating artistic images, concept art, or stylized illustrations where photorealism is not required. The model excels with anime and artistic content but performs poorly on realistic subjects.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "text_to_image_ernie_image",
+        "title": "Text to Image (Ernie Image)",
+        "description": "Generates images from text prompts using Baidu\u2019s open ERNIE Image (~8B DiT): bilingual in-image typography and layouts (posters, infographics, multi-panel compositions) alongside general scenes, with bundled encoders and VAE.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "text_to_image_ernie_image_turbo",
+        "title": "Text to Image (Ernie Image Turbo)",
+        "description": "Faster ERNIE Image Turbo variant (~8B DiT, distilled for fewer sampling steps): same strengths in Chinese/English on-image text and layout-heavy graphics as the base ERNIE Image lineup, with bundled encoders and VAE.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "text_to_image_flux_1_dev",
+        "title": "Text to Image (Flux.1 Dev)",
+        "description": "Generates images from prompts using FLUX.1 [dev]: a 12B rectified-flow MMDiT with dual CLIP plus T5-XXL text encoders and guidance-distilled sampling for sharp prompt following versus classic DDPM diffusion.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "text_to_image_flux_1_krea_dev",
+        "title": "Text to Image (Flux.1 Krea Dev)",
+        "description": "FLUX.1 Krea [dev] (Black Forest Labs \u00d7 Krea): open-weight 12B rectified-flow text-to-image drop-in alongside FLUX.1 [dev], tuned away from overcooked saturation toward more natural diversity in people, realism, and style while keeping ecosystem compatibility.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "text_to_image_flux_2_dev",
+        "title": "Text to Image (Flux.2 Dev)",
+        "description": "Generates images from prompts using FLUX.2 [dev]: a newer 32B rectified-flow stack with distilled guidance plus a stronger long-context multimodal encoder for complex scenes, sharper typography/UI text, anatomy, lighting, and high-resolution latent decoding.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "text_to_image_ideogram_v4",
+        "title": "Text to Image (Ideogram v4)",
+        "description": "This subgraph generates images using Ideogram v4, accepting plain text or structured JSON prompts for precise layout and style control. It suits detailed illustrations, concept art, or marketing visuals needing predictable composition and color palettes. The model uses flow-matching with asymmetric guidance, so no negative prompt is needed, but JSON prompts yield the best results.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "text_to_image_netayume_lumina",
+        "title": "Text to Image (NetaYume Lumina)",
+        "description": "Generates images from text prompts using NetaYume Lumina, fine-tuned from Neta Lumina for anime-style and illustration generation.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "text_to_image_qwen_image",
+        "title": "Text to Image (Qwen-Image)",
+        "description": "Generates images from text prompts using Qwen-Image, Alibaba's 20B MMDiT model with excellent multilingual text rendering.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "text_to_image_qwen_image_2512",
+        "title": "Text to Image (Qwen-Image 2512)",
+        "description": "Generates images from text prompts using Qwen-Image-2512, with enhanced human realism and finer natural detail over the base version.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "text_to_image_z_image_base",
+        "title": "Text to Image (Z-Image-Base)",
+        "description": "Generates images from text prompts using Z-Image base weights with Qwen3 text encoder and bundled VAE.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "text_to_image_z_image_turbo",
+        "title": "Text to Image (Z-Image-Turbo)",
+        "description": "Generates images from text prompts using Z-Image-Turbo, Alibaba's distilled 6B DiT model.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      }
+    ]
+  },
+  {
+    "moduleName": "default",
+    "title": "Video generation and editing",
+    "blueprints": [
+      {
+        "name": "canny_to_video_ltx_2_0",
+        "title": "Canny to Video (LTX 2.0)",
+        "description": "Generates video from Canny edge maps using LTX-2, with optional synchronized audio.",
+        "mediaType": "video",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "character_replacement_scail_2_base",
+        "title": "Character Replacement (SCAIL-2 Base)",
+        "description": "Replaces a character in a video with a reference image using the SCAIL-2 model for end-to-end controlled animation without intermediate pose maps. Key inputs include a source video, a reference character image, and optional text prompts for style or context. Suitable for animated or live-action footage, multi-character scenes, and creative video editing where direct pose-free animation is needed; works best with moderate-length videos.",
+        "mediaType": "video",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "character_replacement_scail_2_extend",
+        "title": "Character Replacement (SCAIL-2 Extend)",
+        "description": "Replaces a character in a video with a reference image using the SCAIL-2 model for end-to-end controlled animation without intermediate pose maps. Key inputs include a source video, a reference character image, and optional text prompts for style or context. Suitable for animated or live-action footage, multi-character scenes, and creative video editing where direct pose-free animation is needed; works best with moderate-length videos.",
+        "mediaType": "video",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "depth_to_video_ltx_2_0",
+        "title": "Depth to Video (LTX 2.0)",
+        "description": "Generates depth-controlled video with LTX-2: motion and structure follow a depth-reference video alongside text prompting, optional first-frame image conditioning, with optional synchronized audio.",
+        "mediaType": "video",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "first_last_frame_to_video",
+        "title": "First-Last-Frame to Video",
+        "description": "Generates a video that interpolates between the first and last keyframes using LTX-2.3, including optional audio.",
+        "mediaType": "video",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "first_last_frame_to_video_ltx_2_3",
+        "title": "First-Last-Frame to Video (LTX-2.3)",
+        "description": "Generates a video interpolating between first and last keyframes using LTX-2.3.",
+        "mediaType": "video",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_to_video",
+        "title": "Image to Video",
+        "description": "Image to Video blueprint",
+        "mediaType": "video",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_to_video_ltx_2_3",
+        "title": "Image to Video (LTX-2.3)",
+        "description": "Generates video from a single input image using LTX-2.3.",
+        "mediaType": "video",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_to_video_wan_2_2",
+        "title": "Image to Video (Wan 2.2)",
+        "description": "Image-to-video with Wan 2.2 using a start image plus text prompt to extend motion from the still frame.",
+        "mediaType": "video",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "pose_to_video_ltx_2_0",
+        "title": "Pose to Video (LTX 2.0)",
+        "description": "Generates video from pose reference frames using LTX-2, with optional synchronized audio.",
+        "mediaType": "video",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "text_to_video_ltx_2_3",
+        "title": "Text to Video (LTX-2.3)",
+        "description": "Generates video from text prompts using LTX-2.3, Lightricks' video diffusion model.",
+        "mediaType": "video",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "text_to_video_wan_2_2",
+        "title": "Text to Video (Wan 2.2)",
+        "description": "Generates video from text prompts using Wan2.2, Alibaba's diffusion video model.",
+        "mediaType": "video",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "video_edit_bernini_r",
+        "title": "Video Edit (Bernini-R)",
+        "description": "This subgraph uses Depth Anything 3 to predict spatially consistent geometry from any number of images or video frames, with or without known camera poses. It outputs depth maps, camera poses, and optionally 3D Gaussian parameters for novel view synthesis.",
+        "mediaType": "video",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "video_inpaint_void",
+        "title": "Video Inpaint (VOID)",
+        "description": "Removes objects from video by inpainting masked regions using VOID (CogVideoX), with SAM3 text-guided segmentation and optional two-pass optical-flow refinement.",
+        "mediaType": "video",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "video_inpaint_wan2_1_vace",
+        "title": "Video Inpaint(Wan2.1 VACE)",
+        "description": "Video Inpaint(Wan2.1 VACE) blueprint",
+        "mediaType": "video",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "video_inpainting_wan2_1_vace",
+        "title": "Video Inpainting (Wan2.1 VACE)",
+        "description": "Removes objects from video by inpainting masked regions using Wan 2.1 VACE, with SAM3 text-guided segmentation and optional Lightning LoRA turbo mode.",
+        "mediaType": "video",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "video_upscale_gan_x4",
+        "title": "Video Upscale(GAN x4)",
+        "description": "Upscales video to 4\u00d7 resolution using a GAN-based upscaling model.",
+        "mediaType": "video",
+        "mediaSubtype": "webp"
+      }
+    ]
+  },
+  {
+    "moduleName": "default",
+    "title": "Video Tools",
+    "blueprints": [
+      {
+        "name": "frame_interpolation",
+        "title": "Frame Interpolation",
+        "description": "Increases video frame rate by synthesizing intermediate frames with a frame interpolation model.",
+        "mediaType": "video",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "get_any_video_frame",
+        "title": "Get Any Video Frame",
+        "description": "Extracts one image frame from a video at a chosen index, with optional trim and FPS control.",
+        "mediaType": "video",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "merge_videos",
+        "title": "Merge Videos",
+        "description": "Concatenates two videos end-to-end with optional resize, letterbox padding, and audio merge or drop.",
+        "mediaType": "video",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "video_captioning_gemini",
+        "title": "Video Captioning(Gemini)",
+        "description": "Generates descriptive captions for video input using Google's Gemini multimodal LLM.",
+        "mediaType": "video",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "video_stitch",
+        "title": "Video Stitch",
+        "description": "Stitches multiple video clips into a single sequential video file.",
+        "mediaType": "video",
+        "mediaSubtype": "webp"
+      }
+    ]
+  },
+  {
+    "moduleName": "default",
+    "title": "3D",
+    "blueprints": [
+      {
+        "name": "geometry_estimation_moge",
+        "title": "Geometry Estimation (MoGe)",
+        "description": "Estimates 3D scene geometry from an input image using MoGe, outputting a mesh plus OpenGL and DirectX normal maps.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_to_gaussian_splat_triposplat",
+        "title": "Image to Gaussian Splat (TripoSplat)",
+        "description": "This subgraph takes a single 2D image as input and generates a variable number of 3D Gaussians (up to 262,144) as output, enabling high-quality 3D reconstruction. It is ideal for asset creation, AR/VR, game development, and simulation environments, handling diverse image styles from photos to illustrations.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_to_model_hunyuan3d_2_1",
+        "title": "Image to 3D Model (Hunyuan3d 2.1)",
+        "description": "Generates 3D mesh models from a single input image using Hunyuan3D 2.0/2.1.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      }
+    ]
+  },
+  {
+    "moduleName": "default",
+    "title": "Conditioning & Preprocessors",
+    "blueprints": [
+      {
+        "name": "image_depth_estimation_depth_anything_3",
+        "title": "Image Depth Estimation (Depth Anything 3)",
+        "description": "This subgraph takes an input image and produces a depth map using the Depth Anything 3 model, which recovers spatially consistent geometry from any number of views. It is ideal for single or multi-view images, videos, and 3D scenes where accurate depth estimation is needed for tasks like SLAM, novel view synthesis, or spatial perception. The model uses a plain transformer backbone and supports both monocular and multi-view inputs without.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_depth_estimation_lotus_depth",
+        "title": "Image Depth Estimation (Lotus Depth)",
+        "description": "Estimates a monocular depth map from an input image using the Lotus depth estimation model.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_depth_estimation_moge",
+        "title": "Image Depth Estimation (MoGe)",
+        "description": "Estimates monocular depth from an input image using MoGe, outputting both raw and colorized depth maps plus a mask.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_face_detection_mediapipe",
+        "title": "Image Face Detection (Mediapipe)",
+        "description": "Detects facial landmarks from an image using MediaPipe, outputting landmark data, face bounding boxes, and an optional face-region mask.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_segmentation_sam3",
+        "title": "Image Segmentation (SAM3)",
+        "description": "Segments images into masks using Meta SAM3 from text prompts, points, or boxes.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_to_pose_map_sdpose_multi_person",
+        "title": "Image to Pose Map (SDPose Multi-Person)",
+        "description": "Detects multiple people in an image and outputs per-person pose keypoints, skeleton renders, and bounding boxes using SDPose.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "image_to_pose_map_sdpose_ood",
+        "title": "Image to Pose Map (SDPose-OOD)",
+        "description": "Extracts human pose keypoints and stick-figure visuals from an image using SDPose-OOD, with optional bounding-box input per subject.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "video_depth_estimation_depth_anything_3",
+        "title": "Video Depth Estimation (Depth Anything 3)",
+        "description": "This subgraph processes a video input through Depth Anything 3 to produce temporally consistent depth maps for each frame, outputting a depth video. It is ideal for video content requiring spatial geometry estimation, such as 3D reconstruction, SLAM, or novel view synthesis from moving cameras. The model uses a plain transformer backbone trained with a depth-ray representation, supporting any number of views without requiring known camera poses.",
+        "mediaType": "video",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "video_depth_estimation_moge",
+        "title": "Video Depth Estimation (MoGe)",
+        "description": "Estimates monocular depth from an input video using MoGe, outputting both raw and colorized depth maps plus a mask.",
+        "mediaType": "video",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "video_face_detection_mediapipe",
+        "title": "Video Face Detection (Mediapipe)",
+        "description": "Detects facial landmarks from a video using MediaPipe, outputting landmark data, face bounding boxes, and an optional face-region mask.",
+        "mediaType": "video",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "video_segmentation_sam3",
+        "title": "Video Segmentation (SAM3)",
+        "description": "Segments video into temporally consistent masks using Meta SAM3 from text or interactive prompts.",
+        "mediaType": "video",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "video_to_pose_map_sdpose_multi_person",
+        "title": "Video to Pose Map (SDPose Multi-Person)",
+        "description": "Extracts multi-person pose keypoints and skeleton frame sequences from video using SDPose with built-in person detection.",
+        "mediaType": "video",
+        "mediaSubtype": "webp"
+      }
+    ]
+  },
+  {
+    "moduleName": "default",
+    "title": "Text Tools",
+    "blueprints": [
+      {
+        "name": "prompt_enhance",
+        "title": "Prompt Enhance",
+        "description": "Expands short text prompts into detailed descriptions using a text generation model for better generation quality.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      },
+      {
+        "name": "select_per_line_text_by_index",
+        "title": "Select Per-Line Text by Index",
+        "description": "Selects one line from multiline text by zero-based index for batch or list-driven prompt workflows.",
+        "mediaType": "image",
+        "mediaSubtype": "webp"
+      }
+    ]
+  }
+]
