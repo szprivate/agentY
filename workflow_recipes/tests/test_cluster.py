@@ -125,6 +125,39 @@ class TestCategorySignal(unittest.TestCase):
         self.assertAlmostEqual(with_unknown, baseline)
 
 
+class TestDescriptionClustering(unittest.TestCase):
+    """TF-IDF cosine over description text groups similar-reading workflows."""
+
+    TEXTS = [
+        "API image-to-video via Kling O3. 1 image to 1 video output.",       # 0
+        "API first-last-frame-to-video via Kling O3. keyframe images to video.",  # 1
+        "Adjusts image brightness and contrast using a GPU fragment shader.",  # 2
+        "Adjusts hue, saturation, lightness using a GPU fragment shader.",     # 3
+    ]
+
+    def test_similar_descriptions_cluster(self):
+        m = C.description_matrix(self.TEXTS)
+        # The two Kling video descriptions should be more similar to each other
+        # than to a GPU-shader image filter.
+        kling = m[(0, 1)][0]
+        cross = m[(0, 2)][0]
+        self.assertGreater(kling, cross)
+
+    def test_agglomerate_groups_by_text(self):
+        m = C.description_matrix(self.TEXTS)
+        fps = [make_fp(f"w{i}", ["X"], [("a", "b", "T")]) for i in range(4)]
+        clusters = C.agglomerate(fps, m, threshold=0.15)
+        groups = sorted(sorted(i for i in c.members) for c in clusters)
+        # Kling pair {0,1} and shader pair {2,3} group separately.
+        self.assertIn([0, 1], groups)
+        self.assertIn([2, 3], groups)
+
+    def test_shared_terms(self):
+        terms = C.shared_terms(self.TEXTS, [2, 3])
+        self.assertIn("shader", terms)
+        self.assertNotIn("the", terms)   # stopword removed
+
+
 class TestJaccard(unittest.TestCase):
     def test_basic(self):
         self.assertEqual(C.jaccard(frozenset({1, 2}), frozenset({1, 2})), 1.0)

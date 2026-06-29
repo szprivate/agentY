@@ -249,6 +249,24 @@ def _media(graph: WorkflowGraph, task: Optional[str]) -> Optional[str]:
     return "image"
 
 
+def description_text(graph: WorkflowGraph) -> str:
+    """The text used for description-based clustering: the authoritative catalog
+    description (+ title + humanized filename). For the few workflows the catalog
+    does not describe, a fallback intent phrase keeps them comparable instead of
+    empty."""
+    parts: List[str] = []
+    if graph.index_description:
+        parts.append(graph.index_description)
+    if graph.index_title:
+        parts.append(graph.index_title)
+    parts.append(graph.name.replace("_", " "))
+    if not graph.index_description:
+        it = classify_intent(graph)
+        parts.append(when_to_use(it.media, it.task, it.model_families))
+        parts.extend(it.model_families)
+    return " ".join(parts)
+
+
 def classify_intent(graph: WorkflowGraph) -> Intent:
     text = _search_text(graph)
     task = _task(text)

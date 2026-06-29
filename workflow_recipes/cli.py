@@ -17,10 +17,18 @@ import json
 import os
 from typing import Dict, List
 
+from collections import defaultdict
+
 from . import cluster as cluster_mod
 from . import fingerprint as fp_mod
+from . import intent as intent_mod
 from . import parser as parser_mod
 from . import recipe_builder as recipe_mod
+from . import taxonomy as taxonomy_mod
+
+# Mode-appropriate default similarity thresholds (different scales).
+# "category" uses a fixed taxonomy, so the threshold is unused.
+_DEFAULT_THRESHOLD = {"category": 0.0, "description": 0.25, "structural": 0.55}
 
 # Default input folders (relative to repo root / current working directory).
 _DEFAULT_CUSTOM = "comfyui_workflow_templates_custom"
@@ -41,8 +49,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="folder of official workflow templates")
     p.add_argument("--out-dir", default=_DEFAULT_OUTDIR,
                    help="directory for generated reports / databases")
-    p.add_argument("--similarity-threshold", type=float, default=0.55,
-                   help="merge clusters while average similarity >= this value")
+    p.add_argument("--cluster-on", choices=["category", "description", "structural"],
+                   default="category",
+                   help="how to group workflows into types: 'category' (the "
+                        "canonical ComfyUI task taxonomy - Text to Image, Image "
+                        "to Video, API/Partner Nodes, ...), 'description' (TF-IDF "
+                        "cosine over catalog descriptions), or 'structural' "
+                        "(node-graph fingerprints)")
+    p.add_argument("--similarity-threshold", type=float, default=None,
+                   help="merge clusters while average similarity >= this value "
+                        "(default: 0.30 for description mode, 0.55 for structural)")
     p.add_argument("--object-info-cache", default=_DEFAULT_CACHE,
                    help="path to cached /object_info JSON (read, or written on fetch)")
     p.add_argument("--templates-descriptions", default=_DEFAULT_TEMPLATE_DESCS,
@@ -89,44 +105,74 @@ def run(args) -> Dict:
         print("[error] no workflows parsed; nothing to do")
         return {}
 
+    types_path = os.path.join(args.out_dir, "workflow_types.json")
+    types_report_path = os.path.join(args.out_dir, "workflow_types_report.md")
+    nodes_path = os.path.join(args.out_dir, "node_knowledge.json")
+
+    if args.cluster_on == "category":
+        # Hierarchical database: task -> model -> node clusters.
+        tasks, leaves = recipe_mod.build_database(graphs)
+        _write_database_json(types_path, tasks, len(graphs))
+        _write_database_report(types_report_path, tasks)
+        node_knowledge = recipe_mod.build_node_knowledge(graphs, leaves, object_info)
+        _write_node_knowledge(nodes_path, node_knowledge, len(graphs))
+        print(f"[done] {len(graphs)} workflows -> {len(tasks)} tasks / "
+              f"{len(leaves)} task+model recipes; {len(node_knowledge)} node classes")
+        for pth in (types_path, types_report_path, nodes_path):
+            print(f"[done] wrote {pth}")
+        return {"graphs": graphs, "tasks": tasks, "leaves": leaves,
+                "node_knowledge": node_knowledge}
+
+    # Flat experimental grouping modes (description / structural).
+    threshold = (args.similarity_threshold if args.similarity_threshold is not None
+                 else _DEFAULT_THRESHOLD[args.cluster_on])
     fps = [fp_mod.fingerprint(g) for g in graphs]
-    matrix = cluster_mod.pairwise_matrix(fps, weights)
-    clusters = cluster_mod.agglomerate(fps, matrix, args.similarity_threshold)
+    texts = [intent_mod.description_text(g) for g in graphs]
+    if args.cluster_on == "description":
+        matrix = cluster_mod.description_matrix(texts)
+    else:
+        matrix = cluster_mod.pairwise_matrix(fps, weights)
+    clusters = cluster_mod.agglomerate(fps, matrix, threshold)
 
     debug_path = os.path.join(args.out_dir, "clustering_debug.json")
-    _write_debug(debug_path, fps, matrix, clusters, weights, args.similarity_threshold)
-
-    meta_by_name = {
-        g.name: {"category": g.category, "title": g.index_title} for g in graphs
-    }
+    _write_debug(debug_path, fps, matrix, clusters, weights, threshold, args.cluster_on)
+    meta_by_name = {g.name: {"category": g.category, "title": g.index_title,
+                             "canonical": taxonomy_mod.classify(g)} for g in graphs}
     report_path = os.path.join(args.out_dir, "clustering_report.md")
-    _write_report(report_path, fps, clusters, args.similarity_threshold, weights, meta_by_name)
-
-    # Phase 4 - synthesize the recipe database.
-    recipes = recipe_mod.build_recipes(
-        graphs, clusters, object_info_available=bool(object_info)
-    )
-    types_path = os.path.join(args.out_dir, "workflow_types.json")
-    _write_types_json(types_path, recipes, weights, args.similarity_threshold, len(graphs))
-    types_report_path = os.path.join(args.out_dir, "workflow_types_report.md")
-    _write_types_report(types_report_path, recipes, args.similarity_threshold)
-
-    # Node knowledge - signatures + usage for the wiring brain.
+    _write_report(report_path, fps, clusters, threshold, weights, meta_by_name,
+                  args.cluster_on, texts)
+    recipes = recipe_mod.build_recipes(graphs, clusters, object_info_available=bool(object_info))
+    _write_types_json(types_path, recipes, weights, threshold, len(graphs), args.cluster_on)
+    _write_types_report(types_report_path, recipes, threshold)
     node_knowledge = recipe_mod.build_node_knowledge(graphs, recipes, object_info)
-    nodes_path = os.path.join(args.out_dir, "node_knowledge.json")
     _write_node_knowledge(nodes_path, node_knowledge, len(graphs))
 
     print(f"[done] {len(graphs)} workflows -> {len(clusters)} types "
-          f"(threshold {args.similarity_threshold}); {len(node_knowledge)} node classes")
+          f"(cluster-on={args.cluster_on}, threshold {threshold}); "
+          f"{len(node_knowledge)} node classes")
     for pth in (debug_path, report_path, types_path, types_report_path, nodes_path):
         print(f"[done] wrote {pth}")
     return {"graphs": graphs, "fingerprints": fps, "clusters": clusters,
             "matrix": matrix, "recipes": recipes, "node_knowledge": node_knowledge}
 
 
-def _write_debug(path, fps, matrix, clusters, weights, threshold) -> None:
+def _group_by_category(graphs, fps):
+    """Group workflows by their canonical taxonomy category. Each category is one
+    cluster (a 'type'). Deterministic: members sorted, clusters ordered by size
+    then category name."""
+    by_cat = defaultdict(list)
+    for i, g in enumerate(graphs):
+        by_cat[taxonomy_mod.classify(g)].append(i)
+    clusters = [cluster_mod.Cluster(members=sorted(idxs), cohesion=1.0)
+                for _cat, idxs in by_cat.items()]
+    clusters.sort(key=lambda c: (-len(c.members), [fps[m].name for m in c.members]))
+    return clusters
+
+
+def _write_debug(path, fps, matrix, clusters, weights, threshold, cluster_on) -> None:
     payload = {
-        "config": {"weights": weights, "similarity_threshold": threshold},
+        "config": {"cluster_on": cluster_on, "weights": weights,
+                   "similarity_threshold": threshold},
         "fingerprints": [
             {
                 "name": f.name,
@@ -171,29 +217,37 @@ def _cluster_categories(meta_by_name, names) -> Dict[str, int]:
     return dict(sorted(cats.items(), key=lambda kv: (-kv[1], kv[0])))
 
 
-def _write_report(path, fps, clusters, threshold, weights, meta_by_name) -> None:
+def _write_report(path, fps, clusters, threshold, weights, meta_by_name,
+                  cluster_on, texts) -> None:
     singletons = [c for c in clusters if len(c.members) == 1]
     grouped = [c for c in clusters if len(c.members) > 1]
     lines: List[str] = []
-    lines.append("# Clustering report (Phase 3)")
+    lines.append("# Clustering report")
     lines.append("")
+    _basis_desc = {
+        "category": " (canonical ComfyUI task taxonomy)",
+        "description": " (TF-IDF cosine over catalog descriptions)",
+        "structural": " (node-graph fingerprints)",
+    }
+    lines.append(f"- Clustering basis: **{cluster_on}**" + _basis_desc.get(cluster_on, ""))
     lines.append(f"- Workflows: {len(fps)}")
     lines.append(f"- Types (clusters): {len(clusters)}  "
                  f"({len(grouped)} multi-member, {len(singletons)} singletons)")
-    lines.append(f"- Similarity threshold: {threshold}")
-    lines.append(f"- Signal weights: {weights}")
-    lines.append("")
-    lines.append("Sanity-check the groupings below, then tell me a threshold to "
-                 "lock in before I build Phase 4 (recipe synthesis).")
+    if cluster_on != "category":
+        lines.append(f"- Similarity threshold: {threshold}")
+    if cluster_on == "structural":
+        lines.append(f"- Signal weights: {weights}")
     lines.append("")
 
     for idx, c in enumerate(clusters, 1):
-        names = [fps[m].name for m in c.members]
         sources = sorted({fps[m].source for m in c.members})
         src_label = sources[0] if len(sources) == 1 else "mixed"
-        shared = cluster_mod.shared_signals(fps, c.members)
         cats = _cluster_categories(meta_by_name, [fps[m].name for m in c.members])
-        lines.append(f"## Type {idx}  -  {len(c.members)} member(s)  -  source: {src_label}")
+        if cluster_on == "category":
+            label = meta_by_name.get(fps[c.members[0]].name, {}).get("canonical", f"Type {idx}")
+            lines.append(f"## {label}  -  {len(c.members)} member(s)  -  source: {src_label}")
+        else:
+            lines.append(f"## Type {idx}  -  {len(c.members)} member(s)  -  source: {src_label}")
         lines.append(f"- cohesion (mean intra-similarity): {round(c.cohesion, 3)}")
         if cats:
             purity = "pure" if len(cats) == 1 else "MIXED categories"
@@ -205,23 +259,24 @@ def _write_report(path, fps, clusters, threshold, weights, meta_by_name) -> None
             suffix = f' - "{title}"' if title else ""
             lines.append(f"    - {fps[m].name}  ({fps[m].source}, {fps[m].node_count} nodes){suffix}")
         if len(c.members) > 1:
-            lines.append(f"- shared node classes ({len(shared['shared_classes'])}): "
-                         + (", ".join(shared["shared_classes"]) or "(none)"))
-            conns = shared["shared_connections"]
-            lines.append(f"- shared connection patterns ({len(conns)}):")
-            for a, b, t in conns[:25]:
-                lines.append(f"    - {a} -> {b}  [{t}]")
-            if len(conns) > 25:
-                lines.append(f"    - ... and {len(conns) - 25} more")
+            if cluster_on == "description":
+                terms = cluster_mod.shared_terms(texts, c.members)
+                lines.append(f"- shared description terms ({len(terms)}): "
+                             + (", ".join(terms[:30]) or "(none)"))
+            else:
+                shared = cluster_mod.shared_signals(fps, c.members)
+                lines.append(f"- shared node classes ({len(shared['shared_classes'])}): "
+                             + (", ".join(shared["shared_classes"]) or "(none)"))
         lines.append("")
 
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
 
 
-def _write_types_json(path, recipes, weights, threshold, n_workflows) -> None:
+def _write_types_json(path, recipes, weights, threshold, n_workflows, cluster_on) -> None:
     payload = {
-        "config": {"weights": weights, "similarity_threshold": threshold},
+        "config": {"cluster_on": cluster_on, "weights": weights,
+                   "similarity_threshold": threshold},
         "generated_from": {"workflow_count": n_workflows, "type_count": len(recipes)},
         "types": recipes,
     }
@@ -328,6 +383,69 @@ def _write_types_report(path, recipes, threshold) -> None:
             lines.append(f"- unresolved nodes (not in object_info): {', '.join(r['unresolved_nodes'])}")
         if r["custom_nodes"]:
             lines.append(f"- custom nodes: {', '.join(r['custom_nodes'])}")
+        lines.append("")
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+
+def _write_database_json(path, tasks, n_workflows) -> None:
+    payload = {
+        "structure": "task -> model -> node clusters",
+        "generated_from": {
+            "workflow_count": n_workflows,
+            "task_count": len(tasks),
+            "recipe_count": sum(t["model_count"] for t in tasks),
+        },
+        "tasks": tasks,
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+
+
+def _write_database_report(path, tasks) -> None:
+    lines: List[str] = []
+    lines.append("# Workflow recipe database  (task -> model -> node clusters)")
+    lines.append("")
+    lines.append(f"- Tasks: {len(tasks)} | "
+                 f"task+model recipes: {sum(t['model_count'] for t in tasks)}")
+    lines.append("- Self-contained: every recipe has user_intent + description + "
+                 "node clusters. No human annotation step.")
+    lines.append("")
+
+    for t in tasks:
+        lines.append(f"# {t['task']}  (`{t['id']}`)  -  {t['member_count']} workflow(s), "
+                     f"{t['model_count']} model(s)")
+        lines.append("")
+        for m in t["models"]:
+            ui = m["user_intent"]
+            lines.append(f"## {t['task']} / {m['model']}  (`{m['id']}`)  -  "
+                         f"{m['member_count']} workflow(s)  -  source: {m['source']}")
+            lines.append(f"- when to use: {ui.get('when_to_use')}")
+            ex = ui.get("example_requests", [])
+            if ex:
+                lines.append(f"- example request: \"{ex[0]}\"")
+            lines.append(f"- description: {m['description']}")
+            lines.append("- member workflows:")
+            for mf in m["member_files"]:
+                lines.append(f"    - {mf}")
+            lines.append("- node clusters (required structure):")
+            if m["node_clusters"]:
+                for nc in m["node_clusters"]:
+                    lines.append(f"    - {nc['cluster']}: {', '.join(nc['nodes'])}")
+            else:
+                lines.append("    - (none resolved)")
+            paired = [e for e in m["required_node_roles"] if e.get("paired_or_multiple")]
+            if paired:
+                lines.append("- paired/multiple required: "
+                             + ", ".join(f"{e['node_class']} x{e['min_instances']}"
+                                         for e in paired))
+            opt = [e["node_class"] for e in m["optional_node_roles"] if not e.get("utility")]
+            if opt:
+                lines.append(f"- optional roles: {', '.join(opt[:12])}")
+            if m["unresolved_nodes"]:
+                lines.append(f"- unresolved nodes: {', '.join(m['unresolved_nodes'])}")
+            lines.append("")
         lines.append("")
 
     with open(path, "w", encoding="utf-8") as f:

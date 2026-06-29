@@ -28,6 +28,7 @@ from collections import Counter, defaultdict
 from typing import Dict, List, Optional, Tuple
 
 from . import intent as intent_mod
+from . import taxonomy as taxonomy_mod
 from .cluster import Cluster
 from .fingerprint import Fingerprint, classify_role, role_description, SPINE_ROLES
 from .parser import WorkflowGraph
@@ -464,9 +465,13 @@ def _slugify(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
 
 
-def _slug(members: List[WorkflowGraph], boundary: Dict, user_intent: Dict) -> str:
-    """A readable, deterministic id from the derived intent (task + model family),
-    falling back to a structural signature when intent is uninformative."""
+def _slug(members: List[WorkflowGraph], boundary: Dict, user_intent: Dict,
+          canonical_category: Optional[str] = None) -> str:
+    """A readable, deterministic id. Prefers the canonical category (e.g.
+    "image_to_video"); falls back to intent (task + model family), then to a
+    structural signature."""
+    if canonical_category:
+        return _slugify(canonical_category)
     task = user_intent.get("task")
     media = user_intent.get("media")
     families = user_intent.get("model_families") or []
@@ -509,54 +514,146 @@ def _assign_ids(recipes: List[Dict]) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Top-level builder
+# Node clusters - group the required roles into functional units
+# --------------------------------------------------------------------------- #
+# Ordered functional groups; each role_key (or class) is placed in the first
+# group it matches. This is the "node clusters" view at a recipe leaf.
+_CLUSTER_GROUPS = [
+    ("inputs", {"image_loader", "video_loader"}),
+    ("model loading", {"model_loader", "lora_loader", "clip_loader", "vae_loader"}),
+    ("conditioning", {"text_encode", "conditioning_op", "controlnet", "guidance"}),
+    ("latent / canvas", {"latent_source", "vae_encode"}),
+    ("sampling", {"sampler"}),
+    ("decoding", {"vae_decode"}),
+    ("output", {"save_output"}),
+]
+
+
+def _node_clusters(required: List[Dict]) -> List[Dict]:
+    """Group the required (invariant) node roles into functional clusters - the
+    structural building blocks of the recipe."""
+    buckets: Dict[str, List[str]] = {name: [] for name, _ in _CLUSTER_GROUPS}
+    other: List[str] = []
+    for entry in required:
+        role = entry.get("role_key", "other")
+        label = entry["node_class"]
+        if entry.get("min_instances", 1) and entry.get("min_instances", 1) >= 2:
+            label += f" (x{entry['min_instances']})"
+        placed = False
+        for name, roles in _CLUSTER_GROUPS:
+            if role in roles:
+                buckets[name].append(label)
+                placed = True
+                break
+        if not placed:
+            other.append(label)
+    clusters = [{"cluster": name, "nodes": sorted(nodes)}
+                for name, _ in _CLUSTER_GROUPS for nodes in [buckets[name]] if nodes]
+    if other:
+        clusters.append({"cluster": "other operations", "nodes": sorted(other)})
+    return clusters
+
+
+# --------------------------------------------------------------------------- #
+# Recipe body (shared by flat and hierarchical builders)
+# --------------------------------------------------------------------------- #
+def _recipe_body(members: List[WorkflowGraph]) -> Dict:
+    required, optional = _node_roles(members)
+    boundary = _boundary_ports(members)
+    unresolved, custom = _custom_and_unresolved(members)
+    sources = sorted({g.source for g in members})
+    user_intent = _user_intent(members)
+    description, description_source = _description(members, required, boundary, user_intent)
+    return {
+        "source": sources[0] if len(sources) == 1 else "mixed",
+        "member_files": sorted(g.name for g in members),
+        "member_descriptions": _member_descriptions(members),
+        "member_count": len(members),
+        "user_intent": user_intent,
+        "description": description,
+        "description_source": description_source,
+        "node_clusters": _node_clusters(required),
+        "required_node_roles": required,
+        "optional_node_roles": optional,
+        "connection_patterns": _connection_patterns(members),
+        "boundary_ports": boundary,
+        "param_variability": _param_variability(members, required),
+        "catalog_category": _category_info(members),
+        "unresolved_nodes": unresolved,
+        "custom_nodes": custom,
+    }
+
+
+def _primary_model(graph: WorkflowGraph) -> str:
+    """The single model family a workflow is filed under (its first detected
+    family), or "Generic" when no model family is detected (e.g. GLSL filters)."""
+    fams = intent_mod.classify_intent(graph).model_families
+    return fams[0] if fams else "Generic"
+
+
+# --------------------------------------------------------------------------- #
+# Top-level builders
 # --------------------------------------------------------------------------- #
 def build_recipes(
     graphs: List[WorkflowGraph],
     clusters: List[Cluster],
     object_info_available: bool = True,
 ) -> List[Dict]:
+    """Flat recipe list (one per cluster) - used by the description / structural
+    grouping modes."""
     recipes: List[Dict] = []
     for c in clusters:
         members = [graphs[m] for m in c.members]
-        required, optional = _node_roles(members)
-        boundary = _boundary_ports(members)
-        unresolved, custom = _custom_and_unresolved(members)
-        sources = sorted({g.source for g in members})
-        source = sources[0] if len(sources) == 1 else "mixed"
-
-        category = _category_info(members)
-        user_intent = _user_intent(members)
-        description, description_source = _description(
-            members, required, boundary, user_intent
-        )
-
+        body = _recipe_body(members)
+        canonical_category = _dominant([taxonomy_mod.classify(g) for g in members])
         recipe = {
-            "_slug": _slug(members, boundary, user_intent),
-            "category": category,
+            "_slug": _slug(members, body["boundary_ports"], body["user_intent"],
+                           canonical_category),
+            "canonical_category": canonical_category,
             "suggested_title": _suggested_title(members),
-            "user_intent": user_intent,
-            "description": description,
-            "description_source": description_source,
-            "source": source,
-            "member_files": sorted(g.name for g in members),
-            "member_descriptions": _member_descriptions(members),
-            "member_count": len(members),
             "cohesion": round(c.cohesion, 4),
-            "required_node_roles": required,
-            "optional_node_roles": optional,
-            "connection_patterns": _connection_patterns(members),
-            "boundary_ports": boundary,
-            "param_variability": _param_variability(members, required),
-            "unresolved_nodes": unresolved,
-            "custom_nodes": custom,
         }
+        recipe.update(body)
         recipes.append(recipe)
-
-    # Sort by member_count desc, then by slug for stable ordering, then assign ids.
     recipes.sort(key=lambda r: (-r["member_count"], r["_slug"], r["member_files"]))
     _assign_ids(recipes)
     return recipes
+
+
+def build_database(graphs: List[WorkflowGraph]) -> Tuple[List[Dict], List[Dict]]:
+    """Hierarchical database: task -> model -> node clusters.
+
+    Level 1 is the canonical task category (taxonomy.classify); level 2 is the
+    model family the workflow is filed under; the leaf is a tight recipe (node
+    clusters + roles + connections) over the workflows sharing that task+model.
+
+    Returns (tasks_tree, flat_leaves). The flat leaves are reused for
+    node-knowledge usage links."""
+    groups: Dict[Tuple[str, str], List[int]] = defaultdict(list)
+    for i, g in enumerate(graphs):
+        groups[(taxonomy_mod.classify(g), _primary_model(g))].append(i)
+
+    by_task: Dict[str, List[Dict]] = defaultdict(list)
+    flat_leaves: List[Dict] = []
+    for (task, model), idxs in groups.items():
+        members = [graphs[i] for i in sorted(idxs)]
+        leaf = {"id": f"{_slugify(task)}__{_slugify(model)}", "model": model}
+        leaf.update(_recipe_body(members))
+        by_task[task].append(leaf)
+        flat_leaves.append(leaf)
+
+    tasks: List[Dict] = []
+    for task, leaves in by_task.items():
+        leaves.sort(key=lambda r: (-r["member_count"], r["model"]))
+        tasks.append({
+            "task": task,
+            "id": _slugify(task),
+            "member_count": sum(l["member_count"] for l in leaves),
+            "model_count": len(leaves),
+            "models": leaves,
+        })
+    tasks.sort(key=lambda t: (-t["member_count"], t["task"]))
+    return tasks, flat_leaves
 
 
 # --------------------------------------------------------------------------- #

@@ -55,6 +55,7 @@ class Node:
     title: Optional[str] = None
     resolved: bool = False        # True if class_type was found in object_info
     is_custom: bool = False       # True if object_info says it is a custom node
+    is_api: bool = False          # True if a ComfyUI API / partner node
     input_types: Dict[str, str] = field(default_factory=dict)   # input name -> type
     output_types: List[str] = field(default_factory=list)       # output slot types
 
@@ -189,6 +190,13 @@ def _is_custom_node(info: Dict[str, Any]) -> bool:
     module = str(info.get("python_module", ""))
     # Core nodes live in "nodes" or "comfy_extras.*"; everything else is custom.
     return module.startswith("custom_nodes")
+
+
+def _is_api_node(info: Dict[str, Any]) -> bool:
+    """True for ComfyUI API / partner nodes (the cloud-service integrations,
+    e.g. Kling, Veo, ByteDance/Seedream, BFL Flux Pro). These live in the
+    ``comfy_api_nodes`` python module."""
+    return str(info.get("python_module", "")).startswith("comfy_api_nodes")
 
 
 # --------------------------------------------------------------------------- #
@@ -539,6 +547,7 @@ def enrich(graph: WorkflowGraph, object_info: Dict[str, Any]) -> WorkflowGraph:
         if info:
             node.resolved = True
             node.is_custom = _is_custom_node(info)
+            node.is_api = _is_api_node(info)
             node.input_types = _input_types_from_info(info)
             node.output_types = _output_types_from_info(info)
         else:

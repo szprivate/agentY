@@ -99,7 +99,7 @@ class TestDescriptionField(unittest.TestCase):
                                  object_info_available=True)[0]
         self.assertEqual(recipe["description"], "Combines frames into a video.")
         self.assertEqual(recipe["description_source"], "catalog")
-        self.assertEqual(recipe["category"]["primary"], "Video Tools")
+        self.assertEqual(recipe["catalog_category"]["primary"], "Video Tools")
         self.assertEqual(recipe["member_descriptions"][0]["description"],
                          "Combines frames into a video.")
 

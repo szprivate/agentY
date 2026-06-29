@@ -1,5 +1,6 @@
 {
   "config": {
+    "cluster_on": "structural",
     "weights": {
       "classes": 0.4,
       "connections": 0.35,
@@ -7,7 +8,7 @@
       "spine": 0.05,
       "category": 0.0
     },
-    "similarity_threshold": 0.3
+    "similarity_threshold": 0.55
   },
   "fingerprints": [
     {
@@ -116751,50 +116752,9 @@
   "clusters": [
     {
       "members": [
-        "Wan22Vace_VID2VID",
-        "video_wan2_2_14B_flf2v",
-        "video_wan2_2_14B_fun_camera",
-        "video_wan2_2_14B_fun_control",
-        "video_wan_vace_14B_ref2v",
-        "video_wan_vace_14B_v2v",
-        "video_wan_vace_flf2v",
-        "video_wan_vace_outpainting",
-        "character_replacement_scail_2_base",
-        "character_replacement_scail_2_extend",
-        "image_to_video",
-        "image_to_video_wan_2_2",
-        "text_to_video_wan_2_2",
-        "video_inpaint_wan2_1_vace",
-        "video_inpainting_wan2_1_vace"
-      ],
-      "cohesion": 0.4221
-    },
-    {
-      "members": [
-        "image_z_image_turbo",
-        "image_z_image_turbo_fun_union_controlnet",
-        "canny_to_image_z_image_turbo",
-        "controlnet_z_image_turbo",
-        "depth_to_image_z_image_turbo",
-        "image_inpainting_flux_1_fill_dev",
-        "pose_to_image_z_image_turbo",
-        "text_to_audio_ace_step_1_5",
-        "text_to_image",
-        "text_to_image_anima",
-        "text_to_image_anima_base_1_0",
-        "text_to_image_flux_1_dev",
-        "text_to_image_flux_1_krea_dev",
-        "text_to_image_z_image_base",
-        "text_to_image_z_image_turbo"
-      ],
-      "cohesion": 0.4826
-    },
-    {
-      "members": [
         "brightness_and_contrast",
         "chromatic_aberration",
         "color_adjustment",
-        "color_balance",
         "edge_preserving_blur",
         "film_grain",
         "glow",
@@ -116804,131 +116764,82 @@
         "sharpen",
         "unsharp_mask"
       ],
-      "cohesion": 0.6488
+      "cohesion": 0.6838
     },
     {
       "members": [
-        "image_edit",
-        "image_edit_firered_image_edit_1_1",
-        "image_edit_longcat_image_edit",
-        "image_edit_qwen_2509",
-        "image_edit_qwen_2511",
-        "image_to_layers_qwen_image_layered",
-        "image_upscale_z_image_turbo",
-        "text_to_image_qwen_image",
-        "text_to_image_qwen_image_2512"
+        "image_z_image_turbo",
+        "text_to_image",
+        "text_to_image_flux_1_dev",
+        "text_to_image_flux_1_krea_dev",
+        "text_to_image_z_image_base",
+        "text_to_image_z_image_turbo"
       ],
-      "cohesion": 0.4221
+      "cohesion": 0.7157
     },
     {
       "members": [
         "video_ltx2_3_flf2v",
         "video_ltx2_3_i2v",
-        "canny_to_video_ltx_2_0",
-        "depth_to_video_ltx_2_0",
         "first_last_frame_to_video",
         "first_last_frame_to_video_ltx_2_3",
         "image_to_video_ltx_2_3",
-        "pose_to_video_ltx_2_0",
         "text_to_video_ltx_2_3"
       ],
-      "cohesion": 0.6222
+      "cohesion": 0.678
     },
     {
       "members": [
         "Kling3_multiShot",
-        "api_kling_o3_flf2v",
-        "api_kling_o3_i2v",
-        "api_kling_o3_video_edit",
         "api_ltxv_image_to_video",
         "api_ltxv_text_to_video",
         "api_wan2_6_i2v",
         "api_wan2_6_t2v"
       ],
-      "cohesion": 0.4991
+      "cohesion": 0.674
+    },
+    {
+      "members": [
+        "image_edit_firered_image_edit_1_1",
+        "image_edit_qwen_2509",
+        "text_to_image_qwen_image",
+        "text_to_image_qwen_image_2512"
+      ],
+      "cohesion": 0.7007
+    },
+    {
+      "members": [
+        "image_z_image_turbo_fun_union_controlnet",
+        "canny_to_image_z_image_turbo",
+        "controlnet_z_image_turbo",
+        "pose_to_image_z_image_turbo"
+      ],
+      "cohesion": 0.789
+    },
+    {
+      "members": [
+        "video_wan_vace_14B_ref2v",
+        "video_wan_vace_14B_v2v",
+        "video_wan_vace_flf2v",
+        "video_wan_vace_outpainting"
+      ],
+      "cohesion": 0.7447
     },
     {
       "members": [
         "NanoBanana2_outpaintUpscale",
-        "NanoBananaPro_3x3CharacterSheet",
-        "NanoBananaPro_3x3CharacterSheet_closeups",
         "api_magnific_image_relight",
-        "api_topaz_image_enhance",
-        "api_veo3"
+        "api_topaz_image_enhance"
       ],
-      "cohesion": 0.4782
+      "cohesion": 0.7333
     },
     {
       "members": [
-        "image_flux2_klein_image_edit_9b_distilled",
-        "image_flux2_klein_text_to_image",
-        "image_edit_flux_2_dev",
-        "image_edit_flux_2_klein_4b",
-        "text_to_image_flux_2_dev",
-        "text_to_image_ideogram_v4"
+        "canny_to_video_ltx_2_0",
+        "depth_to_video_ltx_2_0",
+        "pose_to_video_ltx_2_0"
       ],
-      "cohesion": 0.4744
-    },
-    {
-      "members": [
-        "api_bytedance_seedream_5_0_lite_image_edit",
-        "api_kling_o3_image",
-        "imageEdit_nano_banana2",
-        "imageEdit_nano_banana_pro"
-      ],
-      "cohesion": 0.6356
-    },
-    {
-      "members": [
-        "api_magnific_image_upscale_creative",
-        "api_magnific_image_upscale_precise",
-        "upscale_ultimateSD",
-        "upscale_using_model"
-      ],
-      "cohesion": 0.4536
-    },
-    {
-      "members": [
-        "audio_generation_stable_audio_3_medium",
-        "audio_generation_stable_audio_3_medium_base",
-        "text_to_image_ernie_image",
-        "text_to_image_ernie_image_turbo"
-      ],
-      "cohesion": 0.6079
-    },
-    {
-      "members": [
-        "crop_images_2x2",
-        "crop_images_3x3",
-        "get_any_video_frame",
-        "split_image_grid_to_tiles"
-      ],
-      "cohesion": 0.5324
-    },
-    {
-      "members": [
-        "image_captioning_gemini",
-        "image_channels",
-        "prompt_enhance",
-        "video_captioning_gemini"
-      ],
-      "cohesion": 0.675
-    },
-    {
-      "members": [
-        "api_meshy_image_to_model",
-        "api_meshy_multi_image_to_model",
-        "api_meshy_text_to_model"
-      ],
-      "cohesion": 0.5222
-    },
-    {
-      "members": [
-        "frame_interpolation",
-        "merge_videos",
-        "video_stitch"
-      ],
-      "cohesion": 0.4828
+      "cohesion": 0.7982
     },
     {
       "members": [
@@ -116940,11 +116851,11 @@
     },
     {
       "members": [
-        "image_edit_bernini_r",
-        "video_edit_bernini_r",
-        "video_inpaint_void"
+        "image_captioning_gemini",
+        "prompt_enhance",
+        "video_captioning_gemini"
       ],
-      "cohesion": 0.4979
+      "cohesion": 1.0
     },
     {
       "members": [
@@ -116953,6 +116864,92 @@
         "video_to_pose_map_sdpose_multi_person"
       ],
       "cohesion": 0.716
+    },
+    {
+      "members": [
+        "image_to_video",
+        "image_to_video_wan_2_2",
+        "text_to_video_wan_2_2"
+      ],
+      "cohesion": 0.7565
+    },
+    {
+      "members": [
+        "video_wan2_2_14B_flf2v",
+        "video_wan2_2_14B_fun_camera",
+        "video_wan2_2_14B_fun_control"
+      ],
+      "cohesion": 0.8084
+    },
+    {
+      "members": [
+        "NanoBananaPro_3x3CharacterSheet",
+        "NanoBananaPro_3x3CharacterSheet_closeups"
+      ],
+      "cohesion": 1.0
+    },
+    {
+      "members": [
+        "api_bytedance_seedream_5_0_lite_image_edit",
+        "api_kling_o3_image"
+      ],
+      "cohesion": 0.84
+    },
+    {
+      "members": [
+        "api_kling_o3_flf2v",
+        "api_kling_o3_i2v"
+      ],
+      "cohesion": 0.731
+    },
+    {
+      "members": [
+        "api_magnific_image_upscale_creative",
+        "api_magnific_image_upscale_precise"
+      ],
+      "cohesion": 0.8
+    },
+    {
+      "members": [
+        "api_meshy_image_to_model",
+        "api_meshy_multi_image_to_model"
+      ],
+      "cohesion": 0.7
+    },
+    {
+      "members": [
+        "audio_generation_stable_audio_3_medium",
+        "audio_generation_stable_audio_3_medium_base"
+      ],
+      "cohesion": 1.0
+    },
+    {
+      "members": [
+        "character_replacement_scail_2_base",
+        "character_replacement_scail_2_extend"
+      ],
+      "cohesion": 0.9469
+    },
+    {
+      "members": [
+        "crop_images_2x2",
+        "crop_images_3x3"
+      ],
+      "cohesion": 0.8923
+    },
+    {
+      "members": [
+        "get_any_video_frame",
+        "split_image_grid_to_tiles"
+      ],
+      "cohesion": 0.585
+    },
+    {
+      "members": [
+        "imageEdit_nano_banana2",
+        "imageEdit_nano_banana_pro"
+      ],
+      "cohesion": 0.8667
     },
     {
       "members": [
@@ -116970,10 +116967,38 @@
     },
     {
       "members": [
+        "image_edit",
+        "image_edit_qwen_2511"
+      ],
+      "cohesion": 0.8348
+    },
+    {
+      "members": [
+        "image_edit_bernini_r",
+        "video_edit_bernini_r"
+      ],
+      "cohesion": 0.8801
+    },
+    {
+      "members": [
+        "image_edit_flux_2_dev",
+        "text_to_image_flux_2_dev"
+      ],
+      "cohesion": 0.7393
+    },
+    {
+      "members": [
         "image_face_detection_mediapipe",
         "video_face_detection_mediapipe"
       ],
       "cohesion": 0.575
+    },
+    {
+      "members": [
+        "image_flux2_klein_image_edit_9b_distilled",
+        "image_edit_flux_2_klein_4b"
+      ],
+      "cohesion": 0.6811
     },
     {
       "members": [
@@ -116991,7 +117016,46 @@
     },
     {
       "members": [
+        "text_to_image_anima",
+        "text_to_image_anima_base_1_0"
+      ],
+      "cohesion": 1.0
+    },
+    {
+      "members": [
+        "text_to_image_ernie_image",
+        "text_to_image_ernie_image_turbo"
+      ],
+      "cohesion": 0.8331
+    },
+    {
+      "members": [
+        "video_inpaint_wan2_1_vace",
+        "video_inpainting_wan2_1_vace"
+      ],
+      "cohesion": 0.6102
+    },
+    {
+      "members": [
+        "Wan22Vace_VID2VID"
+      ],
+      "cohesion": 1.0
+    },
+    {
+      "members": [
         "api_ideogram_v3_t2i"
+      ],
+      "cohesion": 1.0
+    },
+    {
+      "members": [
+        "api_kling_o3_video_edit"
+      ],
+      "cohesion": 1.0
+    },
+    {
+      "members": [
+        "api_meshy_text_to_model"
       ],
       "cohesion": 1.0
     },
@@ -117003,7 +117067,55 @@
     },
     {
       "members": [
+        "api_veo3"
+      ],
+      "cohesion": 1.0
+    },
+    {
+      "members": [
+        "color_balance"
+      ],
+      "cohesion": 1.0
+    },
+    {
+      "members": [
         "color_curves"
+      ],
+      "cohesion": 1.0
+    },
+    {
+      "members": [
+        "depth_to_image_z_image_turbo"
+      ],
+      "cohesion": 1.0
+    },
+    {
+      "members": [
+        "frame_interpolation"
+      ],
+      "cohesion": 1.0
+    },
+    {
+      "members": [
+        "image_channels"
+      ],
+      "cohesion": 1.0
+    },
+    {
+      "members": [
+        "image_edit_longcat_image_edit"
+      ],
+      "cohesion": 1.0
+    },
+    {
+      "members": [
+        "image_flux2_klein_text_to_image"
+      ],
+      "cohesion": 1.0
+    },
+    {
+      "members": [
+        "image_inpainting_flux_1_fill_dev"
       ],
       "cohesion": 1.0
     },
@@ -117015,7 +117127,25 @@
     },
     {
       "members": [
+        "image_to_layers_qwen_image_layered"
+      ],
+      "cohesion": 1.0
+    },
+    {
+      "members": [
         "image_to_model_hunyuan3d_2_1"
+      ],
+      "cohesion": 1.0
+    },
+    {
+      "members": [
+        "image_upscale_z_image_turbo"
+      ],
+      "cohesion": 1.0
+    },
+    {
+      "members": [
+        "merge_videos"
       ],
       "cohesion": 1.0
     },
@@ -117045,13 +117175,49 @@
     },
     {
       "members": [
+        "text_to_audio_ace_step_1_5"
+      ],
+      "cohesion": 1.0
+    },
+    {
+      "members": [
+        "text_to_image_ideogram_v4"
+      ],
+      "cohesion": 1.0
+    },
+    {
+      "members": [
         "text_to_image_netayume_lumina"
       ],
       "cohesion": 1.0
     },
     {
       "members": [
+        "upscale_ultimateSD"
+      ],
+      "cohesion": 1.0
+    },
+    {
+      "members": [
+        "upscale_using_model"
+      ],
+      "cohesion": 1.0
+    },
+    {
+      "members": [
         "video_gemini_motionPromptGeneration"
+      ],
+      "cohesion": 1.0
+    },
+    {
+      "members": [
+        "video_inpaint_void"
+      ],
+      "cohesion": 1.0
+    },
+    {
+      "members": [
+        "video_stitch"
       ],
       "cohesion": 1.0
     },

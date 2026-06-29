@@ -4,13 +4,29 @@ Discover ComfyUI workflow *types* from a corpus of workflow JSON files and emit
 a high-level **recipe database** that describes each type by node *roles and
 relationships* - not literal copied subgraphs.
 
-The database is **self-contained**: every type carries a populated `description`
-and a `user_intent` block (media / task / model families / when_to_use /
-example_requests), and a companion `node_knowledge.json` describes every node
-class (role + I/O signature + which types use it). It is meant to be consumed
-directly by a downstream LLM agent pipeline - a "researcher" that maps a request
-like "build a video workflow using WAN 2.2" to a recipe, and a "brain" that
-wires the workflow to standard - with no human annotation step.
+The database is a three-level hierarchy - **task -> model -> node clusters**:
+
+```
+Image to Video                         (task: the canonical category)
+  +- WAN 2.2                           (model family)
+  |    node clusters: model loading [UNETLoader x2, CLIPLoader, VAELoader],
+  |    conditioning [CLIPTextEncode x2], sampling [KSamplerAdvanced x2], ...
+  +- LTX-2
+       node clusters: ...
+```
+
+Grouping by (task, model) makes each leaf recipe *tight* - same model means the
+same loaders/samplers - so the node-cluster structure is precise rather than an
+average over a whole task. Every leaf is **self-contained**: a populated
+`description`, a `user_intent` block (media / task / model families /
+when_to_use / example_requests), and the `node_clusters` (required structure).
+A companion `node_knowledge.json` describes every node class (role + I/O
+signature + which recipes use it).
+
+It is meant to be consumed directly by a downstream LLM agent pipeline - a
+"researcher" that maps a request like "build a video workflow using WAN 2.2" to
+the task+model recipe, and a "brain" that wires the workflow to standard from
+the node clusters - with no human annotation step.
 
 This tool only *discovers* types and writes the database; it does not build
 workflows, select recipes, wire nodes, or call any LLM.
@@ -32,11 +48,10 @@ Outputs are written to `workflow_recipes/output/`:
 
 | file | what it is |
 |------|------------|
-| `workflow_types.json` | the full recipe database (all types) |
-| `node_knowledge.json` | per node class: role, I/O signature, and which types use it |
-| `workflow_types_report.md` | human-readable per-type report, sorted by member_count desc |
-| `clustering_report.md` | grouping report (why workflows grouped) |
-| `clustering_debug.json` | fingerprints + all pairwise similarities (tune the threshold) |
+| `workflow_types.json` | the full recipe database, nested task -> model -> node clusters |
+| `node_knowledge.json` | per node class: role, I/O signature, and which recipes use it |
+| `workflow_types_report.md` | human-readable hierarchical report |
+| `clustering_report.md` / `clustering_debug.json` | only written for the `description` / `structural` experimental modes |
 
 ## How it works (phases)
 
@@ -51,9 +66,21 @@ Outputs are written to `workflow_recipes/output/`:
    patterns (`src_role -> dst_role [type]`), radius-1 local-cluster signatures,
    and which "spine" roles are present. Signals are weighted and individually
    droppable.
-3. **cluster** - threshold-based **average-linkage agglomerative** clustering
-   over weighted-Jaccard similarity. No cluster count is pre-specified. The
-   threshold is configurable; clustering is deterministic.
+3. **group into types** (`--cluster-on`, default `category`):
+   - **`category`** (default) - classify each workflow into the canonical
+     ComfyUI task taxonomy (`taxonomy.py`) and group by it. One category = one
+     type. Deterministic rule-based classification anchored on the catalog
+     category, boundary-port modality, and authoritative API-node detection.
+     This is what a user asks for ("Image to Video", "Image Edit with
+     ControlNet", "API / Partner Nodes"), so it is the best researcher-matching
+     basis. See the category list below.
+   - **`description`** - TF-IDF cosine over the catalog descriptions + threshold
+     agglomerative clustering. Groups by what reads alike (model family + task).
+   - **`structural`** - weighted-Jaccard over node-graph fingerprints +
+     threshold agglomerative. Groups by exact node-graph shape.
+
+   The `description` and `structural` modes are threshold-based agglomerative
+   (no preset cluster count; configurable threshold). All modes are deterministic.
 4. **intent** - derive each workflow's `{media, task, model_families}` from
    filename tokens, catalog descriptions, node roles, and model-loader widget
    filenames, using transparent rule-based vocab tables (no LLM).
@@ -71,7 +98,8 @@ Outputs are written to `workflow_recipes/output/`:
 
 | flag | default | meaning |
 |------|---------|---------|
-| `--similarity-threshold` | `0.55` | merge clusters while avg similarity >= this |
+| `--cluster-on` | `category` | grouping basis: `category` (canonical taxonomy), `description`, or `structural` |
+| `--similarity-threshold` | `0.25` desc / `0.55` struct | merge clusters while avg similarity >= this (unused for `category`) |
 | `--object-info-cache` | `workflow_recipes/object_info_cache.json` | read/written cache |
 | `--templates-descriptions` | `config/workflow_templates.json` | flat name->description map enriching workflows the index.json files do not describe |
 | `--host` / `--port` | `127.0.0.1` / `8188` | ComfyUI for `/object_info` |
@@ -83,7 +111,29 @@ Outputs are written to `workflow_recipes/output/`:
 | `--weight-category` | `0.0` | weight of the catalog-category signal (0 = off; see below) |
 | `--custom-folder` / `--official-folder` | the two template folders | inputs |
 
-### The catalog-category signal (`--weight-category`)
+### The canonical taxonomy (`--cluster-on category`, default)
+
+`taxonomy.py` classifies every workflow into one of these categories (matching
+ComfyUI's own template taxonomy at https://comfy.org/workflows):
+
+> Text to Image | Image Edit | Image Edit with ControlNet | Inpaint / Outpaint |
+> Upscale | Character | Image Tools | Text to Video | Image to Video |
+> Video to Video | First / Last Frame to Video | Video Inpaint | Video Tools |
+> 3D | Audio | Preprocessors / Estimation | Text Tools | API / Partner Nodes
+
+Classification precedence: (1) text utilities (captioning / prompt), (2)
+API/partner nodes (authoritative via the `comfy_api_nodes` module), (3) the
+catalog category for coarse buckets (Image Tools, Video Tools, Audio, 3D,
+Preprocessors, Image Editing), (4) refine the two broad generation buckets and
+custom workflows by output media + input modality (from boundary ports) + name.
+The category is also stored per type as `canonical_category`, and used for the
+type `id`.
+
+Partner/API workflows are functionally diverse, so they are sub-split by task -
+`API / Partner Nodes - Image to Video`, `- Image Edit`, `- 3D`, `- Upscale`, ... -
+keeping the recognizable partner prefix while each recipe stays coherent.
+
+### The catalog-category signal (`--weight-category`, structural mode only)
 
 By default clustering is purely structural (`--weight-category 0`). Raising this
 weight lets the authoritative catalog category (from `index.json`) nudge the
@@ -94,36 +144,38 @@ rather than scored as a match or a mismatch, so it never collapses uncategorized
 graphs together. On this corpus, raising it from 0 -> 0.5 takes 68 -> ~56 types
 at threshold 0.55. Tune it alongside `--similarity-threshold`.
 
-## Recipe record schema (`workflow_types.json` -> `types[]`)
+## Recipe schema (`workflow_types.json`)
+
+The top level is `tasks[]`; each task has `models[]`; each model is a recipe leaf.
 
 ```jsonc
 {
-  "id": "image_to_video_wan_2_2",        // readable slug (task + model family; deterministic)
-  "category": {                          // authoritative catalog category (index.json)
-    "primary": "Image Tools",
-    "distribution": {"Image Tools": 11},
-    "pure": true,                        // false => members span >=2 categories
-    "spans_multiple": false,             // true is a possible over-merge to review
-    "coverage": 11, "uncategorized": 0
-  },
-  "suggested_title": "Brightness and Contrast",  // human title hint from the catalog
-  "user_intent": {                       // the researcher's matching surface
-    "media": "video",                    // image | video | audio | 3d | text
-    "task": "image_to_video",
-    "model_families": ["WAN 2.2"],
-    "when_to_use": "Use to generate a video from an input image using WAN 2.2.",
-    "example_requests": ["build a video workflow using WAN 2.2", "..."]
-  },
-  "description": "Image-to-video with Wan 2.2 ...",  // ALWAYS populated
-  "description_source": "catalog",       // catalog | catalog+synthesized | synthesized
-  "source": "custom | official | mixed",
-  "member_files": ["..."],
-  "member_descriptions": [               // authoritative per-member catalog text
-    {"name": "sharpen", "title": "Sharpen", "description": "Sharpens an image ..."}
-  ],
-  "member_count": 6,
-  "cohesion": 0.83,                      // mean intra-cluster similarity
-  "required_node_roles": [              // present in ALL members (invariants)
+  "structure": "task -> model -> node clusters",
+  "tasks": [{
+    "task": "Image to Video", "id": "image_to_video",
+    "member_count": 7, "model_count": 2,
+    "models": [{
+      "id": "image_to_video__wan_2_2",   // {task}__{model} slug (deterministic)
+      "model": "WAN 2.2",
+      "user_intent": {                   // the researcher's matching surface
+        "media": "video", "task": "image_to_video",
+        "model_families": ["WAN 2.2"],
+        "when_to_use": "Use to generate a video from an input image using WAN 2.2.",
+        "example_requests": ["build a video workflow using WAN 2.2", "..."]
+      },
+      "description": "Image-to-video with Wan 2.2 ...",  // ALWAYS populated
+      "description_source": "catalog",   // catalog | catalog+synthesized | synthesized
+      "source": "custom | official | mixed",
+      "member_files": ["..."],
+      "member_descriptions": [{"name": "...", "title": "...", "description": "..."}],
+      "member_count": 3,
+      "node_clusters": [                 // required structure, grouped by function
+        {"cluster": "model loading", "nodes": ["UNETLoader (x2)", "CLIPLoader", "VAELoader"]},
+        {"cluster": "conditioning", "nodes": ["CLIPTextEncode (x2)"]},
+        {"cluster": "sampling", "nodes": ["KSamplerAdvanced (x2)"]}
+      ],
+      // ... and the detailed fields below (roles / connections / ports):
+      "required_node_roles": [              // present in ALL members (invariants)
     {
       "role": "diffusion model / UNET loader",
       "role_key": "model_loader",
@@ -138,26 +190,28 @@ at threshold 0.55. Tune it alongside `--similarity-threshold`.
       ]
     }
   ],
-  "optional_node_roles": [ ... ],        // present in SOME members (variant)
-  "connection_patterns": [
-    {"from_role": "model_loader", "to_role": "sampler",
-     "data_type": "MODEL", "frequency": "all members (3/3)", "invariant": true}
-  ],
-  "boundary_ports": {
-    "inputs":  [{"data_type": "IMAGE", "role": "image_loader"}],
-    "outputs": [{"data_type": "IMAGE", "role": "save_output"}]
-  },
-  "param_variability": "varies across members: KSampler; constant: VAEDecode",
-  "unresolved_nodes": [ ... ],           // classes absent from object_info
-  "custom_nodes": [ ... ]                // resolved but third-party
+      "optional_node_roles": [ ... ],    // present in SOME members (variant)
+      "connection_patterns": [
+        {"from_role": "model_loader", "to_role": "sampler",
+         "data_type": "MODEL", "frequency": "all members (3/3)", "invariant": true}
+      ],
+      "boundary_ports": {
+        "inputs":  [{"data_type": "IMAGE", "role": "image_loader"}],
+        "outputs": [{"data_type": "VIDEO", "role": "save_output"}]
+      },
+      "param_variability": "varies across members: KSamplerAdvanced; constant: ...",
+      "catalog_category": { "primary": "Video generation and editing", "...": "..." },
+      "unresolved_nodes": [ ... ],       // classes absent from object_info
+      "custom_nodes": [ ... ]            // resolved but third-party
+    }]
+  }]
 }
 ```
 
-The schema is a superset of the requested fields; extra fields
-(`user_intent`, `optional_node_roles`, `custom_nodes`, `min/max_instances`,
-`cohesion`, ...) are additive. The earlier human-in-the-loop fields
-(`needs_annotation` / `annotation_reason` / `notes_for_annotation`) were removed
-when the database became self-contained.
+Each leaf is self-contained; the earlier human-in-the-loop fields
+(`needs_annotation` / `annotation_reason` / `notes_for_annotation`) were removed.
+The `description` / `structural` modes instead emit a flat `types[]` list (same
+leaf fields, grouped by similarity rather than task+model).
 
 ## `node_knowledge.json`
 

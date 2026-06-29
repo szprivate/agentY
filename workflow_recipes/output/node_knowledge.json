@@ -41,7 +41,7 @@
         "INT"
       ],
       "used_in_type_ids": [
-        "image_edit_nano_banana"
+        "api_partner_nodes_image_edit__nano_banana"
       ],
       "occurrences": 2
     },
@@ -68,7 +68,7 @@
         "AUDIO"
       ],
       "used_in_type_ids": [
-        "video_generation"
+        "video_tools__generic"
       ],
       "occurrences": 1
     },
@@ -93,10 +93,11 @@
         "GUIDER"
       ],
       "used_in_type_ids": [
-        "depth_estimation_lotus",
-        "first_last_frame_to_video_ltx_2",
-        "image_edit_flux_2_klein",
-        "text_to_image_z_image"
+        "image_edit__flux_2",
+        "image_edit_with_controlnet__z_image",
+        "preprocessors_estimation__lotus",
+        "text_to_image__flux_2",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 6
     },
@@ -125,11 +126,13 @@
         "SIGMAS"
       ],
       "used_in_type_ids": [
-        "depth_estimation_lotus",
-        "first_last_frame_to_video_ltx_2",
-        "text_to_image_z_image",
-        "text_to_video_bernini",
-        "text_to_video_wan_2_2"
+        "character__wan",
+        "image_edit__wan_2_2",
+        "image_edit_with_controlnet__z_image",
+        "preprocessors_estimation__lotus",
+        "video_inpaint__sam3",
+        "video_to_video__ltx_2",
+        "video_to_video__wan_2_2"
       ],
       "occurrences": 10
     },
@@ -152,10 +155,10 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "image_generation_2",
-        "style_transfer_gemini",
-        "text_to_video_wan_2_2",
-        "video_generation"
+        "api_partner_nodes_image_edit__nano_banana",
+        "image_tools__generic",
+        "video_to_video__wan_vace",
+        "video_tools__generic"
       ],
       "occurrences": 6
     },
@@ -172,7 +175,8 @@
       },
       "outputs": [],
       "used_in_type_ids": [
-        "text_to_video_bernini"
+        "image_edit__wan_2_2",
+        "video_to_video__wan_2_2"
       ],
       "occurrences": 2
     },
@@ -216,7 +220,7 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "image_edit_nano_banana"
+        "api_partner_nodes_image_edit__seedream"
       ],
       "occurrences": 1
     },
@@ -245,9 +249,13 @@
         "GUIDER"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2",
-        "image_edit_flux_2_klein",
-        "text_to_video_bernini"
+        "first_last_frame_to_video__ltx_2",
+        "image_edit__flux_2_klein",
+        "image_to_video__ltx_2",
+        "text_to_image__flux_2_klein",
+        "text_to_video__ltx_2",
+        "video_inpaint__sam3",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 20
     },
@@ -275,8 +283,8 @@
         "MODEL"
       ],
       "used_in_type_ids": [
-        "controlnet_qwen_image",
-        "image_edit_qwen_image"
+        "image_edit__firered",
+        "image_edit__qwen_image"
       ],
       "occurrences": 6
     },
@@ -305,7 +313,7 @@
         "MODEL"
       ],
       "used_in_type_ids": [
-        "image_edit_flux_2_klein"
+        "text_to_image__ideogram"
       ],
       "occurrences": 1
     },
@@ -333,14 +341,32 @@
         "CLIP"
       ],
       "used_in_type_ids": [
-        "controlnet_qwen_image",
-        "image_edit_flux_2_klein",
-        "image_edit_qwen_image",
-        "inpaint_qwen_image",
-        "text_to_image_ernie",
-        "text_to_image_z_image",
-        "text_to_video_bernini",
-        "text_to_video_wan_2_2"
+        "audio__qwen_image",
+        "character__wan",
+        "first_last_frame_to_video__wan_2_2",
+        "first_last_frame_to_video__wan_vace",
+        "image_edit__firered",
+        "image_edit__flux_2",
+        "image_edit__flux_2_klein",
+        "image_edit__longcat",
+        "image_edit__qwen_image",
+        "image_edit__wan_2_2",
+        "image_edit_with_controlnet__z_image",
+        "image_to_video__wan_2_2",
+        "inpaint_outpaint__qwen_image",
+        "text_to_image__anima",
+        "text_to_image__ernie",
+        "text_to_image__flux_2",
+        "text_to_image__flux_2_klein",
+        "text_to_image__ideogram",
+        "text_to_image__qwen_image",
+        "text_to_image__z_image",
+        "text_to_video__wan_2_2",
+        "upscale__z_image",
+        "video_inpaint__sam3",
+        "video_inpaint__wan_vace",
+        "video_to_video__wan_2_2",
+        "video_to_video__wan_vace"
       ],
       "occurrences": 55
     },
@@ -365,17 +391,40 @@
         "CONDITIONING"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2",
-        "image_edit_flux_2_klein",
-        "image_edit_qwen_image",
-        "inpaint_qwen_image",
-        "segmentation_sam3",
-        "text_to_image_ernie",
-        "text_to_image_lumina",
-        "text_to_image_z_image",
-        "text_to_video_bernini",
-        "text_to_video_wan_2_2",
-        "upscale_magnific"
+        "audio__qwen_image",
+        "character__wan",
+        "first_last_frame_to_video__ltx_2",
+        "first_last_frame_to_video__wan_2_2",
+        "first_last_frame_to_video__wan_vace",
+        "image_edit__flux_2",
+        "image_edit__flux_2_klein",
+        "image_edit__qwen_image",
+        "image_edit__wan_2_2",
+        "image_edit_with_controlnet__z_image",
+        "image_to_video__ltx_2",
+        "image_to_video__wan_2_2",
+        "inpaint_outpaint__flux",
+        "inpaint_outpaint__qwen_image",
+        "preprocessors_estimation__sam3",
+        "text_to_image__anima",
+        "text_to_image__ernie",
+        "text_to_image__flux",
+        "text_to_image__flux_2",
+        "text_to_image__flux_2_klein",
+        "text_to_image__flux_krea",
+        "text_to_image__ideogram",
+        "text_to_image__lumina",
+        "text_to_image__qwen_image",
+        "text_to_image__z_image",
+        "text_to_video__ltx_2",
+        "text_to_video__wan_2_2",
+        "upscale__flux",
+        "upscale__z_image",
+        "video_inpaint__sam3",
+        "video_inpaint__wan_vace",
+        "video_to_video__ltx_2",
+        "video_to_video__wan_2_2",
+        "video_to_video__wan_vace"
       ],
       "occurrences": 110
     },
@@ -402,8 +451,8 @@
         "CLIP_VISION_OUTPUT"
       ],
       "used_in_type_ids": [
-        "3d_generation_hunyuan3d",
-        "text_to_video_wan_2_2"
+        "3d__hunyuan3d",
+        "character__wan"
       ],
       "occurrences": 3
     },
@@ -426,8 +475,8 @@
         "CLIP_VISION"
       ],
       "used_in_type_ids": [
-        "3d_generation_triposplat",
-        "text_to_video_wan_2_2"
+        "3d__triposplat",
+        "character__wan"
       ],
       "occurrences": 3
     },
@@ -454,7 +503,7 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "text_to_image_z_image"
+        "image_edit_with_controlnet__z_image"
       ],
       "occurrences": 2
     },
@@ -479,14 +528,18 @@
         "VAE"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2",
-        "pose_estimation_sdpose",
-        "segmentation_sam3",
-        "text_to_image_ernie",
-        "text_to_image_lumina",
-        "text_to_video_bernini",
-        "text_to_video_wan_2_2",
-        "upscale_magnific"
+        "audio__qwen_image",
+        "character__wan",
+        "first_last_frame_to_video__ltx_2",
+        "image_to_video__ltx_2",
+        "preprocessors_estimation__sam3",
+        "preprocessors_estimation__sdpose",
+        "text_to_image__lumina",
+        "text_to_video__ltx_2",
+        "upscale__flux",
+        "video_inpaint__sam3",
+        "video_inpaint__wan_vace",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 22
     },
@@ -509,7 +562,7 @@
         "INT"
       ],
       "used_in_type_ids": [
-        "image_generation"
+        "image_tools__generic"
       ],
       "occurrences": 1
     },
@@ -540,7 +593,7 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "text_to_video_wan_2_2"
+        "character__wan"
       ],
       "occurrences": 1
     },
@@ -567,14 +620,18 @@
         "BOOLEAN"
       ],
       "used_in_type_ids": [
-        "depth_estimation_moge",
-        "first_last_frame_to_video_ltx_2",
-        "image_edit_flux_2_klein",
-        "image_generation_2",
-        "text_to_image_ernie",
-        "text_to_video_bernini",
-        "text_to_video_wan_2_2",
-        "video_generation"
+        "3d__moge",
+        "audio__qwen_image",
+        "character__wan",
+        "first_last_frame_to_video__ltx_2",
+        "image_to_video__ltx_2",
+        "image_tools__generic",
+        "preprocessors_estimation__moge",
+        "text_to_image__ideogram",
+        "text_to_video__ltx_2",
+        "video_inpaint__sam3",
+        "video_inpaint__wan_vace",
+        "video_tools__generic"
       ],
       "occurrences": 49
     },
@@ -598,7 +655,7 @@
         "INT"
       ],
       "used_in_type_ids": [
-        "image_edit_flux_2_klein"
+        "text_to_image__ideogram"
       ],
       "occurrences": 3
     },
@@ -625,15 +682,23 @@
         "COMFY_MATCHTYPE_V3"
       ],
       "used_in_type_ids": [
-        "3d_generation_triposplat",
-        "depth_estimation_moge",
-        "image_edit_flux_2_klein",
-        "image_edit_qwen_image",
-        "text_to_image_ernie",
-        "text_to_video_bernini",
-        "text_to_video_wan_2_2",
-        "video_generation",
-        "video_generation_mediapipe"
+        "3d__moge",
+        "3d__triposplat",
+        "audio__qwen_image",
+        "character__wan",
+        "image_edit__firered",
+        "image_edit__flux_2",
+        "image_edit__qwen_image",
+        "image_edit__wan_2_2",
+        "preprocessors_estimation__mediapipe",
+        "preprocessors_estimation__moge",
+        "text_to_image__ernie",
+        "text_to_image__flux_2",
+        "text_to_image__qwen_image",
+        "video_inpaint__sam3",
+        "video_inpaint__wan_vace",
+        "video_to_video__wan_2_2",
+        "video_tools__generic"
       ],
       "occurrences": 52
     },
@@ -656,9 +721,16 @@
         "CONDITIONING"
       ],
       "used_in_type_ids": [
-        "image_edit_flux_2_klein",
-        "text_to_image_ernie",
-        "text_to_image_z_image"
+        "audio__ace_step",
+        "image_edit__flux_2_klein",
+        "image_edit_with_controlnet__z_image",
+        "inpaint_outpaint__flux",
+        "text_to_image__ernie",
+        "text_to_image__flux",
+        "text_to_image__flux_krea",
+        "text_to_image__ideogram",
+        "text_to_image__qwen_image",
+        "text_to_image__z_image"
       ],
       "occurrences": 15
     },
@@ -698,7 +770,7 @@
         "CONDITIONING"
       ],
       "used_in_type_ids": [
-        "inpaint_qwen_image"
+        "inpaint_outpaint__qwen_image"
       ],
       "occurrences": 2
     },
@@ -721,7 +793,7 @@
         "CONTROL_NET"
       ],
       "used_in_type_ids": [
-        "inpaint_qwen_image"
+        "inpaint_outpaint__qwen_image"
       ],
       "occurrences": 2
     },
@@ -749,12 +821,21 @@
         "VIDEO"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2",
-        "motion_prompt_gemini",
-        "text_to_video_bernini",
-        "text_to_video_wan_2_2",
-        "upscale",
-        "video_generation"
+        "first_last_frame_to_video__ltx_2",
+        "first_last_frame_to_video__wan_2_2",
+        "first_last_frame_to_video__wan_vace",
+        "image_to_video__ltx_2",
+        "image_to_video__wan_2_2",
+        "text_to_video__ltx_2",
+        "text_to_video__wan_2_2",
+        "text_tools__gemini",
+        "upscale__generic",
+        "video_inpaint__sam3",
+        "video_inpaint__wan_vace",
+        "video_to_video__ltx_2",
+        "video_to_video__wan_2_2",
+        "video_to_video__wan_vace",
+        "video_tools__generic"
       ],
       "occurrences": 30
     },
@@ -780,7 +861,7 @@
         "CURVE"
       ],
       "used_in_type_ids": [
-        "image"
+        "image_tools__generic"
       ],
       "occurrences": 4
     },
@@ -804,10 +885,11 @@
         "INT"
       ],
       "used_in_type_ids": [
-        "image_edit_flux_2_klein",
-        "image_generation",
-        "text_to_image_ernie",
-        "text_to_video_bernini"
+        "audio__qwen_image",
+        "image_edit__wan_2_2",
+        "image_tools__generic",
+        "text_to_image__ideogram",
+        "video_to_video__wan_2_2"
       ],
       "occurrences": 12
     },
@@ -824,7 +906,7 @@
       },
       "outputs": [],
       "used_in_type_ids": [
-        "depth_estimation_depth_anything"
+        "preprocessors_estimation__depth_anything"
       ],
       "occurrences": 2
     },
@@ -841,7 +923,7 @@
       },
       "outputs": [],
       "used_in_type_ids": [
-        "depth_estimation_depth_anything"
+        "preprocessors_estimation__depth_anything"
       ],
       "occurrences": 2
     },
@@ -867,7 +949,7 @@
         "MODEL"
       ],
       "used_in_type_ids": [
-        "text_to_image_z_image"
+        "inpaint_outpaint__flux"
       ],
       "occurrences": 1
     },
@@ -903,7 +985,7 @@
         "MODEL"
       ],
       "used_in_type_ids": [
-        "text_to_video_wan_2_2"
+        "video_to_video__wan_vace"
       ],
       "occurrences": 2
     },
@@ -926,7 +1008,7 @@
         "STRING"
       ],
       "used_in_type_ids": [
-        "text_to_video_wan_2_2"
+        "video_to_video__wan_vace"
       ],
       "occurrences": 2
     },
@@ -945,9 +1027,9 @@
         "NOISE"
       ],
       "used_in_type_ids": [
-        "depth_estimation_lotus",
-        "first_last_frame_to_video_ltx_2",
-        "text_to_image_z_image"
+        "image_edit_with_controlnet__z_image",
+        "preprocessors_estimation__lotus",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 4
     },
@@ -977,7 +1059,10 @@
         "CLIP"
       ],
       "used_in_type_ids": [
-        "text_to_image_z_image"
+        "audio__ace_step",
+        "inpaint_outpaint__flux",
+        "text_to_image__flux",
+        "text_to_image__flux_krea"
       ],
       "occurrences": 4
     },
@@ -1009,7 +1094,7 @@
         "GUIDER"
       ],
       "used_in_type_ids": [
-        "image_edit_flux_2_klein"
+        "text_to_image__ideogram"
       ],
       "occurrences": 1
     },
@@ -1034,7 +1119,7 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "text_to_image_z_image"
+        "audio__ace_step"
       ],
       "occurrences": 1
     },
@@ -1061,7 +1146,7 @@
         "AUDIO"
       ],
       "used_in_type_ids": [
-        "video_generation"
+        "video_tools__generic"
       ],
       "occurrences": 1
     },
@@ -1088,8 +1173,12 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "image_edit_flux_2_klein",
-        "text_to_image_ernie"
+        "image_edit__flux_2",
+        "image_edit__flux_2_klein",
+        "text_to_image__ernie",
+        "text_to_image__flux_2",
+        "text_to_image__flux_2_klein",
+        "text_to_image__ideogram"
       ],
       "occurrences": 8
     },
@@ -1118,7 +1207,7 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "text_to_video_wan_2_2"
+        "text_to_video__wan_2_2"
       ],
       "occurrences": 1
     },
@@ -1147,7 +1236,10 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2"
+        "first_last_frame_to_video__ltx_2",
+        "image_to_video__ltx_2",
+        "text_to_video__ltx_2",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 9
     },
@@ -1172,7 +1264,7 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "text_to_image_ernie"
+        "audio__qwen_image"
       ],
       "occurrences": 2
     },
@@ -1197,7 +1289,7 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "3d_generation_hunyuan3d"
+        "3d__hunyuan3d"
       ],
       "occurrences": 1
     },
@@ -1224,8 +1316,8 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "controlnet_qwen_image",
-        "text_to_image_z_image"
+        "image_edit__qwen_image",
+        "text_to_image__anima"
       ],
       "occurrences": 3
     },
@@ -1254,7 +1346,7 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "image_edit_qwen_image"
+        "image_edit__qwen_image"
       ],
       "occurrences": 1
     },
@@ -1281,9 +1373,12 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "image_edit_qwen_image",
-        "text_to_image_lumina",
-        "text_to_image_z_image"
+        "image_edit_with_controlnet__z_image",
+        "text_to_image__flux",
+        "text_to_image__flux_krea",
+        "text_to_image__lumina",
+        "text_to_image__qwen_image",
+        "text_to_image__z_image"
       ],
       "occurrences": 14
     },
@@ -1310,7 +1405,10 @@
         "SIGMAS"
       ],
       "used_in_type_ids": [
-        "image_edit_flux_2_klein"
+        "image_edit__flux_2",
+        "image_edit__flux_2_klein",
+        "text_to_image__flux_2",
+        "text_to_image__flux_2_klein"
       ],
       "occurrences": 5
     },
@@ -1335,9 +1433,10 @@
         "CONDITIONING"
       ],
       "used_in_type_ids": [
-        "image_edit_flux_2_klein",
-        "image_edit_qwen_image",
-        "text_to_image_z_image"
+        "image_edit__flux_2",
+        "image_edit__longcat",
+        "inpaint_outpaint__flux",
+        "text_to_image__flux_2"
       ],
       "occurrences": 5
     },
@@ -1360,8 +1459,8 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "image_edit_qwen_image",
-        "inpaint_qwen_image"
+        "image_edit__qwen_image",
+        "inpaint_outpaint__qwen_image"
       ],
       "occurrences": 4
     },
@@ -1386,7 +1485,8 @@
         "CONDITIONING"
       ],
       "used_in_type_ids": [
-        "image_edit_qwen_image"
+        "image_edit__longcat",
+        "image_edit__qwen_image"
       ],
       "occurrences": 6
     },
@@ -1413,7 +1513,7 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "video_generation"
+        "video_tools__generic"
       ],
       "occurrences": 1
     },
@@ -1436,7 +1536,7 @@
         "INTERP_MODEL"
       ],
       "used_in_type_ids": [
-        "video_generation"
+        "video_tools__generic"
       ],
       "occurrences": 1
     },
@@ -1474,9 +1574,7 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "image",
-        "image_generation",
-        "image_generation_gemini"
+        "image_tools__generic"
       ],
       "occurrences": 14
     },
@@ -1517,9 +1615,8 @@
         "STRING"
       ],
       "used_in_type_ids": [
-        "character_sheet_nano_banana",
-        "image_edit_nano_banana",
-        "style_transfer_gemini"
+        "api_partner_nodes_character__nano_banana",
+        "api_partner_nodes_image_edit__nano_banana"
       ],
       "occurrences": 4
     },
@@ -1563,8 +1660,8 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "character_sheet_nano_banana",
-        "image_edit_nano_banana"
+        "api_partner_nodes_image_edit__nano_banana",
+        "api_partner_nodes_inpaint_outpaint__nano_banana"
       ],
       "occurrences": 2
     },
@@ -1602,10 +1699,10 @@
         "STRING"
       ],
       "used_in_type_ids": [
-        "character_sheet_nano_banana",
-        "image_generation_gemini",
-        "motion_prompt_gemini",
-        "style_transfer_gemini"
+        "api_partner_nodes_character__nano_banana",
+        "api_partner_nodes_image_edit__nano_banana",
+        "text_tools__gemini",
+        "text_tools__generic"
       ],
       "occurrences": 7
     },
@@ -1630,15 +1727,20 @@
         "INT"
       ],
       "used_in_type_ids": [
-        "depth_estimation_moge",
-        "first_last_frame_to_video_ltx_2",
-        "image_edit_flux_2_klein",
-        "image_edit_qwen_image",
-        "image_generation_2",
-        "text_to_image_z_image",
-        "text_to_video_bernini",
-        "text_to_video_wan_2_2",
-        "video_generation"
+        "3d__moge",
+        "character__wan",
+        "first_last_frame_to_video__ltx_2",
+        "image_edit__flux_2",
+        "image_edit__flux_2_klein",
+        "image_edit__qwen_image",
+        "image_edit_with_controlnet__z_image",
+        "image_to_video__ltx_2",
+        "image_tools__generic",
+        "preprocessors_estimation__moge",
+        "video_inpaint__sam3",
+        "video_inpaint__wan_vace",
+        "video_to_video__ltx_2",
+        "video_tools__generic"
       ],
       "occurrences": 29
     },
@@ -1663,19 +1765,32 @@
         "FLOAT"
       ],
       "used_in_type_ids": [
-        "depth_estimation_depth_anything",
-        "depth_estimation_moge",
-        "first_last_frame_to_video_ltx_2",
-        "image_generation_2",
-        "image_to_video_kling",
-        "motion_prompt_gemini",
-        "pose_estimation_sdpose",
-        "segmentation_sam3",
-        "text_to_video_bernini",
-        "text_to_video_wan_2_2",
-        "upscale",
-        "video_generation",
-        "video_generation_mediapipe"
+        "api_partner_nodes_first_last_frame_to_video__kling",
+        "api_partner_nodes_image_to_video__kling",
+        "api_partner_nodes_image_to_video__ltx_2",
+        "api_partner_nodes_image_to_video__wan_2_6",
+        "api_partner_nodes_text_to_video__ltx_2",
+        "api_partner_nodes_text_to_video__wan_2_6",
+        "api_partner_nodes_video_to_video__kling",
+        "character__wan",
+        "first_last_frame_to_video__ltx_2",
+        "first_last_frame_to_video__wan_2_2",
+        "first_last_frame_to_video__wan_vace",
+        "image_to_video__ltx_2",
+        "image_to_video__wan_2_2",
+        "preprocessors_estimation__depth_anything",
+        "preprocessors_estimation__mediapipe",
+        "preprocessors_estimation__moge",
+        "preprocessors_estimation__sam3",
+        "preprocessors_estimation__sdpose",
+        "text_tools__gemini",
+        "upscale__generic",
+        "video_inpaint__sam3",
+        "video_inpaint__wan_vace",
+        "video_to_video__ltx_2",
+        "video_to_video__wan_2_2",
+        "video_to_video__wan_vace",
+        "video_tools__generic"
       ],
       "occurrences": 41
     },
@@ -1702,8 +1817,8 @@
         "MASK"
       ],
       "used_in_type_ids": [
-        "inpaint_qwen_image",
-        "text_to_video_wan_2_2"
+        "inpaint_outpaint__qwen_image",
+        "video_inpaint__wan_vace"
       ],
       "occurrences": 3
     },
@@ -1727,7 +1842,7 @@
         "CONDITIONING"
       ],
       "used_in_type_ids": [
-        "3d_generation_hunyuan3d"
+        "3d__hunyuan3d"
       ],
       "occurrences": 1
     },
@@ -1758,7 +1873,7 @@
         "SIGMAS"
       ],
       "used_in_type_ids": [
-        "image_edit_flux_2_klein"
+        "text_to_image__ideogram"
       ],
       "occurrences": 1
     },
@@ -1802,7 +1917,7 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "text_to_image_ideogram"
+        "api_partner_nodes_text_to_image__ideogram"
       ],
       "occurrences": 1
     },
@@ -1832,7 +1947,7 @@
         "STRING"
       ],
       "used_in_type_ids": [
-        "controlnet_qwen_image"
+        "image_edit__qwen_image"
       ],
       "occurrences": 1
     },
@@ -1857,7 +1972,7 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "text_to_video_wan_2_2"
+        "first_last_frame_to_video__wan_vace"
       ],
       "occurrences": 4
     },
@@ -1885,8 +2000,10 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "image_edit_nano_banana",
-        "image_to_video_kling"
+        "api_partner_nodes_first_last_frame_to_video__kling",
+        "api_partner_nodes_image_edit__kling",
+        "api_partner_nodes_image_edit__seedream",
+        "api_partner_nodes_image_to_video__kling"
       ],
       "occurrences": 4
     },
@@ -1913,7 +2030,7 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "inpaint_qwen_image"
+        "inpaint_outpaint__qwen_image"
       ],
       "occurrences": 2
     },
@@ -1947,8 +2064,8 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "inpaint_qwen_image",
-        "text_to_video_wan_2_2"
+        "inpaint_outpaint__qwen_image",
+        "video_inpaint__wan_vace"
       ],
       "occurrences": 3
     },
@@ -1973,7 +2090,7 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "image_generation_2"
+        "image_tools__generic"
       ],
       "occurrences": 13
     },
@@ -2000,10 +2117,11 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2",
-        "image_generation_2",
-        "text_to_video_bernini",
-        "text_to_video_wan_2_2"
+        "character__wan",
+        "video_inpaint__sam3",
+        "video_inpaint__wan_vace",
+        "video_to_video__ltx_2",
+        "video_tools__generic"
       ],
       "occurrences": 10
     },
@@ -2030,7 +2148,7 @@
         "HISTOGRAM"
       ],
       "used_in_type_ids": [
-        "image"
+        "image_tools__generic"
       ],
       "occurrences": 1
     },
@@ -2053,9 +2171,9 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "depth_estimation_lotus",
-        "first_last_frame_to_video_ltx_2",
-        "text_to_image_z_image"
+        "image_edit_with_controlnet__z_image",
+        "preprocessors_estimation__lotus",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 4
     },
@@ -2078,7 +2196,7 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "image_edit_nano_banana"
+        "api_partner_nodes_image_edit__nano_banana"
       ],
       "occurrences": 2
     },
@@ -2103,7 +2221,7 @@
         "VAE"
       ],
       "used_in_type_ids": [
-        "3d_generation_hunyuan3d"
+        "3d__hunyuan3d"
       ],
       "occurrences": 1
     },
@@ -2137,8 +2255,8 @@
         "MASK"
       ],
       "used_in_type_ids": [
-        "inpaint_qwen_image",
-        "text_to_video_wan_2_2"
+        "inpaint_outpaint__qwen_image",
+        "video_to_video__wan_vace"
       ],
       "occurrences": 2
     },
@@ -2183,7 +2301,7 @@
         "MASK"
       ],
       "used_in_type_ids": [
-        "motion_prompt_gemini"
+        "text_tools__gemini"
       ],
       "occurrences": 1
     },
@@ -2210,8 +2328,9 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2",
-        "image_edit_qwen_image"
+        "image_to_video__ltx_2",
+        "upscale__z_image",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 3
     },
@@ -2238,7 +2357,7 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "inpaint_qwen_image"
+        "inpaint_outpaint__qwen_image"
       ],
       "occurrences": 2
     },
@@ -2267,9 +2386,10 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "image_edit_flux_2_klein",
-        "image_edit_qwen_image",
-        "text_to_image_z_image"
+        "image_edit__flux_2_klein",
+        "image_edit__longcat",
+        "image_edit_with_controlnet__z_image",
+        "upscale__z_image"
       ],
       "occurrences": 6
     },
@@ -2303,8 +2423,8 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "text_to_video_wan_2_2",
-        "video_generation"
+        "video_to_video__wan_vace",
+        "video_tools__generic"
       ],
       "occurrences": 2
     },
@@ -2329,9 +2449,11 @@
         "MASK"
       ],
       "used_in_type_ids": [
-        "depth_estimation_moge",
-        "inpaint_qwen_image",
-        "text_to_video_wan_2_2"
+        "first_last_frame_to_video__wan_vace",
+        "inpaint_outpaint__qwen_image",
+        "preprocessors_estimation__moge",
+        "video_inpaint__wan_vace",
+        "video_to_video__wan_vace"
       ],
       "occurrences": 8
     },
@@ -2356,9 +2478,8 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "image_edit_qwen_image",
-        "upscale",
-        "upscale_magnific"
+        "upscale__generic",
+        "upscale__z_image"
       ],
       "occurrences": 3
     },
@@ -2393,7 +2514,7 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "text_to_image_z_image"
+        "inpaint_outpaint__flux"
       ],
       "occurrences": 1
     },
@@ -2416,7 +2537,7 @@
         "INT"
       ],
       "used_in_type_ids": [
-        "text_to_video_wan_2_2"
+        "video_to_video__wan_vace"
       ],
       "occurrences": 1
     },
@@ -2439,9 +2560,9 @@
         "MASK"
       ],
       "used_in_type_ids": [
-        "3d_generation_triposplat",
-        "segmentation_birefnet",
-        "text_to_video_wan_2_2"
+        "3d__triposplat",
+        "image_tools__birefnet",
+        "video_inpaint__wan_vace"
       ],
       "occurrences": 5
     },
@@ -2466,8 +2587,8 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "3d_generation_triposplat",
-        "segmentation_birefnet"
+        "3d__triposplat",
+        "image_tools__birefnet"
       ],
       "occurrences": 2
     },
@@ -2492,8 +2613,8 @@
         "STRING"
       ],
       "used_in_type_ids": [
-        "image_edit_flux_2_klein",
-        "text_to_image_ernie"
+        "audio__qwen_image",
+        "text_to_image__ideogram"
       ],
       "occurrences": 6
     },
@@ -2534,15 +2655,27 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "3d_generation_hunyuan3d",
-        "3d_generation_triposplat",
-        "controlnet_qwen_image",
-        "image_edit_qwen_image",
-        "inpaint_qwen_image",
-        "text_to_image_ernie",
-        "text_to_image_lumina",
-        "text_to_image_z_image",
-        "text_to_video_wan_2_2"
+        "3d__hunyuan3d",
+        "3d__triposplat",
+        "audio__ace_step",
+        "audio__qwen_image",
+        "first_last_frame_to_video__wan_vace",
+        "image_edit__firered",
+        "image_edit__longcat",
+        "image_edit__qwen_image",
+        "image_edit_with_controlnet__z_image",
+        "inpaint_outpaint__flux",
+        "inpaint_outpaint__qwen_image",
+        "text_to_image__anima",
+        "text_to_image__ernie",
+        "text_to_image__flux",
+        "text_to_image__flux_krea",
+        "text_to_image__lumina",
+        "text_to_image__qwen_image",
+        "text_to_image__z_image",
+        "upscale__z_image",
+        "video_inpaint__wan_vace",
+        "video_to_video__wan_vace"
       ],
       "occurrences": 40
     },
@@ -2589,7 +2722,11 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "text_to_video_wan_2_2"
+        "first_last_frame_to_video__wan_2_2",
+        "image_to_video__wan_2_2",
+        "text_to_video__wan_2_2",
+        "video_to_video__wan_2_2",
+        "video_to_video__wan_vace"
       ],
       "occurrences": 14
     },
@@ -2612,12 +2749,19 @@
         "SAMPLER"
       ],
       "used_in_type_ids": [
-        "depth_estimation_lotus",
-        "first_last_frame_to_video_ltx_2",
-        "image_edit_flux_2_klein",
-        "text_to_image_z_image",
-        "text_to_video_bernini",
-        "text_to_video_wan_2_2"
+        "character__wan",
+        "image_edit__flux_2",
+        "image_edit__flux_2_klein",
+        "image_edit__wan_2_2",
+        "image_edit_with_controlnet__z_image",
+        "image_to_video__ltx_2",
+        "preprocessors_estimation__lotus",
+        "text_to_image__flux_2",
+        "text_to_image__flux_2_klein",
+        "text_to_image__ideogram",
+        "text_to_video__ltx_2",
+        "video_to_video__ltx_2",
+        "video_to_video__wan_2_2"
       ],
       "occurrences": 26
     },
@@ -2653,7 +2797,7 @@
         "VIDEO"
       ],
       "used_in_type_ids": [
-        "image_to_video_kling"
+        "api_partner_nodes_video_to_video__kling"
       ],
       "occurrences": 1
     },
@@ -2695,7 +2839,7 @@
         "VIDEO"
       ],
       "used_in_type_ids": [
-        "image_to_video_kling"
+        "api_partner_nodes_first_last_frame_to_video__kling"
       ],
       "occurrences": 1
     },
@@ -2731,7 +2875,7 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "image_edit_nano_banana"
+        "api_partner_nodes_image_edit__kling"
       ],
       "occurrences": 1
     },
@@ -2771,7 +2915,7 @@
         "VIDEO"
       ],
       "used_in_type_ids": [
-        "image_to_video_kling"
+        "api_partner_nodes_image_to_video__kling"
       ],
       "occurrences": 1
     },
@@ -2803,7 +2947,7 @@
         "VIDEO"
       ],
       "used_in_type_ids": [
-        "image_to_video_kling"
+        "api_partner_nodes_image_to_video__kling"
       ],
       "occurrences": 1
     },
@@ -2830,7 +2974,10 @@
         "CLIP"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2"
+        "first_last_frame_to_video__ltx_2",
+        "image_to_video__ltx_2",
+        "text_to_video__ltx_2",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 9
     },
@@ -2872,7 +3019,9 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2"
+        "first_last_frame_to_video__ltx_2",
+        "image_to_video__ltx_2",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 9
     },
@@ -2897,7 +3046,10 @@
         "AUDIO"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2"
+        "first_last_frame_to_video__ltx_2",
+        "image_to_video__ltx_2",
+        "text_to_video__ltx_2",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 9
     },
@@ -2920,7 +3072,10 @@
         "VAE"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2"
+        "first_last_frame_to_video__ltx_2",
+        "image_to_video__ltx_2",
+        "text_to_video__ltx_2",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 9
     },
@@ -2945,7 +3100,10 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2"
+        "first_last_frame_to_video__ltx_2",
+        "image_to_video__ltx_2",
+        "text_to_video__ltx_2",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 15
     },
@@ -2973,7 +3131,10 @@
         "CONDITIONING"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2"
+        "first_last_frame_to_video__ltx_2",
+        "image_to_video__ltx_2",
+        "text_to_video__ltx_2",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 9
     },
@@ -3002,7 +3163,10 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2"
+        "first_last_frame_to_video__ltx_2",
+        "image_to_video__ltx_2",
+        "text_to_video__ltx_2",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 9
     },
@@ -3031,7 +3195,10 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2"
+        "first_last_frame_to_video__ltx_2",
+        "image_to_video__ltx_2",
+        "text_to_video__ltx_2",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 9
     },
@@ -3062,7 +3229,9 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2"
+        "image_to_video__ltx_2",
+        "text_to_video__ltx_2",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 12
     },
@@ -3089,7 +3258,9 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2"
+        "image_to_video__ltx_2",
+        "text_to_video__ltx_2",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 6
     },
@@ -3114,7 +3285,9 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2"
+        "first_last_frame_to_video__ltx_2",
+        "image_to_video__ltx_2",
+        "text_to_video__ltx_2"
       ],
       "occurrences": 9
     },
@@ -3148,7 +3321,8 @@
         "SIGMAS"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2"
+        "image_to_video__ltx_2",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 3
     },
@@ -3172,7 +3346,10 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2"
+        "first_last_frame_to_video__ltx_2",
+        "image_to_video__ltx_2",
+        "text_to_video__ltx_2",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 15
     },
@@ -3199,7 +3376,7 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "image_edit_qwen_image"
+        "image_edit__qwen_image"
       ],
       "occurrences": 1
     },
@@ -3222,7 +3399,9 @@
         "LATENT_UPSCALE_MODEL"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2"
+        "image_to_video__ltx_2",
+        "text_to_video__ltx_2",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 6
     },
@@ -3245,8 +3424,8 @@
         "BACKGROUND_REMOVAL"
       ],
       "used_in_type_ids": [
-        "3d_generation_triposplat",
-        "segmentation_birefnet"
+        "3d__triposplat",
+        "image_tools__birefnet"
       ],
       "occurrences": 2
     },
@@ -3263,7 +3442,7 @@
       },
       "outputs": [],
       "used_in_type_ids": [
-        "depth_estimation_depth_anything"
+        "preprocessors_estimation__depth_anything"
       ],
       "occurrences": 2
     },
@@ -3287,16 +3466,34 @@
         "MASK"
       ],
       "used_in_type_ids": [
-        "3d_generation_meshy",
-        "character_sheet_nano_banana",
-        "controlnet_qwen_image",
-        "first_last_frame_to_video_ltx_2",
-        "image_edit_flux_2_klein",
-        "image_edit_nano_banana",
-        "image_to_video_kling",
-        "text_to_image_z_image",
-        "text_to_video_wan_2_2",
-        "upscale_magnific"
+        "api_partner_nodes_3d__meshy",
+        "api_partner_nodes_character__nano_banana",
+        "api_partner_nodes_first_last_frame_to_video__kling",
+        "api_partner_nodes_image_edit__kling",
+        "api_partner_nodes_image_edit__magnific",
+        "api_partner_nodes_image_edit__nano_banana",
+        "api_partner_nodes_image_edit__seedream",
+        "api_partner_nodes_image_to_video__kling",
+        "api_partner_nodes_image_to_video__ltx_2",
+        "api_partner_nodes_image_to_video__veo",
+        "api_partner_nodes_image_to_video__wan_2_6",
+        "api_partner_nodes_inpaint_outpaint__nano_banana",
+        "api_partner_nodes_upscale__magnific",
+        "api_partner_nodes_upscale__z_image",
+        "api_partner_nodes_video_to_video__kling",
+        "first_last_frame_to_video__ltx_2",
+        "first_last_frame_to_video__wan_2_2",
+        "first_last_frame_to_video__wan_vace",
+        "image_edit__flux_2_klein",
+        "image_edit__qwen_image",
+        "image_edit_with_controlnet__z_image",
+        "image_to_video__ltx_2",
+        "image_to_video__wan_2_2",
+        "text_to_video__ltx_2",
+        "upscale__flux",
+        "upscale__generic",
+        "video_to_video__wan_2_2",
+        "video_to_video__wan_vace"
       ],
       "occurrences": 49
     },
@@ -3319,7 +3516,7 @@
         "FACE_DETECTION_MODEL"
       ],
       "used_in_type_ids": [
-        "video_generation_mediapipe"
+        "preprocessors_estimation__mediapipe"
       ],
       "occurrences": 2
     },
@@ -3342,7 +3539,8 @@
         "MOGE_MODEL"
       ],
       "used_in_type_ids": [
-        "depth_estimation_moge"
+        "3d__moge",
+        "preprocessors_estimation__moge"
       ],
       "occurrences": 3
     },
@@ -3365,10 +3563,11 @@
         "VIDEO"
       ],
       "used_in_type_ids": [
-        "frame_interpolation_topaz",
-        "image_to_video_kling",
-        "motion_prompt_gemini",
-        "text_to_video_wan_2_2"
+        "api_partner_nodes_upscale__topaz",
+        "api_partner_nodes_video_to_video__kling",
+        "text_tools__gemini",
+        "video_to_video__wan_2_2",
+        "video_to_video__wan_vace"
       ],
       "occurrences": 7
     },
@@ -3400,9 +3599,10 @@
         "CLIP"
       ],
       "used_in_type_ids": [
-        "controlnet_qwen_image",
-        "first_last_frame_to_video_ltx_2",
-        "text_to_video_wan_2_2"
+        "first_last_frame_to_video__wan_vace",
+        "image_edit__qwen_image",
+        "image_to_video__ltx_2",
+        "video_to_video__wan_vace"
       ],
       "occurrences": 6
     },
@@ -3429,12 +3629,22 @@
         "MODEL"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2",
-        "image_edit_flux_2_klein",
-        "image_edit_qwen_image",
-        "inpaint_qwen_image",
-        "text_to_video_bernini",
-        "text_to_video_wan_2_2"
+        "character__wan",
+        "image_edit__firered",
+        "image_edit__flux_2",
+        "image_edit__qwen_image",
+        "image_edit__wan_2_2",
+        "image_to_video__ltx_2",
+        "image_to_video__wan_2_2",
+        "inpaint_outpaint__qwen_image",
+        "text_to_image__flux_2",
+        "text_to_image__qwen_image",
+        "text_to_video__ltx_2",
+        "text_to_video__wan_2_2",
+        "video_inpaint__wan_vace",
+        "video_to_video__ltx_2",
+        "video_to_video__wan_2_2",
+        "video_to_video__wan_vace"
       ],
       "occurrences": 36
     },
@@ -3453,9 +3663,9 @@
         "CONDITIONING"
       ],
       "used_in_type_ids": [
-        "depth_estimation_lotus",
-        "first_last_frame_to_video_ltx_2",
-        "text_to_image_z_image"
+        "image_edit_with_controlnet__z_image",
+        "preprocessors_estimation__lotus",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 4
     },
@@ -3491,7 +3701,7 @@
         "VIDEO"
       ],
       "used_in_type_ids": [
-        "image_to_video_kling"
+        "api_partner_nodes_image_to_video__ltx_2"
       ],
       "occurrences": 1
     },
@@ -3525,7 +3735,7 @@
         "VIDEO"
       ],
       "used_in_type_ids": [
-        "image_to_video_kling"
+        "api_partner_nodes_text_to_video__ltx_2"
       ],
       "occurrences": 1
     },
@@ -3565,7 +3775,7 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "character_sheet_nano_banana"
+        "api_partner_nodes_image_edit__magnific"
       ],
       "occurrences": 1
     },
@@ -3606,7 +3816,7 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "upscale_magnific"
+        "api_partner_nodes_upscale__magnific"
       ],
       "occurrences": 1
     },
@@ -3641,7 +3851,7 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "upscale_magnific"
+        "api_partner_nodes_upscale__magnific"
       ],
       "occurrences": 1
     },
@@ -3664,7 +3874,10 @@
         "SIGMAS"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2"
+        "first_last_frame_to_video__ltx_2",
+        "image_to_video__ltx_2",
+        "text_to_video__ltx_2",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 12
     },
@@ -3681,13 +3894,17 @@
       },
       "outputs": [],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2",
-        "image_edit_qwen_image",
-        "inpaint_qwen_image",
-        "text_to_image_lumina",
-        "text_to_image_z_image",
-        "text_to_video_bernini",
-        "text_to_video_wan_2_2"
+        "image_edit__qwen_image",
+        "image_edit__wan_2_2",
+        "image_to_video__ltx_2",
+        "image_to_video__wan_2_2",
+        "inpaint_outpaint__qwen_image",
+        "text_to_image__lumina",
+        "text_to_image__qwen_image",
+        "text_to_video__wan_2_2",
+        "video_inpaint__wan_vace",
+        "video_to_video__ltx_2",
+        "video_to_video__wan_2_2"
       ],
       "occurrences": 18
     },
@@ -3708,9 +3925,9 @@
       },
       "outputs": [],
       "used_in_type_ids": [
-        "inpaint_qwen_image",
-        "text_to_video_bernini",
-        "text_to_video_wan_2_2"
+        "inpaint_outpaint__qwen_image",
+        "video_inpaint__sam3",
+        "video_inpaint__wan_vace"
       ],
       "occurrences": 4
     },
@@ -3733,8 +3950,10 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "inpaint_qwen_image",
-        "text_to_video_wan_2_2"
+        "first_last_frame_to_video__wan_vace",
+        "inpaint_outpaint__qwen_image",
+        "video_inpaint__wan_vace",
+        "video_to_video__wan_vace"
       ],
       "occurrences": 9
     },
@@ -3768,7 +3987,7 @@
         "BOUNDING_BOX"
       ],
       "used_in_type_ids": [
-        "video_generation_mediapipe"
+        "preprocessors_estimation__mediapipe"
       ],
       "occurrences": 2
     },
@@ -3793,7 +4012,7 @@
         "MASK"
       ],
       "used_in_type_ids": [
-        "video_generation_mediapipe"
+        "preprocessors_estimation__mediapipe"
       ],
       "occurrences": 2
     },
@@ -3831,7 +4050,7 @@
         "FILE_3D_FBX"
       ],
       "used_in_type_ids": [
-        "3d_generation_meshy"
+        "api_partner_nodes_3d__meshy"
       ],
       "occurrences": 1
     },
@@ -3869,7 +4088,7 @@
         "FILE_3D_FBX"
       ],
       "used_in_type_ids": [
-        "3d_generation_meshy"
+        "api_partner_nodes_3d__meshy"
       ],
       "occurrences": 1
     },
@@ -3907,7 +4126,7 @@
         "FILE_3D_FBX"
       ],
       "used_in_type_ids": [
-        "3d_generation_meshy"
+        "api_partner_nodes_3d__meshy"
       ],
       "occurrences": 1
     },
@@ -3942,7 +4161,8 @@
         "MOGE_GEOMETRY"
       ],
       "used_in_type_ids": [
-        "depth_estimation_moge"
+        "3d__moge",
+        "preprocessors_estimation__moge"
       ],
       "occurrences": 3
     },
@@ -3973,7 +4193,7 @@
         "MESH"
       ],
       "used_in_type_ids": [
-        "depth_estimation_moge"
+        "3d__moge"
       ],
       "occurrences": 1
     },
@@ -3998,7 +4218,8 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "depth_estimation_moge"
+        "3d__moge",
+        "preprocessors_estimation__moge"
       ],
       "occurrences": 8
     },
@@ -4021,7 +4242,7 @@
         "MODEL_PATCH"
       ],
       "used_in_type_ids": [
-        "text_to_image_z_image"
+        "image_edit_with_controlnet__z_image"
       ],
       "occurrences": 5
     },
@@ -4046,12 +4267,16 @@
         "MODEL"
       ],
       "used_in_type_ids": [
-        "3d_generation_hunyuan3d",
-        "controlnet_qwen_image",
-        "image_edit_qwen_image",
-        "inpaint_qwen_image",
-        "text_to_image_lumina",
-        "text_to_image_z_image"
+        "3d__hunyuan3d",
+        "audio__ace_step",
+        "image_edit__firered",
+        "image_edit__qwen_image",
+        "image_edit_with_controlnet__z_image",
+        "inpaint_outpaint__qwen_image",
+        "text_to_image__lumina",
+        "text_to_image__qwen_image",
+        "text_to_image__z_image",
+        "upscale__z_image"
       ],
       "occurrences": 24
     },
@@ -4076,7 +4301,14 @@
         "MODEL"
       ],
       "used_in_type_ids": [
-        "text_to_video_wan_2_2"
+        "character__wan",
+        "first_last_frame_to_video__wan_2_2",
+        "first_last_frame_to_video__wan_vace",
+        "image_to_video__wan_2_2",
+        "text_to_video__wan_2_2",
+        "video_inpaint__wan_vace",
+        "video_to_video__wan_2_2",
+        "video_to_video__wan_vace"
       ],
       "occurrences": 22
     },
@@ -4093,10 +4325,11 @@
       },
       "outputs": [],
       "used_in_type_ids": [
-        "image_edit_qwen_image",
-        "inpaint_qwen_image",
-        "segmentation_sam3",
-        "text_to_video_wan_2_2"
+        "image_edit__qwen_image",
+        "image_to_video__wan_2_2",
+        "inpaint_outpaint__qwen_image",
+        "preprocessors_estimation__sam3",
+        "text_to_video__wan_2_2"
       ],
       "occurrences": 7
     },
@@ -4119,7 +4352,7 @@
         "OPTICAL_FLOW"
       ],
       "used_in_type_ids": [
-        "text_to_video_bernini"
+        "video_inpaint__sam3"
       ],
       "occurrences": 1
     },
@@ -4142,11 +4375,13 @@
         "STRING"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2",
-        "image_2",
-        "style_transfer_gemini",
-        "text_to_image_ernie",
-        "text_to_video_bernini"
+        "api_partner_nodes_image_edit__nano_banana",
+        "audio__qwen_image",
+        "image_edit__wan_2_2",
+        "image_to_video__ltx_2",
+        "text_to_image__ernie",
+        "text_tools__generic",
+        "video_to_video__wan_2_2"
       ],
       "occurrences": 15
     },
@@ -4167,11 +4402,14 @@
       },
       "outputs": [],
       "used_in_type_ids": [
-        "3d_generation_triposplat",
-        "inpaint_qwen_image",
-        "style_transfer_gemini",
-        "text_to_image_z_image",
-        "text_to_video_wan_2_2"
+        "3d__triposplat",
+        "api_partner_nodes_image_edit__nano_banana",
+        "character__wan",
+        "first_last_frame_to_video__wan_vace",
+        "image_edit_with_controlnet__z_image",
+        "inpaint_outpaint__qwen_image",
+        "video_inpaint__wan_vace",
+        "video_to_video__wan_vace"
       ],
       "occurrences": 15
     },
@@ -4194,14 +4432,22 @@
         "BOOLEAN"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2",
-        "image_edit_flux_2_klein",
-        "image_edit_qwen_image",
-        "image_generation",
-        "text_to_image_ernie",
-        "text_to_video_bernini",
-        "text_to_video_wan_2_2",
-        "video_generation"
+        "audio__qwen_image",
+        "character__wan",
+        "image_edit__firered",
+        "image_edit__flux_2",
+        "image_edit__qwen_image",
+        "image_edit__wan_2_2",
+        "image_to_video__ltx_2",
+        "image_tools__generic",
+        "text_to_image__ernie",
+        "text_to_image__flux_2",
+        "text_to_image__qwen_image",
+        "text_to_video__ltx_2",
+        "video_inpaint__sam3",
+        "video_inpaint__wan_vace",
+        "video_to_video__wan_2_2",
+        "video_tools__generic"
       ],
       "occurrences": 25
     },
@@ -4230,7 +4476,7 @@
         "BOUNDING_BOX"
       ],
       "used_in_type_ids": [
-        "image_generation_2"
+        "image_tools__generic"
       ],
       "occurrences": 13
     },
@@ -4253,13 +4499,18 @@
         "FLOAT"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2",
-        "image_edit_qwen_image",
-        "image_generation",
-        "text_to_image_ernie",
-        "text_to_image_z_image",
-        "text_to_video_bernini",
-        "text_to_video_wan_2_2"
+        "audio__ace_step",
+        "audio__qwen_image",
+        "character__wan",
+        "image_edit__firered",
+        "image_edit__qwen_image",
+        "image_edit__wan_2_2",
+        "image_to_video__ltx_2",
+        "image_tools__generic",
+        "text_to_image__qwen_image",
+        "video_inpaint__wan_vace",
+        "video_to_video__ltx_2",
+        "video_to_video__wan_2_2"
       ],
       "occurrences": 63
     },
@@ -4282,16 +4533,28 @@
         "INT"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2",
-        "image_2",
-        "image_edit_flux_2_klein",
-        "image_edit_qwen_image",
-        "image_generation",
-        "image_generation_2",
-        "inpaint_qwen_image",
-        "text_to_video_bernini",
-        "text_to_video_wan_2_2",
-        "video_generation"
+        "character__wan",
+        "first_last_frame_to_video__ltx_2",
+        "first_last_frame_to_video__wan_vace",
+        "image_edit__firered",
+        "image_edit__flux_2",
+        "image_edit__qwen_image",
+        "image_edit__wan_2_2",
+        "image_to_video__ltx_2",
+        "image_tools__generic",
+        "inpaint_outpaint__qwen_image",
+        "text_to_image__flux_2",
+        "text_to_image__flux_2_klein",
+        "text_to_image__ideogram",
+        "text_to_image__qwen_image",
+        "text_to_video__ltx_2",
+        "text_tools__generic",
+        "video_inpaint__sam3",
+        "video_inpaint__wan_vace",
+        "video_to_video__ltx_2",
+        "video_to_video__wan_2_2",
+        "video_to_video__wan_vace",
+        "video_tools__generic"
       ],
       "occurrences": 87
     },
@@ -4308,7 +4571,7 @@
       },
       "outputs": [],
       "used_in_type_ids": [
-        "text_to_image_z_image"
+        "audio__ace_step"
       ],
       "occurrences": 1
     },
@@ -4331,13 +4594,16 @@
         "STRING"
       ],
       "used_in_type_ids": [
-        "character_sheet_nano_banana",
-        "first_last_frame_to_video_ltx_2",
-        "image_edit_flux_2_klein",
-        "style_transfer_gemini",
-        "text_to_image_ernie",
-        "text_to_image_lumina",
-        "text_to_video_bernini"
+        "api_partner_nodes_character__nano_banana",
+        "api_partner_nodes_image_edit__nano_banana",
+        "audio__qwen_image",
+        "image_edit__wan_2_2",
+        "image_to_video__ltx_2",
+        "text_to_image__ernie",
+        "text_to_image__flux_2_klein",
+        "text_to_image__lumina",
+        "text_to_video__ltx_2",
+        "video_to_video__wan_2_2"
       ],
       "occurrences": 17
     },
@@ -4371,7 +4637,7 @@
         "MODEL"
       ],
       "used_in_type_ids": [
-        "text_to_image_z_image"
+        "image_edit_with_controlnet__z_image"
       ],
       "occurrences": 5
     },
@@ -4402,7 +4668,7 @@
         "BOUNDING_BOX"
       ],
       "used_in_type_ids": [
-        "pose_estimation_sdpose"
+        "preprocessors_estimation__sdpose"
       ],
       "occurrences": 2
     },
@@ -4425,9 +4691,16 @@
         "NOISE"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2",
-        "image_edit_flux_2_klein",
-        "text_to_video_bernini"
+        "first_last_frame_to_video__ltx_2",
+        "image_edit__flux_2",
+        "image_edit__flux_2_klein",
+        "image_to_video__ltx_2",
+        "text_to_image__flux_2",
+        "text_to_image__flux_2_klein",
+        "text_to_image__ideogram",
+        "text_to_video__ltx_2",
+        "video_inpaint__sam3",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 22
     },
@@ -4452,7 +4725,7 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "text_to_video_wan_2_2"
+        "video_inpaint__wan_vace"
       ],
       "occurrences": 1
     },
@@ -4478,8 +4751,9 @@
         "CONDITIONING"
       ],
       "used_in_type_ids": [
-        "image_edit_flux_2_klein",
-        "image_edit_qwen_image"
+        "image_edit__flux_2",
+        "image_edit__flux_2_klein",
+        "image_edit__qwen_image"
       ],
       "occurrences": 7
     },
@@ -4514,8 +4788,9 @@
         "STRING"
       ],
       "used_in_type_ids": [
-        "image_2",
-        "text_to_video_bernini"
+        "image_edit__wan_2_2",
+        "text_tools__generic",
+        "video_to_video__wan_2_2"
       ],
       "occurrences": 3
     },
@@ -4540,8 +4815,8 @@
         "MASK"
       ],
       "used_in_type_ids": [
-        "3d_generation_triposplat",
-        "segmentation_birefnet"
+        "3d__triposplat",
+        "image_tools__birefnet"
       ],
       "occurrences": 2
     },
@@ -4566,7 +4841,9 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "text_to_video_wan_2_2"
+        "first_last_frame_to_video__wan_vace",
+        "video_inpaint__wan_vace",
+        "video_to_video__wan_vace"
       ],
       "occurrences": 3
     },
@@ -4583,7 +4860,9 @@
       },
       "outputs": [],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2"
+        "image_to_video__ltx_2",
+        "text_to_video__ltx_2",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 5
     },
@@ -4614,7 +4893,7 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "video_generation"
+        "video_tools__generic"
       ],
       "occurrences": 1
     },
@@ -4641,11 +4920,15 @@
         "COMFY_MATCHTYPE_V3"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2",
-        "image_edit_qwen_image",
-        "pose_estimation_sdpose",
-        "text_to_video_wan_2_2",
-        "video_generation"
+        "character__wan",
+        "first_last_frame_to_video__ltx_2",
+        "image_edit__firered",
+        "image_to_video__ltx_2",
+        "preprocessors_estimation__sdpose",
+        "text_to_video__ltx_2",
+        "video_inpaint__wan_vace",
+        "video_to_video__ltx_2",
+        "video_tools__generic"
       ],
       "occurrences": 18
     },
@@ -4670,8 +4953,10 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "depth_estimation_moge",
-        "first_last_frame_to_video_ltx_2"
+        "3d__moge",
+        "image_to_video__ltx_2",
+        "preprocessors_estimation__moge",
+        "text_to_video__ltx_2"
       ],
       "occurrences": 6
     },
@@ -4712,9 +4997,9 @@
         "BOUNDING_BOX"
       ],
       "used_in_type_ids": [
-        "segmentation_sam3",
-        "text_to_video_bernini",
-        "text_to_video_wan_2_2"
+        "preprocessors_estimation__sam3",
+        "video_inpaint__sam3",
+        "video_inpaint__wan_vace"
       ],
       "occurrences": 4
     },
@@ -4750,7 +5035,7 @@
         "SAM3_TRACK_DATA"
       ],
       "used_in_type_ids": [
-        "text_to_video_wan_2_2"
+        "character__wan"
       ],
       "occurrences": 4
     },
@@ -4767,7 +5052,7 @@
       },
       "outputs": [],
       "used_in_type_ids": [
-        "text_to_video_wan_2_2"
+        "character__wan"
       ],
       "occurrences": 2
     },
@@ -4804,7 +5089,7 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "pose_estimation_sdpose"
+        "preprocessors_estimation__sdpose"
       ],
       "occurrences": 3
     },
@@ -4836,7 +5121,7 @@
         "POSE_KEYPOINT"
       ],
       "used_in_type_ids": [
-        "pose_estimation_sdpose"
+        "preprocessors_estimation__sdpose"
       ],
       "occurrences": 3
     },
@@ -4876,8 +5161,9 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "text_to_video_bernini",
-        "text_to_video_wan_2_2"
+        "character__wan",
+        "image_edit__wan_2_2",
+        "video_to_video__wan_2_2"
       ],
       "occurrences": 6
     },
@@ -4909,11 +5195,18 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "depth_estimation_lotus",
-        "first_last_frame_to_video_ltx_2",
-        "image_edit_flux_2_klein",
-        "text_to_image_z_image",
-        "text_to_video_bernini"
+        "first_last_frame_to_video__ltx_2",
+        "image_edit__flux_2",
+        "image_edit__flux_2_klein",
+        "image_edit_with_controlnet__z_image",
+        "image_to_video__ltx_2",
+        "preprocessors_estimation__lotus",
+        "text_to_image__flux_2",
+        "text_to_image__flux_2_klein",
+        "text_to_image__ideogram",
+        "text_to_video__ltx_2",
+        "video_inpaint__sam3",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 27
     },
@@ -4938,7 +5231,7 @@
         "SAMPLER"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2"
+        "first_last_frame_to_video__ltx_2"
       ],
       "occurrences": 3
     },
@@ -4961,7 +5254,7 @@
       },
       "outputs": [],
       "used_in_type_ids": [
-        "3d_generation_meshy"
+        "api_partner_nodes_3d__meshy"
       ],
       "occurrences": 6
     },
@@ -4984,14 +5277,22 @@
       },
       "outputs": [],
       "used_in_type_ids": [
-        "character_sheet_nano_banana",
-        "controlnet_qwen_image",
-        "image_edit_flux_2_klein",
-        "image_edit_nano_banana",
-        "style_transfer_gemini",
-        "text_to_image_ideogram",
-        "text_to_image_z_image",
-        "upscale_magnific"
+        "api_partner_nodes_character__nano_banana",
+        "api_partner_nodes_image_edit__kling",
+        "api_partner_nodes_image_edit__magnific",
+        "api_partner_nodes_image_edit__nano_banana",
+        "api_partner_nodes_image_edit__seedream",
+        "api_partner_nodes_inpaint_outpaint__nano_banana",
+        "api_partner_nodes_text_to_image__ideogram",
+        "api_partner_nodes_upscale__magnific",
+        "api_partner_nodes_upscale__z_image",
+        "image_edit__flux_2_klein",
+        "image_edit__qwen_image",
+        "image_edit_with_controlnet__z_image",
+        "text_to_image__flux_2_klein",
+        "text_to_image__z_image",
+        "upscale__flux",
+        "upscale__generic"
       ],
       "occurrences": 20
     },
@@ -5018,9 +5319,9 @@
       },
       "outputs": [],
       "used_in_type_ids": [
-        "character_sheet_nano_banana",
-        "frame_interpolation_topaz",
-        "text_to_video_wan_2_2"
+        "api_partner_nodes_image_to_video__veo",
+        "api_partner_nodes_upscale__topaz",
+        "video_to_video__wan_vace"
       ],
       "occurrences": 3
     },
@@ -5045,9 +5346,9 @@
         "SIGMAS"
       ],
       "used_in_type_ids": [
-        "depth_estimation_lotus",
-        "first_last_frame_to_video_ltx_2",
-        "text_to_image_z_image"
+        "image_edit_with_controlnet__z_image",
+        "preprocessors_estimation__lotus",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 4
     },
@@ -5072,7 +5373,7 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "inpaint_qwen_image"
+        "inpaint_outpaint__qwen_image"
       ],
       "occurrences": 1
     },
@@ -5099,7 +5400,7 @@
         "MASK"
       ],
       "used_in_type_ids": [
-        "text_to_video_wan_2_2"
+        "first_last_frame_to_video__wan_vace"
       ],
       "occurrences": 2
     },
@@ -5128,7 +5429,7 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "image_generation_2"
+        "image_tools__generic"
       ],
       "occurrences": 1
     },
@@ -5154,7 +5455,8 @@
         "SIGMAS"
       ],
       "used_in_type_ids": [
-        "text_to_video_bernini"
+        "image_edit__wan_2_2",
+        "video_to_video__wan_2_2"
       ],
       "occurrences": 2
     },
@@ -5181,8 +5483,9 @@
         "STRING"
       ],
       "used_in_type_ids": [
-        "text_to_image_lumina",
-        "text_to_video_bernini"
+        "image_edit__wan_2_2",
+        "text_to_image__lumina",
+        "video_to_video__wan_2_2"
       ],
       "occurrences": 4
     },
@@ -5209,10 +5512,12 @@
         "STRING"
       ],
       "used_in_type_ids": [
-        "image_2",
-        "image_edit_flux_2_klein",
-        "text_to_image_ernie",
-        "text_to_video_bernini"
+        "audio__qwen_image",
+        "image_edit__wan_2_2",
+        "text_to_image__ernie",
+        "text_to_image__ideogram",
+        "text_tools__generic",
+        "video_to_video__wan_2_2"
       ],
       "occurrences": 16
     },
@@ -5263,7 +5568,7 @@
         "CONDITIONING"
       ],
       "used_in_type_ids": [
-        "text_to_image_z_image"
+        "audio__ace_step"
       ],
       "occurrences": 1
     },
@@ -5293,7 +5598,7 @@
         "CONDITIONING"
       ],
       "used_in_type_ids": [
-        "image_edit_qwen_image"
+        "image_edit__longcat"
       ],
       "occurrences": 2
     },
@@ -5327,8 +5632,8 @@
         "CONDITIONING"
       ],
       "used_in_type_ids": [
-        "controlnet_qwen_image",
-        "image_edit_qwen_image"
+        "image_edit__firered",
+        "image_edit__qwen_image"
       ],
       "occurrences": 10
     },
@@ -5368,7 +5673,8 @@
         "STRING"
       ],
       "used_in_type_ids": [
-        "text_to_image_ernie"
+        "audio__qwen_image",
+        "text_to_image__ernie"
       ],
       "occurrences": 4
     },
@@ -5408,7 +5714,7 @@
         "STRING"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2"
+        "image_to_video__ltx_2"
       ],
       "occurrences": 1
     },
@@ -5456,7 +5762,7 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "character_sheet_nano_banana"
+        "api_partner_nodes_upscale__z_image"
       ],
       "occurrences": 1
     },
@@ -5502,7 +5808,7 @@
         "VIDEO"
       ],
       "used_in_type_ids": [
-        "frame_interpolation_topaz"
+        "api_partner_nodes_upscale__topaz"
       ],
       "occurrences": 1
     },
@@ -5529,7 +5835,7 @@
         "AUDIO"
       ],
       "used_in_type_ids": [
-        "text_to_video_bernini"
+        "video_inpaint__sam3"
       ],
       "occurrences": 1
     },
@@ -5554,7 +5860,9 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "text_to_video_wan_2_2"
+        "first_last_frame_to_video__wan_vace",
+        "video_inpaint__wan_vace",
+        "video_to_video__wan_vace"
       ],
       "occurrences": 7
     },
@@ -5583,7 +5891,7 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "3d_generation_triposplat"
+        "3d__triposplat"
       ],
       "occurrences": 1
     },
@@ -5612,7 +5920,7 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "3d_generation_triposplat"
+        "3d__triposplat"
       ],
       "occurrences": 1
     },
@@ -5647,7 +5955,7 @@
         "MODEL"
       ],
       "used_in_type_ids": [
-        "3d_generation_triposplat"
+        "3d__triposplat"
       ],
       "occurrences": 1
     },
@@ -5672,18 +5980,39 @@
         "MODEL"
       ],
       "used_in_type_ids": [
-        "3d_generation_triposplat",
-        "controlnet_qwen_image",
-        "depth_estimation_lotus",
-        "first_last_frame_to_video_ltx_2",
-        "image_edit_flux_2_klein",
-        "image_edit_qwen_image",
-        "inpaint_qwen_image",
-        "pose_estimation_sdpose",
-        "text_to_image_ernie",
-        "text_to_image_z_image",
-        "text_to_video_bernini",
-        "text_to_video_wan_2_2"
+        "3d__triposplat",
+        "audio__ace_step",
+        "character__wan",
+        "first_last_frame_to_video__wan_2_2",
+        "first_last_frame_to_video__wan_vace",
+        "image_edit__firered",
+        "image_edit__flux_2",
+        "image_edit__flux_2_klein",
+        "image_edit__longcat",
+        "image_edit__qwen_image",
+        "image_edit__wan_2_2",
+        "image_edit_with_controlnet__z_image",
+        "image_to_video__wan_2_2",
+        "inpaint_outpaint__flux",
+        "inpaint_outpaint__qwen_image",
+        "preprocessors_estimation__lotus",
+        "preprocessors_estimation__sdpose",
+        "text_to_image__anima",
+        "text_to_image__ernie",
+        "text_to_image__flux",
+        "text_to_image__flux_2",
+        "text_to_image__flux_2_klein",
+        "text_to_image__flux_krea",
+        "text_to_image__ideogram",
+        "text_to_image__qwen_image",
+        "text_to_image__z_image",
+        "text_to_video__wan_2_2",
+        "upscale__z_image",
+        "video_inpaint__sam3",
+        "video_inpaint__wan_vace",
+        "video_to_video__ltx_2",
+        "video_to_video__wan_2_2",
+        "video_to_video__wan_vace"
       ],
       "occurrences": 69
     },
@@ -5756,7 +6085,7 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "upscale_magnific"
+        "upscale__flux"
       ],
       "occurrences": 1
     },
@@ -5779,9 +6108,9 @@
         "UPSCALE_MODEL"
       ],
       "used_in_type_ids": [
-        "image_edit_qwen_image",
-        "upscale",
-        "upscale_magnific"
+        "upscale__flux",
+        "upscale__generic",
+        "upscale__z_image"
       ],
       "occurrences": 4
     },
@@ -5806,17 +6135,38 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "controlnet_qwen_image",
-        "depth_estimation_lotus",
-        "first_last_frame_to_video_ltx_2",
-        "image_edit_flux_2_klein",
-        "image_edit_qwen_image",
-        "inpaint_qwen_image",
-        "text_to_image_ernie",
-        "text_to_image_lumina",
-        "text_to_image_z_image",
-        "text_to_video_bernini",
-        "text_to_video_wan_2_2"
+        "character__wan",
+        "first_last_frame_to_video__wan_2_2",
+        "first_last_frame_to_video__wan_vace",
+        "image_edit__firered",
+        "image_edit__flux_2",
+        "image_edit__flux_2_klein",
+        "image_edit__longcat",
+        "image_edit__qwen_image",
+        "image_edit__wan_2_2",
+        "image_edit_with_controlnet__z_image",
+        "image_to_video__ltx_2",
+        "image_to_video__wan_2_2",
+        "inpaint_outpaint__flux",
+        "inpaint_outpaint__qwen_image",
+        "preprocessors_estimation__lotus",
+        "text_to_image__anima",
+        "text_to_image__ernie",
+        "text_to_image__flux",
+        "text_to_image__flux_2",
+        "text_to_image__flux_2_klein",
+        "text_to_image__flux_krea",
+        "text_to_image__ideogram",
+        "text_to_image__lumina",
+        "text_to_image__qwen_image",
+        "text_to_image__z_image",
+        "text_to_video__wan_2_2",
+        "upscale__z_image",
+        "video_inpaint__sam3",
+        "video_inpaint__wan_vace",
+        "video_to_video__ltx_2",
+        "video_to_video__wan_2_2",
+        "video_to_video__wan_vace"
       ],
       "occurrences": 61
     },
@@ -5841,8 +6191,8 @@
         "AUDIO"
       ],
       "used_in_type_ids": [
-        "text_to_image_ernie",
-        "text_to_image_z_image"
+        "audio__ace_step",
+        "audio__qwen_image"
       ],
       "occurrences": 3
     },
@@ -5871,7 +6221,7 @@
         "VOXEL"
       ],
       "used_in_type_ids": [
-        "3d_generation_hunyuan3d"
+        "3d__hunyuan3d"
       ],
       "occurrences": 1
     },
@@ -5904,7 +6254,10 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2"
+        "first_last_frame_to_video__ltx_2",
+        "image_to_video__ltx_2",
+        "text_to_video__ltx_2",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 9
     },
@@ -5933,7 +6286,7 @@
         "SPLAT"
       ],
       "used_in_type_ids": [
-        "3d_generation_triposplat"
+        "3d__triposplat"
       ],
       "occurrences": 1
     },
@@ -5958,12 +6311,16 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "depth_estimation_lotus",
-        "first_last_frame_to_video_ltx_2",
-        "image_edit_flux_2_klein",
-        "image_edit_qwen_image",
-        "inpaint_qwen_image",
-        "text_to_image_z_image"
+        "image_edit__firered",
+        "image_edit__flux_2",
+        "image_edit__flux_2_klein",
+        "image_edit__longcat",
+        "image_edit__qwen_image",
+        "image_edit_with_controlnet__z_image",
+        "inpaint_outpaint__qwen_image",
+        "preprocessors_estimation__lotus",
+        "upscale__z_image",
+        "video_to_video__ltx_2"
       ],
       "occurrences": 16
     },
@@ -5986,17 +6343,38 @@
         "VAE"
       ],
       "used_in_type_ids": [
-        "3d_generation_triposplat",
-        "controlnet_qwen_image",
-        "depth_estimation_lotus",
-        "first_last_frame_to_video_ltx_2",
-        "image_edit_flux_2_klein",
-        "image_edit_qwen_image",
-        "inpaint_qwen_image",
-        "text_to_image_ernie",
-        "text_to_image_z_image",
-        "text_to_video_bernini",
-        "text_to_video_wan_2_2"
+        "3d__triposplat",
+        "audio__ace_step",
+        "character__wan",
+        "first_last_frame_to_video__wan_2_2",
+        "first_last_frame_to_video__wan_vace",
+        "image_edit__firered",
+        "image_edit__flux_2",
+        "image_edit__flux_2_klein",
+        "image_edit__longcat",
+        "image_edit__qwen_image",
+        "image_edit__wan_2_2",
+        "image_edit_with_controlnet__z_image",
+        "image_to_video__wan_2_2",
+        "inpaint_outpaint__flux",
+        "inpaint_outpaint__qwen_image",
+        "preprocessors_estimation__lotus",
+        "text_to_image__anima",
+        "text_to_image__ernie",
+        "text_to_image__flux",
+        "text_to_image__flux_2",
+        "text_to_image__flux_2_klein",
+        "text_to_image__flux_krea",
+        "text_to_image__ideogram",
+        "text_to_image__qwen_image",
+        "text_to_image__z_image",
+        "text_to_video__wan_2_2",
+        "upscale__z_image",
+        "video_inpaint__sam3",
+        "video_inpaint__wan_vace",
+        "video_to_video__ltx_2",
+        "video_to_video__wan_2_2",
+        "video_to_video__wan_vace"
       ],
       "occurrences": 59
     },
@@ -6027,7 +6405,7 @@
         "MASK"
       ],
       "used_in_type_ids": [
-        "style_transfer_gemini"
+        "api_partner_nodes_image_edit__nano_banana"
       ],
       "occurrences": 7
     },
@@ -6072,7 +6450,7 @@
         "VHS_VIDEOINFO"
       ],
       "used_in_type_ids": [
-        "style_transfer_gemini"
+        "api_partner_nodes_image_edit__nano_banana"
       ],
       "occurrences": 1
     },
@@ -6101,7 +6479,7 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "style_transfer_gemini"
+        "api_partner_nodes_image_edit__nano_banana"
       ],
       "occurrences": 1
     },
@@ -6143,9 +6521,20 @@
         "VHS_FILENAMES"
       ],
       "used_in_type_ids": [
-        "first_last_frame_to_video_ltx_2",
-        "image_to_video_kling",
-        "text_to_video_wan_2_2"
+        "api_partner_nodes_first_last_frame_to_video__kling",
+        "api_partner_nodes_image_to_video__kling",
+        "api_partner_nodes_image_to_video__ltx_2",
+        "api_partner_nodes_image_to_video__wan_2_6",
+        "api_partner_nodes_text_to_video__ltx_2",
+        "api_partner_nodes_text_to_video__wan_2_6",
+        "api_partner_nodes_video_to_video__kling",
+        "first_last_frame_to_video__ltx_2",
+        "first_last_frame_to_video__wan_2_2",
+        "first_last_frame_to_video__wan_vace",
+        "image_to_video__ltx_2",
+        "image_to_video__wan_2_2",
+        "video_to_video__wan_2_2",
+        "video_to_video__wan_vace"
       ],
       "occurrences": 17
     },
@@ -6186,7 +6575,7 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "text_to_video_bernini"
+        "video_inpaint__sam3"
       ],
       "occurrences": 1
     },
@@ -6205,7 +6594,7 @@
         "SAMPLER"
       ],
       "used_in_type_ids": [
-        "text_to_video_bernini"
+        "video_inpaint__sam3"
       ],
       "occurrences": 2
     },
@@ -6238,7 +6627,7 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "text_to_video_bernini"
+        "video_inpaint__sam3"
       ],
       "occurrences": 1
     },
@@ -6261,7 +6650,7 @@
         "NOISE"
       ],
       "used_in_type_ids": [
-        "text_to_video_bernini"
+        "video_inpaint__sam3"
       ],
       "occurrences": 1
     },
@@ -6305,7 +6694,7 @@
         "VIDEO"
       ],
       "used_in_type_ids": [
-        "character_sheet_nano_banana"
+        "api_partner_nodes_image_to_video__veo"
       ],
       "occurrences": 1
     },
@@ -6334,8 +6723,8 @@
         "VIDEO"
       ],
       "used_in_type_ids": [
-        "depth_estimation_depth_anything",
-        "video_generation_mediapipe"
+        "preprocessors_estimation__depth_anything",
+        "preprocessors_estimation__mediapipe"
       ],
       "occurrences": 2
     },
@@ -6362,7 +6751,7 @@
         "MESH"
       ],
       "used_in_type_ids": [
-        "3d_generation_hunyuan3d"
+        "3d__hunyuan3d"
       ],
       "occurrences": 1
     },
@@ -6404,7 +6793,7 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "text_to_video_wan_2_2"
+        "video_to_video__wan_2_2"
       ],
       "occurrences": 1
     },
@@ -6447,7 +6836,7 @@
         "INT"
       ],
       "used_in_type_ids": [
-        "text_to_video_wan_2_2"
+        "image_to_video__wan_2_2"
       ],
       "occurrences": 1
     },
@@ -6491,7 +6880,7 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "text_to_video_wan_2_2"
+        "image_to_video__wan_2_2"
       ],
       "occurrences": 1
     },
@@ -6537,7 +6926,7 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "text_to_video_wan_2_2"
+        "first_last_frame_to_video__wan_2_2"
       ],
       "occurrences": 1
     },
@@ -6579,7 +6968,7 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "text_to_video_wan_2_2"
+        "image_to_video__wan_2_2"
       ],
       "occurrences": 2
     },
@@ -6625,7 +7014,7 @@
         "VIDEO"
       ],
       "used_in_type_ids": [
-        "image_to_video_kling"
+        "api_partner_nodes_image_to_video__wan_2_6"
       ],
       "occurrences": 1
     },
@@ -6675,7 +7064,7 @@
         "LATENT"
       ],
       "used_in_type_ids": [
-        "text_to_video_wan_2_2"
+        "character__wan"
       ],
       "occurrences": 2
     },
@@ -6719,7 +7108,7 @@
         "VIDEO"
       ],
       "used_in_type_ids": [
-        "image_to_video_kling"
+        "api_partner_nodes_text_to_video__wan_2_6"
       ],
       "occurrences": 1
     },
@@ -6766,7 +7155,9 @@
         "INT"
       ],
       "used_in_type_ids": [
-        "text_to_video_wan_2_2"
+        "first_last_frame_to_video__wan_vace",
+        "video_inpaint__wan_vace",
+        "video_to_video__wan_vace"
       ],
       "occurrences": 7
     },
@@ -6805,8 +7196,8 @@
         "MASK"
       ],
       "used_in_type_ids": [
-        "style_transfer_gemini",
-        "text_to_video_wan_2_2"
+        "api_partner_nodes_image_edit__nano_banana",
+        "video_to_video__wan_vace"
       ],
       "occurrences": 2
     },
@@ -6836,7 +7227,7 @@
         "MASK"
       ],
       "used_in_type_ids": [
-        "text_to_video_wan_2_2"
+        "video_to_video__wan_vace"
       ],
       "occurrences": 1
     },
@@ -6863,7 +7254,7 @@
         "INT"
       ],
       "used_in_type_ids": [
-        "text_to_video_wan_2_2"
+        "video_to_video__wan_vace"
       ],
       "occurrences": 1
     },
@@ -6898,7 +7289,7 @@
         "IMAGE"
       ],
       "used_in_type_ids": [
-        "motion_prompt_gemini"
+        "text_tools__gemini"
       ],
       "occurrences": 1
     }

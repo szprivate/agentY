@@ -17,6 +17,9 @@ always yield the same clusters.
 
 from __future__ import annotations
 
+import math
+import re
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Dict, FrozenSet, List, Tuple
 
@@ -73,6 +76,75 @@ def pairwise_matrix(
         for j in range(i + 1, len(fps)):
             matrix[(i, j)] = similarity_breakdown(fps[i], fps[j], weights)
     return matrix
+
+
+# --------------------------------------------------------------------------- #
+# Description-based similarity (TF-IDF cosine over catalog descriptions)
+# --------------------------------------------------------------------------- #
+# Generic words that do not help distinguish workflow intent. Domain words that
+# DO discriminate (image, video, audio, model names) are deliberately kept.
+_STOPWORDS = {
+    "the", "a", "an", "of", "to", "from", "with", "and", "or", "via", "for",
+    "in", "on", "by", "up", "is", "are", "it", "its", "this", "that", "as",
+    "at", "into", "using", "use", "uses", "used", "plus", "per", "while",
+    "also", "than", "then", "your", "you", "blueprint", "subgraph", "output",
+    "outputs", "input", "inputs", "node", "nodes", "takes", "produces",
+    "generate", "generates", "generating", "creates", "create", "creating",
+    "supports", "support", "based", "local", "api", "optional", "single", "one",
+}
+_WORD = re.compile(r"[a-z0-9.]+")
+
+
+def _tokenize(text: str) -> List[str]:
+    tokens = []
+    for raw in _WORD.findall((text or "").lower()):
+        tok = raw.strip(".")
+        if len(tok) >= 2 and tok not in _STOPWORDS and not tok.isdigit():
+            tokens.append(tok)
+    return tokens
+
+
+def description_matrix(
+    texts: List[str],
+) -> Dict[Tuple[int, int], Tuple[float, Dict[str, float]]]:
+    """TF-IDF cosine similarity over per-workflow description texts.
+
+    Rare, distinctive terms (canny, wan2.2, ltx, relight) dominate the score
+    while generic words contribute little, so workflows that *read* alike group
+    together. Returns the same (score, per_signal) matrix shape as the
+    structural path so the rest of the pipeline is unchanged."""
+    docs = [_tokenize(t) for t in texts]
+    n = len(docs)
+    df: Counter = Counter()
+    for d in docs:
+        df.update(set(d))
+    idf = {t: math.log((n + 1) / (c + 1)) + 1.0 for t, c in df.items()}
+
+    vecs: List[Tuple[Dict[str, float], float]] = []
+    for d in docs:
+        tf = Counter(d)
+        vec = {t: (1.0 + math.log(c)) * idf[t] for t, c in tf.items()}
+        norm = math.sqrt(sum(v * v for v in vec.values())) or 1.0
+        vecs.append((vec, norm))
+
+    matrix: Dict[Tuple[int, int], Tuple[float, Dict[str, float]]] = {}
+    for i in range(n):
+        vi, ni = vecs[i]
+        for j in range(i + 1, n):
+            vj, nj = vecs[j]
+            small, large = (vi, vj) if len(vi) <= len(vj) else (vj, vi)
+            dot = sum(val * large.get(t, 0.0) for t, val in small.items())
+            cos = dot / (ni * nj)
+            matrix[(i, j)] = (round(cos, 6), {"description": round(cos, 6)})
+    return matrix
+
+
+def shared_terms(texts: List[str], members: List[int]) -> List[str]:
+    """Tokens common to all members' description texts (for the report)."""
+    if not members:
+        return []
+    sets = [set(_tokenize(texts[m])) for m in members]
+    return sorted(set.intersection(*sets)) if sets else []
 
 
 def _pair_sim(matrix, i: int, j: int) -> float:

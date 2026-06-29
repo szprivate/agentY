@@ -30,6 +30,9 @@ from src.tools.comfyui import (  # noqa: F401
     # Workflow templates
     get_workflow_catalog,
     get_workflow_template,
+    # Workflow recipes (task -> model -> node clusters knowledge base)
+    list_workflow_recipes,
+    get_workflow_recipe,
     # Workflow modification
     save_workflow,
     patch_workflow,
@@ -94,7 +97,8 @@ _SHARED_CORE_TOOLS = [
     "get_prompt_status_by_id", "clear_history", "get_logs", "get_system_stats",
     "get_comfyui_dirs", "submit_prompt", "duplicate_workflow", "get_node_schema",
     "get_workflow_node_info", "search_nodes", "get_workflow_catalog",
-    "get_workflow_template", "save_workflow", "patch_workflow", "add_workflow_node",
+    "get_workflow_template", "list_workflow_recipes", "get_workflow_recipe",
+    "save_workflow", "patch_workflow", "add_workflow_node",
     "remove_workflow_node", "update_workflow", "replace_node", "apply_brainbriefing",
     "validate_workflow", "check_model",
     # huggingface
@@ -229,6 +233,9 @@ BRAIN_TOOLS: list = [
     get_image_resolution,
     # Workflow assembly, modification & validation
     get_workflow_template,
+    # Recipe knowledge base (task -> model -> node clusters) for build_new
+    list_workflow_recipes,
+    get_workflow_recipe,
     apply_brainbriefing,
     update_workflow,
     replace_node,
