@@ -6,23 +6,24 @@ every type) carries a derived *intent*: what media it produces, what task it
 performs, and which model family it uses.
 
 Extraction is deterministic and rule-based from transparent, tunable vocab
-tables, using several signals per workflow:
+tables (kept as module-level constants), using several signals per workflow:
   - the filename tokens (e.g. "video_wan2_2_14B_flf2v"),
   - the catalog title/description (index.json + config/workflow_templates.json),
-  - the node roles present (reusing fingerprint.classify_role),
+  - the node roles present (reusing roles.classify_role),
   - model-loader widget filenames (e.g. "wan2.2_i2v_high_noise.safetensors").
 
-Nothing here calls an LLM; it only reads the corpus metadata.
+``IntentClassifier`` wraps the rules; nothing here calls an LLM, it only reads
+the corpus metadata.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from collections import Counter
 from typing import List, Optional
 
-from .fingerprint import classify_role
-from .parser import WorkflowGraph
+from .model import Intent, WorkflowGraph
+from .roles import classify_role
 
 # --------------------------------------------------------------------------- #
 # Vocab tables (ordered, specific -> general; first match wins for task)
@@ -171,148 +172,148 @@ _TASK_PRIORITY = [
     "prompt_enhance", "motion_prompt",
 ]
 
-
-def dominant_task(tasks: List[str]) -> Optional[str]:
-    """Most frequent task; ties broken by _TASK_PRIORITY (generation > modifier)."""
-    from collections import Counter
-    if not tasks:
-        return None
-    counts = Counter(tasks)
-    rank = {t: i for i, t in enumerate(_TASK_PRIORITY)}
-    return sorted(counts.items(), key=lambda kv: (-kv[1], rank.get(kv[0], 999)))[0][0]
-
 _TOKEN_SPLIT = re.compile(r"[^a-z0-9.]+")
 
 
-@dataclass
-class Intent:
-    media: Optional[str] = None
-    task: Optional[str] = None
-    model_families: List[str] = field(default_factory=list)
-    keywords: List[str] = field(default_factory=list)
+class IntentClassifier:
+    """Derive a workflow's ``Intent`` (media / task / model families) and the
+    natural-language phrasing used in the type-level matching surface.
 
+    Stateless: the rules live in the module-level vocab tables, so one shared
+    instance is enough and every call is deterministic."""
 
-def _search_text(graph: WorkflowGraph) -> str:
-    """Lowercased text to match vocab against: filename + catalog title/desc +
-    model-loader widget filenames."""
-    parts = [graph.name, graph.index_title or "", graph.index_description or ""]
-    for node in graph.nodes.values():
-        if classify_role(node.class_type) in ("model_loader", "lora_loader"):
-            wv = node.widgets_values
-            values = wv if isinstance(wv, list) else (wv.values() if isinstance(wv, dict) else [])
-            parts.extend(str(v) for v in values if isinstance(v, str))
-    # Match against two views so tokens hit regardless of separator style:
-    #   joined - raw, keeps "_" (matches "text_to_image", "wan2_2", "wan2.2")
-    #   norm   - "_"/"-" -> space (matches "wan 2.2")
-    # A fully separator-stripped view is deliberately avoided: it would fuse word
-    # boundaries (e.g. "an image" -> "animage", spuriously matching "anima").
-    joined = " ".join(parts).lower()
-    norm = joined.replace("_", " ").replace("-", " ")
-    return f"{norm} {joined}"
+    # --------------------------------------------------------------------- #
+    # Per-workflow classification
+    # --------------------------------------------------------------------- #
+    def classify(self, graph: WorkflowGraph) -> Intent:
+        text = self._search_text(graph)
+        task = self._task(text)
+        media = self._media(graph, task)
+        families = self._model_families(text)
+        keywords = [t for t in _TOKEN_SPLIT.split(graph.name.lower()) if len(t) > 2]
+        return Intent(media=media, task=task, model_families=families, keywords=keywords)
 
+    def description_text(self, graph: WorkflowGraph) -> str:
+        """The text used for description-based comparison: the authoritative
+        catalog description (+ title + humanized filename). For the few workflows
+        the catalog does not describe, a fallback intent phrase keeps them
+        comparable instead of empty."""
+        parts: List[str] = []
+        if graph.index_description:
+            parts.append(graph.index_description)
+        if graph.index_title:
+            parts.append(graph.index_title)
+        parts.append(graph.name.replace("_", " "))
+        if not graph.index_description:
+            it = self.classify(graph)
+            parts.append(self.when_to_use(it.media, it.task, it.model_families))
+            parts.extend(it.model_families)
+        return " ".join(parts)
 
-def _model_families(text: str) -> List[str]:
-    matched = []
-    for label, subs in _MODEL_FAMILIES:
-        if any(s in text for s in subs):
-            matched.append(label)
-    suppressed = set()
-    for label in matched:
-        suppressed.update(_FAMILY_SUPPRESS.get(label, []))
-    # Preserve table order, drop suppressed generics and duplicates.
-    out: List[str] = []
-    for label, _subs in _MODEL_FAMILIES:
-        if label in matched and label not in suppressed and label not in out:
-            out.append(label)
-    return out
+    # --------------------------------------------------------------------- #
+    # Signals
+    # --------------------------------------------------------------------- #
+    def _search_text(self, graph: WorkflowGraph) -> str:
+        """Lowercased text to match vocab against: filename + catalog title/desc
+        + model-loader widget filenames."""
+        parts = [graph.name, graph.index_title or "", graph.index_description or ""]
+        for node in graph.nodes.values():
+            if classify_role(node.class_type) in ("model_loader", "lora_loader"):
+                wv = node.widgets_values
+                values = wv if isinstance(wv, list) else (wv.values() if isinstance(wv, dict) else [])
+                parts.extend(str(v) for v in values if isinstance(v, str))
+        # Match against two views so tokens hit regardless of separator style:
+        #   joined - raw, keeps "_" (matches "text_to_image", "wan2_2", "wan2.2")
+        #   norm   - "_"/"-" -> space (matches "wan 2.2")
+        # A fully separator-stripped view is deliberately avoided: it would fuse
+        # word boundaries (e.g. "an image" -> "animage", spuriously matching
+        # "anima").
+        joined = " ".join(parts).lower()
+        norm = joined.replace("_", " ").replace("-", " ")
+        return f"{norm} {joined}"
 
+    @staticmethod
+    def _model_families(text: str) -> List[str]:
+        matched = []
+        for label, subs in _MODEL_FAMILIES:
+            if any(s in text for s in subs):
+                matched.append(label)
+        suppressed = set()
+        for label in matched:
+            suppressed.update(_FAMILY_SUPPRESS.get(label, []))
+        # Preserve table order, drop suppressed generics and duplicates.
+        out: List[str] = []
+        for label, _subs in _MODEL_FAMILIES:
+            if label in matched and label not in suppressed and label not in out:
+                out.append(label)
+        return out
 
-def _task(text: str) -> Optional[str]:
-    for label, subs in _TASKS:
-        if any(s in text for s in subs):
-            return label
-    return None
+    @staticmethod
+    def _task(text: str) -> Optional[str]:
+        for label, subs in _TASKS:
+            if any(s in text for s in subs):
+                return label
+        return None
 
+    @staticmethod
+    def _media(graph: WorkflowGraph, task: Optional[str]) -> Optional[str]:
+        if task and task in _TASK_MEDIA:
+            return _TASK_MEDIA[task]
+        classes = {n.class_type.lower() for n in graph.nodes.values()}
+        if any("saveglb" in c or "splat" in c or "mesh" in c for c in classes):
+            return "3d"
+        if any("saveaudio" in c or c.startswith("audio") for c in classes):
+            return "audio"
+        if any("videocombine" in c or "createvideo" in c or "savevideo" in c for c in classes):
+            return "video"
+        if graph.media_type in ("image", "video", "audio"):
+            return graph.media_type
+        return "image"
 
-def _media(graph: WorkflowGraph, task: Optional[str]) -> Optional[str]:
-    if task and task in _TASK_MEDIA:
-        return _TASK_MEDIA[task]
-    classes = {n.class_type.lower() for n in graph.nodes.values()}
-    if any("saveglb" in c or "splat" in c or "mesh" in c for c in classes):
-        return "3d"
-    if any("saveaudio" in c or c.startswith("audio") for c in classes):
-        return "audio"
-    if any("videocombine" in c or "createvideo" in c or "savevideo" in c for c in classes):
-        return "video"
-    if graph.media_type in ("image", "video", "audio"):
-        return graph.media_type
-    return "image"
+    # --------------------------------------------------------------------- #
+    # Type-level aggregation + phrasing
+    # --------------------------------------------------------------------- #
+    @staticmethod
+    def dominant_task(tasks: List[str]) -> Optional[str]:
+        """Most frequent task; ties broken by _TASK_PRIORITY (generation > modifier)."""
+        if not tasks:
+            return None
+        counts = Counter(tasks)
+        rank = {t: i for i, t in enumerate(_TASK_PRIORITY)}
+        return sorted(counts.items(), key=lambda kv: (-kv[1], rank.get(kv[0], 999)))[0][0]
 
+    @staticmethod
+    def _article(word: str) -> str:
+        return "an" if word[:1] in "aeiou" else "a"
 
-def description_text(graph: WorkflowGraph) -> str:
-    """The text used for description-based clustering: the authoritative catalog
-    description (+ title + humanized filename). For the few workflows the catalog
-    does not describe, a fallback intent phrase keeps them comparable instead of
-    empty."""
-    parts: List[str] = []
-    if graph.index_description:
-        parts.append(graph.index_description)
-    if graph.index_title:
-        parts.append(graph.index_title)
-    parts.append(graph.name.replace("_", " "))
-    if not graph.index_description:
-        it = classify_intent(graph)
-        parts.append(when_to_use(it.media, it.task, it.model_families))
-        parts.extend(it.model_families)
-    return " ".join(parts)
+    def task_phrase(self, task: Optional[str], media: Optional[str] = None) -> str:
+        """Natural-language phrase for a task. Media-neutral tasks adapt to the
+        actual output media so a video controlnet does not read as 'an image'."""
+        phrase = _TASK_PHRASE.get(task or "", "run a node graph")
+        if "{m}" in phrase or "{am}" in phrase:
+            noun = media or "image"
+            phrase = phrase.replace("{am}", f"{self._article(noun)} {noun}").replace("{m}", noun)
+        return phrase
 
+    def when_to_use(self, media: Optional[str], task: Optional[str], families: List[str]) -> str:
+        phrase = self.task_phrase(task, media)
+        fam = f" using {', '.join(families)}" if families else ""
+        return f"Use to {phrase}{fam}."
 
-def classify_intent(graph: WorkflowGraph) -> Intent:
-    text = _search_text(graph)
-    task = _task(text)
-    media = _media(graph, task)
-    families = _model_families(text)
-    keywords = [t for t in _TOKEN_SPLIT.split(graph.name.lower()) if len(t) > 2]
-    return Intent(media=media, task=task, model_families=families, keywords=keywords)
-
-
-# --------------------------------------------------------------------------- #
-# Phrasing helpers (for type-level user_intent)
-# --------------------------------------------------------------------------- #
-def _article(word: str) -> str:
-    return "an" if word[:1] in "aeiou" else "a"
-
-
-def task_phrase(task: Optional[str], media: Optional[str] = None) -> str:
-    """Natural-language phrase for a task. Media-neutral tasks adapt to the
-    actual output media so a video controlnet does not read as 'an image'."""
-    phrase = _TASK_PHRASE.get(task or "", "run a node graph")
-    if "{m}" in phrase or "{am}" in phrase:
-        noun = media or "image"
-        phrase = phrase.replace("{am}", f"{_article(noun)} {noun}").replace("{m}", noun)
-    return phrase
-
-
-def when_to_use(media: Optional[str], task: Optional[str], families: List[str]) -> str:
-    phrase = task_phrase(task, media)
-    fam = f" using {', '.join(families)}" if families else ""
-    return f"Use to {phrase}{fam}."
-
-
-def example_requests(media: Optional[str], task: Optional[str], families: List[str]) -> List[str]:
-    media = media or "image"
-    out: List[str] = []
-    if families:
-        for fam in families:
-            out.append(f"build {_article(media)} {media} workflow using {fam}")
-    else:
-        out.append(f"build {_article(media)} {media} workflow")
-    tp = task_phrase(task, media)
-    out.append(tp + (f" using {families[0]}" if families else ""))
-    # Deterministic de-duplication preserving order.
-    seen, deduped = set(), []
-    for r in out:
-        if r not in seen:
-            seen.add(r)
-            deduped.append(r)
-    return deduped
+    def example_requests(self, media: Optional[str], task: Optional[str], families: List[str]) -> List[str]:
+        media = media or "image"
+        out: List[str] = []
+        if families:
+            for fam in families:
+                out.append(f"build {self._article(media)} {media} workflow using {fam}")
+        else:
+            out.append(f"build {self._article(media)} {media} workflow")
+        tp = self.task_phrase(task, media)
+        out.append(tp + (f" using {families[0]}" if families else ""))
+        # Deterministic de-duplication preserving order.
+        seen, deduped = set(), []
+        for r in out:
+            if r not in seen:
+                seen.add(r)
+                deduped.append(r)
+        return deduped

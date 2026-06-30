@@ -1,37 +1,42 @@
-"""Phase 4 - synthesize one recipe record per discovered workflow type.
+"""Synthesize the recipe database: task -> model -> node clusters.
 
 A recipe describes a *pattern* (node roles and relationships), not a literal
 copied subgraph. The two highest-value behaviors here:
 
-  Invariant detection - a node class present in ALL members of a type is a
-  structural invariant (mandatory); one present in only some is optional/variant.
+  Invariant detection - a node class present in ALL members of a (task, model)
+  group is a structural invariant (mandatory); one present in only some is
+  optional/variant.
 
-  Paired-node preservation - when a type consistently uses *multiple* instances
+  Paired-node preservation - when a group consistently uses *multiple* instances
   of the same class (e.g. two model loaders for a high-noise/low-noise pair),
   both are surfaced as required. These are never collapsed into one role, and
   where the instances play structurally distinct roles that is recorded too.
 
-Roles are expressed functionally (classify_role); when a node has no known role
-its class name is used so custom/unknown nodes stay distinguishable.
+Roles are expressed functionally (roles.classify_role); when a node has no known
+role its class name is used so custom/unknown nodes stay distinguishable.
 
-The database is self-contained: every type carries a populated ``description``
+The database is self-contained: every leaf carries a populated ``description``
 (authoritative catalog text when available, else synthesized from intent and
 structure) and a ``user_intent`` block (media / task / model families /
 when_to_use / example_requests) so the researcher can match a request like
 "build a video workflow using WAN 2.2" without any human annotation step.
+
+  RecipeBuilder.build(graphs) -> RecipeDatabase   (the task->model tree)
+  RecipeBuilder.node_knowledge(...)               (per node-class signatures)
+  RecipeDatabase.to_json_dict() / .to_report_markdown()
 """
 
 from __future__ import annotations
 
 import re
 from collections import Counter, defaultdict
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-from . import intent as intent_mod
-from . import taxonomy as taxonomy_mod
-from .cluster import Cluster
-from .fingerprint import Fingerprint, classify_role, role_description, SPINE_ROLES
-from .parser import WorkflowGraph
+from .intent import IntentClassifier
+from .model import WorkflowGraph
+from .roles import classify_role, is_utility, role_description, role_or_class
+from .taxonomy import TaxonomyClassifier
 
 
 # Honor the hyphen-only rule: normalize en/em dashes and arrows in any embedded
@@ -50,44 +55,10 @@ def sanitize_text(text: str) -> str:
         text = text.replace(bad, good)
     return text
 
+
 # Data types that represent workflow content crossing the boundary (as opposed
 # to internal config like MODEL/CLIP/VAE weights).
 _CONTENT_TYPES = {"IMAGE", "VIDEO", "AUDIO", "MASK", "LATENT", "MESH", "STRING"}
-
-_OUTPUT_HINT = {
-    "IMAGE": "image", "MASK": "image", "VIDEO": "video", "LATENT": "latent",
-    "AUDIO": "audio", "MESH": "model", "STRING": "text",
-}
-
-# Short tokens for spine roles, used only to build structural slugs.
-_ROLE_ABBR = {
-    "model_loader": "ld", "sampler": "sample", "vae_decode": "dec",
-    "vae_encode": "enc", "text_encode": "txt", "latent_source": "lat",
-    "api_node": "api",
-}
-
-
-def role_or_class(class_type: str) -> str:
-    """Functional role when known, else the raw class name (keeps custom nodes
-    distinguishable instead of bucketing them all as 'other')."""
-    role = classify_role(class_type)
-    return role if role != "other" else class_type
-
-
-# Plumbing nodes that are frequently present in multiples but carry no
-# functional intent (primitives, math, switches, reroutes, string/json ops).
-# Used only to keep the "paired/multiple required" emphasis on meaningful nodes;
-# it does NOT affect fingerprinting or clustering.
-_UTILITY_SUBSTRINGS = (
-    "primitive", "reroute", "comfymathexpression", "comfynumberconvert",
-    "comfyswitchnode", "mathint", "mathfloat", "getimagesize",
-    "stringreplace", "stringconcatenate", "jsonextractstring", "previewany",
-)
-
-
-def is_utility(class_type: str) -> bool:
-    name = (class_type or "").lower()
-    return any(s in name for s in _UTILITY_SUBSTRINGS)
 
 
 # --------------------------------------------------------------------------- #
@@ -314,7 +285,7 @@ def _param_variability(members: List[WorkflowGraph], required: List[Dict]) -> st
 
 
 # --------------------------------------------------------------------------- #
-# Custom / unresolved nodes and annotation policy
+# Custom / unresolved nodes and catalog metadata
 # --------------------------------------------------------------------------- #
 def _custom_and_unresolved(members: List[WorkflowGraph]) -> Tuple[List[str], List[str]]:
     unresolved: set = set()
@@ -352,15 +323,6 @@ def _category_info(members: List[WorkflowGraph]) -> Dict:
     }
 
 
-def _suggested_title(members: List[WorkflowGraph]) -> Optional[str]:
-    """A human title hint from the catalog: the most common member title (ties
-    broken alphabetically), or None if no member carries a catalog title."""
-    titles = [g.index_title for g in members if g.index_title]
-    if not titles:
-        return None
-    return sorted(Counter(titles).items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
-
-
 def _member_descriptions(members: List[WorkflowGraph]) -> List[Dict]:
     """Authoritative per-member catalog descriptions (only where present)."""
     out = []
@@ -373,144 +335,10 @@ def _member_descriptions(members: List[WorkflowGraph]) -> List[Dict]:
     return out
 
 
-def _user_intent(members: List[WorkflowGraph]) -> Dict:
-    """Aggregate per-member intent into a type-level matching surface."""
-    intents = [intent_mod.classify_intent(g) for g in members]
-    media = _dominant([i.media for i in intents if i.media])
-    task = intent_mod.dominant_task([i.task for i in intents if i.task])
-    fam_counter: Counter = Counter()
-    for i in intents:
-        for fam in i.model_families:
-            fam_counter[fam] += 1
-    # Order families by frequency then name (deterministic).
-    families = [f for f, _c in sorted(fam_counter.items(), key=lambda kv: (-kv[1], kv[0]))]
-    return {
-        "media": media,
-        "task": task,
-        "model_families": families,
-        "when_to_use": intent_mod.when_to_use(media, task, families),
-        "example_requests": intent_mod.example_requests(media, task, families),
-    }
-
-
 def _dominant(values: List) -> Optional[str]:
     if not values:
         return None
     return sorted(Counter(values).items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
-
-
-def _synthesized_description(required: List[Dict], boundary: Dict, user_intent: Dict) -> str:
-    """A factual description for types lacking authoritative catalog text.
-
-    Built from the derived intent plus the structural spine, so it is concrete
-    and self-contained (no placeholder / draft language)."""
-    lead = intent_mod.task_phrase(
-        user_intent.get("task"), user_intent.get("media")
-    ).capitalize()
-    fam = user_intent.get("model_families") or []
-    fam_clause = f" using {', '.join(fam)}" if fam else ""
-    roles = [e["role_key"] for e in required]
-    bits = []
-    if "model_loader" in roles:
-        bits.append("loads a diffusion model")
-    if "vae_loader" in roles or "vae_decode" in roles:
-        bits.append("uses a VAE")
-    if "text_encode" in roles:
-        bits.append("encodes a text prompt")
-    if "latent_source" in roles:
-        bits.append("starts from an empty latent")
-    if "sampler" in roles:
-        bits.append("runs a diffusion sampler")
-    if "vae_decode" in roles:
-        bits.append("decodes the latent to pixels")
-    in_types = ", ".join(sorted({p["data_type"] for p in boundary.get("inputs", [])})) or "none"
-    out_types = ", ".join(sorted({p["data_type"] for p in boundary.get("outputs", [])})) or "none"
-    body = "; ".join(bits) if bits else "applies a sequence of node operations"
-    return sanitize_text(
-        f"{lead}{fam_clause}. Structurally it {body}. "
-        f"Boundary inputs: {in_types}; outputs: {out_types}."
-    )
-
-
-def _description(members: List[WorkflowGraph], required: List[Dict],
-                 boundary: Dict, user_intent: Dict) -> Tuple[str, str]:
-    """Return an always-populated (description, description_source).
-
-    Authoritative catalog descriptions are preferred (and used even for
-    custom-node types). When only some members are described, the catalog text
-    is kept and the source notes the mix; when none are, a factual description is
-    synthesized from intent + structure."""
-    described = [(g.name, g.index_description) for g in members if g.index_description]
-    if not described:
-        return _synthesized_description(required, boundary, user_intent), "synthesized"
-
-    unique = sorted({sanitize_text(d) for _n, d in described})
-    if len(unique) == 1:
-        text = unique[0]
-    else:
-        text = " | ".join(unique)
-    source = "catalog" if len(described) == len(members) else "catalog+synthesized"
-    return text, source
-
-
-# --------------------------------------------------------------------------- #
-# Slugs (deterministic, structural - not semantic intent)
-# --------------------------------------------------------------------------- #
-# Priority for choosing the slug's content hint when a type has several output
-# data types (e.g. a video graph emits both IMAGE frames and AUDIO).
-_OUTPUT_PRIORITY = ["MESH", "VIDEO", "IMAGE", "LATENT", "MASK", "AUDIO", "STRING"]
-
-
-def _slugify(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
-
-
-def _slug(members: List[WorkflowGraph], boundary: Dict, user_intent: Dict,
-          canonical_category: Optional[str] = None) -> str:
-    """A readable, deterministic id. Prefers the canonical category (e.g.
-    "image_to_video"); falls back to intent (task + model family), then to a
-    structural signature."""
-    if canonical_category:
-        return _slugify(canonical_category)
-    task = user_intent.get("task")
-    media = user_intent.get("media")
-    families = user_intent.get("model_families") or []
-    parts: List[str] = []
-    if task:
-        parts.append(task)
-    elif media:
-        parts.append(media)
-    if families:
-        parts.append(_slugify(families[0]))
-    base = "_".join(p for p in parts if p)
-    if base:
-        return base
-
-    # Structural fallback (no task/media/family resolved).
-    out_types = {p["data_type"] for p in boundary.get("outputs", [])}
-    primary = next((t for t in _OUTPUT_PRIORITY if t in out_types), None)
-    hint = _OUTPUT_HINT.get(primary, "") if primary else ""
-    spine = sorted({
-        classify_role(c)
-        for g in members for c in {n.class_type for n in g.nodes.values()}
-        if classify_role(c) in SPINE_ROLES
-    })
-    tokens = [hint] + [_ROLE_ABBR.get(r, r) for r in spine[:3]]
-    return "_".join(t for t in tokens if t) or "type"
-
-
-def _assign_ids(recipes: List[Dict]) -> None:
-    """Assign deterministic, de-duplicated ids to recipes (already ordered)."""
-    seen: Counter = Counter()
-    for r in recipes:
-        base = r.pop("_slug")
-        seen[base] += 1
-        r_id = base if seen[base] == 1 else f"{base}_{seen[base]}"
-        # Re-key so 'id' is first in the dict for readability.
-        new = {"id": r_id}
-        new.update(r)
-        r.clear()
-        r.update(new)
 
 
 # --------------------------------------------------------------------------- #
@@ -555,7 +383,7 @@ def _node_clusters(required: List[Dict]) -> List[Dict]:
 
 
 # --------------------------------------------------------------------------- #
-# Recipe body (shared by flat and hierarchical builders)
+# API / execution
 # --------------------------------------------------------------------------- #
 def _api_info(members: List[WorkflowGraph]) -> Tuple[bool, List[str]]:
     """Whether any member uses ComfyUI API / partner nodes (which call out to a
@@ -580,166 +408,326 @@ def _execution(task: str, uses_api: bool) -> str:
     return "hybrid" if uses_api else "local"
 
 
-def _recipe_body(members: List[WorkflowGraph]) -> Dict:
-    required, optional = _node_roles(members)
-    boundary = _boundary_ports(members)
-    unresolved, custom = _custom_and_unresolved(members)
-    sources = sorted({g.source for g in members})
-    user_intent = _user_intent(members)
-    description, description_source = _description(members, required, boundary, user_intent)
-    uses_api, api_classes = _api_info(members)
-    return {
-        "source": sources[0] if len(sources) == 1 else "mixed",
-        "uses_api_nodes": uses_api,
-        "api_node_classes": api_classes,
-        "member_files": sorted(g.name for g in members),
-        "member_descriptions": _member_descriptions(members),
-        "member_count": len(members),
-        "user_intent": user_intent,
-        "description": description,
-        "description_source": description_source,
-        "node_clusters": _node_clusters(required),
-        "required_node_roles": required,
-        "optional_node_roles": optional,
-        "connection_patterns": _connection_patterns(members),
-        "boundary_ports": boundary,
-        "param_variability": _param_variability(members, required),
-        "catalog_category": _category_info(members),
-        "unresolved_nodes": unresolved,
-        "custom_nodes": custom,
-    }
-
-
-def _primary_model(graph: WorkflowGraph) -> str:
-    """The single model family a workflow is filed under (its first detected
-    family), or "Generic" when no model family is detected (e.g. GLSL filters)."""
-    fams = intent_mod.classify_intent(graph).model_families
-    return fams[0] if fams else "Generic"
+def _slugify(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
 
 
 # --------------------------------------------------------------------------- #
-# Top-level builders
+# The database
 # --------------------------------------------------------------------------- #
-def build_recipes(
-    graphs: List[WorkflowGraph],
-    clusters: List[Cluster],
-    object_info_available: bool = True,
-) -> List[Dict]:
-    """Flat recipe list (one per cluster) - used by the description / structural
-    grouping modes."""
-    recipes: List[Dict] = []
-    for c in clusters:
-        members = [graphs[m] for m in c.members]
-        body = _recipe_body(members)
-        canonical_category = _dominant([taxonomy_mod.classify(g) for g in members])
-        recipe = {
-            "_slug": _slug(members, body["boundary_ports"], body["user_intent"],
-                           canonical_category),
-            "canonical_category": canonical_category,
-            "execution": _execution(canonical_category, body["uses_api_nodes"]),
-            "suggested_title": _suggested_title(members),
-            "cohesion": round(c.cohesion, 4),
+@dataclass
+class RecipeDatabase:
+    """The hierarchical recipe database: task -> model -> node clusters.
+
+    ``tasks`` is the nested tree (each task carries its ``models`` leaves);
+    ``leaves`` is the same leaves flattened for node-knowledge usage links."""
+
+    tasks: List[Dict] = field(default_factory=list)
+    leaves: List[Dict] = field(default_factory=list)
+    workflow_count: int = 0
+
+    @property
+    def recipe_count(self) -> int:
+        return sum(t["model_count"] for t in self.tasks)
+
+    def to_json_dict(self) -> Dict:
+        return {
+            "structure": "task -> model -> node clusters",
+            "generated_from": {
+                "workflow_count": self.workflow_count,
+                "task_count": len(self.tasks),
+                "recipe_count": self.recipe_count,
+            },
+            "tasks": self.tasks,
         }
-        recipe.update(body)
-        recipes.append(recipe)
-    recipes.sort(key=lambda r: (-r["member_count"], r["_slug"], r["member_files"]))
-    _assign_ids(recipes)
-    return recipes
+
+    def to_report_markdown(self) -> str:
+        lines: List[str] = []
+        lines.append("# Workflow recipe database  (task -> model -> node clusters)")
+        lines.append("")
+        lines.append(f"- Tasks: {len(self.tasks)} | "
+                     f"task+model recipes: {self.recipe_count}")
+        lines.append("- Self-contained: every recipe has user_intent + description + "
+                     "node clusters. No human annotation step.")
+        lines.append("")
+
+        for t in self.tasks:
+            lines.append(f"# {t['task']}  (`{t['id']}`)  -  {t['member_count']} workflow(s), "
+                         f"{t['model_count']} model(s)")
+            lines.append("")
+            for m in t["models"]:
+                ui = m["user_intent"]
+                lines.append(f"## {t['task']} / {m['model']}  (`{m['id']}`)  -  "
+                             f"{m['member_count']} workflow(s)  -  source: {m['source']}")
+                exec_note = m["execution"]
+                if m["api_node_classes"]:
+                    exec_note += f" (API nodes: {', '.join(m['api_node_classes'])})"
+                lines.append(f"- execution: {exec_note}")
+                lines.append(f"- when to use: {ui.get('when_to_use')}")
+                ex = ui.get("example_requests", [])
+                if ex:
+                    lines.append(f"- example request: \"{ex[0]}\"")
+                lines.append(f"- description: {m['description']}")
+                lines.append("- member workflows:")
+                for mf in m["member_files"]:
+                    lines.append(f"    - {mf}")
+                lines.append("- node clusters (required structure):")
+                if m["node_clusters"]:
+                    for nc in m["node_clusters"]:
+                        lines.append(f"    - {nc['cluster']}: {', '.join(nc['nodes'])}")
+                else:
+                    lines.append("    - (none resolved)")
+                paired = [e for e in m["required_node_roles"] if e.get("paired_or_multiple")]
+                if paired:
+                    lines.append("- paired/multiple required: "
+                                 + ", ".join(f"{e['node_class']} x{e['min_instances']}"
+                                             for e in paired))
+                opt = [e["node_class"] for e in m["optional_node_roles"] if not e.get("utility")]
+                if opt:
+                    lines.append(f"- optional roles: {', '.join(opt[:12])}")
+                if m["unresolved_nodes"]:
+                    lines.append(f"- unresolved nodes: {', '.join(m['unresolved_nodes'])}")
+                lines.append("")
+            lines.append("")
+
+        return "\n".join(lines)
 
 
-def build_database(graphs: List[WorkflowGraph]) -> Tuple[List[Dict], List[Dict]]:
-    """Hierarchical database: task -> model -> node clusters.
+# --------------------------------------------------------------------------- #
+# The builder
+# --------------------------------------------------------------------------- #
+class RecipeBuilder:
+    """Synthesize the recipe database and the per-node-class knowledge from a
+    parsed corpus. Pure functions do the structural work; this class wires in the
+    intent + taxonomy classifiers that the leaf records depend on."""
 
-    Level 1 is the canonical task category (taxonomy.classify); level 2 is the
-    model family the workflow is filed under; the leaf is a tight recipe (node
-    clusters + roles + connections) over the workflows sharing that task+model.
+    def __init__(
+        self,
+        intent: Optional[IntentClassifier] = None,
+        taxonomy: Optional[TaxonomyClassifier] = None,
+    ) -> None:
+        self._intent = intent or IntentClassifier()
+        self._taxonomy = taxonomy or TaxonomyClassifier()
 
-    Returns (tasks_tree, flat_leaves). The flat leaves are reused for
-    node-knowledge usage links."""
-    groups: Dict[Tuple[str, str], List[int]] = defaultdict(list)
-    for i, g in enumerate(graphs):
-        groups[(taxonomy_mod.classify(g), _primary_model(g))].append(i)
+    # --------------------------------------------------------------------- #
+    # Recipe body (shared per (task, model) group)
+    # --------------------------------------------------------------------- #
+    def recipe_body(self, members: List[WorkflowGraph]) -> Dict:
+        required, optional = _node_roles(members)
+        boundary = _boundary_ports(members)
+        unresolved, custom = _custom_and_unresolved(members)
+        sources = sorted({g.source for g in members})
+        user_intent = self._user_intent(members)
+        description, description_source = self._description(members, required, boundary, user_intent)
+        uses_api, api_classes = _api_info(members)
+        return {
+            "source": sources[0] if len(sources) == 1 else "mixed",
+            "uses_api_nodes": uses_api,
+            "api_node_classes": api_classes,
+            "member_files": sorted(g.name for g in members),
+            "member_descriptions": _member_descriptions(members),
+            "member_count": len(members),
+            "user_intent": user_intent,
+            "description": description,
+            "description_source": description_source,
+            "node_clusters": _node_clusters(required),
+            "required_node_roles": required,
+            "optional_node_roles": optional,
+            "connection_patterns": _connection_patterns(members),
+            "boundary_ports": boundary,
+            "param_variability": _param_variability(members, required),
+            "catalog_category": _category_info(members),
+            "unresolved_nodes": unresolved,
+            "custom_nodes": custom,
+        }
 
-    by_task: Dict[str, List[Dict]] = defaultdict(list)
-    flat_leaves: List[Dict] = []
-    for (task, model), idxs in groups.items():
-        members = [graphs[i] for i in sorted(idxs)]
-        body = _recipe_body(members)
-        leaf = {"id": f"{_slugify(task)}__{_slugify(model)}", "model": model,
-                "execution": _execution(task, body["uses_api_nodes"])}
-        leaf.update(body)
-        by_task[task].append(leaf)
-        flat_leaves.append(leaf)
-
-    tasks: List[Dict] = []
-    for task, leaves in by_task.items():
-        leaves.sort(key=lambda r: (-r["member_count"], r["model"]))
-        tasks.append({
+    def _user_intent(self, members: List[WorkflowGraph]) -> Dict:
+        """Aggregate per-member intent into a type-level matching surface."""
+        intents = [self._intent.classify(g) for g in members]
+        media = _dominant([i.media for i in intents if i.media])
+        task = self._intent.dominant_task([i.task for i in intents if i.task])
+        fam_counter: Counter = Counter()
+        for i in intents:
+            for fam in i.model_families:
+                fam_counter[fam] += 1
+        # Order families by frequency then name (deterministic).
+        families = [f for f, _c in sorted(fam_counter.items(), key=lambda kv: (-kv[1], kv[0]))]
+        return {
+            "media": media,
             "task": task,
-            "id": _slugify(task),
-            "execution": "api" if task.startswith("API / Partner Nodes") else "local",
-            "member_count": sum(l["member_count"] for l in leaves),
-            "model_count": len(leaves),
-            "models": leaves,
-        })
-    tasks.sort(key=lambda t: (-t["member_count"], t["task"]))
-    return tasks, flat_leaves
+            "model_families": families,
+            "when_to_use": self._intent.when_to_use(media, task, families),
+            "example_requests": self._intent.example_requests(media, task, families),
+        }
+
+    def _synthesized_description(self, required: List[Dict], boundary: Dict, user_intent: Dict) -> str:
+        """A factual description for types lacking authoritative catalog text.
+
+        Built from the derived intent plus the structural spine, so it is concrete
+        and self-contained (no placeholder / draft language)."""
+        lead = self._intent.task_phrase(
+            user_intent.get("task"), user_intent.get("media")
+        ).capitalize()
+        fam = user_intent.get("model_families") or []
+        fam_clause = f" using {', '.join(fam)}" if fam else ""
+        roles = [e["role_key"] for e in required]
+        bits = []
+        if "model_loader" in roles:
+            bits.append("loads a diffusion model")
+        if "vae_loader" in roles or "vae_decode" in roles:
+            bits.append("uses a VAE")
+        if "text_encode" in roles:
+            bits.append("encodes a text prompt")
+        if "latent_source" in roles:
+            bits.append("starts from an empty latent")
+        if "sampler" in roles:
+            bits.append("runs a diffusion sampler")
+        if "vae_decode" in roles:
+            bits.append("decodes the latent to pixels")
+        in_types = ", ".join(sorted({p["data_type"] for p in boundary.get("inputs", [])})) or "none"
+        out_types = ", ".join(sorted({p["data_type"] for p in boundary.get("outputs", [])})) or "none"
+        body = "; ".join(bits) if bits else "applies a sequence of node operations"
+        return sanitize_text(
+            f"{lead}{fam_clause}. Structurally it {body}. "
+            f"Boundary inputs: {in_types}; outputs: {out_types}."
+        )
+
+    def _description(self, members: List[WorkflowGraph], required: List[Dict],
+                     boundary: Dict, user_intent: Dict) -> Tuple[str, str]:
+        """Return an always-populated (description, description_source).
+
+        Authoritative catalog descriptions are preferred (and used even for
+        custom-node types). When only some members are described, the catalog
+        text is kept and the source notes the mix; when none are, a factual
+        description is synthesized from intent + structure."""
+        described = [(g.name, g.index_description) for g in members if g.index_description]
+        if not described:
+            return self._synthesized_description(required, boundary, user_intent), "synthesized"
+
+        unique = sorted({sanitize_text(d) for _n, d in described})
+        if len(unique) == 1:
+            text = unique[0]
+        else:
+            text = " | ".join(unique)
+        source = "catalog" if len(described) == len(members) else "catalog+synthesized"
+        return text, source
+
+    def _primary_model(self, graph: WorkflowGraph) -> str:
+        """The single model family a workflow is filed under (its first detected
+        family), or "Generic" when no model family is detected (e.g. GLSL filters)."""
+        fams = self._intent.classify(graph).model_families
+        return fams[0] if fams else "Generic"
+
+    # --------------------------------------------------------------------- #
+    # Top-level build
+    # --------------------------------------------------------------------- #
+    def build(self, graphs: List[WorkflowGraph]) -> RecipeDatabase:
+        """Hierarchical database: task -> model -> node clusters.
+
+        Level 1 is the canonical task category (taxonomy); level 2 is the model
+        family the workflow is filed under; the leaf is a tight recipe (node
+        clusters + roles + connections) over the workflows sharing that
+        task+model."""
+        groups: Dict[Tuple[str, str], List[int]] = defaultdict(list)
+        for i, g in enumerate(graphs):
+            groups[(self._taxonomy.classify(g), self._primary_model(g))].append(i)
+
+        by_task: Dict[str, List[Dict]] = defaultdict(list)
+        flat_leaves: List[Dict] = []
+        for (task, model), idxs in groups.items():
+            members = [graphs[i] for i in sorted(idxs)]
+            body = self.recipe_body(members)
+            leaf = {"id": f"{_slugify(task)}__{_slugify(model)}", "model": model,
+                    "execution": _execution(task, body["uses_api_nodes"])}
+            leaf.update(body)
+            by_task[task].append(leaf)
+            flat_leaves.append(leaf)
+
+        tasks: List[Dict] = []
+        for task, leaves in by_task.items():
+            leaves.sort(key=lambda r: (-r["member_count"], r["model"]))
+            tasks.append({
+                "task": task,
+                "id": _slugify(task),
+                "execution": "api" if task.startswith("API / Partner Nodes") else "local",
+                "member_count": sum(l["member_count"] for l in leaves),
+                "model_count": len(leaves),
+                "models": leaves,
+            })
+        tasks.sort(key=lambda t: (-t["member_count"], t["task"]))
+        return RecipeDatabase(tasks=tasks, leaves=flat_leaves, workflow_count=len(graphs))
+
+    # --------------------------------------------------------------------- #
+    # Node knowledge - per node class used in the corpus (for the wiring brain)
+    # --------------------------------------------------------------------- #
+    def node_knowledge(
+        self,
+        graphs: List[WorkflowGraph],
+        recipes: List[Dict],
+        object_info: Optional[Dict] = None,
+    ) -> List[Dict]:
+        """Describe every node class used in the corpus so the brain can wire
+        nodes to standard: role, custom flag, I/O signature (from object_info),
+        and which recipes use it. Bounded to classes actually present in the
+        corpus. ``recipes`` is the flat leaves list (each with id + member_files)."""
+        object_info = object_info or {}
+        name_to_type = {
+            mf: r["id"] for r in recipes for mf in r["member_files"]
+        }
+
+        occ: Counter = Counter()
+        types_by_class: Dict[str, set] = defaultdict(set)
+        custom_flag: Dict[str, bool] = {}
+        resolved_flag: Dict[str, bool] = {}
+        for g in graphs:
+            tid = name_to_type.get(g.name)
+            for node in g.nodes.values():
+                cls = node.class_type
+                occ[cls] += 1
+                if tid:
+                    types_by_class[cls].add(tid)
+                custom_flag[cls] = custom_flag.get(cls, False) or node.is_custom
+                resolved_flag[cls] = resolved_flag.get(cls, False) or node.resolved
+
+        out: List[Dict] = []
+        for cls in sorted(occ):
+            info = object_info.get(cls, {})
+            spec = info.get("input", {}) if isinstance(info, dict) else {}
+            required_in = sorted((spec.get("required", {}) or {}).keys())
+            optional_in = sorted((spec.get("optional", {}) or {}).keys())
+            input_types = {}
+            for section in ("required", "optional"):
+                for nm, decl in (spec.get(section, {}) or {}).items():
+                    t = decl[0] if isinstance(decl, list) and decl else decl
+                    input_types[nm] = "COMBO" if isinstance(t, list) else str(t)
+            outputs = []
+            for t in (info.get("output", []) if isinstance(info, dict) else []):
+                outputs.append("COMBO" if isinstance(t, list) else str(t))
+            role = classify_role(cls)
+            out.append({
+                "class": cls,
+                "role": role,
+                "role_description": role_description(role),
+                "resolved": resolved_flag.get(cls, False),
+                "is_custom": custom_flag.get(cls, False),
+                "inputs": {"required": required_in, "optional": optional_in, "types": input_types},
+                "outputs": outputs,
+                "used_in_type_ids": sorted(types_by_class.get(cls, set())),
+                "occurrences": occ[cls],
+            })
+        return out
 
 
-# --------------------------------------------------------------------------- #
-# Node knowledge - per node class used in the corpus (for the wiring "brain")
-# --------------------------------------------------------------------------- #
-def build_node_knowledge(
-    graphs: List[WorkflowGraph],
-    recipes: List[Dict],
-    object_info: Optional[Dict] = None,
-) -> List[Dict]:
-    """Describe every node class used in the corpus so the brain can wire nodes
-    to standard: role, custom flag, I/O signature (from object_info), and which
-    types use it. Bounded to classes actually present in the corpus."""
-    object_info = object_info or {}
-    name_to_type = {
-        mf: r["id"] for r in recipes for mf in r["member_files"]
+def node_knowledge_json_dict(node_knowledge: List[Dict], workflow_count: int) -> Dict:
+    """The wrapped payload written to the node-knowledge JSON file."""
+    custom = sum(1 for n in node_knowledge if n["is_custom"])
+    unresolved = sum(1 for n in node_knowledge if not n["resolved"])
+    return {
+        "generated_from": {
+            "workflow_count": workflow_count,
+            "node_class_count": len(node_knowledge),
+            "custom_classes": custom,
+            "unresolved_classes": unresolved,
+        },
+        "nodes": node_knowledge,
     }
-
-    occ: Counter = Counter()
-    types_by_class: Dict[str, set] = defaultdict(set)
-    custom_flag: Dict[str, bool] = {}
-    resolved_flag: Dict[str, bool] = {}
-    for g in graphs:
-        tid = name_to_type.get(g.name)
-        for node in g.nodes.values():
-            cls = node.class_type
-            occ[cls] += 1
-            if tid:
-                types_by_class[cls].add(tid)
-            custom_flag[cls] = custom_flag.get(cls, False) or node.is_custom
-            resolved_flag[cls] = resolved_flag.get(cls, False) or node.resolved
-
-    out: List[Dict] = []
-    for cls in sorted(occ):
-        info = object_info.get(cls, {})
-        spec = info.get("input", {}) if isinstance(info, dict) else {}
-        required_in = sorted((spec.get("required", {}) or {}).keys())
-        optional_in = sorted((spec.get("optional", {}) or {}).keys())
-        input_types = {}
-        for section in ("required", "optional"):
-            for nm, decl in (spec.get(section, {}) or {}).items():
-                t = decl[0] if isinstance(decl, list) and decl else decl
-                input_types[nm] = "COMBO" if isinstance(t, list) else str(t)
-        outputs = []
-        for t in (info.get("output", []) if isinstance(info, dict) else []):
-            outputs.append("COMBO" if isinstance(t, list) else str(t))
-        role = classify_role(cls)
-        out.append({
-            "class": cls,
-            "role": role,
-            "role_description": role_description(role),
-            "resolved": resolved_flag.get(cls, False),
-            "is_custom": custom_flag.get(cls, False),
-            "inputs": {"required": required_in, "optional": optional_in, "types": input_types},
-            "outputs": outputs,
-            "used_in_type_ids": sorted(types_by_class.get(cls, set())),
-            "occurrences": occ[cls],
-        })
-    return out

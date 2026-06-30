@@ -1,14 +1,14 @@
 """Unit tests for index.json (catalog) handling: parsing, category aggregation,
-and description-sourced annotation notes."""
+and the description-field policy."""
 
 import json
 import os
 import tempfile
 import unittest
 
-from workflow_recipes import parser as P
-from workflow_recipes import recipe_builder as R
-from workflow_recipes.cluster import Cluster
+from src.tools.workflow_recipes import parser as P
+from src.tools.workflow_recipes import recipe as R
+from src.tools.workflow_recipes.recipe import RecipeBuilder
 
 OFFICIAL_INDEX = [
     {
@@ -33,6 +33,11 @@ OFFICIAL_INDEX = [
 
 # Custom-shape index (no descriptions) must be handled gracefully.
 CUSTOM_INDEX = [{"templates": [{"name": "my_custom_wf", "models": [], "io": {}}]}]
+
+
+def _leaf(graphs):
+    """The single (task, model) leaf for a homogeneous set of graphs."""
+    return RecipeBuilder().build(graphs).leaves[0]
 
 
 class TestLoadDescriptions(unittest.TestCase):
@@ -95,8 +100,7 @@ class TestDescriptionField(unittest.TestCase):
         # description (even for custom-node types), with provenance noted.
         g = _graph("vid", ["VHS_VideoCombine"], source="official",
                    category="Video Tools", description="Combines frames into a video.")
-        recipe = R.build_recipes([g], [Cluster(members=[0], cohesion=1.0)],
-                                 object_info_available=True)[0]
+        recipe = _leaf([g])
         self.assertEqual(recipe["description"], "Combines frames into a video.")
         self.assertEqual(recipe["description_source"], "catalog")
         self.assertEqual(recipe["catalog_category"]["primary"], "Video Tools")
@@ -106,16 +110,14 @@ class TestDescriptionField(unittest.TestCase):
     def test_description_always_populated_for_custom(self):
         g = _graph("c", ["MyCustomThing"], source="custom")  # no category/desc
         g = P.enrich(g, {})  # MyCustomThing unresolved
-        recipe = R.build_recipes([g], [Cluster(members=[0], cohesion=1.0)],
-                                 object_info_available=True)[0]
+        recipe = _leaf([g])
         self.assertTrue(recipe["description"])                 # never blank
         self.assertEqual(recipe["description_source"], "synthesized")
 
     def test_arrow_and_endash_sanitized_in_description(self):
         g = _graph("k", ["VHS_VideoCombine"], source="custom",
                    description="image → video – done")
-        recipe = R.build_recipes([g], [Cluster(members=[0], cohesion=1.0)],
-                                 object_info_available=True)[0]
+        recipe = _leaf([g])
         self.assertNotIn("→", recipe["description"])
         self.assertNotIn("–", recipe["description"])
         self.assertIn("->", recipe["description"])

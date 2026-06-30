@@ -1,11 +1,11 @@
 """Unit tests for recipe synthesis: invariant vs optional roles, the critical
-paired-node case, boundary ports, and the annotation policy."""
+paired-node case, boundary ports, the self-contained record policy, and the
+hierarchical (task -> model) build."""
 
 import unittest
 
-from workflow_recipes import parser as P
-from workflow_recipes import recipe_builder as R
-from workflow_recipes.cluster import Cluster
+from src.tools.workflow_recipes import parser as P
+from src.tools.workflow_recipes.recipe import RecipeBuilder
 
 
 def _graph(nodes, links, name, source="official", object_info=None):
@@ -14,8 +14,10 @@ def _graph(nodes, links, name, source="official", object_info=None):
     return P.enrich(g, object_info or {})
 
 
-def _single_cluster(graphs):
-    return [Cluster(members=list(range(len(graphs))), cohesion=1.0)]
+def _leaf(graphs):
+    """The single (task, model) leaf for a homogeneous set of graphs."""
+    db = RecipeBuilder().build(graphs)
+    return db.leaves[0]
 
 
 # Core object_info so these graphs count as pure-core (no custom/unresolved).
@@ -56,8 +58,7 @@ class TestPairedNodes(unittest.TestCase):
 
     def test_two_loaders_both_required(self):
         graphs = [self._two_loader_graph("a"), self._two_loader_graph("b")]
-        recipes = R.build_recipes(graphs, _single_cluster(graphs), object_info_available=True)
-        recipe = recipes[0]
+        recipe = _leaf(graphs)
         loader = [e for e in recipe["required_node_roles"] if e["node_class"] == "UNETLoader"]
         self.assertEqual(len(loader), 1, "should be one aggregated entry for the class")
         entry = loader[0]
@@ -78,9 +79,8 @@ class TestPairedNodes(unittest.TestCase):
         ]
         one_links = [[1, 1, 0, 3, 0, "MODEL"], [4, 3, 0, 5, 0, "LATENT"], [5, 5, 0, 6, 0, "IMAGE"]]
         one = _graph(one_nodes, one_links, "one", object_info=CORE_INFO)
-        graphs = [two, one]
-        recipes = R.build_recipes(graphs, _single_cluster(graphs), object_info_available=True)
-        entry = [e for e in recipes[0]["required_node_roles"] if e["node_class"] == "UNETLoader"][0]
+        recipe = _leaf([two, one])
+        entry = [e for e in recipe["required_node_roles"] if e["node_class"] == "UNETLoader"][0]
         self.assertEqual(entry["min_instances"], 1)
         self.assertFalse(entry.get("paired_or_multiple", False))
 
@@ -98,8 +98,7 @@ class TestInvariantVsOptional(unittest.TestCase):
         g2_nodes = base_nodes + [{"id": 4, "type": "LoraLoader", "widgets_values": ["l"]}]
         g2_links = base_links + [[3, 4, 0, 1, 0, "MODEL"]]
         g2 = _graph(g2_nodes, g2_links, "g2", object_info=CORE_INFO)
-        graphs = [g1, g2]
-        recipe = R.build_recipes(graphs, _single_cluster(graphs), object_info_available=True)[0]
+        recipe = _leaf([g1, g2])
         req_classes = {e["node_class"] for e in recipe["required_node_roles"]}
         opt_classes = {e["node_class"] for e in recipe["optional_node_roles"]}
         self.assertEqual(req_classes, {"KSampler", "VAEDecode", "SaveImage"})
@@ -111,14 +110,14 @@ class TestSelfContainedRecords(unittest.TestCase):
         # The database is self-contained: the old human-in-the-loop fields are gone.
         nodes = [{"id": 1, "type": "MyCustomThing", "widgets_values": []}]
         g = _graph(nodes, [], "c", source="custom", object_info={})
-        recipe = R.build_recipes([g], _single_cluster([g]), object_info_available=True)[0]
+        recipe = _leaf([g])
         for gone in ("needs_annotation", "annotation_reason", "notes_for_annotation"):
             self.assertNotIn(gone, recipe)
 
     def test_custom_type_gets_synthesized_description(self):
         nodes = [{"id": 1, "type": "MyCustomThing", "widgets_values": []}]
         g = _graph(nodes, [], "c", source="custom", object_info={})  # unresolved
-        recipe = R.build_recipes([g], _single_cluster([g]), object_info_available=True)[0]
+        recipe = _leaf([g])
         self.assertTrue(recipe["description"])                  # never blank
         self.assertEqual(recipe["description_source"], "synthesized")
         self.assertIn("MyCustomThing", recipe["unresolved_nodes"])
@@ -132,7 +131,7 @@ class TestSelfContainedRecords(unittest.TestCase):
         ]
         links = [[1, 1, 0, 2, 0, "LATENT"], [2, 2, 0, 3, 0, "IMAGE"]]
         g = _graph(nodes, links, "core", object_info=CORE_INFO)
-        recipe = R.build_recipes([g], _single_cluster([g]), object_info_available=True)[0]
+        recipe = _leaf([g])
         self.assertTrue(recipe["description"])
         # No warning / draft language anywhere in the description.
         self.assertNotIn("DRAFT", recipe["description"])
@@ -151,13 +150,13 @@ class TestExecution(unittest.TestCase):
                      [], "api_kling_o3_i2v", object_info={})
         for n in api.nodes.values():
             n.is_api = True
-        recipes = R.build_recipes([local], _single_cluster([local]))
-        self.assertEqual(recipes[0]["execution"], "local")
-        self.assertFalse(recipes[0]["uses_api_nodes"])
-        recipes_api = R.build_recipes([api], _single_cluster([api]))
-        self.assertEqual(recipes_api[0]["execution"], "api")
-        self.assertTrue(recipes_api[0]["uses_api_nodes"])
-        self.assertIn("KlingNode", recipes_api[0]["api_node_classes"])
+        local_leaf = _leaf([local])
+        self.assertEqual(local_leaf["execution"], "local")
+        self.assertFalse(local_leaf["uses_api_nodes"])
+        api_leaf = _leaf([api])
+        self.assertEqual(api_leaf["execution"], "api")
+        self.assertTrue(api_leaf["uses_api_nodes"])
+        self.assertIn("KlingNode", api_leaf["api_node_classes"])
 
 
 class TestNodeKnowledge(unittest.TestCase):
@@ -167,34 +166,39 @@ class TestNodeKnowledge(unittest.TestCase):
             {"id": 2, "type": "VAEDecode", "widgets_values": []},
         ]
         g = _graph(nodes, [[1, 1, 0, 2, 0, "LATENT"]], "g1", object_info=CORE_INFO)
-        recipes = R.build_recipes([g], _single_cluster([g]), object_info_available=True)
-        nk = R.build_node_knowledge([g], recipes, CORE_INFO)
+        builder = RecipeBuilder()
+        db = builder.build([g])
+        nk = builder.node_knowledge([g], db.leaves, CORE_INFO)
         by_class = {n["class"]: n for n in nk}
         self.assertIn("KSampler", by_class)
         ks = by_class["KSampler"]
         self.assertEqual(ks["outputs"], ["LATENT"])
         self.assertEqual(ks["role"], "sampler")
-        self.assertEqual(ks["used_in_type_ids"], [recipes[0]["id"]])
+        self.assertEqual(ks["used_in_type_ids"], [db.leaves[0]["id"]])
         self.assertEqual(ks["occurrences"], 1)
 
 
-class TestDeterminismAndIds(unittest.TestCase):
-    def test_ids_unique_and_sorted_by_member_count(self):
-        def mk(name):
+class TestHierarchyAndIds(unittest.TestCase):
+    def test_leaf_ids_unique_and_tasks_sorted_by_member_count(self):
+        def img(name):
             nodes = [
                 {"id": 1, "type": "KSampler", "widgets_values": [1]},
                 {"id": 2, "type": "VAEDecode", "widgets_values": []},
             ]
             return _graph(nodes, [[1, 1, 0, 2, 0, "LATENT"]], name, object_info=CORE_INFO)
 
-        graphs = [mk("a"), mk("b"), mk("c")]
-        clusters = [Cluster(members=[0, 1], cohesion=1.0), Cluster(members=[2], cohesion=1.0)]
-        recipes = R.build_recipes(graphs, clusters, object_info_available=True)
-        ids = [r["id"] for r in recipes]
-        self.assertEqual(len(ids), len(set(ids)), "ids must be unique")
-        # Larger cluster first.
-        self.assertEqual(recipes[0]["member_count"], 2)
-        self.assertEqual(recipes[1]["member_count"], 1)
+        # Two identical image graphs collapse into one task (member_count 2);
+        # one audio graph forms a smaller task (member_count 1).
+        audio = _graph([{"id": 1, "type": "KSampler", "widgets_values": [1]}], [],
+                       "text_to_audio_ace_step_1_5", object_info=CORE_INFO)
+        db = RecipeBuilder().build([img("a"), img("b"), audio])
+        leaf_ids = [m["id"] for t in db.tasks for m in t["models"]]
+        self.assertEqual(len(leaf_ids), len(set(leaf_ids)), "leaf ids must be unique")
+        task_ids = [t["id"] for t in db.tasks]
+        self.assertEqual(len(task_ids), len(set(task_ids)), "task ids must be unique")
+        # Larger task first.
+        self.assertEqual(db.tasks[0]["member_count"], 2)
+        self.assertEqual(db.tasks[-1]["member_count"], 1)
 
 
 if __name__ == "__main__":

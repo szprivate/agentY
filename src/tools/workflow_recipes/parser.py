@@ -1,4 +1,4 @@
-"""Phase 1 - parse and normalize ComfyUI workflow JSON into a directed graph.
+"""Parse and normalize ComfyUI workflow JSON into a directed graph.
 
 Two on-disk formats are auto-detected per file:
 
@@ -18,6 +18,9 @@ Two on-disk formats are auto-detected per file:
 The output is a WorkflowGraph: nodes keyed by a namespaced id, typed edges, and
 explicit boundary ports recovered from the outermost subgraph definition.
 
+The ``Corpus`` class owns the end-to-end load: object_info (cache or live fetch),
+the catalog descriptions, and the parsed + enriched graphs.
+
 Robustness: malformed JSON is skipped (logged), never fatal to the batch.
 Determinism: nodes/edges are emitted in a stable, sorted order.
 """
@@ -28,8 +31,10 @@ import json
 import os
 import re
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
+
+from .model import Edge, Node, WorkflowGraph
 
 # A type whose name looks like a UUID is a subgraph reference, not a real class.
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-", re.IGNORECASE)
@@ -40,75 +45,6 @@ _MAX_SUBGRAPH_DEPTH = 16
 # ComfyUI subgraph boundary node ids (negative, fixed by the format).
 _DEFAULT_INPUT_NODE_ID = -10
 _DEFAULT_OUTPUT_NODE_ID = -20
-
-
-# --------------------------------------------------------------------------- #
-# Data model
-# --------------------------------------------------------------------------- #
-@dataclass
-class Node:
-    """A single resolved node in the normalized graph."""
-
-    id: str                       # namespaced unique id within the workflow
-    class_type: str               # e.g. "KSampler"; UUID kept only if unexpandable
-    widgets_values: Any = None    # list (UI) or dict (API) of parameter values
-    title: Optional[str] = None
-    resolved: bool = False        # True if class_type was found in object_info
-    is_custom: bool = False       # True if object_info says it is a custom node
-    is_api: bool = False          # True if a ComfyUI API / partner node
-    input_types: Dict[str, str] = field(default_factory=dict)   # input name -> type
-    output_types: List[str] = field(default_factory=list)       # output slot types
-
-
-@dataclass
-class Edge:
-    """A typed directed connection: src output slot -> dst input slot."""
-
-    src_id: str
-    src_slot: int
-    dst_id: str
-    dst_slot: int
-    data_type: str = "UNKNOWN"
-    dst_input_name: Optional[str] = None
-
-
-@dataclass
-class WorkflowGraph:
-    """A fully normalized workflow."""
-
-    name: str                     # file basename without extension
-    path: str
-    source: str                   # "custom" or "official"
-    fmt: str                      # "ui" or "api"
-    nodes: Dict[str, Node] = field(default_factory=dict)
-    edges: List[Edge] = field(default_factory=list)
-    boundary_inputs: List[Dict[str, str]] = field(default_factory=list)   # {name, data_type}
-    boundary_outputs: List[Dict[str, str]] = field(default_factory=list)  # {name, data_type}
-    unresolved_classes: List[str] = field(default_factory=list)
-    errors: List[str] = field(default_factory=list)
-
-    # Authoritative metadata from the template catalog (index.json), when present.
-    category: Optional[str] = None        # human category, e.g. "Image Tools"
-    index_title: Optional[str] = None     # human title, e.g. "Brightness and Contrast"
-    index_description: Optional[str] = None
-    media_type: Optional[str] = None      # e.g. "image" / "video" / "audio"
-
-    # -- convenience accessors used by later phases -----------------------
-    def class_of(self, node_id: str) -> str:
-        node = self.nodes.get(node_id)
-        return node.class_type if node else "UNKNOWN"
-
-    def out_adjacency(self) -> Dict[str, List[Edge]]:
-        adj: Dict[str, List[Edge]] = defaultdict(list)
-        for e in self.edges:
-            adj[e.src_id].append(e)
-        return adj
-
-    def in_adjacency(self) -> Dict[str, List[Edge]]:
-        adj: Dict[str, List[Edge]] = defaultdict(list)
-        for e in self.edges:
-            adj[e.dst_id].append(e)
-        return adj
 
 
 # --------------------------------------------------------------------------- #
@@ -566,7 +502,7 @@ def enrich(graph: WorkflowGraph, object_info: Dict[str, Any]) -> WorkflowGraph:
 
 
 # --------------------------------------------------------------------------- #
-# Top-level entry points
+# File-level parsing
 # --------------------------------------------------------------------------- #
 # Files that are catalogs, not workflows.
 _SKIP_BASENAMES = {"index.json", "index.schema.json"}
@@ -608,39 +544,85 @@ def parse_file(
     return graph
 
 
-def load_corpus(
-    folders: Dict[str, str],
-    object_info: Optional[Dict[str, Any]] = None,
-    descriptions: Optional[Dict[str, Dict]] = None,
-    log=print,
-) -> List[WorkflowGraph]:
-    """Parse every workflow under each {source_label: folder} mapping.
+# --------------------------------------------------------------------------- #
+# Corpus - the end-to-end loader
+# --------------------------------------------------------------------------- #
+class Corpus:
+    """Owns the workflow corpus: object_info signatures, catalog descriptions,
+    and the parsed + enriched ``WorkflowGraph`` list.
 
-    Folders are walked recursively. When a descriptions map (from index.json) is
-    supplied, each graph is annotated with its catalog category/title/description.
-    Results are returned sorted by (source, name) for deterministic ordering.
-    """
-    descriptions = descriptions or {}
-    graphs: List[WorkflowGraph] = []
-    for source, folder in folders.items():
-        if not os.path.isdir(folder):
-            log(f"[warn] input folder not found: {folder}")
-            continue
-        paths = []
-        for root, _dirs, files in os.walk(folder):
-            for fn in files:
-                if fn.lower().endswith(".json"):
-                    paths.append(os.path.join(root, fn))
-        for path in sorted(paths):
-            graph = parse_file(path, source, object_info, log=log)
-            if graph is not None:
-                meta = descriptions.get(graph.name)
-                if meta:
-                    graph.category = meta.get("category")
-                    graph.index_title = meta.get("title")
-                    graph.index_description = meta.get("description")
-                    graph.media_type = meta.get("media_type")
-                graphs.append(graph)
-    graphs.sort(key=lambda g: (g.source, g.name))
-    log(f"[corpus] parsed {len(graphs)} workflows")
-    return graphs
+    Build one with :meth:`load`, then read ``.graphs`` (the parsed workflows) and
+    ``.object_info`` (kept for node-knowledge generation downstream)."""
+
+    def __init__(
+        self,
+        graphs: List[WorkflowGraph],
+        object_info: Dict[str, Any],
+        descriptions: Dict[str, Dict],
+    ) -> None:
+        self.graphs = graphs
+        self.object_info = object_info
+        self.descriptions = descriptions
+
+    def __iter__(self):
+        return iter(self.graphs)
+
+    def __len__(self) -> int:
+        return len(self.graphs)
+
+    @classmethod
+    def load(
+        cls,
+        folders: Dict[str, str],
+        object_info_cache: Optional[str] = None,
+        host: str = "127.0.0.1",
+        port: int = 8188,
+        allow_fetch: bool = True,
+        templates_descriptions: Optional[str] = None,
+        log=print,
+    ) -> "Corpus":
+        """Load object_info (cache or live), catalog descriptions, then parse
+        every workflow under each {source_label: folder} mapping."""
+        object_info = load_object_info(
+            object_info_cache, host=host, port=port, allow_fetch=allow_fetch, log=log
+        )
+        descriptions = load_descriptions(folders, templates_descriptions, log=log)
+        graphs = cls._parse_folders(folders, object_info, descriptions, log=log)
+        return cls(graphs, object_info, descriptions)
+
+    @staticmethod
+    def _parse_folders(
+        folders: Dict[str, str],
+        object_info: Optional[Dict[str, Any]] = None,
+        descriptions: Optional[Dict[str, Dict]] = None,
+        log=print,
+    ) -> List[WorkflowGraph]:
+        """Parse every workflow under each {source_label: folder} mapping.
+
+        Folders are walked recursively. Each graph is annotated with its catalog
+        category/title/description when present. Results are returned sorted by
+        (source, name) for deterministic ordering."""
+        descriptions = descriptions or {}
+        graphs: List[WorkflowGraph] = []
+        for source, folder in folders.items():
+            if not os.path.isdir(folder):
+                log(f"[warn] input folder not found: {folder}")
+                continue
+            paths = []
+            for root, _dirs, files in os.walk(folder):
+                for fn in files:
+                    if fn.lower().endswith(".json"):
+                        paths.append(os.path.join(root, fn))
+            for path in sorted(paths):
+                graph = parse_file(path, source, object_info, log=log)
+                if graph is not None:
+                    meta = descriptions.get(graph.name)
+                    if meta:
+                        graph.category = meta.get("category")
+                        graph.index_title = meta.get("title")
+                        graph.index_description = meta.get("description")
+                        graph.media_type = meta.get("media_type")
+                    graphs.append(graph)
+        graphs.sort(key=lambda g: (g.source, g.name))
+        log(f"[corpus] parsed {len(graphs)} workflows")
+        return graphs

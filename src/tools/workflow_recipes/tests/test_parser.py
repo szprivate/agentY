@@ -6,7 +6,7 @@ import os
 import tempfile
 import unittest
 
-from workflow_recipes import parser as P
+from src.tools.workflow_recipes import parser as P
 
 
 # A tiny text-to-image graph expressed two ways: UI and API. They describe the

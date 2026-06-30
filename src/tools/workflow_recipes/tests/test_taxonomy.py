@@ -2,8 +2,10 @@
 
 import unittest
 
-from workflow_recipes import parser as P
-from workflow_recipes import taxonomy as T
+from src.tools.workflow_recipes import parser as P
+from src.tools.workflow_recipes.taxonomy import TaxonomyClassifier
+
+T = TaxonomyClassifier()
 
 
 def _graph(name, classes, category=None, b_in=None, b_out=None, api=False):
