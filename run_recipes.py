@@ -7,11 +7,11 @@ importable regardless of where you invoke it from:
 
     python D:\\AI\\agentY\\run_recipes.py --no-fetch
 
-Equivalent to `python -m src.tools.workflow_recipes.cli ...` run from the repo
+Equivalent to `python -m agenty_core.workflow_recipes.cli ...` run from the repo
 root.
 """
 
-from src.tools.workflow_recipes.cli import main
+from agenty_core.workflow_recipes.cli import main
 
 if __name__ == "__main__":
     raise SystemExit(main())

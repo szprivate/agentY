@@ -28,4 +28,4 @@ config/models.json
 
 # Large regenerable /object_info cache for the workflow_recipes generator
 # (the consumable DB at config/workflow_recipes.json IS tracked).
-src/tools/workflow_recipes/object_info_cache.json
+config/workflow_recipes_object_info_cache.json
