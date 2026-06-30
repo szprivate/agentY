@@ -1,0 +1,257 @@
+"""Recipe reliability harness (Phase 1).
+
+Drives local workflow-recipe intents through the real researcher->brain->execute
+pipeline headless, captures the ComfyUI execution outcome, and classifies each as
+pass / agent build failure / ComfyUI-or-model error / missing model / timeout.
+Writes an incremental report so progress survives a hang or crash.
+
+Run:
+    python -m scripts.recipe_reliability.run --task "Image Edit" --limit 1
+    python -m scripts.recipe_reliability.run --only image_edit__qwen_image
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import os
+import sys
+import time
+import urllib.request
+
+from dotenv import load_dotenv
+
+_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _root not in sys.path:
+    sys.path.insert(0, _root)
+load_dotenv(os.path.join(_root, ".env"))
+
+# The pipeline's verbose logging prints unicode (e.g. "->" arrows); make stdout
+# UTF-8 so a cp1252 console does not crash the run with UnicodeEncodeError.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+from src.pipeline import create_pipeline               # noqa: E402
+from src.agent import create_brain_agent, create_researcher_agent  # noqa: E402
+from agenty_core.tools.comfyui import clear_tool_caches  # noqa: E402
+
+_DB = os.path.join(_root, "config", "workflow_recipes.json")
+_REPORT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "report.json")
+_COMFY = "http://127.0.0.1:8188"
+
+# ComfyUI's input directory (LoadImage resolves filenames relative to here).
+_INPUT_DIR = "W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input"
+
+_IMAGE_INPUT_TASKS = {
+    "image_edit", "controlnet", "inpaint", "outpaint", "upscale",
+    "style_transfer", "image_to_video", "video_edit", "first_last_frame_to_video",
+}
+
+_TEST_COLORS = [(200, 60, 60), (60, 160, 80), (70, 90, 200),
+                (210, 170, 40), (150, 70, 170), (60, 180, 190)]
+
+
+def _ensure_test_images(n: int) -> list[str]:
+    """Synthesize n visually-distinct test images in ComfyUI's input dir and
+    return their paths. ComfyUI's VAE bug blocks generating real inputs, so we
+    make controllable ones with PIL (distinct colour + shape + label)."""
+    from PIL import Image, ImageDraw  # noqa: PLC0415
+    os.makedirs(_INPUT_DIR, exist_ok=True)
+    paths = []
+    for i in range(max(1, n)):
+        p = os.path.join(_INPUT_DIR, f"recipe_test_input_{i + 1}.png")
+        if not os.path.isfile(p):
+            base = _TEST_COLORS[i % len(_TEST_COLORS)]
+            img = Image.new("RGB", (768, 768), base)
+            dr = ImageDraw.Draw(img)
+            dr.ellipse([180, 180, 588, 588], fill=tuple(min(255, c + 70) for c in base))
+            dr.rectangle([120 + i * 30, 120, 648, 648], outline=(255, 255, 255), width=10)
+            dr.text((70, 60), f"TEST {i + 1}", fill=(255, 255, 255))
+            img.save(p)
+    return [os.path.join(_INPUT_DIR, f"recipe_test_input_{i + 1}.png").replace("\\", "/")
+            for i in range(max(1, n))]
+
+
+def _image_count(recipe: dict) -> int:
+    """How many IMAGE inputs this recipe's type exposes (>=1 for image tasks)."""
+    imgs = [p for p in recipe["boundary_ports"].get("inputs", []) if p.get("data_type") == "IMAGE"]
+    return max(1, len(imgs))
+
+
+def _load_local_recipes(task: str | None, only: str | None, limit: int | None):
+    db = json.load(open(_DB, encoding="utf-8"))
+    out = []
+    for t in db["tasks"]:
+        if task and t["task"] != task:
+            continue
+        for m in t["models"]:
+            if m["execution"] != "local":
+                continue
+            if only and m["id"] != only:
+                continue
+            out.append(m)
+    return out[:limit] if limit else out
+
+
+def _build_intent(recipe: dict, pool: list[str]) -> tuple[str, int]:
+    """Return (intent_text, n_images). For image-input recipes, embed as many
+    distinct input image paths as the recipe's type exposes (capped to the pool)."""
+    ui = recipe["user_intent"]
+    task, model = ui.get("task"), recipe["model"]
+    needs_image = (task in _IMAGE_INPUT_TASKS) or any(
+        p.get("data_type") in ("IMAGE", "VIDEO") for p in recipe["boundary_ports"].get("inputs", [])
+    )
+    n = min(_image_count(recipe), len(pool)) if needs_image else 0
+    images = pool[:n]
+    single = {
+        "image_edit": f"Edit this image: turn it into a vibrant watercolor painting. Use {model}.",
+        "text_to_image": f"Generate an image of a serene mountain lake at sunrise using {model}.",
+        "controlnet": f"Generate an image guided by this control image using {model}.",
+        "inpaint": f"Inpaint this image, filling the masked area naturally, using {model}.",
+        "upscale": f"Upscale this image using {model}.",
+    }.get(task, ui.get("example_requests", ["build a workflow"])[0])
+    if n >= 2:
+        # Multi-image edit: phrase so the Researcher counts all the inputs.
+        phrasing = (f"Edit using these {n} reference images: blend them into a single "
+                    f"cohesive composition. Use {model}.")
+    else:
+        phrasing = single
+    if images:
+        label = "Input image:" if n == 1 else "Input images:"
+        phrasing += " " + label + " " + " ".join(f'"{p}"' for p in images)
+    return phrasing, n
+
+
+def _comfy_history_ids() -> set:
+    try:
+        h = json.load(urllib.request.urlopen(f"{_COMFY}/history?max_items=50", timeout=5))
+        return set(h.keys())
+    except Exception:
+        return set()
+
+
+def _comfy_outcome(new_ids: set) -> dict:
+    """Inspect ComfyUI history for the prompts run during this recipe."""
+    try:
+        h = json.load(urllib.request.urlopen(f"{_COMFY}/history?max_items=50", timeout=5))
+    except Exception as e:  # noqa: BLE001
+        return {"submitted": False, "error": f"history fetch failed: {e}"}
+    statuses, errors = [], []
+    for pid in new_ids:
+        entry = h.get(pid, {})
+        st = entry.get("status", {})
+        statuses.append(st.get("status_str"))
+        for mtype, mdata in st.get("messages", []):
+            if "error" in mtype:
+                errors.append({
+                    "node_type": mdata.get("node_type"),
+                    "exception_type": mdata.get("exception_type"),
+                    "exception_message": (mdata.get("exception_message") or "")[:300],
+                })
+    return {"submitted": bool(new_ids), "statuses": statuses, "errors": errors}
+
+
+async def _drive(pipeline, user_input: str, timeout: float):
+    qa_q: asyncio.Queue = asyncio.Queue()
+    seen: list[str] = []
+    parts: list[str] = []
+    in_researcher = False
+
+    async def _consume():
+        nonlocal in_researcher
+        async for event in pipeline.stream_async(user_input, qa_reply_queue=qa_q):
+            if not isinstance(event, dict):
+                continue
+            if event.get("brain_assembly_fail_ask"):
+                seen.append("brain_assembly_fail"); await qa_q.put(""); continue
+            if event.get("qa_fail_ask"):
+                seen.append("qa_fail"); await qa_q.put("n"); continue
+            if event.get("approval_ask"):
+                seen.append("approval"); await qa_q.put("y"); continue
+            if event.get("_researcher_start"):
+                in_researcher = True; continue
+            if event.get("_researcher_done"):
+                in_researcher = False; continue
+            data = event.get("data")
+            if data and not in_researcher:
+                parts.append(data)
+        await pipeline._await_pending_compression()
+
+    await asyncio.wait_for(_consume(), timeout=timeout)
+    return seen, "".join(parts)
+
+
+def _classify(seen, response, comfy):
+    text = (response or "").lower()
+    if comfy.get("submitted") and comfy.get("statuses"):
+        if any(s == "success" for s in comfy["statuses"]) and not comfy.get("errors"):
+            return "pass"
+        if comfy.get("errors"):
+            return "comfyui_exec_error"
+    if "brain_assembly_fail" in seen:
+        return "agent_build_fail"
+    if "not found" in text and ("model" in text or "check_model" in text):
+        return "missing_model"
+    if "template" in text and "not found" in text:
+        return "agent_build_fail"
+    return "no_execution"  # built nothing / unclear - inspect logs
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--task", default=None, help="canonical task to filter (e.g. 'Image Edit')")
+    ap.add_argument("--only", default=None, help="single recipe id")
+    ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--timeout", type=float, default=900.0, help="per-recipe seconds")
+    args = ap.parse_args()
+
+    recipes = _load_local_recipes(args.task, args.only, args.limit)
+    print(f"[harness] {len(recipes)} local recipe(s) to test")
+    # Provision a pool of distinct test images sized to the largest recipe need.
+    max_imgs = max((_image_count(r) for r in recipes), default=1)
+    pool = _ensure_test_images(max_imgs)
+    print(f"[harness] test image pool ({len(pool)}): {[os.path.basename(p) for p in pool]}")
+    pipeline = create_pipeline(session_id="recipe-reliability", verbose=True)
+
+    results = []
+    for i, recipe in enumerate(recipes, 1):
+        rid = recipe["id"]
+        intent, n_images = _build_intent(recipe, pool)
+        print(f"\n{'='*70}\n[harness] ({i}/{len(recipes)}) {rid}\n  intent: {intent}\n{'='*70}")
+        # Isolate this recipe: fresh brain + researcher history, cleared caches.
+        pipeline._brain = create_brain_agent()
+        pipeline._researcher = create_researcher_agent()
+        clear_tool_caches()
+        before = _comfy_history_ids()
+        t0 = time.time()
+        timed_out = False
+        try:
+            seen, response = asyncio.run(_drive(pipeline, intent, args.timeout))
+        except asyncio.TimeoutError:
+            seen, response, timed_out = ["timeout"], "", True
+        except Exception as e:  # noqa: BLE001
+            seen, response = [f"exception:{e}"], str(e)
+        dur = round(time.time() - t0, 1)
+        new_ids = _comfy_history_ids() - before
+        comfy = _comfy_outcome(new_ids)
+        outcome = "timeout" if timed_out else _classify(seen, response, comfy)
+        rec = {
+            "id": rid, "intent": intent, "n_images": n_images,
+            "duration_s": dur, "events": seen, "comfyui": comfy,
+            "outcome": outcome, "response_tail": (response or "")[-600:],
+        }
+        results.append(rec)
+        print(f"[harness] -> {rid}: {outcome}  ({dur}s)  comfyui={comfy.get('statuses')} errors={len(comfy.get('errors', []))}")
+        json.dump({"results": results}, open(_REPORT, "w", encoding="utf-8"), indent=2)
+
+    print(f"\n[harness] done. report -> {_REPORT}")
+    from collections import Counter
+    print("[harness] outcomes:", dict(Counter(r["outcome"] for r in results)))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
