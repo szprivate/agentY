@@ -46,3 +46,26 @@ in ComfyUI v0.23 - see Comfy-Org/ComfyUI issues #14227 / #14295). It fails the
 Load VAE node on essentially every local diffusion recipe, so the harness
 reports `comfyui_exec_error` for them regardless of agent correctness. Fix the
 ComfyUI version first; then the loop can surface real agent-level failures.
+
+## vision_qa_test.py - vision-QA RL-style loop
+
+Tests the vision-QA agent (`src.executor._vision_qa`) in isolation - no ComfyUI,
+no diffusion. It feeds the agent controlled `(intent, image[, input image])`
+cases with a KNOWN ground-truth verdict (PIL-generated: red square, blue circle,
+recolor edits, text), parses the PASS/FAIL it returns, and scores verdict
+accuracy + false-pass / false-fail. Reward = correct verdicts; tune
+`config/system_prompts/system_prompt.qaChecker.md` (or `_vision_qa`) and re-run.
+
+```bash
+python -m scripts.recipe_reliability.vision_qa_test           # all cases
+python -m scripts.recipe_reliability.vision_qa_test --limit 1 # validate setup
+```
+
+### Second known blocker: Ollama vision
+
+Vision QA (and memory) run on Ollama. Currently Ollama's model runner is
+crashing (`0xc0000005` access violation): **every** `/api/chat` call returns 500
+- text and image alike - so the QA loop cannot run. Restart Ollama (and verify a
+multimodal model such as `qwen3-vl:*` responds to an image) before running this.
+The configured `executor_vision_model` is `gemma4:12b`; if it turns out not to be
+multimodal once Ollama is healthy, switch it to a `qwen3-vl` model.
