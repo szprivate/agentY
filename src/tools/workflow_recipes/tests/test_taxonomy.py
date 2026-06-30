@@ -49,6 +49,26 @@ class TestTaxonomy(unittest.TestCase):
                    b_in=["VIDEO"], b_out=["VIDEO"])
         self.assertEqual(T.classify(g), "Video to Video")
 
+    def test_partner_text_to_video_with_optional_image(self):
+        # Veo-style: a partner video node with an OPTIONAL image input must stay
+        # Text to Video, not be mistaken for Image to Video.
+        veo = _graph("api_veo3", ["Veo3VideoGenerationNode", "LoadImage", "SaveVideo"],
+                     b_out=["VIDEO"], api=True)
+        self.assertEqual(T.classify(veo), "API / Partner Nodes - Text to Video")
+        # A partner node whose CLASS name declares the task is honored.
+        i2v = _graph("api_wan2_6_i2v", ["WanImageToVideoApi", "LoadImage"],
+                     b_out=["VIDEO"], api=True)
+        self.assertEqual(T.classify(i2v), "API / Partner Nodes - Image to Video")
+        t2v = _graph("api_wan2_6_t2v", ["WanTextToVideoApi"], b_out=["VIDEO"], api=True)
+        self.assertEqual(T.classify(t2v), "API / Partner Nodes - Text to Video")
+
+    def test_local_image_input_still_i2v(self):
+        # A LOCAL video graph with an image input is still Image to Video.
+        g = _graph("video_wan2_2_14B_fun_camera",
+                   ["UNETLoader", "KSampler", "LoadImage", "VHS_VideoCombine"],
+                   b_out=["VIDEO"])
+        self.assertEqual(T.classify(g), "Image to Video")
+
     def test_first_last_frame(self):
         g = _graph("video_wan2_2_14B_flf2v", ["UNETLoader", "KSampler", "VHS_VideoCombine"],
                    b_in=["IMAGE"], b_out=["VIDEO"])

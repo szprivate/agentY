@@ -95,6 +95,8 @@ def _task_category(graph: WorkflowGraph, gen: bool) -> str:
     mistaken for a video manipulation tool."""
     name = graph.name.lower()
     classes = {n.class_type.lower() for n in graph.nodes.values()}
+    uses_api = (any(getattr(n, "is_api", False) for n in graph.nodes.values())
+                or name.startswith("api_"))
     in_types = _input_modalities(graph)
     has_img_in = "IMAGE" in in_types
     has_vid_in = "VIDEO" in in_types
@@ -106,7 +108,8 @@ def _task_category(graph: WorkflowGraph, gen: bool) -> str:
         return "Audio"
 
     if media == "video":
-        if _name_has(name, "flf", "first_last", "first-last", "firstlast"):
+        if _name_has(name, "flf", "first_last", "first-last", "firstlast") \
+                or _has(classes, "firstlast"):
             return "First / Last Frame to Video"
         if "inpaint" in name:
             return "Video Inpaint"
@@ -114,16 +117,19 @@ def _task_category(graph: WorkflowGraph, gen: bool) -> str:
             return "Upscale"
         if not gen:
             return "Video Tools"
-        # Explicit task in the name wins over inferred input modality.
-        if _name_has(name, "t2v", "text_to_video"):
+        # Explicit task in the name or the node class wins over inferred input
+        # modality. Partner nodes encode the task in their class name, e.g.
+        # WanTextToVideoApi / KlingOmniProImageToVideoNode.
+        if _name_has(name, "t2v", "text_to_video") or _has(classes, "texttovideo", "text2video"):
             return "Text to Video"
-        if _name_has(name, "i2v", "image_to_video"):
+        if _name_has(name, "i2v", "image_to_video") or _has(classes, "imagetovideo", "image2video"):
             return "Image to Video"
-        if _name_has(name, "v2v", "vid2vid", "video_to_video", "vace"):
+        if _name_has(name, "v2v", "vid2vid", "video_to_video", "vace") or has_vid_in:
             return "Video to Video"
-        if has_vid_in:
-            return "Video to Video"
-        if has_img_in:
+        # A bare image input implies image-to-video for LOCAL graphs. Partner
+        # generation nodes (e.g. Veo) often expose an OPTIONAL image input, so
+        # for API workflows a generic node with no i2v signal stays text-to-video.
+        if has_img_in and not uses_api:
             return "Image to Video"
         return "Text to Video"
 

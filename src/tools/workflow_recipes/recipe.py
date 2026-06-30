@@ -557,6 +557,29 @@ def _node_clusters(required: List[Dict]) -> List[Dict]:
 # --------------------------------------------------------------------------- #
 # Recipe body (shared by flat and hierarchical builders)
 # --------------------------------------------------------------------------- #
+def _api_info(members: List[WorkflowGraph]) -> Tuple[bool, List[str]]:
+    """Whether any member uses ComfyUI API / partner nodes (which call out to a
+    remote cloud service), and which node classes those are."""
+    api_classes: set = set()
+    uses = False
+    for g in members:
+        if g.name.startswith("api_"):
+            uses = True
+        for n in g.nodes.values():
+            if getattr(n, "is_api", False):
+                uses = True
+                api_classes.add(n.class_type)
+    return uses, sorted(api_classes)
+
+
+def _execution(task: str, uses_api: bool) -> str:
+    """Where the workflow runs: "api" (remote generation via partner nodes),
+    "hybrid" (local generation plus some remote/API helper node), or "local"."""
+    if (task or "").startswith("API / Partner Nodes"):
+        return "api"
+    return "hybrid" if uses_api else "local"
+
+
 def _recipe_body(members: List[WorkflowGraph]) -> Dict:
     required, optional = _node_roles(members)
     boundary = _boundary_ports(members)
@@ -564,8 +587,11 @@ def _recipe_body(members: List[WorkflowGraph]) -> Dict:
     sources = sorted({g.source for g in members})
     user_intent = _user_intent(members)
     description, description_source = _description(members, required, boundary, user_intent)
+    uses_api, api_classes = _api_info(members)
     return {
         "source": sources[0] if len(sources) == 1 else "mixed",
+        "uses_api_nodes": uses_api,
+        "api_node_classes": api_classes,
         "member_files": sorted(g.name for g in members),
         "member_descriptions": _member_descriptions(members),
         "member_count": len(members),
@@ -610,6 +636,7 @@ def build_recipes(
             "_slug": _slug(members, body["boundary_ports"], body["user_intent"],
                            canonical_category),
             "canonical_category": canonical_category,
+            "execution": _execution(canonical_category, body["uses_api_nodes"]),
             "suggested_title": _suggested_title(members),
             "cohesion": round(c.cohesion, 4),
         }
@@ -637,8 +664,10 @@ def build_database(graphs: List[WorkflowGraph]) -> Tuple[List[Dict], List[Dict]]
     flat_leaves: List[Dict] = []
     for (task, model), idxs in groups.items():
         members = [graphs[i] for i in sorted(idxs)]
-        leaf = {"id": f"{_slugify(task)}__{_slugify(model)}", "model": model}
-        leaf.update(_recipe_body(members))
+        body = _recipe_body(members)
+        leaf = {"id": f"{_slugify(task)}__{_slugify(model)}", "model": model,
+                "execution": _execution(task, body["uses_api_nodes"])}
+        leaf.update(body)
         by_task[task].append(leaf)
         flat_leaves.append(leaf)
 
@@ -648,6 +677,7 @@ def build_database(graphs: List[WorkflowGraph]) -> Tuple[List[Dict], List[Dict]]
         tasks.append({
             "task": task,
             "id": _slugify(task),
+            "execution": "api" if task.startswith("API / Partner Nodes") else "local",
             "member_count": sum(l["member_count"] for l in leaves),
             "model_count": len(leaves),
             "models": leaves,

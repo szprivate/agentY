@@ -165,6 +165,9 @@ The top level is `tasks[]`; each task has `models[]`; each model is a recipe lea
       },
       "description": "Image-to-video with Wan 2.2 ...",  // ALWAYS populated
       "description_source": "catalog",   // catalog | catalog+synthesized | synthesized
+      "execution": "local",              // local | api (remote partner nodes) | hybrid
+      "uses_api_nodes": false,           // any comfy_api_nodes node present
+      "api_node_classes": [],            // which partner-node classes, if any
       "source": "custom | official | mixed",
       "member_files": ["..."],
       "member_descriptions": [{"name": "...", "title": "...", "description": "..."}],

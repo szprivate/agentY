@@ -421,6 +421,10 @@ def _write_database_report(path, tasks) -> None:
             ui = m["user_intent"]
             lines.append(f"## {t['task']} / {m['model']}  (`{m['id']}`)  -  "
                          f"{m['member_count']} workflow(s)  -  source: {m['source']}")
+            exec_note = m["execution"]
+            if m["api_node_classes"]:
+                exec_note += f" (API nodes: {', '.join(m['api_node_classes'])})"
+            lines.append(f"- execution: {exec_note}")
             lines.append(f"- when to use: {ui.get('when_to_use')}")
             ex = ui.get("example_requests", [])
             if ex:

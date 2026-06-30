@@ -21,11 +21,17 @@ The returned `recipe` gives you:
 
 | field | use |
 |-------|-----|
+| `execution` | `local` (local models), `api` (remote partner-node generation), or `hybrid` (local + a remote helper). See note below. |
 | `member_workflows` | concrete templates that already implement this task+model — your scaffold (Step 2) |
 | `required_nodes` | node classes that MUST be present, with `min_instances` (e.g. `UNETLoader` x2 for a high/low-noise model pair) |
 | `node_clusters` | the required structure grouped by function (model loading, conditioning, sampling, decoding, output) |
 | `connection_patterns` | the invariant role-level wiring (e.g. `model_loader -> sampler [MODEL]`) |
 | `boundary_ports` | the inputs/outputs the finished workflow must expose |
+
+**Local vs remote (`execution`)** determines what the workflow needs:
+- `execution: "api"` — generation runs **remotely** on a partner service (Kling, Veo, Magnific, ...). There are no local model files to set; configure the partner node's parameters (model name, prompt, input image) instead. Local model checks/downloads do not apply.
+- `execution: "local"` — runs on the local ComfyUI; wire the local model loaders (the brainbriefing model paths are Researcher-verified).
+- `execution: "hybrid"` — local generation plus a remote helper node (e.g. a Gemini prompt expander); set up both.
 
 If `get_workflow_recipe` returns `{"error": "recipe database not found"}`, skip to the **Fallback** section at the end of this skill.
 

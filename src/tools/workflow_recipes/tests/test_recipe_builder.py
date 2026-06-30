@@ -139,6 +139,27 @@ class TestSelfContainedRecords(unittest.TestCase):
         self.assertNotIn("FLAG", recipe["description"])
 
 
+class TestExecution(unittest.TestCase):
+    def test_local_vs_api(self):
+        # A local diffusion graph.
+        local = _graph([
+            {"id": 1, "type": "KSampler", "widgets_values": [1]},
+            {"id": 2, "type": "VAEDecode", "widgets_values": []},
+        ], [[1, 1, 0, 2, 0, "LATENT"]], "text_to_image_flux", object_info=CORE_INFO)
+        # An API/partner graph (node flagged is_api).
+        api = _graph([{"id": 1, "type": "KlingNode", "widgets_values": []}],
+                     [], "api_kling_o3_i2v", object_info={})
+        for n in api.nodes.values():
+            n.is_api = True
+        recipes = R.build_recipes([local], _single_cluster([local]))
+        self.assertEqual(recipes[0]["execution"], "local")
+        self.assertFalse(recipes[0]["uses_api_nodes"])
+        recipes_api = R.build_recipes([api], _single_cluster([api]))
+        self.assertEqual(recipes_api[0]["execution"], "api")
+        self.assertTrue(recipes_api[0]["uses_api_nodes"])
+        self.assertIn("KlingNode", recipes_api[0]["api_node_classes"])
+
+
 class TestNodeKnowledge(unittest.TestCase):
     def test_signature_and_usage(self):
         nodes = [
