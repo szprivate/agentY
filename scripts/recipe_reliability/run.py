@@ -306,7 +306,13 @@ def main() -> int:
         dur = round(time.time() - t0, 1)
         new_ids = _comfy_history_ids() - before
         comfy = _comfy_outcome(new_ids)
-        outcome = "timeout" if timed_out else _classify(seen, response, comfy)
+        # Trust ComfyUI's outcome even on timeout: with a slow local LLM the
+        # workflow can build + execute successfully and only the post-execution
+        # steps (vision QA / memory) overrun the clock. Only fall back to
+        # "timeout" when ComfyUI gave no conclusive result.
+        outcome = _classify(seen, response, comfy)
+        if timed_out and outcome == "no_execution":
+            outcome = "timeout"
         rec = {
             "id": rid, "intent": intent, "n_images": n_images,
             "duration_s": dur, "events": seen, "comfyui": comfy,
