@@ -68,6 +68,7 @@ Choose a ComfyUI workflow that matches the user request.
 - If no match found: you MUST set `template.name` to `"build_new"` and continue.
 - If user explicitly requests a new workflow: you MUST set `template.name` to `"build_new"` and continue.
 - You MUST NOT stop or ask for clarification if no template is found.
+- **When `template.name == "build_new"`**: call `get_workflow_recipe(task, model)` and take the model file names for the brainbriefing from its `node_defaults` (e.g. `UNETLoader.unet_name`, `CLIPLoader.clip_name`, `VAELoader.vae_name`). These are the installed, template-verified files — use them **verbatim** and do NOT guess a generic name (e.g. `ltx-2-video.safetensors`, `wan-video.safetensors`) or trigger a download. Only if `node_defaults` is missing a model that `required_nodes` needs may you fall back to `check_model` / download.
 
 ---
 

@@ -166,6 +166,8 @@ DOP_TOOLS: list = []
 RESEARCHER_TOOLS: list = [
     get_workflow_catalog,
     get_workflow_template,
+    list_workflow_recipes,
+    get_workflow_recipe,  # build_new: source model files from recipe node_defaults
     check_model,         # verify model files exist in the ComfyUI installation
     get_comfyui_dirs,
     read_text_file,
