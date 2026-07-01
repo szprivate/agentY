@@ -647,6 +647,14 @@ class Pipeline:
         self._vision_usage_snap = self._usage_snapshot(self._vision_agent) if self._vision_agent else {}
         user_text = self._extract_text(user_input)
         user_text = self._annotate_attachments(user_input, user_text)
+        # Headless/CLI: register image paths embedded in the plain-text message so
+        # downstream stages (brainbriefing, LoadImage wiring) receive real input
+        # paths, mirroring Chainlit's attachment handling. Chainlit callers pass a
+        # content-block list and set last_user_input_images themselves.
+        if not isinstance(user_input, list):
+            _cli_imgs, _ = Pipeline._scan_media_paths(user_text)
+            if _cli_imgs:
+                self._session.last_user_input_images = _cli_imgs
         _triage_snap = self._usage_snapshot(self._triage_agent)
         _triage_input = (
             user_input
@@ -2543,6 +2551,18 @@ class Pipeline:
         return str(user_input)
 
     @staticmethod
+    def _scan_media_paths(user_text: str) -> tuple[list[str], list[str]]:
+        """Return (image_paths, video_paths) for existing files referenced by
+        path in a plain-text message. Tokens may be quoted or unquoted."""
+        _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif"}
+        _VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+        tokens = re.findall(r'"([^"]+)"|\'([^\']+)\'|(\S+)', user_text)
+        flat = [t for group in tokens for t in group if t]
+        imgs = [t for t in flat if Path(t).suffix.lower() in _IMAGE_EXTS and os.path.isfile(t)]
+        vids = [t for t in flat if Path(t).suffix.lower() in _VIDEO_EXTS and os.path.isfile(t)]
+        return imgs, vids
+
+    @staticmethod
     def _annotate_attachments(user_input: Any, user_text: str) -> str:
         """Append an attachment hint to *user_text* so triage knows images are present.
 
@@ -2551,16 +2571,9 @@ class Pipeline:
         when the caller already attached image content blocks or embedded a file
         path directly in their CLI message.
         """
-        _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif"}
-        _VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
-
         if not isinstance(user_input, list):
             # CLI / plain-text mode: scan for image/video file paths in the message.
-            # Extract tokens that could be paths (quoted or unquoted).
-            tokens = re.findall(r'"([^"]+)"|\'([^\']+)\'|(\S+)', user_text)
-            flat = [t for group in tokens for t in group if t]
-            img_paths = [t for t in flat if Path(t).suffix.lower() in _IMAGE_EXTS and os.path.isfile(t)]
-            vid_paths = [t for t in flat if Path(t).suffix.lower() in _VIDEO_EXTS and os.path.isfile(t)]
+            img_paths, vid_paths = Pipeline._scan_media_paths(user_text)
             parts: list[str] = []
             if img_paths:
                 parts.append(f"{len(img_paths)} image{'s' if len(img_paths) > 1 else ''}")

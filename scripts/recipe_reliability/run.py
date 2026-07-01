@@ -189,7 +189,20 @@ def _classify(seen, response, comfy):
     if comfy.get("submitted") and comfy.get("statuses"):
         if any(s == "success" for s in comfy["statuses"]) and not comfy.get("errors"):
             return "pass"
-        if comfy.get("errors"):
+        errs = comfy.get("errors") or []
+        # Distinguish environment/resource failures from agent-build failures:
+        # if the graph reached execution and only failed on VRAM or a missing
+        # model file, that is not the agent's fault.
+        blob = " ".join(
+            f"{e.get('exception_type', '')} {e.get('exception_message', '')}".lower()
+            for e in errs
+        )
+        if "outofmemory" in blob or "out of memory" in blob or "allocation on device" in blob:
+            return "resource_oom"
+        if ("not in list" in blob or "not found" in blob or "no such file" in blob
+                or "does not exist" in blob or "value not in" in blob):
+            return "missing_model"
+        if errs:
             return "comfyui_exec_error"
     if "brain_assembly_fail" in seen:
         return "agent_build_fail"
