@@ -40,7 +40,6 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 from src.pipeline import create_pipeline               # noqa: E402
-from src.agent import create_brain_agent, create_researcher_agent  # noqa: E402
 from agenty_core.tools.comfyui import clear_tool_caches  # noqa: E402
 
 _DB = os.path.join(_root, "config", "workflow_recipes.json")
@@ -212,7 +211,10 @@ def _classify(seen, response, comfy):
             f"{e.get('exception_type', '')} {e.get('exception_message', '')}".lower()
             for e in errs
         )
-        if "outofmemory" in blob or "out of memory" in blob or "allocation on device" in blob:
+        if any(p in blob for p in (
+            "outofmemory", "out of memory", "allocation on device",
+            "not enough memory", "defaultcpuallocator", "alloc_cpu", "cannot allocate",
+        )):
             return "resource_oom"
         if ("not in list" in blob or "not found" in blob or "no such file" in blob
                 or "does not exist" in blob or "value not in" in blob):
@@ -250,16 +252,15 @@ def main() -> int:
     max_imgs = max((_image_count(r) for r in recipes), default=1)
     pool = _ensure_test_images(max_imgs)
     print(f"[harness] test image pool ({len(pool)}): {[os.path.basename(p) for p in pool]}")
-    pipeline = create_pipeline(session_id="recipe-reliability", verbose=True)
-
     results = []
     for i, recipe in enumerate(recipes, 1):
         rid = recipe["id"]
         intent, n_images = _build_intent(recipe, pool)
         print(f"\n{'='*70}\n[harness] ({i}/{len(recipes)}) {rid}\n  intent: {intent}\n{'='*70}")
-        # Isolate this recipe: fresh brain + researcher history, cleared caches.
-        pipeline._brain = create_brain_agent()
-        pipeline._researcher = create_researcher_agent()
+        # Full isolation: a fresh pipeline + unique session per recipe so no
+        # session state (input images, chat history, memory) leaks into the next
+        # recipe and confuses triage/researcher.
+        pipeline = create_pipeline(session_id=f"recipe-reliability-{rid}", verbose=True)
         clear_tool_caches()
         before = _comfy_history_ids()
         t0 = time.time()
