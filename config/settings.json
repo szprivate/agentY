@@ -43,17 +43,17 @@
   "llm": {
     
     "pipeline": {
-      "researcher": "ollama,gemma4:12b",
-      "brain": "ollama,gemma4:12b",
-      "triage": "ollama,gemma4:12b",
-      "info": "ollama,gemma4:12b",
-      "story": "ollama,gemma4:12b",
-      "scout": "ollama,gemma4:12b",
-      "dop": "ollama,gemma4:12b",
-      "planner": "ollama,gemma4:12b",
-      "learnings": "ollama,gemma4:12b",
-      "error_checker": "ollama,gemma4:12b",
-      "build_skill": "ollama,gemma4:12b",
+      "researcher": "ollama,qwen3.6:27b",
+      "brain": "ollama,qwen3.6:27b",
+      "triage": "ollama,qwen3.6:27b",
+      "info": "ollama,qwen3.6:27b",
+      "story": "ollama,qwen3.6:27b",
+      "scout": "ollama,qwen3.6:27b",
+      "dop": "ollama,qwen3.6:27b",
+      "planner": "ollama,qwen3.6:27b",
+      "learnings": "ollama,qwen3.6:27b",
+      "error_checker": "ollama,qwen3.6:27b",
+      "build_skill": "ollama,qwen3.6:27b",
       "llm_functions": "gemma4:12b",
       "executor_vision_model": "gemma4:12b"
     },
