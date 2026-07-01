@@ -503,9 +503,13 @@ def _make_agent(
         # (the .local researcher/brain carry the full model table) and yields
         # malformed brainbriefings. Give the local model a big context window.
         num_ctx = int(_cfg("OLLAMA_NUM_CTX", "ollama", "num_ctx", default=32768))
+        # From-scratch builds emit a long tool-call sequence; a low output cap
+        # trips MaxTokensReachedException, so raise num_predict/max_tokens too.
+        ol_max_tokens = int(_cfg("OLLAMA_MAX_TOKENS", "ollama", "max_tokens", default=12288))
         _ensure_ollama_model(model_id, host)
-        model = OllamaModel(host=host, model_id=model_id, options={"num_ctx": num_ctx})
-        print(f"[agentY:{role}] Using Ollama — {model_id} (num_ctx={num_ctx})")
+        model = OllamaModel(host=host, model_id=model_id, max_tokens=ol_max_tokens,
+                            options={"num_ctx": num_ctx})
+        print(f"[agentY:{role}] Using Ollama — {model_id} (num_ctx={num_ctx}, max_tokens={ol_max_tokens})")
     else:
         model_id = anthropic_model or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
         tokens = max_tokens or int(_cfg("ANTHROPIC_MAX_TOKENS", "anthropic", "max_tokens", default=4096))
