@@ -80,6 +80,7 @@ Signal the workflow as ready for the Executor.
 - You MUST NOT call `submit_prompt`, `view_image`, or `analyze_image` — these belong to the Executor.
 - You MUST NOT ask the user for permission — act immediately.
 - `signal_workflow_ready` on the final iteration MUST be your last tool call.
+- This applies **equally to a from-scratch build** (`template.name == "build_new"`): once the assembled workflow is complete, immediately call `signal_workflow_ready(workflow_path)`. Do NOT stop to describe the workflow, estimate generation time, list the nodes, or offer to "validate / refine / adjust" anything — finalize it.
 
 ---
 
