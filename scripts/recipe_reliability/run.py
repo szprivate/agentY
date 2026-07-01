@@ -87,9 +87,10 @@ def _image_count(recipe: dict) -> int:
 
 
 def _load_local_recipes(task: str | None, only: str | None, limit: int | None,
-                        exclude: set[str] | None = None):
+                        exclude: set[str] | None = None, include: set[str] | None = None):
     db = json.load(open(_DB, encoding="utf-8"))
     exclude = exclude or set()
+    include = include or set()
     out = []
     for t in db["tasks"]:
         if task and t["task"] != task:
@@ -98,6 +99,8 @@ def _load_local_recipes(task: str | None, only: str | None, limit: int | None,
             if m["execution"] != "local":
                 continue
             if only and m["id"] != only:
+                continue
+            if include and m["id"] not in include:
                 continue
             if m["id"] in exclude:
                 continue
@@ -238,6 +241,7 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--timeout", type=float, default=900.0, help="per-recipe seconds")
     ap.add_argument("--exclude", default="", help="comma-separated recipe ids to skip")
+    ap.add_argument("--include", default="", help="comma-separated recipe ids allowlist")
     ap.add_argument("--no-downloads", action="store_true",
                     help="disable HF model downloads (missing models fail fast); "
                          "default lets the agent download missing models")
@@ -249,7 +253,8 @@ def main() -> int:
         os.environ["AGENTY_DISABLE_DOWNLOADS"] = "1"
 
     exclude = {s.strip() for s in args.exclude.split(",") if s.strip()}
-    recipes = _load_local_recipes(args.task, args.only, args.limit, exclude)
+    include = {s.strip() for s in args.include.split(",") if s.strip()}
+    recipes = _load_local_recipes(args.task, args.only, args.limit, exclude, include)
     print(f"[harness] {len(recipes)} local recipe(s) to test")
     # Provision a pool of distinct test images sized to the largest recipe need.
     max_imgs = max((_image_count(r) for r in recipes), default=1)
