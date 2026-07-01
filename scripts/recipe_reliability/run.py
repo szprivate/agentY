@@ -87,8 +87,10 @@ def _image_count(recipe: dict) -> int:
     return max(1, len(imgs))
 
 
-def _load_local_recipes(task: str | None, only: str | None, limit: int | None):
+def _load_local_recipes(task: str | None, only: str | None, limit: int | None,
+                        exclude: set[str] | None = None):
     db = json.load(open(_DB, encoding="utf-8"))
+    exclude = exclude or set()
     out = []
     for t in db["tasks"]:
         if task and t["task"] != task:
@@ -97,6 +99,8 @@ def _load_local_recipes(task: str | None, only: str | None, limit: int | None):
             if m["execution"] != "local":
                 continue
             if only and m["id"] != only:
+                continue
+            if m["id"] in exclude:
                 continue
             out.append(m)
     return out[:limit] if limit else out
@@ -225,9 +229,11 @@ def main() -> int:
     ap.add_argument("--only", default=None, help="single recipe id")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--timeout", type=float, default=900.0, help="per-recipe seconds")
+    ap.add_argument("--exclude", default="", help="comma-separated recipe ids to skip")
     args = ap.parse_args()
 
-    recipes = _load_local_recipes(args.task, args.only, args.limit)
+    exclude = {s.strip() for s in args.exclude.split(",") if s.strip()}
+    recipes = _load_local_recipes(args.task, args.only, args.limit, exclude)
     print(f"[harness] {len(recipes)} local recipe(s) to test")
     # Provision a pool of distinct test images sized to the largest recipe need.
     max_imgs = max((_image_count(r) for r in recipes), default=1)
