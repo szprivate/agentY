@@ -26,11 +26,6 @@ if _root not in sys.path:
     sys.path.insert(0, _root)
 load_dotenv(os.path.join(_root, ".env"))
 
-# Reliability sweep: never let the researcher download multi-GB models for a
-# recipe whose files are not installed. With downloads disabled it fails fast
-# to a missing-model blocker (which we classify + skip) instead of hanging.
-os.environ.setdefault("AGENTY_DISABLE_DOWNLOADS", "1")
-
 # The pipeline's verbose logging prints unicode (e.g. "->" arrows); make stdout
 # UTF-8 so a cp1252 console does not crash the run with UnicodeEncodeError.
 for _stream in (sys.stdout, sys.stderr):
@@ -243,7 +238,15 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--timeout", type=float, default=900.0, help="per-recipe seconds")
     ap.add_argument("--exclude", default="", help="comma-separated recipe ids to skip")
+    ap.add_argument("--no-downloads", action="store_true",
+                    help="disable HF model downloads (missing models fail fast); "
+                         "default lets the agent download missing models")
     args = ap.parse_args()
+
+    # By default the researcher may download missing models via its HF tools.
+    # --no-downloads fails fast to a missing-model blocker instead.
+    if args.no_downloads:
+        os.environ["AGENTY_DISABLE_DOWNLOADS"] = "1"
 
     exclude = {s.strip() for s in args.exclude.split(",") if s.strip()}
     recipes = _load_local_recipes(args.task, args.only, args.limit, exclude)
