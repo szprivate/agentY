@@ -98,6 +98,25 @@ def _cases(img: dict[str, str]) -> list[dict]:
          "out": img["red_square"], "inputs": [img["red_square"]], "expect": "FAIL"},
         {"name": "edit_add_yellow_circle_ok", "intent": "add a yellow circle in the center",
          "out": img["red_yellow_circle"], "inputs": [img["red_square"]], "expect": "PASS"},
+        # ---- Harder tier: adversarial cases that probe real discrimination ----
+        # Right shape, wrong colour -> must FAIL (not just "there is a circle").
+        {"name": "gen_shape_ok_colour_wrong", "intent": "a green circle on a white background",
+         "out": img["blue_circle"], "inputs": [], "expect": "FAIL"},
+        # Right colour, wrong shape -> must FAIL (not just "there is blue").
+        {"name": "gen_colour_ok_shape_wrong", "intent": "a solid blue square filling the frame",
+         "out": img["blue_circle"], "inputs": [], "expect": "FAIL"},
+        # Compound intent, only half delivered -> must FAIL (missing element).
+        {"name": "gen_compound_partial", "intent": "a red square next to a blue circle",
+         "out": img["red_square"], "inputs": [], "expect": "FAIL"},
+        # Compound intent fully delivered -> PASS (red field with a coloured circle inside).
+        {"name": "gen_compound_match", "intent": "a red image with a round shape in the center",
+         "out": img["red_yellow_circle"], "inputs": [], "expect": "PASS"},
+        # Edit happened but hit the WRONG target colour -> must FAIL.
+        {"name": "edit_wrong_target_colour", "intent": "change the color of this square to blue",
+         "out": img["green_square"], "inputs": [img["red_square"]], "expect": "FAIL"},
+        # Edit asked to add a circle but output is unchanged -> must FAIL.
+        {"name": "edit_add_circle_unchanged", "intent": "add a yellow circle in the center",
+         "out": img["red_square"], "inputs": [img["red_square"]], "expect": "FAIL"},
     ]
 
 
