@@ -98,3 +98,114 @@ If a matching entry exists, **apply the documented solution directly** instead o
 2026-06-11 | apply_brainbriefing fails when positive_prompt_node_id is null in template | Use get_workflow_node_info to identify the prompt injection node (e.g., PrimitiveStringMultiline), then patch via update_workflow directly into that node's value field.
 
 2026-06-11 | LoadImage validation fails when image path lacks subfolder prefix in ComfyUI input | Qualify filename with full subfolder path (e.g., 'agent/references/filename.png') matching the ComfyUI input directory structure to resolve custom_validation_failed errors.
+
+2026-07-01 | VAEEncode pixels input connected to wrong node output type | Feed VAEEncode.pixels from the scaled image node (e.g., node 75:80), not from GetImageSize or other non-image outputs. Verify output slot type matches IMAGE before patching.
+
+2026-07-01 | KSampler node receives invalid string values for sampler_name and denoise fields | Patch KSampler with correct types: sampler_name as string (e.g., "euler"), scheduler as string (e.g., "simple"), denoise as float between 0-1 (e.g., 1.0).
+2026-07-01 | MarkdownNote custom node not installed causes server validation error on workflow | Remove unsupported MarkdownNote nodes from template before validation; they are documentation-only and not required for execution.
+2026-07-01 | apply_brainbriefing fails when positive_prompt_node_id is None; manual node patching needed | When positive_prompt_node_id is null, manually identify the correct text node ID using node inspection and patch it directly via update_workflow instead of relying on apply_brainbriefing.
+
+2026-07-01 | KSampler denoise input received string value instead of float | Set denoise to a float value (e.g., 1.0) not a string. KSampler requires sampler_name and scheduler as strings, but denoise must be numeric.
+2026-07-01 | MarkdownNote custom node missing causes server validation error | Remove MarkdownNote nodes before validation; they are documentation-only and not installed in ComfyUI.
+
+2026-07-01 | UNETLoader requires weight_dtype parameter for Qwen Image models | Add weight_dtype input to UNETLoader node; set to 'default' to resolve required input validation error during workflow assembly.
+
+2026-07-01 | UNETLoader missing weight_dtype input for Flux models | Add weight_dtype input to UNETLoader node and set to 'default' to resolve required input validation error.
+
+2026-07-01 | UNETLoader requires weight_dtype input for Flux models | When loading Flux UNET models with UNETLoader, always include weight_dtype input set to 'default' to pass validation.
+
+2026-07-01 | DepthAnythingLoader node does not exist in ComfyUI; use DepthAnythingV2Preprocessor instead | The brainbriefing referenced a non-existent DepthAnythingLoader. Use DepthAnythingV2Preprocessor with ckpt_name parameter (e.g., 'depth_anything_v2_vitl.pth') to generate depth maps from images.
+2026-07-01 | Depth Anything V2 model file format mismatch; .safetensors model cannot be used directly | DepthAnythingV2Preprocessor expects .pth checkpoint files, not .safetensors. Specify model via ckpt_name combo option (e.g., 'depth_anything_v2_vitl.pth') rather than loading external files.
+2026-07-01 | save_workflow tool fails when building from template; must use update_workflow with add_nodes instead | When patching an existing template workflow, use update_workflow() with add_nodes parameter, not save_workflow(). The latter is only for entirely new workflows created outside templates.
+
+2026-07-01 | Lotus depth workflow assembly requires explicit node wiring via update_workflow | Build from empty template by calling update_workflow with all 14 nodes (loaders, conditioning, sampling, encode/decode, image ops) in single add_nodes batch to ensure proper connections.
+2026-07-01 | get_node_schema returns full model path options with subdirectory prefixes for VAE and UNET loaders | Use exact path strings from schema options (e.g., 'lotusDepth\\lotus-depth-g-v1-0_VAE.safetensors') when patching VAELoader and UNETLoader inputs to avoid validation failures.
+
+2026-07-01 | SAM3_Detect outputs MASK type incompatible with SaveImage IMAGE input | Use PorterDuffImageComposite to composite the mask over a background image, converting MASK to IMAGE format before SaveImage node.
+2026-07-01 | Search nodes function returns empty results for common mask conversion queries | When mask-to-image conversion is needed, use get_node_schema to inspect nodes like PorterDuffImageComposite that accept MASK type and output IMAGE.
+
+2026-07-01 | TextEncodeQwenImageEditPlus supports up to 3 reference images for blending | Use TextEncodeQwenImageEditPlus node with image1, image2, image3 optional inputs to condition Qwen Image editing with multiple reference images in a single encoding step.
+2026-07-01 | EmptyQwenImageLayeredLatentImage requires layers and batch_size parameters | Always set layers (default 3) and batch_size (default 1) when initializing latent space for Qwen Image workflows to avoid required input missing errors.
+2026-07-01 | UNETLoader weight_dtype parameter must be explicitly set for Qwen models | Add weight_dtype input to UNETLoader and set to 'default' to prevent validation errors when loading Qwen Image diffusion models.
+
+2026-07-01 | UNETLoader missing weight_dtype input causes validation failure | Add weight_dtype input to UNETLoader node and set it to 'default' to resolve required input validation error.
+
+2026-07-01 | update_workflow add_nodes with large JSON payload causes truncation and parsing errors | Split large node definitions into smaller batches or use incremental add_nodes calls with fewer nodes per update to avoid JSON truncation during workflow assembly.
+2026-07-01 | ControlNet workflow scaffold templates are empty and require manual node creation from recipe | Always fetch the workflow recipe first, extract required_nodes list, then use update_workflow with add_nodes to build from empty scaffold; do not assume templates have pre-built structure.
+2026-07-01 | LoadImage node combo options populated from available files; brainbriefing input_nodes role ignored during initial assembly | Verify LoadImage filename matches the combo options returned by get_node_schema; input_nodes role field is metadata only and does not auto-wire connections.
+
+2026-07-01 | CheckpointLoaderSimple model paths use backslash separators in combo options | Use backslash format (e.g., 'FLUX1\\flux1-dev-fp8.safetensors') when patching checkpoint names, matching the exact string from get_node_schema dropdown options.
+2026-07-01 | UltimateSDUpscale workflow requires VAE input not provided in initial assembly | Ensure UltimateSDUpscale node receives a VAE output from a VAELoader or equivalent node; the upscale operation cannot proceed without explicit VAE conditioning.
+
+2026-07-01 | Empty Qwen Image inpaint template requires full build from recipe | Build all required nodes per recipe spec using add_workflow_node batch calls. Wire nodes per connection_patterns. Do not assume scaffold exists; validate against recipe requirements.
+2026-07-01 | Multiple sequential get_workflow_template calls return empty canvases | When template returns build_from_scratch=true hint, proceed directly to recipe-driven node assembly. Avoid repeated template lookups; use get_workflow_recipe once and build deterministically.
+2026-07-01 | ControlNetInpaintingAliMamaApply node requires both positive and negative conditioning inputs | Wire CLIPTextEncode outputs (positive and negative) separately to the ControlNet apply node before KSampler to ensure proper inpainting control flow.
+
+2026-07-01 | Z-Image-Turbo workflow assembly requires Qwen text encoder with lumina2 type | Use CLIPLoader with clip_name containing FLUX2 or similar prefix and type set to lumina2 for Z-Image-Turbo compatibility.
+2026-07-01 | ModelSamplingAuraFlow patch node requires shift parameter for Z-Image-Turbo | Apply ModelSamplingAuraFlow with shift=3.0 before KSampler to properly configure Z-Image-Turbo model behavior.
+2026-07-01 | Z-Image-Turbo uses EmptySD3LatentImage for latent canvas initialization | Initialize latent space with EmptySD3LatentImage node set to target resolution (1024x768) instead of other latent initialization nodes.
+2026-07-01 | Z-Image-Turbo KSampler requires cfg=1 and res_multistep scheduler | Configure KSampler with cfg=1.0, res_multistep sampler, and simple scheduler for Z-Image-Turbo 8-step sampling.
+
+2026-07-01 | Model path names require exact backslash-prefixed directory format | Use get_node_schema to verify exact model path strings; paths like 'FLUXDEVGGUF\clip_l.safetensors' must include the directory prefix exactly as shown in dropdown options.
+2026-07-01 | VAELoader validation fails with incorrect model path format | When patching VAE model names, ensure the path matches available options exactly; FLUX1\ae.safetensors is valid but FLUX1/ae.safetensors with forward slashes will fail validation.
+
+2026-07-01 | DualCLIPLoader path format requires backslashes escaped in JSON strings | Use double backslashes (e.g., "FLUXDEVGGUF\\\\clip_l.safetensors") when specifying model paths in add_nodes JSON to match ComfyUI's internal path validation.
+2026-07-01 | update_workflow fails silently when nodes already exist from previous failed attempt | Always remove existing nodes with remove_nodes before attempting to re-add them; check the added_nodes array in response to verify successful creation.
+
+2026-07-01 | DualCLIPLoader model paths require backslashes not forward slashes in workflow JSON | Use backslash path separators (e.g., "HUNYUAN\\clip_l.safetensors") when setting clip_name1/clip_name2 inputs; forward slashes cause "value_not_in_list" validation errors.
+2026-07-01 | Model file paths from brainbriefing may not match exact node schema dropdown options | Always verify model paths against get_node_schema output before patching; use check_model tool to resolve ambiguous filenames to full path format.
+
+2026-07-01 | Flux 2 Klein workflow assembly requires DualCLIPLoader with identical clip_name1 and clip_name2 | Use DualCLIPLoader with both clip_name1 and clip_name2 set to the same Flux 2 Klein text encoder (e.g., FLUX.2-klein-9B-text_encoder-8bit.safetensors) for proper dual-encoder initialization.
+2026-07-01 | EmptySD3LatentImage node used for Flux 2 Klein latent initialization instead of model-specific variant | EmptySD3LatentImage works correctly for Flux 2 Klein workflows; accepts width, height, batch_size inputs and produces compatible LATENT output for KSampler.
+
+2026-07-01 | DualCLIPLoader requires full model path including folder prefix like FLUXDEVGGUF\ | Always specify the complete path string from the dropdown options (e.g., 'FLUXDEVGGUF\\clip_l.safetensors') when loading CLIP models to avoid recognition errors.
+2026-07-01 | Empty template workflow requires building all nodes in single batch to ensure proper connections | When using an empty scaffold, call update_workflow once with all required nodes in add_nodes array to maintain correct wiring across the full pipeline.
+
+2026-07-01 | DepthAnythingLoader node does not exist in ComfyUI; use DepthAnythingV2Preprocessor instead | Replace nonexistent DepthAnythingLoader with DepthAnythingV2Preprocessor node. Set ckpt_name to depth_anything_v2_vitb.pth (or other .pth variants), not .safetensors files.
+2026-07-01 | Depth Anything V2 recipe in workflow_recipes.json maps to Depth Anything 3 template with different node classes | When depth task brainbriefing specifies V2 model, directly search and use DepthAnythingV2Preprocessor node; do not rely on recipe template node names.
+
+2026-07-01 | Lotus depth workflow assembly requires 14 nodes in single batch | Use update_workflow with all nodes (loaders, conditioning, sampling, encode/decode, invert) in one add_nodes call to ensure proper connection wiring from empty template.
+
+2026-07-01 | SAM3Grounding outputs MASK at index 0, visualization IMAGE at index 1 | When saving SAM3 segmentation results, wire SAM3Grounding output index 1 (visualization) to SaveImage, not index 0 (masks), to avoid type mismatch errors.
+
+2026-07-01 | Qwen Image editing requires explicit model variant specification in UNETLoader | Add weight_dtype input to UNETLoader node and set to 'default' when loading Qwen Image models to prevent validation errors.
+2026-07-01 | Multiple reference images for composition need individual LoadImage nodes wired separately | Create one LoadImage node per reference image (e.g., nodes 1, 2, 3) with distinct filenames; wire all outputs to conditioning/sampling pipeline for blending.
+
+2026-07-01 | Empty template scaffold requires all nodes added in single batch for proper wiring | Use update_workflow with complete add_nodes batch containing all 19 nodes at once to ensure correct connections; splitting into incremental calls causes link failures.
+2026-07-01 | save_workflow cannot be used on existing template workflows | Always use update_workflow with add_nodes parameter when patching or building on existing templates; save_workflow is reserved for entirely new workflows only.
+
+2026-07-01 | Flux 2 Klein workflow assembly requires 19 nodes wired in specific order | Build from empty template using get_workflow_recipe, then update_workflow with all nodes in single batch: loaders (CLIP, UNET, VAE), conditioning (CLIPTextEncode), latent ops (VAEEncode, EmptyFlux2LatentImage), sampling (CFGGuider, KSamplerSelect, Flux2Scheduler, SamplerCustomAdvanced), decode (VAEDecode), and SaveImage. Wire model outputs to guider and sampler inputs per recipe pattern.
+
+2026-07-01 | Z-Image ControlNet workflow assembly from empty template succeeds | Build Z-Image ControlNet workflows by fetching recipe, loading node schemas for all 15 nodes (loaders, ControlNet, sampling, decode), then batch-adding via update_workflow with proper wiring per recipe connection_patterns.
+
+2026-07-01 | UpscaleModelLoader combo option must match available models list | When patching UpscaleModelLoader, verify available model names via get_node_schema first. Use only models in the options list (e.g., '4x_NMKD-Siax_200k.pth'), not arbitrary model names like 'RealESRGAN_x4plus.pth'.
+
+2026-07-01 | LoadImage validation fails when mask file missing from ComfyUI input directory | Copy the mask file to the ComfyUI input directory before patching LoadImage. Use absolute path from brainbriefing or upload via file copy before workflow validation.
+2026-07-01 | Large add_nodes JSON payloads cause parsing/truncation errors in update_workflow | Split node definitions into smaller batches (5–10 nodes per call) instead of sending all nodes in one update_workflow call to avoid system limits.
+2026-07-01 | Qwen Image inpainting requires ControlNetInpaintingAliMamaApply node with proper conditioning wiring | Wire CLIPTextEncode outputs (positive and negative) separately to ControlNetInpaintingAliMamaApply before KSampler; ensure vae, image, and mask inputs are connected.
+
+2026-07-01 | LTX-2 image edit recipe unavailable in workflow database | When a task-model combination lacks a dedicated recipe, use fallback approach: load closest available recipe scaffold (e.g., Flux 2 Klein for image edit) and build workflow to that specification instead.
+2026-07-01 | update_workflow must be used for populating empty template canvases | When assembling workflow on empty template, use update_workflow with add_nodes parameter, not save_workflow; save_workflow is reserved for entirely new workflows outside templates.
+2026-07-01 | Dual reference image blending requires VAE encoding and ReferenceLatent chaining | For multi-image blending workflows, load both images via LoadImage, encode each to latent via VAE encoder, then chain ReferenceLatent nodes to pass both references to sampler for conditioning.
+
+2026-07-01 | WAN 2.2 I2V workflow requires VAEEncode node to convert input image to latent space | After LoadImage, wire output to VAEEncode with VAE model to create latent representation before passing to KSampler for video generation.
+2026-07-01 | EmptyLatentImage node location unclear in comfyui directory structure during node schema discovery | Search for node class names using get_workflow_recipe and get_node_schema; if standard nodes unavailable, check comfy_extras subdirectories or use search_nodes with specific keywords like "empty latent".
+
+2026-07-01 | LTX-2 video i2v workflow assembly requires batch node creation with all 40+ nodes wired together | Build LTX-2 workflows in single update_workflow call with all nodes (loaders, conditioning, latent ops, sampling, decode) to avoid partial assembly errors and ensure proper connection flow.
+2026-07-01 | LTXVImgToVideoInplace node requires both image and pre-generated latent inputs for conditioning | Wire LoadImage output to LTXVImgToVideoInplace image slot and EmptyLTXVLatentVideo output to latent slot; node conditions existing latent space rather than generating from scratch.
+2026-07-01 | LTXVConditioning node output must be split into separate positive and negative conditioning paths | Use LTXVConditioning with frame_rate parameter to output two conditioning tensors that feed separately into downstream sampling nodes via CFGGuider.
+2026-07-01 | LTXVSeparateAVLatent must be called after sampling to split combined audio-video latent into discrete paths | After SamplerCustomAdvanced, wire output to LTXVSeparateAVLatent to extract video_latent and audio_latent separately before decoding each stream.
+
+2026-07-01 | WAN 2.2 i2v workflow assembly succeeds with 15-node batch in single update_workflow call | Build all nodes (CLIPLoader, UNETLoader high/low, VAELoader, CLIPTextEncode, ModelSamplingSD3, KSamplerAdvanced, VAEDecode, VHS_VideoCombine) in one add_nodes batch from empty template following recipe structure.
+
+2026-07-01 | BerniniConditioning reference_images input requires dictionary-indexed structure not array list | Use write_text_file to manually construct reference_images as indexed dict entries (e.g. "0": [node_id, slot], "1": [node_id, slot]) rather than attempting array syntax [[node_id, slot]] in update_workflow patches.
+2026-07-01 | WAN 2.2 image blending workflow assembly fails with direct add_nodes batch containing BerniniConditioning | Build workflow incrementally or use manual JSON file write with correct reference_images indexing; validate with update_workflow after manual JSON construction to ensure BerniniConditioning wiring resolves properly.
+
+2026-07-01 | LTX-2 i2v workflow: 28 schema fetches before assembly attempt | Fetch all node schemas upfront in batch, then assemble workflow in single update_workflow call. Avoid sequential schema calls that delay node addition.
+2026-07-01 | LTX-2 i2v requires audio VAE and text encoder loader nodes for full i2v-audio pipeline | Include LTXAVTextEncoderLoader and LTXVAudioVAELoader nodes in build, wire to LTXVEmptyLatentAudio and LTXVConcatAVLatent for synchronized audio output.
+2026-07-01 | GetImageSize node needed to extract resolution from LoadImage for dynamic latent generation | Wire LoadImage output to GetImageSize, use width/height outputs to parameterize EmptyLTXVLatentVideo instead of hardcoding dimensions.
+
+2026-07-01 | WAN 2.2 i2v workflow needs VHS_VideoCombine output node | CreateVideo produces VIDEO type but needs VHS_VideoCombine as final output node to satisfy ComfyUI's prompt_no_outputs validation requirement.
+2026-07-01 | Workflow assembly from empty template requires all nodes in single batch | Avoid incremental add_nodes calls; add all 16 nodes (LoadImage, CLIP, UNETLoader, VAELoader, text encode, sampling, decode, VHS) in one update_workflow call to prevent partial assembly and wiring failures.
+
+2026-07-01 | WAN 2.2 first-to-last frame video workflow builds successfully from empty template in single batch | Fetch recipe, load all node schemas (LoadImage, CLIPLoader, UNETLoader, VAELoader, CLIPTextEncode, ModelSamplingSD3, KSamplerAdvanced, WanFirstLastFrameToVideo, VAEDecode, CreateVideo, GetVideoComponents, VHS_VideoCombine), then add all 17 nodes via single update_workflow call with proper wiring per connection_patterns.

@@ -36,7 +36,9 @@
       "SDXL\\stable-diffusion-xl-1.0-inpainting-0.1.safetensors",
       "SDXL_Turbo\\wildcardxXLTURBO_wildcardxXLTURBOV10.safetensors",
       "SUPIR\\SUPIR-v0F_fp16.safetensors",
-      "TXT2GIF\\hsxl_temporal_layers.safetensors"
+      "TXT2GIF\\hsxl_temporal_layers.safetensors",
+      "flux-2-klein-4b.safetensors",
+      "z_image_turbo_fp8_e4m3fn.safetensors"
     ],
     "configs": [],
     "loras": [
@@ -53,6 +55,7 @@
       "Characters_People\\kirdunstfluxmini.safetensors",
       "Characters_People\\mastermerlin_flux_911T4rga.safetensors",
       "FLUX2\\Flux2TurboComfyv2.safetensors",
+      "Flux_2-Turbo-LoRA_comfyui.safetensors",
       "LTX2\\ltx-2-19b-distilled-lora-384.safetensors",
       "LTX2\\ltx-2-19b-ic-lora-canny-control.safetensors",
       "LTX2\\ltx-2-19b-ic-lora-depth-control.safetensors",
@@ -91,6 +94,7 @@
       "QWEN\\qwen-edit-skin.safetensors",
       "QWEN\\qwen-edit-skin_1.1_000002750.safetensors",
       "QWEN\\qwen-image-edit-2511-multiple-angles-lora.safetensors",
+      "Qwen-Image-Lightning-8steps-V1.0.safetensors",
       "Style\\2000analogcore_v3.safetensors",
       "Style\\AnimateLCM_sd15_t2v_lora.safetensors",
       "Style\\BokehGlow01_CE_FLUX_AIT3k.safetensors",
@@ -190,6 +194,9 @@
       "WAN21\\Wan2_1_VAE_fp32.safetensors",
       "WAN21\\wan_2.1_vae.safetensors",
       "WAN22\\wan2.2_vae.safetensors",
+      "ae.safetensors",
+      "diffusion_pytorch_model.safetensors",
+      "flux2-vae.safetensors",
       "lotusDepth\\lotus-depth-g-v1-0_VAE.safetensors",
       "taeltx_2.safetensors"
     ],
@@ -216,7 +223,11 @@
       "SDXL\\SDXL_textEncoder.safetensors",
       "UMT5\\umt5-xxl-enc-bf16.safetensors",
       "UMT5\\umt5_xxl_fp8_e4m3fn_scaled.safetensors",
-      "WAN\\open-clip-xlm-roberta-large-vit-huge-14_fp16.safetensors"
+      "WAN\\open-clip-xlm-roberta-large-vit-huge-14_fp16.safetensors",
+      "ernie-image-prompt-enhancer.safetensors",
+      "ministral-3-3b.safetensors",
+      "qwen_3_4b.safetensors",
+      "qwen_3_4b_fp8_mixed.safetensors"
     ],
     "diffusion_models": [
       "FLUX1\\flux1-canny-dev.safetensors",
@@ -297,8 +308,15 @@
       "WAN22\\wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors",
       "WAN22\\wan2.2_t2v_low_noise_14B_fp16.safetensors",
       "WAN22\\wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",
+      "ernie-image.safetensors",
+      "flux-2-klein-4b.safetensors",
       "flux-2-klein-9b-fp8.safetensors",
+      "flux-2-klein-9b.safetensors",
+      "flux-2-klein-base-4b-fp8.safetensors",
+      "flux1-krea-dev_fp8_scaled.safetensors",
       "lotusDepth\\lotus-depth-d-v1-1.safetensors",
+      "qwen_image_fp8_e4m3fn.safetensors",
+      "z-image-turbo-fp8-e4m3fn.safetensors",
       "z_image_turbo_bf16.safetensors"
     ],
     "clip_vision": [
@@ -339,7 +357,8 @@
       "SDXL\\sai_xl_depth_256lora.safetensors",
       "SD_CONTROL\\sai_xl_canny_256lora.safetensors",
       "SD_CONTROL\\sai_xl_depth_256lora.safetensors",
-      "WAN21\\Wan21_Uni3C_controlnet_fp16.safetensors"
+      "WAN21\\Wan21_Uni3C_controlnet_fp16.safetensors",
+      "Z-Image-Turbo-Fun-Controlnet-Union.safetensors"
     ],
     "gligen": [],
     "upscale_models": [
@@ -357,7 +376,9 @@
     "classifiers": [],
     "model_patches": [
       "Wan2_1-InfiniTetalk-Single_fp16.safetensors",
-      "Wan2_1-InfiniteTalk-Multi_fp16.safetensors"
+      "Wan2_1-InfiniteTalk-Multi_fp16.safetensors",
+      "Z-Image-Turbo-Fun-Controlnet-Union.safetensors",
+      "qwen_image_inpaint_diffsynth_controlnet-fp8.safetensors"
     ],
     "audio_encoders": [
       "wav2vec2-chinese-base_fp16.safetensors",
@@ -439,7 +460,8 @@
       "sam2_hiera_small.safetensors"
     ],
     "sam3": [
-      "sam3.pt"
+      "sam3.pt",
+      "sam3.safetensors"
     ],
     "sams": [
       "sam_vit_b_01ec64.pth"
@@ -484,9 +506,7 @@
       "t5-v1_1-xxl-encoder-Q8_0.gguf"
     ],
     "kjnodes_fonts": [],
-    "rmbg": [
-      "RMBG-2.0\\model.safetensors"
-    ],
+    "rmbg": [],
     "LLM": [],
     "sharp": [],
     "VHS_video_formats": [],
