@@ -499,9 +499,13 @@ def _make_agent(
     if llm == "ollama":
         model_id = ollama_model or str(_cfg("OLLAMA_MODEL", "ollama", "model", default="qwen3-vl:30b"))
         host = str(_cfg("OLLAMA_HOST", "ollama", "host", default="http://localhost:11434"))
+        # Ollama defaults num_ctx to ~4k, which truncates the large agent prompts
+        # (the .local researcher/brain carry the full model table) and yields
+        # malformed brainbriefings. Give the local model a big context window.
+        num_ctx = int(_cfg("OLLAMA_NUM_CTX", "ollama", "num_ctx", default=32768))
         _ensure_ollama_model(model_id, host)
-        model = OllamaModel(host=host, model_id=model_id)
-        print(f"[agentY:{role}] Using Ollama — {model_id}")
+        model = OllamaModel(host=host, model_id=model_id, options={"num_ctx": num_ctx})
+        print(f"[agentY:{role}] Using Ollama — {model_id} (num_ctx={num_ctx})")
     else:
         model_id = anthropic_model or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
         tokens = max_tokens or int(_cfg("ANTHROPIC_MAX_TOKENS", "anthropic", "max_tokens", default=4096))

@@ -43,23 +43,24 @@
   "llm": {
     
     "pipeline": {
-      "researcher": "claude,claude-haiku-4-5",
-      "brain": "claude,claude-haiku-4-5",
-      "triage": "claude,claude-haiku-4-5",
-      "info": "claude,claude-haiku-4-5",
-      "story": "claude,claude-haiku-4-5",
-      "scout": "claude,claude-haiku-4-5",
-      "dop": "claude,claude-haiku-4-5",
-      "planner": "claude,claude-haiku-4-5",
-      "learnings": "claude,claude-haiku-4-5",
-      "error_checker": "claude,claude-haiku-4-5",
-      "build_skill": "claude,claude-haiku-4-5",
+      "researcher": "ollama,gemma4:12b",
+      "brain": "ollama,gemma4:12b",
+      "triage": "ollama,gemma4:12b",
+      "info": "ollama,gemma4:12b",
+      "story": "ollama,gemma4:12b",
+      "scout": "ollama,gemma4:12b",
+      "dop": "ollama,gemma4:12b",
+      "planner": "ollama,gemma4:12b",
+      "learnings": "ollama,gemma4:12b",
+      "error_checker": "ollama,gemma4:12b",
+      "build_skill": "ollama,gemma4:12b",
       "llm_functions": "gemma4:12b",
       "executor_vision_model": "gemma4:12b"
     },
 
     "ollama": {
-      "host": "http://localhost:11434"
+      "host": "http://localhost:11434",
+      "num_ctx": 32768
     },
 
     "anthropic": {
