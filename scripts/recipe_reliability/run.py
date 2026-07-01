@@ -245,12 +245,19 @@ def main() -> int:
     ap.add_argument("--no-downloads", action="store_true",
                     help="disable HF model downloads (missing models fail fast); "
                          "default lets the agent download missing models")
+    ap.add_argument("--build", action="store_true",
+                    help="build-from-scratch mode: disable templates so the agent "
+                         "assembles each workflow node-by-node from the recipe")
     args = ap.parse_args()
 
     # By default the researcher may download missing models via its HF tools.
     # --no-downloads fails fast to a missing-model blocker instead.
     if args.no_downloads:
         os.environ["AGENTY_DISABLE_DOWNLOADS"] = "1"
+    # Build-from-scratch: gate template loading so get_workflow_catalog is empty
+    # and get_workflow_template returns an empty canvas (see agenty_core comfyui).
+    if args.build:
+        os.environ["AGENTY_FORCE_BUILD"] = "1"
 
     exclude = {s.strip() for s in args.exclude.split(",") if s.strip()}
     include = {s.strip() for s in args.include.split(",") if s.strip()}
@@ -264,6 +271,10 @@ def main() -> int:
     for i, recipe in enumerate(recipes, 1):
         rid = recipe["id"]
         intent, n_images = _build_intent(recipe, pool)
+        if args.build:
+            intent += (" Build this workflow from scratch by assembling the nodes "
+                       "yourself to the recipe standard; do not reuse an existing "
+                       "workflow template.")
         print(f"\n{'='*70}\n[harness] ({i}/{len(recipes)}) {rid}\n  intent: {intent}\n{'='*70}")
         # Full isolation: a fresh pipeline + unique session per recipe so no
         # session state (input images, chat history, memory) leaks into the next
