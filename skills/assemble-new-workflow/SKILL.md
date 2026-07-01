@@ -8,6 +8,8 @@ allowed-tools: get_workflow_recipe, list_workflow_recipes, get_workflow_catalog,
 
 Activate when `brainbriefing.template.name == "build_new"`. Build the workflow to the **standard described by the recipe database** (`task -> model -> node clusters`). The recipe tells you which nodes are required, how they connect, the boundary ports, and which existing templates implement this task+model so you can start from one rather than from nothing.
 
+**Trust the recipe — never refuse or substitute.** The recipe's `required_nodes` are the correct, **standard** ComfyUI node classes for this exact task+model, and its `node_defaults` are the template-verified widget params. Every model in the recipe DB (Qwen Image, Z-Image, Flux, LTX, WAN, ...) runs on these standard nodes — do NOT claim it "needs a custom node / diffusers integration", do NOT say it is "unsupported", and do NOT substitute a different model (Flux/SDXL/etc.). Build exactly what the recipe specifies. The only legitimate stop is when `get_node_schema` reports a required class truly absent from this ComfyUI instance.
+
 ---
 
 ## Step 1 — Fetch the recipe
