@@ -53,24 +53,30 @@ _IMAGE_INPUT_TASKS = {
 _TEST_COLORS = [(200, 60, 60), (60, 160, 80), (70, 90, 200),
                 (210, 170, 40), (150, 70, 170), (60, 180, 190)]
 
+# Keep test inputs small so edit/i2v workflows that derive their working
+# resolution from the input size do not blow up GPU VRAM. This is for
+# reliability testing only - real users supply full-res images.
+_TEST_IMG_SIZE = 512
 
-def _ensure_test_images(n: int) -> list[str]:
-    """Synthesize n visually-distinct test images in ComfyUI's input dir and
-    return their paths. ComfyUI's VAE bug blocks generating real inputs, so we
-    make controllable ones with PIL (distinct colour + shape + label)."""
+
+def _ensure_test_images(n: int, size: int = _TEST_IMG_SIZE) -> list[str]:
+    """Synthesize n visually-distinct, low-resolution test images in ComfyUI's
+    input dir and return their paths. Controllable PIL images (distinct colour +
+    shape + label); always regenerated so a changed size takes effect."""
     from PIL import Image, ImageDraw  # noqa: PLC0415
     os.makedirs(_INPUT_DIR, exist_ok=True)
-    paths = []
+    s = size
     for i in range(max(1, n)):
         p = os.path.join(_INPUT_DIR, f"recipe_test_input_{i + 1}.png")
-        if not os.path.isfile(p):
-            base = _TEST_COLORS[i % len(_TEST_COLORS)]
-            img = Image.new("RGB", (768, 768), base)
-            dr = ImageDraw.Draw(img)
-            dr.ellipse([180, 180, 588, 588], fill=tuple(min(255, c + 70) for c in base))
-            dr.rectangle([120 + i * 30, 120, 648, 648], outline=(255, 255, 255), width=10)
-            dr.text((70, 60), f"TEST {i + 1}", fill=(255, 255, 255))
-            img.save(p)
+        base = _TEST_COLORS[i % len(_TEST_COLORS)]
+        img = Image.new("RGB", (s, s), base)
+        dr = ImageDraw.Draw(img)
+        dr.ellipse([s * 0.23, s * 0.23, s * 0.77, s * 0.77],
+                   fill=tuple(min(255, c + 70) for c in base))
+        dr.rectangle([s * 0.16 + i * 20, s * 0.16, s * 0.84, s * 0.84],
+                     outline=(255, 255, 255), width=max(4, s // 76))
+        dr.text((s * 0.09, s * 0.08), f"TEST {i + 1}", fill=(255, 255, 255))
+        img.save(p)
     return [os.path.join(_INPUT_DIR, f"recipe_test_input_{i + 1}.png").replace("\\", "/")
             for i in range(max(1, n))]
 
