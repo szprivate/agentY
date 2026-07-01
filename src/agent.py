@@ -189,6 +189,31 @@ def _build_model_table() -> str:
         "loras":        "LoRAs",
     }
 
+    # Legacy models.json carried curated shortname->path maps under these keys.
+    # When they are absent, derive them from the auto-scanned `available`
+    # inventory (which reflects EVERY ComfyUI search path, incl. extra drives
+    # like L:/) so the researcher always sees what is actually installed.
+    if not any(isinstance(data.get(k), dict) and data.get(k) for k in category_titles):
+        available = data.get("available", {})
+        _folder_map = {
+            "unets":       ("diffusion_models", "unet", "unet_gguf"),
+            "checkpoints": ("checkpoints",),
+            "vae":         ("vae",),
+            "clip":        ("text_encoders", "clip", "clip_gguf"),
+            "controlnets": ("controlnet",),
+            "loras":       ("loras",),
+        }
+        derived: dict[str, dict[str, str]] = {}
+        for cat, folders in _folder_map.items():
+            entries: dict[str, str] = {}
+            for folder in folders:
+                for path in available.get(folder, []):
+                    if isinstance(path, str):
+                        entries.setdefault(Path(path).name, path)
+            if entries:
+                derived[cat] = entries
+        data = {**data, **derived}
+
     lines: list[str] = [
         "## Models",
         "",

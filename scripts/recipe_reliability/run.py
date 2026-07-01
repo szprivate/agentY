@@ -26,6 +26,11 @@ if _root not in sys.path:
     sys.path.insert(0, _root)
 load_dotenv(os.path.join(_root, ".env"))
 
+# Reliability sweep: never let the researcher download multi-GB models for a
+# recipe whose files are not installed. With downloads disabled it fails fast
+# to a missing-model blocker (which we classify + skip) instead of hanging.
+os.environ.setdefault("AGENTY_DISABLE_DOWNLOADS", "1")
+
 # The pipeline's verbose logging prints unicode (e.g. "->" arrows); make stdout
 # UTF-8 so a cp1252 console does not crash the run with UnicodeEncodeError.
 for _stream in (sys.stdout, sys.stderr):
@@ -214,10 +219,16 @@ def _classify(seen, response, comfy):
             return "missing_model"
         if errs:
             return "comfyui_exec_error"
-    if "brain_assembly_fail" in seen:
-        return "agent_build_fail"
+    # Missing-model blockers (incl. download-disabled) are environment, not agent.
+    if any(p in text for p in (
+        "not installed", "not available", "download is disabled", "missing model",
+        "unavailable", "empty model list",
+    )) and "template" not in text:
+        return "missing_model"
     if "not found" in text and ("model" in text or "check_model" in text):
         return "missing_model"
+    if "brain_assembly_fail" in seen:
+        return "agent_build_fail"
     if "template" in text and "not found" in text:
         return "agent_build_fail"
     return "no_execution"  # built nothing / unclear - inspect logs
