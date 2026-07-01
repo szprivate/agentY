@@ -118,19 +118,32 @@ def _build_intent(recipe: dict, pool: list[str]) -> tuple[str, int]:
     )
     n = min(_image_count(recipe), len(pool)) if needs_image else 0
     images = pool[:n]
-    single = {
-        "image_edit": f"Edit this image: turn it into a vibrant watercolor painting. Use {model}.",
+    # Task-appropriate phrasing. Video tasks MUST NOT get image-edit "blend"
+    # phrasing or the Researcher mis-classifies them as image edit.
+    phrasings = {
         "text_to_image": f"Generate an image of a serene mountain lake at sunrise using {model}.",
+        "image_edit": f"Edit this image: turn it into a vibrant watercolor painting. Use {model}.",
+        "image_edit_with_controlnet": f"Generate an image guided by this control image using {model}.",
         "controlnet": f"Generate an image guided by this control image using {model}.",
+        "inpaint_outpaint": f"Inpaint this image, filling the masked area naturally, using {model}.",
         "inpaint": f"Inpaint this image, filling the masked area naturally, using {model}.",
         "upscale": f"Upscale this image using {model}.",
-    }.get(task, ui.get("example_requests", ["build a workflow"])[0])
-    if n >= 2:
-        # Multi-image edit: phrase so the Researcher counts all the inputs.
-        phrasing = (f"Edit using these {n} reference images: blend them into a single "
-                    f"cohesive composition. Use {model}.")
-    else:
-        phrasing = single
+        "text_to_video": f"Generate a short video of a serene mountain lake at sunrise using {model}.",
+        "image_to_video": f"Generate a short video by animating this image using {model}.",
+        "first_last_frame_to_video": (
+            f"Generate a short video that starts on the first frame and ends on the "
+            f"last frame, interpolating between them, using {model}."),
+        "video_to_video": f"Transform this video using {model}.",
+        "video_inpaint": f"Inpaint the masked region of this video using {model}.",
+        "character": f"Generate a short video of this character using {model}.",
+    }
+    phrasing = phrasings.get(task)
+    if phrasing is None:
+        if n >= 2:
+            phrasing = (f"Edit using these {n} reference images: blend them into a single "
+                        f"cohesive composition. Use {model}.")
+        else:
+            phrasing = ui.get("example_requests", [f"Build a workflow using {model}."])[0]
     if images:
         label = "Input image:" if n == 1 else "Input images:"
         phrasing += " " + label + " " + " ".join(f'"{p}"' for p in images)
