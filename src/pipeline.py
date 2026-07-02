@@ -3130,6 +3130,9 @@ class Pipeline:
     # fraction of briefing attempts: at ~40% stochastic runaway, 4 retries leaves
     # ~1% residual failure (reliably-runaway recipes still need a prompt/model fix).
     _MAX_RESEARCHER_RETRIES = 4
+    # Auto self-correction rounds when the brain ends without calling
+    # signal_workflow_ready (common with local models that stop early).
+    _MAX_BRAIN_AUTORETRIES = 2
 
     def _build_researcher_prompt(self, user_input) -> tuple[str, str]:
         """Build the Researcher's first-attempt prompt and the extracted user text.
@@ -3350,6 +3353,10 @@ class Pipeline:
         # Track whether a brain-assembly failure was resolved via user advice.
         _assembly_fail_error: str | None = None
         _assembly_fail_advice: str | None = None
+        # Local models (qwen3.6) sometimes end the brain turn without calling
+        # signal_workflow_ready; auto self-correct a bounded number of times
+        # before falling back to asking a user (headless callers have no user).
+        _brain_autoretry = 0
 
         while True:
             interrupt_result = None
@@ -3396,6 +3403,29 @@ class Pipeline:
                     latest_wf = _latest_output_workflow()
                     if self._verbose:
                         print(f"pipeline: Brain did not signal any workflow. Latest JSON: {latest_wf}")
+                    # Auto self-correction: re-prompt the brain to finish the exact
+                    # tool sequence before asking a user (headless callers reply with
+                    # empty advice, which would otherwise abort immediately).
+                    if _brain_autoretry < self._MAX_BRAIN_AUTORETRIES:
+                        _brain_autoretry += 1
+                        if self._verbose:
+                            print(f"pipeline: Brain auto-retry {_brain_autoretry}/"
+                                  f"{self._MAX_BRAIN_AUTORETRIES} — re-prompting to signal.")
+                        current_input = (
+                            "You did NOT finish: signal_workflow_ready was never called, "
+                            "so nothing was submitted.\n"
+                            + (f"Your latest saved workflow is: {latest_wf}\n" if latest_wf else "")
+                            + "Complete the assembly NOW, in this exact order, making only "
+                            "these tool calls:\n"
+                            "1. If not done yet, call apply_brainbriefing(workflow_path, "
+                            "brainbriefing_json).\n"
+                            "2. Then call signal_workflow_ready(workflow_path) as your final "
+                            "action.\n"
+                            "Do not explain, describe, list nodes, or ask questions — just make "
+                            "those tool calls.\n\n"
+                            f"Original brainbriefing:\n\n{brain_prompt}"
+                        )
+                        continue
                     yield {
                         "brain_assembly_fail_ask": True,
                         "latest_workflow_path": latest_wf or "",
