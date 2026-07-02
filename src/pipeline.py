@@ -41,6 +41,13 @@ from src.executor import execute_workflow as _execute_workflow, execute_workflow
 from src.utils.memory import format_memories, memory_add, memory_search
 from src.tools.memory_tools import set_session_id as _set_memory_session_id
 from src.tools.comfyui import clear_tool_caches as _clear_tool_caches
+# Deterministic brain happy-path: call the mechanical assembly ops directly
+# (no LLM). get_workflow_template / apply_brainbriefing are plain functions;
+# signal_workflow_ready is a Strands DecoratedFunctionTool, so use __wrapped__.
+from agenty_core.tools.comfyui import get_workflow_template as _det_get_template
+from agenty_core.tools.comfyui import apply_brainbriefing as _det_apply_briefing
+from src.tools.workflow_handoff import signal_workflow_ready as _det_signal_tool
+_det_signal_ready = _det_signal_tool.__wrapped__
 from src.utils.learnings import count_tool_calls, maybe_run_learnings
 from src.utils.debug_log import trace as _trace
 
@@ -3355,6 +3362,64 @@ class Pipeline:
             pass
         return None
 
+    def _try_deterministic_brain(self, raw_json: str) -> str | None:
+        """Mechanical brain happy-path with no LLM.
+
+        A ``ready`` briefing that names a standard template needs no reasoning:
+        load the template, apply the briefing (the same deterministic patcher the
+        LLM would call), and signal. Returns the signalled workflow path on
+        success, or ``None`` to fall back to the LLM brain — for a missing/build
+        template, batch/variations, an annotation (2-image control) job, a
+        non-standard node, or an ``apply_brainbriefing`` error the model should
+        fix. Any exception also falls back.
+        """
+        def _bail(reason: str) -> None:
+            if self._verbose:
+                print(f"pipeline: deterministic brain declined — {reason}")
+            return None
+
+        try:
+            bb = json.loads(raw_json)
+        except Exception:  # noqa: BLE001
+            return _bail("raw_json not parseable")
+        if not isinstance(bb, dict) or bb.get("status") != "ready":
+            return _bail(f"status={bb.get('status') if isinstance(bb, dict) else '?'}")
+        tmpl = bb.get("template") or {}
+        name = tmpl.get("name") if isinstance(tmpl, dict) else None
+        if not name or name in ("build_new", "Kling3_multiShot"):
+            return _bail(f"template={name!r}")
+        # Defer anything that needs the brain's special skills to the LLM.
+        if bb.get("variations") or bb.get("batch_request"):
+            return _bail("variations/batch")
+        if bb.get("count_iter") not in (None, 1):
+            return _bail(f"count_iter={bb.get('count_iter')}")
+        if bb.get("input_image_count") == 2:  # annotation / control-image path
+            return _bail("input_image_count==2")
+        try:
+            tinfo = json.loads(_det_get_template(name))
+            path = tinfo.get("workflow_path")
+            if not path:
+                return _bail("template returned no workflow_path")
+            res = json.loads(_det_apply_briefing(path, raw_json))
+            if res.get("status") != "ok":
+                probs = res.get("problems") or res.get("server_errors") or res.get("node_errors")
+                return _bail(f"apply_brainbriefing status={res.get('status')} problems={str(probs)[:400]}")
+            wf_path = res.get("workflow_path") or path
+            # BatchImagesNode needs the brain's replace_node step (1.2.1); defer.
+            try:
+                wf = json.load(open(wf_path, encoding="utf-8"))
+                if any(isinstance(n, dict) and n.get("class_type") == "BatchImagesNode"
+                       for n in wf.values()):
+                    return None
+            except Exception:  # noqa: BLE001
+                pass
+            _det_signal_ready(wf_path)
+            return wf_path
+        except Exception as exc:  # noqa: BLE001
+            if self._verbose:
+                print(f"pipeline: deterministic brain path errored ({exc}); LLM fallback.")
+            return None
+
     async def _astream_brain_stage(
         self,
         raw_json: str,
@@ -3383,6 +3448,19 @@ class Pipeline:
         current_input: Any = brain_prompt
         _brain_snap = self._usage_snapshot(self._brain)
 
+        # Deterministic happy-path: a ready briefing naming a standard template is
+        # assembled mechanically in code (get_template -> apply -> signal), skipping
+        # the erratic LLM brain entirely. Only the plain single-run case; anything
+        # non-standard or any apply error falls through to the model below.
+        _skip_brain_llm = False
+        if not _is_error_retry and _override_brain_prompt is None:
+            _det_path = self._try_deterministic_brain(raw_json)
+            if _det_path:
+                _skip_brain_llm = True
+                if self._verbose:
+                    print(f"pipeline: Brain deterministic happy-path — signalled "
+                          f"{_det_path} (no LLM).")
+
         # Track whether a brain-assembly failure was resolved via user advice.
         _assembly_fail_error: str | None = None
         _assembly_fail_advice: str | None = None
@@ -3395,15 +3473,20 @@ class Pipeline:
             interrupt_result = None
 
             yield {"_brain_start": True}
-            async for event in self._brain.stream_async(current_input):
-                yield event
-                if "result" in event:
-                    agent_result = event["result"]
-                    if getattr(agent_result, "stop_reason", None) == "interrupt":
-                        for intr in getattr(agent_result, "interrupts", []):
-                            if getattr(intr, "name", None) == INTERRUPT_NAME:
-                                interrupt_result = intr
-                                break
+            if _skip_brain_llm:
+                # Deterministic path already assembled + signalled; skip the model
+                # for this first pass and go straight to the executor below.
+                _skip_brain_llm = False
+            else:
+                async for event in self._brain.stream_async(current_input):
+                    yield event
+                    if "result" in event:
+                        agent_result = event["result"]
+                        if getattr(agent_result, "stop_reason", None) == "interrupt":
+                            for intr in getattr(agent_result, "interrupts", []):
+                                if getattr(intr, "name", None) == INTERRUPT_NAME:
+                                    interrupt_result = intr
+                                    break
             yield {"_brain_done": True}
 
             if interrupt_result is None:
