@@ -3219,11 +3219,23 @@ class Pipeline:
         researcher_prompt_text, _ = self._build_researcher_prompt(user_input)
 
         last_error: str | None = None
+        # A runaway/hang forces messages.clear(), which also wipes the original
+        # request from context — the next attempt must then re-send it in full
+        # rather than a terse correction that assumes prior context.
+        _context_reset = False
         _researcher_snap = self._usage_snapshot(self._researcher)
 
         for attempt in range(1 + self._MAX_RESEARCHER_RETRIES):
             if attempt == 0:
                 prompt = researcher_prompt_text
+            elif _context_reset:
+                _context_reset = False
+                if self._verbose:
+                    print(f"pipeline: Researcher retry {attempt}/{self._MAX_RESEARCHER_RETRIES} "
+                          f"(context was reset — re-sending full request) …")
+                prompt = (researcher_prompt_text
+                          + "\n\nIMPORTANT: Output ONLY the brainbriefing JSON. Be concise "
+                          "and use as few tool calls as possible.")
             else:
                 if self._verbose:
                     print(f"pipeline: Researcher retry {attempt}/{self._MAX_RESEARCHER_RETRIES} …")
@@ -3261,6 +3273,7 @@ class Pipeline:
                     self._researcher.messages.clear()
                 except Exception:  # noqa: BLE001
                     pass
+                _context_reset = True
                 continue
             except MaxTokensReachedException:
                 # Local reasoning models (qwen3.6) intermittently spiral to the
@@ -3278,6 +3291,7 @@ class Pipeline:
                     self._researcher.messages.clear()
                 except Exception:  # noqa: BLE001
                     pass
+                _context_reset = True
                 continue
 
             last_response = "".join(chunks)
