@@ -88,13 +88,28 @@ def _image_count(recipe: dict) -> int:
     return max(1, len(imgs))
 
 
+# Emit recipes in a task-category order (prompt2image -> preprocessing ->
+# image edit -> video -> everything else) so the highest-priority templates run
+# first and a long overnight sweep front-loads the important results.
+_CATEGORY_RANK = {
+    "Text to Image": 1,                                              # prompt2image
+    "Preprocessors / Estimation": 2,                                 # preprocessing
+    "Image Edit": 3, "Image Edit with ControlNet": 3,                # image edit
+    "Inpaint / Outpaint": 3, "Upscale": 3,
+    "Text to Video": 4, "Image to Video": 4,                         # video
+    "First / Last Frame to Video": 4, "Video to Video": 4,
+    "Video Inpaint": 4, "Video Tools": 4, "Character": 4,
+    "Image Tools": 5, "3D": 5, "Audio": 5,                           # other
+}
+
+
 def _load_local_recipes(task: str | None, only: str | None, limit: int | None,
                         exclude: set[str] | None = None, include: set[str] | None = None):
     db = json.load(open(_DB, encoding="utf-8"))
     exclude = exclude or set()
     include = include or set()
-    out = []
-    for t in db["tasks"]:
+    ranked = []
+    for ti, t in enumerate(db["tasks"]):
         if task and t["task"] != task:
             continue
         for m in t["models"]:
@@ -106,7 +121,9 @@ def _load_local_recipes(task: str | None, only: str | None, limit: int | None,
                 continue
             if m["id"] in exclude:
                 continue
-            out.append(m)
+            ranked.append((_CATEGORY_RANK.get(t["task"], 5), ti, m))
+    ranked.sort(key=lambda x: (x[0], x[1]))  # category order, stable within category
+    out = [m for _, _, m in ranked]
     return out[:limit] if limit else out
 
 
