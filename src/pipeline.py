@@ -3411,19 +3411,19 @@ class Pipeline:
                         if self._verbose:
                             print(f"pipeline: Brain auto-retry {_brain_autoretry}/"
                                   f"{self._MAX_BRAIN_AUTORETRIES} — re-prompting to signal.")
+                        # Keep this re-prompt MINIMAL — do NOT re-inject the full
+                        # briefing. The brain still has its own conversation history;
+                        # re-injecting bloats context and sends local models into a
+                        # tool-call loop that can hang until the recipe timeout.
                         current_input = (
-                            "You did NOT finish: signal_workflow_ready was never called, "
-                            "so nothing was submitted.\n"
-                            + (f"Your latest saved workflow is: {latest_wf}\n" if latest_wf else "")
-                            + "Complete the assembly NOW, in this exact order, making only "
-                            "these tool calls:\n"
-                            "1. If not done yet, call apply_brainbriefing(workflow_path, "
-                            "brainbriefing_json).\n"
-                            "2. Then call signal_workflow_ready(workflow_path) as your final "
-                            "action.\n"
-                            "Do not explain, describe, list nodes, or ask questions — just make "
-                            "those tool calls.\n\n"
-                            f"Original brainbriefing:\n\n{brain_prompt}"
+                            "You did NOT call signal_workflow_ready, so nothing was "
+                            "submitted. Do ONLY this, no explanation, no other tools:\n"
+                            + (f"- Your assembled workflow is saved at: {latest_wf}\n"
+                               if latest_wf else "")
+                            + "- If you have not applied the brainbriefing yet, call "
+                            "apply_brainbriefing once.\n"
+                            "- Then call signal_workflow_ready(workflow_path) as your "
+                            "final action."
                         )
                         continue
                     yield {
