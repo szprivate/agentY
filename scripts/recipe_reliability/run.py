@@ -54,8 +54,10 @@ _TEST_COLORS = [(200, 60, 60), (60, 160, 80), (70, 90, 200),
 
 # Keep test inputs small so edit/i2v workflows that derive their working
 # resolution from the input size do not blow up GPU VRAM. This is for
-# reliability testing only - real users supply full-res images.
-_TEST_IMG_SIZE = 512
+# reliability testing only - real users supply full-res images. Reduced to 384
+# after repeated machine power-loss crashes under heavy GPU load (RTX 5090):
+# smaller inputs shorten the high-draw window for edit/i2v/upscale workflows.
+_TEST_IMG_SIZE = 384
 
 
 def _ensure_test_images(n: int, size: int = _TEST_IMG_SIZE) -> list[str]:
@@ -144,6 +146,11 @@ def _build_intent(recipe: dict, pool: list[str]) -> tuple[str, int]:
                         f"cohesive composition. Use {model}.")
         else:
             phrasing = ui.get("example_requests", [f"Build a workflow using {model}."])[0]
+    # Reliability testing on an RTX 5090 that hard-crashed twice under sustained
+    # GPU load: nudge a modest output size and few sampling steps to shorten the
+    # high-draw window (heavy models like Qwen-Image are the main offenders).
+    phrasing += (" Keep this test light on the GPU: use a small output resolution "
+                 "(around 768x768 for images, 480p for video) and few sampling steps.")
     if images:
         label = "Input image:" if n == 1 else "Input images:"
         phrasing += " " + label + " " + " ".join(f'"{p}"' for p in images)
