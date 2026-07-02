@@ -3130,6 +3130,10 @@ class Pipeline:
     # fraction of briefing attempts: at ~40% stochastic runaway, 4 retries leaves
     # ~1% residual failure (reliably-runaway recipes still need a prompt/model fix).
     _MAX_RESEARCHER_RETRIES = 4
+    # Wall-clock cap per researcher attempt. Local models can loop on tool calls
+    # indefinitely (no exception, no output) and would otherwise hang until the
+    # whole-recipe timeout; bounding each attempt converts a hang into a retry.
+    _RESEARCHER_ATTEMPT_TIMEOUT = 150.0
     # Auto self-correction rounds when the brain ends without calling
     # signal_workflow_ready (common with local models that stop early).
     _MAX_BRAIN_AUTORETRIES = 2
@@ -3233,16 +3237,31 @@ class Pipeline:
 
             chunks: list[str] = []
             try:
-                async for event in self._researcher.stream_async(prompt):
-                    if isinstance(event, dict):
-                        chunk = event.get("data", "")
-                        if chunk:
-                            chunks.append(chunk)
-                    yield event
-                    # Drain any progress lines pushed by sync tools (e.g. download_hf_model)
-                    # and surface them as plain data events so Chainlit can display them.
-                    for _prog_line in _drain_progress():
-                        yield {"data": _prog_line}
+                async with asyncio.timeout(self._RESEARCHER_ATTEMPT_TIMEOUT):
+                    async for event in self._researcher.stream_async(prompt):
+                        if isinstance(event, dict):
+                            chunk = event.get("data", "")
+                            if chunk:
+                                chunks.append(chunk)
+                        yield event
+                        # Drain any progress lines pushed by sync tools (e.g. download_hf_model)
+                        # and surface them as plain data events so Chainlit can display them.
+                        for _prog_line in _drain_progress():
+                            yield {"data": _prog_line}
+            except (TimeoutError, asyncio.TimeoutError):
+                # The attempt looped/stalled past the per-attempt cap. Reset the
+                # (now cancelled) message history and retry with a terser demand.
+                last_error = ("The previous attempt did not finish in time — it looped "
+                              "or stalled. Output ONLY the concise brainbriefing JSON "
+                              "now, with as few tool calls as possible.")
+                if self._verbose:
+                    print(f"pipeline: Researcher attempt {attempt} timed out "
+                          f"({self._RESEARCHER_ATTEMPT_TIMEOUT:.0f}s); resetting and retrying.")
+                try:
+                    self._researcher.messages.clear()
+                except Exception:  # noqa: BLE001
+                    pass
+                continue
             except MaxTokensReachedException:
                 # Local reasoning models (qwen3.6) intermittently spiral to the
                 # output cap, raising this otherwise-unrecoverable exception
