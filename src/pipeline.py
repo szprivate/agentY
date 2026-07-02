@@ -25,6 +25,7 @@ from typing import Any, List, Optional
 
 from pydantic import BaseModel, Field, ValidationError
 from strands import Agent
+from strands.types.exceptions import MaxTokensReachedException
 
 from src.agent import create_brain_agent, create_dop_agent, create_error_checker_agent, create_info_agent, create_planner_agent, create_researcher_agent, create_scout_agent, create_story_agent, create_triage_agent, create_vision_agent, _settings
 from src.tools.image_handling import set_vision_agent as _set_vision_agent
@@ -3124,7 +3125,11 @@ class Pipeline:
             if self._verbose:
                 print(f"[memory] auto-save error: {exc}")
 
-    _MAX_RESEARCHER_RETRIES = 2  # up to 2 correction rounds after the first attempt
+    # Up to N correction rounds after the first attempt. Set high enough to absorb
+    # local reasoning models (qwen3.6) that spiral to the output cap on a large
+    # fraction of briefing attempts: at ~40% stochastic runaway, 4 retries leaves
+    # ~1% residual failure (reliably-runaway recipes still need a prompt/model fix).
+    _MAX_RESEARCHER_RETRIES = 4
 
     def _build_researcher_prompt(self, user_input) -> tuple[str, str]:
         """Build the Researcher's first-attempt prompt and the extracted user text.
@@ -3224,16 +3229,34 @@ class Pipeline:
                 """).strip()
 
             chunks: list[str] = []
-            async for event in self._researcher.stream_async(prompt):
-                if isinstance(event, dict):
-                    chunk = event.get("data", "")
-                    if chunk:
-                        chunks.append(chunk)
-                yield event
-                # Drain any progress lines pushed by sync tools (e.g. download_hf_model)
-                # and surface them as plain data events so Chainlit can display them.
-                for _prog_line in _drain_progress():
-                    yield {"data": _prog_line}
+            try:
+                async for event in self._researcher.stream_async(prompt):
+                    if isinstance(event, dict):
+                        chunk = event.get("data", "")
+                        if chunk:
+                            chunks.append(chunk)
+                    yield event
+                    # Drain any progress lines pushed by sync tools (e.g. download_hf_model)
+                    # and surface them as plain data events so Chainlit can display them.
+                    for _prog_line in _drain_progress():
+                        yield {"data": _prog_line}
+            except MaxTokensReachedException:
+                # Local reasoning models (qwen3.6) intermittently spiral to the
+                # output cap, raising this otherwise-unrecoverable exception
+                # mid-briefing. The runaway is stochastic, so reset the corrupted
+                # message history and let the retry loop try again with a clean
+                # context and a terser instruction.
+                last_error = ("The previous attempt exceeded the model output limit "
+                              "(runaway generation). Output ONLY concise, valid "
+                              "brainbriefing JSON — no long explanations or repetition.")
+                if self._verbose:
+                    print(f"pipeline: Researcher hit max_tokens (attempt {attempt}); "
+                          f"resetting context and retrying.")
+                try:
+                    self._researcher.messages.clear()
+                except Exception:  # noqa: BLE001
+                    pass
+                continue
 
             last_response = "".join(chunks)
             label = "initial" if attempt == 0 else f"retry {attempt}"
