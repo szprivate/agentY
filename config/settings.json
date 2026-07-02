@@ -61,7 +61,9 @@
     "ollama": {
       "host": "http://localhost:11434",
       "num_ctx": 32768,
-      "max_tokens": 16384
+      "max_tokens": 16384,
+      "repeat_penalty": 1.1,
+      "think": false
     },
 
     "anthropic": {

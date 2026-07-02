@@ -506,10 +506,22 @@ def _make_agent(
         # From-scratch builds emit a long tool-call sequence; a low output cap
         # trips MaxTokensReachedException, so raise num_predict/max_tokens too.
         ol_max_tokens = int(_cfg("OLLAMA_MAX_TOKENS", "ollama", "max_tokens", default=12288))
+        # qwen3.6 is a reasoning model: its <think> chain-of-thought consumes output
+        # tokens and, on complex brainbriefings, exhausts max_tokens -> the
+        # unrecoverable MaxTokensReachedException (observed ~50% of text-to-image
+        # recipes). The briefing/patch work is structured extraction, not deep
+        # reasoning, so disable thinking. think=False is the root-cause fix; a mild
+        # repeat_penalty guards residual repetition without degrading JSON (1.3 did).
+        repeat_penalty = float(_cfg("OLLAMA_REPEAT_PENALTY", "ollama", "repeat_penalty", default=1.1))
+        _think_cfg = _cfg("OLLAMA_THINK", "ollama", "think", default=False)
+        think = _think_cfg if isinstance(_think_cfg, bool) else \
+            str(_think_cfg).strip().lower() in ("1", "true", "yes", "on")
         _ensure_ollama_model(model_id, host)
         model = OllamaModel(host=host, model_id=model_id, max_tokens=ol_max_tokens,
-                            options={"num_ctx": num_ctx})
-        print(f"[agentY:{role}] Using Ollama — {model_id} (num_ctx={num_ctx}, max_tokens={ol_max_tokens})")
+                            options={"num_ctx": num_ctx, "repeat_penalty": repeat_penalty},
+                            additional_args={"think": think})
+        print(f"[agentY:{role}] Using Ollama — {model_id} (num_ctx={num_ctx}, "
+              f"max_tokens={ol_max_tokens}, repeat_penalty={repeat_penalty}, think={think})")
     else:
         model_id = anthropic_model or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
         tokens = max_tokens or int(_cfg("ANTHROPIC_MAX_TOKENS", "anthropic", "max_tokens", default=4096))
