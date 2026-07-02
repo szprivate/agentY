@@ -284,8 +284,10 @@ def main() -> int:
         os.environ["AGENTY_FORCE_BUILD"] = "1"
     # Hard-cap generated latent dimensions sub-HD for every recipe (apply_brainbriefing
     # clamps width/height to this). Guards a power-limited GPU from HD+ latents that
-    # the researcher or a template default would otherwise request. Overridable.
-    os.environ.setdefault("AGENTY_MAX_DIM", str(args.max_dim))
+    # the researcher or a template default would otherwise request. Set explicitly
+    # (not setdefault) so the CLI value always wins; also export it as a shell prefix
+    # at launch so subprocess-executed tools inherit it at spawn time.
+    os.environ["AGENTY_MAX_DIM"] = str(args.max_dim)
 
     exclude = {s.strip() for s in args.exclude.split(",") if s.strip()}
     include = {s.strip() for s in args.include.split(",") if s.strip()}
