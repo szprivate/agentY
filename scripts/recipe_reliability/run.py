@@ -271,6 +271,20 @@ def _classify(seen, response, comfy):
     return "no_execution"  # built nothing / unclear - inspect logs
 
 
+def _refresh_ollama_state() -> None:
+    """Unload the local models so the next recipe reloads them with fresh runtime
+    state. qwen3.6:27b degrades over prolonged continuous use into researcher
+    tool-call loops/hangs; a reload resets it (verified: 5 consecutive hangs on a
+    stale instance vs a clean pass right after an unload). Best-effort."""
+    import subprocess  # noqa: PLC0415
+    for m in ("qwen3.6:27b", "gemma4:12b"):
+        try:
+            subprocess.run(["ollama", "stop", m], timeout=30,
+                           capture_output=True, text=True)
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", default=None, help="canonical task to filter (e.g. 'Image Edit')")
@@ -323,6 +337,9 @@ def main() -> int:
                        "yourself to the recipe standard; do not reuse an existing "
                        "workflow template.")
         print(f"\n{'='*70}\n[harness] ({i}/{len(recipes)}) {rid}\n  intent: {intent}\n{'='*70}")
+        # Refresh Ollama runtime state so each recipe starts from a clean model
+        # load (avoids the tool-loop hangs that build up over a long sweep).
+        _refresh_ollama_state()
         # Full isolation: a fresh pipeline + unique session per recipe so no
         # session state (input images, chat history, memory) leaks into the next
         # recipe and confuses triage/researcher.
