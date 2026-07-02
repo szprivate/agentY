@@ -149,8 +149,8 @@ def _build_intent(recipe: dict, pool: list[str]) -> tuple[str, int]:
     # Reliability testing on an RTX 5090 that hard-crashed twice under sustained
     # GPU load: nudge a modest output size and few sampling steps to shorten the
     # high-draw window (heavy models like Qwen-Image are the main offenders).
-    phrasing += (" Keep this test light on the GPU: use a small output resolution "
-                 "(around 768x768 for images, 480p for video) and few sampling steps.")
+    phrasing += (" Keep this test light on the GPU: use a small, sub-HD output "
+                 "resolution (512x512 for images, 480p for video) and few sampling steps.")
     if images:
         label = "Input image:" if n == 1 else "Input images:"
         phrasing += " " + label + " " + " ".join(f'"{p}"' for p in images)
@@ -268,6 +268,10 @@ def main() -> int:
     ap.add_argument("--build", action="store_true",
                     help="build-from-scratch mode: disable templates so the agent "
                          "assembles each workflow node-by-node from the recipe")
+    ap.add_argument("--max-dim", type=int, default=768,
+                    help="hard cap (px) on generated latent width/height, applied in "
+                         "apply_brainbriefing (sub-HD by default to protect a "
+                         "power-limited GPU)")
     args = ap.parse_args()
 
     # By default the researcher may download missing models via its HF tools.
@@ -278,6 +282,10 @@ def main() -> int:
     # and get_workflow_template returns an empty canvas (see agenty_core comfyui).
     if args.build:
         os.environ["AGENTY_FORCE_BUILD"] = "1"
+    # Hard-cap generated latent dimensions sub-HD for every recipe (apply_brainbriefing
+    # clamps width/height to this). Guards a power-limited GPU from HD+ latents that
+    # the researcher or a template default would otherwise request. Overridable.
+    os.environ.setdefault("AGENTY_MAX_DIM", str(args.max_dim))
 
     exclude = {s.strip() for s in args.exclude.split(",") if s.strip()}
     include = {s.strip() for s in args.include.split(",") if s.strip()}
