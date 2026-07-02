@@ -404,6 +404,16 @@ def analyze_image(
     two images for identical content, precise spatial positioning, or explicit
     user request for raw pixel analysis).
     """
+    # Test/speed mode: skip the vision model entirely and return a canned
+    # description. Used by the researcher-only reliability sweep so image-input
+    # recipes exercise briefing generation without loading a vision model.
+    if os.environ.get("AGENTY_STUB_VISION"):
+        label = os.path.basename(file_path or image_url) or "input image"
+        return {"status": "ok", "content": [{"text": (
+            f"Image analysis for {label} (stubbed): a standard test image — a "
+            "centered subject on a plain background, natural lighting, ordinary "
+            "colours, no text. Suitable as an edit / upscale / animation source."
+        )}]}
     data: Optional[bytes] = None
     source_name = ""
     detected_mime = ""

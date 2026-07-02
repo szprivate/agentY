@@ -297,6 +297,31 @@ def _load_system_prompt(llm: str) -> str:
     return text
 
 
+_THINK_SUPPORT_CACHE: dict[str, bool] = {}
+
+
+def _ollama_supports_thinking(model_id: str, host: str) -> bool:
+    """Return True if the Ollama model advertises the 'thinking' capability.
+
+    Passing `think` to a non-thinking model (e.g. qwen3-coder) is a 400 error,
+    so callers gate the flag on this. Cached per model; on any lookup failure
+    returns False (safest — never send an unsupported param)."""
+    if model_id in _THINK_SUPPORT_CACHE:
+        return _THINK_SUPPORT_CACHE[model_id]
+    supported = False
+    try:
+        import ollama  # noqa: PLC0415
+        resp = ollama.Client(host).show(model_id)
+        caps = getattr(resp, "capabilities", None)
+        if caps is None and isinstance(resp, dict):
+            caps = resp.get("capabilities")
+        supported = "thinking" in (caps or [])
+    except Exception:  # noqa: BLE001
+        supported = False
+    _THINK_SUPPORT_CACHE[model_id] = supported
+    return supported
+
+
 def _ensure_ollama_model(model_id: str, host: str) -> None:
     """Pull *model_id* via ``ollama pull`` if it is not already present locally.
 
@@ -517,11 +542,17 @@ def _make_agent(
         think = _think_cfg if isinstance(_think_cfg, bool) else \
             str(_think_cfg).strip().lower() in ("1", "true", "yes", "on")
         _ensure_ollama_model(model_id, host)
+        # Only pass the `think` flag to models that actually support thinking:
+        # a non-thinking model (e.g. qwen3-coder) rejects it with a 400.
+        _add_args = {}
+        if _ollama_supports_thinking(model_id, host):
+            _add_args["think"] = think
         model = OllamaModel(host=host, model_id=model_id, max_tokens=ol_max_tokens,
                             options={"num_ctx": num_ctx, "repeat_penalty": repeat_penalty},
-                            additional_args={"think": think})
+                            additional_args=_add_args)
         print(f"[agentY:{role}] Using Ollama — {model_id} (num_ctx={num_ctx}, "
-              f"max_tokens={ol_max_tokens}, repeat_penalty={repeat_penalty}, think={think})")
+              f"max_tokens={ol_max_tokens}, repeat_penalty={repeat_penalty}, "
+              f"think={_add_args.get('think', 'n/a')})")
     else:
         model_id = anthropic_model or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
         tokens = max_tokens or int(_cfg("ANTHROPIC_MAX_TOKENS", "anthropic", "max_tokens", default=4096))

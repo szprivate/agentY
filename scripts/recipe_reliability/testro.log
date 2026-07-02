@@ -1,0 +1,429 @@
+[harness] 4 local recipe(s) to test
+[harness] test image pool (3): ['recipe_test_input_1.png', 'recipe_test_input_2.png', 'recipe_test_input_3.png']
+
+======================================================================
+[harness] (1/4) text_to_image__qwen_image
+  intent: Generate an image of a serene mountain lake at sunrise using Qwen Image. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps.
+======================================================================
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.researcher.local.md
+[agentY:researcher] Loaded skills: annotation, assemble-from-template, assemble-new-workflow, batch-handoff, brain-learnings, comfyui-core, feedback-loop, flux-sampling, image-batch, image-downsize, kling-multishot, output-paths, prompt-craft, troubleshooting, upscale-ultimatesd, video-gemini-motionpromptgeneration, workflow-templates
+[agentY] Ollama model 'qwen3-coder:30b' already present — skipping pull.
+[agentY:researcher] Using Ollama — qwen3-coder:30b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=n/a)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.brain.local.md
+[agentY:brain] Loaded skills: annotation, assemble-from-template, assemble-new-workflow, batch-handoff, brain-learnings, comfyui-core, feedback-loop, flux-sampling, image-batch, image-downsize, kling-multishot, output-paths, prompt-craft, troubleshooting, upscale-ultimatesd, video-gemini-motionpromptgeneration, workflow-templates
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:brain] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.info.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:info] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.story.md
+YAML parse failed, retrying with colon-quoting fallback
+[agentY:story] Loaded skills: story-scene, story-storyboard, story-synopsis
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:story] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.triage.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:triage] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.planner.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:planner] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.scout.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:scout] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.dop.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:dop] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.error_checker.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:error_checker] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.vision_agent.md
+[agentY] Ollama model 'qwen3-vl:30b' already present — skipping pull.
+[agentY:vision_agent] Using Ollama — qwen3-vl:30b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[memory] FAISS memory layer initialised  (path=D:\AI\agentY\memory, embed=nomic-embed-text, llm=ollama,qwen3-vl:30b)
+Failed to load spaCy lemma model: spaCy is not installed. Install it with: pip install mem0ai[nlp]
+Failed to load spaCy full model: spaCy is not installed. Install it with: pip install mem0ai[nlp]
+
+🪙 [researcher] after memory_read: +24,153 in / +28 out  (total: 24,153 in / 28 out)
+
+🪙 [researcher] after get_workflow_catalog: +24,232 in / +13 out  (total: 48,385 in / 41 out)
+
+🪙 [researcher] after get_workflow_template: +29,476 in / +31 out  (total: 77,861 in / 72 out)
+
+🪙 [researcher] after check_model: +30,352 in / +94 out  (total: 108,213 in / 166 out)
+
+🪙 [researcher] after get_comfyui_dirs: +30,607 in / +15 out  (total: 138,820 in / 181 out)
+
+🪙 [researcher] after analyze_image: +30,685 in / +35 out  (total: 169,505 in / 216 out)
+
+🪙 [researcher] after upload_image: +30,775 in / +35 out  (total: 200,280 in / 251 out)
+
+🪙 [researcher] after web_search_images: +30,844 in / +38 out  (total: 231,124 in / 289 out)
+
+🪙 [researcher] after download_image: +31,087 in / +67 out  (total: 262,211 in / 356 out)
+
+🪙 [researcher] after analyze_image: +31,330 in / +57 out  (total: 293,541 in / 413 out)
+
+🪙 [researcher] after run_script (skill:image-downsize): +31,460 in / +77 out  (total: 325,001 in / 490 out)
+
+🪙 [researcher] after run_script (skill:image-downsize): +31,645 in / +81 out  (total: 356,646 in / 571 out)
+
+🪙 [researcher] after run_script (skill:image-downsize): +32,039 in / +80 out  (total: 388,685 in / 651 out)
+
+🪙 [researcher] after run_script (skill:image-downsize): +32,432 in / +81 out  (total: 421,117 in / 732 out)
+
+🪙 [researcher] after run_script (skill:image-downsize): +32,712 in / +80 out  (total: 453,829 in / 812 out)
+
+🪙 [researcher] after upload_image: +27,782 in / +42 out  (total: 481,611 in / 854 out)
+
+🪙 [researcher] after analyze_image: +27,863 in / +42 out  (total: 509,474 in / 896 out)
+
+🪙 [researcher] after run_script (skill:image-downsize): +27,965 in / +79 out  (total: 537,439 in / 975 out)
+
+🪙 [researcher] after run_script (skill:image-downsize): +28,357 in / +79 out  (total: 565,796 in / 1,054 out)
+
+🪙 [researcher] after run_script (skill:image-downsize): +28,749 in / +79 out  (total: 594,545 in / 1,133 out)
+
+🪙 [researcher] after run_script (skill:image-downsize): +29,141 in / +80 out  (total: 623,686 in / 1,213 out)
+
+🪙 [researcher] after run_script (skill:image-downsize): +29,534 in / +81 out  (total: 653,220 in / 1,294 out)
+
+🪙 [researcher] after run_script (skill:image-downsize): +29,928 in / +81 out  (total: 683,148 in / 1,375 out)
+
+🪙 [researcher] after run_script (skill:image-downsize): +30,322 in / +80 out  (total: 713,470 in / 1,455 out)
+
+🪙 [researcher] after run_script (skill:image-downsize): +30,715 in / +80 out  (total: 744,185 in / 1,535 out)
+
+🪙 [researcher] after run_script (skill:image-downsize): +31,108 in / +80 out  (total: 775,293 in / 1,615 out)
+
+🪙 [researcher] after run_script (skill:image-downsize): +31,501 in / +80 out  (total: 806,794 in / 1,695 out)
+
+🪙 [researcher] after run_script (skill:image-downsize): +31,894 in / +80 out  (total: 838,688 in / 1,775 out)
+
+🪙 [researcher] after run_script (skill:image-downsize): +32,287 in / +80 out  (total: 870,975 in / 1,855 out)
+
+🪙 [researcher] after run_script (skill:image-downsize): +32,680 in / +80 out  (total: 903,655 in / 1,935 out)
+
+🪙 [researcher] after run_script (skill:image-downsize): +32,197 in / +80 out  (total: 935,852 in / 2,015 out)
+
+🪙 [researcher] after run_script (skill:image-downsize): +32,590 in / +80 out  (total: 968,442 in / 2,095 out)
+
+🪙 [researcher] after run_script (skill:image-downsize): +32,728 in / +80 out  (total: 1,001,170 in / 2,175 out)
+
+🪙 [researcher] after run_script (skill:image-downsize): +32,641 in / +80 out  (total: 1,033,811 in / 2,255 out)
+
+🪙 [researcher] after run_script (skill:image-downsize): +32,730 in / +80 out  (total: 1,066,541 in / 2,335 out)
+
+🪙 [researcher] after run_script (skill:image-downsize): +32,475 in / +80 out  (total: 1,099,016 in / 2,415 out)
+
+🪙 [researcher] after run_script (skill:image-downsize): +32,475 in / +80 out  (total: 1,131,491 in / 2,495 out)
+
+🪙 [researcher] after run_script (skill:image-downsize): +32,474 in / +80 out  (total: 1,163,965 in / 2,575 out)
+
+🪙 [researcher] after run_script (skill:image-downsize): +32,474 in / +80 out  (total: 1,196,439 in / 2,655 out)
+
+🪙 [researcher] after analyze_image: +32,740 in / +57 out  (total: 1,229,179 in / 2,712 out)
+
+🪙 [researcher] after upload_image: +32,731 in / +57 out  (total: 1,261,910 in / 2,769 out)
+
+🪙 [researcher] after get_workflow_catalog: +32,535 in / +13 out  (total: 1,294,445 in / 2,782 out)
+
+🪙 [researcher] after get_workflow_template: +32,670 in / +32 out  (total: 1,327,115 in / 2,814 out)
+
+🪙 [researcher] after check_model: +32,681 in / +83 out  (total: 1,359,796 in / 2,897 out)
+
+🪙 [researcher] after get_comfyui_dirs: +32,510 in / +15 out  (total: 1,392,306 in / 2,912 out)
+
+🪙 [researcher] after upload_image: +32,588 in / +57 out  (total: 1,424,894 in / 2,969 out)
+
+🪙 [researcher] after analyze_image: +32,701 in / +57 out  (total: 1,457,595 in / 3,026 out)
+cycle failed
+Traceback (most recent call last):
+  File "D:\ai\agentY\.venv\Lib\site-packages\strands\event_loop\event_loop.py", line 238, in event_loop_cycle
+    async for tool_event in tool_events:
+  File "D:\ai\agentY\.venv\Lib\site-packages\strands\event_loop\event_loop.py", line 646, in _handle_tool_execution
+    async for event in events:
+  File "D:\ai\agentY\.venv\Lib\site-packages\strands\event_loop\event_loop.py", line 318, in recurse_event_loop
+    async for event in events:
+  File "D:\ai\agentY\.venv\Lib\site-packages\strands\event_loop\event_loop.py", line 198, in event_loop_cycle
+    async for model_event in model_events:
+  File "D:\ai\agentY\.venv\Lib\site-packages\strands\event_loop\event_loop.py", line 469, in _handle_model_execution
+    raise e
+  File "D:\ai\agentY\.venv\Lib\site-packages\strands\event_loop\event_loop.py", line 391, in _handle_model_execution
+    async for event in stream_messages(
+  File "D:\ai\agentY\.venv\Lib\site-packages\strands\event_loop\streaming.py", line 506, in stream_messages
+    async for event in process_stream(chunks, start_time, cancel_signal):
+  File "D:\ai\agentY\.venv\Lib\site-packages\strands\event_loop\streaming.py", line 416, in process_stream
+    async for chunk in chunks:
+  File "D:\ai\agentY\.venv\Lib\site-packages\strands\models\ollama.py", line 330, in stream
+    async for event in response:
+  File "D:\ai\agentY\.venv\Lib\site-packages\ollama\_client.py", line 782, in inner
+    raise ResponseError(e.response.text, e.response.status_code) from None
+ollama._types.ResponseError: XML syntax error on line 12: unexpected EOF (status code: 500)
+pipeline: Researcher attempt 0 errored (XML syntax error on line 12: unexpected EOF (status code: 500)); backing off and retrying.
+pipeline: Researcher retry 1/4 (context was reset — re-sending full request) …
+
+🪙 [researcher] after get_workflow_catalog: +24,174 in / +13 out  (total: 1,481,769 in / 3,039 out)
+
+🪙 [researcher] after get_workflow_template: +29,418 in / +31 out  (total: 1,511,187 in / 3,070 out)
+
+🪙 [researcher] after check_model: +30,294 in / +118 out  (total: 1,541,481 in / 3,188 out)
+
+🪙 [researcher] after get_comfyui_dirs: +30,621 in / +15 out  (total: 1,572,102 in / 3,203 out)
+
+🪙 [researcher] after analyze_image: +30,699 in / +80 out  (total: 1,602,801 in / 3,283 out)
+
+🪙 [researcher] after upload_image: +30,855 in / +91 out  (total: 1,633,656 in / 3,374 out)
+
+🪙 [researcher] after run_script: +31,002 in / +434 out  (total: 1,664,658 in / 3,808 out)
+
+🪙 [researcher] after run_script: +31,941 in / +434 out  (total: 1,696,599 in / 4,242 out)
+
+🪙 [researcher] after run_script: +32,735 in / +434 out  (total: 1,729,334 in / 4,676 out)
+pipeline: Researcher finished (retry 1). Extracting brainbriefing …
+pipeline: Brainbriefing recovered after 1 retry(ies).
+pipeline: Brainbriefing OK (retry 1) — status=ready, task='Generate a serene mountain lake at sunrise using Qwen Image with low GPU usage and small resolution.', template='qwen2511_imageEdit'
+[harness] -> text_to_image__qwen_image: researcher_ok  (188.7s)  status=ready
+
+======================================================================
+[harness] (2/4) image_edit__qwen_image
+  intent: Edit this image: turn it into a vibrant watercolor painting. Use Qwen Image. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input images: "W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png" "W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_2.png" "W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_3.png"
+======================================================================
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.researcher.local.md
+[agentY:researcher] Loaded skills: annotation, assemble-from-template, assemble-new-workflow, batch-handoff, brain-learnings, comfyui-core, feedback-loop, flux-sampling, image-batch, image-downsize, kling-multishot, output-paths, prompt-craft, troubleshooting, upscale-ultimatesd, video-gemini-motionpromptgeneration, workflow-templates
+[agentY] Ollama model 'qwen3-coder:30b' already present — skipping pull.
+[agentY:researcher] Using Ollama — qwen3-coder:30b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=n/a)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.brain.local.md
+[agentY:brain] Loaded skills: annotation, assemble-from-template, assemble-new-workflow, batch-handoff, brain-learnings, comfyui-core, feedback-loop, flux-sampling, image-batch, image-downsize, kling-multishot, output-paths, prompt-craft, troubleshooting, upscale-ultimatesd, video-gemini-motionpromptgeneration, workflow-templates
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:brain] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.info.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:info] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.story.md
+YAML parse failed, retrying with colon-quoting fallback
+[agentY:story] Loaded skills: story-scene, story-storyboard, story-synopsis
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:story] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.triage.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:triage] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.planner.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:planner] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.scout.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:scout] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.dop.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:dop] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.error_checker.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:error_checker] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.vision_agent.md
+[agentY] Ollama model 'qwen3-vl:30b' already present — skipping pull.
+[agentY:vision_agent] Using Ollama — qwen3-vl:30b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+
+🪙 [researcher] after analyze_image: +24,225 in / +381 out  (total: 24,225 in / 381 out)
+
+🪙 [researcher] after analyze_image: +0 in / +0 out  (total: 24,225 in / 381 out)
+
+🪙 [researcher] after analyze_image: +0 in / +0 out  (total: 24,225 in / 381 out)
+
+🪙 [researcher] after check_model: +0 in / +0 out  (total: 24,225 in / 381 out)
+
+🪙 [researcher] after get_workflow_catalog: +0 in / +0 out  (total: 24,225 in / 381 out)
+
+🪙 [researcher] after upload_image: +0 in / +0 out  (total: 24,225 in / 381 out)
+
+🪙 [researcher] after upload_image: +0 in / +0 out  (total: 24,225 in / 381 out)
+
+🪙 [researcher] after upload_image: +0 in / +0 out  (total: 24,225 in / 381 out)
+
+🪙 [researcher] after get_workflow_template: +30,141 in / +31 out  (total: 54,366 in / 412 out)
+
+🪙 [researcher] after get_comfyui_dirs: +31,017 in / +15 out  (total: 85,383 in / 427 out)
+
+🪙 [researcher] after run_script: +31,095 in / +462 out  (total: 116,478 in / 889 out)
+
+🪙 [researcher] after run_script: +32,060 in / +463 out  (total: 148,538 in / 1,352 out)
+pipeline: Researcher finished (initial). Extracting brainbriefing …
+pipeline: Brainbriefing OK (initial) — status=ready, task='Edit images to turn them into vibrant watercolor paintings using Qwen Image with a small, sub-HD output resolution (512x512) and few sampling steps.', template='qwen2511_imageEdit'
+[harness] -> image_edit__qwen_image: researcher_ok  (28.2s)  status=ready
+
+======================================================================
+[harness] (3/4) upscale__flux
+  intent: Upscale this image using Flux. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: "W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png"
+======================================================================
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.researcher.local.md
+[agentY:researcher] Loaded skills: annotation, assemble-from-template, assemble-new-workflow, batch-handoff, brain-learnings, comfyui-core, feedback-loop, flux-sampling, image-batch, image-downsize, kling-multishot, output-paths, prompt-craft, troubleshooting, upscale-ultimatesd, video-gemini-motionpromptgeneration, workflow-templates
+[agentY] Ollama model 'qwen3-coder:30b' already present — skipping pull.
+[agentY:researcher] Using Ollama — qwen3-coder:30b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=n/a)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.brain.local.md
+[agentY:brain] Loaded skills: annotation, assemble-from-template, assemble-new-workflow, batch-handoff, brain-learnings, comfyui-core, feedback-loop, flux-sampling, image-batch, image-downsize, kling-multishot, output-paths, prompt-craft, troubleshooting, upscale-ultimatesd, video-gemini-motionpromptgeneration, workflow-templates
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:brain] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.info.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:info] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.story.md
+YAML parse failed, retrying with colon-quoting fallback
+[agentY:story] Loaded skills: story-scene, story-storyboard, story-synopsis
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:story] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.triage.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:triage] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.planner.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:planner] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.scout.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:scout] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.dop.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:dop] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.error_checker.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:error_checker] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.vision_agent.md
+[agentY] Ollama model 'qwen3-vl:30b' already present — skipping pull.
+[agentY:vision_agent] Using Ollama — qwen3-vl:30b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+
+🪙 [researcher] after analyze_image: +24,144 in / +138 out  (total: 24,144 in / 138 out)
+
+🪙 [researcher] after get_workflow_catalog: +0 in / +0 out  (total: 24,144 in / 138 out)
+
+🪙 [researcher] after get_comfyui_dirs: +0 in / +0 out  (total: 24,144 in / 138 out)
+
+🪙 [researcher] after upload_image: +0 in / +0 out  (total: 24,144 in / 138 out)
+
+🪙 [researcher] after get_workflow_template: +29,657 in / +28 out  (total: 53,801 in / 166 out)
+
+🪙 [researcher] after check_model: +30,309 in / +37 out  (total: 84,110 in / 203 out)
+
+🪙 [researcher] after run_script (skill:assemble-from-template): +30,393 in / +49 out  (total: 114,503 in / 252 out)
+
+🪙 [researcher] after run_script (skill:comfyui-core): +30,508 in / +49 out  (total: 145,011 in / 301 out)
+
+🪙 [researcher] after run_script: +30,624 in / +32 out  (total: 175,635 in / 333 out)
+pipeline: Researcher finished (initial). Extracting brainbriefing …
+pipeline: Brainbriefing OK (initial) — status=ready, task='Upscale an image using Flux with a small sub-HD output resolution (512x512) and few sampling steps to keep GPU usage low.', template='upscale_ultimateSD'
+[harness] -> upscale__flux: researcher_ok  (21.4s)  status=ready
+
+======================================================================
+[harness] (4/4) inpaint_outpaint__flux
+  intent: build an image workflow using Flux Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: "W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png"
+======================================================================
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.researcher.local.md
+[agentY:researcher] Loaded skills: annotation, assemble-from-template, assemble-new-workflow, batch-handoff, brain-learnings, comfyui-core, feedback-loop, flux-sampling, image-batch, image-downsize, kling-multishot, output-paths, prompt-craft, troubleshooting, upscale-ultimatesd, video-gemini-motionpromptgeneration, workflow-templates
+[agentY] Ollama model 'qwen3-coder:30b' already present — skipping pull.
+[agentY:researcher] Using Ollama — qwen3-coder:30b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=n/a)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.brain.local.md
+[agentY:brain] Loaded skills: annotation, assemble-from-template, assemble-new-workflow, batch-handoff, brain-learnings, comfyui-core, feedback-loop, flux-sampling, image-batch, image-downsize, kling-multishot, output-paths, prompt-craft, troubleshooting, upscale-ultimatesd, video-gemini-motionpromptgeneration, workflow-templates
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:brain] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.info.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:info] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.story.md
+YAML parse failed, retrying with colon-quoting fallback
+[agentY:story] Loaded skills: story-scene, story-storyboard, story-synopsis
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:story] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.triage.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:triage] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.planner.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:planner] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.scout.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:scout] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.dop.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:dop] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.error_checker.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:error_checker] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.vision_agent.md
+[agentY] Ollama model 'qwen3-vl:30b' already present — skipping pull.
+[agentY:vision_agent] Using Ollama — qwen3-vl:30b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+
+🪙 [researcher] after memory_read: +24,143 in / +28 out  (total: 24,143 in / 28 out)
+
+🪙 [researcher] after get_workflow_catalog: +24,188 in / +13 out  (total: 48,331 in / 41 out)
+
+🪙 [researcher] after get_workflow_template: +29,432 in / +30 out  (total: 77,763 in / 71 out)
+
+🪙 [researcher] after upload_image: +29,928 in / +55 out  (total: 107,691 in / 126 out)
+
+🪙 [researcher] after get_image_resolution: +30,019 in / +55 out  (total: 137,710 in / 181 out)
+
+🪙 [researcher] after check_model: +30,141 in / +73 out  (total: 167,851 in / 254 out)
+
+🪙 [researcher] after get_comfyui_dirs: +30,333 in / +15 out  (total: 198,184 in / 269 out)
+
+🪙 [researcher] after analyze_image: +30,411 in / +55 out  (total: 228,595 in / 324 out)
+LLM extraction failed: invalid model name (status code: 400)
+
+🪙 [researcher] after memory_write: +30,523 in / +51 out  (total: 259,118 in / 375 out)
+cycle failed
+Traceback (most recent call last):
+  File "D:\ai\agentY\.venv\Lib\site-packages\strands\event_loop\event_loop.py", line 238, in event_loop_cycle
+    async for tool_event in tool_events:
+  File "D:\ai\agentY\.venv\Lib\site-packages\strands\event_loop\event_loop.py", line 646, in _handle_tool_execution
+    async for event in events:
+  File "D:\ai\agentY\.venv\Lib\site-packages\strands\event_loop\event_loop.py", line 318, in recurse_event_loop
+    async for event in events:
+  File "D:\ai\agentY\.venv\Lib\site-packages\strands\event_loop\event_loop.py", line 198, in event_loop_cycle
+    async for model_event in model_events:
+  File "D:\ai\agentY\.venv\Lib\site-packages\strands\event_loop\event_loop.py", line 469, in _handle_model_execution
+    raise e
+  File "D:\ai\agentY\.venv\Lib\site-packages\strands\event_loop\event_loop.py", line 391, in _handle_model_execution
+    async for event in stream_messages(
+  File "D:\ai\agentY\.venv\Lib\site-packages\strands\event_loop\streaming.py", line 506, in stream_messages
+    async for event in process_stream(chunks, start_time, cancel_signal):
+  File "D:\ai\agentY\.venv\Lib\site-packages\strands\event_loop\streaming.py", line 416, in process_stream
+    async for chunk in chunks:
+  File "D:\ai\agentY\.venv\Lib\site-packages\strands\models\ollama.py", line 330, in stream
+    async for event in response:
+  File "D:\ai\agentY\.venv\Lib\site-packages\ollama\_client.py", line 782, in inner
+    raise ResponseError(e.response.text, e.response.status_code) from None
+ollama._types.ResponseError: XML syntax error on line 55: unexpected EOF (status code: 500)
+pipeline: Researcher attempt 0 errored (XML syntax error on line 55: unexpected EOF (status code: 500)); backing off and retrying.
+pipeline: Researcher retry 1/4 (context was reset — re-sending full request) …
+
+🪙 [researcher] after analyze_image: +24,164 in / +138 out  (total: 283,282 in / 513 out)
+
+🪙 [researcher] after get_workflow_catalog: +0 in / +0 out  (total: 283,282 in / 513 out)
+
+🪙 [researcher] after get_comfyui_dirs: +0 in / +0 out  (total: 283,282 in / 513 out)
+
+🪙 [researcher] after upload_image: +0 in / +0 out  (total: 283,282 in / 513 out)
+
+🪙 [researcher] after get_workflow_template: +29,677 in / +29 out  (total: 312,959 in / 542 out)
+
+🪙 [researcher] after check_model: +30,637 in / +33 out  (total: 343,596 in / 575 out)
+
+🪙 [researcher] after check_model: +30,713 in / +36 out  (total: 374,309 in / 611 out)
+
+🪙 [researcher] after check_model: +30,798 in / +40 out  (total: 405,107 in / 651 out)
+
+🪙 [researcher] after get_image_resolution: +30,891 in / +55 out  (total: 435,998 in / 706 out)
+
+🪙 [researcher] after run_script: +31,013 in / +381 out  (total: 467,011 in / 1,087 out)
+
+🪙 [researcher] after run_script: +31,851 in / +381 out  (total: 498,862 in / 1,468 out)
+
+🪙 [researcher] after run_script: +32,679 in / +381 out  (total: 531,541 in / 1,849 out)
+
+🪙 [researcher] after run_script: +27,956 in / +381 out  (total: 559,497 in / 2,230 out)
+
+🪙 [researcher] after run_script: +28,735 in / +381 out  (total: 588,232 in / 2,611 out)
+pipeline: Researcher finished (retry 1). Extracting brainbriefing …
+pipeline: Brainbriefing recovered after 1 retry(ies).
+pipeline: Brainbriefing OK (retry 1) — status=ready, task='Edit an image using Flux with low GPU usage, 512x512 resolution, and few sampling steps.', template='image_edit_flux_2_dev'
+[harness] -> inpaint_outpaint__flux: researcher_ok  (62.6s)  status=ready
+
+[harness] done. report -> D:\ai\agentY\scripts\recipe_reliability\report.json
+[harness] outcomes: {'researcher_ok': 4}

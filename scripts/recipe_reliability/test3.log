@@ -1,0 +1,313 @@
+[harness] 3 local recipe(s) to test
+[harness] test image pool (1): ['recipe_test_input_1.png']
+
+======================================================================
+[harness] (1/3) text_to_image__qwen_image
+  intent: Generate an image of a serene mountain lake at sunrise using Qwen Image. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps.
+======================================================================
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.researcher.local.md
+[agentY:researcher] Loaded skills: annotation, assemble-from-template, assemble-new-workflow, batch-handoff, brain-learnings, comfyui-core, feedback-loop, flux-sampling, image-batch, image-downsize, kling-multishot, output-paths, prompt-craft, troubleshooting, upscale-ultimatesd, video-gemini-motionpromptgeneration, workflow-templates
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:researcher] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.brain.local.md
+[agentY:brain] Loaded skills: annotation, assemble-from-template, assemble-new-workflow, batch-handoff, brain-learnings, comfyui-core, feedback-loop, flux-sampling, image-batch, image-downsize, kling-multishot, output-paths, prompt-craft, troubleshooting, upscale-ultimatesd, video-gemini-motionpromptgeneration, workflow-templates
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:brain] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.info.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:info] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.story.md
+YAML parse failed, retrying with colon-quoting fallback
+[agentY:story] Loaded skills: story-scene, story-storyboard, story-synopsis
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:story] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.triage.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:triage] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.planner.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:planner] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.scout.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:scout] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.dop.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:dop] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.error_checker.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:error_checker] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.vision_agent.md
+[agentY] Ollama model 'gemma4:12b' already present — skipping pull.
+[agentY:vision_agent] Using Ollama — gemma4:12b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+pipeline: Triage → intent=new_request, confidence=1.00, handler=researcher
+pipeline: Stage 1 – Researcher resolving spec …
+[memory] FAISS memory layer initialised  (path=D:\AI\agentY\memory, embed=nomic-embed-text, llm=gemma4:12b)
+Failed to load spaCy lemma model: spaCy is not installed. Install it with: pip install mem0ai[nlp]
+Failed to load spaCy full model: spaCy is not installed. Install it with: pip install mem0ai[nlp]
+
+🪙 [researcher] after get_workflow_catalog: +24,555 in / +239 out  (total: 24,555 in / 239 out)
+
+🪙 [researcher] after list_workflow_recipes: +0 in / +0 out  (total: 24,555 in / 239 out)
+
+🪙 [researcher] after get_comfyui_dirs: +0 in / +0 out  (total: 24,555 in / 239 out)
+
+🪙 [researcher] after get_workflow_catalog: +28,346 in / +202 out  (total: 52,901 in / 441 out)
+
+🪙 [researcher] after get_workflow_template: +29,918 in / +370 out  (total: 82,819 in / 811 out)
+
+🪙 [researcher] after analyze_image: +30,435 in / +567 out  (total: 113,254 in / 1,378 out)
+
+🪙 [researcher] after get_workflow_template: +0 in / +0 out  (total: 113,254 in / 1,378 out)
+
+🪙 [researcher] after run_script: +32,267 in / +472 out  (total: 145,521 in / 1,850 out)
+pipeline: Researcher hit max_tokens (attempt 0); resetting context and retrying.
+pipeline: Researcher retry 1/4 …
+pipeline: Researcher finished (retry 1). Extracting brainbriefing …
+pipeline: Researcher retry 2/4 …
+pipeline: Researcher finished (retry 2). Extracting brainbriefing …
+pipeline: Brainbriefing recovered after 2 retry(ies).
+pipeline: Brainbriefing OK (retry 2) — status=ready, task='Generate an image', template=None
+pipeline: Stage 2 – Brain streaming …
+
+🪙 [brain] after skills: +9,555 in / +480 out  (total: 9,555 in / 480 out)
+
+🪙 [brain] after skills: +10,405 in / +283 out  (total: 19,960 in / 763 out)
+
+🪙 [brain] after get_workflow_recipe: +12,959 in / +145 out  (total: 32,919 in / 908 out)
+
+🪙 [brain] after get_workflow_template: +14,859 in / +138 out  (total: 47,778 in / 1,046 out)
+
+🪙 [brain] after update_workflow: +15,365 in / +651 out  (total: 63,143 in / 1,697 out)
+
+🪙 [brain] after signal_workflow_ready: +15,638 in / +110 out  (total: 78,781 in / 1,807 out)
+pipeline: Brain signaled D:\AI\agentY\output_workflows\text_to_image.json ready.
+[executor] Batch 1/1 queued prompt_id=3069701f-b6c0-480d-ad0a-aacbd32b6955
+[executor] Batch streaming 1/1 prompt_id=3069701f-b6c0-480d-ad0a-aacbd32b6955
+[executor] [1/1] Finished. Outputs: ['\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\ComfyUI_00002_.png']
+[memory] Saved: User requested: Generate an image, at 1024x1024.
+pipeline: Brain finished.
+pipeline: Brain used 6 tool call(s) in this session.
+pipeline: Compressing Brain history (14 messages) …
+[learnings] 6 tool calls — learnings agent started in background.
+pipeline: Chat summary:
+TASK: image generation
+TEMPLATE: text_to_image
+WORKFLOW_FILE: D:\AI\agentY\output_workflows\20260702_142712_text_to_image.json
+INPUT_PATHS: none
+INPUT_PATHS_USER_MESSAGE: none
+OUTPUT_PATHS: \\bepic-storage01\work\0193_Never_Stop_Dreaming_Spec\02_build\comfy\sebastian.zilius\output\ComfyUI_00002_.png
+PATCHES: Node 4.text → ''
+TOKENS: 94,647 in / 2,060 out (total: 96,707)
+COST: $0.00
+
+[learnings] Brain used 6 tool calls — analysing for learnings …
+pipeline: Brain history compressed → 384 chars summary.
+[harness] -> text_to_image__qwen_image: pass  (255.6s)  comfyui=['success', 'error'] errors=0
+
+======================================================================
+[harness] (2/3) text_to_image__anima
+  intent: Generate an image of a serene mountain lake at sunrise using Anima. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps.
+======================================================================
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.researcher.local.md
+[agentY:researcher] Loaded skills: annotation, assemble-from-template, assemble-new-workflow, batch-handoff, brain-learnings, comfyui-core, feedback-loop, flux-sampling, image-batch, image-downsize, kling-multishot, output-paths, prompt-craft, troubleshooting, upscale-ultimatesd, video-gemini-motionpromptgeneration, workflow-templates
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:researcher] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.brain.local.md
+[agentY:brain] Loaded skills: annotation, assemble-from-template, assemble-new-workflow, batch-handoff, brain-learnings, comfyui-core, feedback-loop, flux-sampling, image-batch, image-downsize, kling-multishot, output-paths, prompt-craft, troubleshooting, upscale-ultimatesd, video-gemini-motionpromptgeneration, workflow-templates
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.learnings.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:brain] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:learnings] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.info.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:info] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.story.md
+YAML parse failed, retrying with colon-quoting fallback
+[agentY:story] Loaded skills: story-scene, story-storyboard, story-synopsis
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:story] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.triage.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:triage] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.planner.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:planner] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.scout.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:scout] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.dop.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:dop] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.error_checker.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:error_checker] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.vision_agent.md
+[agentY] Ollama model 'gemma4:12b' already present — skipping pull.
+[agentY:vision_agent] Using Ollama — gemma4:12b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[learnings] Appended 1 new learning(s) to D:\ai\agentY\skills\brain-learnings\SKILL.md
+pipeline: Triage → intent=new_request, confidence=1.00, handler=researcher
+pipeline: Stage 1 – Researcher resolving spec …
+
+🪙 [researcher] after get_workflow_catalog: +24,513 in / +171 out  (total: 24,513 in / 171 out)
+
+🪙 [researcher] after get_workflow_template: +29,885 in / +100 out  (total: 54,398 in / 271 out)
+
+🪙 [researcher] after check_model: +30,407 in / +914 out  (total: 84,805 in / 1,185 out)
+
+🪙 [researcher] after get_comfyui_dirs: +0 in / +0 out  (total: 84,805 in / 1,185 out)
+
+🪙 [researcher] after check_model: +30,615 in / +236 out  (total: 115,420 in / 1,421 out)
+
+🪙 [researcher] after search_huggingface_models: +30,686 in / +112 out  (total: 146,106 in / 1,533 out)
+
+🪙 [researcher] after search_huggingface_models: +30,769 in / +314 out  (total: 176,875 in / 1,847 out)
+
+🪙 [researcher] after find_hf_file: +30,849 in / +307 out  (total: 207,724 in / 2,154 out)
+
+🪙 [researcher] after web_search: +30,941 in / +46 out  (total: 238,665 in / 2,200 out)
+
+🪙 [researcher] after get_model_info: +32,155 in / +181 out  (total: 270,820 in / 2,381 out)
+pipeline: Researcher hit max_tokens (attempt 0); resetting context and retrying.
+pipeline: Researcher retry 1/4 …
+pipeline: Researcher finished (retry 1). Extracting brainbriefing …
+pipeline: Researcher retry 2/4 …
+pipeline: Researcher finished (retry 2). Extracting brainbriefing …
+pipeline: Brainbriefing recovered after 2 retry(ies).
+pipeline: Brainbriefing OK (retry 2) — status=ready, task='Generate an image based on text prompt', template=None
+pipeline: Stage 2 – Brain streaming …
+
+🪙 [brain] after skills: +9,571 in / +188 out  (total: 9,571 in / 188 out)
+
+🪙 [brain] after list_workflow_recipes: +12,086 in / +85 out  (total: 21,657 in / 273 out)
+
+🪙 [brain] after get_workflow_recipe: +15,910 in / +245 out  (total: 37,567 in / 518 out)
+
+🪙 [brain] after get_workflow_template: +17,777 in / +737 out  (total: 55,344 in / 1,255 out)
+
+🪙 [brain] after get_workflow_recipe: +18,283 in / +437 out  (total: 73,627 in / 1,692 out)
+
+🪙 [brain] after check_model: +20,150 in / +600 out  (total: 93,777 in / 2,292 out)
+
+🪙 [brain] after replace_node: +20,305 in / +3,421 out  (total: 114,082 in / 5,713 out)
+pipeline: Brain did not signal any workflow. Latest JSON: output_workflows\text_to_image.json
+pipeline: Brain auto-retry 1/2 — re-prompting to signal.
+
+🪙 [brain] after update_workflow: +38,978 in / +675 out  (total: 153,060 in / 6,388 out)
+
+🪙 [brain] after get_workflow_template: +18,824 in / +377 out  (total: 171,884 in / 6,765 out)
+
+🪙 [brain] after apply_brainbriefing: +19,330 in / +469 out  (total: 191,214 in / 7,234 out)
+tool_name=<patch_workflow>, available_tools=<['get_node_schema', 'get_workflow_node_info', 'get_comfyui_dirs', 'upload_image', 'get_image_resolution', 'get_workflow_template', 'list_workflow_recipes', 'get_workflow_recipe', 'apply_brainbriefing', 'update_workflow', 'replace_node', 'save_workflow', 'search_nodes', 'check_model', 'signal_workflow_ready', 'duplicate_workflow', 'start_batch_job', 'get_batch_status', 'stop_batch_job', 'list_batch_jobs', 'run_script', 'iterate', 'file_read', 'read_text_file', 'write_text_file', 'memory_read', 'memory_write', 'stop', 'skills']> | tool not found in registry
+
+🪙 [brain] after patch_workflow: +19,799 in / +172 out  (total: 211,013 in / 7,406 out)
+
+🪙 [brain] after run_script: +19,897 in / +363 out  (total: 230,910 in / 7,769 out)
+
+🪙 [brain] after run_script: +20,031 in / +157 out  (total: 250,941 in / 7,926 out)
+
+🪙 [brain] after signal_workflow_ready: +20,148 in / +210 out  (total: 271,089 in / 8,136 out)
+pipeline: Brain signaled D:\AI\agentY\output_workflows\text_to_image.json ready.
+executor: ❌ Submission failed for iteration 1/1: 400 Client Error: Bad Request for url: http://127.0.0.1:8188/prompt
+[memory] Saved: User requested: Generate an image based on text prompt, at 1024x1024.
+pipeline: Brain finished.
+pipeline: Brain used 5 tool call(s) in this session.
+pipeline: Compressing Brain history (11 messages) …
+[learnings] 5 tool call(s) — below threshold (5); skipping.
+pipeline: Chat summary:
+TASK: image generation
+TEMPLATE: same as WORKFLOW_FILE (text_to_image)
+WORKFLOW_FILE: D:\AI\agentY\output_workflows\20260702_143813_workflow.json
+INPUT_PATHS: none
+INPUT_PATHS_USER_MESSAGE: none
+OUTPUT_PATHS: none
+PATCHES: Node 42.images → [5, 0]
+TOKENS: 291,391 in / 8,234 out (total: 299,625)
+COST: $0.00
+
+pipeline: Brain history compressed → 306 chars summary.
+[harness] -> text_to_image__anima: no_execution  (639.7s)  comfyui=[] errors=0
+
+======================================================================
+[harness] (3/3) text_to_image__z_image
+  intent: Generate an image of a serene mountain lake at sunrise using Z-Image. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps.
+======================================================================
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.researcher.local.md
+[agentY:researcher] Loaded skills: annotation, assemble-from-template, assemble-new-workflow, batch-handoff, brain-learnings, comfyui-core, feedback-loop, flux-sampling, image-batch, image-downsize, kling-multishot, output-paths, prompt-craft, troubleshooting, upscale-ultimatesd, video-gemini-motionpromptgeneration, workflow-templates
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:researcher] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.brain.local.md
+[agentY:brain] Loaded skills: annotation, assemble-from-template, assemble-new-workflow, batch-handoff, brain-learnings, comfyui-core, feedback-loop, flux-sampling, image-batch, image-downsize, kling-multishot, output-paths, prompt-craft, troubleshooting, upscale-ultimatesd, video-gemini-motionpromptgeneration, workflow-templates
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:brain] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.info.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:info] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.story.md
+YAML parse failed, retrying with colon-quoting fallback
+[agentY:story] Loaded skills: story-scene, story-storyboard, story-synopsis
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:story] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.triage.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:triage] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.planner.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:planner] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.scout.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:scout] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.dop.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:dop] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.error_checker.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:error_checker] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.vision_agent.md
+[agentY] Ollama model 'gemma4:12b' already present — skipping pull.
+[agentY:vision_agent] Using Ollama — gemma4:12b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+pipeline: Triage → intent=new_request, confidence=1.00, handler=researcher
+pipeline: Stage 1 – Researcher resolving spec …
+
+🪙 [researcher] after get_workflow_catalog: +24,515 in / +205 out  (total: 24,515 in / 205 out)
+
+🪙 [researcher] after get_workflow_template: +29,887 in / +158 out  (total: 54,402 in / 363 out)
+pipeline: Researcher finished (initial). Extracting brainbriefing …
+pipeline: Researcher retry 1/4 …
+
+🪙 [researcher] after get_comfyui_dirs: +60,867 in / +522 out  (total: 115,269 in / 885 out)
+pipeline: Researcher finished (retry 1). Extracting brainbriefing …
+pipeline: Brainbriefing recovered after 1 retry(ies).
+pipeline: Brainbriefing OK (retry 1) — status=ready, task='Generate a serene mountain lake at sunrise using Z-Image-Turbo with sub-HD resolution and few sampling steps', template='text_to_image_z_image_turbo'
+pipeline: Stage 2 – Brain streaming …
+
+🪙 [brain] after get_workflow_template: +9,722 in / +217 out  (total: 9,722 in / 217 out)
+
+🪙 [brain] after update_workflow: +10,243 in / +1,178 out  (total: 19,965 in / 1,395 out)
+
+🪙 [brain] after signal_workflow_ready: +10,591 in / +591 out  (total: 30,556 in / 1,986 out)
+pipeline: Brain signaled D:\AI\agentY\output_workflows\text_to_image_z_image_turbo.json ready.
+[executor] Batch 1/1 queued prompt_id=7a9b0dba-1251-470d-ada7-ca63044ab7cc
+[executor] Batch streaming 1/1 prompt_id=7a9b0dba-1251-470d-ada7-ca63044ab7cc
+[executor] [1/1] Finished. Outputs: ['W:\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\image_generation_00020_.png']
+[memory] Saved: User requested: Generate a serene mountain lake at sunrise using Z-Image-Turbo with sub-HD resolutio
+pipeline: Brain finished.
+pipeline: Brain used 3 tool call(s) in this session.
+pipeline: Compressing Brain history (8 messages) …
+[learnings] 3 tool call(s) — below threshold (5); skipping.
+pipeline: Chat summary:
+TASK: image generation
+TEMPLATE: text_to_image_z_image_turbo
+WORKFLOW_FILE: D:\AI\agentY\output_workflows\20260702_144104_text_to_image_z_image_turbo.json
+INPUT_PATHS: none
+INPUT_PATHS_USER_MESSAGE: none
+OUTPUT_PATHS: W:\0193_Never_Stop_Dreaming_Spec\02_build\comfy\sebastian.zilius\output\image_generation_00020_.png
+PATCHES: Node 10.filename_prefix → 'W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/output/imag..., Node 8.width → 512, Node 8.height → 512
+TOKENS: 41,388 in / 2,120 out (total: 43,508)
+COST: $0.00
+
+pipeline: Brain history compressed → 532 chars summary.
+[harness] -> text_to_image__z_image: pass  (158.2s)  comfyui=['error', 'success'] errors=0
+
+[harness] done. report -> D:\ai\agentY\scripts\recipe_reliability\report.json
+[harness] outcomes: {'pass': 2, 'no_execution': 1}

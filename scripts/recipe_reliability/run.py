@@ -233,6 +233,22 @@ async def _drive(pipeline, user_input: str, timeout: float):
     return seen, "".join(parts)
 
 
+async def _drive_researcher(pipeline, user_input: str, timeout: float):
+    """Drive ONLY the Researcher stage; return (raw_json, error) from its sentinel."""
+    raw_json = None
+    error = None
+
+    async def _consume():
+        nonlocal raw_json, error
+        async for ev in pipeline._arun_researcher(user_input):
+            if isinstance(ev, dict) and ev.get("_researcher_done"):
+                raw_json = ev.get("raw_json")
+                error = ev.get("error")
+
+    await asyncio.wait_for(_consume(), timeout=timeout)
+    return raw_json, error
+
+
 def _classify(seen, response, comfy):
     text = (response or "").lower()
     if comfy.get("submitted") and comfy.get("statuses"):
@@ -277,7 +293,7 @@ def _refresh_ollama_state() -> None:
     tool-call loops/hangs; a reload resets it (verified: 5 consecutive hangs on a
     stale instance vs a clean pass right after an unload). Best-effort."""
     import subprocess  # noqa: PLC0415
-    for m in ("qwen3.6:27b", "gemma4:12b"):
+    for m in ("qwen3-coder:30b", "qwen3.6:27b", "qwen3-vl:30b"):
         try:
             subprocess.run(["ollama", "stop", m], timeout=30,
                            capture_output=True, text=True)
@@ -303,6 +319,9 @@ def main() -> int:
                     help="hard cap (px) on generated latent width/height, applied in "
                          "apply_brainbriefing (sub-HD by default to protect a "
                          "power-limited GPU)")
+    ap.add_argument("--researcher-only", action="store_true",
+                    help="drive only the Researcher stage (produce + validate the "
+                         "brainbriefing); skip Brain/ComfyUI. Fast; stubs vision.")
     args = ap.parse_args()
 
     # By default the researcher may download missing models via its HF tools.
@@ -319,6 +338,10 @@ def main() -> int:
     # (not setdefault) so the CLI value always wins; also export it as a shell prefix
     # at launch so subprocess-executed tools inherit it at spawn time.
     os.environ["AGENTY_MAX_DIM"] = str(args.max_dim)
+    # Researcher-only: no Brain/ComfyUI, and stub analyze_image so image-input
+    # recipes exercise briefing generation without loading a vision model.
+    if args.researcher_only:
+        os.environ["AGENTY_STUB_VISION"] = "1"
 
     exclude = {s.strip() for s in args.exclude.split(",") if s.strip()}
     include = {s.strip() for s in args.include.split(",") if s.strip()}
@@ -338,13 +361,42 @@ def main() -> int:
                        "workflow template.")
         print(f"\n{'='*70}\n[harness] ({i}/{len(recipes)}) {rid}\n  intent: {intent}\n{'='*70}")
         # Refresh Ollama runtime state so each recipe starts from a clean model
-        # load (avoids the tool-loop hangs that build up over a long sweep).
-        _refresh_ollama_state()
+        # load (avoids the tool-loop hangs that build up over a long sweep). Skip
+        # in researcher-only mode: qwen3-coder (non-thinking) doesn't degrade, and
+        # the per-recipe unload/reload races cause transient Ollama 500s.
+        if not args.researcher_only:
+            _refresh_ollama_state()
         # Full isolation: a fresh pipeline + unique session per recipe so no
         # session state (input images, chat history, memory) leaks into the next
         # recipe and confuses triage/researcher.
         pipeline = create_pipeline(session_id=f"recipe-reliability-{rid}", verbose=True)
         clear_tool_caches()
+        if args.researcher_only:
+            t0 = time.time()
+            timed_out = False
+            try:
+                raw_json, r_err = asyncio.run(_drive_researcher(pipeline, intent, args.timeout))
+            except asyncio.TimeoutError:
+                raw_json, r_err, timed_out = None, "timeout", True
+            except Exception as e:  # noqa: BLE001
+                raw_json, r_err = None, f"exception:{e}"
+            dur = round(time.time() - t0, 1)
+            status = None
+            if raw_json:
+                try:
+                    status = json.loads(raw_json).get("status")
+                except Exception:  # noqa: BLE001
+                    status = "?"
+            outcome = ("researcher_ok" if status == "ready" else
+                       "researcher_blocked" if raw_json else
+                       "timeout" if timed_out else "researcher_fail")
+            rec = {"id": rid, "intent": intent, "duration_s": dur, "outcome": outcome,
+                   "briefing_status": status, "error": (r_err or "")[:300],
+                   "briefing_tail": (raw_json or "")[-500:]}
+            results.append(rec)
+            print(f"[harness] -> {rid}: {outcome}  ({dur}s)  status={status}")
+            json.dump({"results": results}, open(_REPORT, "w", encoding="utf-8"), indent=2)
+            continue
         before = _comfy_history_ids()
         t0 = time.time()
         timed_out = False

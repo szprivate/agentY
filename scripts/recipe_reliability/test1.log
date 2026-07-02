@@ -1,0 +1,105 @@
+[harness] 1 local recipe(s) to test
+[harness] test image pool (1): ['recipe_test_input_1.png']
+
+======================================================================
+[harness] (1/1) text_to_image__qwen_image
+  intent: Generate an image of a serene mountain lake at sunrise using Qwen Image. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps.
+======================================================================
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.researcher.local.md
+[agentY:researcher] Loaded skills: annotation, assemble-from-template, assemble-new-workflow, batch-handoff, brain-learnings, comfyui-core, feedback-loop, flux-sampling, image-batch, image-downsize, kling-multishot, output-paths, prompt-craft, troubleshooting, upscale-ultimatesd, video-gemini-motionpromptgeneration, workflow-templates
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:researcher] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.brain.local.md
+[agentY:brain] Loaded skills: annotation, assemble-from-template, assemble-new-workflow, batch-handoff, brain-learnings, comfyui-core, feedback-loop, flux-sampling, image-batch, image-downsize, kling-multishot, output-paths, prompt-craft, troubleshooting, upscale-ultimatesd, video-gemini-motionpromptgeneration, workflow-templates
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:brain] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.info.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:info] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.story.md
+YAML parse failed, retrying with colon-quoting fallback
+[agentY:story] Loaded skills: story-scene, story-storyboard, story-synopsis
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:story] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.triage.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:triage] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.planner.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:planner] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.scout.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:scout] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.dop.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:dop] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.error_checker.md
+[agentY] Ollama model 'qwen3.6:27b' already present — skipping pull.
+[agentY:error_checker] Using Ollama — qwen3.6:27b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+[agentY] System prompt: D:\AI\agentY\config\system_prompts\system_prompt.vision_agent.md
+[agentY] Ollama model 'gemma4:12b' already present — skipping pull.
+[agentY:vision_agent] Using Ollama — gemma4:12b (num_ctx=32768, max_tokens=16384, repeat_penalty=1.1, think=True)
+pipeline: Triage → intent=new_request, confidence=1.00, handler=researcher
+pipeline: Stage 1 – Researcher resolving spec …
+[memory] FAISS memory layer initialised  (path=D:\AI\agentY\memory, embed=nomic-embed-text, llm=gemma4:12b)
+Failed to load spaCy lemma model: spaCy is not installed. Install it with: pip install mem0ai[nlp]
+Failed to load spaCy full model: spaCy is not installed. Install it with: pip install mem0ai[nlp]
+
+🪙 [researcher] after get_workflow_catalog: +24,555 in / +156 out  (total: 24,555 in / 156 out)
+
+🪙 [researcher] after list_workflow_recipes: +0 in / +0 out  (total: 24,555 in / 156 out)
+
+🪙 [researcher] after get_workflow_catalog: +28,238 in / +285 out  (total: 52,793 in / 441 out)
+
+🪙 [researcher] after analyze_image: +0 in / +0 out  (total: 52,793 in / 441 out)
+
+🪙 [researcher] after get_comfyui_dirs: +29,891 in / +839 out  (total: 82,684 in / 1,280 out)
+
+🪙 [researcher] after get_workflow_template: +30,024 in / +1,125 out  (total: 112,708 in / 2,405 out)
+pipeline: Researcher finished (initial). Extracting brainbriefing …
+pipeline: Researcher retry 1/4 …
+pipeline: Researcher finished (retry 1). Extracting brainbriefing …
+pipeline: Brainbriefing recovered after 1 retry(ies).
+pipeline: Brainbriefing OK (retry 1) — status=ready, task='Generate cinematic urban landscape photography using uploaded reference images as style guidance.', template='text_to_image_flux_1_dev'
+pipeline: Stage 2 – Brain streaming …
+
+🪙 [brain] after get_workflow_template: +9,732 in / +457 out  (total: 9,732 in / 457 out)
+pipeline: Brain did not signal any workflow. Latest JSON: output_workflows\text_to_image_flux_1_dev.json
+pipeline: Brain auto-retry 1/2 — re-prompting to signal.
+
+🪙 [brain] after apply_brainbriefing: +20,626 in / +793 out  (total: 30,358 in / 1,250 out)
+
+🪙 [brain] after update_workflow: +10,883 in / +694 out  (total: 41,241 in / 1,944 out)
+
+🪙 [brain] after signal_workflow_ready: +11,166 in / +67 out  (total: 52,407 in / 2,011 out)
+
+🪙 [brain] after signal_workflow_ready: +11,329 in / +114 out  (total: 63,736 in / 2,125 out)
+pipeline: Brain signaled 2 workflows (batch) ready.
+[executor] Batch 1/2 queued prompt_id=70b3df0c-68c0-44ee-bb8d-0259871f001c
+[executor] Batch 2/2 queued prompt_id=6cd443f4-5759-4f56-9880-7949a687016e
+[executor] Batch streaming 1/2 prompt_id=70b3df0c-68c0-44ee-bb8d-0259871f001c
+[executor] [1/2] Finished. Outputs: ['W:\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\image_generation_00020_.png']
+[executor] Batch streaming 2/2 prompt_id=6cd443f4-5759-4f56-9880-7949a687016e
+[executor] [2/2] Finished. Outputs: ['W:\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\image_generation_00020_.png']
+executor: could not copy workflow to user dir — [WinError 32] The process cannot access the file because it is being used by another process
+[memory] Saved: User requested: Generate cinematic urban landscape photography using uploaded reference images as st
+pipeline: Brain finished.
+pipeline: Brain used 5 tool call(s) in this session.
+pipeline: Compressing Brain history (14 messages) …
+[learnings] 5 tool call(s) — below threshold (5); skipping.
+pipeline: Chat summary:
+TASK: image generation
+TEMPLATE: text_to_image_flux_1_dev
+WORKFLOW_FILE: D:\AI\agentY\output_workflows\20260702_162138_text_to_image_flux_1_dev.json
+INPUT_PATHS: none
+INPUT_PATHS_USER_MESSAGE: none
+OUTPUT_PATHS: W:\0193_Never_Stop_Dreaming_Spec\02_build\comfy\sebastian.zilius\output\image_generation_00020_.png
+PATCHES: Node 5.text → 'Professional cinematic urban photography of a dramatic mountain landscape me...
+TOKENS: 75,228 in / 2,282 out (total: 77,510)
+COST: $0.00
+
+pipeline: Brain history compressed → 473 chars summary.
+[harness] -> text_to_image__qwen_image: pass  (361.7s)  comfyui=['success', 'success', 'error', 'error'] errors=0
+
+[harness] done. report -> D:\ai\agentY\scripts\recipe_reliability\report.json
+[harness] outcomes: {'pass': 1}

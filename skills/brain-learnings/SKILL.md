@@ -209,3 +209,17 @@ If a matching entry exists, **apply the documented solution directly** instead o
 2026-07-01 | Workflow assembly from empty template requires all nodes in single batch | Avoid incremental add_nodes calls; add all 16 nodes (LoadImage, CLIP, UNETLoader, VAELoader, text encode, sampling, decode, VHS) in one update_workflow call to prevent partial assembly and wiring failures.
 
 2026-07-01 | WAN 2.2 first-to-last frame video workflow builds successfully from empty template in single batch | Fetch recipe, load all node schemas (LoadImage, CLIPLoader, UNETLoader, VAELoader, CLIPTextEncode, ModelSamplingSD3, KSamplerAdvanced, WanFirstLastFrameToVideo, VAEDecode, CreateVideo, GetVideoComponents, VHS_VideoCombine), then add all 17 nodes via single update_workflow call with proper wiring per connection_patterns.
+
+2026-07-02 | Null brainbriefing templates trigger inefficient manual assembly | First query get_workflow_recipe(task) to find the standard template name, load that JSON as a scaffold via get_workflow_template, and apply minimal patches for parameters like prompts or resolution.
+
+2026-07-02 | update_workflow fails when using widget_values_index for CLIPTextEncode prompts | Always patch prompt nodes via `"input_name": "text"` in the dict instead of `widget_values_index` to avoid validation errors and ensure reliable text injection.
+
+2026-07-02 | update_workflow throws AttributeError when patches field is passed as escaped JSON instead of raw dict list | Always pass the patches parameter directly as a native Python object without extra quotes or stringifying to avoid type errors." (35 words? Wait, I'll just count it now.)
+Actually let's do exactly what the prompt says. No preamble. Plain text only.
+
+2026-07-02 | Workflow validation fails when templates include uninstalled custom nodes like MarkdownNote | Remove unknown class_type entries via update_workflow remove_nodes parameter before submitting.
+2026-07-02 | KSampler validation fails with sampler values not found in allowed lists | Use get_node_schema to fetch valid string options before patching inputs.
+
+2026-07-02 | apply_brainbriefing fails validation when briefing specifies an output_node_id not found | Instead of adding missing nodes, patch configuration parameters directly onto actual final SaveImage or video save node already present in workflow template.
+
+2026-07-02 | ComfyUI workflow fails validation due to unconnected inputs like conditioning | Instead of iterative node lookups, directly read the saved JSON file via read_text_file. Parse exact nested IDs from the structure and batch-patch all missing connections in one update_workflow call.

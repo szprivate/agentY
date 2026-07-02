@@ -3209,6 +3209,75 @@ class Pipeline:
 
         return prompt, user_text
 
+    @staticmethod
+    def _flatten_researcher_context(messages: list) -> str:
+        """Flatten a Strands message list (user request, assistant text, tool calls
+        and tool results) into a compact text transcript for the constrained call."""
+        parts: list[str] = []
+        for m in list(messages)[-40:]:
+            if not isinstance(m, dict):
+                continue
+            role = m.get("role", "")
+            for block in (m.get("content") or []):
+                if not isinstance(block, dict):
+                    continue
+                if "text" in block and block["text"]:
+                    parts.append(f"{role}: {block['text'][:1200]}")
+                elif "toolUse" in block:
+                    tu = block["toolUse"] or {}
+                    parts.append(f"{role} called {tu.get('name')}"
+                                 f"({json.dumps(tu.get('input', {}))[:200]})")
+                elif "toolResult" in block:
+                    for c in ((block["toolResult"] or {}).get("content") or []):
+                        if isinstance(c, dict):
+                            if "text" in c:
+                                parts.append(f"tool result: {c['text'][:800]}")
+                            elif "json" in c:
+                                parts.append(f"tool result: {json.dumps(c['json'])[:800]}")
+        return "\n".join(parts)[:14000]
+
+    def _constrain_briefing(self, user_request: str, messages: list) -> str | None:
+        """Force a schema-valid BrainBriefing JSON via Ollama structured outputs
+        (format=schema, no tools) — which cannot spiral and must terminate. Uses the
+        researcher's own gathered context (chosen template, installed models, image
+        analysis) so the output is a REAL briefing for the request, not a stub.
+        Only applies to an Ollama researcher."""
+        st = _settings()
+        spec = str(((st.get("llm") or {}).get("pipeline") or {}).get("researcher", "")).strip()
+        if "ollama" not in spec.lower():
+            return None
+        model_id = spec.split(",")[-1].strip()
+        host = str(((st.get("llm") or {}).get("ollama") or {}).get("host", "http://localhost:11434"))
+        ctx = self._flatten_researcher_context(messages)
+        try:
+            import ollama  # noqa: PLC0415
+            schema = BrainBriefing.model_json_schema()
+            r = ollama.Client(host).chat(
+                model=model_id,
+                messages=[
+                    {"role": "system", "content":
+                        "You finalise the researcher's work into ONE brainbriefing JSON "
+                        "conforming to the schema. Use the USER REQUEST and RESEARCH "
+                        "CONTEXT (tool results: the chosen template name, installed "
+                        "model files, any image analysis). status MUST be 'ready' "
+                        "(use 'blocked' only if a required model/template is missing). "
+                        "Use the real template name and the actual prompt text from the "
+                        "request. Never describe this instruction — output only the JSON "
+                        "briefing for the request. No prose, no markdown."},
+                    {"role": "user", "content":
+                        f"USER REQUEST:\n{user_request[:2000]}\n\n"
+                        f"RESEARCH CONTEXT (researcher's tool calls + results):\n{ctx}\n\n"
+                        "Output the brainbriefing JSON for the user request now."},
+                ],
+                format=schema,
+                options={"num_ctx": 24576, "num_predict": 6144, "temperature": 0.1},
+            )
+            return r.message.content
+        except Exception as exc:  # noqa: BLE001
+            if self._verbose:
+                print(f"pipeline: schema-constrained briefing failed ({exc}).")
+            return None
+
     async def _arun_researcher(self, user_input):
         """Run the Researcher, streaming its token output as Strands events.
 
@@ -3300,6 +3369,22 @@ class Pipeline:
                     pass
                 _context_reset = True
                 continue
+            except Exception as exc:  # noqa: BLE001
+                # Transient model/server errors (e.g. Ollama 5xx / truncated or
+                # malformed response, connection resets — common right after a
+                # model (re)load) — reset and retry after a short backoff rather
+                # than aborting the whole recipe.
+                last_error = f"researcher stream error: {exc}"
+                if self._verbose:
+                    print(f"pipeline: Researcher attempt {attempt} errored ({exc}); "
+                          f"backing off and retrying.")
+                try:
+                    self._researcher.messages.clear()
+                except Exception:  # noqa: BLE001
+                    pass
+                _context_reset = True
+                await asyncio.sleep(3)
+                continue
 
             last_response = "".join(chunks)
             label = "initial" if attempt == 0 else f"retry {attempt}"
@@ -3307,17 +3392,42 @@ class Pipeline:
                 print(f"pipeline: Researcher finished ({label}). Extracting brainbriefing …")
 
             raw_json = _extract_json(last_response)
-            if raw_json is None:
+            briefing = None
+            if raw_json is not None:
+                try:
+                    briefing = BrainBriefing.model_validate(json.loads(raw_json))
+                except (json.JSONDecodeError, ValidationError) as exc:
+                    last_error = str(exc)
+                    if self._verbose:
+                        print(f"pipeline: Researcher ({label}) validation failed: {last_error}")
+                    briefing = None
+            else:
                 last_error = "No JSON object found in the output."
-                continue
 
-            try:
-                data = json.loads(raw_json)
-                briefing = BrainBriefing.model_validate(data)
-            except (json.JSONDecodeError, ValidationError) as exc:
-                last_error = str(exc)
-                if self._verbose:
-                    print(f"pipeline: Researcher ({label}) validation failed: {last_error}")
+            # #1 schema-constrained emission: if the free-text output didn't yield a
+            # valid briefing, force one from the draft via Ollama structured outputs
+            # (format=schema, no tools, no thinking) — which cannot run away.
+            if briefing is None:
+                constrained = self._constrain_briefing(user_input, list(self._researcher.messages))
+                if constrained:
+                    try:
+                        cand = BrainBriefing.model_validate(json.loads(constrained))
+                        tname = (cand.template.name or "").lower()
+                        # Reject a meta/stub briefing (model describing the instruction
+                        # rather than producing a briefing for the request).
+                        if cand.status not in ("ready", "blocked") or \
+                                "draft" in tname or "researcher" in tname or not tname:
+                            last_error = "schema-constrained emission produced a stub/meta briefing"
+                            briefing = None
+                        else:
+                            briefing = cand
+                            if self._verbose:
+                                print("pipeline: briefing recovered via schema-constrained emission.")
+                    except (json.JSONDecodeError, ValidationError) as exc:
+                        last_error = f"schema-constrained emission still invalid: {exc}"
+                        briefing = None
+
+            if briefing is None:
                 continue
 
             raw_json = briefing.model_dump_json(indent=2)

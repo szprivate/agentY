@@ -43,7 +43,7 @@
   "llm": {
     
     "pipeline": {
-      "researcher": "ollama,qwen3.6:27b",
+      "researcher": "ollama,qwen3-coder:30b",
       "brain": "ollama,qwen3.6:27b",
       "triage": "ollama,qwen3.6:27b",
       "info": "ollama,qwen3.6:27b",
@@ -54,8 +54,8 @@
       "learnings": "ollama,qwen3.6:27b",
       "error_checker": "ollama,qwen3.6:27b",
       "build_skill": "ollama,qwen3.6:27b",
-      "llm_functions": "gemma4:12b",
-      "executor_vision_model": "gemma4:12b"
+      "llm_functions": "ollama,qwen3-vl:30b",
+      "executor_vision_model": "ollama,qwen3-vl:30b"
     },
 
     "ollama": {
@@ -63,7 +63,7 @@
       "num_ctx": 32768,
       "max_tokens": 16384,
       "repeat_penalty": 1.1,
-      "think": false
+      "think": true
     },
 
     "anthropic": {
