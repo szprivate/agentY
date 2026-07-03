@@ -41,11 +41,11 @@ from src.executor import execute_workflow as _execute_workflow, execute_workflow
 from src.utils.memory import format_memories, memory_add, memory_search
 from src.tools.memory_tools import set_session_id as _set_memory_session_id
 from src.tools.comfyui import clear_tool_caches as _clear_tool_caches
-# Deterministic brain happy-path: call the mechanical assembly ops directly
-# (no LLM). get_workflow_template / apply_brainbriefing are plain functions;
-# signal_workflow_ready is a Strands DecoratedFunctionTool, so use __wrapped__.
-from agenty_core.tools.comfyui import get_workflow_template as _det_get_template
-from agenty_core.tools.comfyui import apply_brainbriefing as _det_apply_briefing
+# Deterministic brain happy-path: the mechanical assembly (load template ->
+# apply briefing -> validate) lives in the shared assembly_deterministic module;
+# the pipeline calls it, then signals. signal_workflow_ready is a Strands
+# DecoratedFunctionTool, so use __wrapped__ to call it directly.
+from agenty_core.tools.assembly_deterministic import assemble_workflow_deterministic as _assemble_workflow_deterministic
 from src.tools.workflow_handoff import signal_workflow_ready as _det_signal_tool
 _det_signal_ready = _det_signal_tool.__wrapped__
 from src.utils.learnings import count_tool_calls, maybe_run_learnings
@@ -3506,15 +3506,13 @@ class Pipeline:
         if bb.get("input_image_count") == 2:  # annotation / control-image path
             return _bail("input_image_count==2")
         try:
-            tinfo = json.loads(_det_get_template(name))
-            path = tinfo.get("workflow_path")
-            if not path:
-                return _bail("template returned no workflow_path")
-            res = json.loads(_det_apply_briefing(path, raw_json))
-            if res.get("status") != "ok":
-                probs = res.get("problems") or res.get("server_errors") or res.get("node_errors")
-                return _bail(f"apply_brainbriefing status={res.get('status')} problems={str(probs)[:400]}")
-            wf_path = res.get("workflow_path") or path
+            res = json.loads(_assemble_workflow_deterministic(raw_json))
+            if res.get("status") != "ready":
+                return _bail(f"assembly status={res.get('status')} "
+                             f"problems={str(res.get('problems'))[:400]}")
+            wf_path = res.get("workflow_path")
+            if not wf_path:
+                return _bail("assembly returned no workflow_path")
             # BatchImagesNode needs the brain's replace_node step (1.2.1); defer.
             try:
                 wf = json.load(open(wf_path, encoding="utf-8"))

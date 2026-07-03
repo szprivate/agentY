@@ -69,6 +69,8 @@ from src.tools.memory_tools import memory_read, memory_write  # noqa: F401
 from src.tools.web_search import web_search, web_search_images  # noqa: F401
 # agentY-only pipeline handoff (not part of the shared agenty_core layer)
 from src.tools.workflow_handoff import signal_workflow_ready  # noqa: F401
+# Fully deterministic (no-LLM) workflow assembly (shared agenty_core layer)
+from src.tools.assembly_deterministic import assemble_workflow_deterministic  # noqa: F401
 # Headless batch jobs — shared with agentY-mcp via agenty_core
 from src.tools.batch import (  # noqa: F401
     start_batch_job,
