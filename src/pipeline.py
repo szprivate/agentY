@@ -3609,8 +3609,10 @@ class Pipeline:
             return _bail("variations/batch")
         if bb.get("count_iter") not in (None, 1):
             return _bail(f"count_iter={bb.get('count_iter')}")
-        if bb.get("input_image_count") == 2:  # annotation / control-image path
-            return _bail("input_image_count==2")
+        # NOTE: input_image_count is checked AFTER assembly against the template's
+        # actual image loaders — the briefing's count is often inflated (recipe
+        # ports aggregate several member templates), which used to bail a plain
+        # single-image job (e.g. LTX i2v) to the unreliable LLM brain.
         try:
             res = json.loads(_assemble_workflow_deterministic(raw_json))
             # Aux models the template references but that aren't installed (and
@@ -3631,12 +3633,21 @@ class Pipeline:
             wf_path = res.get("workflow_path")
             if not wf_path:
                 return _bail("assembly returned no workflow_path")
-            # BatchImagesNode needs the brain's replace_node step (1.2.1); defer.
             try:
                 wf = json.load(open(wf_path, encoding="utf-8"))
-                if any(isinstance(n, dict) and n.get("class_type") == "BatchImagesNode"
-                       for n in wf.values()):
+                _nodes = [n for n in wf.values() if isinstance(n, dict)]
+                # BatchImagesNode needs the brain's replace_node step (1.2.1); defer.
+                if any(n.get("class_type") == "BatchImagesNode" for n in _nodes):
                     return None
+                # A genuine 2-image annotation / control-image job — the template
+                # has two image loaders whose roles the brain must assign — is
+                # deferred to the LLM. A spurious input_image_count on a
+                # single-loader template is ignored (assembly already bound it).
+                if bb.get("input_image_count") == 2 and sum(
+                    1 for n in _nodes if n.get("class_type")
+                    in ("LoadImage", "LoadImageMask", "LoadImageOutput")
+                ) >= 2:
+                    return _bail("2 image loaders — annotation/control needs LLM")
             except Exception:  # noqa: BLE001
                 pass
             _det_signal_ready(wf_path)

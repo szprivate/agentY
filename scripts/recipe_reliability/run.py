@@ -83,8 +83,13 @@ def _ensure_test_images(n: int, size: int = _TEST_IMG_SIZE) -> list[str]:
 
 
 def _image_count(recipe: dict) -> int:
-    """How many IMAGE inputs this recipe's type exposes (>=1 for image tasks)."""
-    imgs = [p for p in recipe["boundary_ports"].get("inputs", []) if p.get("data_type") == "IMAGE"]
+    """How many IMAGE inputs this recipe's type exposes (>=1 for image tasks).
+
+    Matches any port whose data type includes IMAGE — e.g. an ``IMAGE,MASK``
+    port (inpaint / first-last-frame) is still an image input, so it must be
+    counted or those recipes get no input images."""
+    imgs = [p for p in recipe["boundary_ports"].get("inputs", [])
+            if "IMAGE" in str(p.get("data_type", "")).upper()]
     return max(1, len(imgs))
 
 
@@ -133,7 +138,8 @@ def _build_intent(recipe: dict, pool: list[str]) -> tuple[str, int]:
     ui = recipe["user_intent"]
     task, model = ui.get("task"), recipe["model"]
     needs_image = (task in _IMAGE_INPUT_TASKS) or any(
-        p.get("data_type") in ("IMAGE", "VIDEO") for p in recipe["boundary_ports"].get("inputs", [])
+        any(dt in str(p.get("data_type", "")).upper() for dt in ("IMAGE", "VIDEO"))
+        for p in recipe["boundary_ports"].get("inputs", [])
     )
     n = min(_image_count(recipe), len(pool)) if needs_image else 0
     images = pool[:n]
