@@ -392,7 +392,7 @@ def main() -> int:
                        "timeout" if timed_out else "researcher_fail")
             rec = {"id": rid, "intent": intent, "duration_s": dur, "outcome": outcome,
                    "briefing_status": status, "error": (r_err or "")[:300],
-                   "briefing_tail": (raw_json or "")[-500:]}
+                   "briefing": raw_json or ""}
             results.append(rec)
             print(f"[harness] -> {rid}: {outcome}  ({dur}s)  status={status}")
             json.dump({"results": results}, open(_REPORT, "w", encoding="utf-8"), indent=2)
