@@ -3141,6 +3141,9 @@ class Pipeline:
     # indefinitely (no exception, no output) and would otherwise hang until the
     # whole-recipe timeout; bounding each attempt converts a hang into a retry.
     _RESEARCHER_ATTEMPT_TIMEOUT = 150.0
+    # How many times to reject a content-free 'blocked' briefing before accepting
+    # it (avoids exhausting all retries into a fail when a model is truly missing).
+    _MAX_EMPTY_BLOCKER_RETRIES = 2
     # Auto self-correction rounds when the brain ends without calling
     # signal_workflow_ready (common with local models that stop early).
     _MAX_BRAIN_AUTORETRIES = 2
@@ -3299,6 +3302,7 @@ class Pipeline:
         # request from context — the next attempt must then re-send it in full
         # rather than a terse correction that assumes prior context.
         _context_reset = False
+        _eb_retries = 0  # empty-blocker rejections (bounded, then accept the block)
         _researcher_snap = self._usage_snapshot(self._researcher)
 
         for attempt in range(1 + self._MAX_RESEARCHER_RETRIES):
@@ -3429,6 +3433,28 @@ class Pipeline:
 
             if briefing is None:
                 continue
+
+            # A content-free block (status='blocked' with no concrete blocker) is
+            # usually an agent error — the model is often installed. Retry a bounded
+            # number of times, nudging it to name the blocker or proceed ready; if it
+            # still insists, accept the block (a clean 'blocked', not a fail).
+            if briefing.status == "blocked" and not any(
+                    isinstance(b, str) and b.strip() for b in (briefing.blockers or [])):
+                if _eb_retries < self._MAX_EMPTY_BLOCKER_RETRIES:
+                    _eb_retries += 1
+                    last_error = (
+                        "You set status='blocked' but listed no concrete blocker. If a "
+                        "specific model file or template is genuinely missing, name it "
+                        "exactly in 'blockers'. Otherwise the requirements ARE met — set "
+                        "status='ready' and produce the full brainbriefing."
+                    )
+                    if self._verbose:
+                        print(f"pipeline: rejected empty-blocker briefing "
+                              f"({_eb_retries}/{self._MAX_EMPTY_BLOCKER_RETRIES}); retrying.")
+                    _context_reset = True
+                    continue
+                if self._verbose:
+                    print("pipeline: empty-blocker persisted — accepting the block.")
 
             raw_json = briefing.model_dump_json(indent=2)
             if self._verbose:
