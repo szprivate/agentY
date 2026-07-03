@@ -474,14 +474,17 @@ def main() -> int:
                 _msgs = list(getattr(pipeline, "_researcher").messages)
             except Exception:  # noqa: BLE001
                 _msgs = []
+            # The pipeline strips raw_json from the _researcher_done event it
+            # re-emits, but stashes the briefing on _last_brainbriefing_json.
+            _brief = getattr(pipeline, "_last_brainbriefing_json", None) or researcher_raw or ""
             _bstatus = None
-            if researcher_raw:
+            if _brief:
                 try:
-                    _bstatus = json.loads(researcher_raw).get("status")
+                    _bstatus = json.loads(_brief).get("status")
                 except Exception:  # noqa: BLE001
                     _bstatus = "?"
             _ft = {"recipe_id": rid, "outcome": outcome, "briefing_status": _bstatus,
-                   "query": intent, "briefing": researcher_raw or "",
+                   "query": intent, "briefing": _brief,
                    "comfyui": comfy, "messages": _msgs}
             try:
                 with open(os.path.join(args.finetune_dir, f"{rid}.json"), "w",
