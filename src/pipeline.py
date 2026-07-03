@@ -48,6 +48,10 @@ from src.tools.comfyui import clear_tool_caches as _clear_tool_caches
 from agenty_core.tools.assembly_deterministic import assemble_workflow_deterministic as _assemble_workflow_deterministic
 from src.tools.workflow_handoff import signal_workflow_ready as _det_signal_tool
 _det_signal_ready = _det_signal_tool.__wrapped__
+# Deterministic download+rerun: resolve a named missing model on HF and fetch it
+# into ComfyUI's extra model path, then retry the researcher.
+from agenty_core.tools.huggingface import find_hf_file as _find_hf_file
+from agenty_core.tools.huggingface import download_hf_model as _download_hf_model
 from src.utils.learnings import count_tool_calls, maybe_run_learnings
 from src.utils.debug_log import trace as _trace
 
@@ -3281,6 +3285,53 @@ class Pipeline:
                 print(f"pipeline: schema-constrained briefing failed ({exc}).")
             return None
 
+    def _attempt_model_downloads(self, blockers: list) -> bool:
+        """Resolve each model filename named in a blocked briefing's blockers on
+        HuggingFace (find_hf_file) and download it into ComfyUI's extra model path
+        (download_hf_model). Returns True if at least one model was newly downloaded
+        (caller should retry the researcher). No-op when downloads are disabled."""
+        import re as _re  # noqa: PLC0415
+        files: set[str] = set()
+        for b in (blockers or []):
+            if isinstance(b, str):
+                for m in _re.findall(r"[\w./\\-]+\.(?:safetensors|pth|ckpt|gguf|bin|onnx|sft)", b):
+                    files.add(m.replace("\\", "/").rsplit("/", 1)[-1])
+        if not files:
+            return False
+        got = False
+        for fn in files:
+            try:
+                res = json.loads(_find_hf_file(fn))
+                exact = [m for m in res.get("matches", []) if m.get("exact")]
+                if not exact:
+                    if self._verbose:
+                        print(f"pipeline: no HF match for missing model {fn}")
+                    continue
+                m = exact[0]
+                hf_sub = m.get("subfolder", "") or ""
+                # The HF subfolder leaf names the local model category (e.g.
+                # 'diffusion_models', 'checkpoints'); download_hf_model maps it to
+                # ComfyUI's extra model path.
+                local_cat = hf_sub.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+                dl = json.loads(_download_hf_model(
+                    m["repo_id"], m["filename"], destination_folder=local_cat, subfolder=hf_sub))
+                if dl.get("ok") and not dl.get("skipped"):
+                    got = True
+                    if self._verbose:
+                        print(f"pipeline: downloaded missing model {fn} from "
+                              f"{m['repo_id']} -> {dl.get('path')}")
+                elif dl.get("skipped") and self._verbose:
+                    print(f"pipeline: downloads disabled — cannot fetch {fn}")
+            except Exception as exc:  # noqa: BLE001
+                if self._verbose:
+                    print(f"pipeline: download of {fn} failed ({exc})")
+        if got:
+            try:
+                _clear_tool_caches()  # so check_model / object_info see the new files
+            except Exception:  # noqa: BLE001
+                pass
+        return got
+
     async def _arun_researcher(self, user_input):
         """Run the Researcher, streaming its token output as Strands events.
 
@@ -3303,6 +3354,7 @@ class Pipeline:
         # rather than a terse correction that assumes prior context.
         _context_reset = False
         _eb_retries = 0  # empty-blocker rejections (bounded, then accept the block)
+        _downloaded = False  # attempted a named-missing-model download once
         _researcher_snap = self._usage_snapshot(self._researcher)
 
         for attempt in range(1 + self._MAX_RESEARCHER_RETRIES):
@@ -3455,6 +3507,22 @@ class Pipeline:
                     continue
                 if self._verbose:
                     print("pipeline: empty-blocker persisted — accepting the block.")
+
+            # Deterministic download+rerun: if blocked on a named missing model,
+            # resolve it on HF and fetch it into ComfyUI's extra model path, then
+            # retry so the researcher can proceed. Once per request; a no-op when
+            # downloads are disabled (download_hf_model fails fast).
+            if briefing.status == "blocked" and not _downloaded and any(
+                    isinstance(b, str) and b.strip() for b in (briefing.blockers or [])):
+                _downloaded = True
+                if self._attempt_model_downloads(briefing.blockers or []):
+                    _context_reset = True
+                    last_error = ("The previously-missing model(s) have now been "
+                                  "downloaded and are available. Reassess and produce "
+                                  "the full brainbriefing with status='ready'.")
+                    if self._verbose:
+                        print("pipeline: downloaded missing model(s); retrying researcher.")
+                    continue
 
             raw_json = briefing.model_dump_json(indent=2)
             if self._verbose:
