@@ -313,19 +313,30 @@ def _refresh_ollama_state() -> None:
 
 
 def _clear_comfyui_queue() -> None:
-    """Interrupt any zombie execution and clear pending prompts before a recipe.
+    """Reset ComfyUI's GPU footprint before a recipe: interrupt any zombie
+    execution, clear the queue, and UNLOAD its models / free VRAM.
 
-    A killed harness leaves its in-flight ComfyUI render running; that zombie
-    pins the GPU at 100% and starves the researcher LLM into 150s timeouts.
-    Nothing legitimate is ever running between recipes, so a blanket interrupt
-    is safe HERE (unlike inside apply_brainbriefing's validation). Best-effort."""
+    Two starvation modes, both fatal to the researcher on a 32 GB card:
+      * a killed harness leaves its in-flight render running (zombie pins the GPU
+        at 100%), and
+      * ComfyUI holds ~24 GB of idle model from the previous recipe, leaving too
+        little for qwen3-coder (~21 GB) to load — it CPU-offloads and every
+        researcher attempt hits the 150s timeout.
+    /free with unload_models+free_memory releases that VRAM so the LLM loads
+    fully on-GPU; ComfyUI reloads its model when the brain later executes.
+    Nothing legitimate runs between recipes, so a blanket interrupt is safe HERE
+    (unlike inside apply_brainbriefing's validation). Best-effort."""
     import urllib.request  # noqa: PLC0415
-    for path, payload in (("/interrupt", b"{}"), ("/queue", b'{"clear": true}')):
+    for path, payload in (
+        ("/interrupt", b"{}"),
+        ("/queue", b'{"clear": true}'),
+        ("/free", b'{"unload_models": true, "free_memory": true}'),
+    ):
         try:
             req = urllib.request.Request(
                 f"http://127.0.0.1:8188{path}", data=payload,
                 headers={"Content-Type": "application/json"})
-            urllib.request.urlopen(req, timeout=10).read()
+            urllib.request.urlopen(req, timeout=15).read()
         except Exception:  # noqa: BLE001
             pass
 
