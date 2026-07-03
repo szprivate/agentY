@@ -35,6 +35,6 @@ scripts/recipe_reliability/*.log
 scripts/recipe_reliability/brain_assembly_report.json
 input/
 
-scripts/recipe_reliability/researcher_finetune_data/
-scripts/recipe_reliability/downloaded_models.jsonl
+scripts/recipe_reliability/researcher_finetune_data*/
+scripts/recipe_reliability/downloaded_models*.jsonl
 scripts/recipe_reliability/sweep_final.log

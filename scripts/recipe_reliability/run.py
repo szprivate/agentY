@@ -208,9 +208,10 @@ async def _drive(pipeline, user_input: str, timeout: float):
     seen: list[str] = []
     parts: list[str] = []
     in_researcher = False
+    researcher_raw: str | None = None
 
     async def _consume():
-        nonlocal in_researcher
+        nonlocal in_researcher, researcher_raw
         async for event in pipeline.stream_async(user_input, qa_reply_queue=qa_q):
             if not isinstance(event, dict):
                 continue
@@ -223,14 +224,18 @@ async def _drive(pipeline, user_input: str, timeout: float):
             if event.get("_researcher_start"):
                 in_researcher = True; continue
             if event.get("_researcher_done"):
-                in_researcher = False; continue
+                in_researcher = False
+                # Capture the researcher's briefing for SFT training data.
+                if event.get("raw_json"):
+                    researcher_raw = event.get("raw_json")
+                continue
             data = event.get("data")
             if data and not in_researcher:
                 parts.append(data)
         await pipeline._await_pending_compression()
 
     await asyncio.wait_for(_consume(), timeout=timeout)
-    return seen, "".join(parts)
+    return seen, "".join(parts), researcher_raw
 
 
 async def _drive_researcher(pipeline, user_input: str, timeout: float):
@@ -434,8 +439,9 @@ def main() -> int:
         before = _comfy_history_ids()
         t0 = time.time()
         timed_out = False
+        researcher_raw = None
         try:
-            seen, response = asyncio.run(_drive(pipeline, intent, args.timeout))
+            seen, response, researcher_raw = asyncio.run(_drive(pipeline, intent, args.timeout))
         except asyncio.TimeoutError:
             seen, response, timed_out = ["timeout"], "", True
         except Exception as e:  # noqa: BLE001
@@ -458,6 +464,33 @@ def main() -> int:
         results.append(rec)
         print(f"[harness] -> {rid}: {outcome}  ({dur}s)  comfyui={comfy.get('statuses')} errors={len(comfy.get('errors', []))}")
         json.dump({"results": results}, open(_REPORT, "w", encoding="utf-8"), indent=2)
+        # Researcher SFT training data (end-to-end run): one record per recipe with
+        # the query, the full researcher trajectory, the briefing it produced, and
+        # the *end-to-end* outcome (incl. ComfyUI render result). The render
+        # outcome lets you filter to briefings that actually executed — the
+        # highest-quality query→briefing pairs for supervised fine-tuning.
+        if args.finetune_dir:
+            try:
+                _msgs = list(getattr(pipeline, "_researcher").messages)
+            except Exception:  # noqa: BLE001
+                _msgs = []
+            _bstatus = None
+            if researcher_raw:
+                try:
+                    _bstatus = json.loads(researcher_raw).get("status")
+                except Exception:  # noqa: BLE001
+                    _bstatus = "?"
+            _ft = {"recipe_id": rid, "outcome": outcome, "briefing_status": _bstatus,
+                   "query": intent, "briefing": researcher_raw or "",
+                   "comfyui": comfy, "messages": _msgs}
+            try:
+                with open(os.path.join(args.finetune_dir, f"{rid}.json"), "w",
+                          encoding="utf-8") as _f:
+                    json.dump(_ft, _f, indent=2, ensure_ascii=False,
+                              default=lambda o: (o.decode("utf-8", "replace")
+                                                 if isinstance(o, (bytes, bytearray)) else str(o)))
+            except Exception as _e:  # noqa: BLE001
+                print(f"[harness] finetune capture failed for {rid}: {_e}")
 
     print(f"\n[harness] done. report -> {_REPORT}")
     from collections import Counter
