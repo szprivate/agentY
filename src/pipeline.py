@@ -3613,8 +3613,20 @@ class Pipeline:
             return _bail("input_image_count==2")
         try:
             res = json.loads(_assemble_workflow_deterministic(raw_json))
+            # Aux models the template references but that aren't installed (and
+            # the researcher never named as blockers, e.g. a VAE/LoRA) surface in
+            # missing_models. Download them and re-assemble once so they don't
+            # force an LLM round-trip or a 400 at submission.
+            _mm = res.get("missing_models") or []
+            if res.get("status") != "ready" and _mm and not os.environ.get("AGENTY_DISABLE_DOWNLOADS"):
+                if self._verbose:
+                    print(f"pipeline: deterministic assembly needs {len(_mm)} model(s): "
+                          f"{', '.join(m.rsplit(chr(92),1)[-1] for m in _mm[:4])} — downloading …")
+                if self._attempt_model_downloads(_mm):
+                    res = json.loads(_assemble_workflow_deterministic(raw_json))
             if res.get("status") != "ready":
                 return _bail(f"assembly status={res.get('status')} "
+                             f"missing_models={res.get('missing_models')} "
                              f"problems={str(res.get('problems'))[:400]}")
             wf_path = res.get("workflow_path")
             if not wf_path:
