@@ -31,3 +31,6 @@ config/models.json
 config/workflow_recipes_object_info_cache.json
 # recipe-reliability transient logs
 scripts/recipe_reliability/*.log
+
+scripts/recipe_reliability/brain_assembly_report.json
+input/
