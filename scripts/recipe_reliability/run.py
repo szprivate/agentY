@@ -312,6 +312,24 @@ def _refresh_ollama_state() -> None:
             pass
 
 
+def _clear_comfyui_queue() -> None:
+    """Interrupt any zombie execution and clear pending prompts before a recipe.
+
+    A killed harness leaves its in-flight ComfyUI render running; that zombie
+    pins the GPU at 100% and starves the researcher LLM into 150s timeouts.
+    Nothing legitimate is ever running between recipes, so a blanket interrupt
+    is safe HERE (unlike inside apply_brainbriefing's validation). Best-effort."""
+    import urllib.request  # noqa: PLC0415
+    for path, payload in (("/interrupt", b"{}"), ("/queue", b'{"clear": true}')):
+        try:
+            req = urllib.request.Request(
+                f"http://127.0.0.1:8188{path}", data=payload,
+                headers={"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=10).read()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", default=None, help="canonical task to filter (e.g. 'Image Edit')")
@@ -409,6 +427,7 @@ def main() -> int:
         # the per-recipe unload/reload races cause transient Ollama 500s.
         if not args.researcher_only:
             _refresh_ollama_state()
+            _clear_comfyui_queue()
         # Full isolation: a fresh pipeline + unique session per recipe so no
         # session state (input images, chat history, memory) leaks into the next
         # recipe and confuses triage/researcher.
