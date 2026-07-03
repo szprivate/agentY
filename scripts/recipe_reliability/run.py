@@ -333,6 +333,10 @@ def main() -> int:
     ap.add_argument("--download-log", default="",
                     help="if set, append a JSONL manifest of every model downloaded "
                          "(filename, repo, full path) to this file")
+    ap.add_argument("--resume", action="store_true",
+                    help="skip recipes already present in the report and append new "
+                         "results (so a killed run can be relaunched and continue "
+                         "into the same report.json / download-log)")
     args = ap.parse_args()
 
     # By default the researcher may download missing models via its HF tools.
@@ -355,15 +359,29 @@ def main() -> int:
         os.environ["AGENTY_STUB_VISION"] = "1"
     if args.download_log:
         os.environ["AGENTY_DOWNLOAD_LOG"] = os.path.abspath(args.download_log)
-        # start fresh so the manifest reflects this run only
-        try:
-            open(os.environ["AGENTY_DOWNLOAD_LOG"], "w", encoding="utf-8").close()
-        except Exception:
-            pass
+        # start fresh so the manifest reflects this run only — but on --resume keep
+        # appending to the existing manifest.
+        if not args.resume:
+            try:
+                open(os.environ["AGENTY_DOWNLOAD_LOG"], "w", encoding="utf-8").close()
+            except Exception:
+                pass
     if args.finetune_dir:
         os.makedirs(args.finetune_dir, exist_ok=True)
 
-    exclude = {s.strip() for s in args.exclude.split(",") if s.strip()}
+    # --resume: seed results from the existing report and skip those recipe ids so
+    # a killed run can be relaunched (same command) and continue where it stopped.
+    results = []
+    done_ids: set[str] = set()
+    if args.resume and os.path.exists(_REPORT):
+        try:
+            results = json.load(open(_REPORT, encoding="utf-8")).get("results", [])
+            done_ids = {r["id"] for r in results if r.get("id")}
+            print(f"[harness] --resume: {len(done_ids)} recipe(s) already in report — skipping them")
+        except Exception as e:  # noqa: BLE001
+            print(f"[harness] --resume: could not read existing report ({e}); starting fresh")
+
+    exclude = {s.strip() for s in args.exclude.split(",") if s.strip()} | done_ids
     include = {s.strip() for s in args.include.split(",") if s.strip()}
     recipes = _load_local_recipes(args.task, args.only, args.limit, exclude, include)
     print(f"[harness] {len(recipes)} local recipe(s) to test")
@@ -371,7 +389,6 @@ def main() -> int:
     max_imgs = max((_image_count(r) for r in recipes), default=1)
     pool = _ensure_test_images(max_imgs)
     print(f"[harness] test image pool ({len(pool)}): {[os.path.basename(p) for p in pool]}")
-    results = []
     for i, recipe in enumerate(recipes, 1):
         rid = recipe["id"]
         intent, n_images = _build_intent(recipe, pool)
