@@ -322,6 +322,12 @@ def main() -> int:
     ap.add_argument("--researcher-only", action="store_true",
                     help="drive only the Researcher stage (produce + validate the "
                          "brainbriefing); skip Brain/ComfyUI. Fast; stubs vision.")
+    ap.add_argument("--finetune-dir", default="",
+                    help="if set, write one researcher SFT record per recipe "
+                         "(query + trajectory + briefing) into this folder")
+    ap.add_argument("--download-log", default="",
+                    help="if set, append a JSONL manifest of every model downloaded "
+                         "(filename, repo, full path) to this file")
     args = ap.parse_args()
 
     # By default the researcher may download missing models via its HF tools.
@@ -342,6 +348,15 @@ def main() -> int:
     # recipes exercise briefing generation without loading a vision model.
     if args.researcher_only:
         os.environ["AGENTY_STUB_VISION"] = "1"
+    if args.download_log:
+        os.environ["AGENTY_DOWNLOAD_LOG"] = os.path.abspath(args.download_log)
+        # start fresh so the manifest reflects this run only
+        try:
+            open(os.environ["AGENTY_DOWNLOAD_LOG"], "w", encoding="utf-8").close()
+        except Exception:
+            pass
+    if args.finetune_dir:
+        os.makedirs(args.finetune_dir, exist_ok=True)
 
     exclude = {s.strip() for s in args.exclude.split(",") if s.strip()}
     include = {s.strip() for s in args.include.split(",") if s.strip()}
@@ -396,6 +411,25 @@ def main() -> int:
             results.append(rec)
             print(f"[harness] -> {rid}: {outcome}  ({dur}s)  status={status}")
             json.dump({"results": results}, open(_REPORT, "w", encoding="utf-8"), indent=2)
+            # Researcher SFT training data: one record per recipe with the query,
+            # the full researcher trajectory (tool calls + results), and the
+            # resulting briefing. The 'outcome' field lets you filter to the
+            # researcher_ok (ready) pairs for supervised fine-tuning.
+            if args.finetune_dir:
+                try:
+                    _msgs = list(getattr(pipeline, "_researcher").messages)
+                except Exception:  # noqa: BLE001
+                    _msgs = []
+                _ft = {"recipe_id": rid, "outcome": outcome, "briefing_status": status,
+                       "query": intent, "briefing": raw_json or "", "messages": _msgs}
+                try:
+                    with open(os.path.join(args.finetune_dir, f"{rid}.json"), "w",
+                              encoding="utf-8") as _f:
+                        json.dump(_ft, _f, indent=2, ensure_ascii=False,
+                                  default=lambda o: (o.decode("utf-8", "replace")
+                                                     if isinstance(o, (bytes, bytearray)) else str(o)))
+                except Exception as _e:  # noqa: BLE001
+                    print(f"[harness] finetune capture failed for {rid}: {_e}")
             continue
         before = _comfy_history_ids()
         t0 = time.time()

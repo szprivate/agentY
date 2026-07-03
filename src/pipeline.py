@@ -3320,6 +3320,18 @@ class Pipeline:
                     if self._verbose:
                         print(f"pipeline: downloaded missing model {fn} from "
                               f"{m['repo_id']} -> {dl.get('path')}")
+                    # Record the download (filename, repo, full path) to a manifest.
+                    _mlog = os.environ.get("AGENTY_DOWNLOAD_LOG")
+                    if _mlog:
+                        try:
+                            with open(_mlog, "a", encoding="utf-8") as _mf:
+                                _mf.write(json.dumps({
+                                    "filename": fn, "repo_id": m["repo_id"],
+                                    "path": dl.get("path"), "size_mb": dl.get("size_mb"),
+                                    "subfolder": hf_sub,
+                                }) + "\n")
+                        except Exception:  # noqa: BLE001
+                            pass
                 elif dl.get("skipped") and self._verbose:
                     print(f"pipeline: downloads disabled — cannot fetch {fn}")
             except Exception as exc:  # noqa: BLE001
