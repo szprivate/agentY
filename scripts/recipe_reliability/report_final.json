@@ -1,0 +1,857 @@
+{
+  "results": [
+    {
+      "id": "text_to_image__qwen_image",
+      "intent": "Generate an image of a serene mountain lake at sunrise using Qwen Image. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps.",
+      "n_images": 0,
+      "duration_s": 394.0,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "success",
+          "error"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "\u2591] 13/20 (65%) \u2014 node 10 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591] 15/20 (75%) \u2014 node 10 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591] 17/20 (85%) \u2014 node 10 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591] 19/20 (95%) \u2014 node 10 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 20/20 (100%) \u2014 node 10 \u00b7 KSampler\n[1/1] \ud83c\udfa8 Running node 9 \u00b7 VAEDecode\n[1/1] \ud83c\udfa8 Running node 20 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\image_generation_00050_.png`\n[1/1] \u2705 Done. Outputs: `image_generation_00050_.png`"
+    },
+    {
+      "id": "text_to_image__anima",
+      "intent": "Generate an image of a serene mountain lake at sunrise using Anima. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps.",
+      "n_images": 0,
+      "duration_s": 314.3,
+      "events": [],
+      "comfyui": {
+        "submitted": false,
+        "statuses": [],
+        "errors": []
+      },
+      "outcome": "no_execution",
+      "response_tail": "I need more information before I can continue."
+    },
+    {
+      "id": "text_to_image__ernie",
+      "intent": "Generate an image of a serene mountain lake at sunrise using ERNIE. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps.",
+      "n_images": 0,
+      "duration_s": 185.4,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "success",
+          "error"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "\u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 4/8 (50%) \u2014 node 6 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 5/8 (62%) \u2014 node 6 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591] 6/8 (75%) \u2014 node 6 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591] 7/8 (87%) \u2014 node 6 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 8/8 (100%) \u2014 node 6 \u00b7 KSampler\n[1/1] \ud83c\udfa8 Running node 5 \u00b7 VAEDecode\n[1/1] \ud83c\udfa8 Running node 10 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\ComfyUI_00005_.png`\n[1/1] \u2705 Done. Outputs: `ComfyUI_00005_.png`"
+    },
+    {
+      "id": "text_to_image__z_image",
+      "intent": "Generate an image of a serene mountain lake at sunrise using Z-Image. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps.",
+      "n_images": 0,
+      "duration_s": 178.5,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "success",
+          "error"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "4/8 (50%) \u2014 node 57:3 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 5/8 (62%) \u2014 node 57:3 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591] 6/8 (75%) \u2014 node 57:3 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591] 7/8 (87%) \u2014 node 57:3 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 8/8 (100%) \u2014 node 57:3 \u00b7 KSampler\n[1/1] \ud83c\udfa8 Running node 57:8 \u00b7 VAE Decode\n[1/1] \ud83c\udfa8 Running node 9 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\image_generation_00051_.png`\n[1/1] \u2705 Done. Outputs: `image_generation_00051_.png`"
+    },
+    {
+      "id": "text_to_image__flux",
+      "intent": "Generate an image of a serene mountain lake at sunrise using Flux. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps.",
+      "n_images": 0,
+      "duration_s": 341.9,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "success",
+          "error"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 13/20 (65%) \u2014 node 6 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591] 15/20 (75%) \u2014 node 6 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591] 17/20 (85%) \u2014 node 6 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591] 19/20 (95%) \u2014 node 6 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 20/20 (100%) \u2014 node 6 \u00b7 KSampler\n[1/1] \ud83c\udfa8 Running node 8 \u00b7 VAEDecode\n[1/1] \ud83c\udfa8 Running node 9 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\image_generation_00052_.png`\n[1/1] \u2705 Done. Outputs: `image_generation_00052_.png`"
+    },
+    {
+      "id": "text_to_image__flux_2",
+      "intent": "Generate an image of a serene mountain lake at sunrise using Flux 2. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps.",
+      "n_images": 0,
+      "duration_s": 657.0,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "success",
+          "error"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": " \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591] 36/40 (90%) \u2014 node 16 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591] 37/40 (92%) \u2014 node 16 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591] 38/40 (95%) \u2014 node 16 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591] 39/40 (97%) \u2014 node 16 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 40/40 (100%) \u2014 node 16 \u00b7 KSampler\n[1/1] \ud83c\udfa8 Running node 17 \u00b7 VAEDecode\n[1/1] \ud83c\udfa8 Running node 19 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\ComfyUI_00008_.png`\n[1/1] \u2705 Done. Outputs: `ComfyUI_00008_.png`"
+    },
+    {
+      "id": "text_to_image__flux_2_klein",
+      "intent": "Generate an image of a serene mountain lake at sunrise using Flux 2 Klein. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps.",
+      "n_images": 0,
+      "duration_s": 127.0,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "success",
+          "error"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591] 15/20 (75%) \u2014 node 14 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591] 17/20 (85%) \u2014 node 14 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591] 19/20 (95%) \u2014 node 14 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 20/20 (100%) \u2014 node 14 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 Running node 13 \u00b7 VAEDecode\n[1/1] \ud83c\udfa8 Running node 19 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\image_generation_00059_.png`\n[1/1] \u2705 Done. Outputs: `image_generation_00059_.png`"
+    },
+    {
+      "id": "text_to_image__flux_krea",
+      "intent": "Generate an image of a serene mountain lake at sunrise using Flux Krea. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps.",
+      "n_images": 0,
+      "duration_s": 222.5,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "success",
+          "error"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 13/20 (65%) \u2014 node 6 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591] 15/20 (75%) \u2014 node 6 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591] 17/20 (85%) \u2014 node 6 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591] 19/20 (95%) \u2014 node 6 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 20/20 (100%) \u2014 node 6 \u00b7 KSampler\n[1/1] \ud83c\udfa8 Running node 8 \u00b7 VAEDecode\n[1/1] \ud83c\udfa8 Running node 9 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\image_generation_00053_.png`\n[1/1] \u2705 Done. Outputs: `image_generation_00053_.png`"
+    },
+    {
+      "id": "text_to_image__ideogram",
+      "intent": "Generate an image guided by this control image using Ideogram. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 290.8,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "success",
+          "error"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": " \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591] 15/20 (75%) \u2014 node 14 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591] 17/20 (85%) \u2014 node 14 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591] 19/20 (95%) \u2014 node 14 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 20/20 (100%) \u2014 node 14 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 Running node 13 \u00b7 VAEDecode\n[1/1] \ud83c\udfa8 Running node 19 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\image_edit_00015_.png`\n[1/1] \u2705 Done. Outputs: `image_edit_00015_.png`"
+    },
+    {
+      "id": "text_to_image__lumina",
+      "intent": "Generate an image of a serene mountain lake at sunrise using Lumina. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps.",
+      "n_images": 0,
+      "duration_s": 317.3,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "success",
+          "error"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "\u2591\u2591\u2591\u2591\u2591] 19/30 (63%) \u2014 node 4 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591\u2591] 22/30 (73%) \u2014 node 4 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591] 25/30 (83%) \u2014 node 4 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591] 28/30 (93%) \u2014 node 4 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 30/30 (100%) \u2014 node 4 \u00b7 KSampler\n[1/1] \ud83c\udfa8 Running node 10 \u00b7 VAEDecode\n[1/1] \ud83c\udfa8 Running node 15 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\image_generation_00054_.png`\n[1/1] \u2705 Done. Outputs: `image_generation_00054_.png`"
+    },
+    {
+      "id": "preprocessors_estimation__sdpose",
+      "intent": "build an image workflow using SDPose Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 222.7,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "error",
+          "error"
+        ],
+        "errors": [
+          {
+            "node_type": "UNETLoader",
+            "exception_type": "RuntimeError",
+            "exception_message": "ERROR: Could not detect model type of: L:\\software\\comfyui\\Models\\diffusion_models\\MelBandRoformer\\MelBandRoformer_fp16.safetensors\n\n"
+          }
+        ]
+      },
+      "outcome": "comfyui_exec_error",
+      "response_tail": "\u2026\n\u2705 Iteration 1/1 queued \u00b7 prompt_id=`be067360-d02f-473b-9121-066718b4914b`\n\u23f3 All 1/1 workflows queued \u2014 streaming progress in submission order\u2026\n[1/1] \u23f3 Streaming progress (prompt_id=`be067360-d02f-473b-9121-066718b4914b`)\u2026\n[1/1] \u23f3 Queue: 1 job(s) ahead\n[1/1] \ud83c\udfa8 Running node 5 \u00b7 Load Image\n[1/1] \ud83c\udfa8 Running node 3 \u00b7 ResizeImageMaskNode\n[1/1] \ud83c\udfa8 Running node 7 \u00b7 UNETLoader\n[1/1] \u274c Error in UNETLoader (node 7): ERROR: Could not detect model type of: L:\\software\\comfyui\\Models\\diffusion_models\\MelBandRoformer\\MelBandRoformer_fp16.safetensors\n\n\n[1/1] \u274c ComfyUI execution error: ComfyUI execution failed"
+    },
+    {
+      "id": "preprocessors_estimation__depth_anything",
+      "intent": "build an image workflow using Depth Anything Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 179.1,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "error",
+          "success"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "c7`\n\u23f3 All 1/1 workflows queued \u2014 streaming progress in submission order\u2026\n[1/1] \u23f3 Streaming progress (prompt_id=`c72c1843-0eda-4ddd-a724-cba75b204ec7`)\u2026\n[1/1] \u23f3 Queue: 1 job(s) ahead\n[1/1] \ud83c\udfa8 Running node 4 \u00b7 Load Image\n[1/1] \ud83c\udfa8 Running node 3 \u00b7 LoadDA3Model\n[1/1] \ud83c\udfa8 Running node 2 \u00b7 DA3Inference\n[1/1] \ud83c\udfa8 Running node 1 \u00b7 DA3Render\n[1/1] \ud83c\udfa8 Running node 5 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\image_generation_00055_.png`\n[1/1] \u2705 Done. Outputs: `image_generation_00055_.png`"
+    },
+    {
+      "id": "preprocessors_estimation__lotus",
+      "intent": "build an image workflow using Lotus Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 104.5,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "success",
+          "error"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "SamplerSelect\n[1/1] \ud83c\udfa8 Running node 8 \u00b7 LotusConditioning\n[1/1] \ud83c\udfa8 Running node 7 \u00b7 BasicGuider\n[1/1] \ud83c\udfa8 Running node 2 \u00b7 DisableNoise\n[1/1] \ud83c\udfa8 Running node 9 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 1/1 (100%) \u2014 node 9 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 Running node 12 \u00b7 VAEDecode\n[1/1] \ud83c\udfa8 Running node 13 \u00b7 ImageInvert\n[1/1] \ud83c\udfa8 Running node 14 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\image_generation_00056_.png`\n[1/1] \u2705 Done. Outputs: `image_generation_00056_.png`"
+    },
+    {
+      "id": "preprocessors_estimation__mediapipe",
+      "intent": "build an image workflow using MediaPipe Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 241.4,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "error",
+          "success",
+          "error",
+          "success"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": " Output\n[1/2] \u2705 Complete \u2014 collecting outputs\u2026\n[1/2] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\image_edit_00016_.png`\n[1/2] \u2705 Done. Outputs: `image_edit_00016_.png`\n[2/2] \u23f3 Streaming progress (prompt_id=`b854b10f-e377-4b2b-9c13-642d52ede792`)\u2026\n[2/2] \u23f3 Queue: 1 job(s) ahead\n[2/2] \ud83d\udcbe 6 node(s) served from cache\n[2/2] \u2705 Complete \u2014 collecting outputs\u2026\n[2/2] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\image_edit_00016_.png`\n[2/2] \u2705 Done. Outputs: `image_edit_00016_.png`"
+    },
+    {
+      "id": "preprocessors_estimation__moge",
+      "intent": "build an image workflow using MoGe Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 277.7,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "success",
+          "error"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "vanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591] 15/20 (75%) \u2014 node 14 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591] 17/20 (85%) \u2014 node 14 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591] 19/20 (95%) \u2014 node 14 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 20/20 (100%) \u2014 node 14 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 Running node 13 \u00b7 VAEDecode\n[1/1] \ud83c\udfa8 Running node 19 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\ComfyUI_00006_.png`\n[1/1] \u2705 Done. Outputs: `ComfyUI_00006_.png`"
+    },
+    {
+      "id": "preprocessors_estimation__sam3",
+      "intent": "build an image workflow using SAM3 Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 197.0,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "error",
+          "success"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "flows queued \u2014 streaming progress in submission order\u2026\n[1/1] \u23f3 Streaming progress (prompt_id=`40917bc7-b102-47db-bcb1-2878043250f1`)\u2026\n[1/1] \u23f3 Queue: 1 job(s) ahead\n[1/1] \ud83c\udfa8 Running node 2 \u00b7 CheckpointLoaderSimple\n[1/1] \ud83c\udfa8 Running node 4 \u00b7 CLIPTextEncode\n[1/1] \ud83c\udfa8 Running node 3 \u00b7 Load Image\n[1/1] \ud83c\udfa8 Running node 1 \u00b7 SAM3_Detect\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 1/1 (100%) \u2014 node 1 \u00b7 SAM3_Detect\n[1/1] \ud83c\udfa8 Running node 5 \u00b7 Save Mask Output\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `D:\\AI\\agentY\\output_images\\ComfyUI_temp_xuzuv_00001_.png`\n[1/1] \u2705 Done. Outputs: `ComfyUI_temp_xuzuv_00001_.png`"
+    },
+    {
+      "id": "image_edit__qwen_image",
+      "intent": "Edit this image: turn it into a vibrant watercolor painting. Use Qwen Image. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input images: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\" \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_2.png\" \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_3.png\"",
+      "n_images": 3,
+      "duration_s": 726.7,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "error",
+          "success",
+          "error"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "ode 23 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 5/8 (62%) \u2014 node 23 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591] 6/8 (75%) \u2014 node 23 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591] 7/8 (87%) \u2014 node 23 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 8/8 (100%) \u2014 node 23 \u00b7 KSampler\n[1/1] \ud83c\udfa8 Running node 25 \u00b7 VAE Decode\n[1/1] \ud83c\udfa8 Running node 27 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\imageEdit_qwen2511_imageEdit_00001_.png`\n[1/1] \u2705 Done. Outputs: `imageEdit_qwen2511_imageEdit_00001_.png`"
+    },
+    {
+      "id": "image_edit__flux_2_klein",
+      "intent": "Edit this image: turn it into a vibrant watercolor painting. Use Flux 2 Klein. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 325.8,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "error",
+          "success",
+          "error",
+          "success"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": " Image\n[1/2] \u2705 Complete \u2014 collecting outputs\u2026\n[1/2] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\image_edit_00017_.png`\n[1/2] \u2705 Done. Outputs: `image_edit_00017_.png`\n[2/2] \u23f3 Streaming progress (prompt_id=`835ef638-9d7c-4b11-acf8-dc1fd7fb61ec`)\u2026\n[2/2] \u23f3 Queue: 1 job(s) ahead\n[2/2] \ud83d\udcbe 19 node(s) served from cache\n[2/2] \u2705 Complete \u2014 collecting outputs\u2026\n[2/2] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\image_edit_00017_.png`\n[2/2] \u2705 Done. Outputs: `image_edit_00017_.png`"
+    },
+    {
+      "id": "image_edit__firered",
+      "intent": "Edit this image: turn it into a vibrant watercolor painting. Use FireRed. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input images: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\" \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_2.png\" \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_3.png\"",
+      "n_images": 3,
+      "duration_s": 466.0,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "error",
+          "error",
+          "success"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 4/8 (50%) \u2014 node 6 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 5/8 (62%) \u2014 node 6 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591] 6/8 (75%) \u2014 node 6 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591] 7/8 (87%) \u2014 node 6 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 8/8 (100%) \u2014 node 6 \u00b7 KSampler\n[1/1] \ud83c\udfa8 Running node 5 \u00b7 VAEDecode\n[1/1] \ud83c\udfa8 Running node 10 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agentOut\\image_generation_00007_.png`\n[1/1] \u2705 Done. Outputs: `image_generation_00007_.png`"
+    },
+    {
+      "id": "image_edit__flux_2",
+      "intent": "Edit this image: turn it into a vibrant watercolor painting. Use Flux 2. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 341.7,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "error",
+          "success"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": " \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591] 15/20 (75%) \u2014 node 14 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591] 17/20 (85%) \u2014 node 14 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591] 19/20 (95%) \u2014 node 14 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 20/20 (100%) \u2014 node 14 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 Running node 13 \u00b7 VAEDecode\n[1/1] \ud83c\udfa8 Running node 19 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\image_edit_00018_.png`\n[1/1] \u2705 Done. Outputs: `image_edit_00018_.png`"
+    },
+    {
+      "id": "image_edit__longcat",
+      "intent": "Edit this image: turn it into a vibrant watercolor painting. Use LongCat. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 300.9,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "error",
+          "success"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591] 46/50 (92%) \u2014 node 10 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591] 47/50 (94%) \u2014 node 10 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591] 48/50 (96%) \u2014 node 10 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591] 49/50 (98%) \u2014 node 10 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 50/50 (100%) \u2014 node 10 \u00b7 KSampler\n[1/1] \ud83c\udfa8 Running node 13 \u00b7 VAEDecode\n[1/1] \ud83c\udfa8 Running node 15 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\image_edit_00019_.png`\n[1/1] \u2705 Done. Outputs: `image_edit_00019_.png`"
+    },
+    {
+      "id": "image_edit__wan_2_2",
+      "intent": "Generate a short video of a serene mountain lake at sunrise using WAN 2.2. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input images: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\" \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_2.png\" \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_3.png\"",
+      "n_images": 3,
+      "duration_s": 438.5,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "success",
+          "error"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "/1] \ud83c\udfa8 Running node 6 \u00b7 LoraLoaderModelOnly\n[1/1] \ud83c\udfa8 Running node 5 \u00b7 ModelSamplingSD3\n[1/1] \ud83c\udfa8 Running node 14 \u00b7 KSamplerAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 1/2 (50%) \u2014 node 14 \u00b7 KSamplerAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 2/2 (100%) \u2014 node 14 \u00b7 KSamplerAdvanced\n[1/1] \ud83c\udfa8 Running node 20 \u00b7 VAEDecode\n[1/1] \ud83c\udfa8 Running node 19 \u00b7 CreateVideo\n[1/1] \ud83c\udfa8 Running node 21 \u00b7 Save Video (auto)\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\video_00012_.mp4`\n[1/1] \u2705 Done. Outputs: `video_00012_.mp4`"
+    },
+    {
+      "id": "image_edit_with_controlnet__z_image",
+      "intent": "Generate an image guided by this control image using Z-Image. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 210.2,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "success",
+          "error"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 4/8 (50%) \u2014 node 6 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 5/8 (62%) \u2014 node 6 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591] 6/8 (75%) \u2014 node 6 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591] 7/8 (87%) \u2014 node 6 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 8/8 (100%) \u2014 node 6 \u00b7 KSampler\n[1/1] \ud83c\udfa8 Running node 5 \u00b7 VAEDecode\n[1/1] \ud83c\udfa8 Running node 14 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\image_generation_00057_.png`\n[1/1] \u2705 Done. Outputs: `image_generation_00057_.png`"
+    },
+    {
+      "id": "upscale__generic",
+      "intent": "Upscale this image using Generic. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 316.2,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "error",
+          "success"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "2 \u00b7 Upscale Image (using Model)\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 1/6 (16%) \u2014 node 2 \u00b7 Upscale Image (using Model)\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 3/6 (50%) \u2014 node 2 \u00b7 Upscale Image (using Model)\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591] 5/6 (83%) \u2014 node 2 \u00b7 Upscale Image (using Model)\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 6/6 (100%) \u2014 node 2 \u00b7 Upscale Image (using Model)\n[1/1] \ud83c\udfa8 Running node 4 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\ComfyUI_00007_.png`\n[1/1] \u2705 Done. Outputs: `ComfyUI_00007_.png`"
+    },
+    {
+      "id": "upscale__flux",
+      "intent": "Upscale this image using Flux. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 246.9,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "error",
+          "success"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 13/20 (65%) \u2014 node 1 \u00b7 Ultimate SD Upscale\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591] 15/20 (75%) \u2014 node 1 \u00b7 Ultimate SD Upscale\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591] 17/20 (85%) \u2014 node 1 \u00b7 Ultimate SD Upscale\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591] 19/20 (95%) \u2014 node 1 \u00b7 Ultimate SD Upscale\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 20/20 (100%) \u2014 node 1 \u00b7 Ultimate SD Upscale\n[1/1] \ud83c\udfa8 Running node 7 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `W:\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\image_upscale_00001_.png`\n[1/1] \u2705 Done. Outputs: `image_upscale_00001_.png`"
+    },
+    {
+      "id": "upscale__z_image",
+      "intent": "Upscale this image using Z-Image. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 252.3,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "error",
+          "success"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 1/5 (20%) \u2014 node 13 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 2/5 (40%) \u2014 node 13 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 3/5 (60%) \u2014 node 13 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591] 4/5 (80%) \u2014 node 13 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 5/5 (100%) \u2014 node 13 \u00b7 KSampler\n[1/1] \ud83c\udfa8 Running node 12 \u00b7 VAEDecode\n[1/1] \ud83c\udfa8 Running node 15 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\image_generation_00058_.png`\n[1/1] \u2705 Done. Outputs: `image_generation_00058_.png`"
+    },
+    {
+      "id": "inpaint_outpaint__qwen_image",
+      "intent": "Inpaint this image, filling the masked area naturally, using Qwen Image. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 409.3,
+      "events": [
+        "exception:Agent has reached an unrecoverable state due to max_tokens limit. For more information see: https://strandsagents.com/latest/user-guide/concepts/agents/agent-loop/#maxtokensreachedexception"
+      ],
+      "comfyui": {
+        "submitted": false,
+        "statuses": [],
+        "errors": []
+      },
+      "outcome": "no_execution",
+      "response_tail": "Agent has reached an unrecoverable state due to max_tokens limit. For more information see: https://strandsagents.com/latest/user-guide/concepts/agents/agent-loop/#maxtokensreachedexception"
+    },
+    {
+      "id": "inpaint_outpaint__flux",
+      "intent": "build an image workflow using Flux Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 336.6,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "error",
+          "success"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 1/4 (25%) \u2014 node 75:64 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 2/4 (50%) \u2014 node 75:64 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591] 3/4 (75%) \u2014 node 75:64 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 4/4 (100%) \u2014 node 75:64 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 Running node 75:65 \u00b7 VAE Decode\n[1/1] \ud83c\udfa8 Running node 9 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\Flux2-Klein_00001_.png`\n[1/1] \u2705 Done. Outputs: `Flux2-Klein_00001_.png`"
+    },
+    {
+      "id": "image_to_video__ltx_2",
+      "intent": "Generate a short video by animating this image using LTX-2. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input images: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\" \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_2.png\"",
+      "n_images": 2,
+      "duration_s": 706.5,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "error",
+          "success"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "amplerCustomAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 2/3 (66%) \u2014 node 44 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 3/3 (100%) \u2014 node 44 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 Running node 35 \u00b7 LTXVSeparateAVLatent\n[1/1] \ud83c\udfa8 Running node 34 \u00b7 LTXVAudioVAEDecode\n[1/1] \ud83c\udfa8 Running node 46 \u00b7 VAEDecodeTiled\n[1/1] \ud83c\udfa8 Running node 45 \u00b7 CreateVideo\n[1/1] \ud83c\udfa8 Running node 47 \u00b7 Save Video (auto)\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\video_00013_.mp4`\n[1/1] \u2705 Done. Outputs: `video_00013_.mp4`"
+    },
+    {
+      "id": "image_to_video__wan_2_2",
+      "intent": "Generate a short video by animating this image using WAN 2.2. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 295.3,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "success",
+          "error"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "/1] \ud83c\udfa8 Running node 6 \u00b7 LoraLoaderModelOnly\n[1/1] \ud83c\udfa8 Running node 5 \u00b7 ModelSamplingSD3\n[1/1] \ud83c\udfa8 Running node 14 \u00b7 KSamplerAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 1/2 (50%) \u2014 node 14 \u00b7 KSamplerAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 2/2 (100%) \u2014 node 14 \u00b7 KSamplerAdvanced\n[1/1] \ud83c\udfa8 Running node 20 \u00b7 VAEDecode\n[1/1] \ud83c\udfa8 Running node 19 \u00b7 CreateVideo\n[1/1] \ud83c\udfa8 Running node 21 \u00b7 Save Video (auto)\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\video_00022_.mp4`\n[1/1] \u2705 Done. Outputs: `video_00022_.mp4`"
+    },
+    {
+      "id": "video_to_video__wan_vace",
+      "intent": "Generate a short video of a serene mountain lake at sunrise using WAN VACE. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 285.1,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "success",
+          "error"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "\u2591\u2591\u2591\u2591] 5/9 (55%) \u2014 node 70:44 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 6/9 (66%) \u2014 node 70:44 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591] 7/9 (77%) \u2014 node 70:44 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591] 8/9 (88%) \u2014 node 70:44 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 9/9 (100%) \u2014 node 70:44 \u00b7 KSampler\n[1/1] \ud83c\udfa8 Running node 70:43 \u00b7 VAE Decode\n[1/1] \ud83c\udfa8 Running node 9 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\image_edit_00020_.png`\n[1/1] \u2705 Done. Outputs: `image_edit_00020_.png`"
+    },
+    {
+      "id": "video_to_video__wan_2_2",
+      "intent": "Generate a short video of a serene mountain lake at sunrise using WAN 2.2. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input images: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\" \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_2.png\"",
+      "n_images": 2,
+      "duration_s": 343.5,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "error",
+          "success"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "/1] \ud83c\udfa8 Running node 6 \u00b7 LoraLoaderModelOnly\n[1/1] \ud83c\udfa8 Running node 5 \u00b7 ModelSamplingSD3\n[1/1] \ud83c\udfa8 Running node 14 \u00b7 KSamplerAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 1/2 (50%) \u2014 node 14 \u00b7 KSamplerAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 2/2 (100%) \u2014 node 14 \u00b7 KSamplerAdvanced\n[1/1] \ud83c\udfa8 Running node 20 \u00b7 VAEDecode\n[1/1] \ud83c\udfa8 Running node 19 \u00b7 CreateVideo\n[1/1] \ud83c\udfa8 Running node 21 \u00b7 Save Video (auto)\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\video_00023_.mp4`\n[1/1] \u2705 Done. Outputs: `video_00023_.mp4`"
+    },
+    {
+      "id": "video_to_video__ltx_2",
+      "intent": "Upscale this image using LTX-2. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 199.7,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "success",
+          "error"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": " 13/20 (65%) \u2014 node 1 \u00b7 Ultimate SD Upscale\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591] 15/20 (75%) \u2014 node 1 \u00b7 Ultimate SD Upscale\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591] 17/20 (85%) \u2014 node 1 \u00b7 Ultimate SD Upscale\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591] 19/20 (95%) \u2014 node 1 \u00b7 Ultimate SD Upscale\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 20/20 (100%) \u2014 node 1 \u00b7 Ultimate SD Upscale\n[1/1] \ud83c\udfa8 Running node 7 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\image_edit_00021_.png`\n[1/1] \u2705 Done. Outputs: `image_edit_00021_.png`"
+    },
+    {
+      "id": "first_last_frame_to_video__ltx_2",
+      "intent": "Generate a short video that starts on the first frame and ends on the last frame, interpolating between them, using LTX-2. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input images: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\" \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_2.png\"",
+      "n_images": 2,
+      "duration_s": 1202.6,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "error",
+          "success",
+          "error",
+          "success",
+          "success",
+          "error",
+          "error",
+          "success",
+          "error"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591] 7/8 (87%) \u2014 node 26 \u00b7 SamplerCustomAdvanced\n[4/4] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 8/8 (100%) \u2014 node 26 \u00b7 SamplerCustomAdvanced\n[4/4] \ud83c\udfa8 Running node 13 \u00b7 LTXVSeparateAVLatent\n[4/4] \ud83c\udfa8 Running node 34 \u00b7 LTXVAudioVAEDecode\n[4/4] \ud83c\udfa8 Running node 11 \u00b7 LTXVCropGuides\n[4/4] \ud83c\udfa8 Running node 33 \u00b7 VAEDecodeTiled\n[4/4] \ud83c\udfa8 Running node 32 \u00b7 CreateVideo\n[4/4] \ud83c\udfa8 Running node 35 \u00b7 Save Video (auto)\n[4/4] \u2705 Complete \u2014 collecting outputs\u2026\n[4/4] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\video_00017_.mp4`\n[4/4] \u2705 Done. Outputs: `video_00017_.mp4`"
+    },
+    {
+      "id": "first_last_frame_to_video__wan_2_2",
+      "intent": "Generate a short video that starts on the first frame and ends on the last frame, interpolating between them, using WAN 2.2. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 366.8,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "error",
+          "success"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": " \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591] 15/20 (75%) \u2014 node 14 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591] 17/20 (85%) \u2014 node 14 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591] 19/20 (95%) \u2014 node 14 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 20/20 (100%) \u2014 node 14 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 Running node 13 \u00b7 VAEDecode\n[1/1] \ud83c\udfa8 Running node 19 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\image_edit_00022_.png`\n[1/1] \u2705 Done. Outputs: `image_edit_00022_.png`"
+    },
+    {
+      "id": "first_last_frame_to_video__wan_vace",
+      "intent": "Generate a short video that starts on the first frame and ends on the last frame, interpolating between them, using WAN VACE. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input images: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\" \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_2.png\"",
+      "n_images": 2,
+      "duration_s": 771.5,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "error",
+          "error",
+          "success"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591] 7/8 (87%) \u2014 node 26 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 8/8 (100%) \u2014 node 26 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 Running node 13 \u00b7 LTXVSeparateAVLatent\n[1/1] \ud83c\udfa8 Running node 34 \u00b7 LTXVAudioVAEDecode\n[1/1] \ud83c\udfa8 Running node 11 \u00b7 LTXVCropGuides\n[1/1] \ud83c\udfa8 Running node 33 \u00b7 VAEDecodeTiled\n[1/1] \ud83c\udfa8 Running node 32 \u00b7 CreateVideo\n[1/1] \ud83c\udfa8 Running node 35 \u00b7 Save Video (auto)\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\video_00018_.mp4`\n[1/1] \u2705 Done. Outputs: `video_00018_.mp4`"
+    },
+    {
+      "id": "video_tools__generic",
+      "intent": "build a video workflow Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 74.2,
+      "events": [],
+      "comfyui": {
+        "submitted": false,
+        "statuses": [],
+        "errors": []
+      },
+      "outcome": "no_execution",
+      "response_tail": "I need a bit more information before I can proceed:\n\n- Input image 'bold_outfit_woman.jpeg' not found at the specified path."
+    },
+    {
+      "id": "video_inpaint__wan_vace",
+      "intent": "Generate a short video of a serene mountain lake at sunrise using WAN VACE. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 418.1,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "success",
+          "error"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "/1] \ud83c\udfa8 Running node 6 \u00b7 LoraLoaderModelOnly\n[1/1] \ud83c\udfa8 Running node 7 \u00b7 ModelSamplingSD3\n[1/1] \ud83c\udfa8 Running node 13 \u00b7 KSamplerAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 1/2 (50%) \u2014 node 13 \u00b7 KSamplerAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 2/2 (100%) \u2014 node 13 \u00b7 KSamplerAdvanced\n[1/1] \ud83c\udfa8 Running node 15 \u00b7 VAEDecode\n[1/1] \ud83c\udfa8 Running node 14 \u00b7 CreateVideo\n[1/1] \ud83c\udfa8 Running node 16 \u00b7 Save Video (auto)\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\video_00024_.mp4`\n[1/1] \u2705 Done. Outputs: `video_00024_.mp4`"
+    },
+    {
+      "id": "video_inpaint__sam3",
+      "intent": "Inpaint the masked region of this video using SAM3. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 252.2,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "success",
+          "error"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 13/20 (65%) \u2014 node 9 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591] 15/20 (75%) \u2014 node 9 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591] 17/20 (85%) \u2014 node 9 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591] 19/20 (95%) \u2014 node 9 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 20/20 (100%) \u2014 node 9 \u00b7 KSampler\n[1/1] \ud83c\udfa8 Running node 8 \u00b7 VAEDecode\n[1/1] \ud83c\udfa8 Running node 12 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\image_edit_00023_.png`\n[1/1] \u2705 Done. Outputs: `image_edit_00023_.png`"
+    },
+    {
+      "id": "character__wan",
+      "intent": "Generate a short video by animating this image using WAN. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input images: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\" \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_2.png\"",
+      "n_images": 2,
+      "duration_s": 371.3,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "error",
+          "success"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "/1] \ud83c\udfa8 Running node 6 \u00b7 LoraLoaderModelOnly\n[1/1] \ud83c\udfa8 Running node 5 \u00b7 ModelSamplingSD3\n[1/1] \ud83c\udfa8 Running node 14 \u00b7 KSamplerAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 1/2 (50%) \u2014 node 14 \u00b7 KSamplerAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 2/2 (100%) \u2014 node 14 \u00b7 KSamplerAdvanced\n[1/1] \ud83c\udfa8 Running node 20 \u00b7 VAEDecode\n[1/1] \ud83c\udfa8 Running node 19 \u00b7 CreateVideo\n[1/1] \ud83c\udfa8 Running node 21 \u00b7 Save Video (auto)\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\video_00019_.mp4`\n[1/1] \u2705 Done. Outputs: `video_00019_.mp4`"
+    },
+    {
+      "id": "text_to_video__ltx_2",
+      "intent": "Generate a short video of a serene mountain lake at sunrise using LTX-2. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps.",
+      "n_images": 0,
+      "duration_s": 611.6,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "success",
+          "error"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "amplerCustomAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 2/3 (66%) \u2014 node 44 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 3/3 (100%) \u2014 node 44 \u00b7 SamplerCustomAdvanced\n[1/1] \ud83c\udfa8 Running node 35 \u00b7 LTXVSeparateAVLatent\n[1/1] \ud83c\udfa8 Running node 34 \u00b7 LTXVAudioVAEDecode\n[1/1] \ud83c\udfa8 Running node 46 \u00b7 VAEDecodeTiled\n[1/1] \ud83c\udfa8 Running node 45 \u00b7 CreateVideo\n[1/1] \ud83c\udfa8 Running node 47 \u00b7 Save Video (auto)\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\video_00020_.mp4`\n[1/1] \u2705 Done. Outputs: `video_00020_.mp4`"
+    },
+    {
+      "id": "text_to_video__wan_2_2",
+      "intent": "Generate a short video of a serene mountain lake at sunrise using WAN 2.2. Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps.",
+      "n_images": 0,
+      "duration_s": 350.9,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "success",
+          "error"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "/1] \ud83c\udfa8 Running node 6 \u00b7 LoraLoaderModelOnly\n[1/1] \ud83c\udfa8 Running node 5 \u00b7 ModelSamplingSD3\n[1/1] \ud83c\udfa8 Running node 14 \u00b7 KSamplerAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 1/2 (50%) \u2014 node 14 \u00b7 KSamplerAdvanced\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 2/2 (100%) \u2014 node 14 \u00b7 KSamplerAdvanced\n[1/1] \ud83c\udfa8 Running node 20 \u00b7 VAEDecode\n[1/1] \ud83c\udfa8 Running node 19 \u00b7 CreateVideo\n[1/1] \ud83c\udfa8 Running node 21 \u00b7 Save Video (auto)\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\video_00021_.mp4`\n[1/1] \u2705 Done. Outputs: `video_00021_.mp4`"
+    },
+    {
+      "id": "image_tools__generic",
+      "intent": "build an image workflow Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 619.5,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "error",
+          "success"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "g node 10 \u00b7 CFGNorm\n[1/1] \ud83c\udfa8 Running node 16 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 1/4 (25%) \u2014 node 16 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 2/4 (50%) \u2014 node 16 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591\u2591] 3/4 (75%) \u2014 node 16 \u00b7 KSampler\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 4/4 (100%) \u2014 node 16 \u00b7 KSampler\n[1/1] \ud83c\udfa8 Running node 15 \u00b7 VAEDecode\n[1/1] \ud83c\udfa8 Running node 20 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\image_edit_00024_.png`\n[1/1] \u2705 Done. Outputs: `image_edit_00024_.png`"
+    },
+    {
+      "id": "image_tools__birefnet",
+      "intent": "build an image workflow using BiRefNet Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 96.4,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "success",
+          "error"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": " in submission order\u2026\n[1/1] \u23f3 Streaming progress (prompt_id=`b3def8ee-6f04-40ff-8adc-3927509beb35`)\u2026\n[1/1] \u23f3 Queue: 1 job(s) ahead\n[1/1] \ud83c\udfa8 Running node 2 \u00b7 Load Image\n[1/1] \ud83c\udfa8 Running node 3 \u00b7 LoadBackgroundRemovalModel\n[1/1] \ud83c\udfa8 Running node 1 \u00b7 RemoveBackground\n[1/1] \ud83c\udfa8 Running node 4 \u00b7 InvertMask\n[1/1] \ud83c\udfa8 Running node 5 \u00b7 JoinImageWithAlpha\n[1/1] \ud83c\udfa8 Running node 6 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\agent\\image_edit_00026_.png`\n[1/1] \u2705 Done. Outputs: `image_edit_00026_.png`"
+    },
+    {
+      "id": "3d__hunyuan3d",
+      "intent": "build a 3d workflow using Hunyuan3D Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 640.3,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "success"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "/1] \ud83c\udfa8 [\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2591] 1/100 (1%) \u2014 node 8 \u00b7 VoxelToMesh\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 100/100 (100%) \u2014 node 8 \u00b7 VoxelToMesh\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 100/100 (100%) \u2014 node 8 \u00b7 VoxelToMesh\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 100/100 (100%) \u2014 node 8 \u00b7 VoxelToMesh\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 100/100 (100%) \u2014 node 8 \u00b7 VoxelToMesh\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 100/100 (100%) \u2014 node 8 \u00b7 VoxelToMesh\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 100/100 (100%) \u2014 node 8 \u00b7 VoxelToMesh\n[1/1] \ud83c\udfa8 Running node 10 \u00b7 SaveGLB\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \u26a0\ufe0f No output files found in ComfyUI history."
+    },
+    {
+      "id": "3d__moge",
+      "intent": "build a 3d workflow using MoGe Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 141.2,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "error",
+          "success"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 1/1 (100%) \u2014 node 11 \u00b7 MoGeRender\n[1/1] \ud83c\udfa8 Running node 13 \u00b7 Save Image\n[1/1] \ud83c\udfa8 Running node 10 \u00b7 MoGeRender\n[1/1] \ud83c\udfa8 [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 1/1 (100%) \u2014 node 10 \u00b7 MoGeRender\n[1/1] \ud83c\udfa8 Running node 12 \u00b7 Save Image\n[1/1] \u2705 Complete \u2014 collecting outputs\u2026\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\ComfyUI_00009_.png`\n[1/1] \ud83d\udcbe Output: `\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\ComfyUI_00010_.png`\n[1/1] \u2705 Done. Outputs: `ComfyUI_00009_.png`, `ComfyUI_00010_.png`"
+    },
+    {
+      "id": "3d__triposplat",
+      "intent": "build a 3d workflow using TripoSplat Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps. Input image: \"W:/0193_Never_Stop_Dreaming_Spec/02_build/comfy/sebastian.zilius/input/recipe_test_input_1.png\"",
+      "n_images": 1,
+      "duration_s": 305.1,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "error",
+          "success",
+          "error",
+          "success",
+          "success"
+        ],
+        "errors": []
+      },
+      "outcome": "pass",
+      "response_tail": "b0`)\u2026\n[2/3] \u23f3 Queue: 2 job(s) ahead\n[2/3] \ud83d\udcbe 6 node(s) served from cache\n[2/3] \u2705 Complete \u2014 collecting outputs\u2026\n[2/3] \ud83d\udcbe Output: `W:\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\image_edit\\ComfyUI_temp_tilst_00001_.png`\n[2/3] \u2705 Done. Outputs: `ComfyUI_temp_tilst_00001_.png`\n[3/3] \u23f3 Streaming progress (prompt_id=`8b870961-e8b9-4385-97bb-e67810bcb969`)\u2026\n[3/3] \u2705 Complete \u2014 collecting outputs\u2026\n[3/3] \ud83d\udcbe Output: `W:\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\output\\image_edit\\ComfyUI_temp_tilst_00001_.png`\n[3/3] \u2705 Done. Outputs: `ComfyUI_temp_tilst_00001_.png`"
+    },
+    {
+      "id": "audio__qwen_image",
+      "intent": "build an audio workflow using Qwen Image Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps.",
+      "n_images": 0,
+      "duration_s": 68.2,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "error",
+          "error"
+        ],
+        "errors": [
+          {
+            "node_type": "TextGenerate",
+            "exception_type": "AttributeError",
+            "exception_message": "'CLIPTextModel' object has no attribute 'generate'\n"
+          }
+        ]
+      },
+      "outcome": "comfyui_exec_error",
+      "response_tail": "697`)\u2026\n[1/1] \u23f3 Queue: 1 job(s) ahead\n[1/1] \ud83c\udfa8 Running node 9 \u00b7 CLIPLoader\n[1/1] \ud83c\udfa8 Running node 11 \u00b7 User: short description (USER_INPUT in template)\n[1/1] \ud83c\udfa8 Running node 19 \u00b7 Custom Combo (Category index)\n[1/1] \ud83c\udfa8 Running node 20 \u00b7 JsonExtractString\n[1/1] \ud83c\udfa8 Running node 17 \u00b7 Text Replace (PROMPT TEMPLATE)\n[1/1] \ud83c\udfa8 Running node 16 \u00b7 Text Replace (USER INPUT)\n[1/1] \ud83c\udfa8 Running node 18 \u00b7 Text Replace (AUDIO LENGTH)\n[1/1] \ud83c\udfa8 Running node 12 \u00b7 TextGenerate\n[1/1] \u274c Error in TextGenerate (node 12): 'CLIPTextModel' object has no attribute 'generate'\n\n[1/1] \u274c ComfyUI execution error: ComfyUI execution failed"
+    },
+    {
+      "id": "audio__ace_step",
+      "intent": "build an audio workflow using ACE-Step Keep this test light on the GPU: use a small, sub-HD output resolution (512x512 for images, 480p for video) and few sampling steps.",
+      "n_images": 0,
+      "duration_s": 237.8,
+      "events": [],
+      "comfyui": {
+        "submitted": true,
+        "statuses": [
+          "error"
+        ],
+        "errors": []
+      },
+      "outcome": "no_execution",
+      "response_tail": "Workflow validated and signaled ready for task `text_to_audio_ace_step_1_5`. Execution queued with automatic ComfyUI submission, polling, QA via Ollama, and output saving to ./output handled by the Executor pipeline per specifications.\n\ud83d\ude80 Queuing iteration 1/1\u2026\n\u274c Submission failed for iteration 1/1: 400 Client Error: Bad Request for url: http://127.0.0.1:8188/prompt\n\u274c All workflow submissions failed \u2014 nothing to poll."
+    }
+  ]
+}

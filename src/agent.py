@@ -1,5 +1,5 @@
 """
-agentY – A ComfyUI agent built on the Strands Agents SDK.
+agentY – A ComfyUI agent built on the //eStrands Agents SDK.
 
 Two-agent pipeline:
   • Researcher  – Ollama (default) or any LLM; pattern-matching/resolution only.

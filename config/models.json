@@ -16,6 +16,7 @@
       "LTXV\\ltxv-13b-0.9.7-distilled-fp8.safetensors",
       "LTXV\\ltxv-2b-0.9.6-dev-04-25.safetensors",
       "LTXV\\ltxv-2b-0.9.6-distilled-04-25.safetensors",
+      "NetaYumev35_pretrained_all_in_one.safetensors",
       "SD15\\Anything-V3.0.ckpt",
       "SD15\\anythingV3_fp16.safetensors",
       "SD15\\control_sd15_animal_openpose_fp16.pth",
@@ -37,7 +38,15 @@
       "SDXL_Turbo\\wildcardxXLTURBO_wildcardxXLTURBOV10.safetensors",
       "SUPIR\\SUPIR-v0F_fp16.safetensors",
       "TXT2GIF\\hsxl_temporal_layers.safetensors",
+      "birefnet.safetensors",
       "flux-2-klein-4b.safetensors",
+      "hunyuan_3d_v2.1.safetensors",
+      "ltx-2.3-22b-distilled-fp8.safetensors",
+      "ltx-2.3-22b-distilled.safetensors",
+      "model.safetensors",
+      "sam3.1_multiplex_fp16.safetensors",
+      "sdpose_wholebody_fp16.safetensors",
+      "split_files\\diffusion_models\\anima-base-v1.0.safetensors",
       "z_image_turbo_fp8_e4m3fn.safetensors"
     ],
     "configs": [],
@@ -55,6 +64,7 @@
       "Characters_People\\kirdunstfluxmini.safetensors",
       "Characters_People\\mastermerlin_flux_911T4rga.safetensors",
       "FLUX2\\Flux2TurboComfyv2.safetensors",
+      "FireRed-Image-Edit-1.0-Lightning-8steps-v1.0.safetensors",
       "Flux_2-Turbo-LoRA_comfyui.safetensors",
       "LTX2\\ltx-2-19b-distilled-lora-384.safetensors",
       "LTX2\\ltx-2-19b-ic-lora-canny-control.safetensors",
@@ -94,6 +104,7 @@
       "QWEN\\qwen-edit-skin.safetensors",
       "QWEN\\qwen-edit-skin_1.1_000002750.safetensors",
       "QWEN\\qwen-image-edit-2511-multiple-angles-lora.safetensors",
+      "Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors",
       "Qwen-Image-Lightning-8steps-V1.0.safetensors",
       "Style\\2000analogcore_v3.safetensors",
       "Style\\AnimateLCM_sd15_t2v_lora.safetensors",
@@ -177,7 +188,10 @@
       "lora_bmw-jacket\\epochs\\bmw-jacket-000008.safetensors",
       "lora_bmw-jacket\\epochs\\bmw-jacket-000012.safetensors",
       "lora_bmw-jacket\\epochs\\bmw-jacket-01-000004.safetensors",
-      "lora_treets\\treets-crispy-04_masked.safetensors"
+      "lora_treets\\treets-crispy-04_masked.safetensors",
+      "ltx-2.3-22b-distilled-lora-384.safetensors",
+      "wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+      "wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors"
     ],
     "vae": [
       "FLUX1\\ae.safetensors",
@@ -194,11 +208,16 @@
       "WAN21\\Wan2_1_VAE_fp32.safetensors",
       "WAN21\\wan_2.1_vae.safetensors",
       "WAN22\\wan2.2_vae.safetensors",
+      "ace_1.5_vae.safetensors",
       "ae.safetensors",
       "diffusion_pytorch_model.safetensors",
       "flux2-vae.safetensors",
+      "full_encoder_small_decoder.safetensors",
       "lotusDepth\\lotus-depth-g-v1-0_VAE.safetensors",
-      "taeltx_2.safetensors"
+      "taeltx_2.safetensors",
+      "vae\\diffusion_pytorch_model.safetensors",
+      "vae\\flux2-vae.safetensors",
+      "vae\\triposplat_vae_decoder_fp16.safetensors"
     ],
     "text_encoders": [
       "FLUX2\\FLUX.2-klein-9B-text_encoder-8bit.safetensors",
@@ -226,8 +245,10 @@
       "WAN\\open-clip-xlm-roberta-large-vit-huge-14_fp16.safetensors",
       "ernie-image-prompt-enhancer.safetensors",
       "ministral-3-3b.safetensors",
+      "qwen_0.6b_ace15.safetensors",
       "qwen_3_4b.safetensors",
-      "qwen_3_4b_fp8_mixed.safetensors"
+      "qwen_3_4b_fp8_mixed.safetensors",
+      "qwen_4b_ace15.safetensors"
     ],
     "diffusion_models": [
       "FLUX1\\flux1-canny-dev.safetensors",
@@ -241,6 +262,7 @@
       "FLUX2\\flux-2-klein-9b.safetensors",
       "FLUX2\\flux2-dev.safetensors",
       "FLUX2\\flux2_dev_fp8mixed.safetensors",
+      "FireRed-Image-Edit-1.1-transformer.safetensors",
       "HIDREAME11\\HiDream-E1-1.safetensors",
       "HIDREAME11\\HiDream-I1-Full.safetensors",
       "HIDREAME11\\hidream_e1_1_bf16.safetensors",
@@ -308,14 +330,21 @@
       "WAN22\\wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors",
       "WAN22\\wan2.2_t2v_low_noise_14B_fp16.safetensors",
       "WAN22\\wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",
+      "acestep_v1.5_turbo.safetensors",
+      "diffusion_models\\triposplat_fp16.safetensors",
+      "ernie-image-turbo.safetensors",
       "ernie-image.safetensors",
       "flux-2-klein-4b.safetensors",
       "flux-2-klein-9b-fp8.safetensors",
       "flux-2-klein-9b.safetensors",
       "flux-2-klein-base-4b-fp8.safetensors",
       "flux1-krea-dev_fp8_scaled.safetensors",
+      "longcat_image_edit_bf16.safetensors",
       "lotusDepth\\lotus-depth-d-v1-1.safetensors",
+      "ltx-2.3-22b-distilled-1.1_transformer_fp8.safetensors",
       "qwen_image_fp8_e4m3fn.safetensors",
+      "transformer\\diffusion_pytorch_model-00001-of-00005.safetensors",
+      "transformer\\diffusion_pytorch_model.safetensors",
       "z-image-turbo-fp8-e4m3fn.safetensors",
       "z_image_turbo_bf16.safetensors"
     ],
@@ -323,6 +352,7 @@
       "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors",
       "CLIP-ViT-bigG-14-laion2B-39B-b160k.safetensors",
       "HUNYUAN\\llava_llama3_vision.safetensors",
+      "clip_vision\\dino_v3_vit_h.safetensors",
       "clip_vision_g.safetensors",
       "clip_vision_h.safetensors",
       "models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth",
@@ -365,11 +395,13 @@
       "2xNomosUni_compact_otf_medium.pth",
       "4x-ClearRealityV1.pth",
       "4x_NMKD-Siax_200k.pth",
-      "8xNMKDSuperscale_150000G.pt"
+      "8xNMKDSuperscale_150000G.pt",
+      "RealESRGAN_x4plus.safetensors"
     ],
     "latent_upscale_models": [
       "ltx-2-spatial-upscaler-x2-1.0.safetensors",
-      "ltx-2-temporal-upscaler-x2-1.0.safetensors"
+      "ltx-2-temporal-upscaler-x2-1.0.safetensors",
+      "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
     ],
     "hypernetworks": [],
     "photomaker": [],
@@ -384,11 +416,19 @@
       "wav2vec2-chinese-base_fp16.safetensors",
       "wav2vec2-large-xlsr-53-german.bin"
     ],
-    "background_removal": [],
+    "background_removal": [
+      "birefnet.safetensors"
+    ],
     "frame_interpolation": [],
-    "geometry_estimation": [],
+    "geometry_estimation": [
+      "depth_anything_3_mono_large.safetensors",
+      "geometry_estimation\\moge_2_vitl_normal_fp16.safetensors",
+      "moge_2_vitl_normal_fp16.safetensors"
+    ],
     "optical_flow": [],
-    "detection": [],
+    "detection": [
+      "mediapipe_face_fp32.safetensors"
+    ],
     ".cache": [],
     "animatediff_models": [],
     "animatediff_motion_lora": [],
@@ -397,11 +437,17 @@
       "abcd\\rdn_abcd.pth",
       "abcd\\swinir_abcd.pth"
     ],
+    "depth_anything": [
+      "model.safetensors"
+    ],
+    "ernie_image": [],
     "facerestore_models": [
       "GFPGANv1.3.pth",
       "GFPGANv1.4.pth",
       "codeformer-v0.1.0.pth"
     ],
+    "flux1": [],
+    "flux2": [],
     "Hunyuan": [
       "split_files\\clip_vision\\sigclip_vision_patch14_384.safetensors",
       "split_files\\diffusion_models\\hunyuanvideo1.5_1080p_sr_distilled_fp8_scaled.safetensors",
@@ -413,6 +459,7 @@
       "hyperswap_1b_256.onnx",
       "hyperswap_1c_256.onnx"
     ],
+    "ideoram": [],
     "insightface": [
       "inswapper_128.onnx"
     ],
@@ -448,6 +495,8 @@
     "llm": [
       "Llama-3.2-11B-Vision-Instruct-bnb-4bit_0002.safetensors"
     ],
+    "longcat": [],
+    "moge": [],
     "onnx": [
       "human-parts\\deeplabv3p-resnet50-human.onnx"
     ],
@@ -465,6 +514,9 @@
     ],
     "sams": [
       "sam_vit_b_01ec64.pth"
+    ],
+    "split_files": [
+      "text_encoders\\qwen_3_06b_base.safetensors"
     ],
     "ultralytics": [
       "bbox\\face_yolov8m.pt",

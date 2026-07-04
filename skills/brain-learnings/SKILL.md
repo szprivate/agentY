@@ -223,3 +223,41 @@ Actually let's do exactly what the prompt says. No preamble. Plain text only.
 2026-07-02 | apply_brainbriefing fails validation when briefing specifies an output_node_id not found | Instead of adding missing nodes, patch configuration parameters directly onto actual final SaveImage or video save node already present in workflow template.
 
 2026-07-02 | ComfyUI workflow fails validation due to unconnected inputs like conditioning | Instead of iterative node lookups, directly read the saved JSON file via read_text_file. Parse exact nested IDs from the structure and batch-patch all missing connections in one update_workflow call.
+
+2026-07-03 | Workflow validation fails with NoneType AttributeError when LoadImage inputs are null or invalid | Query each LoadImage schema for valid combo options and explicitly patch all missing image fields before validating.
+
+2026-07-03 | Validation loops occur when apply_brainbriefing leaves unspecified template nodes with null inputs unpatched, causing repeated failures until manually corrected or removed to bypass re-running the applier and inspect unrelated fields first
+
+2026-07-03 | apply_brainbriefing and signal_workflow_ready called twice after first successful response returned" -> 14 words). Perfect.
+
+2026-07-03 | Workflow templates contain disconnected internal wiring that causes validation errors from missing node inputs | Review apply_brainbriefing logs for specific failing node IDs and their schemas. Trace compatible upstream outputs within the file, patch connections via update_workflow manually, then signal readiness without retrying full briefings.
+
+2026-07-03 | Calling update_workflow on duplicates created by duplicate workflow in batch mode is redundant when no node modifications are needed, since duplication handles seed randomization and validation internally? Wait, let's make sure it fits constraints exactly one entry per line" or multiple if there are new learnings to add"? It says output NO_NEW_LEARNINGS otherwise. If I find a pattern." Let me re-read "Output format: Produce one entry per line... One entry per problem-solution pair you identify". Okay, but the prompt also says `YYYY-MM-DD | <problem field must be ≤15 words! Problem: update_workflow on duplicates is redundant in batch mode" -> 9
+</think>
+2026-07-03 | Calling duplicate workflow already validates workflows and randomises seeds automatically. Skip calling update_workflow with empty patches after duplicating identical runs to save tool calls and avoid redundancy.
+
+2026-07-03 | Workflow validation fails when masking/expanding nodes lack required inputs like GrowMask mask) -> Use `get_workflow_node_info` schemas, verify compatible outputs (e.g., LoadImage slot 1 = MASK), then patch via update_workflow with proper JSON syntax before signaling readiness."
+
+2026-07-03 | Workflow validation fails with missing_node_type errors when uninstalled Reroute or routing nodes are present | Use JSON parsing scripts to find all consumers of the broken node, patch their inputs directly to the original source output slot, then delete the orphaned node.
+2026-07-03 | Combo validation fails when raw integers replace required string dropdown options | Query schema COMBO options and patch invalid integer inputs with exact matching string values like area to pass server checks.
+
+2026-07-03 | Pre-briefing node queries cause workflow assembly stalls and mismatched schema results | Always run apply_brainbriefing immediately after template retrieval; it automatically injects parameters, adds missing sink nodes, preventing unnecessary get_workflow_node_info calls that delay handoff.
+
+2026-07-03 | Wan2._Vace template patching fails with cascading missing input errors during blind node cleanup when custom bEpic classes require specific video/image slots that must be wired via get_node_schema and explicit [source_id, index] connection arrays instead of deleting downstream outputs or guessing formats.
+
+2026-07-03 | GrowMask validation fails due to missing mask input during inpainting workflow assembly | Wire the MASK input to index 1 of a LoadImage node, which outputs both IMAGE and MASK types. Apply using update_workflow patches.
+
+2026-07-03 | ComfyUI workflow patching fails when connection node IDs are integers instead of strings | Connection references in patches must use stringified node IDs like ["11", 1] rather than raw integers to pass validation and prevent inner-node exceptions.
+
+2026-07-04 | ComfyUI rejects workflows with only mask outputs during validation | Add a MaskToImage node connected to the mask generator output. Wire its image result into a SaveImage node and explicitly patch connections before signaling ready.
+
+2026-07-04 | ComfyUI rejects workflow with prompt_no_outputs when template lacks an output node. | Add MaskPreview+ wired to the detector mask slot. It natively accepts MASK type inputs, satisfying validation without requiring image conversion steps.
+2026-07-04 | Repeated search_nodes failures caused by stacking multiple unrelated keywords in queries. | Query with single concepts like mask preview instead of combining terms; simple keywords return utility nodes faster and avoid zero-result dead ends.
+
+2026-07-04 | Manual workflow patching causes prompt_no_outputs errors after removing unsupported note nodes | Use apply_brainbrief directly; it auto-injects model paths, synthesizes required terminal SaveVideo outputs, and resolves template validation issues without manual fixes.
+
+2026-07-04 | update_workflow fails with prompt_no_outputs if template lacks frontend save nodes | Use apply_brainbriefing instead of manual patches on raw templates. It automatically synthesizes required terminal SaveVideo or SaveImage nodes, preventing validation errors before execution.
+
+2026-07-04 | Wan22Vace workflow fails during i2v tasks because LoadVideo expects a source video file causing null input validation errors. Remove the incompatible nodes and patch downstream inputs to use stitched reference images instead of clips via update_workflow remove_nodes parameter, then rewire control_video links to avoid type mismatches from missing media files.`
+
+2026-07-04 | apply_brainbriefing rebonds LoadImage inputs to placeholders when specified files are missing. | Manually patch LoadImage nodes via update_workflow using relative subdirectory paths matching ComfyUI input structure instead of relying on auto-apply.
