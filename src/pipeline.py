@@ -3604,15 +3604,17 @@ class Pipeline:
         name = tmpl.get("name") if isinstance(tmpl, dict) else None
         if not name or name in ("build_new", "Kling3_multiShot"):
             return _bail(f"template={name!r}")
-        # Defer anything that needs the brain's special skills to the LLM.
+        # Genuine variation/batch jobs need the brain's image-batch skill.
         if bb.get("variations") or bb.get("batch_request"):
             return _bail("variations/batch")
-        if bb.get("count_iter") not in (None, 1):
-            return _bail(f"count_iter={bb.get('count_iter')}")
-        # NOTE: input_image_count is checked AFTER assembly against the template's
-        # actual image loaders — the briefing's count is often inflated (recipe
-        # ports aggregate several member templates), which used to bail a plain
-        # single-image job (e.g. LTX i2v) to the unreliable LLM brain.
+        # NOTE: a bare count_iter>1 WITHOUT variations is a spurious researcher
+        # over-count — the multiprompt expansion (_expand_variations) only fires
+        # when variations is also true, so the LLM batch path just signals N
+        # workflows that all fail. Don't bail on it: the deterministic path
+        # renders one workflow, far more reliable than the failing batch.
+        # input_image_count is likewise checked AFTER assembly against the
+        # template's actual image loaders (the briefing's count is often inflated
+        # because recipe ports aggregate several member templates).
         try:
             res = json.loads(_assemble_workflow_deterministic(raw_json))
             # Aux models the template references but that aren't installed (and
