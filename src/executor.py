@@ -236,6 +236,17 @@ def _submit_workflow(workflow_path: str, client_id: str = "") -> str:
     if client.api_key:
         payload["extra_data"] = {"api_key_comfy_org": client.api_key}
 
+    # Mirror the exact workflow onto the ComfyUI canvas so the user always sees
+    # what actually ran. Best-effort and non-fatal; disable with
+    # AGENTY_CANVAS_AUTOLOAD=0. The open_workflow_in_canvas tool also stays
+    # available for on-demand ("show me the workflow") calls by the agent.
+    if os.environ.get("AGENTY_CANVAS_AUTOLOAD", "1") != "0":
+        try:
+            from agenty_core.tools.comfyui import open_workflow_in_canvas as _canvas
+            _canvas(workflow_path, name=p.stem)
+        except Exception:  # noqa: BLE001
+            pass
+
     result = client.post("/prompt", json_data=payload)
     if isinstance(result, dict) and "prompt_id" in result:
         return result["prompt_id"]
