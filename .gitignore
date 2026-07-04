@@ -26,8 +26,15 @@ output_workflows/
 config/models.json
 .vscode
 
-# Large regenerable /object_info cache for the workflow_recipes generator
-# (the consumable DB at config/workflow_recipes.json IS tracked).
+# The workflow-template corpus + recipe DB are now canonical in agenty_core
+# (agenty_core.paths.corpus_root); they must NOT be re-created here, or the
+# repos would drift apart again. The tool layer reads them from agenty_core.
+comfyui_workflow_templates_custom/
+comfyui_workflow_templates_official/
+config/workflow_templates.json
+config/workflow_recipes.json
+config/workflow_recipes_node_knowledge.json
+config/workflow_recipes_report.md
 config/workflow_recipes_object_info_cache.json
 # recipe-reliability transient logs
 scripts/recipe_reliability/*.log
