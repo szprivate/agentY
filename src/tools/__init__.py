@@ -35,6 +35,7 @@ from src.tools.comfyui import (  # noqa: F401
     get_workflow_recipe,
     # Workflow modification
     save_workflow,
+    open_workflow_in_canvas,
     patch_workflow,
     add_workflow_node,
     remove_workflow_node,
@@ -100,7 +101,7 @@ _SHARED_CORE_TOOLS = [
     "get_comfyui_dirs", "submit_prompt", "duplicate_workflow", "get_node_schema",
     "get_workflow_node_info", "search_nodes", "get_workflow_catalog",
     "get_workflow_template", "list_workflow_recipes", "get_workflow_recipe",
-    "save_workflow", "patch_workflow", "add_workflow_node",
+    "save_workflow", "open_workflow_in_canvas", "patch_workflow", "add_workflow_node",
     "remove_workflow_node", "update_workflow", "replace_node", "apply_brainbriefing",
     "validate_workflow", "check_model",
     # huggingface
@@ -248,6 +249,8 @@ BRAIN_TOOLS: list = [
     check_model,
     # Handoff to executor (replaces submit_prompt)
     signal_workflow_ready,
+    # Load the assembled workflow into the ComfyUI canvas for the user to inspect
+    open_workflow_in_canvas,
     # Batch: duplicate workflow for each iteration
     duplicate_workflow,
     # Headless batch jobs over a folder of inputs (detached worker)
