@@ -3,7 +3,7 @@
   "generated_from": {
     "workflow_count": 137,
     "task_count": 27,
-    "recipe_count": 71
+    "recipe_count": 72
   },
   "tasks": [
     {
@@ -326,14 +326,14 @@
           "member_count": 1,
           "user_intent": {
             "media": "image",
-            "task": "segmentation",
+            "task": "remove_background",
             "model_families": [
               "BiRefNet"
             ],
-            "when_to_use": "Use to segment an image using BiRefNet.",
+            "when_to_use": "Use to remove the background from an image using BiRefNet.",
             "example_requests": [
               "build an image workflow using BiRefNet",
-              "segment an image using BiRefNet"
+              "remove the background from an image using BiRefNet"
             ]
           },
           "description": "Removes or replaces image backgrounds using BiRefNet segmentation and alpha compositing.",
@@ -3101,14 +3101,14 @@
           "member_count": 1,
           "user_intent": {
             "media": "image",
-            "task": "controlnet",
+            "task": "text_to_image",
             "model_families": [
               "Ideogram"
             ],
-            "when_to_use": "Use to generate an image guided by a control map (canny/depth/pose) using Ideogram.",
+            "when_to_use": "Use to generate an image from a text prompt using Ideogram.",
             "example_requests": [
               "build an image workflow using Ideogram",
-              "generate an image guided by a control map (canny/depth/pose) using Ideogram"
+              "generate an image from a text prompt using Ideogram"
             ]
           },
           "description": "This subgraph generates images using Ideogram v4, accepting plain text or structured JSON prompts for precise layout and style control. It suits detailed illustrations, concept art, or marketing visuals needing predictable composition and color palettes. The model uses flow-matching with asymmetric guidance, so no negative prompt is needed, but JSON prompts yield the best results.",
@@ -4656,14 +4656,14 @@
           "member_count": 2,
           "user_intent": {
             "media": "image",
-            "task": "video_generation",
+            "task": "landmark_estimation",
             "model_families": [
               "MediaPipe"
             ],
-            "when_to_use": "Use to generate a video using MediaPipe.",
+            "when_to_use": "Use to detect facial landmarks using MediaPipe.",
             "example_requests": [
               "build an image workflow using MediaPipe",
-              "generate a video using MediaPipe"
+              "detect facial landmarks using MediaPipe"
             ]
           },
           "description": "Detects facial landmarks from a video using MediaPipe, outputting landmark data, face bounding boxes, and an optional face-region mask. | Detects facial landmarks from an image using MediaPipe, outputting landmark data, face bounding boxes, and an optional face-region mask.",
@@ -6247,6 +6247,653 @@
           "custom_nodes": []
         },
         {
+          "id": "image_edit__bernini",
+          "model": "Bernini",
+          "execution": "local",
+          "source": "official",
+          "uses_api_nodes": false,
+          "api_node_classes": [],
+          "member_files": [
+            "image_edit_bernini_r"
+          ],
+          "member_descriptions": [
+            {
+              "name": "image_edit_bernini_r",
+              "title": "Image Edit (Bernini-R)",
+              "description": "Edits a single image using a text prompt, leveraging Bernini-R's latent semantic planning for changes like object addition, removal, or style transfer. Ideal for creative edits requiring precise semantic understanding, such as adding a snowman to a scene or altering an object's appearance."
+            }
+          ],
+          "member_count": 1,
+          "user_intent": {
+            "media": "image",
+            "task": "image_edit",
+            "model_families": [
+              "Bernini"
+            ],
+            "when_to_use": "Use to edit an existing image using Bernini.",
+            "example_requests": [
+              "build an image workflow using Bernini",
+              "edit an existing image using Bernini"
+            ]
+          },
+          "description": "Edits a single image using a text prompt, leveraging Bernini-R's latent semantic planning for changes like object addition, removal, or style transfer. Ideal for creative edits requiring precise semantic understanding, such as adding a snowman to a scene or altering an object's appearance.",
+          "description_source": "catalog",
+          "node_clusters": [
+            {
+              "cluster": "model loading",
+              "nodes": [
+                "CLIPLoader",
+                "LoraLoaderModelOnly (x2)",
+                "UNETLoader (x2)",
+                "VAELoader"
+              ]
+            },
+            {
+              "cluster": "conditioning",
+              "nodes": [
+                "BasicScheduler",
+                "BerniniConditioning",
+                "CLIPTextEncode (x2)",
+                "SplitSigmas"
+              ]
+            },
+            {
+              "cluster": "sampling",
+              "nodes": [
+                "KSamplerSelect",
+                "SamplerCustom (x2)"
+              ]
+            },
+            {
+              "cluster": "decoding",
+              "nodes": [
+                "VAEDecode"
+              ]
+            },
+            {
+              "cluster": "other operations",
+              "nodes": [
+                "ComfySwitchNode (x5)",
+                "CustomCombo",
+                "MarkdownNote",
+                "PreviewAny",
+                "PrimitiveBoolean",
+                "PrimitiveFloat (x2)",
+                "PrimitiveInt (x5)",
+                "PrimitiveStringMultiline",
+                "RegexExtract",
+                "StringConcatenate",
+                "StringReplace"
+              ]
+            }
+          ],
+          "required_node_roles": [
+            {
+              "role": "prompt text encoding",
+              "role_key": "text_encode",
+              "node_class": "CLIPTextEncode",
+              "utility": false,
+              "frequency": "all members (1/1), 2 required instances",
+              "min_instances": 2,
+              "max_instances": 2,
+              "paired_or_multiple": true,
+              "distinct_instances": [
+                {
+                  "feeds_into": [
+                    "conditioning_op"
+                  ],
+                  "fed_by": [
+                    "StringConcatenate",
+                    "clip_loader"
+                  ],
+                  "occurrences": 1
+                },
+                {
+                  "feeds_into": [
+                    "conditioning_op"
+                  ],
+                  "fed_by": [
+                    "clip_loader"
+                  ],
+                  "occurrences": 1
+                }
+              ]
+            },
+            {
+              "role": "LoRA / model patch loader",
+              "role_key": "lora_loader",
+              "node_class": "LoraLoaderModelOnly",
+              "utility": false,
+              "frequency": "all members (1/1), 2 required instances",
+              "min_instances": 2,
+              "max_instances": 2,
+              "paired_or_multiple": true
+            },
+            {
+              "role": "diffusion sampler / denoiser",
+              "role_key": "sampler",
+              "node_class": "SamplerCustom",
+              "utility": false,
+              "frequency": "all members (1/1), 2 required instances",
+              "min_instances": 2,
+              "max_instances": 2,
+              "paired_or_multiple": true,
+              "distinct_instances": [
+                {
+                  "feeds_into": [
+                    "sampler"
+                  ],
+                  "fed_by": [
+                    "ComfySwitchNode",
+                    "ComfySwitchNode",
+                    "conditioning_op",
+                    "conditioning_op",
+                    "conditioning_op",
+                    "guidance",
+                    "sampler"
+                  ],
+                  "occurrences": 1
+                },
+                {
+                  "feeds_into": [
+                    "vae_decode"
+                  ],
+                  "fed_by": [
+                    "ComfySwitchNode",
+                    "ComfySwitchNode",
+                    "conditioning_op",
+                    "conditioning_op",
+                    "guidance",
+                    "sampler",
+                    "sampler"
+                  ],
+                  "occurrences": 1
+                }
+              ]
+            },
+            {
+              "role": "diffusion model / UNET loader",
+              "role_key": "model_loader",
+              "node_class": "UNETLoader",
+              "utility": false,
+              "frequency": "all members (1/1), 2 required instances",
+              "min_instances": 2,
+              "max_instances": 2,
+              "paired_or_multiple": true,
+              "distinct_instances": [
+                {
+                  "feeds_into": [
+                    "ComfySwitchNode",
+                    "guidance",
+                    "lora_loader"
+                  ],
+                  "fed_by": [],
+                  "occurrences": 1
+                },
+                {
+                  "feeds_into": [
+                    "ComfySwitchNode",
+                    "lora_loader"
+                  ],
+                  "fed_by": [],
+                  "occurrences": 1
+                }
+              ]
+            },
+            {
+              "role": "guider / sigma / scheduler",
+              "role_key": "guidance",
+              "node_class": "BasicScheduler",
+              "utility": false,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            },
+            {
+              "role": "conditioning combine / edit",
+              "role_key": "conditioning_op",
+              "node_class": "BerniniConditioning",
+              "utility": false,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            },
+            {
+              "role": "text encoder / CLIP loader",
+              "role_key": "clip_loader",
+              "node_class": "CLIPLoader",
+              "utility": false,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            },
+            {
+              "role": "unclassified node role",
+              "role_key": "other",
+              "node_class": "CustomCombo",
+              "utility": false,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            },
+            {
+              "role": "diffusion sampler / denoiser",
+              "role_key": "sampler",
+              "node_class": "KSamplerSelect",
+              "utility": false,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            },
+            {
+              "role": "unclassified node role",
+              "role_key": "other",
+              "node_class": "MarkdownNote",
+              "utility": false,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            },
+            {
+              "role": "unclassified node role",
+              "role_key": "other",
+              "node_class": "RegexExtract",
+              "utility": false,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            },
+            {
+              "role": "guider / sigma / scheduler",
+              "role_key": "guidance",
+              "node_class": "SplitSigmas",
+              "utility": false,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            },
+            {
+              "role": "latent -> pixel decode",
+              "role_key": "vae_decode",
+              "node_class": "VAEDecode",
+              "utility": false,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            },
+            {
+              "role": "VAE loader",
+              "role_key": "vae_loader",
+              "node_class": "VAELoader",
+              "utility": false,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            },
+            {
+              "role": "unclassified node role",
+              "role_key": "other",
+              "node_class": "ComfySwitchNode",
+              "utility": true,
+              "frequency": "all members (1/1)",
+              "min_instances": 5,
+              "max_instances": 5
+            },
+            {
+              "role": "unclassified node role",
+              "role_key": "other",
+              "node_class": "PrimitiveInt",
+              "utility": true,
+              "frequency": "all members (1/1)",
+              "min_instances": 5,
+              "max_instances": 5
+            },
+            {
+              "role": "unclassified node role",
+              "role_key": "other",
+              "node_class": "PrimitiveFloat",
+              "utility": true,
+              "frequency": "all members (1/1)",
+              "min_instances": 2,
+              "max_instances": 2
+            },
+            {
+              "role": "unclassified node role",
+              "role_key": "other",
+              "node_class": "PreviewAny",
+              "utility": true,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            },
+            {
+              "role": "unclassified node role",
+              "role_key": "other",
+              "node_class": "PrimitiveBoolean",
+              "utility": true,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            },
+            {
+              "role": "unclassified node role",
+              "role_key": "other",
+              "node_class": "PrimitiveStringMultiline",
+              "utility": true,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            },
+            {
+              "role": "unclassified node role",
+              "role_key": "other",
+              "node_class": "StringConcatenate",
+              "utility": true,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            },
+            {
+              "role": "unclassified node role",
+              "role_key": "other",
+              "node_class": "StringReplace",
+              "utility": true,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            }
+          ],
+          "optional_node_roles": [],
+          "connection_patterns": [
+            {
+              "from_role": "ComfySwitchNode",
+              "to_role": "guidance",
+              "data_type": "INT",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "ComfySwitchNode",
+              "to_role": "sampler",
+              "data_type": "FLOAT",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "ComfySwitchNode",
+              "to_role": "sampler",
+              "data_type": "MODEL",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "CustomCombo",
+              "to_role": "PrimitiveInt",
+              "data_type": "INT",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "PreviewAny",
+              "to_role": "StringReplace",
+              "data_type": "STRING",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "PrimitiveBoolean",
+              "to_role": "ComfySwitchNode",
+              "data_type": "BOOLEAN",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "PrimitiveFloat",
+              "to_role": "ComfySwitchNode",
+              "data_type": "FLOAT",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "PrimitiveInt",
+              "to_role": "ComfySwitchNode",
+              "data_type": "INT",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "PrimitiveInt",
+              "to_role": "PreviewAny",
+              "data_type": "INT",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "PrimitiveStringMultiline",
+              "to_role": "StringConcatenate",
+              "data_type": "STRING",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "RegexExtract",
+              "to_role": "StringConcatenate",
+              "data_type": "STRING",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "StringConcatenate",
+              "to_role": "text_encode",
+              "data_type": "STRING",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "StringReplace",
+              "to_role": "RegexExtract",
+              "data_type": "STRING",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "clip_loader",
+              "to_role": "text_encode",
+              "data_type": "CLIP",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "conditioning_op",
+              "to_role": "sampler",
+              "data_type": "CONDITIONING",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "conditioning_op",
+              "to_role": "sampler",
+              "data_type": "LATENT",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "guidance",
+              "to_role": "guidance",
+              "data_type": "SIGMAS",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "guidance",
+              "to_role": "sampler",
+              "data_type": "SIGMAS",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "lora_loader",
+              "to_role": "ComfySwitchNode",
+              "data_type": "MODEL",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "model_loader",
+              "to_role": "ComfySwitchNode",
+              "data_type": "MODEL",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "model_loader",
+              "to_role": "guidance",
+              "data_type": "MODEL",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "model_loader",
+              "to_role": "lora_loader",
+              "data_type": "MODEL",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "sampler",
+              "to_role": "sampler",
+              "data_type": "LATENT",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "sampler",
+              "to_role": "sampler",
+              "data_type": "SAMPLER",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "sampler",
+              "to_role": "vae_decode",
+              "data_type": "LATENT",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "text_encode",
+              "to_role": "conditioning_op",
+              "data_type": "CONDITIONING",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "vae_loader",
+              "to_role": "conditioning_op",
+              "data_type": "VAE",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "vae_loader",
+              "to_role": "vae_decode",
+              "data_type": "VAE",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            }
+          ],
+          "boundary_ports": {
+            "inputs": [
+              {
+                "data_type": "BOOLEAN",
+                "role": "value"
+              },
+              {
+                "data_type": "COMBO",
+                "role": "choice"
+              },
+              {
+                "data_type": "COMBO",
+                "role": "clip_name"
+              },
+              {
+                "data_type": "COMBO",
+                "role": "lora_name"
+              },
+              {
+                "data_type": "COMBO",
+                "role": "unet_name"
+              },
+              {
+                "data_type": "COMBO",
+                "role": "unet_name_1"
+              },
+              {
+                "data_type": "COMBO",
+                "role": "vae_name"
+              },
+              {
+                "data_type": "IMAGE",
+                "role": "reference_images.reference_image_0"
+              },
+              {
+                "data_type": "IMAGE",
+                "role": "reference_video"
+              },
+              {
+                "data_type": "IMAGE",
+                "role": "source_video"
+              },
+              {
+                "data_type": "INT",
+                "role": "height"
+              },
+              {
+                "data_type": "INT",
+                "role": "length"
+              },
+              {
+                "data_type": "INT",
+                "role": "noise_seed"
+              },
+              {
+                "data_type": "INT",
+                "role": "ref_max_size"
+              },
+              {
+                "data_type": "INT",
+                "role": "width"
+              },
+              {
+                "data_type": "STRING",
+                "role": "text"
+              }
+            ],
+            "outputs": [
+              {
+                "data_type": "IMAGE",
+                "role": "IMAGE"
+              }
+            ]
+          },
+          "param_variability": "single member - no cross-member variability to report",
+          "catalog_category": {
+            "primary": "Image generation and editing",
+            "distribution": {
+              "Image generation and editing": 1
+            },
+            "pure": true,
+            "spans_multiple": false,
+            "coverage": 1,
+            "uncategorized": 0
+          },
+          "unresolved_nodes": [
+            "BerniniConditioning",
+            "MarkdownNote"
+          ],
+          "custom_nodes": []
+        },
+        {
           "id": "image_edit__firered",
           "model": "FireRed",
           "execution": "local",
@@ -7445,655 +8092,6 @@
             "uncategorized": 0
           },
           "unresolved_nodes": [],
-          "custom_nodes": []
-        },
-        {
-          "id": "image_edit__wan_2_2",
-          "model": "WAN 2.2",
-          "execution": "local",
-          "source": "official",
-          "uses_api_nodes": false,
-          "api_node_classes": [],
-          "member_files": [
-            "image_edit_bernini_r"
-          ],
-          "member_descriptions": [
-            {
-              "name": "image_edit_bernini_r",
-              "title": "Image Edit (Bernini-R)",
-              "description": "Edits a single image using a text prompt, leveraging Bernini-R's latent semantic planning for changes like object addition, removal, or style transfer. Ideal for creative edits requiring precise semantic understanding, such as adding a snowman to a scene or altering an object's appearance."
-            }
-          ],
-          "member_count": 1,
-          "user_intent": {
-            "media": "video",
-            "task": "text_to_video",
-            "model_families": [
-              "Bernini",
-              "WAN 2.2"
-            ],
-            "when_to_use": "Use to generate a video from a text prompt using Bernini, WAN 2.2.",
-            "example_requests": [
-              "build a video workflow using Bernini",
-              "build a video workflow using WAN 2.2",
-              "generate a video from a text prompt using Bernini"
-            ]
-          },
-          "description": "Edits a single image using a text prompt, leveraging Bernini-R's latent semantic planning for changes like object addition, removal, or style transfer. Ideal for creative edits requiring precise semantic understanding, such as adding a snowman to a scene or altering an object's appearance.",
-          "description_source": "catalog",
-          "node_clusters": [
-            {
-              "cluster": "model loading",
-              "nodes": [
-                "CLIPLoader",
-                "LoraLoaderModelOnly (x2)",
-                "UNETLoader (x2)",
-                "VAELoader"
-              ]
-            },
-            {
-              "cluster": "conditioning",
-              "nodes": [
-                "BasicScheduler",
-                "BerniniConditioning",
-                "CLIPTextEncode (x2)",
-                "SplitSigmas"
-              ]
-            },
-            {
-              "cluster": "sampling",
-              "nodes": [
-                "KSamplerSelect",
-                "SamplerCustom (x2)"
-              ]
-            },
-            {
-              "cluster": "decoding",
-              "nodes": [
-                "VAEDecode"
-              ]
-            },
-            {
-              "cluster": "other operations",
-              "nodes": [
-                "ComfySwitchNode (x5)",
-                "CustomCombo",
-                "MarkdownNote",
-                "PreviewAny",
-                "PrimitiveBoolean",
-                "PrimitiveFloat (x2)",
-                "PrimitiveInt (x5)",
-                "PrimitiveStringMultiline",
-                "RegexExtract",
-                "StringConcatenate",
-                "StringReplace"
-              ]
-            }
-          ],
-          "required_node_roles": [
-            {
-              "role": "prompt text encoding",
-              "role_key": "text_encode",
-              "node_class": "CLIPTextEncode",
-              "utility": false,
-              "frequency": "all members (1/1), 2 required instances",
-              "min_instances": 2,
-              "max_instances": 2,
-              "paired_or_multiple": true,
-              "distinct_instances": [
-                {
-                  "feeds_into": [
-                    "conditioning_op"
-                  ],
-                  "fed_by": [
-                    "StringConcatenate",
-                    "clip_loader"
-                  ],
-                  "occurrences": 1
-                },
-                {
-                  "feeds_into": [
-                    "conditioning_op"
-                  ],
-                  "fed_by": [
-                    "clip_loader"
-                  ],
-                  "occurrences": 1
-                }
-              ]
-            },
-            {
-              "role": "LoRA / model patch loader",
-              "role_key": "lora_loader",
-              "node_class": "LoraLoaderModelOnly",
-              "utility": false,
-              "frequency": "all members (1/1), 2 required instances",
-              "min_instances": 2,
-              "max_instances": 2,
-              "paired_or_multiple": true
-            },
-            {
-              "role": "diffusion sampler / denoiser",
-              "role_key": "sampler",
-              "node_class": "SamplerCustom",
-              "utility": false,
-              "frequency": "all members (1/1), 2 required instances",
-              "min_instances": 2,
-              "max_instances": 2,
-              "paired_or_multiple": true,
-              "distinct_instances": [
-                {
-                  "feeds_into": [
-                    "sampler"
-                  ],
-                  "fed_by": [
-                    "ComfySwitchNode",
-                    "ComfySwitchNode",
-                    "conditioning_op",
-                    "conditioning_op",
-                    "conditioning_op",
-                    "guidance",
-                    "sampler"
-                  ],
-                  "occurrences": 1
-                },
-                {
-                  "feeds_into": [
-                    "vae_decode"
-                  ],
-                  "fed_by": [
-                    "ComfySwitchNode",
-                    "ComfySwitchNode",
-                    "conditioning_op",
-                    "conditioning_op",
-                    "guidance",
-                    "sampler",
-                    "sampler"
-                  ],
-                  "occurrences": 1
-                }
-              ]
-            },
-            {
-              "role": "diffusion model / UNET loader",
-              "role_key": "model_loader",
-              "node_class": "UNETLoader",
-              "utility": false,
-              "frequency": "all members (1/1), 2 required instances",
-              "min_instances": 2,
-              "max_instances": 2,
-              "paired_or_multiple": true,
-              "distinct_instances": [
-                {
-                  "feeds_into": [
-                    "ComfySwitchNode",
-                    "guidance",
-                    "lora_loader"
-                  ],
-                  "fed_by": [],
-                  "occurrences": 1
-                },
-                {
-                  "feeds_into": [
-                    "ComfySwitchNode",
-                    "lora_loader"
-                  ],
-                  "fed_by": [],
-                  "occurrences": 1
-                }
-              ]
-            },
-            {
-              "role": "guider / sigma / scheduler",
-              "role_key": "guidance",
-              "node_class": "BasicScheduler",
-              "utility": false,
-              "frequency": "all members (1/1)",
-              "min_instances": 1,
-              "max_instances": 1
-            },
-            {
-              "role": "conditioning combine / edit",
-              "role_key": "conditioning_op",
-              "node_class": "BerniniConditioning",
-              "utility": false,
-              "frequency": "all members (1/1)",
-              "min_instances": 1,
-              "max_instances": 1
-            },
-            {
-              "role": "text encoder / CLIP loader",
-              "role_key": "clip_loader",
-              "node_class": "CLIPLoader",
-              "utility": false,
-              "frequency": "all members (1/1)",
-              "min_instances": 1,
-              "max_instances": 1
-            },
-            {
-              "role": "unclassified node role",
-              "role_key": "other",
-              "node_class": "CustomCombo",
-              "utility": false,
-              "frequency": "all members (1/1)",
-              "min_instances": 1,
-              "max_instances": 1
-            },
-            {
-              "role": "diffusion sampler / denoiser",
-              "role_key": "sampler",
-              "node_class": "KSamplerSelect",
-              "utility": false,
-              "frequency": "all members (1/1)",
-              "min_instances": 1,
-              "max_instances": 1
-            },
-            {
-              "role": "unclassified node role",
-              "role_key": "other",
-              "node_class": "MarkdownNote",
-              "utility": false,
-              "frequency": "all members (1/1)",
-              "min_instances": 1,
-              "max_instances": 1
-            },
-            {
-              "role": "unclassified node role",
-              "role_key": "other",
-              "node_class": "RegexExtract",
-              "utility": false,
-              "frequency": "all members (1/1)",
-              "min_instances": 1,
-              "max_instances": 1
-            },
-            {
-              "role": "guider / sigma / scheduler",
-              "role_key": "guidance",
-              "node_class": "SplitSigmas",
-              "utility": false,
-              "frequency": "all members (1/1)",
-              "min_instances": 1,
-              "max_instances": 1
-            },
-            {
-              "role": "latent -> pixel decode",
-              "role_key": "vae_decode",
-              "node_class": "VAEDecode",
-              "utility": false,
-              "frequency": "all members (1/1)",
-              "min_instances": 1,
-              "max_instances": 1
-            },
-            {
-              "role": "VAE loader",
-              "role_key": "vae_loader",
-              "node_class": "VAELoader",
-              "utility": false,
-              "frequency": "all members (1/1)",
-              "min_instances": 1,
-              "max_instances": 1
-            },
-            {
-              "role": "unclassified node role",
-              "role_key": "other",
-              "node_class": "ComfySwitchNode",
-              "utility": true,
-              "frequency": "all members (1/1)",
-              "min_instances": 5,
-              "max_instances": 5
-            },
-            {
-              "role": "unclassified node role",
-              "role_key": "other",
-              "node_class": "PrimitiveInt",
-              "utility": true,
-              "frequency": "all members (1/1)",
-              "min_instances": 5,
-              "max_instances": 5
-            },
-            {
-              "role": "unclassified node role",
-              "role_key": "other",
-              "node_class": "PrimitiveFloat",
-              "utility": true,
-              "frequency": "all members (1/1)",
-              "min_instances": 2,
-              "max_instances": 2
-            },
-            {
-              "role": "unclassified node role",
-              "role_key": "other",
-              "node_class": "PreviewAny",
-              "utility": true,
-              "frequency": "all members (1/1)",
-              "min_instances": 1,
-              "max_instances": 1
-            },
-            {
-              "role": "unclassified node role",
-              "role_key": "other",
-              "node_class": "PrimitiveBoolean",
-              "utility": true,
-              "frequency": "all members (1/1)",
-              "min_instances": 1,
-              "max_instances": 1
-            },
-            {
-              "role": "unclassified node role",
-              "role_key": "other",
-              "node_class": "PrimitiveStringMultiline",
-              "utility": true,
-              "frequency": "all members (1/1)",
-              "min_instances": 1,
-              "max_instances": 1
-            },
-            {
-              "role": "unclassified node role",
-              "role_key": "other",
-              "node_class": "StringConcatenate",
-              "utility": true,
-              "frequency": "all members (1/1)",
-              "min_instances": 1,
-              "max_instances": 1
-            },
-            {
-              "role": "unclassified node role",
-              "role_key": "other",
-              "node_class": "StringReplace",
-              "utility": true,
-              "frequency": "all members (1/1)",
-              "min_instances": 1,
-              "max_instances": 1
-            }
-          ],
-          "optional_node_roles": [],
-          "connection_patterns": [
-            {
-              "from_role": "ComfySwitchNode",
-              "to_role": "guidance",
-              "data_type": "INT",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            },
-            {
-              "from_role": "ComfySwitchNode",
-              "to_role": "sampler",
-              "data_type": "FLOAT",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            },
-            {
-              "from_role": "ComfySwitchNode",
-              "to_role": "sampler",
-              "data_type": "MODEL",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            },
-            {
-              "from_role": "CustomCombo",
-              "to_role": "PrimitiveInt",
-              "data_type": "INT",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            },
-            {
-              "from_role": "PreviewAny",
-              "to_role": "StringReplace",
-              "data_type": "STRING",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            },
-            {
-              "from_role": "PrimitiveBoolean",
-              "to_role": "ComfySwitchNode",
-              "data_type": "BOOLEAN",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            },
-            {
-              "from_role": "PrimitiveFloat",
-              "to_role": "ComfySwitchNode",
-              "data_type": "FLOAT",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            },
-            {
-              "from_role": "PrimitiveInt",
-              "to_role": "ComfySwitchNode",
-              "data_type": "INT",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            },
-            {
-              "from_role": "PrimitiveInt",
-              "to_role": "PreviewAny",
-              "data_type": "INT",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            },
-            {
-              "from_role": "PrimitiveStringMultiline",
-              "to_role": "StringConcatenate",
-              "data_type": "STRING",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            },
-            {
-              "from_role": "RegexExtract",
-              "to_role": "StringConcatenate",
-              "data_type": "STRING",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            },
-            {
-              "from_role": "StringConcatenate",
-              "to_role": "text_encode",
-              "data_type": "STRING",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            },
-            {
-              "from_role": "StringReplace",
-              "to_role": "RegexExtract",
-              "data_type": "STRING",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            },
-            {
-              "from_role": "clip_loader",
-              "to_role": "text_encode",
-              "data_type": "CLIP",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            },
-            {
-              "from_role": "conditioning_op",
-              "to_role": "sampler",
-              "data_type": "CONDITIONING",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            },
-            {
-              "from_role": "conditioning_op",
-              "to_role": "sampler",
-              "data_type": "LATENT",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            },
-            {
-              "from_role": "guidance",
-              "to_role": "guidance",
-              "data_type": "SIGMAS",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            },
-            {
-              "from_role": "guidance",
-              "to_role": "sampler",
-              "data_type": "SIGMAS",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            },
-            {
-              "from_role": "lora_loader",
-              "to_role": "ComfySwitchNode",
-              "data_type": "MODEL",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            },
-            {
-              "from_role": "model_loader",
-              "to_role": "ComfySwitchNode",
-              "data_type": "MODEL",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            },
-            {
-              "from_role": "model_loader",
-              "to_role": "guidance",
-              "data_type": "MODEL",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            },
-            {
-              "from_role": "model_loader",
-              "to_role": "lora_loader",
-              "data_type": "MODEL",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            },
-            {
-              "from_role": "sampler",
-              "to_role": "sampler",
-              "data_type": "LATENT",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            },
-            {
-              "from_role": "sampler",
-              "to_role": "sampler",
-              "data_type": "SAMPLER",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            },
-            {
-              "from_role": "sampler",
-              "to_role": "vae_decode",
-              "data_type": "LATENT",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            },
-            {
-              "from_role": "text_encode",
-              "to_role": "conditioning_op",
-              "data_type": "CONDITIONING",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            },
-            {
-              "from_role": "vae_loader",
-              "to_role": "conditioning_op",
-              "data_type": "VAE",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            },
-            {
-              "from_role": "vae_loader",
-              "to_role": "vae_decode",
-              "data_type": "VAE",
-              "frequency": "all members (1/1)",
-              "invariant": true
-            }
-          ],
-          "boundary_ports": {
-            "inputs": [
-              {
-                "data_type": "BOOLEAN",
-                "role": "value"
-              },
-              {
-                "data_type": "COMBO",
-                "role": "choice"
-              },
-              {
-                "data_type": "COMBO",
-                "role": "clip_name"
-              },
-              {
-                "data_type": "COMBO",
-                "role": "lora_name"
-              },
-              {
-                "data_type": "COMBO",
-                "role": "unet_name"
-              },
-              {
-                "data_type": "COMBO",
-                "role": "unet_name_1"
-              },
-              {
-                "data_type": "COMBO",
-                "role": "vae_name"
-              },
-              {
-                "data_type": "IMAGE",
-                "role": "reference_images.reference_image_0"
-              },
-              {
-                "data_type": "IMAGE",
-                "role": "reference_video"
-              },
-              {
-                "data_type": "IMAGE",
-                "role": "source_video"
-              },
-              {
-                "data_type": "INT",
-                "role": "height"
-              },
-              {
-                "data_type": "INT",
-                "role": "length"
-              },
-              {
-                "data_type": "INT",
-                "role": "noise_seed"
-              },
-              {
-                "data_type": "INT",
-                "role": "ref_max_size"
-              },
-              {
-                "data_type": "INT",
-                "role": "width"
-              },
-              {
-                "data_type": "STRING",
-                "role": "text"
-              }
-            ],
-            "outputs": [
-              {
-                "data_type": "IMAGE",
-                "role": "IMAGE"
-              }
-            ]
-          },
-          "param_variability": "single member - no cross-member variability to report",
-          "catalog_category": {
-            "primary": "Image generation and editing",
-            "distribution": {
-              "Image generation and editing": 1
-            },
-            "pure": true,
-            "spans_multiple": false,
-            "coverage": 1,
-            "uncategorized": 0
-          },
-          "unresolved_nodes": [
-            "BerniniConditioning",
-            "MarkdownNote"
-          ],
           "custom_nodes": []
         }
       ]
@@ -9780,7 +9778,7 @@
       "id": "video_to_video",
       "execution": "local",
       "member_count": 7,
-      "model_count": 3,
+      "model_count": 4,
       "models": [
         {
           "id": "video_to_video__wan_vace",
@@ -9805,16 +9803,16 @@
           "member_count": 4,
           "user_intent": {
             "media": "video",
-            "task": "text_to_video",
+            "task": "video_edit",
             "model_families": [
               "WAN VACE",
               "WAN 2.2"
             ],
-            "when_to_use": "Use to generate a video from a text prompt using WAN VACE, WAN 2.2.",
+            "when_to_use": "Use to edit an existing video using WAN VACE, WAN 2.2.",
             "example_requests": [
               "build a video workflow using WAN VACE",
               "build a video workflow using WAN 2.2",
-              "generate a video from a text prompt using WAN VACE"
+              "edit an existing video using WAN VACE"
             ]
           },
           "description": "[Local] image editing via Wan. 3 image inputs -> 1 image output. Performs advanced image-to-image editing and transformations.",
@@ -10350,15 +10348,14 @@
           ]
         },
         {
-          "id": "video_to_video__wan_2_2",
-          "model": "WAN 2.2",
+          "id": "video_to_video__depth_anything",
+          "model": "Depth Anything",
           "execution": "local",
-          "source": "mixed",
+          "source": "official",
           "uses_api_nodes": false,
           "api_node_classes": [],
           "member_files": [
-            "video_edit_bernini_r",
-            "video_wan2_2_14B_fun_control"
+            "video_edit_bernini_r"
           ],
           "member_descriptions": [
             {
@@ -10367,30 +10364,29 @@
               "description": "This subgraph uses Depth Anything 3 to predict spatially consistent geometry from any number of images or video frames, with or without known camera poses. It outputs depth maps, camera poses, and optionally 3D Gaussian parameters for novel view synthesis."
             }
           ],
-          "member_count": 2,
+          "member_count": 1,
           "user_intent": {
             "media": "video",
-            "task": "text_to_video",
+            "task": "video_edit",
             "model_families": [
-              "WAN 2.2",
               "Bernini",
               "Depth Anything"
             ],
-            "when_to_use": "Use to generate a video from a text prompt using WAN 2.2, Bernini, Depth Anything.",
+            "when_to_use": "Use to edit an existing video using Bernini, Depth Anything.",
             "example_requests": [
-              "build a video workflow using WAN 2.2",
               "build a video workflow using Bernini",
               "build a video workflow using Depth Anything",
-              "generate a video from a text prompt using WAN 2.2"
+              "edit an existing video using Bernini"
             ]
           },
           "description": "This subgraph uses Depth Anything 3 to predict spatially consistent geometry from any number of images or video frames, with or without known camera poses. It outputs depth maps, camera poses, and optionally 3D Gaussian parameters for novel view synthesis.",
-          "description_source": "catalog+synthesized",
+          "description_source": "catalog",
           "node_clusters": [
             {
               "cluster": "model loading",
               "nodes": [
                 "CLIPLoader",
+                "LoraLoaderModelOnly (x2)",
                 "UNETLoader (x2)",
                 "VAELoader"
               ]
@@ -10398,7 +10394,17 @@
             {
               "cluster": "conditioning",
               "nodes": [
-                "CLIPTextEncode (x2)"
+                "BasicScheduler",
+                "BerniniConditioning",
+                "CLIPTextEncode (x2)",
+                "SplitSigmas"
+              ]
+            },
+            {
+              "cluster": "sampling",
+              "nodes": [
+                "KSamplerSelect",
+                "SamplerCustom (x2)"
               ]
             },
             {
@@ -10410,8 +10416,19 @@
             {
               "cluster": "other operations",
               "nodes": [
+                "ComfySwitchNode (x5)",
                 "CreateVideo",
-                "GetVideoComponents"
+                "CustomCombo",
+                "GetVideoComponents",
+                "MarkdownNote",
+                "PreviewAny",
+                "PrimitiveBoolean",
+                "PrimitiveFloat (x2)",
+                "PrimitiveInt (x5)",
+                "PrimitiveStringMultiline",
+                "RegexExtract",
+                "StringConcatenate",
+                "StringReplace"
               ]
             }
           ],
@@ -10421,20 +10438,11 @@
               "role_key": "text_encode",
               "node_class": "CLIPTextEncode",
               "utility": false,
-              "frequency": "all members (2/2), 2 required instances",
+              "frequency": "all members (1/1), 2 required instances",
               "min_instances": 2,
               "max_instances": 2,
               "paired_or_multiple": true,
               "distinct_instances": [
-                {
-                  "feeds_into": [
-                    "Wan22FunControlToVideo"
-                  ],
-                  "fed_by": [
-                    "clip_loader"
-                  ],
-                  "occurrences": 2
-                },
                 {
                   "feeds_into": [
                     "conditioning_op"
@@ -10457,22 +10465,67 @@
               ]
             },
             {
-              "role": "diffusion model / UNET loader",
-              "role_key": "model_loader",
-              "node_class": "UNETLoader",
+              "role": "LoRA / model patch loader",
+              "role_key": "lora_loader",
+              "node_class": "LoraLoaderModelOnly",
               "utility": false,
-              "frequency": "all members (2/2), 2 required instances",
+              "frequency": "all members (1/1), 2 required instances",
+              "min_instances": 2,
+              "max_instances": 2,
+              "paired_or_multiple": true
+            },
+            {
+              "role": "diffusion sampler / denoiser",
+              "role_key": "sampler",
+              "node_class": "SamplerCustom",
+              "utility": false,
+              "frequency": "all members (1/1), 2 required instances",
               "min_instances": 2,
               "max_instances": 2,
               "paired_or_multiple": true,
               "distinct_instances": [
                 {
                   "feeds_into": [
-                    "ModelSamplingSD3"
+                    "sampler"
                   ],
-                  "fed_by": [],
-                  "occurrences": 2
+                  "fed_by": [
+                    "ComfySwitchNode",
+                    "ComfySwitchNode",
+                    "conditioning_op",
+                    "conditioning_op",
+                    "conditioning_op",
+                    "guidance",
+                    "sampler"
+                  ],
+                  "occurrences": 1
                 },
+                {
+                  "feeds_into": [
+                    "vae_decode"
+                  ],
+                  "fed_by": [
+                    "ComfySwitchNode",
+                    "ComfySwitchNode",
+                    "conditioning_op",
+                    "conditioning_op",
+                    "guidance",
+                    "sampler",
+                    "sampler"
+                  ],
+                  "occurrences": 1
+                }
+              ]
+            },
+            {
+              "role": "diffusion model / UNET loader",
+              "role_key": "model_loader",
+              "node_class": "UNETLoader",
+              "utility": false,
+              "frequency": "all members (1/1), 2 required instances",
+              "min_instances": 2,
+              "max_instances": 2,
+              "paired_or_multiple": true,
+              "distinct_instances": [
                 {
                   "feeds_into": [
                     "ComfySwitchNode",
@@ -10493,20 +10546,29 @@
               ]
             },
             {
-              "role": "unclassified node role",
-              "role_key": "other",
-              "node_class": "GetVideoComponents",
+              "role": "guider / sigma / scheduler",
+              "role_key": "guidance",
+              "node_class": "BasicScheduler",
               "utility": false,
-              "frequency": "all members (2/2)",
+              "frequency": "all members (1/1)",
               "min_instances": 1,
-              "max_instances": 2
+              "max_instances": 1
+            },
+            {
+              "role": "conditioning combine / edit",
+              "role_key": "conditioning_op",
+              "node_class": "BerniniConditioning",
+              "utility": false,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
             },
             {
               "role": "text encoder / CLIP loader",
               "role_key": "clip_loader",
               "node_class": "CLIPLoader",
               "utility": false,
-              "frequency": "all members (2/2)",
+              "frequency": "all members (1/1)",
               "min_instances": 1,
               "max_instances": 1
             },
@@ -10515,7 +10577,61 @@
               "role_key": "other",
               "node_class": "CreateVideo",
               "utility": false,
-              "frequency": "all members (2/2)",
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            },
+            {
+              "role": "unclassified node role",
+              "role_key": "other",
+              "node_class": "CustomCombo",
+              "utility": false,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            },
+            {
+              "role": "unclassified node role",
+              "role_key": "other",
+              "node_class": "GetVideoComponents",
+              "utility": false,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            },
+            {
+              "role": "diffusion sampler / denoiser",
+              "role_key": "sampler",
+              "node_class": "KSamplerSelect",
+              "utility": false,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            },
+            {
+              "role": "unclassified node role",
+              "role_key": "other",
+              "node_class": "MarkdownNote",
+              "utility": false,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            },
+            {
+              "role": "unclassified node role",
+              "role_key": "other",
+              "node_class": "RegexExtract",
+              "utility": false,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            },
+            {
+              "role": "guider / sigma / scheduler",
+              "role_key": "guidance",
+              "node_class": "SplitSigmas",
+              "utility": false,
+              "frequency": "all members (1/1)",
               "min_instances": 1,
               "max_instances": 1
             },
@@ -10524,7 +10640,7 @@
               "role_key": "vae_decode",
               "node_class": "VAEDecode",
               "utility": false,
-              "frequency": "all members (2/2)",
+              "frequency": "all members (1/1)",
               "min_instances": 1,
               "max_instances": 1
             },
@@ -10533,145 +10649,8 @@
               "role_key": "vae_loader",
               "node_class": "VAELoader",
               "utility": false,
-              "frequency": "all members (2/2)",
+              "frequency": "all members (1/1)",
               "min_instances": 1,
-              "max_instances": 1
-            }
-          ],
-          "optional_node_roles": [
-            {
-              "role": "diffusion sampler / denoiser",
-              "role_key": "sampler",
-              "node_class": "KSamplerAdvanced",
-              "utility": false,
-              "frequency": "1/2 members",
-              "min_instances": 0,
-              "max_instances": 2
-            },
-            {
-              "role": "LoRA / model patch loader",
-              "role_key": "lora_loader",
-              "node_class": "LoraLoaderModelOnly",
-              "utility": false,
-              "frequency": "1/2 members",
-              "min_instances": 0,
-              "max_instances": 2
-            },
-            {
-              "role": "unclassified node role",
-              "role_key": "other",
-              "node_class": "ModelSamplingSD3",
-              "utility": false,
-              "frequency": "1/2 members",
-              "min_instances": 0,
-              "max_instances": 2
-            },
-            {
-              "role": "diffusion sampler / denoiser",
-              "role_key": "sampler",
-              "node_class": "SamplerCustom",
-              "utility": false,
-              "frequency": "1/2 members",
-              "min_instances": 0,
-              "max_instances": 2
-            },
-            {
-              "role": "guider / sigma / scheduler",
-              "role_key": "guidance",
-              "node_class": "BasicScheduler",
-              "utility": false,
-              "frequency": "1/2 members",
-              "min_instances": 0,
-              "max_instances": 1
-            },
-            {
-              "role": "conditioning combine / edit",
-              "role_key": "conditioning_op",
-              "node_class": "BerniniConditioning",
-              "utility": false,
-              "frequency": "1/2 members",
-              "min_instances": 0,
-              "max_instances": 1
-            },
-            {
-              "role": "unclassified node role",
-              "role_key": "other",
-              "node_class": "CustomCombo",
-              "utility": false,
-              "frequency": "1/2 members",
-              "min_instances": 0,
-              "max_instances": 1
-            },
-            {
-              "role": "diffusion sampler / denoiser",
-              "role_key": "sampler",
-              "node_class": "KSamplerSelect",
-              "utility": false,
-              "frequency": "1/2 members",
-              "min_instances": 0,
-              "max_instances": 1
-            },
-            {
-              "role": "image input / load",
-              "role_key": "image_loader",
-              "node_class": "LoadImage",
-              "utility": false,
-              "frequency": "1/2 members",
-              "min_instances": 0,
-              "max_instances": 1
-            },
-            {
-              "role": "video input / load",
-              "role_key": "video_loader",
-              "node_class": "LoadVideo",
-              "utility": false,
-              "frequency": "1/2 members",
-              "min_instances": 0,
-              "max_instances": 1
-            },
-            {
-              "role": "unclassified node role",
-              "role_key": "other",
-              "node_class": "MarkdownNote",
-              "utility": false,
-              "frequency": "1/2 members",
-              "min_instances": 0,
-              "max_instances": 1
-            },
-            {
-              "role": "unclassified node role",
-              "role_key": "other",
-              "node_class": "RegexExtract",
-              "utility": false,
-              "frequency": "1/2 members",
-              "min_instances": 0,
-              "max_instances": 1
-            },
-            {
-              "role": "guider / sigma / scheduler",
-              "role_key": "guidance",
-              "node_class": "SplitSigmas",
-              "utility": false,
-              "frequency": "1/2 members",
-              "min_instances": 0,
-              "max_instances": 1
-            },
-            {
-              "role": "save / preview / combine output",
-              "role_key": "save_output",
-              "node_class": "VHS_VideoCombine",
-              "utility": false,
-              "frequency": "1/2 members",
-              "min_instances": 0,
-              "max_instances": 1
-            },
-            {
-              "role": "unclassified node role",
-              "role_key": "other",
-              "node_class": "Wan22FunControlToVideo",
-              "utility": false,
-              "frequency": "1/2 members",
-              "min_instances": 0,
               "max_instances": 1
             },
             {
@@ -10679,8 +10658,8 @@
               "role_key": "other",
               "node_class": "ComfySwitchNode",
               "utility": true,
-              "frequency": "1/2 members",
-              "min_instances": 0,
+              "frequency": "all members (1/1)",
+              "min_instances": 5,
               "max_instances": 5
             },
             {
@@ -10688,8 +10667,8 @@
               "role_key": "other",
               "node_class": "PrimitiveInt",
               "utility": true,
-              "frequency": "1/2 members",
-              "min_instances": 0,
+              "frequency": "all members (1/1)",
+              "min_instances": 5,
               "max_instances": 5
             },
             {
@@ -10697,8 +10676,8 @@
               "role_key": "other",
               "node_class": "PrimitiveFloat",
               "utility": true,
-              "frequency": "1/2 members",
-              "min_instances": 0,
+              "frequency": "all members (1/1)",
+              "min_instances": 2,
               "max_instances": 2
             },
             {
@@ -10706,8 +10685,8 @@
               "role_key": "other",
               "node_class": "PreviewAny",
               "utility": true,
-              "frequency": "1/2 members",
-              "min_instances": 0,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
               "max_instances": 1
             },
             {
@@ -10715,8 +10694,8 @@
               "role_key": "other",
               "node_class": "PrimitiveBoolean",
               "utility": true,
-              "frequency": "1/2 members",
-              "min_instances": 0,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
               "max_instances": 1
             },
             {
@@ -10724,8 +10703,8 @@
               "role_key": "other",
               "node_class": "PrimitiveStringMultiline",
               "utility": true,
-              "frequency": "1/2 members",
-              "min_instances": 0,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
               "max_instances": 1
             },
             {
@@ -10733,8 +10712,8 @@
               "role_key": "other",
               "node_class": "StringConcatenate",
               "utility": true,
-              "frequency": "1/2 members",
-              "min_instances": 0,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
               "max_instances": 1
             },
             {
@@ -10742,45 +10721,235 @@
               "role_key": "other",
               "node_class": "StringReplace",
               "utility": true,
-              "frequency": "1/2 members",
-              "min_instances": 0,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
               "max_instances": 1
             }
           ],
+          "optional_node_roles": [],
           "connection_patterns": [
+            {
+              "from_role": "ComfySwitchNode",
+              "to_role": "guidance",
+              "data_type": "INT",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "ComfySwitchNode",
+              "to_role": "sampler",
+              "data_type": "FLOAT",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "ComfySwitchNode",
+              "to_role": "sampler",
+              "data_type": "MODEL",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "CustomCombo",
+              "to_role": "PrimitiveInt",
+              "data_type": "INT",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "GetVideoComponents",
+              "to_role": "CreateVideo",
+              "data_type": "AUDIO",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "GetVideoComponents",
+              "to_role": "CreateVideo",
+              "data_type": "FLOAT",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "GetVideoComponents",
+              "to_role": "conditioning_op",
+              "data_type": "IMAGE",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "PreviewAny",
+              "to_role": "StringReplace",
+              "data_type": "STRING",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "PrimitiveBoolean",
+              "to_role": "ComfySwitchNode",
+              "data_type": "BOOLEAN",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "PrimitiveFloat",
+              "to_role": "ComfySwitchNode",
+              "data_type": "FLOAT",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "PrimitiveInt",
+              "to_role": "ComfySwitchNode",
+              "data_type": "INT",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "PrimitiveInt",
+              "to_role": "PreviewAny",
+              "data_type": "INT",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "PrimitiveStringMultiline",
+              "to_role": "StringConcatenate",
+              "data_type": "STRING",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "RegexExtract",
+              "to_role": "StringConcatenate",
+              "data_type": "STRING",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "StringConcatenate",
+              "to_role": "text_encode",
+              "data_type": "STRING",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "StringReplace",
+              "to_role": "RegexExtract",
+              "data_type": "STRING",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
             {
               "from_role": "clip_loader",
               "to_role": "text_encode",
               "data_type": "CLIP",
-              "frequency": "all members (2/2)",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "conditioning_op",
+              "to_role": "sampler",
+              "data_type": "CONDITIONING",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "conditioning_op",
+              "to_role": "sampler",
+              "data_type": "LATENT",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "guidance",
+              "to_role": "guidance",
+              "data_type": "SIGMAS",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "guidance",
+              "to_role": "sampler",
+              "data_type": "SIGMAS",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "lora_loader",
+              "to_role": "ComfySwitchNode",
+              "data_type": "MODEL",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "model_loader",
+              "to_role": "ComfySwitchNode",
+              "data_type": "MODEL",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "model_loader",
+              "to_role": "guidance",
+              "data_type": "MODEL",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "model_loader",
+              "to_role": "lora_loader",
+              "data_type": "MODEL",
+              "frequency": "all members (1/1)",
               "invariant": true
             },
             {
               "from_role": "sampler",
               "to_role": "sampler",
               "data_type": "LATENT",
-              "frequency": "all members (2/2)",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "sampler",
+              "to_role": "sampler",
+              "data_type": "SAMPLER",
+              "frequency": "all members (1/1)",
               "invariant": true
             },
             {
               "from_role": "sampler",
               "to_role": "vae_decode",
               "data_type": "LATENT",
-              "frequency": "all members (2/2)",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "text_encode",
+              "to_role": "conditioning_op",
+              "data_type": "CONDITIONING",
+              "frequency": "all members (1/1)",
               "invariant": true
             },
             {
               "from_role": "vae_decode",
               "to_role": "CreateVideo",
               "data_type": "IMAGE",
-              "frequency": "all members (2/2)",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "vae_loader",
+              "to_role": "conditioning_op",
+              "data_type": "VAE",
+              "frequency": "all members (1/1)",
               "invariant": true
             },
             {
               "from_role": "vae_loader",
               "to_role": "vae_decode",
               "data_type": "VAE",
-              "frequency": "all members (2/2)",
+              "frequency": "all members (1/1)",
               "invariant": true
             }
           ],
@@ -10858,7 +11027,7 @@
               }
             ]
           },
-          "param_variability": "constant across members: CLIPLoader; varies across members: CreateVideo, GetVideoComponents, VAEDecode, VAELoader",
+          "param_variability": "single member - no cross-member variability to report",
           "catalog_category": {
             "primary": "Video generation and editing",
             "distribution": {
@@ -10867,15 +11036,13 @@
             "pure": true,
             "spans_multiple": false,
             "coverage": 1,
-            "uncategorized": 1
+            "uncategorized": 0
           },
           "unresolved_nodes": [
             "BerniniConditioning",
             "MarkdownNote"
           ],
-          "custom_nodes": [
-            "VHS_VideoCombine"
-          ]
+          "custom_nodes": []
         },
         {
           "id": "video_to_video__ltx_2",
@@ -10897,16 +11064,14 @@
           "member_count": 1,
           "user_intent": {
             "media": "video",
-            "task": "upscale",
+            "task": "controlnet",
             "model_families": [
-              "LTX-2",
-              "Lotus"
+              "LTX-2"
             ],
-            "when_to_use": "Use to upscale / enhance a video using LTX-2, Lotus.",
+            "when_to_use": "Use to generate a video guided by a control map (canny/depth/pose) using LTX-2.",
             "example_requests": [
               "build a video workflow using LTX-2",
-              "build a video workflow using Lotus",
-              "upscale / enhance a video using LTX-2"
+              "generate a video guided by a control map (canny/depth/pose) using LTX-2"
             ]
           },
           "description": "Generates depth-controlled video with LTX-2: motion and structure follow a depth-reference video alongside text prompting, optional first-frame image conditioning, with optional synchronized audio.",
@@ -12069,6 +12234,417 @@
             "Reroute"
           ],
           "custom_nodes": []
+        },
+        {
+          "id": "video_to_video__wan_2_2",
+          "model": "WAN 2.2",
+          "execution": "local",
+          "source": "custom",
+          "uses_api_nodes": false,
+          "api_node_classes": [],
+          "member_files": [
+            "video_wan2_2_14B_fun_control"
+          ],
+          "member_descriptions": [],
+          "member_count": 1,
+          "user_intent": {
+            "media": "video",
+            "task": "controlnet",
+            "model_families": [
+              "WAN 2.2"
+            ],
+            "when_to_use": "Use to generate a video guided by a control map (canny/depth/pose) using WAN 2.2.",
+            "example_requests": [
+              "build a video workflow using WAN 2.2",
+              "generate a video guided by a control map (canny/depth/pose) using WAN 2.2"
+            ]
+          },
+          "description": "Generate a video guided by a control map (canny/depth/pose) using WAN 2.2. Structurally it loads a diffusion model; uses a VAE; encodes a text prompt; runs a diffusion sampler; decodes the latent to pixels. Boundary inputs: IMAGE, VIDEO; outputs: AUDIO, IMAGE.",
+          "description_source": "synthesized",
+          "node_clusters": [
+            {
+              "cluster": "inputs",
+              "nodes": [
+                "LoadImage",
+                "LoadVideo"
+              ]
+            },
+            {
+              "cluster": "model loading",
+              "nodes": [
+                "CLIPLoader",
+                "UNETLoader (x2)",
+                "VAELoader"
+              ]
+            },
+            {
+              "cluster": "conditioning",
+              "nodes": [
+                "CLIPTextEncode (x2)"
+              ]
+            },
+            {
+              "cluster": "sampling",
+              "nodes": [
+                "KSamplerAdvanced (x2)"
+              ]
+            },
+            {
+              "cluster": "decoding",
+              "nodes": [
+                "VAEDecode"
+              ]
+            },
+            {
+              "cluster": "output",
+              "nodes": [
+                "VHS_VideoCombine"
+              ]
+            },
+            {
+              "cluster": "other operations",
+              "nodes": [
+                "CreateVideo",
+                "GetVideoComponents (x2)",
+                "ModelSamplingSD3 (x2)",
+                "Wan22FunControlToVideo"
+              ]
+            }
+          ],
+          "required_node_roles": [
+            {
+              "role": "prompt text encoding",
+              "role_key": "text_encode",
+              "node_class": "CLIPTextEncode",
+              "utility": false,
+              "frequency": "all members (1/1), 2 required instances",
+              "min_instances": 2,
+              "max_instances": 2,
+              "paired_or_multiple": true
+            },
+            {
+              "role": "unclassified node role",
+              "role_key": "other",
+              "node_class": "GetVideoComponents",
+              "utility": false,
+              "frequency": "all members (1/1), 2 required instances",
+              "min_instances": 2,
+              "max_instances": 2,
+              "paired_or_multiple": true,
+              "distinct_instances": [
+                {
+                  "feeds_into": [
+                    "Wan22FunControlToVideo"
+                  ],
+                  "fed_by": [
+                    "video_loader"
+                  ],
+                  "occurrences": 1
+                },
+                {
+                  "feeds_into": [
+                    "save_output",
+                    "save_output",
+                    "save_output"
+                  ],
+                  "fed_by": [
+                    "CreateVideo"
+                  ],
+                  "occurrences": 1
+                }
+              ]
+            },
+            {
+              "role": "diffusion sampler / denoiser",
+              "role_key": "sampler",
+              "node_class": "KSamplerAdvanced",
+              "utility": false,
+              "frequency": "all members (1/1), 2 required instances",
+              "min_instances": 2,
+              "max_instances": 2,
+              "paired_or_multiple": true,
+              "distinct_instances": [
+                {
+                  "feeds_into": [
+                    "sampler"
+                  ],
+                  "fed_by": [
+                    "ModelSamplingSD3",
+                    "Wan22FunControlToVideo",
+                    "Wan22FunControlToVideo",
+                    "Wan22FunControlToVideo"
+                  ],
+                  "occurrences": 1
+                },
+                {
+                  "feeds_into": [
+                    "vae_decode"
+                  ],
+                  "fed_by": [
+                    "ModelSamplingSD3",
+                    "Wan22FunControlToVideo",
+                    "Wan22FunControlToVideo",
+                    "sampler"
+                  ],
+                  "occurrences": 1
+                }
+              ]
+            },
+            {
+              "role": "unclassified node role",
+              "role_key": "other",
+              "node_class": "ModelSamplingSD3",
+              "utility": false,
+              "frequency": "all members (1/1), 2 required instances",
+              "min_instances": 2,
+              "max_instances": 2,
+              "paired_or_multiple": true
+            },
+            {
+              "role": "diffusion model / UNET loader",
+              "role_key": "model_loader",
+              "node_class": "UNETLoader",
+              "utility": false,
+              "frequency": "all members (1/1), 2 required instances",
+              "min_instances": 2,
+              "max_instances": 2,
+              "paired_or_multiple": true
+            },
+            {
+              "role": "text encoder / CLIP loader",
+              "role_key": "clip_loader",
+              "node_class": "CLIPLoader",
+              "utility": false,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            },
+            {
+              "role": "unclassified node role",
+              "role_key": "other",
+              "node_class": "CreateVideo",
+              "utility": false,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            },
+            {
+              "role": "image input / load",
+              "role_key": "image_loader",
+              "node_class": "LoadImage",
+              "utility": false,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            },
+            {
+              "role": "video input / load",
+              "role_key": "video_loader",
+              "node_class": "LoadVideo",
+              "utility": false,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            },
+            {
+              "role": "latent -> pixel decode",
+              "role_key": "vae_decode",
+              "node_class": "VAEDecode",
+              "utility": false,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            },
+            {
+              "role": "VAE loader",
+              "role_key": "vae_loader",
+              "node_class": "VAELoader",
+              "utility": false,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            },
+            {
+              "role": "save / preview / combine output",
+              "role_key": "save_output",
+              "node_class": "VHS_VideoCombine",
+              "utility": false,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            },
+            {
+              "role": "unclassified node role",
+              "role_key": "other",
+              "node_class": "Wan22FunControlToVideo",
+              "utility": false,
+              "frequency": "all members (1/1)",
+              "min_instances": 1,
+              "max_instances": 1
+            }
+          ],
+          "optional_node_roles": [],
+          "connection_patterns": [
+            {
+              "from_role": "CreateVideo",
+              "to_role": "GetVideoComponents",
+              "data_type": "VIDEO",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "GetVideoComponents",
+              "to_role": "Wan22FunControlToVideo",
+              "data_type": "IMAGE",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "GetVideoComponents",
+              "to_role": "save_output",
+              "data_type": "AUDIO",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "GetVideoComponents",
+              "to_role": "save_output",
+              "data_type": "FLOAT",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "GetVideoComponents",
+              "to_role": "save_output",
+              "data_type": "IMAGE",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "ModelSamplingSD3",
+              "to_role": "sampler",
+              "data_type": "MODEL",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "Wan22FunControlToVideo",
+              "to_role": "sampler",
+              "data_type": "CONDITIONING",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "Wan22FunControlToVideo",
+              "to_role": "sampler",
+              "data_type": "LATENT",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "clip_loader",
+              "to_role": "text_encode",
+              "data_type": "CLIP",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "image_loader",
+              "to_role": "Wan22FunControlToVideo",
+              "data_type": "IMAGE",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "model_loader",
+              "to_role": "ModelSamplingSD3",
+              "data_type": "MODEL",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "sampler",
+              "to_role": "sampler",
+              "data_type": "LATENT",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "sampler",
+              "to_role": "vae_decode",
+              "data_type": "LATENT",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "text_encode",
+              "to_role": "Wan22FunControlToVideo",
+              "data_type": "CONDITIONING",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "vae_decode",
+              "to_role": "CreateVideo",
+              "data_type": "IMAGE",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "vae_loader",
+              "to_role": "Wan22FunControlToVideo",
+              "data_type": "VAE",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "vae_loader",
+              "to_role": "vae_decode",
+              "data_type": "VAE",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            },
+            {
+              "from_role": "video_loader",
+              "to_role": "GetVideoComponents",
+              "data_type": "VIDEO",
+              "frequency": "all members (1/1)",
+              "invariant": true
+            }
+          ],
+          "boundary_ports": {
+            "inputs": [
+              {
+                "data_type": "IMAGE",
+                "role": "image_loader"
+              },
+              {
+                "data_type": "VIDEO",
+                "role": "video_loader"
+              }
+            ],
+            "outputs": [
+              {
+                "data_type": "AUDIO",
+                "role": "save_output"
+              },
+              {
+                "data_type": "IMAGE",
+                "role": "save_output"
+              }
+            ]
+          },
+          "param_variability": "single member - no cross-member variability to report",
+          "catalog_category": {
+            "primary": null,
+            "distribution": {},
+            "pure": false,
+            "coverage": 0
+          },
+          "unresolved_nodes": [],
+          "custom_nodes": [
+            "VHS_VideoCombine"
+          ]
         }
       ]
     },
@@ -14555,13 +15131,11 @@
             "media": "image",
             "task": "controlnet",
             "model_families": [
-              "Z-Image",
-              "Lotus"
+              "Z-Image"
             ],
-            "when_to_use": "Use to generate an image guided by a control map (canny/depth/pose) using Z-Image, Lotus.",
+            "when_to_use": "Use to generate an image guided by a control map (canny/depth/pose) using Z-Image.",
             "example_requests": [
               "build an image workflow using Z-Image",
-              "build an image workflow using Lotus",
               "generate an image guided by a control map (canny/depth/pose) using Z-Image"
             ]
           },
@@ -16006,14 +16580,14 @@
           "member_count": 1,
           "user_intent": {
             "media": "video",
-            "task": "frame_interpolation",
+            "task": "upscale",
             "model_families": [
               "Topaz"
             ],
-            "when_to_use": "Use to increase a video's frame rate via interpolation using Topaz.",
+            "when_to_use": "Use to upscale / enhance a video using Topaz.",
             "example_requests": [
               "build a video workflow using Topaz",
-              "increase a video's frame rate via interpolation using Topaz"
+              "upscale / enhance a video using Topaz"
             ]
           },
           "description": "API video upscaling via Topaz AI. 1 video -> 1 enhanced video output. Supports resolution upscaling (Starlight/Astra Fast model) and frame interpolation (apo-8 model).",
@@ -20186,14 +20760,14 @@
           "member_count": 1,
           "user_intent": {
             "media": "image",
-            "task": "outpaint",
+            "task": "inpaint",
             "model_families": [
               "Flux"
             ],
-            "when_to_use": "Use to outpaint / extend an image beyond its borders using Flux.",
+            "when_to_use": "Use to inpaint masked regions of an image using Flux.",
             "example_requests": [
               "build an image workflow using Flux",
-              "outpaint / extend an image beyond its borders using Flux"
+              "inpaint masked regions of an image using Flux"
             ]
           },
           "description": "Inpaints masked image regions using Flux.1 fill [dev], Black Forest Labs' inpainting/outpainting model.",
@@ -20505,16 +21079,16 @@
           "member_count": 2,
           "user_intent": {
             "media": "video",
-            "task": "text_to_video",
+            "task": "video_inpaint",
             "model_families": [
               "WAN VACE",
               "SAM3"
             ],
-            "when_to_use": "Use to generate a video from a text prompt using WAN VACE, SAM3.",
+            "when_to_use": "Use to inpaint regions of a video using WAN VACE, SAM3.",
             "example_requests": [
               "build a video workflow using WAN VACE",
               "build a video workflow using SAM3",
-              "generate a video from a text prompt using WAN VACE"
+              "inpaint regions of a video using WAN VACE"
             ]
           },
           "description": "Removes objects from video by inpainting masked regions using Wan 2.1 VACE, with SAM3 text-guided segmentation and optional Lightning LoRA turbo mode. | Video Inpaint(Wan2.1 VACE) blueprint",
@@ -22099,8 +22673,8 @@
       "model_count": 1,
       "models": [
         {
-          "id": "character__wan",
-          "model": "WAN",
+          "id": "character__scail",
+          "model": "SCAIL",
           "execution": "local",
           "source": "official",
           "uses_api_nodes": false,
@@ -22124,20 +22698,16 @@
           "member_count": 2,
           "user_intent": {
             "media": "video",
-            "task": "image_to_video",
+            "task": "character_replacement",
             "model_families": [
               "Anima",
-              "SAM3",
-              "SCAIL",
-              "WAN"
+              "SCAIL"
             ],
-            "when_to_use": "Use to generate a video from an input image using Anima, SAM3, SCAIL, WAN.",
+            "when_to_use": "Use to replace a character in a video using Anima, SCAIL.",
             "example_requests": [
               "build a video workflow using Anima",
-              "build a video workflow using SAM3",
               "build a video workflow using SCAIL",
-              "build a video workflow using WAN",
-              "generate a video from an input image using Anima"
+              "replace a character in a video using Anima"
             ]
           },
           "description": "Replaces a character in a video with a reference image using the SCAIL-2 model for end-to-end controlled animation without intermediate pose maps. Key inputs include a source video, a reference character image, and optional text prompts for style or context. Suitable for animated or live-action footage, multi-character scenes, and creative video editing where direct pose-free animation is needed; works best with moderate-length videos.",

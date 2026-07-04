@@ -1,6 +1,6 @@
 # Workflow recipe database  (task -> model -> node clusters)
 
-- Tasks: 27 | task+model recipes: 71
+- Tasks: 27 | task+model recipes: 72
 - Self-contained: every recipe has user_intent + description + node clusters. No human annotation step.
 
 # Image Tools  (`image_tools`)  -  18 workflow(s), 2 model(s)
@@ -34,7 +34,7 @@
 
 ## Image Tools / BiRefNet  (`image_tools__birefnet`)  -  1 workflow(s)  -  source: official
 - execution: local
-- when to use: Use to segment an image using BiRefNet.
+- when to use: Use to remove the background from an image using BiRefNet.
 - example request: "build an image workflow using BiRefNet"
 - description: Removes or replaces image backgrounds using BiRefNet segmentation and alpha compositing.
 - member workflows:
@@ -175,7 +175,7 @@
 
 ## Text to Image / Ideogram  (`text_to_image__ideogram`)  -  1 workflow(s)  -  source: official
 - execution: local
-- when to use: Use to generate an image guided by a control map (canny/depth/pose) using Ideogram.
+- when to use: Use to generate an image from a text prompt using Ideogram.
 - example request: "build an image workflow using Ideogram"
 - description: This subgraph generates images using Ideogram v4, accepting plain text or structured JSON prompts for precise layout and style control. It suits detailed illustrations, concept art, or marketing visuals needing predictable composition and color palettes. The model uses flow-matching with asymmetric guidance, so no negative prompt is needed, but JSON prompts yield the best results.
 - member workflows:
@@ -253,7 +253,7 @@
 
 ## Preprocessors / Estimation / MediaPipe  (`preprocessors_estimation__mediapipe`)  -  2 workflow(s)  -  source: official
 - execution: local
-- when to use: Use to generate a video using MediaPipe.
+- when to use: Use to detect facial landmarks using MediaPipe.
 - example request: "build an image workflow using MediaPipe"
 - description: Detects facial landmarks from a video using MediaPipe, outputting landmark data, face bounding boxes, and an optional face-region mask. | Detects facial landmarks from an image using MediaPipe, outputting landmark data, face bounding boxes, and an optional face-region mask.
 - member workflows:
@@ -331,6 +331,22 @@
 - paired/multiple required: ReferenceLatent x2
 - optional roles: ConditioningZeroOut, LoadImage, SaveImage
 
+## Image Edit / Bernini  (`image_edit__bernini`)  -  1 workflow(s)  -  source: official
+- execution: local
+- when to use: Use to edit an existing image using Bernini.
+- example request: "build an image workflow using Bernini"
+- description: Edits a single image using a text prompt, leveraging Bernini-R's latent semantic planning for changes like object addition, removal, or style transfer. Ideal for creative edits requiring precise semantic understanding, such as adding a snowman to a scene or altering an object's appearance.
+- member workflows:
+    - image_edit_bernini_r
+- node clusters (required structure):
+    - model loading: CLIPLoader, LoraLoaderModelOnly (x2), UNETLoader (x2), VAELoader
+    - conditioning: BasicScheduler, BerniniConditioning, CLIPTextEncode (x2), SplitSigmas
+    - sampling: KSamplerSelect, SamplerCustom (x2)
+    - decoding: VAEDecode
+    - other operations: ComfySwitchNode (x5), CustomCombo, MarkdownNote, PreviewAny, PrimitiveBoolean, PrimitiveFloat (x2), PrimitiveInt (x5), PrimitiveStringMultiline, RegexExtract, StringConcatenate, StringReplace
+- paired/multiple required: CLIPTextEncode x2, LoraLoaderModelOnly x2, SamplerCustom x2, UNETLoader x2
+- unresolved nodes: BerniniConditioning, MarkdownNote
+
 ## Image Edit / FireRed  (`image_edit__firered`)  -  1 workflow(s)  -  source: official
 - execution: local
 - when to use: Use to edit an existing image using FireRed.
@@ -378,22 +394,6 @@
     - other operations: FluxKontextMultiReferenceLatentMethod (x2), ImageScaleToTotalPixels
 - paired/multiple required: FluxGuidance x2, FluxKontextMultiReferenceLatentMethod x2, TextEncodeQwenImageEdit x2
 
-## Image Edit / WAN 2.2  (`image_edit__wan_2_2`)  -  1 workflow(s)  -  source: official
-- execution: local
-- when to use: Use to generate a video from a text prompt using Bernini, WAN 2.2.
-- example request: "build a video workflow using Bernini"
-- description: Edits a single image using a text prompt, leveraging Bernini-R's latent semantic planning for changes like object addition, removal, or style transfer. Ideal for creative edits requiring precise semantic understanding, such as adding a snowman to a scene or altering an object's appearance.
-- member workflows:
-    - image_edit_bernini_r
-- node clusters (required structure):
-    - model loading: CLIPLoader, LoraLoaderModelOnly (x2), UNETLoader (x2), VAELoader
-    - conditioning: BasicScheduler, BerniniConditioning, CLIPTextEncode (x2), SplitSigmas
-    - sampling: KSamplerSelect, SamplerCustom (x2)
-    - decoding: VAEDecode
-    - other operations: ComfySwitchNode (x5), CustomCombo, MarkdownNote, PreviewAny, PrimitiveBoolean, PrimitiveFloat (x2), PrimitiveInt (x5), PrimitiveStringMultiline, RegexExtract, StringConcatenate, StringReplace
-- paired/multiple required: CLIPTextEncode x2, LoraLoaderModelOnly x2, SamplerCustom x2, UNETLoader x2
-- unresolved nodes: BerniniConditioning, MarkdownNote
-
 
 # Image to Video  (`image_to_video`)  -  7 workflow(s), 2 model(s)
 
@@ -438,11 +438,11 @@
 - unresolved nodes: MarkdownNote, Note
 
 
-# Video to Video  (`video_to_video`)  -  7 workflow(s), 3 model(s)
+# Video to Video  (`video_to_video`)  -  7 workflow(s), 4 model(s)
 
 ## Video to Video / WAN VACE  (`video_to_video__wan_vace`)  -  4 workflow(s)  -  source: custom
 - execution: local
-- when to use: Use to generate a video from a text prompt using WAN VACE, WAN 2.2.
+- when to use: Use to edit an existing video using WAN VACE, WAN 2.2.
 - example request: "build a video workflow using WAN VACE"
 - description: [Local] image editing via Wan. 3 image inputs -> 1 image output. Performs advanced image-to-image editing and transformations.
 - member workflows:
@@ -458,26 +458,25 @@
 - paired/multiple required: CLIPTextEncode x2
 - optional roles: DiffusionModelLoaderKJ, DiffusionModelSelector, KSamplerAdvanced, LoadImage, LoraLoaderModelOnly, PreviewImage, BatchImagesNode, ImagePadForOutpaint, ImageStitch, ImageToMask, Int, KSampler
 
-## Video to Video / WAN 2.2  (`video_to_video__wan_2_2`)  -  2 workflow(s)  -  source: mixed
+## Video to Video / Depth Anything  (`video_to_video__depth_anything`)  -  1 workflow(s)  -  source: official
 - execution: local
-- when to use: Use to generate a video from a text prompt using WAN 2.2, Bernini, Depth Anything.
-- example request: "build a video workflow using WAN 2.2"
+- when to use: Use to edit an existing video using Bernini, Depth Anything.
+- example request: "build a video workflow using Bernini"
 - description: This subgraph uses Depth Anything 3 to predict spatially consistent geometry from any number of images or video frames, with or without known camera poses. It outputs depth maps, camera poses, and optionally 3D Gaussian parameters for novel view synthesis.
 - member workflows:
     - video_edit_bernini_r
-    - video_wan2_2_14B_fun_control
 - node clusters (required structure):
-    - model loading: CLIPLoader, UNETLoader (x2), VAELoader
-    - conditioning: CLIPTextEncode (x2)
+    - model loading: CLIPLoader, LoraLoaderModelOnly (x2), UNETLoader (x2), VAELoader
+    - conditioning: BasicScheduler, BerniniConditioning, CLIPTextEncode (x2), SplitSigmas
+    - sampling: KSamplerSelect, SamplerCustom (x2)
     - decoding: VAEDecode
-    - other operations: CreateVideo, GetVideoComponents
-- paired/multiple required: CLIPTextEncode x2, UNETLoader x2
-- optional roles: KSamplerAdvanced, LoraLoaderModelOnly, ModelSamplingSD3, SamplerCustom, BasicScheduler, BerniniConditioning, CustomCombo, KSamplerSelect, LoadImage, LoadVideo, MarkdownNote, RegexExtract
+    - other operations: ComfySwitchNode (x5), CreateVideo, CustomCombo, GetVideoComponents, MarkdownNote, PreviewAny, PrimitiveBoolean, PrimitiveFloat (x2), PrimitiveInt (x5), PrimitiveStringMultiline, RegexExtract, StringConcatenate, StringReplace
+- paired/multiple required: CLIPTextEncode x2, LoraLoaderModelOnly x2, SamplerCustom x2, UNETLoader x2
 - unresolved nodes: BerniniConditioning, MarkdownNote
 
 ## Video to Video / LTX-2  (`video_to_video__ltx_2`)  -  1 workflow(s)  -  source: official
 - execution: local
-- when to use: Use to upscale / enhance a video using LTX-2, Lotus.
+- when to use: Use to generate a video guided by a control map (canny/depth/pose) using LTX-2.
 - example request: "build a video workflow using LTX-2"
 - description: Generates depth-controlled video with LTX-2: motion and structure follow a depth-reference video alongside text prompting, optional first-frame image conditioning, with optional synchronized audio.
 - member workflows:
@@ -491,6 +490,23 @@
     - other operations: CreateVideo, DisableNoise, EmptyLTXVLatentVideo, GetImageSize, GetVideoComponents, ImageFromBatch, ImageInvert, ImageScaleBy, LTXVAddGuide, LTXVConcatAVLatent (x2), LTXVCropGuides, LTXVImgToVideoInplace (x2), LTXVScheduler, LTXVSeparateAVLatent (x2), MarkdownNote, PrimitiveFloat, PrimitiveInt, RandomNoise (x2), Reroute, ResizeImageMaskNode, SetFirstSigma
 - paired/multiple required: KSamplerSelect x3, SamplerCustomAdvanced x3, CFGGuider x2, CLIPTextEncode x2, LTXVConcatAVLatent x2, LTXVImgToVideoInplace x2, LTXVSeparateAVLatent x2, LoraLoaderModelOnly x2, RandomNoise x2, VAEDecode x2
 - unresolved nodes: MarkdownNote, Reroute
+
+## Video to Video / WAN 2.2  (`video_to_video__wan_2_2`)  -  1 workflow(s)  -  source: custom
+- execution: local
+- when to use: Use to generate a video guided by a control map (canny/depth/pose) using WAN 2.2.
+- example request: "build a video workflow using WAN 2.2"
+- description: Generate a video guided by a control map (canny/depth/pose) using WAN 2.2. Structurally it loads a diffusion model; uses a VAE; encodes a text prompt; runs a diffusion sampler; decodes the latent to pixels. Boundary inputs: IMAGE, VIDEO; outputs: AUDIO, IMAGE.
+- member workflows:
+    - video_wan2_2_14B_fun_control
+- node clusters (required structure):
+    - inputs: LoadImage, LoadVideo
+    - model loading: CLIPLoader, UNETLoader (x2), VAELoader
+    - conditioning: CLIPTextEncode (x2)
+    - sampling: KSamplerAdvanced (x2)
+    - decoding: VAEDecode
+    - output: VHS_VideoCombine
+    - other operations: CreateVideo, GetVideoComponents (x2), ModelSamplingSD3 (x2), Wan22FunControlToVideo
+- paired/multiple required: CLIPTextEncode x2, GetVideoComponents x2, KSamplerAdvanced x2, ModelSamplingSD3 x2, UNETLoader x2
 
 
 # API / Partner Nodes - Image Edit  (`api_partner_nodes_image_edit`)  -  6 workflow(s), 4 model(s)
@@ -608,7 +624,7 @@
 
 ## Image Edit with ControlNet / Z-Image  (`image_edit_with_controlnet__z_image`)  -  5 workflow(s)  -  source: mixed
 - execution: local
-- when to use: Use to generate an image guided by a control map (canny/depth/pose) using Z-Image, Lotus.
+- when to use: Use to generate an image guided by a control map (canny/depth/pose) using Z-Image.
 - example request: "build an image workflow using Z-Image"
 - description: Generates an image from a Canny edge map using Z-Image-Turbo, with text conditioning. | Generates an image from a depth map using Z-Image-Turbo with text conditioning. | Generates an image from pose keypoints using Z-Image-Turbo with text conditioning. | Generates images from a text prompt and ControlNet conditioning (e.g. depth, canny) using Z-Image-Turbo. | [Local] image editing via Z-Image-Turbo. 1 image input -> 1 image output. Uses ControlNet for precise and controlled image editing.
 - member workflows:
@@ -721,7 +737,7 @@
 
 ## API / Partner Nodes - Upscale / Topaz  (`api_partner_nodes_upscale__topaz`)  -  1 workflow(s)  -  source: custom
 - execution: api (API nodes: TopazVideoEnhance)
-- when to use: Use to increase a video's frame rate via interpolation using Topaz.
+- when to use: Use to upscale / enhance a video using Topaz.
 - example request: "build a video workflow using Topaz"
 - description: API video upscaling via Topaz AI. 1 video -> 1 enhanced video output. Supports resolution upscaling (Starlight/Astra Fast model) and frame interpolation (apo-8 model).
 - member workflows:
@@ -967,7 +983,7 @@
 
 ## Inpaint / Outpaint / Flux  (`inpaint_outpaint__flux`)  -  1 workflow(s)  -  source: official
 - execution: local
-- when to use: Use to outpaint / extend an image beyond its borders using Flux.
+- when to use: Use to inpaint masked regions of an image using Flux.
 - example request: "build an image workflow using Flux"
 - description: Inpaints masked image regions using Flux.1 fill [dev], Black Forest Labs' inpainting/outpainting model.
 - member workflows:
@@ -984,7 +1000,7 @@
 
 ## Video Inpaint / WAN VACE  (`video_inpaint__wan_vace`)  -  2 workflow(s)  -  source: official
 - execution: local
-- when to use: Use to generate a video from a text prompt using WAN VACE, SAM3.
+- when to use: Use to inpaint regions of a video using WAN VACE, SAM3.
 - example request: "build a video workflow using WAN VACE"
 - description: Removes objects from video by inpainting masked regions using Wan 2.1 VACE, with SAM3 text-guided segmentation and optional Lightning LoRA turbo mode. | Video Inpaint(Wan2.1 VACE) blueprint
 - member workflows:
@@ -1035,9 +1051,9 @@
 
 # Character  (`character`)  -  2 workflow(s), 1 model(s)
 
-## Character / WAN  (`character__wan`)  -  2 workflow(s)  -  source: official
+## Character / SCAIL  (`character__scail`)  -  2 workflow(s)  -  source: official
 - execution: local
-- when to use: Use to generate a video from an input image using Anima, SAM3, SCAIL, WAN.
+- when to use: Use to replace a character in a video using Anima, SCAIL.
 - example request: "build a video workflow using Anima"
 - description: Replaces a character in a video with a reference image using the SCAIL-2 model for end-to-end controlled animation without intermediate pose maps. Key inputs include a source video, a reference character image, and optional text prompts for style or context. Suitable for animated or live-action footage, multi-character scenes, and creative video editing where direct pose-free animation is needed; works best with moderate-length videos.
 - member workflows:
