@@ -27,6 +27,11 @@ if str(_project_root) not in sys.path:
 from dotenv import load_dotenv
 load_dotenv(_project_root / ".env")
 
+# The workflow-template catalog is part of the canonical corpus shared across
+# apps (it lives in agenty_core), so /add_workflow and /remove_workflow edit it
+# there, not in this app's config/.
+from agenty_core.paths import corpus_root as _corpus_root
+
 import chainlit as cl
 # Chainlit auto-initialises its data layer from DATABASE_URL + APP_AWS_* env vars
 # (set in .env). No manual _data_layer assignment needed.
@@ -833,7 +838,7 @@ async def _process_message(message: cl.Message) -> None:
                 print(f"[/add_workflow] Description generation error: {_desc_exc}", file=__import__("sys").stderr)
             
             # ─ Update config/workflow_templates.json ──────────────────────────
-            _templates_path = _project_root / "config" / "workflow_templates.json"
+            _templates_path = _corpus_root() / "config" / "workflow_templates.json"
             if _templates_path.exists():
                 _tpl = _json.loads(_templates_path.read_text(encoding="utf-8"))
             else:
@@ -874,7 +879,7 @@ async def _process_message(message: cl.Message) -> None:
             from src.utils.workflow_parser import workflow_remove as _workflow_remove, _custom_index_path
             _idx = _workflow_remove(_wf_name)
             # Update config/workflow_templates.json
-            _templates_path = _project_root / "config" / "workflow_templates.json"
+            _templates_path = _corpus_root() / "config" / "workflow_templates.json"
             if _templates_path.exists():
                 _tpl = _json.loads(_templates_path.read_text(encoding="utf-8"))
                 if _wf_name in _tpl:
