@@ -2,9 +2,9 @@
 agentY – A ComfyUI agent built on the //eStrands Agents SDK.
 
 Two-agent pipeline:
-  • Researcher  – Ollama (default) or any LLM; pattern-matching/resolution only.
+  • Query Templates  – Ollama (default) or any LLM; pattern-matching/resolution only.
                   Produces a brainbriefing JSON.
-  • Brain       – Claude (default) or any LLM; workflow assembly, execution, QA.
+  • Assemble Workflow       – Claude (default) or any LLM; workflow assembly, execution, QA.
 """
 
 import datetime
@@ -28,20 +28,20 @@ from src.utils.comfyui_interrupt_hook import ComfyUIInterruptHook
 from src.utils.costs import compute_cost_from_usage
 
 from src.tools import (
-    RESEARCHER_TOOLS,
-    BRAIN_TOOLS,
+    QUERYTEMPLATES_TOOLS,
+    ASSEMBLEWORKFLOW_TOOLS,
     INFO_TOOLS,
     STORY_TOOLS,
-    SCOUT_TOOLS,
+    SEARCHWEB_TOOLS,
     ERROR_CHECKER_TOOLS,
     PLANNER_TOOLS,
-    TRIAGE_TOOLS,
+    DETECTUSERINTENT_TOOLS,
     LEARNINGS_TOOLS,
     VISION_AGENT_TOOLS,
     DOP_TOOLS,
     reset_patch_workflow_guard,
 )
-from src.steering import get_brain_steering_handlers, get_researcher_steering_handlers
+from src.steering import get_ASSEMBLEWORKFLOW_steering_handlers, get_QUERYTEMPLATES_steering_handlers
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +75,7 @@ def _cfg(env_var: str, *settings_path: str, default: str | int = "") -> str | in
     Args:
         env_var:       Name of the environment variable to check first.
         *settings_path: Sequence of keys to traverse in the ``llm`` block,
-                        e.g. ``"pipeline", "researcher_ollama_model"``.
+                        e.g. ``"pipeline", "QUERYTEMPLATES_ollama_model"``.
         default:       Hard-coded fallback when neither env var nor JSON key is set.
     """
     # 1. Environment variable wins
@@ -100,7 +100,7 @@ def _parse_llm_setting(value: str) -> tuple[str, str]:
     """Split a 'provider,model' string into (provider, model).
 
     The model part is an empty string when the value contains no comma
-    (e.g. when the value came from a plain RESEARCHER_LLM env var).
+    (e.g. when the value came from a plain QUERYTEMPLATES_LLM env var).
     """
     provider, _, model = value.partition(",")
     return provider.strip(), model.strip()
@@ -217,7 +217,7 @@ def _build_model_table() -> str:
     lines: list[str] = [
         "## Models",
         "",
-        "Use these paths verbatim — they come from the Researcher's brainbriefing.",
+        "Use these paths verbatim — they come from the Query Templates' brainbriefing.",
         "Do NOT check, download, or guess model paths yourself.",
     ]
 
@@ -238,15 +238,15 @@ def _build_model_table() -> str:
 
 # Map from resolved llm name → system-prompt markdown filename stem.
 _SYSTEM_PROMPT_FILE: dict[str, str] = {
-    "researcher": "system_prompt.researcher",
-    "researcher.local": "system_prompt.researcher.local",
-    "brain": "system_prompt.brain",
-    "brain.local": "system_prompt.brain.local",
-    "triage": "system_prompt.triage",
+    "query_templates": "system_prompt.query_templates",
+    "query_templates.local": "system_prompt.query_templates.local",
+    "assemble_workflow": "system_prompt.assemble_workflow",
+    "assemble_workflow.local": "system_prompt.assemble_workflow.local",
+    "detect_user_intent": "system_prompt.detect_user_intent",
     "planner": "system_prompt.planner",
     "info": "system_prompt.info",
     "story": "system_prompt.story",
-    "scout": "system_prompt.scout",
+    "search_web": "system_prompt.search_web",
     "dop": "system_prompt.dop",
     "learnings": "system_prompt.learnings",
     "error_checker": "system_prompt.error_checker",
@@ -510,7 +510,7 @@ def _make_agent(
     """Internal helper that builds a model and wraps it in a Strands Agent.
 
     Args:
-        role: Human-readable label used in log output (e.g. 'researcher', 'brain').
+        role: Human-readable label used in log output (e.g. 'query_templates', 'assemble_workflow').
         llm: LLM backend – ``'claude'`` or ``'ollama'``.
         system_prompt: Full system prompt string.
         tools: List of @tool-decorated callables to give the agent.
@@ -525,7 +525,7 @@ def _make_agent(
         model_id = ollama_model or str(_cfg("OLLAMA_MODEL", "ollama", "model", default="qwen3-vl:30b"))
         host = str(_cfg("OLLAMA_HOST", "ollama", "host", default="http://localhost:11434"))
         # Ollama defaults num_ctx to ~4k, which truncates the large agent prompts
-        # (the .local researcher/brain carry the full model table) and yields
+        # (the .local query_templates/assemble_workflow carry the full model table) and yields
         # malformed brainbriefings. Give the local model a big context window.
         num_ctx = int(_cfg("OLLAMA_NUM_CTX", "ollama", "num_ctx", default=32768))
         # From-scratch builds emit a long tool-call sequence; a low output cap
@@ -687,20 +687,20 @@ def create_vision_agent(
     agent.conversation_manager = SlidingWindowConversationManager(window_size=2)
     return agent
 
-def create_researcher_agent(
+def create_query_templates_agent(
     llm: str | None = None,
     ollama_model: str | None = None,
     anthropic_model: str | None = None,
     **kwargs,
 ) -> Agent:
-    """Create the Researcher agent for experimental dual-agent pipeline.
+    """Create the Query Templates agent for experimental dual-agent pipeline.
 
-    Defaults to Ollama (env: ``RESEARCHER_LLM``, then ``'ollama'``).
-    Override the Ollama model with ``RESEARCHER_OLLAMA_MODEL`` or *ollama_model*.
-    Override the Anthropic model with ``RESEARCHER_ANTHROPIC_MODEL`` or *anthropic_model*.
+    Defaults to Ollama (env: ``QUERYTEMPLATES_LLM``, then ``'ollama'``).
+    Override the Ollama model with ``QUERYTEMPLATES_OLLAMA_MODEL`` or *ollama_model*.
+    Override the Anthropic model with ``QUERYTEMPLATES_ANTHROPIC_MODEL`` or *anthropic_model*.
 
     Args:
-        llm: ``'ollama'`` or ``'claude'``. Falls back to ``RESEARCHER_LLM`` env var.
+        llm: ``'ollama'`` or ``'claude'``. Falls back to ``QUERYTEMPLATES_LLM`` env var.
         ollama_model: Ollama model override (e.g. ``'qwen3-coder:32b'``).
         anthropic_model: Anthropic model override (e.g. ``'claude-haiku-4-5'``).
         **kwargs: Forwarded to the Strands Agent constructor.
@@ -709,8 +709,8 @@ def create_researcher_agent(
     if ollama_model and llm is None:
         llm = "ollama"
 
-    # Read combined 'provider,model' from settings (env var RESEARCHER_LLM still wins).
-    _raw = str(_cfg("RESEARCHER_LLM", "pipeline", "researcher", default="ollama"))
+    # Read combined 'provider,model' from settings (env var QUERYTEMPLATES_LLM still wins).
+    _raw = str(_cfg("QUERYTEMPLATES_LLM", "pipeline", "query_templates", default="ollama"))
     _settings_llm, _settings_model = _parse_llm_setting(_raw)
     resolved_llm = llm or _settings_llm or "ollama"
 
@@ -718,46 +718,46 @@ def create_researcher_agent(
     if resolved_llm == "ollama":
         resolved_ollama = (
             ollama_model
-            or os.environ.get("RESEARCHER_OLLAMA_MODEL")
+            or os.environ.get("QUERYTEMPLATES_OLLAMA_MODEL")
             or _settings_model
             or "qwen3-coder:32b"
         )
         resolved_anthropic = (
             anthropic_model
-            or os.environ.get("RESEARCHER_ANTHROPIC_MODEL")
+            or os.environ.get("QUERYTEMPLATES_ANTHROPIC_MODEL")
             or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
         )
     else:  # claude
         resolved_anthropic = (
             anthropic_model
-            or os.environ.get("RESEARCHER_ANTHROPIC_MODEL")
+            or os.environ.get("QUERYTEMPLATES_ANTHROPIC_MODEL")
             or _settings_model
             or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
         )
         resolved_ollama = ollama_model or "qwen3-coder:32b"
 
-    system_prompt = _load_system_prompt("researcher.local" if resolved_llm == "ollama" else "researcher")
+    system_prompt = _load_system_prompt("query_templates.local" if resolved_llm == "ollama" else "query_templates")
 
     # Load skills from the project-level skills/ directory.
-    researcher_skill_plugins: list = []
+    QUERYTEMPLATES_skill_plugins: list = []
     if _SKILLS_DIR.is_dir():
         skills_plugin = AgentSkills(skills=str(_SKILLS_DIR))
-        researcher_skill_plugins.append(skills_plugin)
+        QUERYTEMPLATES_skill_plugins.append(skills_plugin)
         loaded = [s.name for s in skills_plugin.get_available_skills()]
         if loaded:
             print(f"[agentY:researcher] Loaded skills: {', '.join(loaded)}")
 
     # Merge steering handlers with skill plugins.
-    researcher_plugins = researcher_skill_plugins + get_researcher_steering_handlers()
+    QUERYTEMPLATES_plugins = QUERYTEMPLATES_skill_plugins + get_QUERYTEMPLATES_steering_handlers()
 
     return _make_agent(
-        role="researcher",
+        role="query_templates",
         llm=resolved_llm,
         system_prompt=system_prompt,
-        tools=RESEARCHER_TOOLS,
+        tools=QUERYTEMPLATES_TOOLS,
         ollama_model=resolved_ollama,
         anthropic_model=resolved_anthropic,
-        plugins=researcher_plugins or None,
+        plugins=QUERYTEMPLATES_plugins or None,
         **kwargs,
     )
 
@@ -778,7 +778,7 @@ def create_planner_agent(
     Env var ``PLANNER_LLM`` overrides the full setting; ``PLANNER_OLLAMA_MODEL``
     or ``PLANNER_ANTHROPIC_MODEL`` override just the model.
 
-    Defaults to the same backend/model as the Triage agent.
+    Defaults to the same backend/model as the Detect User Intent agent.
 
     Args:
         llm: ``'ollama'`` or ``'claude'``. Falls back to ``PLANNER_LLM`` env var.
@@ -790,9 +790,9 @@ def create_planner_agent(
         llm = "ollama"
 
     # Read combined 'provider,model' from settings (env var PLANNER_LLM still wins).
-    # Falls back to the triage setting so no extra config is required.
+    # Falls back to the detect_user_intent setting so no extra config is required.
     _raw = str(_cfg("PLANNER_LLM", "pipeline", "planner",
-                    default=str(_cfg("TRIAGE_LLM", "pipeline", "triage", default="ollama"))))
+                    default=str(_cfg("DETECTUSERINTENT_LLM", "pipeline", "triage", default="ollama"))))
     _settings_llm, _settings_model = _parse_llm_setting(_raw)
     resolved_llm = llm or _settings_llm or "ollama"
 
@@ -992,13 +992,13 @@ def create_story_agent(
     )
 
 
-def create_scout_agent(
+def create_SEARCHWEB_agent(
     llm: str | None = None,
     ollama_model: str | None = None,
     anthropic_model: str | None = None,
     **kwargs,
 ) -> Agent:
-    """Create the Reference Scout agent — a focused web-reference gatherer.
+    """Create the Reference Search Web agent — a focused web-reference gatherer.
 
     Given a request, it searches the web, downloads the best reference image(s),
     decides per reference whether it is best used as a direct image input or a
@@ -1008,11 +1008,11 @@ def create_scout_agent(
 
     Reads ``llm.pipeline.scout`` from settings.json (format ``'provider,model'``);
     falls back to the Info-agent setting, then ``claude-haiku-4-5``. Env var
-    ``SCOUT_LLM`` overrides the combined setting; ``SCOUT_OLLAMA_MODEL`` /
-    ``SCOUT_ANTHROPIC_MODEL`` override the provider-specific model.
+    ``SEARCHWEB_LLM`` overrides the combined setting; ``SEARCHWEB_OLLAMA_MODEL`` /
+    ``SEARCHWEB_ANTHROPIC_MODEL`` override the provider-specific model.
 
     Args:
-        llm: ``'claude'`` or ``'ollama'``. Falls back to ``SCOUT_LLM`` env/settings.
+        llm: ``'claude'`` or ``'ollama'``. Falls back to ``SEARCHWEB_LLM`` env/settings.
         ollama_model: Ollama model override.
         anthropic_model: Anthropic model override.
         **kwargs: Forwarded to the Strands Agent constructor.
@@ -1022,39 +1022,39 @@ def create_scout_agent(
 
     # Fall back to the Info-agent setting so no extra config is required.
     _info_default = str(_cfg("INFO_LLM", "pipeline", "info", default="claude,claude-haiku-4-5"))
-    _raw = str(_cfg("SCOUT_LLM", "pipeline", "scout", default=_info_default))
+    _raw = str(_cfg("SEARCHWEB_LLM", "pipeline", "scout", default=_info_default))
     _settings_llm, _settings_model = _parse_llm_setting(_raw)
     resolved_llm = llm or _settings_llm or "claude"
 
-    system_prompt = _load_system_prompt("scout")
+    system_prompt = _load_system_prompt("search_web")
 
     if resolved_llm == "ollama":
         resolved_ollama = (
             ollama_model
-            or os.environ.get("SCOUT_OLLAMA_MODEL")
+            or os.environ.get("SEARCHWEB_OLLAMA_MODEL")
             or _settings_model
             or str(_cfg("LLM_FUNCTIONS_MODEL", "pipeline", "llm_functions", default="qwen3.5:9b"))
         )
         agent = _make_agent(
-            role="scout",
+            role="search_web",
             llm="ollama",
             system_prompt=system_prompt,
-            tools=SCOUT_TOOLS,
+            tools=SEARCHWEB_TOOLS,
             ollama_model=resolved_ollama,
             **kwargs,
         )
     else:
         resolved_anthropic = (
             anthropic_model
-            or os.environ.get("SCOUT_ANTHROPIC_MODEL")
+            or os.environ.get("SEARCHWEB_ANTHROPIC_MODEL")
             or _settings_model
             or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
         )
         agent = _make_agent(
-            role="scout",
+            role="search_web",
             llm="claude",
             system_prompt=system_prompt,
-            tools=SCOUT_TOOLS,
+            tools=SEARCHWEB_TOOLS,
             anthropic_model=resolved_anthropic,
             **kwargs,
         )
@@ -1138,25 +1138,25 @@ def create_dop_agent(
     return agent
 
 
-def create_triage_agent(
+def create_DETECTUSERINTENT_agent(
     llm: str | None = None,
     ollama_model: str | None = None,
     anthropic_model: str | None = None,
     **kwargs,
 ) -> Agent:
-    """Create the Triage agent — a stateless, tool-free intent classifier.
+    """Create the Detect User Intent agent — a stateless, tool-free intent classifier.
 
     Reads ``llm.pipeline.triage`` from settings.json (format: ``'provider,model'``,
     e.g. ``'ollama,qwen3:0.6b'`` or ``'claude,claude-haiku-4-5'``).
-    Env var ``TRIAGE_LLM`` overrides the full setting; ``TRIAGE_OLLAMA_MODEL``
-    or ``TRIAGE_ANTHROPIC_MODEL`` override just the model.
+    Env var ``DETECTUSERINTENT_LLM`` overrides the full setting; ``DETECTUSERINTENT_OLLAMA_MODEL``
+    or ``DETECTUSERINTENT_ANTHROPIC_MODEL`` override just the model.
 
     The agent has no tools and no meaningful conversation history — it reads
     the user message (optionally prefixed with session context) and returns a
     JSON ``{"intent": "...", "confidence": 0.0–1.0}`` object.
 
     Args:
-        llm: ``'ollama'`` or ``'claude'``. Falls back to ``TRIAGE_LLM`` env var.
+        llm: ``'ollama'`` or ``'claude'``. Falls back to ``DETECTUSERINTENT_LLM`` env var.
         ollama_model: Ollama model override (e.g. ``'qwen3:0.6b'``).
         anthropic_model: Anthropic model override (e.g. ``'claude-haiku-4-5'``).
         **kwargs: Forwarded to the Strands Agent constructor.
@@ -1164,38 +1164,38 @@ def create_triage_agent(
     if ollama_model and llm is None:
         llm = "ollama"
 
-    # Read combined 'provider,model' from settings (env var TRIAGE_LLM still wins).
-    _raw = str(_cfg("TRIAGE_LLM", "pipeline", "triage", default="ollama"))
+    # Read combined 'provider,model' from settings (env var DETECTUSERINTENT_LLM still wins).
+    _raw = str(_cfg("DETECTUSERINTENT_LLM", "pipeline", "triage", default="ollama"))
     _settings_llm, _settings_model = _parse_llm_setting(_raw)
     resolved_llm = llm or _settings_llm or "ollama"
 
     if resolved_llm == "ollama":
         resolved_ollama = (
             ollama_model
-            or os.environ.get("TRIAGE_OLLAMA_MODEL")
+            or os.environ.get("DETECTUSERINTENT_OLLAMA_MODEL")
             or _settings_model
             or str(_cfg("LLM_FUNCTIONS_MODEL", "pipeline", "llm_functions", default="qwen3:0.6b"))
         )
         resolved_anthropic = (
             anthropic_model
-            or os.environ.get("TRIAGE_ANTHROPIC_MODEL")
+            or os.environ.get("DETECTUSERINTENT_ANTHROPIC_MODEL")
             or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
         )
     else:  # claude
         resolved_anthropic = (
             anthropic_model
-            or os.environ.get("TRIAGE_ANTHROPIC_MODEL")
+            or os.environ.get("DETECTUSERINTENT_ANTHROPIC_MODEL")
             or _settings_model
             or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
         )
         resolved_ollama = ollama_model or str(_cfg("LLM_FUNCTIONS_MODEL", "pipeline", "llm_functions", default="qwen3:0.6b"))
 
-    system_prompt = _load_system_prompt("triage")
+    system_prompt = _load_system_prompt("detect_user_intent")
     agent = _make_agent(
-        role="triage",
+        role="detect_user_intent",
         llm=resolved_llm,
         system_prompt=system_prompt,
-        tools=TRIAGE_TOOLS,
+        tools=DETECTUSERINTENT_TOOLS,
         ollama_model=resolved_ollama,
         anthropic_model=resolved_anthropic,
         **kwargs,
@@ -1206,20 +1206,20 @@ def create_triage_agent(
     return agent
 
 
-def create_brain_agent(
+def create_ASSEMBLEWORKFLOW_agent(
     llm: str | None = None,
     ollama_model: str | None = None,
     anthropic_model: str | None = None,
     **kwargs,
 ) -> Agent:
-    """Create the Brain agent for experimental dual-agent pipeline.
+    """Create the Assemble Workflow agent for experimental dual-agent pipeline.
 
-    Defaults to Claude (env: ``BRAIN_LLM``, then ``'claude'``).
-    Override the Anthropic model with ``BRAIN_ANTHROPIC_MODEL`` or *anthropic_model*.
-    Override the Ollama model with ``BRAIN_OLLAMA_MODEL`` or *ollama_model*.
+    Defaults to Claude (env: ``ASSEMBLEWORKFLOW_LLM``, then ``'claude'``).
+    Override the Anthropic model with ``ASSEMBLEWORKFLOW_ANTHROPIC_MODEL`` or *anthropic_model*.
+    Override the Ollama model with ``ASSEMBLEWORKFLOW_OLLAMA_MODEL`` or *ollama_model*.
 
     Args:
-        llm: ``'claude'`` or ``'ollama'``. Falls back to ``BRAIN_LLM`` env var.
+        llm: ``'claude'`` or ``'ollama'``. Falls back to ``ASSEMBLEWORKFLOW_LLM`` env var.
         anthropic_model: Anthropic model override (e.g. ``'claude-sonnet-4-5'``).
         ollama_model: Ollama model override.
         **kwargs: Forwarded to the Strands Agent constructor.
@@ -1230,8 +1230,8 @@ def create_brain_agent(
     # Reset the patch_workflow failure counter for each new brain session.
     reset_patch_workflow_guard()
 
-    # Read combined 'provider,model' from settings (env var BRAIN_LLM still wins).
-    _raw = str(_cfg("BRAIN_LLM", "pipeline", "brain", default="claude"))
+    # Read combined 'provider,model' from settings (env var ASSEMBLEWORKFLOW_LLM still wins).
+    _raw = str(_cfg("ASSEMBLEWORKFLOW_LLM", "pipeline", "assemble_workflow", default="claude"))
     _settings_llm, _settings_model = _parse_llm_setting(_raw)
     resolved_llm = llm or _settings_llm or "claude"
 
@@ -1239,7 +1239,7 @@ def create_brain_agent(
     if resolved_llm == "claude":
         resolved_anthropic = (
             anthropic_model
-            or os.environ.get("BRAIN_ANTHROPIC_MODEL")
+            or os.environ.get("ASSEMBLEWORKFLOW_ANTHROPIC_MODEL")
             or _settings_model
             or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
         )
@@ -1247,20 +1247,20 @@ def create_brain_agent(
     else:  # ollama
         resolved_ollama = (
             ollama_model
-            or os.environ.get("BRAIN_OLLAMA_MODEL")
+            or os.environ.get("ASSEMBLEWORKFLOW_OLLAMA_MODEL")
             or _settings_model
             or "qwen3-vl:30b"
         )
         resolved_anthropic = (
             anthropic_model
-            or os.environ.get("BRAIN_ANTHROPIC_MODEL")
+            or os.environ.get("ASSEMBLEWORKFLOW_ANTHROPIC_MODEL")
             or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
         )
-    # Use the local-model variant of the Brain system prompt for Ollama; the
+    # Use the local-model variant of the Assemble Workflow system prompt for Ollama; the
     # standard prompt for Claude.  The local variant contains explicit step-by-step
     # patching instructions instead of skill-activation references.
-    brain_prompt_key = "brain.local" if resolved_llm == "ollama" else "brain"
-    system_prompt = _load_system_prompt(brain_prompt_key)
+    ASSEMBLEWORKFLOW_prompt_key = "brain.local" if resolved_llm == "ollama" else "brain"
+    system_prompt = _load_system_prompt(ASSEMBLEWORKFLOW_prompt_key)
 
     # Load skills from the project-level skills/ directory.
     skills_plugins: list = []
@@ -1272,24 +1272,24 @@ def create_brain_agent(
             print(f"[agentY:brain] Loaded skills: {', '.join(loaded)}")
 
     # Merge skills plugins with steering handlers.
-    brain_plugins = skills_plugins + get_brain_steering_handlers()
+    ASSEMBLEWORKFLOW_plugins = skills_plugins + get_ASSEMBLEWORKFLOW_steering_handlers()
 
     # Merge the ComfyUI interrupt hook with any caller-supplied hooks so we
     # don't silently drop the TokenUsageHookProvider built by _make_agent.
     # We pass the combined list via kwargs; _make_agent's agent_kwargs.update()
     # will replace its default [TokenUsageHookProvider] with our explicit list.
     extra_hooks = kwargs.pop("hooks", [])
-    brain_hooks = [TokenUsageHookProvider(role="brain"), ComfyUIInterruptHook(), *extra_hooks]
+    ASSEMBLEWORKFLOW_hooks = [TokenUsageHookProvider(role="brain"), ComfyUIInterruptHook(), *extra_hooks]
 
     return _make_agent(
         role="brain",
         llm=resolved_llm,
         system_prompt=system_prompt,
-        tools=BRAIN_TOOLS,
+        tools=ASSEMBLEWORKFLOW_TOOLS,
         ollama_model=resolved_ollama,
         anthropic_model=resolved_anthropic,
-        plugins=brain_plugins or None,
-        hooks=brain_hooks,
+        plugins=ASSEMBLEWORKFLOW_plugins or None,
+        hooks=ASSEMBLEWORKFLOW_hooks,
         **kwargs,
     )
 
@@ -1302,9 +1302,9 @@ def create_learnings_agent(
 ) -> Agent:
     """Create the Learnings agent — a stateless pattern-analyser.
 
-    The Learnings agent receives a Brain session transcript and extracts
+    The Learnings agent receives a Assemble Workflow session transcript and extracts
     concise actionable learnings from repeated failure→fix patterns.
-    It is typically invoked asynchronously after tasks where the Brain used
+    It is typically invoked asynchronously after tasks where the Assemble Workflow used
     more than 5 tool calls.
 
     Reads ``llm.pipeline.learnings`` from settings.json (format: ``'provider,model'``).
@@ -1387,8 +1387,8 @@ def create_error_checker_agent(
         llm = "ollama"
 
     # Fall back to the brain setting so no extra config is needed out of the box.
-    _brain_default = str(_cfg("BRAIN_LLM", "pipeline", "brain", default="claude,claude-haiku-4-5"))
-    _raw = str(_cfg("ERROR_CHECKER_LLM", "pipeline", "error_checker", default=_brain_default))
+    _ASSEMBLEWORKFLOW_default = str(_cfg("ASSEMBLEWORKFLOW_LLM", "pipeline", "assemble_workflow", default="claude,claude-haiku-4-5"))
+    _raw = str(_cfg("ERROR_CHECKER_LLM", "pipeline", "error_checker", default=_ASSEMBLEWORKFLOW_default))
     _settings_llm, _settings_model = _parse_llm_setting(_raw)
     resolved_llm = llm or _settings_llm or "claude"
 

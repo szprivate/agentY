@@ -388,9 +388,9 @@ def analyze_image(
 
     * ``mode='describe'`` **(default, recommended)**: The image is sent to an
       isolated Vision Agent call that returns a plain-text description.  No image
-      bytes enter the Researcher's context window (~10K tokens vs ~600K).
+      bytes enter the Query Templates' context window (~10K tokens vs ~600K).
     * ``mode='full'``: Legacy behaviour – returns the raw image bytes so the
-      Researcher can reason over pixels directly (~600K tokens).  Use only when
+      Query Templates can reason over pixels directly (~600K tokens).  Use only when
       precise spatial or identity comparison is needed.
 
     Args:
@@ -405,7 +405,7 @@ def analyze_image(
     user request for raw pixel analysis).
     """
     # Test/speed mode: skip the vision model entirely and return a canned
-    # description. Used by the researcher-only reliability sweep so image-input
+    # description. Used by the query_templates-only reliability sweep so image-input
     # recipes exercise briefing generation without loading a vision model.
     if os.environ.get("AGENTY_STUB_VISION"):
         label = os.path.basename(file_path or image_url) or "input image"

@@ -1,7 +1,7 @@
 """
 ComfyUI tools for the Strands agent.
 
-Exports tool lists for the Researcher, Brain, Info, Triage, Planner,
+Exports tool lists for the Query Templates, Assemble Workflow, Info, Detect User Intent, Planner,
 Learnings, ErrorChecker, and VisionAgent agents.
 """
 
@@ -143,11 +143,11 @@ INFO_TOOLS: list = [
 STORY_TOOLS: list = []
 
 # ---------------------------------------------------------------------------
-# Scout-agent tools – web reference search + staging. Shares the same web/image
+# Search Web-agent tools – web reference search + staging. Shares the same web/image
 # tools as the Info agent, but is a focused subagent the Storyboard director uses
 # to find references and return a structured JSON manifest.
 # ---------------------------------------------------------------------------
-SCOUT_TOOLS: list = [
+SEARCH_WEB_TOOLS: list = [
     web_search,
     web_search_images,
     download_image,      # stage a found image into ComfyUI's input dir
@@ -164,9 +164,9 @@ SCOUT_TOOLS: list = [
 DOP_TOOLS: list = []
 
 # ---------------------------------------------------------------------------
-# Researcher tools – template lookup, asset upload, model resolution.
+# Query Templates tools – template lookup, asset upload, model resolution.
 # ---------------------------------------------------------------------------
-RESEARCHER_TOOLS: list = [
+QUERY_TEMPLATES_TOOLS: list = [
     get_workflow_catalog,
     get_workflow_template,
     list_workflow_recipes,
@@ -195,7 +195,7 @@ RESEARCHER_TOOLS: list = [
 ]
 
 # ---------------------------------------------------------------------------
-# Brain tools – workflow assembly only (steps 1-5 + handoff).
+# Assemble Workflow tools – workflow assembly only (steps 1-5 + handoff).
 # Execution, polling, and Vision QA are handled by the Executor.
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
@@ -227,7 +227,7 @@ ERROR_CHECKER_TOOLS: list = [
     get_system_stats,
 ]
 
-BRAIN_TOOLS: list = [
+ASSEMBLE_WORKFLOW_TOOLS: list = [
     # Node inspection (schema lookup only – no model checking)
     get_node_schema,
     get_workflow_node_info,

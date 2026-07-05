@@ -81,7 +81,7 @@ def log_agent_exchange(label: str, input_text: str | list | dict, output_text: s
     call (e.g. Triage) or where structured message logging is not needed.
 
     Args:
-        label:       Section heading, e.g. ``'TRIAGE'`` or ``'RESEARCHER'``.
+        label:       Section heading, e.g. ``'TRIAGE'`` or ``'QUERY_TEMPLATES'``.
         input_text:  The prompt or content sent to the agent.
         output_text: The raw response returned by the agent.
     """
@@ -109,10 +109,10 @@ def log_agent_messages(label: str, messages: list[dict]) -> None:
 
     Convenience wrapper around ``_log_message_history`` that adds a section
     header with a timestamp, used for agents whose history is available after
-    the call (e.g. Researcher).
+    the call (e.g. Query Templates).
 
     Args:
-        label:    Section heading, e.g. ``'RESEARCHER'``.
+        label:    Section heading, e.g. ``'QUERY_TEMPLATES'``.
         messages: Strands message list (list of dicts).
     """
     sep = "=" * 80
@@ -253,13 +253,13 @@ def _extract_paths_from_messages(messages: list[dict]) -> dict:
 
     Returns a dict with keys:
     - ``workflow_path``          – last patched workflow file path (str | None)
-    - ``template_name``          – workflow template name, researcher-preferred (str | None)
+    - ``template_name``          – workflow template name, query_templates-preferred (str | None)
     - ``output_paths``           – ordered list of generated output file paths
     - ``input_paths``            – ordered list of input image/video file paths
     - ``patch_changes``          – ordered list of human-readable patch descriptions
     """
     workflow_path: str | None = None
-    brainbriefing_template: str | None = None   # researcher-selected (highest priority)
+    brainbriefing_template: str | None = None   # query_templates-selected (highest priority)
     get_template_name: str | None = None         # brain's get_workflow_template call
     prior_summary_template: str | None = None    # from injected prior-round summary
     output_paths: list[str] = []
@@ -409,7 +409,7 @@ def _extract_paths_from_messages(messages: list[dict]) -> dict:
                             if m:
                                 workflow_path = m.group(1)
 
-    # Priority: researcher brainbriefing > get_workflow_template call > prior summary
+    # Priority: query_templates brainbriefing > get_workflow_template call > prior summary
     template_name = brainbriefing_template or get_template_name or prior_summary_template
 
     # Fallback input paths: use prior-summary values, then LoadImage patch values

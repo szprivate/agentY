@@ -173,9 +173,9 @@ Edit `config/settings.json` to point to your ComfyUI instance and set default LL
 
   "llm": {
     "pipeline": {
-      "researcher":            "ollama,qwen3.5:9b",
-      "brain":                 "claude,claude-haiku-4-5",
-      "triage":                "ollama,qwen3.5:9b",
+      "query_templates":            "ollama,qwen3.5:9b",
+      "assemble_workflow":                 "claude,claude-haiku-4-5",
+      "detect_user_intent":                "ollama,qwen3.5:9b",
       "planner":               "ollama,qwen3.5:9b",
       "learnings":             "ollama,qwen3.5:9b",
       "llm_functions":         "qwen3.5:9b",
@@ -205,11 +205,11 @@ The script creates the virtual environment and installs dependencies automatical
 # Auto-reload on source changes (dev mode)
 .\run_agent.ps1 -Watch
 
-# Override the Researcher LLM
-.\run_agent.ps1 -LlmResearcher "ollama,qwen3-coder:32b"
+# Override the query_templates LLM
+.\run_agent.ps1 -Llmquery_templates "ollama,qwen3-coder:32b"
 
-# Override the Brain LLM
-.\run_agent.ps1 -LlmBrain "claude,claude-sonnet-4-5"
+# Override the assemble_workflow LLM
+.\run_agent.ps1 -Llmassemble_workflow "claude,claude-sonnet-4-5"
 
 # Show help
 .\run_agent.ps1 -Help
@@ -225,7 +225,7 @@ Long-term memory is stored in a local FAISS index (`memory/agenty_memory.faiss`)
 
 Each value is resolved in order — first match wins:
 
-1. CLI flag (`-LlmResearcher` / `--researcher-llm`)
+1. CLI flag (`-Llmquery_templates` / `--query_templates-llm`)
 2. Environment variable
 3. `config/settings.json`
 4. Hard-coded default

@@ -12,7 +12,7 @@ After the Brain assembles and validates a ComfyUI workflow it calls
    Batch: polls each prompt_id in submission order; earlier jobs are
    typically already done by the time we reach them.
 3. Copies every output file from ComfyUI's configured output directory to
-   the path specified in the researcher's brainbriefing (``output_nodes[].output_path``).
+   the path specified in the query templates' brainbriefing (``output_nodes[].output_path``).
    Falls back to downloading via ``/view`` when the output directory cannot be
    determined from the ComfyUI API.
 4. Runs a Vision QA pass with an Ollama multimodal model, comparing the
@@ -696,7 +696,7 @@ async def execute_workflow(
 
     Args:
         workflow_path:      Absolute path to the validated workflow JSON.
-        brainbriefing_json: The Researcher's brainbriefing as a JSON string,
+        brainbriefing_json: The Query Templates' brainbriefing as a JSON string,
                             used to extract input image paths for QA comparison.
         user_message:       The raw text the user originally sent.  Forwarded
                             to the Vision QA agent as the ground-truth reference.
@@ -795,7 +795,7 @@ async def execute_workflows_batch(
 
     Args:
         workflow_paths:     Ordered list of absolute workflow JSON file paths.
-        brainbriefing_json: Researcher brainbriefing (for Vision QA).
+        brainbriefing_json: Query Templates brainbriefing (for Vision QA).
         user_message:       The raw text the user originally sent.  Forwarded
                             to the Vision QA agent as the ground-truth reference.
                             Never added to any agent's conversation history.

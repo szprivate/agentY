@@ -109,7 +109,7 @@ except Exception as _exc:
 
 # Serializes on_message so rapid-fire ("chatty") messages queue instead of
 # racing on the shared pipeline singleton. Must be module-global (not
-# per-session) because _pipeline itself — including the single stateful Brain
+# per-session) because _pipeline itself — including the single stateful Assemble Workflow
 # agent and AgentSession — is shared across every Chainlit session/thread.
 _PIPELINE_LOCK = asyncio.Lock()
 
@@ -250,12 +250,12 @@ def _reset_pipeline_state(pipeline) -> None:
     """Wipe all per-conversation state from the shared pipeline singleton.
 
     Called when a new thread starts so no history from a previous chat leaks
-    in.  Clears brain.messages, AgentSession, cached researcher output, and
+    in.  Clears assemble_workflow.messages, AgentSession, cached query_templates output, and
     the prior-session summary used to chain turns.
     """
-    brain = getattr(pipeline, "_brain", None)
-    if brain is not None and hasattr(brain, "messages"):
-        brain.messages.clear()
+    assemble_workflow = getattr(pipeline, "_assemble_workflow", None)
+    if assemble_workflow is not None and hasattr(assemble_workflow, "messages"):
+        assemble_workflow.messages.clear()
 
     existing_session = getattr(pipeline, "_session", None)
     session_id = getattr(existing_session, "session_id", "default") if existing_session else "default"
@@ -267,12 +267,12 @@ def _reset_pipeline_state(pipeline) -> None:
 def _save_thread_state(pipeline) -> None:
     """Snapshot the current pipeline state into Chainlit's per-thread session.
 
-    Called at the end of every on_message turn so the compressed brain summary
+    Called at the end of every on_message turn so the compressed assemble_workflow summary
     and session metadata survive thread navigation (on_chat_resume).
     """
-    brain = getattr(pipeline, "_brain", None)
-    if brain is not None and hasattr(brain, "messages"):
-        cl.user_session.set("brain_messages", list(brain.messages))
+    assemble_workflow = getattr(pipeline, "_assemble_workflow", None)
+    if assemble_workflow is not None and hasattr(assemble_workflow, "messages"):
+        cl.user_session.set("brain_messages", list(assemble_workflow.messages))
 
     session = getattr(pipeline, "_session", None)
     if session is not None:
@@ -299,7 +299,7 @@ def _restore_thread_state(pipeline) -> None:
         _reset_pipeline_state(pipeline)
         return
 
-    brain = getattr(pipeline, "_brain", None)
+    assemble_workflow = getattr(pipeline, "_assemble_workflow", None)
     if brain is not None and hasattr(brain, "messages"):
         brain.messages[:] = brain_messages
 
@@ -429,7 +429,7 @@ async def on_chat_start() -> None:
 async def on_chat_resume(thread) -> None:  # noqa: ARG001
     """Called when the user navigates to an existing thread from the sidebar.
 
-    Restores the compressed brain summary and session state that were saved at
+    Restores the compressed assemble_workflow summary and session state that were saved at
     the end of the last turn in this thread, so the user can continue where
     they left off without losing context.  Falls back to a clean reset if no
     state was saved yet (e.g. a thread that was never completed).
@@ -916,7 +916,7 @@ async def _process_message(message: cl.Message) -> None:
     # ── /switch_model <agent> <provider,model> ────────────────────────────────
     if _text.lower().startswith("/switch_model") or _text.lower().startswith("switch_model"):
         _parts = _text.split(None, 2)  # [cmd, agent_name, provider,model]
-        _AGENTS = {"researcher", "brain", "info", "story", "triage", "planner", "error_checker"}
+        _AGENTS = {"query_templates", "assemble_workflow", "info", "story", "detect_user_intent", "planner", "error_checker"}
         _SETTINGS_KEYS = {"build_skill", "llm_functions", "executor_vision_model"}
         _ALL_SWITCHABLE = _AGENTS | _SETTINGS_KEYS
         if len(_parts) < 3:
@@ -968,11 +968,11 @@ async def _process_message(message: cl.Message) -> None:
             
             # Handle pipeline agents
             from src.agent import (
-                create_researcher_agent,
-                create_brain_agent,
+                create_query_templates_agent,
+                create_assemble_workflow_agent,
                 create_info_agent,
                 create_story_agent,
-                create_triage_agent,
+                create_detect_user_intent_agent,
                 create_planner_agent,
                 create_error_checker_agent,
                 create_dop_agent,
@@ -988,19 +988,19 @@ async def _process_message(message: cl.Message) -> None:
                 else:
                     _kwargs["anthropic_model"] = _model
             _factory_map = {
-                "researcher": create_researcher_agent,
-                "brain":      create_brain_agent,
+                "query_templates": create_query_templates_agent,
+                "assemble_workflow":      create_assemble_workflow_agent,
                 "info":       create_info_agent,
                 "story":      create_story_agent,
-                "triage":     create_triage_agent,
+                "triage":     create_detect_user_intent_agent,
                 "planner":    create_planner_agent,
                 "error_checker": create_error_checker_agent,
                 "dop":        create_dop_agent,
             }
             _new_agent = _factory_map[_agent_name](**_kwargs)
             _attr_map = {
-                "researcher": "_researcher",
-                "brain":      "_brain",
+                "query_templates": "_researcher",
+                "assemble_workflow":      "_assemble_workflow",
                 "info":       "_info_agent",
                 "story":      "_story_agent",
                 "triage":     "_triage_agent",
@@ -1042,11 +1042,11 @@ async def _process_message(message: cl.Message) -> None:
             try:
                 _tr      = await _run_triage(_text, _pip_session, {}, _triage_agent)
                 _handler = _route_intent(_tr)
-                if _handler in ("researcher", "planner"):
+                if _handler in ("query_templates", "planner"):
                     # User switched to a new topic → wipe stale history now.
                     # The pipeline will also clear it, but doing it here keeps
                     # the Chainlit layer's view of the session self-consistent.
-                    _brain = getattr(pipeline, "_brain", None)
+                    _assemble_workflow = getattr(pipeline, "_assemble_workflow", None)
                     if _brain is not None and hasattr(_brain, "messages"):
                         _brain.messages.clear()
                     cl.user_session.set("awaiting_answer", False)
@@ -1264,7 +1264,7 @@ async def _process_message(message: cl.Message) -> None:
                 await qa_reply_queue.put(answer)
                 continue
 
-            # ── Reference scout results — display staged web references ────
+            # ── Reference Search Web results — display staged web references ────
             if event.get("_references_ready"):
                 await _close_inline()
                 ref_paths: list[str] = event.get("paths", [])
@@ -1302,25 +1302,25 @@ async def _process_message(message: cl.Message) -> None:
                     story_step = None
                 continue
 
-            # ── Researcher step (collapsible) ─────────────────────────────
-            if event.get("_researcher_start"):
+            # ── Query Templates step (collapsible) ─────────────────────────────
+            if event.get("_query_templates_start"):
                 await _close_inline()
-                researcher_step = cl.Step(name="🔎 Researcher", type="tool")
+                researcher_step = cl.Step(name="🔎 Query Templates", type="tool")
                 await researcher_step.send()
                 continue
-            if event.get("_researcher_done"):
+            if event.get("_query_templates_done"):
                 if researcher_step is not None:
                     await researcher_step.update()
                     researcher_step = None
                 continue
 
-            # ── Brain step (collapsible) ──────────────────────────────────
-            if event.get("_brain_start"):
+            # ── Assemble Workflow step (collapsible) ──────────────────────────────────
+            if event.get("_assemble_workflow_start"):
                 await _close_inline()
-                brain_step = cl.Step(name="🧠 Brain", type="tool")
+                brain_step = cl.Step(name="🧠 Assemble Workflow", type="tool")
                 await brain_step.send()
                 continue
-            if event.get("_brain_done"):
+            if event.get("_assemble_workflow_done"):
                 if brain_step is not None:
                     await brain_step.update()
                     brain_step = None

@@ -1,7 +1,7 @@
 """agentY-only pipeline handoff tool.
 
 ``signal_workflow_ready`` is specific to the Strands multi-agent pipeline: the
-Brain calls it as its final step instead of executing the workflow itself, and
+Assemble Workflow calls it as its final step instead of executing the workflow itself, and
 the Executor stage (submission, polling, Ollama Vision-QA, output saving) takes
 over.  It is therefore NOT part of the shared ``agenty_core`` tool layer — it
 lives here, in the agentY repo only.  The agentY-mcp server has no equivalent

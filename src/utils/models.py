@@ -51,11 +51,11 @@ class AgentSession(BaseModel):
     chat_summaries: list[ChatSummary] = Field(default_factory=list)
     current_output_paths: list[str] = Field(default_factory=list)
     follow_up_count: int = 0
-    last_agent: str = "brain"  # "brain" | "info" | "researcher" — tracks which agent handled the most recent turn
-    last_researcher_request: str | None = None  # original user text stored when researcher returned status=blocked
+    last_agent: str = "assemble_workflow"  # "assemble_workflow" | "info" | "query_templates" — tracks which agent handled the most recent turn
+    last_researcher_request: str | None = None  # original user text stored when query_templates returned status=blocked
     last_researcher_blockers: list[str] = Field(default_factory=list)  # blocker strings from the last blocked brainbriefing
     last_user_input_images: list[str] = Field(default_factory=list)  # paths of images uploaded by the user, persisted across turns
-    last_info_response: str | None = None  # last response from the Info agent (e.g. a crafted prompt), injected into the Researcher when relevant
+    last_info_response: str | None = None  # last response from the Info agent (e.g. a crafted prompt), injected into the Query Templates when relevant
     last_story_response: str | None = None  # last text the Story agent produced (synopsis or scenes), injected into the next story turn for Mode A→B handoff and refinements
     generated_images: list[GeneratedImage] = Field(default_factory=list)  # ordered gallery of images generated in this thread, referenceable by index/description
 

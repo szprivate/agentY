@@ -1,6 +1,6 @@
 ---
 name: kling-multishot
-description: Kling 3.0 multi-shot storyboard (template Kling3_multiShot). Activate in the Researcher when the selected template is Kling3_multiShot — overrides the standard prompt-craft step. Activate in the Brain during assembly of the Kling3_multiShot template to patch storyboard nodes correctly.
+description: Kling 3.0 multi-shot storyboard (template Kling3_multiShot). Activate in the Query Templates when the selected template is Kling3_multiShot — overrides the standard prompt-craft step. Activate in the Assemble Workflow during assembly of the Kling3_multiShot template to patch storyboard nodes correctly.
 allowed-tools: update_workflow, get_workflow_template
 ---
 
@@ -19,7 +19,7 @@ allowed-tools: update_workflow, get_workflow_template
 
 This is a hard limit of the Kling `storyboard_N_prompt` input: a prompt of 512 characters or more is rejected by ComfyUI (`storyboard_N_prompt cannot be longer than 512 characters`) and fails the entire workflow.
 
-- Applies to **both** the Researcher (when composing prompts) and the Brain (when patching node 12).
+- Applies to **both** the Query Templates (when composing prompts) and the Assemble Workflow (when patching node 12).
 - Applies even to prompts handed over **verbatim** by the Storyboard director: if a supplied prompt is ≥ 512 characters, trim it (drop style tags and camera adjectives first, keep the character lock intact) until it is shorter than 512 — **never patch an over-length prompt**.
 - **Count the characters of every shot prompt before finalising.** If any prompt is ≥ 512, shorten it until it is < 512.
 

@@ -92,7 +92,7 @@ def _build_content(message: str, image_paths: list[str]) -> list | str:
     if not blocks:
         return message or "(no message)"
 
-    # Include the on-disk paths so the Researcher can reference them in the
+    # Include the on-disk paths so the Query Templates can reference them in the
     # BrainBriefing (ComfyUI loaders need the actual file path, not bytes).
     path_lines = "\n".join(f"  - {p}  [image, use this path for ComfyUI input]" for p in image_paths if os.path.exists(p))
     paths_info = f"\n\nAttached image file paths (use these for ComfyUI):\n{path_lines}" if path_lines else ""

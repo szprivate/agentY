@@ -1,9 +1,9 @@
 {
   "comfyui_url": "http://127.0.0.1:8188",
   "system_prompts": {
-    "researcher": "system_prompt.researcher.md",
-    "brain": "system_prompt.brain.md",
-    "triage": "system_prompt.triage.md",
+    "query_templates": "system_prompt.query_templates.md",
+    "assemble_workflow": "system_prompt.assemble_workflow.md",
+    "detect_user_intent": "system_prompt.detect_user_intent.md",
     "planner": "system_prompt.planner.md",
     "error_checker": "system_prompt.error_checker.md",
     "info": "system_prompt.info.md",
@@ -11,7 +11,7 @@
     "qa_checker": "system_prompt.qaChecker.md",
     "vision_agent": "system_prompt.vision_agent.md",
     "story": "system_prompt.story.md",
-    "scout": "system_prompt.scout.md",
+    "search_web": "system_prompt.search_web.md",
     "dop": "system_prompt.dop.md"
   },
   "comfyui_models_dir": "L:\\software\\comfyui\\Models",
@@ -43,12 +43,12 @@
   "llm": {
     
     "pipeline": {
-      "researcher": "ollama,qwen3-coder:30b",
-      "brain": "ollama,qwen3.6:27b",
-      "triage": "ollama,qwen3.6:27b",
+      "query_templates": "ollama,qwen3-coder:30b",
+      "assemble_workflow": "ollama,qwen3.6:27b",
+      "detect_user_intent": "ollama,qwen3.6:27b",
       "info": "ollama,qwen3.6:27b",
       "story": "ollama,qwen3.6:27b",
-      "scout": "ollama,qwen3.6:27b",
+      "search_web": "ollama,qwen3.6:27b",
       "dop": "ollama,qwen3.6:27b",
       "planner": "ollama,qwen3.6:27b",
       "learnings": "ollama,qwen3.6:27b",

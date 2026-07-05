@@ -1,9 +1,9 @@
 """
-agentY – Two-agent pipeline: Researcher → Brain.
+agentY – Two-agent pipeline: Query Templates → Assemble Workflow.
 
 The pipeline exposes a single callable that accepts a raw user request,
-runs it through the Researcher to produce a brainbriefing JSON, then
-hands that JSON to the Brain for workflow assembly, execution, and QA.
+runs it through the Query Templates to produce a brainbriefing JSON, then
+hands that JSON to the Assemble Workflow for workflow assembly, execution, and QA.
 
 Usage
 -----
@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field, ValidationError
 from strands import Agent
 from strands.types.exceptions import MaxTokensReachedException
 
-from src.agent import create_brain_agent, create_dop_agent, create_error_checker_agent, create_info_agent, create_planner_agent, create_researcher_agent, create_scout_agent, create_story_agent, create_triage_agent, create_vision_agent, _settings
+from src.agent import create_assemble_workflow_agent, create_dop_agent, create_error_checker_agent, create_info_agent, create_planner_agent, create_query_templates_agent, create_search_web_agent, create_story_agent, create_detect_user_intent_agent, create_vision_agent, _settings
 from src.tools.image_handling import set_vision_agent as _set_vision_agent
 from src.utils.chat_summary import summarize_conversation, log_agent_messages, log_agent_exchange
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
@@ -49,7 +49,7 @@ from agenty_core.tools.assembly_deterministic import assemble_workflow_determini
 from src.tools.workflow_handoff import signal_workflow_ready as _det_signal_tool
 _det_signal_ready = _det_signal_tool.__wrapped__
 # Deterministic download+rerun: resolve a named missing model on HF and fetch it
-# into ComfyUI's extra model path, then retry the researcher.
+# into ComfyUI's extra model path, then retry the query_templates.
 from agenty_core.tools.huggingface import find_hf_file as _find_hf_file
 from agenty_core.tools.huggingface import download_hf_model as _download_hf_model
 from src.utils.learnings import count_tool_calls, maybe_run_learnings
@@ -100,7 +100,7 @@ class OutputNode(BaseModel):
 
 
 class BrainBriefing(BaseModel):
-    """Structured handoff document from the Researcher to the Brain."""
+    """Structured handoff document from the Query Templates to the Assemble Workflow."""
     status: str = Field(description="'ready' or 'blocked'")
     blockers: List[str] = Field(default_factory=list, description="List of blocker descriptions")
     task: Task
@@ -312,22 +312,22 @@ def _is_affirmative(text: str) -> bool:
 # ---------------------------------------------------------------------------
 
 class Pipeline:
-    """Chains Researcher → Brain with logging and JSON validation.
+    """Chains Query Templates → Assemble Workflow with logging and JSON validation.
 
     Call ``pipeline(user_input)`` just like a Strands Agent.
-    The Researcher runs once per call (stateless); the Brain keeps
+    The Query Templates runs once per call (stateless); the Assemble Workflow keeps
     a sliding-window conversation so multi-turn interactions work.
 
     ``stream_async`` is also supported so Chainlit can update
-    its message in real-time from the Brain stage.
-    ``event_loop_metrics`` delegates to the Brain agent so token-usage
+    its message in real-time from the Assemble Workflow stage.
+    ``event_loop_metrics`` delegates to the Assemble Workflow agent so token-usage
     reporting in Chainlit continues to work.
     """
 
     def __init__(
         self,
-        researcher: Agent,
-        brain: Agent,
+        query_templates: Agent,
+        assemble_workflow: Agent,
         *,
         info_agent: Agent | None = None,
         story_agent: Agent | None = None,
@@ -341,14 +341,14 @@ class Pipeline:
         info_context: dict | None = None,
         session_id: str = "default",
     ) -> None:
-        self._researcher = researcher
-        self._brain = brain
+        self._researcher = query_templates
+        self._assemble_workflow = assemble_workflow
         self._info_agent: Agent = info_agent or create_info_agent()
         self._story_agent: Agent = story_agent or create_story_agent()
-        self._triage_agent: Agent = triage_agent or create_triage_agent()
+        self._triage_agent: Agent = triage_agent or create_detect_user_intent_agent()
         self._planner_agent: Agent = planner_agent or create_planner_agent()
         self._error_checker_agent: Agent = error_checker_agent or create_error_checker_agent()
-        self._scout_agent: Agent = scout_agent or create_scout_agent()
+        self._search_web_agent: Agent = scout_agent or create_search_web_agent()
         self._dop_agent: Agent = dop_agent or create_dop_agent()
         self._verbose = verbose
         self._skip_brain = skip_brain
@@ -363,11 +363,11 @@ class Pipeline:
         self._cinematography_default = self._resolve_director_cinematography()
         self._info_context: dict = info_context or {}
         self._session: AgentSession = AgentSession(session_id=session_id)
-        # Brainbriefing JSON from the most recent Researcher run; used by the
+        # Brainbriefing JSON from the most recent Query Templates run; used by the
         # Executor for Vision QA comparison in follow-up / feedback-loop rounds.
         self._last_brainbriefing_json: str | None = None
         # Compressed summary text from the previous turn, cached so it can be
-        # injected into the Researcher on the NEXT turn regardless of triage intent.
+        # injected into the Query Templates on the NEXT turn regardless of triage intent.
         # This is the authoritative source for OUTPUT_PATHS / INPUT_PATHS_USER_MESSAGE
         # that bridges chained sessions even when triage says "new_request".
         self._last_prior_summary: str | None = None
@@ -381,7 +381,7 @@ class Pipeline:
         # a previous session in the same process.
         _clear_tool_caches()
         # Initialise Vision Agent so analyze_image(mode='describe') works for
-        # all agents (Researcher, Info, etc.) in this pipeline. Keep a reference so
+        # all agents (Query Templates, Info, etc.) in this pipeline. Keep a reference so
         # its per-turn token usage can be folded into the cost accounting (it runs
         # outside the per-agent snapshot brackets, via the analyze_image tool).
         self._vision_agent: Agent | None = None
@@ -466,8 +466,8 @@ class Pipeline:
 
     # Aggregate token usage from ALL agents that contributed to the last turn.
     # Callers that do ``pipeline.event_loop_metrics.accumulated_usage`` see
-    # the combined picture (triage + researcher + brain + info, etc.) instead
-    # of only the Brain.
+    # the combined picture (triage + query_templates + assemble_workflow + info, etc.) instead
+    # of only the Assemble Workflow.
     @property
     def event_loop_metrics(self):  # noqa: ANN201
         # Fold in the Vision agent's per-turn delta before reporting, so the
@@ -480,7 +480,7 @@ class Pipeline:
     def _record_vision_usage(self) -> None:
         """Fold the shared Vision agent's per-turn token delta into the turn usage.
 
-        The Vision agent (used by the ``analyze_image`` tool across Researcher /
+        The Vision agent (used by the ``analyze_image`` tool across Query Templates /
         Info / etc.) runs outside the per-agent ``_usage_snapshot`` brackets, so
         its tokens are captured here from the turn-start snapshot taken in
         :meth:`stream_async`. Idempotent within a turn: after recording, the
@@ -687,8 +687,8 @@ class Pipeline:
                   f" confidence={triage_result.confidence:.2f}, handler={handler}")
         _trace(f"pipeline.stream_async: triage done → handler={handler}")
 
-        # Context-dependent routing: researcher was previously blocked waiting for user input.
-        if self._session.last_agent == "researcher" and self._session.last_researcher_request:
+        # Context-dependent routing: query_templates was previously blocked waiting for user input.
+        if self._session.last_agent == "query_templates" and self._session.last_researcher_request:
             if self._verbose:
                 print("pipeline: Researcher was blocked — re-running with user clarification")
             _bls_s = self._session.last_researcher_blockers
@@ -832,12 +832,12 @@ class Pipeline:
             if _gallery_fu:
                 brain_prompt = f"{_gallery_fu}\n\n{brain_prompt}"
             self._session.follow_up_count += 1
-            _brain_snap_fu = self._usage_snapshot(self._brain)
+            _brain_snap_fu = self._usage_snapshot(self._assemble_workflow)
             yield {"_brain_start": True}
-            async for event in self._brain.stream_async(brain_prompt):
+            async for event in self._assemble_workflow.stream_async(brain_prompt):
                 yield event
             yield {"_brain_done": True}
-            self._record_agent_usage(self._brain, _brain_snap_fu)
+            self._record_agent_usage(self._assemble_workflow, _brain_snap_fu)
             # Executor handoff: stream execution events back to Chainlit
             workflow_paths_fu = _get_workflow_signal()
             workflow_paths_fu = self._expand_variations(workflow_paths_fu, self._last_brainbriefing_json or "")
@@ -861,7 +861,7 @@ class Pipeline:
                     yield {"data": f"\n{line}"}
             self._record_chat_summary(user_text, triage_result, status="completed")
             self._schedule_compression(extra_output_paths=executor_paths_fu)
-            self._session.last_agent = "brain"
+            self._session.last_agent = "assemble_workflow"
             return
 
         if handler == "planner":
@@ -1196,10 +1196,10 @@ class Pipeline:
                 yield {"data": researcher_output}
                 return
             self._ensure_clean_history()
-            _brain_snap_pfb = self._usage_snapshot(self._brain)
-            async for event in self._brain.stream_async(self._build_brain_prompt(raw_json)):
+            _brain_snap_pfb = self._usage_snapshot(self._assemble_workflow)
+            async for event in self._assemble_workflow.stream_async(self._build_brain_prompt(raw_json)):
                 yield event
-            self._record_agent_usage(self._brain, _brain_snap_pfb)
+            self._record_agent_usage(self._assemble_workflow, _brain_snap_pfb)
             wf = _get_workflow_signal()
             wf = self._expand_variations(wf, raw_json)
             self._session.current_output_paths.clear()
@@ -1328,11 +1328,11 @@ class Pipeline:
             while True:  # ── QA retry loop ──────────────────────────────── #
                 _brain_prompt_for_step = _step_brain_prompt_override or self._build_brain_prompt(raw_json)
                 _step_brain_prompt_override = None  # consume once
-                _brain_snap_ps = self._usage_snapshot(self._brain)
+                _brain_snap_ps = self._usage_snapshot(self._assemble_workflow)
                 self._ensure_clean_history()
-                async for event in self._brain.stream_async(_brain_prompt_for_step):
+                async for event in self._assemble_workflow.stream_async(_brain_prompt_for_step):
                     yield event
-                self._record_agent_usage(self._brain, _brain_snap_ps)
+                self._record_agent_usage(self._assemble_workflow, _brain_snap_ps)
 
                 wf_paths = _get_workflow_signal()
                 wf_paths = self._expand_variations(wf_paths, raw_json)
@@ -1376,12 +1376,12 @@ class Pipeline:
                                 break
                             # Fixable error — ask Brain to fix (streamed) and rerun.
                             yield {"data": f"\n_🔧 Fixing step {idx + 1} (attempt {_fix_attempt}/{_MAX_FIX_ATTEMPTS})…_"}
-                            _brain_snap_fix = self._usage_snapshot(self._brain)
+                            _brain_snap_fix = self._usage_snapshot(self._assemble_workflow)
                             async for event in self._brain.stream_async(
                                 self._build_fix_prompt(verdict["fix_plan"], _fix_attempt)
                             ):
                                 yield event
-                            self._record_agent_usage(self._brain, _brain_snap_fix)
+                            self._record_agent_usage(self._assemble_workflow, _brain_snap_fix)
                             wf_paths_fix = _get_workflow_signal()
                             wf_paths_fix = self._expand_variations(wf_paths_fix, raw_json)
                             # Reset for the fix run so the chainlit "already-sent"
@@ -1626,7 +1626,7 @@ class Pipeline:
     def _storyboard_wants_references(user_text: str) -> bool:
         """Return True when the user explicitly asks the agent to look up references.
 
-        Gates the web Reference Scout — we only search/download when the user asks
+        Gates the web Reference Search Web — we only search/download when the user asks
         for it (e.g. "find a reference for a 1950s diner", "look up what X looks
         like"), never proactively.
         """
@@ -1909,15 +1909,15 @@ class Pipeline:
                             updated = True
         return updated
 
-    async def _stream_scout(self, user_text: str):
-        """Run the Reference Scout to find + stage web references for *user_text*.
+    async def _stream_search_web(self, user_text: str):
+        """Run the Reference Search Web to find + stage web references for *user_text*.
 
         Streams the scout's events inside a UI bracket and yields a final
         ``{"_scout_manifest": <dict>}`` sentinel with the parsed manifest
         (``{"references": [{query, mode, path?, name?, subfolder?, description}]}``).
         """
         try:
-            self._scout_agent.messages.clear()
+            self._search_web_agent.messages.clear()
         except Exception:  # noqa: BLE001
             pass
         prompt = (
@@ -1926,17 +1926,17 @@ class Pipeline:
             "manifest exactly as specified in your instructions.\n\n"
             f"User request:\n{user_text}"
         )
-        _snap = self._usage_snapshot(self._scout_agent)
+        _snap = self._usage_snapshot(self._search_web_agent)
         chunks: list[str] = []
         yield {"_story_start": True, "name": "🌐 Reference scout"}
-        async for event in self._scout_agent.stream_async(prompt):
+        async for event in self._search_web_agent.stream_async(prompt):
             if isinstance(event, dict):
                 c = event.get("data", "")
                 if c:
                     chunks.append(c)
             yield event
         yield {"_story_done": True}
-        self._record_agent_usage(self._scout_agent, _snap)
+        self._record_agent_usage(self._search_web_agent, _snap)
         raw = "".join(chunks)
         log_agent_exchange("SCOUT", user_text, raw)
         manifest: dict = {}
@@ -1947,7 +1947,7 @@ class Pipeline:
         except Exception:  # noqa: BLE001
             manifest = {}
         try:
-            self._scout_agent.messages.clear()
+            self._search_web_agent.messages.clear()
         except Exception:  # noqa: BLE001
             pass
         yield {"_scout_manifest": manifest}
@@ -2015,13 +2015,13 @@ class Pipeline:
 
             # 2. Brain → workflow assembly
             self._ensure_clean_history()
-            self._brain.messages.clear()
-            _bsnap = self._usage_snapshot(self._brain)
+            self._assemble_workflow.messages.clear()
+            _bsnap = self._usage_snapshot(self._assemble_workflow)
             yield {"_brain_start": True}
-            async for ev in self._brain.stream_async(self._build_brain_prompt(raw_json)):
+            async for ev in self._assemble_workflow.stream_async(self._build_brain_prompt(raw_json)):
                 yield ev
             yield {"_brain_done": True}
-            self._record_agent_usage(self._brain, _bsnap)
+            self._record_agent_usage(self._assemble_workflow, _bsnap)
 
             # 3. Executor + grounded Vision QA
             wf_paths = _get_workflow_signal()
@@ -2543,7 +2543,7 @@ class Pipeline:
             produced_videos.extend(vid_result.get("output_paths", []))
 
         self._record_chat_summary(user_text, triage_result, status="completed")
-        self._session.last_agent = "brain"
+        self._session.last_agent = "assemble_workflow"
         vids = ", ".join(f"`{Path(p).name}`" for p in produced_videos if p)
         n_char = len(characters)
         yield {"data": (
@@ -2660,7 +2660,7 @@ class Pipeline:
         blocks.  This guard cleans them before the next API call so
         the Anthropic API doesn't reject the request.
         """
-        msgs = self._brain.messages
+        msgs = self._assemble_workflow.messages
         if not msgs:
             return
         cleaned = self._sanitize_messages(list(msgs))
@@ -2755,7 +2755,7 @@ class Pipeline:
         learnings agent is started in a background thread to extract and
         persist any actionable learnings.
         """
-        messages = self._brain.messages
+        messages = self._assemble_workflow.messages
         if not messages:
             return
 
@@ -2790,12 +2790,12 @@ class Pipeline:
         if not summary:
             if self._verbose:
                 print("pipeline: Empty summary returned; clearing history.")
-            self._brain.messages.clear()
+            self._assemble_workflow.messages.clear()
             return
 
         # Append token-usage and cost lines to the summary
         try:
-            usage = self._brain.event_loop_metrics.accumulated_usage
+            usage = self._assemble_workflow.event_loop_metrics.accumulated_usage
             in_tok = usage.get("inputTokens", 0)
             out_tok = usage.get("outputTokens", 0)
             cache_read = usage.get("cacheReadInputTokens", 0)
@@ -2805,7 +2805,7 @@ class Pipeline:
                 token_parts.append(f"{cache_read:,} cache hit")
             if cache_write:
                 token_parts.append(f"{cache_write:,} cache write")
-            cost_val, total_tokens = compute_cost_from_usage(usage, self._brain)
+            cost_val, total_tokens = compute_cost_from_usage(usage, self._assemble_workflow)
             cost_lines = (
                 f"TOKENS: {' / '.join(token_parts)} (total: {total_tokens:,})\n"
                 f"COST: ${cost_val:.2f}"
@@ -3681,11 +3681,11 @@ class Pipeline:
         prompt.  On ``error_unfixable`` the user-facing error message is yielded
         and the stage terminates.
         """
-        self._brain.messages.clear()
+        self._assemble_workflow.messages.clear()
         self._ensure_clean_history()
         brain_prompt = _override_brain_prompt or self._build_brain_prompt(raw_json)
         current_input: Any = brain_prompt
-        _brain_snap = self._usage_snapshot(self._brain)
+        _brain_snap = self._usage_snapshot(self._assemble_workflow)
 
         # Deterministic happy-path: a ready briefing naming a standard template is
         # assembled mechanically in code (get_template -> apply -> signal), skipping
@@ -3717,7 +3717,7 @@ class Pipeline:
                 # for this first pass and go straight to the executor below.
                 _skip_brain_llm = False
             else:
-                async for event in self._brain.stream_async(current_input):
+                async for event in self._assemble_workflow.stream_async(current_input):
                     yield event
                     if "result" in event:
                         agent_result = event["result"]
@@ -3807,7 +3807,7 @@ class Pipeline:
                             continue
                     # No queue or empty advice — abort gracefully.
                     self._record_chat_summary(user_text, triage_result, status="error", raw_json=raw_json)
-                    self._record_agent_usage(self._brain, _brain_snap)
+                    self._record_agent_usage(self._assemble_workflow, _brain_snap)
                     return
 
                 if _qa_fail_event_b:
@@ -3823,13 +3823,13 @@ class Pipeline:
                             continue  # restart the while True loop
                     # No queue or user declined — abort.
                     self._record_chat_summary(user_text, triage_result, status="qa_failed", raw_json=raw_json)
-                    self._record_agent_usage(self._brain, _brain_snap)
+                    self._record_agent_usage(self._assemble_workflow, _brain_snap)
                     return
 
                 self._record_chat_summary(user_text, triage_result, status="completed", raw_json=raw_json)
                 self._schedule_compression(extra_output_paths=executor_paths_b)
-                self._record_agent_usage(self._brain, _brain_snap)
-                self._session.last_agent = "brain"
+                self._record_agent_usage(self._assemble_workflow, _brain_snap)
+                self._session.last_agent = "assemble_workflow"
                 # If this run succeeded after a user-advice retry, record the learning.
                 if _assembly_fail_error and _assembly_fail_advice:
                     from src.utils.learnings import record_user_advice_learning
@@ -4049,19 +4049,19 @@ def create_pipeline(
         planner_anthropic_model: Anthropic model override for the Planner agent.
         verbose: Print stage-transition log lines (default True).
     """
-    researcher = create_researcher_agent(
+    researcher = create_query_templates_agent(
         llm=researcher_llm,
         ollama_model=researcher_ollama_model,
         anthropic_model=researcher_anthropic_model,
     )
-    brain = create_brain_agent(
+    brain = create_assemble_workflow_agent(
         llm=brain_llm,
         anthropic_model=brain_anthropic_model,
         ollama_model=brain_ollama_model,
     )
     info_agent = create_info_agent()
     story_agent = create_story_agent()
-    triage_agent = create_triage_agent(
+    triage_agent = create_detect_user_intent_agent(
         llm=triage_llm,
         ollama_model=triage_ollama_model,
         anthropic_model=triage_anthropic_model,
@@ -4071,7 +4071,7 @@ def create_pipeline(
         ollama_model=planner_ollama_model,
         anthropic_model=planner_anthropic_model,
     )
-    scout_agent = create_scout_agent()
+    scout_agent = create_search_web_agent()
     dop_agent = create_dop_agent()
     return Pipeline(
         researcher,

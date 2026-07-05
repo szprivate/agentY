@@ -1,7 +1,7 @@
 """
-agentY – Self-learning layer: analyses Brain message history after long sessions.
+agentY – Self-learning layer: analyses Assemble Workflow message history after long sessions.
 
-After any Brain session where the agent used **more than 5 tool calls**, this
+After any Assemble Workflow session where the agent used **more than 5 tool calls**, this
 module fires the ``learnings agent`` asynchronously.  The learnings agent
 scans the message history for repeated failure→fix patterns and appends concise
 1–2-sentence learnings to ``skills/brain-learnings/SKILL.md``.
@@ -12,9 +12,9 @@ stored learnings, avoiding duplicate entries across sessions.
 Public API
 ----------
 >>> from src.utils.learnings import count_tool_calls, maybe_run_learnings
->>> n = count_tool_calls(brain_agent.messages)
+>>> n = count_tool_calls(assemble_workflow_agent.messages)
 >>> if n > 5:
-...     maybe_run_learnings(brain_agent.messages, session_id=session_id)
+...     maybe_run_learnings(assemble_workflow_agent.messages, session_id=session_id)
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from typing import Any
 
 # Path to the self-learning skill file that the learnings agent appends to.
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
-_SKILL_PATH = _PROJECT_ROOT / "skills" / "brain-learnings" / "SKILL.md"
+_SKILL_PATH = _PROJECT_ROOT / "skills" / "assemble_workflow-learnings" / "SKILL.md"
 
 # Hard cap on conversation text sent to the learnings agent to avoid blowing up
 # the context window of a small local model.
@@ -208,7 +208,7 @@ async def _run_learnings_async(messages: list[dict], session_id: str) -> None:
         try:
             from src.utils.memory import memory_search, memory_add
             past_hits = memory_search(
-                "brain tool call failure pattern solution",
+                "assemble_workflow tool call failure pattern solution",
                 session_id="learnings_global",
                 limit=10,
             )
@@ -224,7 +224,7 @@ async def _run_learnings_async(messages: list[dict], session_id: str) -> None:
         # Build the prompt for the learnings agent.
         prompt = (
             f"Today's date: {today}\n\n"
-            f"## Brain session transcript ({tool_count} tool calls)\n\n"
+            f"## Assemble Workflow session transcript ({tool_count} tool calls)\n\n"
             f"{transcript}"
             f"{past_learnings_block}\n\n"
             "Analyse the transcript above and output any new learnings in the required format."
@@ -283,7 +283,7 @@ def maybe_run_learnings(
     """Start the learnings agent in a background thread if tool-call count > threshold.
 
     Args:
-        messages:   Brain agent message history (Strands/Anthropic format).
+        messages:   Assemble Workflow agent message history (Strands/Anthropic format).
         session_id: Pipeline session ID (used for FAISS memory namespace).
         threshold:  Minimum tool-call count to trigger analysis (default: 5).
 
@@ -309,11 +309,11 @@ def record_user_advice_learning(
     user_advice: str,
     session_id: str = "default",
 ) -> None:
-    """Record a learning derived from a Brain failure that was resolved by user advice.
+    """Record a learning derived from a Assemble Workflow failure that was resolved by user advice.
 
     Fires in a background thread (fire-and-forget).  Calls the learnings agent
     to produce a concise entry from the error and advice, then appends it to
-    ``skills/brain-learnings/SKILL.md`` and the FAISS memory store.
+    ``skills/assemble_workflow-learnings/SKILL.md`` and the FAISS memory store.
 
     Args:
         error_context: Short description of what the Brain failed to do.
@@ -327,7 +327,7 @@ def record_user_advice_learning(
             today = datetime.date.today().isoformat()
             prompt = (
                 f"Today's date: {today}\n\n"
-                f"## Brain assembly failure resolved by user advice\n\n"
+                f"## Assemble Workflow assembly failure resolved by user advice\n\n"
                 f"**Original error:** {error_context}\n\n"
                 f"**User's advice (that led to success):** {user_advice}\n\n"
                 f"Produce exactly one learning entry in this format:\n"

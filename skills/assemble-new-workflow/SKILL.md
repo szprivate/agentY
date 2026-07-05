@@ -32,7 +32,7 @@ The returned `recipe` gives you:
 
 **Local vs remote (`execution`)** determines what the workflow needs:
 - `execution: "api"` — generation runs **remotely** on a partner service (Kling, Veo, Magnific, ...). There are no local model files to set; configure the partner node's parameters (model name, prompt, input image) instead. Local model checks/downloads do not apply.
-- `execution: "local"` — runs on the local ComfyUI; wire the local model loaders (the brainbriefing model paths are Researcher-verified).
+- `execution: "local"` — runs on the local ComfyUI; wire the local model loaders (the brainbriefing model paths are Query Templates-verified).
 - `execution: "hybrid"` — local generation plus a remote helper node (e.g. a Gemini prompt expander); set up both.
 
 If `get_workflow_recipe` returns `{"error": "recipe database not found"}`, skip to the **Fallback** section at the end of this skill.
@@ -82,7 +82,7 @@ For any node class you are not certain about:
 - **`get_node_schema(node_class)`** — required inputs, types, defaults, output slots. Use to verify input names and connection indices before wiring.
 - **`search_nodes(query)`** — find the right `class_type` for a capability (e.g. `"video combine"`, `"load image path"`).
 
-Model paths come from the brainbriefing (Researcher-verified via `check_model`). Do NOT look up models here.
+Model paths come from the brainbriefing (Query Templates-verified via `check_model`). Do NOT look up models here.
 
 ---
 
@@ -151,7 +151,7 @@ If no close match exists, pick the simplest `txt2img` template, then continue fr
 
 ## Rules
 
-- **Never guess model file names** — model paths come from the brainbriefing (Researcher-verified). Never look them up here.
+- **Never guess model file names** — model paths come from the brainbriefing (Query Templates-verified). Never look them up here.
 - **Never reuse node IDs** that appear in `remove_nodes` — assign fresh IDs to all added nodes.
 - **Preserve paired nodes** — when the recipe lists a node with `min_instances >= 2`, both/all copies must be present and wired to their distinct roles.
 - **Always wire output nodes** (`SaveImage`, `VHS_VideoCombine`, `CreateVideo`, ...) to the final IMAGE/LATENT/AUDIO output. An unconnected output node fails validation.

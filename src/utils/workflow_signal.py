@@ -1,10 +1,10 @@
 """
-workflow_signal – Thread-safe mailbox for the workflow path(s) the Brain hands off.
+workflow_signal – Thread-safe mailbox for the workflow path(s) the Assemble Workflow hands off.
 
-The Brain calls ``signal_workflow_ready(workflow_path)`` as its very last step
+The Assemble Workflow calls ``signal_workflow_ready(workflow_path)`` as its very last step
 instead of ``submit_prompt``.  For batch runs the Brain calls it once per
 workflow file (each append adds to the queue).  The pipeline reads
-``clear_and_get()`` after the Brain finishes and receives the full list,
+``clear_and_get()`` after the Assemble Workflow finishes and receives the full list,
 then passes each path to the Executor in sequence.
 """
 

@@ -1,6 +1,6 @@
 ---
 name: feedback-loop
-description: Handle follow-up requests when triage routes directly to Brain (no Researcher pass). Activated for param_tweak, chain, and correction intents.
+description: Handle follow-up requests when detect user intent routes directly to Assemble Workflow (no Query Templates pass). Activated for param_tweak, chain, and correction intents.
 allowed-tools: 
 ---
 
@@ -55,7 +55,7 @@ The user wants to pipe the last output into a new workflow (e.g., "now upscale i
    - Set INPUT_PATHS from `OUTPUT_PATHS` of the prior round.
 6. Vision QA runs automatically via the pipeline executor.
 
-**No Researcher pass is needed** — the task is unambiguous from context.
+**No Query Templates pass is needed** — the task is unambiguous from context.
 
 ---
 

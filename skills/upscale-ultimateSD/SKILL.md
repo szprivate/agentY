@@ -1,19 +1,19 @@
 ---
 name: upscale-ultimatesd
-description: Ultimate SD upscaler on Flux1-dev fp8 (template upscale_ultimateSD). Activate in the Researcher when the selected template is upscale_ultimateSD. Activate in the Brain during assembly of the upscale_ultimateSD template to patch the UltimateSDUpscale node, ensure the Flux1-dev fp8 checkpoint is present (download from HuggingFace if missing), and wire the LoadImage input + SaveImage output correctly.
+description: Ultimate SD upscaler on Flux1-dev fp8 (template upscale_ultimateSD). Activate in the Query Templates when the selected template is upscale_ultimateSD. Activate in the Assemble Workflow during assembly of the upscale_ultimateSD template to patch the UltimateSDUpscale node, ensure the Flux1-dev fp8 checkpoint is present (download from HuggingFace if missing), and wire the LoadImage input + SaveImage output correctly.
 allowed-tools: update_workflow, get_workflow_template, check_model, download_hf_model, search_huggingface_models, get_model_info
 ---
 
 # Ultimate SD Upscale — Flux1-dev fp8 Skill
 
 ## When to activate
-- **Researcher** (step 2): user asks for image upscaling with creative detail / re-generation / tile-based upscaling / "fix textures" / higher factor than a plain ESRGAN pass can deliver → select template `upscale_ultimateSD`. For a plain model-only upscale (no diffusion pass) use `upscale_using_model` instead.
+- **Query Templates** (step 2): user asks for image upscaling with creative detail / re-generation / tile-based upscaling / "fix textures" / higher factor than a plain ESRGAN pass can deliver → select template `upscale_ultimateSD`. For a plain model-only upscale (no diffusion pass) use `upscale_using_model` instead.
 - **Brain** (step 1.1 assembly): loaded template is `upscale_ultimateSD`.
 - Do **not** activate for API upscalers (Magnific, Topaz) — those have their own templates.
 
 ---
 
-## Researcher — Template selection and brainbriefing
+## Query Templates — Template selection and brainbriefing
 
 Set `task.type` to `image_edit` (UltimateSD re-samples the image, it is not a pure generation).
 
@@ -44,7 +44,7 @@ Note any non-default upscale factor, denoise, or tile size as a WARNING in `bloc
 
 ### Assembly steps
 
-**1. Ensure the diffusion checkpoint is on disk** *(Researcher step)*
+**1. Ensure the diffusion checkpoint is on disk** *(Query Templates step)*
 
 The Researcher MUST call `check_model(["flux1-dev-fp8.safetensors"])` during step 8.
 - If it returns a path → put that path in the brainbriefing verbatim.

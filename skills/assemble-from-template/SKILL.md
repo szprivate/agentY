@@ -4,7 +4,7 @@ description: Assembles a workfow on the basis of a brainbriefing JSON and a pre-
 allowed-tools: update_workflow, get_workflow_template
 ---
 
-This skill is used whenever the brain agent needs to assemble and patch a workflow from a workflow template pre-selected by the researcher agent. Uses the brainbriefing JSON to retrieve input- and output nodes.
+This skill is used whenever the assemble workflow agent needs to assemble and patch a workflow from a workflow template pre-selected by the query templates agent. Uses the brainbriefing JSON to retrieve input- and output nodes.
 
 **General constraints:**
 - Before every tool call, state what you are doing and why.

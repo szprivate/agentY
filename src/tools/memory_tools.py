@@ -1,7 +1,7 @@
 """
 agentY – Strands @tool wrappers for the local FAISS memory layer.
 
-These two tools are injected into both the Researcher and Brain agents so
+These two tools are injected into both the Query Templates and Assemble Workflow agents so
 they can read from and write to long-term memory during a run.
 
 Session binding

@@ -2,18 +2,18 @@
 """
 agentY – main entry point.
 
-Pipeline mode — Researcher resolves the spec, Brain assembles + runs it:
+Pipeline mode — Query Templates resolves the spec, Assemble Workflow assembles + runs it:
     python -m src.main
     python -m src.main --researcher-llm ollama --researcher-ollama-model qwen3-coder:32b
-    python -m src.main --brain-llm claude --brain-anthropic-model claude-sonnet-4-5
+    python -m src.main --assemble-workflow-llm claude --assemble-workflow-anthropic-model claude-sonnet-4-5
 
 Environment variable equivalents (all optional):
-    RESEARCHER_LLM              ollama | claude            (default: ollama)
-    RESEARCHER_OLLAMA_MODEL     model id                   (default: qwen3-coder:32b)
-    RESEARCHER_ANTHROPIC_MODEL  model id
-    BRAIN_LLM                   claude | ollama            (default: claude)
-    BRAIN_ANTHROPIC_MODEL       model id
-    BRAIN_OLLAMA_MODEL          model id
+    QUERYTEMPLATES_LLM              ollama | claude            (default: ollama)
+    QUERYTEMPLATES_OLLAMA_MODEL     model id                   (default: qwen3-coder:32b)
+    QUERYTEMPLATES_ANTHROPIC_MODEL  model id
+    ASSEMBLEWORKFLOW_LLM                   claude | ollama            (default: claude)
+    ASSEMBLEWORKFLOW_ANTHROPIC_MODEL       model id
+    ASSEMBLEWORKFLOW_OLLAMA_MODEL          model id
 """
 
 import argparse
@@ -44,54 +44,54 @@ def main() -> None:
     )
 
 
-    # ── Pipeline: Researcher overrides ────────────────────────────────── #
-    pipeline_group = parser.add_argument_group("Pipeline – Researcher agent")
+    # ── Pipeline: Query Templates overrides ────────────────────────────────── #
+    pipeline_group = parser.add_argument_group("Pipeline – Query Templates agent")
     pipeline_group.add_argument(
         "--researcher-llm",
         choices=["ollama", "claude"],
         default=None,
         metavar="BACKEND",
-        help="LLM backend for the Researcher (default: ollama / RESEARCHER_LLM env).",
+        help="LLM backend for the Query Templates (default: ollama / QUERYTEMPLATES_LLM env).",
     )
     pipeline_group.add_argument(
         "--researcher-ollama-model",
         default=None,
         metavar="MODEL",
-        help="Ollama model for the Researcher (default: qwen3-coder:32b).",
+        help="Ollama model for the Query Templates (default: qwen3-coder:32b).",
     )
     pipeline_group.add_argument(
         "--researcher-anthropic-model",
         default=None,
         metavar="MODEL",
-        help="Anthropic model for the Researcher when --researcher-llm=claude.",
+        help="Anthropic model for the Query Templates when --researcher-llm=claude.",
     )
 
-    # ── Pipeline: Brain overrides ──────────────────────────────────────── #
-    brain_group = parser.add_argument_group("Pipeline – Brain agent")
+    # ── Pipeline: Assemble Workflow overrides ──────────────────────────────────────── #
+    brain_group = parser.add_argument_group("Pipeline – Assemble Workflow agent")
     brain_group.add_argument(
         "--brain-llm",
         choices=["claude", "ollama"],
         default=None,
         metavar="BACKEND",
-        help="LLM backend for the Brain (default: claude / BRAIN_LLM env).",
+        help="LLM backend for the Assemble Workflow (default: claude / ASSEMBLEWORKFLOW_LLM env).",
     )
     brain_group.add_argument(
         "--brain-anthropic-model",
         default=None,
         metavar="MODEL",
-        help="Anthropic model for the Brain (e.g. claude-sonnet-4-5).",
+        help="Anthropic model for the Assemble Workflow (e.g. claude-sonnet-4-5).",
     )
     brain_group.add_argument(
         "--brain-ollama-model",
         default=None,
         metavar="MODEL",
-        help="Ollama model for the Brain when --brain-llm=ollama.",
+        help="Ollama model for the Assemble Workflow when --brain-llm=ollama.",
     )
     brain_group.add_argument(
         "--skip-brain",
         action="store_true",
         default=False,
-        help="Pipeline mode only: return Researcher output directly and skip Brain stage.",
+        help="Pipeline mode only: return Query Templates output directly and skip Assemble Workflow stage.",
     )
 
 
@@ -119,9 +119,9 @@ def main() -> None:
         brain_ollama_model=args.brain_ollama_model,
         skip_brain=args.skip_brain,
     )
-    print("[agentY] Mode: pipeline (Researcher → Brain)")
+    print("[agentY] Mode: pipeline (Query Templates → Assemble Workflow)")
     if args.skip_brain:
-        print("[agentY] SkipBrain is activated: Brain stage will be bypassed and Researcher output will be returned.")
+        print("[agentY] SkipBrain is activated: Assemble Workflow stage will be bypassed and Query Templates output will be returned.")
 
 
     print("\n=== agentY - ComfyUI Agent ===")

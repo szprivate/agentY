@@ -1,5 +1,5 @@
 """
-agentY – Triage entry point.
+agentY – Detect User Intent entry point.
 
 Classifies incoming user messages and routes them to the appropriate handler.
 Uses a Strands Agent wrapping a small Qwen model via Ollama for fast,
@@ -7,11 +7,11 @@ cheap intent classification — no tools, single-turn, stateless.
 
 Typical usage
 -------------
->>> from src.agent import create_triage_agent
->>> triage_agent = create_triage_agent()
+>>> from src.agent import create_detect_user_intent_agent
+>>> triage_agent = create_detect_user_intent_agent()
 >>> session = AgentSession(session_id="abc")
 >>> result  = await triage(user_message, session, info_context, triage_agent)
->>> handler = route(result)          # "researcher" | "brain" | "answer" | "log_warning"
+>>> handler = route(result)          # "query_templates" | "assemble_workflow" | "answer" | "log_warning"
 """
 
 from __future__ import annotations
@@ -55,13 +55,13 @@ def _extract_json(text: str) -> str | None:
 # Public API
 # ---------------------------------------------------------------------------
 
-async def triage(
+async def detect_user_intent(
     user_message: str | list,
     session: AgentSession,
     info_context: dict,  # noqa: ARG001  — reserved for future use
     agent: Agent,
 ) -> TriageResult:
-    """Classify *user_message* using the Triage agent and return a routing result.
+    """Classify *user_message* using the Detect User Intent agent and return a routing result.
 
     Parameters
     ----------
@@ -74,7 +74,7 @@ async def triage(
         Reserved — no longer used by triage directly.  Answering info_query
         requests is now handled by the dedicated Info agent in the pipeline.
     agent:
-        Pre-built Strands Triage agent (created by ``create_triage_agent()``).
+        Pre-built Strands Triage agent (created by ``create_detect_user_intent_agent()``).
         Passed in so the model-availability check only runs once at startup.
 
     Returns
@@ -119,7 +119,7 @@ async def triage(
     else:
         classify_input = f"{session_hint}{user_message}"
 
-    # Call the triage agent asynchronously — returns the full response string.
+    # Call the detect_user_intent agent asynchronously — returns the full response string.
     #
     # IMPORTANT: use ``invoke_async``, NOT the sync ``agent(...)``.  The sync
     # ``__call__`` routes through Strands' ``run_async()``, which executes the
@@ -127,12 +127,12 @@ async def triage(
     # *every* call.  Because the triage agent is persistent (reused each turn),
     # its loop-bound async HTTP client is created on the first call's worker loop
     # and then hangs on the second call's new loop — the classic "info query
-    # turn 1 works, turn 2 wedges in triage" deadlock.  ``invoke_async`` runs the
-    # agent natively on the caller's event loop, exactly like the Brain / Info /
-    # Researcher agents do via ``stream_async`` (which is why they never hang).
+    # turn 1 works, turn 2 wedges in detect_user_intent" deadlock.  ``invoke_async`` runs the
+    # agent natively on the caller's event loop, exactly like the Assemble Workflow / Info /
+    # Query Templates agents do via ``stream_async`` (which is why they never hang).
     raw: str = str(await agent.invoke_async(classify_input))
 
-    # Log triage input/output before messages are cleared.
+    # Log detect_user_intent input/output before messages are cleared.
     log_agent_exchange("TRIAGE", classify_input, raw)
 
     # Reset conversation history so prior exchanges never bleed into the next call.
@@ -152,7 +152,7 @@ async def triage(
         # Parse confidence and run_qa first — these must not be lost if the
         # intent string is unrecognised (a bad intent value used to abort the
         # entire block, leaving confidence=0.0 and triggering a spurious
-        # low-confidence fallback that misfired the full researcher pipeline).
+        # low-confidence fallback that misfired the full Query Templates pipeline).
         confidence = float(parsed.get("confidence", 0.5))
         run_qa     = bool(parsed.get("run_qa", False))
         intent     = MessageIntent(parsed["intent"])
@@ -187,7 +187,7 @@ async def triage(
         )
 
     # When an image is required but missing, carry a user-facing response so the
-    # pipeline can return it directly without starting the Researcher or Brain.
+    # pipeline can return it directly without starting the Query Templates or Assemble Workflow.
     if intent == MessageIntent.needs_image:
         return TriageResult(
             intent=intent,
@@ -208,7 +208,7 @@ def route(result: TriageResult) -> str:
     Returns
     -------
     str
-        One of ``"researcher"`` | ``"brain"`` | ``"answer"`` | ``"story"`` |
+        One of ``"query_templates"`` | ``"assemble_workflow"`` | ``"answer"`` | ``"story"`` |
         ``"needs_image"`` | ``"log_warning"``.
     """
     if result.confidence < 0.6:
@@ -224,12 +224,12 @@ def route(result: TriageResult) -> str:
         case MessageIntent.needs_image:
             return "needs_image"
         case MessageIntent.param_tweak | MessageIntent.feedback:
-            return "brain"
+            return "assemble_workflow"
         case MessageIntent.chain | MessageIntent.batch_request:
-            return "researcher"
+            return "query_templates"
         case MessageIntent.new_planned_request:
             return "planner"
         case MessageIntent.new_request:
-            return "researcher"
+            return "query_templates"
         case _:
-            return "researcher"
+            return "query_templates"

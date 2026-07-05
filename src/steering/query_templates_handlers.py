@@ -1,14 +1,14 @@
-"""Researcher steering handlers for agentY.
+"""Query Templates steering handlers for agentY.
 
-Two handlers enforce Researcher-specific guardrails just-in-time:
+Two handlers enforce Query Templates-specific guardrails just-in-time:
 
 Handler 3 — JsonOutputEnforcer (rule-based, no LLM)
-    After the Researcher produces its final response, checks that the output
+    After the Query Templates produces its final response, checks that the output
     is valid JSON with no surrounding prose or markdown fences. If not,
     returns Guide instructing the agent to output raw JSON only.
 
 Handler 4 — BriefingHallucinationGuard (rule-based, no LLM, uses LedgerProvider)
-    After the Researcher produces its final response, performs two checks:
+    After the Query Templates produces its final response, performs two checks:
     a) Extracts model file paths from the brainbriefing JSON and verifies each
        was returned by get_workflow_template or check_model tool calls recorded
        in the session ledger.
@@ -143,7 +143,7 @@ def _extract_text(message: Message) -> str:
 
 
 class JsonOutputEnforcer(SteeringHandler):
-    """Enforces that the Researcher's final output is bare JSON.
+    """Enforces that the Query Templates' final output is bare JSON.
 
     Only fires when stop_reason is 'end_turn' (i.e. the model is done, not
     mid-tool-call), so it doesn't interfere with intermediate status messages.
@@ -364,7 +364,7 @@ class BriefingHallucinationGuard(SteeringHandler):
     """Rule-based guard that detects fabricated model paths AND mistyped image filenames.
 
     Uses LedgerProvider (via context_providers) to record tool call history
-    during the Researcher session.  On the final ``end_turn``:
+    during the Query Templates session.  On the final ``end_turn``:
 
     1. **Model paths** — extracts file paths ending in model-weight extensions
        from the brainbriefing and verifies each against strings returned by
@@ -469,8 +469,8 @@ class BriefingHallucinationGuard(SteeringHandler):
 # ---------------------------------------------------------------------------
 
 
-def get_researcher_steering_handlers(model=None) -> list:
-    """Return the list of steering handler plugins for the Researcher agent.
+def get_query_templates_steering_handlers(model=None) -> list:
+    """Return the list of steering handler plugins for the Query Templates agent.
 
     Args:
         model: Unused — retained for API compatibility.  Both handlers are
