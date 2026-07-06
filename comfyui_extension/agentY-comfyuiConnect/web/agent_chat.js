@@ -60,6 +60,7 @@ class AgentChat {
     this.curAssistant = null; // DOM node currently streaming assistant text
     this.curStep = null; // {details, body}
     this.nodeCount = 0;
+    this.domCache = new Map(); // threadId -> {html, scroll}: live-rendered panel (thinking/step blocks) kept across conversation switches
     this._injectStyles();
     this._build();
     this._loadCommands();
@@ -162,7 +163,16 @@ class AgentChat {
     } catch (_) {}
   }
 
+  // Snapshot the current thread's live-rendered panel (thinking/step blocks and
+  // all) so returning to it later this session restores exactly what was shown.
+  _saveCurrentDom() {
+    if (this.threadId) {
+      this.domCache.set(this.threadId, { html: this.logEl.innerHTML, scroll: this.logEl.scrollTop });
+    }
+  }
+
   newThread() {
+    this._saveCurrentDom();
     this.threadId = null;
     this.logEl.innerHTML = "";
     this._sys("New conversation. Ask me to generate or edit an image/video — results drop onto the graph as nodes.");
@@ -170,16 +180,29 @@ class AgentChat {
 
   async deleteThread() {
     if (!this.threadId) return this.newThread();
+    const tid = this.threadId;
     try {
-      await fetch(backendBase() + "/agentY/threads/" + this.threadId, { method: "DELETE" });
+      await fetch(backendBase() + "/agentY/threads/" + tid, { method: "DELETE" });
     } catch (_) {}
+    this.domCache.delete(tid);
+    this.threadId = null; // so newThread() doesn't re-cache the just-deleted thread
     this.newThread();
     this._loadThreads();
   }
 
   async openThread(id) {
     if (!id || id === this.threadId) return;
+    this._saveCurrentDom();
     this.threadId = id;
+    // Restore the live-rendered panel if we've shown this thread already this
+    // session (keeps the thinking/step blocks); otherwise rebuild from the
+    // persisted messages, which store only the final user/assistant text.
+    const cached = this.domCache.get(id);
+    if (cached) {
+      this.logEl.innerHTML = cached.html;
+      this.logEl.scrollTop = cached.scroll;
+      return;
+    }
     this.logEl.innerHTML = "";
     try {
       const r = await fetch(backendBase() + "/agentY/threads/" + id);
