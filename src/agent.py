@@ -1259,7 +1259,7 @@ def create_ASSEMBLEWORKFLOW_agent(
     # Use the local-model variant of the Assemble Workflow system prompt for Ollama; the
     # standard prompt for Claude.  The local variant contains explicit step-by-step
     # patching instructions instead of skill-activation references.
-    ASSEMBLEWORKFLOW_prompt_key = "brain.local" if resolved_llm == "ollama" else "brain"
+    ASSEMBLEWORKFLOW_prompt_key = "assemble_workflow.local" if resolved_llm == "ollama" else "assemble_workflow"
     system_prompt = _load_system_prompt(ASSEMBLEWORKFLOW_prompt_key)
 
     # Load skills from the project-level skills/ directory.
