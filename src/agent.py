@@ -570,12 +570,20 @@ def _make_agent(
         if not api_key:
             print(f"[agentY:{role}] WARNING: DASHSCOPE_API_KEY not set — Model Studio calls will fail.")
         ds_max_tokens = max_tokens or int(_cfg("DASHSCOPE_MAX_TOKENS", "dashscope", "max_tokens", default=8192))
+        # Qwen3 "thinking" models (e.g. qwen3.7-plus) emit reasoning_content, which
+        # the Chat Completions API rejects when echoed back on multi-turn requests
+        # — and the pipeline is a tool-calling loop (multi-turn). The work here is
+        # structured extraction/assembly, not deep reasoning, so disable thinking
+        # by default. Override with DASHSCOPE_ENABLE_THINKING or
+        # dashscope.enable_thinking in settings.json.
+        _ds_think_raw = _cfg("DASHSCOPE_ENABLE_THINKING", "dashscope", "enable_thinking", default="false")
+        _ds_think = str(_ds_think_raw).strip().lower() in ("1", "true", "yes", "on")
         model = OpenAIModel(
             client_args={"api_key": api_key, "base_url": base_url},
             model_id=model_id,
-            params={"max_tokens": ds_max_tokens},
+            params={"max_tokens": ds_max_tokens, "extra_body": {"enable_thinking": _ds_think}},
         )
-        print(f"[agentY:{role}] Using Alibaba Model Studio (DashScope) — {model_id}")
+        print(f"[agentY:{role}] Using Alibaba Model Studio (DashScope) — {model_id} (thinking={_ds_think})")
     else:
         model_id = anthropic_model or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
         tokens = max_tokens or int(_cfg("ANTHROPIC_MAX_TOKENS", "anthropic", "max_tokens", default=4096))
