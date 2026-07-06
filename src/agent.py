@@ -792,7 +792,7 @@ def create_planner_agent(
     # Read combined 'provider,model' from settings (env var PLANNER_LLM still wins).
     # Falls back to the detect_user_intent setting so no extra config is required.
     _raw = str(_cfg("PLANNER_LLM", "pipeline", "planner",
-                    default=str(_cfg("DETECTUSERINTENT_LLM", "pipeline", "triage", default="ollama"))))
+                    default=str(_cfg("DETECTUSERINTENT_LLM", "pipeline", "detect_user_intent", default="ollama"))))
     _settings_llm, _settings_model = _parse_llm_setting(_raw)
     resolved_llm = llm or _settings_llm or "ollama"
 
@@ -1022,7 +1022,7 @@ def create_SEARCHWEB_agent(
 
     # Fall back to the Info-agent setting so no extra config is required.
     _info_default = str(_cfg("INFO_LLM", "pipeline", "info", default="claude,claude-haiku-4-5"))
-    _raw = str(_cfg("SEARCHWEB_LLM", "pipeline", "scout", default=_info_default))
+    _raw = str(_cfg("SEARCHWEB_LLM", "pipeline", "search_web", default=_info_default))
     _settings_llm, _settings_model = _parse_llm_setting(_raw)
     resolved_llm = llm or _settings_llm or "claude"
 
@@ -1165,7 +1165,7 @@ def create_DETECTUSERINTENT_agent(
         llm = "ollama"
 
     # Read combined 'provider,model' from settings (env var DETECTUSERINTENT_LLM still wins).
-    _raw = str(_cfg("DETECTUSERINTENT_LLM", "pipeline", "triage", default="ollama"))
+    _raw = str(_cfg("DETECTUSERINTENT_LLM", "pipeline", "detect_user_intent", default="ollama"))
     _settings_llm, _settings_model = _parse_llm_setting(_raw)
     resolved_llm = llm or _settings_llm or "ollama"
 
