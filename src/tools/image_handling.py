@@ -165,7 +165,7 @@ def _downsize(data: bytes, img_fmt: str) -> tuple[bytes, str]:
 @tool
 def upload_image(
     file_path: str,
-    subfolder: str = "agent",
+    subfolder: str = "",
     image_type: str = "input",
     overwrite: bool = False,
 ) -> dict:
@@ -173,10 +173,10 @@ def upload_image(
 
     Args:
         file_path: Local path to the image file.
-        subfolder: Subfolder inside the target directory. Defaults to ``agent``
-                   so agent-staged inputs are grouped under ``input/agent/``
-                   instead of cluttering the input root. ``apply_brainbriefing``
-                   qualifies bare LoadImage references with this same subfolder.
+        subfolder: Subfolder inside the target directory. Defaults to the input
+                   root (``""``): LoadImage on some ComfyUI builds cannot load
+                   files from input subdirectories, so agent inputs are staged
+                   flat and referenced by bare filename.
         image_type: 'input', 'output', or 'temp' (default 'input').
         overwrite: Overwrite existing file with the same name.
     """
@@ -196,12 +196,13 @@ def upload_image(
 
 
 @tool
-def download_image(image_url: str, subfolder: str = "agent/references", downsize: bool = True) -> str:
+def download_image(image_url: str, subfolder: str = "", downsize: bool = True) -> str:
     """Download a web image straight into ComfyUI's input folder so a workflow can load it.
 
     Use this right after ``web_search_images`` to fetch a reference image you
     found (pass the result's ``image_url``).  The image is uploaded into ComfyUI's
-    input directory under ``agent/references`` and can then be referenced directly
+    input directory root (no subfolder — LoadImage on some builds can't read input
+    subdirectories) and can then be referenced directly
     by a ``LoadImage`` node using the returned ``name`` and ``subfolder`` — no
     separate ``upload_image`` call is needed.
 

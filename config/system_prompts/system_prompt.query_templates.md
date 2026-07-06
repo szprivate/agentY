@@ -87,6 +87,11 @@ Map user-provided image paths/filenames into the Assemble Workflowbriefing.
 **Constraints:**
 - You MUST list each input image filename under `input_images[].filename`.
 - `input_image_count` MUST equal the exact length of `input_images`.
+- **Current-message attachments (freshly uploaded images) — HIGHEST PRIORITY**: When the user request contains an `Attached image file paths (use these for ComfyUI)` block, every path listed there is an image the user just uploaded **for this request**. You MUST use them as the workflow's input image(s) and MUST NOT run a template with its default/example image when the user provided one. For EACH listed path you MUST:
+  1. Call `upload_image(file_path=<the listed path>)` to stage it into ComfyUI's input directory.
+  2. Use the `name` returned by `upload_image` as the `filename` in `input_images` and `input_nodes`.
+  3. Set `path` in `input_nodes` to `<get_comfyui_dirs().input_dir>/<name>` (the uploaded name — do NOT reuse the original attachment path).
+  4. Set `input_image_count` to the number of attached images (NEVER 0 when images are attached). If your best-matching template has no image input, switch to an image-consuming template (edit / img2img / img2video / inpaint) that uses the attachment.
 - **Prior-session outputs as inputs**: If the conversation summary (injected as `[CONVERSATION SUMMARY FROM PRIOR ROUND]`) contains an `OUTPUT_PATHS` line, and the current task requires one of those files as input (e.g. "use the image we just generated"), you MUST:
   1. Call `upload_image(file_path=<full path from OUTPUT_PATHS>)` for each such file.
   2. Use the `name` value returned by `upload_image` as the `filename` in `input_images` and `input_nodes`.

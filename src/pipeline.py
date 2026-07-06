@@ -3687,18 +3687,14 @@ class Pipeline:
         current_input: Any = brain_prompt
         _brain_snap = self._usage_snapshot(self._assemble_workflow)
 
-        # Deterministic happy-path: a ready briefing naming a standard template is
-        # assembled mechanically in code (get_template -> apply -> signal), skipping
-        # the erratic LLM brain entirely. Only the plain single-run case; anything
-        # non-standard or any apply error falls through to the model below.
+        # Deterministic happy-path DISABLED. The LLM workflow-assembly agent now
+        # owns assembly end to end: it calls apply_brainbriefing and then fixes any
+        # resulting errors (get_node_schema / update_workflow / replace_node) before
+        # signalling. The mechanical _try_deterministic_brain path skipped the model
+        # but silently mis-assembled some templates (e.g. Nano Banana — snapping a
+        # staged input image to the template's default), so it is no longer used.
+        # (_try_deterministic_brain is retained, uncalled, for easy revert.)
         _skip_brain_llm = False
-        if not _is_error_retry and _override_brain_prompt is None:
-            _det_path = self._try_deterministic_brain(raw_json)
-            if _det_path:
-                _skip_brain_llm = True
-                if self._verbose:
-                    print(f"pipeline: Brain deterministic happy-path — signalled "
-                          f"{_det_path} (no LLM).")
 
         # Track whether a brain-assembly failure was resolved via user advice.
         _assembly_fail_error: str | None = None
