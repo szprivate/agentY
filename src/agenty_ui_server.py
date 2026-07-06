@@ -4,7 +4,7 @@ agentY – headless chat host launcher.
 
 Replaces the Chainlit GUI entry point. It builds the pipeline once and serves the
 bridge + chat host (:mod:`src.utils.agentY_server`) that the ComfyUI-native chat
-sidebar (``comfyui_extension/comfyui-agent-canvas``) talks to over HTTP/SSE. There
+sidebar (``comfyui_extension/agentY-comfyuiConnect``) talks to over HTTP/SSE. There
 is no web GUI here — the UI lives inside ComfyUI.
 
 Launch:
@@ -101,7 +101,7 @@ def main() -> None:
     print("  agentY chat host is running.")
     print(f"  Backend:  {url}   (health: {url}/agentY/health)")
     print("  UI:       open ComfyUI and click the agentY tab in the left sidebar.")
-    print("            (install comfyui_extension/comfyui-agent-canvas into")
+    print("            (install comfyui_extension/agentY-comfyuiConnect into")
     print("             <ComfyUI>/custom_nodes/ and restart ComfyUI once).")
     print("  Stop:     Ctrl+C, or type /stop in the chat.")
     print("=" * 64 + "\n")

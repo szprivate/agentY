@@ -1,7 +1,8 @@
-# agentY for ComfyUI — chat sidebar + auto-open canvas
+# agentY-comfyuiConnect
 
-A ComfyUI custom node (frontend hooks + a server route, **no graph nodes of its
-own**) that is the **agentY UI**. It has two parts:
+The **agentY UI for ComfyUI** — a custom node (frontend hooks + a server route,
+**no graph nodes of its own**) that connects ComfyUI to the agentY agent. It has
+two parts:
 
 1. **Chat sidebar** (`web/agent_chat.js`) — the "agentY" tab in ComfyUI's left
    sidebar. Chat with the agent, browse past conversations, run slash commands,
@@ -32,10 +33,10 @@ own**) that is the **agentY UI**. It has two parts:
 Copy this folder into `ComfyUI/custom_nodes/` and **restart ComfyUI** once:
 
 ```
-cp -r comfyui_extension/comfyui-agent-canvas  <ComfyUI>/custom_nodes/
+cp -r comfyui_extension/agentY-comfyuiConnect  <ComfyUI>/custom_nodes/
 ```
 
-After the restart the console prints `[AgentCanvas] ready …`. Until then, workflows
+After the restart the console prints `[agentY-comfyuiConnect] ready …`. Until then, workflows
 still land in the Workflows sidebar (one click to open); auto-open just isn't live.
 
 Loading replaces the current canvas graph. To disable the automatic behavior set

@@ -1,4 +1,4 @@
-"""AgentCanvas — push a workflow onto the open ComfyUI canvas.
+"""agentY-comfyuiConnect — push a workflow onto the open ComfyUI canvas.
 
 The agentY pipeline POSTs a graph-format workflow to ``/agent/load_workflow``;
 this broadcasts it over the websocket and ``web/agent_canvas.js`` loads it onto
@@ -25,7 +25,7 @@ try:
         return web.json_response({"ok": True, "nodes": len(graph.get("nodes", []))})
 except Exception as _e:  # noqa: BLE001
     # Never break ComfyUI startup if the server API shape changes.
-    print(f"[AgentCanvas] could not register /agent/load_workflow: {_e}")
+    print(f"[agentY-comfyuiConnect] could not register /agent/load_workflow: {_e}")
 
 WEB_DIRECTORY = "./web"
 NODE_CLASS_MAPPINGS = {}

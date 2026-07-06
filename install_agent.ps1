@@ -3,7 +3,7 @@
     Install script for the agentY project.
     Works on Windows PowerShell 5.1+ and PowerShell 7+, and macOS/Linux with PowerShell 7+.
 
-    The UI is the "agentY" tab inside ComfyUI (the comfyui-agent-canvas custom
+    The UI is the "agentY" tab inside ComfyUI (the agentY-comfyuiConnect custom
     node). There is no Chainlit, Docker, Postgres, or MinIO anymore — conversations
     persist to a local SQLite file.
 #>
@@ -108,7 +108,7 @@ Write-Host ""
 Write-Host "  1. Fill in your API keys in .env (HF_TOKEN, ANTHROPIC_API_KEY, COMFYUI_API_KEY)." -ForegroundColor Yellow
 Write-Host ""
 Write-Host "  2. Install the ComfyUI chat UI (once):" -ForegroundColor Yellow
-Write-Host "       copy comfyui_extension\comfyui-agent-canvas  ->  <ComfyUI>\custom_nodes\" -ForegroundColor White
+Write-Host "       copy comfyui_extension\agentY-comfyuiConnect  ->  <ComfyUI>\custom_nodes\" -ForegroundColor White
 Write-Host "     then restart ComfyUI." -ForegroundColor White
 Write-Host ""
 Write-Host "  3. Start the agent chat host:" -ForegroundColor Yellow

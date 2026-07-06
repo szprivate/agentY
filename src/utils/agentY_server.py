@@ -2,7 +2,7 @@
 agentY bridge + chat host — runs on localhost:5000.
 
 This is the backend for the **ComfyUI-native agentY chat UI** (the sidebar
-custom-node panel in ``comfyui_extension/comfyui-agent-canvas``). It replaces the
+custom-node panel in ``comfyui_extension/agentY-comfyuiConnect``). It replaces the
 Chainlit GUI: the pipeline runs here, conversations persist to a local SQLite
 store (:mod:`src.utils.conversation_store`), and — crucially — generated media is
 **not** streamed back as inline images. Instead the executor's output files are

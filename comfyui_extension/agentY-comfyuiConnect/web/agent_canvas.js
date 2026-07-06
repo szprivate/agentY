@@ -1,7 +1,7 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
-// AgentCanvas: when the agentY pipeline runs a workflow it POSTs the graph to
+// agentY-comfyuiConnect: when the agentY pipeline runs a workflow it POSTs the graph to
 // /agent/load_workflow, which the server broadcasts as an "agent.load_workflow"
 // websocket event. Load that graph onto the canvas so the user sees exactly what
 // just ran, without clicking through the Workflows sidebar.
@@ -18,10 +18,10 @@ app.registerExtension({
         try {
           await app.loadGraphData(graph); // older signatures
         } catch (err2) {
-          console.error("[AgentCanvas] loadGraphData failed:", err2);
+          console.error("[agentY-comfyuiConnect] loadGraphData failed:", err2);
         }
       }
     });
-    console.log("[AgentCanvas] ready — workflows the agent runs will open here");
+    console.log("[agentY-comfyuiConnect] ready — workflows the agent runs will open here");
   },
 });

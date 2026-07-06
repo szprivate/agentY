@@ -30,7 +30,7 @@ An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanony
 
 ```
 ComfyUI  (your browser)
-  └─ agentY sidebar tab  ── comfyui_extension/comfyui-agent-canvas
+  └─ agentY sidebar tab  ── comfyui_extension/agentY-comfyuiConnect
         │  HTTP + SSE (default http://127.0.0.1:5000)
         ▼
   agentY chat host  ── src/agenty_ui_server.py  →  src/utils/agentY_server.py
@@ -99,7 +99,7 @@ COMFYUI_API_KEY=comfyui-...     # only if your ComfyUI requires auth / uses API 
 Copy the companion custom node into ComfyUI and restart it once:
 
 ```powershell
-copy -r comfyui_extension\comfyui-agent-canvas  <ComfyUI>\custom_nodes\
+copy -r comfyui_extension\agentY-comfyuiConnect  <ComfyUI>\custom_nodes\
 ```
 
 After the restart, ComfyUI's left sidebar shows an **agentY** tab.
