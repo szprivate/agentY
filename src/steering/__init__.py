@@ -14,4 +14,13 @@ Usage in agent factories:
 from .brain_handlers import get_brain_steering_handlers
 from .query_templates_handlers import get_query_templates_steering_handlers
 
-__all__ = ["get_brain_steering_handlers", "get_query_templates_steering_handlers"]
+# Rename-compat aliases: src/agent.py imports the ALLCAPS spellings.
+get_ASSEMBLEWORKFLOW_steering_handlers = get_brain_steering_handlers
+get_QUERYTEMPLATES_steering_handlers = get_query_templates_steering_handlers
+
+__all__ = [
+    "get_brain_steering_handlers",
+    "get_query_templates_steering_handlers",
+    "get_ASSEMBLEWORKFLOW_steering_handlers",
+    "get_QUERYTEMPLATES_steering_handlers",
+]

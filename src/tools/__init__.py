@@ -271,3 +271,16 @@ ASSEMBLE_WORKFLOW_TOOLS: list = [
     memory_write,
     stop,
 ]
+
+# ---------------------------------------------------------------------------
+# Rename-compat aliases.
+#
+# src/agent.py imports the compact spellings of these tool lists, while the
+# canonical definitions above use the underscored spellings (and TRIAGE_TOOLS
+# predates the triage -> detect_user_intent rename). Alias them so both
+# spellings resolve to the same list object.
+# ---------------------------------------------------------------------------
+QUERYTEMPLATES_TOOLS = QUERY_TEMPLATES_TOOLS
+ASSEMBLEWORKFLOW_TOOLS = ASSEMBLE_WORKFLOW_TOOLS
+SEARCHWEB_TOOLS = SEARCH_WEB_TOOLS
+DETECTUSERINTENT_TOOLS = TRIAGE_TOOLS

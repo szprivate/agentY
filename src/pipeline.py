@@ -35,7 +35,7 @@ from src.utils.comfyui_progress import stream_comfyui_job as _stream_comfyui_job
 from src.utils.progress_signal import drain as _drain_progress
 from src.utils.costs import compute_cost_from_usage
 from src.utils.models import AgentSession, ChatSummary, GeneratedImage, MessageIntent, TriageResult
-from src.utils.triage import triage as _triage, route as _route
+from src.utils.triage import detect_user_intent as _triage, route as _route
 from src.utils.workflow_signal import clear_and_get as _get_workflow_signal
 from src.executor import execute_workflow as _execute_workflow, execute_workflows_batch as _execute_workflows_batch
 from src.utils.memory import format_memories, memory_add, memory_search

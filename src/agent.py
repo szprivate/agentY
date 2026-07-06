@@ -1294,6 +1294,14 @@ def create_ASSEMBLEWORKFLOW_agent(
     )
 
 
+# Rename-compat aliases: pipeline.py, triage.py, and utils/agentY_server.py import
+# the snake_case factory names; these three factories were left in the older
+# ALLCAPS spelling. Alias so both spellings refer to the same function.
+create_assemble_workflow_agent = create_ASSEMBLEWORKFLOW_agent
+create_search_web_agent = create_SEARCHWEB_agent
+create_detect_user_intent_agent = create_DETECTUSERINTENT_agent
+
+
 def create_learnings_agent(
     llm: str | None = None,
     ollama_model: str | None = None,
