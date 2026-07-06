@@ -12,14 +12,10 @@ python-dotenv>=1.0.0
 anthropic>=0.49.0
 ollama
 Pillow>=10.0.0
+# Chat host + ComfyUI bridge server (src/utils/agentY_server.py) — replaces the
+# Chainlit GUI. werkzeug ships with flask; conversations persist to local SQLite
+# (stdlib) so no Postgres/boto3/asyncpg/sqlalchemy are needed anymore.
 flask>=3.0.0
-waitress>=3.0.0
-chainlit>=2.0.0
-starlette<1.0.0
-boto3>=1.34.0
-asyncpg>=0.31.0
-psycopg2>=2.9.11
-sqlalchemy>=2.0.49
 # Local FAISS memory layer (mem0 + nomic-embed-text via Ollama)
 mem0ai>=1.0.0
 faiss-cpu>=1.7.0

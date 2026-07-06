@@ -19,7 +19,7 @@
   "output_dir": "./output_images/",
   "output_workflows_dir": "./output_workflows/",
   "comfyui_user_dir": "D:\\ai\\ComfyUI\\user\\default",
-  "chainlit_datalayer_dir": "D:\\AI\\agentY\\chainlit-datalayer",
+  "conversation_db": "./memory/conversations.sqlite",
   "message_history_log": "./.logs/message_history.log",
   "tokens_usage_log": "./.logs/tokens_usage.log",
 

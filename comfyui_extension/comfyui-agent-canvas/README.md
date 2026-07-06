@@ -1,10 +1,21 @@
-# AgentCanvas — auto-open agent workflows on the ComfyUI canvas
+# agentY for ComfyUI — chat sidebar + auto-open canvas
 
-A tiny ComfyUI custom node (server route + frontend hook, **no nodes**) that lets
-the agentY pipeline open a workflow directly on the open ComfyUI canvas, so you
-see exactly what the agent just ran without clicking through the Workflows sidebar.
+A ComfyUI custom node (frontend hooks + a server route, **no graph nodes of its
+own**) that is the **agentY UI**. It has two parts:
 
-## How it works
+1. **Chat sidebar** (`web/agent_chat.js`) — the "agentY" tab in ComfyUI's left
+   sidebar. Chat with the agent, browse past conversations, run slash commands,
+   and attach images. This **replaces the old Chainlit web GUI.** The agent's
+   *text* streams into the panel; every generated **image/video is dropped onto
+   the graph as a `LoadImage` / video-loader node** instead of shown inline.
+   It talks to the agentY chat host (`src/utils/agentY_server.py`, default
+   `http://127.0.0.1:5000`) over HTTP + SSE. Start that host with `run_agent.ps1`.
+   Override the backend URL with `localStorage.agentY_backend` if it runs elsewhere.
+
+2. **Auto-open canvas** (`web/agent_canvas.js`) — opens the workflow the agent
+   just ran directly on the canvas.
+
+## Auto-open canvas — how it works
 
 - `__init__.py` registers `POST /agent/load_workflow`. It broadcasts the posted
   graph over the websocket as an `agent.load_workflow` event.
