@@ -22,6 +22,12 @@ flask>=3.0.0
 # Local FAISS memory layer (mem0 + nomic-embed-text via Ollama)
 mem0ai>=1.0.0
 faiss-cpu>=1.7.0
+# spaCy — optional NLP for mem0 (lemmatized BM25 keyword search + entity
+# extraction). The memory layer works without it, just in a degraded mode.
+# The en_core_web_sm model is pinned by URL so `uv pip install -r requirements.txt`
+# gets it without needing spaCy's pip-based downloader (uv venvs have no pip).
+spacy>=3.8
+en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
 tqdm>=4.66.0
 # Web search (no API key required) — ddgs is the maintained successor of the
 # now-deprecated duckduckgo-search package (better rate-limit handling).
