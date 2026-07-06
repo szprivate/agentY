@@ -11,6 +11,9 @@ websockets>=12.0
 python-dotenv>=1.0.0
 anthropic>=0.49.0
 ollama
+# OpenAI SDK — used by the Strands OpenAI provider to reach Alibaba Model Studio
+# (DashScope)'s OpenAI-compatible endpoint for Qwen models.
+openai>=1.0.0
 Pillow>=10.0.0
 # Chat host + ComfyUI bridge server (src/utils/agentY_server.py) — replaces the
 # Chainlit GUI. werkzeug ships with flask; conversations persist to local SQLite

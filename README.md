@@ -87,6 +87,7 @@ Edit `.env`:
 HF_TOKEN=hf_...                 # Hugging Face token (for gated model downloads)
 ANTHROPIC_API_KEY=sk-ant-...    # for Claude
 COMFYUI_API_KEY=comfyui-...     # only if your ComfyUI requires auth / uses API nodes
+DASHSCOPE_API_KEY=...           # Alibaba Model Studio (DashScope) — for Qwen models (optional)
 
 # Optional
 # AGENTY_UI_HOST=127.0.0.1
@@ -122,7 +123,7 @@ Edit `config/settings.json` to point at your ComfyUI instance and set default LL
 }
 ```
 
-Each `"pipeline"` value uses the format `"provider,model"` (`"ollama,qwen3.5:9b"` or `"claude,claude-haiku-4-5"`).
+Each `"pipeline"` value uses the format `"provider,model"` — `"claude,claude-haiku-4-5"`, `"ollama,qwen3.5:9b"`, or `"dashscope,qwen-plus"`. **`dashscope`** routes to **Alibaba Model Studio** (Qwen models over its OpenAI-compatible API) — set `DASHSCOPE_API_KEY` in `.env`; tune the endpoint/default under the `dashscope` block in `settings.json` (defaults to the International endpoint). Aliases `qwen` / `modelstudio` / `alibaba` also work.
 
 ---
 

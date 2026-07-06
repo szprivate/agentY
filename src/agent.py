@@ -106,6 +106,12 @@ def _parse_llm_setting(value: str) -> tuple[str, str]:
     return provider.strip(), model.strip()
 
 
+# Provider tokens routed through Alibaba Model Studio (DashScope)'s
+# OpenAI-compatible endpoint. Use any of them in settings.json, e.g.
+# "query_templates": "dashscope,qwen-plus".
+_DASHSCOPE_PROVIDERS = {"dashscope", "modelstudio", "qwen", "alibaba"}
+
+
 class AnthropicModel(_BaseAnthropicModel):
     """AnthropicModel with cache_control injected on the last tool.
 
@@ -503,6 +509,7 @@ def _make_agent(
     tools: list,
     ollama_model: str | None = None,
     anthropic_model: str | None = None,
+    dashscope_model: str | None = None,
     max_tokens: int | None = None,
     plugins: list | None = None,
     **kwargs,
@@ -553,6 +560,22 @@ def _make_agent(
         print(f"[agentY:{role}] Using Ollama — {model_id} (num_ctx={num_ctx}, "
               f"max_tokens={ol_max_tokens}, repeat_penalty={repeat_penalty}, "
               f"think={_add_args.get('think', 'n/a')})")
+    elif llm in _DASHSCOPE_PROVIDERS:
+        # Alibaba Model Studio (DashScope) via its OpenAI-compatible endpoint.
+        from strands.models.openai import OpenAIModel
+        model_id = dashscope_model or str(_cfg("DASHSCOPE_MODEL", "dashscope", "model", default="qwen-plus"))
+        base_url = str(_cfg("DASHSCOPE_BASE_URL", "dashscope", "base_url",
+                            default="https://dashscope-intl.aliyuncs.com/compatible-mode/v1"))
+        api_key = os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("ALIBABA_API_KEY") or ""
+        if not api_key:
+            print(f"[agentY:{role}] WARNING: DASHSCOPE_API_KEY not set — Model Studio calls will fail.")
+        ds_max_tokens = max_tokens or int(_cfg("DASHSCOPE_MAX_TOKENS", "dashscope", "max_tokens", default=8192))
+        model = OpenAIModel(
+            client_args={"api_key": api_key, "base_url": base_url},
+            model_id=model_id,
+            params={"max_tokens": ds_max_tokens},
+        )
+        print(f"[agentY:{role}] Using Alibaba Model Studio (DashScope) — {model_id}")
     else:
         model_id = anthropic_model or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
         tokens = max_tokens or int(_cfg("ANTHROPIC_MAX_TOKENS", "anthropic", "max_tokens", default=4096))
@@ -677,6 +700,7 @@ def create_vision_agent(
     agent = _make_agent(
         role="vision_agent",
         llm=resolved_llm,
+        dashscope_model=_settings_model,
         system_prompt=system_prompt,
         tools=VISION_AGENT_TOOLS,
         ollama_model=resolved_ollama,
@@ -753,6 +777,7 @@ def create_query_templates_agent(
     return _make_agent(
         role="query_templates",
         llm=resolved_llm,
+        dashscope_model=_settings_model,
         system_prompt=system_prompt,
         tools=QUERYTEMPLATES_TOOLS,
         ollama_model=resolved_ollama,
@@ -824,6 +849,7 @@ def create_planner_agent(
     agent = _make_agent(
         role="planner",
         llm=resolved_llm,
+        dashscope_model=_settings_model,
         system_prompt=system_prompt,
         tools=PLANNER_TOOLS,
         ollama_model=resolved_ollama,
@@ -897,7 +923,8 @@ def create_info_agent(
     )
     return _make_agent(
         role="info",
-        llm="claude",
+        llm=resolved_llm,
+        dashscope_model=_settings_model,
         system_prompt=system_prompt,
         tools=INFO_TOOLS,
         anthropic_model=resolved_anthropic,
@@ -983,7 +1010,8 @@ def create_story_agent(
     )
     return _make_agent(
         role="story",
-        llm="claude",
+        llm=resolved_llm,
+        dashscope_model=_settings_model,
         system_prompt=system_prompt,
         tools=STORY_TOOLS,
         anthropic_model=resolved_anthropic,
@@ -1052,7 +1080,8 @@ def create_SEARCHWEB_agent(
         )
         agent = _make_agent(
             role="search_web",
-            llm="claude",
+            llm=resolved_llm,
+            dashscope_model=_settings_model,
             system_prompt=system_prompt,
             tools=SEARCHWEB_TOOLS,
             anthropic_model=resolved_anthropic,
@@ -1127,7 +1156,8 @@ def create_dop_agent(
         )
         agent = _make_agent(
             role="dop",
-            llm="claude",
+            llm=resolved_llm,
+            dashscope_model=_settings_model,
             system_prompt=system_prompt,
             tools=DOP_TOOLS,
             anthropic_model=resolved_anthropic,
@@ -1194,6 +1224,7 @@ def create_DETECTUSERINTENT_agent(
     agent = _make_agent(
         role="detect_user_intent",
         llm=resolved_llm,
+        dashscope_model=_settings_model,
         system_prompt=system_prompt,
         tools=DETECTUSERINTENT_TOOLS,
         ollama_model=resolved_ollama,
@@ -1284,6 +1315,7 @@ def create_ASSEMBLEWORKFLOW_agent(
     return _make_agent(
         role="brain",
         llm=resolved_llm,
+        dashscope_model=_settings_model,
         system_prompt=system_prompt,
         tools=ASSEMBLEWORKFLOW_TOOLS,
         ollama_model=resolved_ollama,
@@ -1357,6 +1389,7 @@ def create_learnings_agent(
     agent = _make_agent(
         role="learnings",
         llm=resolved_llm,
+        dashscope_model=_settings_model,
         system_prompt=system_prompt,
         tools=LEARNINGS_TOOLS,
         ollama_model=resolved_ollama,
@@ -1432,6 +1465,7 @@ def create_error_checker_agent(
     agent = _make_agent(
         role="error_checker",
         llm=resolved_llm,
+        dashscope_model=_settings_model,
         system_prompt=system_prompt,
         tools=ERROR_CHECKER_TOOLS,
         ollama_model=resolved_ollama,

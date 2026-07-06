@@ -666,8 +666,9 @@ def _switch_model(args: list[str]) -> list[dict]:
     provider, _, model = llm_spec.partition(",")
     provider = provider.strip().lower()
     model = model.strip()
-    if provider not in {"claude", "ollama"}:
-        return [_sys(f"❌ Unknown provider `{provider}`. Use `claude` or `ollama`.")]
+    from src.agent import _DASHSCOPE_PROVIDERS
+    if provider not in ({"claude", "ollama"} | _DASHSCOPE_PROVIDERS):
+        return [_sys(f"❌ Unknown provider `{provider}`. Use `claude`, `ollama`, or `dashscope`.")]
     try:
         if agent_name in SETTINGS_KEYS:
             from src.agent import _settings as get_settings
@@ -681,7 +682,12 @@ def _switch_model(args: list[str]) -> list[dict]:
         if _agent_ref is None:
             return [_sys("⚠️ Pipeline not initialised.")]
         kwargs = {"llm": provider}
-        if model:
+        if provider in _DASHSCOPE_PROVIDERS:
+            # DashScope factories read their model from settings; update it so the
+            # rebuilt agent picks up the requested Qwen model.
+            from src.agent import _settings as get_settings
+            get_settings().setdefault("llm", {}).setdefault("pipeline", {})[agent_name] = llm_spec
+        elif model:
             kwargs["ollama_model" if provider == "ollama" else "anthropic_model"] = model
         factory = {
             "query_templates": create_query_templates_agent, "assemble_workflow": create_assemble_workflow_agent,
