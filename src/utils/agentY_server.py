@@ -79,7 +79,7 @@ SLASH_COMMANDS = [
     {"name": "/clear_vram",      "description": "Clear ComfyUI GPU VRAM"},
     {"name": "/images",          "description": "List images generated in this thread (reference them by number)"},
     {"name": "/clearhistory",    "description": "Delete all conversation history (keeps the current thread)"},
-    {"name": "/switch_model",    "description": "Switch an agent's LLM — /switch_model <agent> <provider,model>"},
+    {"name": "/switch_model",    "description": "Switch an agent's LLM — /switch_model <agent|all> <provider,model> (use 'all' for every agent)"},
     {"name": "/add_workflow",    "description": "Add a ComfyUI workflow — /add_workflow <path/to/workflow.json>"},
     {"name": "/resend",          "description": "Resend the first user message of the current thread"},
     {"name": "/remove_workflow", "description": "Remove a workflow by name — /remove_workflow <template_name>"},
@@ -651,59 +651,95 @@ def _remove_workflow(name: str) -> list[dict]:
         return [_sys(f"❌ Failed to remove workflow: {exc}")]
 
 
+# Pipeline agents that can be swapped live, and the utility settings keys that
+# are read from settings.json on demand rather than held as a live agent.
+_SWITCHABLE_AGENTS = ("query_templates", "assemble_workflow", "info", "story",
+                      "detect_user_intent", "planner", "error_checker", "dop")
+_SWITCH_UTILITY_KEYS = ("build_skill", "llm_functions", "executor_vision_model")
+
+
+def _rebuild_agent(agent_name: str, provider: str, model: str, llm_spec: str) -> str | None:
+    """Rebuild one pipeline agent with the given provider/model and swap it into
+    the live pipeline. Returns None on success, or an error string."""
+    from src.agent import (
+        _DASHSCOPE_PROVIDERS, _settings as get_settings,
+        create_query_templates_agent, create_assemble_workflow_agent, create_info_agent,
+        create_story_agent, create_detect_user_intent_agent, create_planner_agent,
+        create_error_checker_agent, create_dop_agent,
+    )
+    if _agent_ref is None:
+        return "pipeline not initialised"
+    factory = {
+        "query_templates": create_query_templates_agent, "assemble_workflow": create_assemble_workflow_agent,
+        "info": create_info_agent, "story": create_story_agent,
+        "detect_user_intent": create_detect_user_intent_agent, "planner": create_planner_agent,
+        "error_checker": create_error_checker_agent, "dop": create_dop_agent,
+    }[agent_name]
+    attr = {
+        "query_templates": "_researcher", "assemble_workflow": "_assemble_workflow",
+        "info": "_info_agent", "story": "_story_agent", "detect_user_intent": "_triage_agent",
+        "planner": "_planner_agent", "error_checker": "_error_checker_agent", "dop": "_dop_agent",
+    }[agent_name]
+    kwargs = {"llm": provider}
+    if provider in _DASHSCOPE_PROVIDERS:
+        # DashScope factories read their model from settings; update it so the
+        # rebuilt agent picks up the requested Qwen model.
+        get_settings().setdefault("llm", {}).setdefault("pipeline", {})[agent_name] = llm_spec
+    elif model:
+        kwargs["ollama_model" if provider == "ollama" else "anthropic_model"] = model
+    try:
+        setattr(_agent_ref, attr, factory(**kwargs))
+        return None
+    except Exception as exc:  # noqa: BLE001
+        return str(exc)
+
+
 def _switch_model(args: list[str]) -> list[dict]:
-    AGENTS = {"query_templates", "assemble_workflow", "info", "story", "detect_user_intent", "planner", "error_checker", "dop"}
-    SETTINGS_KEYS = {"build_skill", "llm_functions", "executor_vision_model"}
+    AGENTS = set(_SWITCHABLE_AGENTS)
+    SETTINGS_KEYS = set(_SWITCH_UTILITY_KEYS)
     ALL = AGENTS | SETTINGS_KEYS
     if len(args) < 2:
-        return [_sys("⚠️ Usage: `/switch_model <agent> <provider,model>`\n\n"
+        return [_sys("⚠️ Usage: `/switch_model <agent|all> <provider,model>`\n\n"
                      f"Agents: `{', '.join(sorted(AGENTS))}`\n"
-                     f"Utilities: `{', '.join(sorted(SETTINGS_KEYS))}`")]
+                     f"Utilities: `{', '.join(sorted(SETTINGS_KEYS))}`\n"
+                     "Use `all` to switch every agent at once — e.g. "
+                     "`/switch_model all claude,claude-haiku-4-5`.")]
     agent_name = args[0].lower()
     llm_spec = args[1].strip()
-    if agent_name not in ALL:
-        return [_sys(f"❌ Unknown agent/utility `{agent_name}`. Valid: `{', '.join(sorted(ALL))}`")]
     provider, _, model = llm_spec.partition(",")
     provider = provider.strip().lower()
     model = model.strip()
     from src.agent import _DASHSCOPE_PROVIDERS
     if provider not in ({"claude", "ollama"} | _DASHSCOPE_PROVIDERS):
         return [_sys(f"❌ Unknown provider `{provider}`. Use `claude`, `ollama`, or `dashscope`.")]
-    try:
-        if agent_name in SETTINGS_KEYS:
-            from src.agent import _settings as get_settings
-            get_settings().setdefault("llm", {}).setdefault("pipeline", {})[agent_name] = llm_spec
-            return [_sys(f"✅ `{agent_name}` now using `{llm_spec}`.")]
-        from src.agent import (
-            create_query_templates_agent, create_assemble_workflow_agent, create_info_agent,
-            create_story_agent, create_detect_user_intent_agent, create_planner_agent,
-            create_error_checker_agent, create_dop_agent,
-        )
+
+    # ── all: switch every pipeline agent in one go ──────────────────────────
+    if agent_name == "all":
         if _agent_ref is None:
             return [_sys("⚠️ Pipeline not initialised.")]
-        kwargs = {"llm": provider}
-        if provider in _DASHSCOPE_PROVIDERS:
-            # DashScope factories read their model from settings; update it so the
-            # rebuilt agent picks up the requested Qwen model.
-            from src.agent import _settings as get_settings
-            get_settings().setdefault("llm", {}).setdefault("pipeline", {})[agent_name] = llm_spec
-        elif model:
-            kwargs["ollama_model" if provider == "ollama" else "anthropic_model"] = model
-        factory = {
-            "query_templates": create_query_templates_agent, "assemble_workflow": create_assemble_workflow_agent,
-            "info": create_info_agent, "story": create_story_agent,
-            "detect_user_intent": create_detect_user_intent_agent, "planner": create_planner_agent,
-            "error_checker": create_error_checker_agent, "dop": create_dop_agent,
-        }[agent_name]
-        attr = {
-            "query_templates": "_researcher", "assemble_workflow": "_assemble_workflow",
-            "info": "_info_agent", "story": "_story_agent", "detect_user_intent": "_triage_agent",
-            "planner": "_planner_agent", "error_checker": "_error_checker_agent", "dop": "_dop_agent",
-        }[agent_name]
-        setattr(_agent_ref, attr, factory(**kwargs))
+        failures = [f"`{a}`: {err}"
+                    for a in sorted(AGENTS)
+                    if (err := _rebuild_agent(a, provider, model, llm_spec))]
+        if failures:
+            return [_sys(f"⚠️ Switched agents to `{llm_spec}`, but some failed:\n" + "\n".join(failures))]
+        return [_sys(f"✅ All {len(AGENTS)} agents now using `{llm_spec}`.\n\n"
+                     "_(The vision/utility keys `llm_functions` and `executor_vision_model` "
+                     "were left unchanged — switch those individually if needed.)_")]
+
+    if agent_name not in ALL:
+        return [_sys(f"❌ Unknown agent/utility `{agent_name}`. Valid: `{', '.join(sorted(ALL))}`, or `all`.")]
+
+    # ── utility settings keys (read from settings.json on demand) ───────────
+    if agent_name in SETTINGS_KEYS:
+        from src.agent import _settings as get_settings
+        get_settings().setdefault("llm", {}).setdefault("pipeline", {})[agent_name] = llm_spec
         return [_sys(f"✅ `{agent_name}` now using `{llm_spec}`.")]
-    except Exception as exc:
-        return [_sys(f"❌ Failed to switch model: {exc}")]
+
+    # ── single pipeline agent ───────────────────────────────────────────────
+    err = _rebuild_agent(agent_name, provider, model, llm_spec)
+    if err:
+        return [_sys(f"❌ Failed to switch model: {err}")]
+    return [_sys(f"✅ `{agent_name}` now using `{llm_spec}`.")]
 
 
 # ── Legacy ComfyUI → agent image-review bridge (kept) ─────────────────────────
