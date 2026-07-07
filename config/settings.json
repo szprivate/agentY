@@ -44,20 +44,20 @@
   "llm": {
     
     "pipeline": {
-      "orchestrator": "claude,claude-haiku-4-5",
-      "query_templates": "dashscope,qwen3.7-plus",
-      "assemble_workflow": "dashscope,qwen3.7-plus",
-      "detect_user_intent": "dashscope,qwen3.7-plus",
-      "info": "dashscope,qwen3.7-plus",
-      "story": "dashscope,qwen3.7-plus",
-      "search_web": "dashscope,qwen3.7-plus",
-      "dop": "dashscope,qwen3.7-plus",
-      "planner": "dashscope,qwen3.7-plus",
-      "learnings": "dashscope,qwen3.7-plus",
-      "error_checker": "dashscope,qwen3.7-plus",
-      "build_skill": "dashscope,qwen3.7-plus",
-      "llm_functions": "dashscope,qwen3.7-plus",
-      "executor_vision_model": "dashscope,qwen3.7-plus"
+      "orchestrator": "dashscope,qwen3.6-flash",
+      "query_templates": "dashscope,qwen3.6-flash",
+      "assemble_workflow": "dashscope,qwen3.6-flash",
+      "detect_user_intent": "dashscope,qwen3.6-flash",
+      "info": "dashscope,qwen3.6-flash",
+      "story": "dashscope,qwen3.6-flash",
+      "search_web": "dashscope,qwen3.6-flash",
+      "dop": "dashscope,qwen3.6-flash",
+      "planner": "dashscope,qwen3.6-flash",
+      "learnings": "dashscope,qwen3.6-flash",
+      "error_checker": "dashscope,qwen3.6-flash",
+      "build_skill": "dashscope,qwen3.6-flash",
+      "llm_functions": "dashscope,qwen3.6-flash",
+      "executor_vision_model": "dashscope,qwen3.6-flash"
     },
 
     "ollama": {
