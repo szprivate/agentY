@@ -60,6 +60,8 @@ class AgentChat {
     this.curAssistant = null; // DOM node currently streaming assistant text
     this.curStep = null; // {details, body}
     this.nodeCount = 0;
+    this._selOrder = []; // node ids in the order they were selected on the canvas
+    this._consumed = {}; // nodeId -> value already sent as an input (skip re-sending unchanged)
     this.domCache = new Map(); // threadId -> {html, scroll}: live-rendered panel (thinking/step blocks) kept across conversation switches
     this._injectStyles();
     this._build();
@@ -439,7 +441,8 @@ class AgentChat {
   // ── sending ──────────────────────────────────────────────────────────────────
   async send() {
     const text = this.input.value.trim();
-    if (!text && this.attachments.length === 0) return;
+    const canvasInputs = this._collectCanvasInputs();
+    if (!text && this.attachments.length === 0 && canvasInputs.length === 0) return;
 
     // Answering an interactive ask → side-channel reply; the SSE stream continues.
     if (this.activeAsk) {
@@ -460,13 +463,31 @@ class AgentChat {
 
     if (this.streaming) return; // one turn at a time
     const imgs = this.attachments.map((a) => a.path);
-    this._userMsg(text + (this.attachments.length ? `  \n_(${this.attachments.length} image(s) attached)_` : ""));
+    const noteParts = [];
+    if (this.attachments.length) noteParts.push(`${this.attachments.length} image(s) attached`);
+    if (canvasInputs.length) {
+      const ni = canvasInputs.filter((c) => c.kind === "image").length;
+      const nv = canvasInputs.length - ni;
+      const bits = [];
+      if (ni) bits.push(`${ni} image`);
+      if (nv) bits.push(`${nv} video`);
+      noteParts.push(`${bits.join(" + ")} from canvas`);
+    }
+    this._userMsg(text + (noteParts.length ? `  \n_(${noteParts.join(", ")})_` : ""));
     this.input.value = "";
     this._autosize();
     this.attachments = [];
     this._renderAttachments();
     this._hidePop();
-    await this._stream({ thread_id: this.threadId, message: text, image_paths: imgs });
+    // Mark these canvas files as consumed so an unchanged, still-selected node
+    // isn't re-sent on the next message.
+    for (const ci of canvasInputs) if (ci._nodeId != null) this._consumed[ci._nodeId] = ci.value;
+    await this._stream({
+      thread_id: this.threadId,
+      message: text,
+      image_paths: imgs,
+      canvas_inputs: canvasInputs.map((c) => ({ value: c.value, kind: c.kind })),
+    });
   }
 
   // ── attachments ──────────────────────────────────────────────────────────────
@@ -491,6 +512,84 @@ class AgentChat {
       chip.addEventListener("click", () => { this.attachments.splice(i, 1); this._renderAttachments(); });
       this.attachEl.append(chip);
     });
+  }
+
+  // ── canvas selection → inputs ─────────────────────────────────────────────────
+  // Selecting Load Image / Load Video node(s) on the ComfyUI graph feeds their
+  // file(s) to the agent as inputs — same as attaching them — in selection order.
+  _ensureSelectionTracking() {
+    const canvas = app.canvas;
+    if (!canvas || canvas.__agentYSelHook) return;
+    canvas.__agentYSelHook = true;
+    const prev = canvas.onSelectionChange;
+    canvas.onSelectionChange = (sel) => {
+      try { if (prev) prev.call(canvas, sel); } catch (_) {}
+      try {
+        const ids = sel ? Object.keys(sel).map(Number) : [];
+        const idset = new Set(ids);
+        const prevSet = new Set(this._selOrder);
+        // Drop deselected, then append newly-selected in the order they appear.
+        // For click-by-click selection each change adds exactly one node, so the
+        // resulting order is the true selection order.
+        this._selOrder = this._selOrder.filter((id) => idset.has(id));
+        for (const id of ids) {
+          if (!this._selOrder.includes(id)) this._selOrder.push(id);
+          if (!prevSet.has(id)) delete this._consumed[id]; // re-selecting re-arms a node
+        }
+      } catch (_) {}
+    };
+  }
+
+  _orderedSelectedNodes() {
+    this._ensureSelectionTracking();
+    const canvas = app.canvas, graph = app.graph;
+    if (!canvas || !graph) return [];
+    const selIds = new Set();
+    if (canvas.selected_nodes) for (const k of Object.keys(canvas.selected_nodes)) selIds.add(Number(k));
+    if (canvas.selectedItems && canvas.selectedItems.forEach)
+      canvas.selectedItems.forEach((it) => { if (it && it.id != null && it.widgets !== undefined) selIds.add(Number(it.id)); });
+    if (selIds.size === 0 && graph._nodes) for (const n of graph._nodes) if (n && n.is_selected) selIds.add(Number(n.id));
+    const ordered = [], seen = new Set();
+    const getNode = (id) => (graph.getNodeById ? graph.getNodeById(id) : (graph._nodes || []).find((n) => Number(n.id) === id));
+    for (const id of (this._selOrder || [])) if (selIds.has(id) && !seen.has(id)) { seen.add(id); const n = getNode(id); if (n) ordered.push(n); }
+    for (const id of selIds) if (!seen.has(id)) { seen.add(id); const n = getNode(id); if (n) ordered.push(n); }
+    return ordered;
+  }
+
+  _loaderInfo(node) {
+    const t = String((node && (node.type || node.comfyClass)) || "");
+    if (!/load/i.test(t)) return null;
+    const widgets = node.widgets || [];
+    const get = (names) => {
+      for (const nm of names) {
+        const w = widgets.find((x) => x && x.name === nm && x.value != null && String(x.value).trim() !== "");
+        if (w) return String(w.value);
+      }
+      return null;
+    };
+    if (/video/i.test(t)) {
+      const v = get(["video", "file", "path", "filename"]);
+      if (v) return { value: v, kind: "video", name: node.title || t };
+    }
+    const iv = get(["image", "file", "filename"]);
+    if (iv) return { value: iv, kind: "image", name: node.title || t };
+    const vv = get(["video", "path"]);
+    if (vv) return { value: vv, kind: "video", name: node.title || t };
+    return null;
+  }
+
+  _collectCanvasInputs() {
+    const out = [];
+    for (const n of this._orderedSelectedNodes()) {
+      const info = this._loaderInfo(n);
+      if (!info) continue;
+      // Skip a still-selected node whose file was already sent unchanged, so a
+      // follow-up message doesn't silently re-attach it (attach-once semantics).
+      if (this._consumed[n.id] === info.value) continue;
+      info._nodeId = n.id;
+      out.push(info);
+    }
+    return out;
   }
 
   // ── slash-command popup ──────────────────────────────────────────────────────

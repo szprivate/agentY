@@ -37,6 +37,7 @@ import json
 import logging
 import os
 import queue
+import re
 import shutil
 import signal
 import subprocess
@@ -188,21 +189,76 @@ def _stage_into_comfy_input(path: str) -> str | None:
         return None
 
 
-# ── Content builder (text + attached images -> Strands content blocks) ────────
+def _resolve_media_ref(value: str, kind: str = "") -> str | None:
+    """Resolve a ComfyUI loader-node file reference to an absolute path.
 
-def _build_content(message: str, image_paths: list[str]) -> list | str:
-    """Build a Strands-compatible content list from text + image file paths.
+    Handles the three shapes a Load Image / Load Video widget value can take:
+      • an absolute path (e.g. a ``VHS_LoadVideoPath`` "video" widget),
+      • an input-dir-relative filename, optionally ComfyUI-annotated with the
+        source dir — ``"clip.png [input]"`` / ``"out.png [output]"`` / ``[temp]``
+        (and possibly a ``subfolder/name`` prefix),
+      • a plain filename already sitting in ComfyUI's input dir.
 
-    Images are downsized to satisfy Claude's 5 MB / 1568 px constraints.
+    Returns the resolved absolute path (as a string) or None when it can't be
+    found on disk.
     """
-    if not image_paths:
+    v = (value or "").strip().strip('"')
+    if not v:
+        return None
+    m = re.match(r"^(?P<name>.*?)(?:\s*\[(?P<t>input|output|temp)\])?\s*$", v)
+    name = (m.group("name").strip() if m else v) or v
+    ann = (m.group("t") if m else None) or "input"
+
+    p = Path(name)
+    if p.is_absolute() and p.exists():
+        return str(p.resolve())
+
+    in_dir = _comfy_input_dir()
+    bases: list[Path] = []
+    if in_dir is not None:
+        if ann == "output":
+            bases.append(in_dir.parent / "output")
+        elif ann == "temp":
+            bases.append(in_dir.parent / "temp")
+        else:
+            bases.append(in_dir)
+        if in_dir not in bases:
+            bases.append(in_dir)  # always fall back to the input dir
+    for base in bases:
+        cand = base / name
+        if cand.exists():
+            return str(cand.resolve())
+    # Last resort: interpret as cwd-relative.
+    if p.exists():
+        return str(p.resolve())
+    return None
+
+
+# ── Content builder (text + attached images/videos -> Strands content blocks) ─
+
+def _build_content(message: str, media_paths: list[str]) -> list | str:
+    """Build a Strands-compatible content list from text + input media paths.
+
+    Image paths are embedded as vision blocks (downsized to satisfy Claude's
+    5 MB / 1568 px constraints) AND listed as file paths. Video paths are not
+    embedded (they can't be sent inline) but ARE listed as file paths so the
+    agent can wire them into a loader node — same effect as attaching them.
+    """
+    if not media_paths:
         return message or "(no message)"
 
     from src.tools.image_handling import _downsize, _detect_format, _MAX_IMAGE_BYTES
 
     blocks: list = []
-    valid: list[str] = []
-    for path in image_paths:
+    img_valid: list[str] = []
+    vid_valid: list[str] = []
+    for path in media_paths:
+        if _is_video_path(path):
+            if os.path.exists(path):
+                vid_valid.append(path)
+            else:
+                logger.warning("Input video not found: %s", path)
+            continue
         try:
             raw = Path(path).read_bytes()
             img_fmt = _detect_format(path) or "png"
@@ -210,18 +266,19 @@ def _build_content(message: str, image_paths: list[str]) -> list | str:
             if len(image_bytes) > _MAX_IMAGE_BYTES:
                 raise ValueError(f"Image still {len(image_bytes):,} bytes after downsize — skipping")
             blocks.append({"image": {"format": img_fmt, "source": {"bytes": image_bytes}}})
-            valid.append(path)
+            img_valid.append(path)
         except Exception as exc:
             logger.warning("Could not load image %s: %s", path, exc)
 
-    if not blocks:
+    if not blocks and not vid_valid:
         return message or "(no message)"
 
-    path_lines = "\n".join(
-        f"  - {p}  [image, use this path for ComfyUI input]" for p in valid if os.path.exists(p)
-    )
-    paths_info = f"\n\nAttached image file paths (use these for ComfyUI):\n{path_lines}" if path_lines else ""
-    intro = message if message else "The user sent an image for processing."
+    path_lines = [f"  - {p}  [image, use this path for ComfyUI input]"
+                  for p in img_valid if os.path.exists(p)]
+    path_lines += [f"  - {p}  [video, use this path for ComfyUI input]" for p in vid_valid]
+    paths_info = ("\n\nAttached input file paths (use these for ComfyUI):\n" + "\n".join(path_lines)
+                  if path_lines else "")
+    intro = message if message else "The user sent media for processing."
     blocks.insert(0, {"text": intro + paths_info})
     return blocks
 
@@ -921,6 +978,21 @@ def _build_app():
         body = request.get_json(silent=True) or {}
         message = (body.get("message") or "").strip()
         image_paths = [p for p in (body.get("image_paths") or []) if isinstance(p, str)]
+        # Load Image / Load Video nodes selected on the ComfyUI canvas become
+        # inputs too, in selection order — same as chat attachments. Each entry is
+        # {value, kind}; resolve its widget value to an absolute path on disk.
+        canvas_paths: list[str] = []
+        for ci in (body.get("canvas_inputs") or []):
+            if not isinstance(ci, dict):
+                continue
+            resolved = _resolve_media_ref(ci.get("value", ""), ci.get("kind", ""))
+            if resolved:
+                canvas_paths.append(resolved)
+            else:
+                logger.warning("Unresolved canvas input: %r", ci)
+        # Canvas-selected inputs lead (they carry the user's chosen order), then
+        # any chat attachments.
+        image_paths = canvas_paths + image_paths
         thread_id = body.get("thread_id")
         if not thread_id or cs.get_thread(thread_id) is None:
             thread_id = cs.create_thread(thread_id=thread_id)

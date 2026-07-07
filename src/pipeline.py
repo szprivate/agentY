@@ -931,9 +931,10 @@ class Pipeline:
         if imgs:
             names_i = ", ".join(os.path.basename(p) for p in imgs)
             lines.append(
-                f"The user provided input image(s): {names_i}. You MUST use them as the "
-                "workflow input (stage with upload_image and bind to the loader node); "
-                "do NOT fall back to a template's default image."
+                f"The user provided input file(s): {names_i}. You MUST use them as the "
+                "workflow input(s) (stage images with upload_image and bind to the loader "
+                "node; use video paths directly in the video loader); do NOT fall back to a "
+                "template's default input."
             )
         return lines
 
