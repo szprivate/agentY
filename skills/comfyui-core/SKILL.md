@@ -51,6 +51,27 @@ ComfyUI workflows are JSON objects mapping **string node IDs** to node definitio
 "images": ["6", 0]      // Connect to node 6's first output (IMAGE)
 ```
 
+### Dynamic (autogrow) inputs — `COMFY_AUTOGROW_V3`
+
+Some V3 nodes (image batchers, multi-reference encoders, string formatters, …)
+have a **dynamic autogrow** input that accepts 0..N connections. In
+`get_node_schema` these show `"dynamic": true` with a `type`, a `connect_as`
+list, and `min`/`max`. **The umbrella name (e.g. `images`, `values`) is never a
+literal input key** — do NOT write `"images": [...]`. Instead add one key per
+connection using the listed slot names:
+
+```json
+// BatchImagesNode: schema shows dynamic IMAGE, connect_as ["image0","image1",…]
+"inputs": {
+  "image0": ["4", 0],   // first  IMAGE producer  (0-based!)
+  "image1": ["5", 0]    // second IMAGE producer
+}
+```
+
+Slot names are either a **0-based prefix** sequence (`image0, image1, …`) or an
+explicit **names** list (`image_1, image_2, …` or `a, b, c, …`) — always exactly
+as given in `connect_as`. Wire at least `min` of them.
+
 ### Important: API Format vs Web UI Format
 
 - **API format** (what we use): `{ "1": { class_type, inputs }, "2": { ... } }`
