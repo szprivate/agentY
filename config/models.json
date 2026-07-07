@@ -558,7 +558,9 @@
       "t5-v1_1-xxl-encoder-Q8_0.gguf"
     ],
     "kjnodes_fonts": [],
-    "rmbg": [],
+    "rmbg": [
+      "RMBG-2.0\\model.safetensors"
+    ],
     "LLM": [],
     "sharp": [],
     "VHS_video_formats": [],

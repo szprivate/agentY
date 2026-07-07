@@ -43,19 +43,19 @@
   "llm": {
     
     "pipeline": {
-      "query_templates": "ollama,qwen3-coder:30b",
-      "assemble_workflow": "ollama,qwen3.6:27b",
-      "detect_user_intent": "ollama,qwen3.6:27b",
-      "info": "ollama,qwen3.6:27b",
-      "story": "ollama,qwen3.6:27b",
-      "search_web": "ollama,qwen3.6:27b",
-      "dop": "ollama,qwen3.6:27b",
-      "planner": "ollama,qwen3.6:27b",
-      "learnings": "ollama,qwen3.6:27b",
-      "error_checker": "ollama,qwen3.6:27b",
-      "build_skill": "ollama,qwen3.6:27b",
-      "llm_functions": "ollama,qwen3-vl:30b",
-      "executor_vision_model": "ollama,qwen3-vl:30b"
+      "query_templates": "dashscope,qwen3.7-plus",
+      "assemble_workflow": "dashscope,qwen3.7-plus",
+      "detect_user_intent": "dashscope,qwen3.7-plus",
+      "info": "dashscope,qwen3.7-plus",
+      "story": "dashscope,qwen3.7-plus",
+      "search_web": "dashscope,qwen3.7-plus",
+      "dop": "dashscope,qwen3.7-plus",
+      "planner": "dashscope,qwen3.7-plus",
+      "learnings": "dashscope,qwen3.7-plus",
+      "error_checker": "dashscope,qwen3.7-plus",
+      "build_skill": "dashscope,qwen3.7-plus",
+      "llm_functions": "dashscope,qwen3.7-plus",
+      "executor_vision_model": "dashscope,qwen3.7-plus"
     },
 
     "ollama": {
@@ -69,6 +69,16 @@
     "anthropic": {
       "model": "claude-haiku-4-5",
       "max_tokens": 16384
+    },
+
+    // Alibaba Model Studio (Dashscope) — Qwen models via the OpenAI-compatible API.
+    // Set any pipeline stage above to "Dashscope,<model>" (e.g. "Dashscope,qwen-plus")
+    // and put your key in .env as DASHSCOPE_API_KEY. For mainland China use
+    // "https://Dashscope.aliyuncs.com/compatible-mode/v1".
+    "dashscope": {
+      "base_url": "https://ws-buzgri7bv429rf4a.eu-central-1.maas.aliyuncs.com/compatible-mode/v1",
+      "model": "qwen-plus",
+      "max_tokens": 8192
     },
 
     "history_window": 12
