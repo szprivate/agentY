@@ -666,7 +666,7 @@ def _remove_workflow(name: str) -> list[dict]:
 # Pipeline agents that can be swapped live, and the utility settings keys that
 # are read from settings.json on demand rather than held as a live agent.
 _SWITCHABLE_AGENTS = ("orchestrator", "query_templates", "assemble_workflow", "info",
-                      "story", "planner", "error_checker", "dop")
+                      "story", "planner", "error_checker", "dop", "detect_user_intent")
 _SWITCH_UTILITY_KEYS = ("build_skill", "llm_functions", "executor_vision_model")
 
 

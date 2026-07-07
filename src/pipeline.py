@@ -308,6 +308,55 @@ def _is_affirmative(text: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Hard-constraint extraction (guided orchestrator)
+# ---------------------------------------------------------------------------
+# Generic task/plumbing words that appear in template names but carry no
+# "brand" identity. Everything left after stripping these is a distinctive
+# model/template name (flux, wan, qwen, kling, nano, banana, vace, krea, …) —
+# exactly what a user means when they say "use Nano Banana".
+_ORCH_STOP_TOKENS: frozenset[str] = frozenset({
+    "image", "images", "video", "videos", "edit", "editing", "editor", "workflow",
+    "workflows", "basic", "simple", "advanced", "standard", "default", "api",
+    "t2i", "i2v", "v2v", "t2v", "flf", "txt2img", "img2img", "text", "to", "and",
+    "the", "with", "from", "for", "gen", "generation", "generate", "model", "models",
+    "upscale", "upscaler", "upscaling", "portrait", "lighting", "camera", "motion",
+    "style", "background", "remove", "removal", "swap", "face", "inpaint",
+    "inpainting", "outpaint", "outpainting", "control", "controlnet", "lora",
+    "sampler", "sampling", "latent", "vae", "clip", "encode", "decode", "load",
+    "save", "node", "nodes", "example", "examples", "template", "templates",
+    "comfy", "comfyui", "ref", "reference", "start", "frame", "multishot", "multi",
+    "shot", "shots", "sequence", "clip", "clips", "audio", "sound", "speech",
+    "first", "last", "single", "dual", "batch", "run", "versions", "variations",
+    "new", "old", "pro", "plus", "mini", "small", "large", "base", "full", "high",
+    "low", "res", "quality", "fast", "turbo", "lite", "light", "photo", "picture",
+})
+
+
+def _split_identifier(name: str) -> str:
+    """Insert spaces at camelCase and letter/digit boundaries.
+
+    Template names are camelCase / snake blends — ``imageEdit_nano_banana2`` and
+    ``NanoBanana2_outpaintUpscale`` must both yield the words *nano* and *banana*
+    (not blobs like ``nanobanana2``) so a plain "use Nano Banana" matches.
+    """
+    s = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", name)          # camelCase → camel Case
+    s = re.sub(r"(?<=[A-Za-z])(?=[0-9])", " ", s)          # banana2 → banana 2
+    s = re.sub(r"(?<=[0-9])(?=[A-Za-z])", " ", s)          # 3x → 3 x
+    return s
+
+
+def _brand_tokens(name: str) -> list[str]:
+    """Return the distinctive (brand/model) tokens of a template name.
+
+    Splits camelCase/snake/digit boundaries, drops the generic task words in
+    ``_ORCH_STOP_TOKENS``, pure digits, and 1-2 char fragments — leaving the
+    identifying tokens (e.g. ``imageEdit_nano_banana2`` → ``['nano', 'banana']``).
+    """
+    toks = re.findall(r"[a-z0-9]+", _split_identifier(name).lower())
+    return [t for t in toks if t not in _ORCH_STOP_TOKENS and len(t) >= 3 and not t.isdigit()]
+
+
+# ---------------------------------------------------------------------------
 # Pipeline callable
 # ---------------------------------------------------------------------------
 
@@ -760,7 +809,33 @@ class Pipeline:
             """
             return await _run_specialist(self._planner_agent, "PLANNER", request)
 
-        return [run_research, run_info, run_story, run_dop, run_web_search, run_planner]
+        @_tool
+        async def classify_intent(message: str) -> str:
+            """Classify the user's message intent (advisory — you still decide).
+
+            Consult this when a request is ambiguous and you're unsure how to route
+            it (e.g. is it a fresh generation, a follow-up/chain on prior output, a
+            plain question, creative writing, or a full storyboard?). Returns a JSON
+            object ``{"intent": ..., "confidence": ..., "run_qa": ...}``. Treat it as
+            a hint, not an order.
+
+            Args:
+                message: The user's message to classify.
+            """
+            if self._triage_agent is None:
+                return json.dumps({"error": "intent classifier not available"})
+            try:
+                res = await _triage(message, self._session, self._info_context, self._triage_agent)
+                return json.dumps({
+                    "intent": res.intent.value,
+                    "confidence": res.confidence,
+                    "run_qa": res.run_qa,
+                })
+            except Exception as exc:  # noqa: BLE001
+                return json.dumps({"error": str(exc)})
+
+        return [run_research, run_info, run_story, run_dop, run_web_search,
+                run_planner, classify_intent]
 
     def _ensure_orch_clean_history(self) -> None:
         """Sanitize the orchestrator's message list (drop orphaned tool blocks)."""
@@ -777,20 +852,119 @@ class Pipeline:
                       f"{len(msgs) - len(cleaned)} orphaned tool message(s).")
             agent.messages[:] = cleaned
 
-    def _build_orchestrator_input(self, user_input, user_text: str):
-        """Assemble the orchestrator's input: gallery + attachments + the message.
+    def _template_brand_index(self) -> dict[str, set[str]]:
+        """Return {template_name: {brand_tokens}} for every catalog template.
 
-        For multimodal input (a content-block list with images) the gallery is
-        prepended as a text block and the image blocks are preserved so the
-        orchestrator can actually see attached images.
+        Built once per pipeline from the local workflow catalog (no ComfyUI
+        server call). Used to detect when the user explicitly names a template.
         """
+        idx = getattr(self, "_brand_index_cache", None)
+        if idx is not None:
+            return idx
+        idx = {}
+        try:
+            from agenty_core.tools.comfyui import get_workflow_catalog as _cat
+            catalog = json.loads(_cat() or "{}")
+            if isinstance(catalog, dict):
+                for name in catalog:
+                    toks = _brand_tokens(str(name))
+                    if toks:
+                        idx[name] = set(toks)
+        except Exception as exc:  # noqa: BLE001
+            if getattr(self, "_verbose", False):
+                print(f"pipeline: brand-index build failed ({exc}); template pinning off.")
+        self._brand_index_cache = idx
+        return idx
+
+    def _match_named_templates(self, user_text: str) -> tuple[str, list[str]] | None:
+        """Detect an explicitly-named template in *user_text*.
+
+        Returns ``(phrase, [template_names])`` when the user's words contain all
+        brand tokens of one or more templates (highest-specificity match wins), or
+        None. A single-token match must be ≥4 chars to avoid incidental hits.
+        """
+        index = self._template_brand_index()
+        if not index:
+            return None
+        msg = set(re.findall(r"[a-z0-9]+", user_text.lower()))
+        if not msg:
+            return None
+        best: list[tuple[str, set[str]]] = []
+        best_score = 0
+        for name, toks in index.items():
+            if not toks or not toks <= msg:
+                continue
+            score = len(toks)
+            if score == 1 and max(len(t) for t in toks) < 4:
+                continue
+            if score > best_score:
+                best_score, best = score, [(name, toks)]
+            elif score == best_score:
+                best.append((name, toks))
+        if not best:
+            return None
+        names = sorted({n for n, _ in best})
+        phrase = " ".join(sorted(best[0][1]))
+        return phrase, names
+
+    def _extract_hard_constraints(self, user_text: str) -> list[str]:
+        """Extract MUST-HONOR directives the orchestrator may not silently drop.
+
+        Covers the two things an unconstrained agent most often ignores: an
+        explicitly-named template, and a provided input image.
+        """
+        lines: list[str] = []
+        matched = self._match_named_templates(user_text)
+        if matched:
+            phrase, names = matched
+            if len(names) == 1:
+                lines.append(
+                    f'The user explicitly asked for the "{names[0]}" template — you '
+                    "MUST use that exact template and MUST NOT substitute a different one."
+                )
+            else:
+                lines.append(
+                    f'The user explicitly named "{phrase}" — you MUST use one of these '
+                    f'matching templates (never an unrelated one): {", ".join(names)}.'
+                )
+        imgs = list(self._session.last_user_input_images or [])
+        if imgs:
+            names_i = ", ".join(os.path.basename(p) for p in imgs)
+            lines.append(
+                f"The user provided input image(s): {names_i}. You MUST use them as the "
+                "workflow input (stage with upload_image and bind to the loader node); "
+                "do NOT fall back to a template's default image."
+            )
+        return lines
+
+    def _build_orchestrator_input(self, user_input, user_text: str):
+        """Assemble the orchestrator's input: hard constraints + gallery + message.
+
+        Any explicit, non-negotiable constraints (a named template, provided input
+        images) are pinned as a MUST-HONOR block at the very top so the free
+        orchestrator cannot silently drop them. For multimodal input the block +
+        gallery are prepended as text blocks and the image blocks are preserved.
+        """
+        constraints = self._extract_hard_constraints(user_text)
+        pin = ""
+        if constraints:
+            pin = (
+                "[HARD CONSTRAINTS — the user was explicit; honor these exactly and do "
+                "NOT substitute or omit them:]\n"
+                + "\n".join(f"- {c}" for c in constraints)
+                + "\n\n"
+            )
+            if self._verbose:
+                print("pipeline: pinned hard constraints:\n" + "\n".join(f"  - {c}" for c in constraints))
+
         if isinstance(user_input, list):
             gallery = self._format_image_gallery()
             blocks = list(user_input)
-            if gallery:
-                blocks.insert(0, {"text": gallery})
+            prefix = pin + (gallery + "\n\n" if gallery else "")
+            if prefix:
+                blocks.insert(0, {"text": prefix})
             return blocks
-        return self._prepend_gallery(self._annotate_attachments(user_input, user_text))
+        return pin + self._prepend_gallery(self._annotate_attachments(user_input, user_text))
 
     async def _astream_orchestrator(self, user_input, *, qa_reply_queue: asyncio.Queue | None = None):
         """Stream the orchestrator for one turn, then run any signalled workflow.
@@ -4356,9 +4530,10 @@ def create_pipeline(
     )
     info_agent = create_info_agent()
     story_agent = create_story_agent()
-    # In free-agent mode the orchestrator owns routing, so the triage classifier
-    # is not built. It is only constructed for the legacy pipeline path.
-    triage_agent = None if free_agent else create_detect_user_intent_agent(
+    # The intent classifier is still built: in free-agent mode it's no longer a
+    # gate, but the orchestrator can consult it on demand via the classify_intent
+    # tool. (It also drives the legacy pipeline path when free_agent=False.)
+    triage_agent = create_detect_user_intent_agent(
         llm=triage_llm,
         ollama_model=triage_ollama_model,
         anthropic_model=triage_anthropic_model,
