@@ -228,11 +228,23 @@ def _build_content(message: str, image_paths: list[str]) -> list | str:
 
 # ── Pipeline state save / restore (per thread) ────────────────────────────────
 
+def _memory_agent(pipeline):
+    """Return the agent whose message history is this thread's durable memory.
+
+    In free-agent mode that's the orchestrator (it owns the whole turn and keeps
+    the multi-turn conversation); otherwise it's the legacy Brain/assembler.
+    """
+    orch = getattr(pipeline, "_orchestrator_agent", None)
+    if orch is not None and getattr(pipeline, "_free_agent", False):
+        return orch
+    return getattr(pipeline, "_assemble_workflow", None)
+
+
 def _reset_pipeline_state(pipeline) -> None:
     """Wipe per-conversation state from the shared pipeline singleton."""
-    brain = getattr(pipeline, "_assemble_workflow", None)
-    if brain is not None and hasattr(brain, "messages"):
-        brain.messages.clear()
+    agent = _memory_agent(pipeline)
+    if agent is not None and hasattr(agent, "messages"):
+        agent.messages.clear()
     existing = getattr(pipeline, "_session", None)
     sid = getattr(existing, "session_id", "default") if existing else "default"
     pipeline._session = AgentSession(session_id=sid)
@@ -252,10 +264,10 @@ def _restore_state(pipeline, thread_id: str) -> None:
                 pass
         pipeline._last_brainbriefing_json = st.get("last_brainbriefing")
         pipeline._last_prior_summary = st.get("last_prior_summary")
-    brain = getattr(pipeline, "_assemble_workflow", None)
+    agent = _memory_agent(pipeline)
     cached = _thread_brain_cache.get(thread_id)
-    if brain is not None and hasattr(brain, "messages") and cached is not None:
-        brain.messages[:] = cached
+    if agent is not None and hasattr(agent, "messages") and cached is not None:
+        agent.messages[:] = cached
     # Rebuild the generated-image gallery into the session so /images and
     # "use image 2" references work after a restart.
     sess = getattr(pipeline, "_session", None)
@@ -275,9 +287,9 @@ def _restore_state(pipeline, thread_id: str) -> None:
 
 def _save_state(pipeline, thread_id: str) -> None:
     """Snapshot pipeline state for *thread_id* (memory cache + durable SQLite)."""
-    brain = getattr(pipeline, "_assemble_workflow", None)
-    if brain is not None and hasattr(brain, "messages"):
-        _thread_brain_cache[thread_id] = list(brain.messages)
+    agent = _memory_agent(pipeline)
+    if agent is not None and hasattr(agent, "messages"):
+        _thread_brain_cache[thread_id] = list(agent.messages)
     session = getattr(pipeline, "_session", None)
     try:
         cs.save_state(
@@ -653,8 +665,8 @@ def _remove_workflow(name: str) -> list[dict]:
 
 # Pipeline agents that can be swapped live, and the utility settings keys that
 # are read from settings.json on demand rather than held as a live agent.
-_SWITCHABLE_AGENTS = ("query_templates", "assemble_workflow", "info", "story",
-                      "detect_user_intent", "planner", "error_checker", "dop")
+_SWITCHABLE_AGENTS = ("orchestrator", "query_templates", "assemble_workflow", "info",
+                      "story", "planner", "error_checker", "dop")
 _SWITCH_UTILITY_KEYS = ("build_skill", "llm_functions", "executor_vision_model")
 
 
@@ -663,12 +675,32 @@ def _rebuild_agent(agent_name: str, provider: str, model: str, llm_spec: str) ->
     the live pipeline. Returns None on success, or an error string."""
     from src.agent import (
         _DASHSCOPE_PROVIDERS, _settings as get_settings,
+        create_orchestrator_agent,
         create_query_templates_agent, create_assemble_workflow_agent, create_info_agent,
         create_story_agent, create_detect_user_intent_agent, create_planner_agent,
         create_error_checker_agent, create_dop_agent,
     )
     if _agent_ref is None:
         return "pipeline not initialised"
+
+    # DashScope factories read their model from settings; update it so the rebuilt
+    # agent picks up the requested Qwen model.
+    if provider in _DASHSCOPE_PROVIDERS:
+        get_settings().setdefault("llm", {}).setdefault("pipeline", {})[agent_name] = llm_spec
+
+    # The orchestrator is rebuilt specially: its tool list must include the
+    # pipeline's delegation tools, and it must be re-wired (skills plugin + live
+    # context) via set_orchestrator rather than a plain setattr.
+    if agent_name == "orchestrator":
+        kwargs = {"llm": provider, "extra_tools": getattr(_agent_ref, "_delegation_tools", None)}
+        if provider not in _DASHSCOPE_PROVIDERS and model:
+            kwargs["ollama_model" if provider == "ollama" else "anthropic_model"] = model
+        try:
+            _agent_ref.set_orchestrator(create_orchestrator_agent(**kwargs))
+            return None
+        except Exception as exc:  # noqa: BLE001
+            return str(exc)
+
     factory = {
         "query_templates": create_query_templates_agent, "assemble_workflow": create_assemble_workflow_agent,
         "info": create_info_agent, "story": create_story_agent,
@@ -681,14 +713,13 @@ def _rebuild_agent(agent_name: str, provider: str, model: str, llm_spec: str) ->
         "planner": "_planner_agent", "error_checker": "_error_checker_agent", "dop": "_dop_agent",
     }[agent_name]
     kwargs = {"llm": provider}
-    if provider in _DASHSCOPE_PROVIDERS:
-        # DashScope factories read their model from settings; update it so the
-        # rebuilt agent picks up the requested Qwen model.
-        get_settings().setdefault("llm", {}).setdefault("pipeline", {})[agent_name] = llm_spec
-    elif model:
+    if provider not in _DASHSCOPE_PROVIDERS and model:
         kwargs["ollama_model" if provider == "ollama" else "anthropic_model"] = model
     try:
         setattr(_agent_ref, attr, factory(**kwargs))
+        # Keep the legacy _brain alias in sync when the assembler is swapped.
+        if agent_name == "assemble_workflow":
+            _agent_ref._brain = _agent_ref._assemble_workflow
         return None
     except Exception as exc:  # noqa: BLE001
         return str(exc)

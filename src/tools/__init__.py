@@ -70,6 +70,13 @@ from src.tools.memory_tools import memory_read, memory_write  # noqa: F401
 from src.tools.web_search import web_search, web_search_images  # noqa: F401
 # agentY-only pipeline handoff (not part of the shared agenty_core layer)
 from src.tools.workflow_handoff import signal_workflow_ready  # noqa: F401
+# Orchestrator meta-tools: live skill authoring + ad-hoc subagents (agentY-only)
+from src.tools.orchestration import (  # noqa: F401
+    create_skill,
+    list_skills,
+    remove_skill,
+    spawn_subagent,
+)
 # Fully deterministic (no-LLM) workflow assembly (shared agenty_core layer)
 from src.tools.assembly_deterministic import assemble_workflow_deterministic  # noqa: F401
 # Headless batch jobs — shared with agentY-mcp via agenty_core
@@ -269,6 +276,88 @@ ASSEMBLE_WORKFLOW_TOOLS: list = [
     # Long-term memory (local FAISS + nomic-embed-text)
     memory_read,
     memory_write,
+    stop,
+]
+
+# ---------------------------------------------------------------------------
+# Orchestrator tools – the union of every real capability the specialists have
+# (execution, node inspection, template/recipe lookup, assembly, image handling,
+# HuggingFace, web search, files, memory, batch, iteration) PLUS the meta-tools
+# that let the orchestrator extend itself (author skills, spawn subagents).
+#
+# Delegation tools (run_research / run_info / …) are bound to the live Pipeline
+# instance and appended at pipeline-build time (see Pipeline._build_delegation_tools),
+# NOT here — they need the running specialist agents.
+# ---------------------------------------------------------------------------
+ORCHESTRATOR_TOOLS: list = [
+    # Execution / queue / history / diagnostics
+    interrupt_execution,
+    free_memory,
+    queue,
+    get_history,
+    get_prompt_status_by_id,
+    clear_history,
+    get_logs,
+    get_system_stats,
+    get_comfyui_dirs,
+    submit_prompt,
+    # Node inspection
+    get_node_schema,
+    get_workflow_node_info,
+    search_nodes,
+    # Templates + recipes
+    get_workflow_catalog,
+    get_workflow_template,
+    list_workflow_recipes,
+    get_workflow_recipe,
+    # Workflow assembly / modification / validation
+    duplicate_workflow,
+    save_workflow,
+    open_workflow_in_canvas,
+    patch_workflow,
+    add_workflow_node,
+    remove_workflow_node,
+    update_workflow,
+    replace_node,
+    apply_brainbriefing,
+    validate_workflow,
+    check_model,
+    # Handoff to the executor (assemble → signal, never submit_prompt directly)
+    signal_workflow_ready,
+    # Image handling
+    upload_image,
+    view_image,
+    get_image_resolution,
+    analyze_image,
+    download_image,
+    # HuggingFace – discover + download models
+    search_huggingface_models,
+    get_model_info,
+    find_hf_file,
+    download_hf_model,
+    # Files / shell / web
+    read_text_file,
+    write_text_file,
+    file_read,
+    run_script,
+    web_search,
+    web_search_images,
+    # Long-term memory
+    memory_read,
+    memory_write,
+    # Headless batch jobs
+    start_batch_job,
+    get_batch_status,
+    stop_batch_job,
+    list_batch_jobs,
+    # Iteration + math
+    iterate,
+    calculator,
+    # Self-extension meta-tools
+    create_skill,
+    list_skills,
+    remove_skill,
+    spawn_subagent,
     stop,
 ]
 

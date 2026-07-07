@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field, ValidationError
 from strands import Agent
 from strands.types.exceptions import MaxTokensReachedException
 
-from src.agent import create_assemble_workflow_agent, create_dop_agent, create_error_checker_agent, create_info_agent, create_planner_agent, create_query_templates_agent, create_search_web_agent, create_story_agent, create_detect_user_intent_agent, create_vision_agent, _settings
+from src.agent import create_assemble_workflow_agent, create_dop_agent, create_error_checker_agent, create_info_agent, create_orchestrator_agent, create_planner_agent, create_query_templates_agent, create_search_web_agent, create_story_agent, create_detect_user_intent_agent, create_vision_agent, _settings
 from src.tools.image_handling import set_vision_agent as _set_vision_agent
 from src.utils.chat_summary import summarize_conversation, log_agent_messages, log_agent_exchange
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
@@ -336,6 +336,8 @@ class Pipeline:
         error_checker_agent: Agent | None = None,
         scout_agent: Agent | None = None,
         dop_agent: Agent | None = None,
+        orchestrator_agent: Agent | None = None,
+        free_agent: bool = True,
         verbose: bool = True,
         skip_brain: bool = False,
         info_context: dict | None = None,
@@ -343,13 +345,29 @@ class Pipeline:
     ) -> None:
         self._researcher = query_templates
         self._assemble_workflow = assemble_workflow
+        # Legacy alias used by a few older code paths (_ensure_clean_history,
+        # _compress_brain_history). Kept in sync with _assemble_workflow.
+        self._brain = assemble_workflow
         self._info_agent: Agent = info_agent or create_info_agent()
         self._story_agent: Agent = story_agent or create_story_agent()
-        self._triage_agent: Agent = triage_agent or create_detect_user_intent_agent()
+        # Free-agent mode routes every turn through the orchestrator, so the
+        # triage classifier is not built (and not needed). It is only constructed
+        # for the legacy pipeline path.
+        self._free_agent = free_agent
+        self._triage_agent: Agent | None = (
+            triage_agent if free_agent else (triage_agent or create_detect_user_intent_agent())
+        )
         self._planner_agent: Agent = planner_agent or create_planner_agent()
         self._error_checker_agent: Agent = error_checker_agent or create_error_checker_agent()
         self._search_web_agent: Agent = scout_agent or create_search_web_agent()
         self._dop_agent: Agent = dop_agent or create_dop_agent()
+        # Orchestrator (the free-agent entry point) + its delegation tools. The
+        # delegation tools are closures over this Pipeline so they always hit the
+        # current specialist instances (surviving /switch_model rebuilds).
+        self._orchestrator_agent: Agent | None = None
+        self._delegation_tools: list = self._build_delegation_tools()
+        if orchestrator_agent is not None:
+            self.set_orchestrator(orchestrator_agent)
         self._verbose = verbose
         self._skip_brain = skip_brain
         # Storyboard director: max Vision-QA attempts per visual step before the
@@ -629,6 +647,275 @@ class Pipeline:
 
         return asyncio.run(_consume())
 
+    # ── Free-agent orchestrator ──────────────────────────────────────────── #
+
+    def set_orchestrator(self, agent: Agent) -> None:
+        """Install *agent* as the live orchestrator and wire its meta-tools.
+
+        Grabs the agent's ``AgentSkills`` plugin (attached by
+        ``create_orchestrator_agent``) and registers it with the orchestration
+        module so ``create_skill`` re-scans the correct, live plugin instance.
+        """
+        self._orchestrator_agent = agent
+        plugin = getattr(agent, "_agentskills_plugin", None)
+        try:
+            from src.tools.orchestration import set_orchestrator_context
+            set_orchestrator_context(agent=agent, skills_plugin=plugin)
+        except Exception as exc:  # noqa: BLE001
+            if getattr(self, "_verbose", False):
+                print(f"pipeline: WARNING: could not wire orchestrator context ({exc}).")
+
+    def _build_delegation_tools(self) -> list:
+        """Build the specialist-as-tool closures the orchestrator can delegate to.
+
+        Each is an async ``@tool`` bound to this Pipeline, so it always invokes the
+        *current* specialist instance (surviving ``/switch_model`` rebuilds) and
+        folds the specialist's per-turn token usage into the turn cost.
+        """
+        from strands import tool as _tool
+
+        async def _run_specialist(agent, label: str, text: str) -> str:
+            snap = self._usage_snapshot(agent)
+            try:
+                out = str(await agent.invoke_async(text))
+            finally:
+                self._record_agent_usage(agent, snap)
+                try:
+                    agent.messages.clear()
+                except Exception:  # noqa: BLE001
+                    pass
+            log_agent_exchange(label, text, out)
+            return out
+
+        @_tool
+        async def run_research(request: str) -> str:
+            """Resolve a request into a validated ComfyUI **brainbriefing** JSON.
+
+            Returns the brainbriefing (template + models + prompts + input/output
+            node bindings). Feed the result to ``apply_brainbriefing`` to assemble
+            the workflow, then ``signal_workflow_ready``.
+
+            Args:
+                request: A natural-language description of what to generate/edit.
+            """
+            raw_json = None
+            error = None
+            researcher_output = ""
+            async for _ev in self._arun_researcher(request):
+                if isinstance(_ev, dict) and "_researcher_done" in _ev:
+                    raw_json = _ev.get("raw_json")
+                    error = _ev.get("error")
+                    researcher_output = _ev.get("researcher_output", "")
+            if error:
+                return json.dumps({"error": error})
+            if raw_json:
+                self._last_brainbriefing_json = raw_json
+                return raw_json
+            return researcher_output or json.dumps({"error": "researcher produced no briefing"})
+
+        @_tool
+        async def run_info(question: str) -> str:
+            """Answer a read-only question about installed models, workflows, or capabilities.
+
+            Args:
+                question: The user's question about what agentY/ComfyUI can do.
+            """
+            return await _run_specialist(self._info_agent, "INFO", self._prepend_gallery(question))
+
+        @_tool
+        async def run_story(request: str) -> str:
+            """Write a short synopsis or scene descriptions for a visual story.
+
+            Args:
+                request: What to write (e.g. "a 3-scene synopsis about …").
+            """
+            return await _run_specialist(self._story_agent, "STORY", request)
+
+        @_tool
+        async def run_dop(text: str) -> str:
+            """Rewrite a prompt/storyboard with concrete cinematography (light/camera/colour).
+
+            Args:
+                text: The prompt or storyboard to enrich.
+            """
+            return await _run_specialist(self._dop_agent, "DOP", text)
+
+        @_tool
+        async def run_web_search(request: str) -> str:
+            """Search the web and stage reference image(s); returns a JSON manifest.
+
+            Args:
+                request: What reference to find (e.g. "a 1950s American diner interior").
+            """
+            return await _run_specialist(self._search_web_agent, "WEB", request)
+
+        @_tool
+        async def run_planner(request: str) -> str:
+            """Decompose a complex, multi-stage request into ordered steps (JSON).
+
+            Use only for genuinely multi-step projects; simple requests need no plan.
+
+            Args:
+                request: The multi-part request to break down.
+            """
+            return await _run_specialist(self._planner_agent, "PLANNER", request)
+
+        return [run_research, run_info, run_story, run_dop, run_web_search, run_planner]
+
+    def _ensure_orch_clean_history(self) -> None:
+        """Sanitize the orchestrator's message list (drop orphaned tool blocks)."""
+        agent = self._orchestrator_agent
+        if agent is None:
+            return
+        msgs = getattr(agent, "messages", None)
+        if not msgs:
+            return
+        cleaned = self._sanitize_messages(list(msgs))
+        if len(cleaned) != len(msgs):
+            if self._verbose:
+                print(f"pipeline: Sanitized orchestrator history: removed "
+                      f"{len(msgs) - len(cleaned)} orphaned tool message(s).")
+            agent.messages[:] = cleaned
+
+    def _build_orchestrator_input(self, user_input, user_text: str):
+        """Assemble the orchestrator's input: gallery + attachments + the message.
+
+        For multimodal input (a content-block list with images) the gallery is
+        prepended as a text block and the image blocks are preserved so the
+        orchestrator can actually see attached images.
+        """
+        if isinstance(user_input, list):
+            gallery = self._format_image_gallery()
+            blocks = list(user_input)
+            if gallery:
+                blocks.insert(0, {"text": gallery})
+            return blocks
+        return self._prepend_gallery(self._annotate_attachments(user_input, user_text))
+
+    async def _astream_orchestrator(self, user_input, *, qa_reply_queue: asyncio.Queue | None = None):
+        """Stream the orchestrator for one turn, then run any signalled workflow.
+
+        This replaces the triage → route → handler block: the orchestrator owns
+        the turn end-to-end. After it finishes (no ComfyUI interrupt pending), the
+        workflow-signal mailbox is drained and the Executor runs exactly as in the
+        legacy Brain stage — so ComfyUI submission / Vision-QA / output-staging is
+        unchanged. ComfyUI interrupts are handled identically to the Brain stage.
+        """
+        self._last_turn_usages = []
+        self._vision_usage_snap = self._usage_snapshot(self._vision_agent) if self._vision_agent else {}
+        self._run_qa = False
+        user_text = self._extract_text(user_input)
+        # Register image paths embedded in a plain-text message so assembly/LoadImage
+        # wiring receives real input paths (Chainlit-style callers set this already).
+        if not isinstance(user_input, list):
+            _imgs, _ = Pipeline._scan_media_paths(user_text)
+            if _imgs:
+                self._session.last_user_input_images = _imgs
+        synth = TriageResult(intent=MessageIntent.new_request, response=None,
+                             confidence=1.0, run_qa=False)
+
+        self._ensure_orch_clean_history()
+        orch_input = self._build_orchestrator_input(user_input, user_text)
+        current_input: Any = orch_input
+        _snap = self._usage_snapshot(self._orchestrator_agent)
+
+        while True:
+            interrupt_result = None
+            yield {"_orchestrator_start": True}
+            async for event in self._orchestrator_agent.stream_async(current_input):
+                yield event
+                if "result" in event:
+                    agent_result = event["result"]
+                    if getattr(agent_result, "stop_reason", None) == "interrupt":
+                        for intr in getattr(agent_result, "interrupts", []):
+                            if getattr(intr, "name", None) == INTERRUPT_NAME:
+                                interrupt_result = intr
+                                break
+                for _prog_line in _drain_progress():
+                    yield {"data": _prog_line}
+            yield {"_orchestrator_done": True}
+
+            if interrupt_result is None:
+                # Executor handoff — drain the workflow-signal mailbox and run.
+                workflow_paths = _get_workflow_signal()
+                workflow_paths = self._expand_variations(workflow_paths, self._last_brainbriefing_json or "")
+                self._session.current_output_paths.clear()
+                exec_paths = self._session.current_output_paths
+                _qa_fail_event: dict | None = None
+                if workflow_paths:
+                    if self._verbose:
+                        count = len(workflow_paths)
+                        tag = f"{count} workflows (batch)" if count > 1 else workflow_paths[0]
+                        print(f"pipeline: Orchestrator signaled {tag} ready.")
+                    async for line in _execute_workflows_batch(
+                        workflow_paths,
+                        self._last_brainbriefing_json or "",
+                        user_message=user_text,
+                        verbose=self._verbose,
+                        collected_paths=exec_paths,
+                        run_qa=self._run_qa,
+                    ):
+                        if isinstance(line, dict) and line.get("qa_fail"):
+                            _qa_fail_event = line
+                            break
+                        yield {"data": f"\n{line}"}
+
+                if _qa_fail_event:
+                    if qa_reply_queue is not None:
+                        yield {"qa_fail_ask": True, **_qa_fail_event}
+                        _answer = await qa_reply_queue.get()
+                        if _is_affirmative(_answer):
+                            yield {"data": "\n\n_🔄 Retrying with QA feedback…_"}
+                            current_input = self._build_qa_feedback_prompt(
+                                user_text, user_text, _qa_fail_event
+                            )
+                            continue
+                    self._record_chat_summary(user_text, synth, status="qa_failed",
+                                              raw_json=self._last_brainbriefing_json)
+                    self._record_agent_usage(self._orchestrator_agent, _snap)
+                    self._session.last_agent = "orchestrator"
+                    return
+
+                self._record_chat_summary(user_text, synth, status="completed",
+                                          raw_json=self._last_brainbriefing_json)
+                self._record_agent_usage(self._orchestrator_agent, _snap)
+                self._session.last_agent = "orchestrator"
+                if self._verbose:
+                    print("pipeline: Orchestrator finished.")
+                return
+
+            # ── ComfyUI interrupt: stream progress, then resume ────── #
+            raw_reason = interrupt_result.reason or ""
+            prompt_id_o = ""
+            client_id_o = ""
+            try:
+                _r = json.loads(raw_reason)
+                if isinstance(_r, dict):
+                    prompt_id_o = str(_r.get("prompt_id", ""))
+                    client_id_o = str(_r.get("client_id", "") or "")
+                else:
+                    prompt_id_o = str(_r)
+            except Exception:
+                prompt_id_o = raw_reason
+            if self._verbose:
+                print(f"pipeline: ComfyUI interrupt — streaming prompt_id={prompt_id_o}")
+            yield {"data": f"\n\n_⏳ ComfyUI job queued (`{prompt_id_o}`). Streaming progress…_"}
+            history_result_o: dict = {}
+            async for ev in _stream_comfyui_job(prompt_id_o, client_id_o):
+                if isinstance(ev, dict):
+                    history_result_o = ev["history"] if "history" in ev else ev
+                    break
+                yield {"data": f"\n_{ev}_"}
+            yield {"data": "\n_✅ ComfyUI job finished — resuming…_"}
+            current_input = [
+                {
+                    "interruptResponse": {
+                        "interruptId": interrupt_result.id,
+                        "response": json.dumps(history_result_o),
+                    }
+                }
+            ]
+
     async def stream_async(self, user_input, *, qa_reply_queue: asyncio.Queue | None = None):  # noqa: ANN201
         """Async generator compatible with Chainlit's streaming loop.
 
@@ -651,6 +938,16 @@ class Pipeline:
         # turn has finished, otherwise this turn would see uncompressed history.
         _trace("pipeline.stream_async: await pending compression")
         await self._await_pending_compression()
+
+        # ── Free-agent mode: the orchestrator owns the whole turn. Skip triage
+        # and the rigid router entirely. ─────────────────────────────────────
+        if self._free_agent and self._orchestrator_agent is not None:
+            _trace("pipeline.stream_async: orchestrator begin")
+            async for event in self._astream_orchestrator(user_input, qa_reply_queue=qa_reply_queue):
+                yield event
+            _trace("pipeline.stream_async: orchestrator done")
+            return
+
         # Stage 0 – Triage (classify intent before any agent is called)
         _trace("pipeline.stream_async: triage begin")
         self._last_turn_usages = []
@@ -4000,6 +4297,8 @@ def create_pipeline(
     planner_llm: str | None = None,
     planner_ollama_model: str | None = None,
     planner_anthropic_model: str | None = None,
+    orchestrator_llm: str | None = None,
+    free_agent: bool = True,
     verbose: bool = True,
     skip_brain: bool = False,
     info_context: dict | None = None,
@@ -4057,7 +4356,9 @@ def create_pipeline(
     )
     info_agent = create_info_agent()
     story_agent = create_story_agent()
-    triage_agent = create_detect_user_intent_agent(
+    # In free-agent mode the orchestrator owns routing, so the triage classifier
+    # is not built. It is only constructed for the legacy pipeline path.
+    triage_agent = None if free_agent else create_detect_user_intent_agent(
         llm=triage_llm,
         ollama_model=triage_ollama_model,
         anthropic_model=triage_anthropic_model,
@@ -4069,7 +4370,7 @@ def create_pipeline(
     )
     scout_agent = create_search_web_agent()
     dop_agent = create_dop_agent()
-    return Pipeline(
+    pipeline = Pipeline(
         researcher,
         brain,
         info_agent=info_agent,
@@ -4078,8 +4379,18 @@ def create_pipeline(
         planner_agent=planner_agent,
         scout_agent=scout_agent,
         dop_agent=dop_agent,
+        free_agent=free_agent,
         verbose=verbose,
         skip_brain=skip_brain,
         info_context=info_context,
         session_id=session_id,
     )
+    # Build the orchestrator with the pipeline's delegation tools appended, then
+    # wire it (and its live AgentSkills plugin) into the pipeline.
+    if free_agent:
+        orchestrator = create_orchestrator_agent(
+            llm=orchestrator_llm,
+            extra_tools=pipeline._delegation_tools,
+        )
+        pipeline.set_orchestrator(orchestrator)
+    return pipeline

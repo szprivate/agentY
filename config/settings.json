@@ -1,6 +1,7 @@
 {
   "comfyui_url": "http://127.0.0.1:8188",
   "system_prompts": {
+    "orchestrator": "system_prompt.orchestrator.md",
     "query_templates": "system_prompt.query_templates.md",
     "assemble_workflow": "system_prompt.assemble_workflow.md",
     "detect_user_intent": "system_prompt.detect_user_intent.md",
@@ -43,6 +44,7 @@
   "llm": {
     
     "pipeline": {
+      "orchestrator": "claude,claude-haiku-4-5",
       "query_templates": "dashscope,qwen3.7-plus",
       "assemble_workflow": "dashscope,qwen3.7-plus",
       "detect_user_intent": "dashscope,qwen3.7-plus",

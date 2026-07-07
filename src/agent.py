@@ -30,6 +30,7 @@ from src.utils.costs import compute_cost_from_usage
 from src.tools import (
     QUERYTEMPLATES_TOOLS,
     ASSEMBLEWORKFLOW_TOOLS,
+    ORCHESTRATOR_TOOLS,
     INFO_TOOLS,
     STORY_TOOLS,
     SEARCHWEB_TOOLS,
@@ -248,6 +249,7 @@ _SYSTEM_PROMPT_FILE: dict[str, str] = {
     "query_templates.local": "system_prompt.query_templates.local",
     "assemble_workflow": "system_prompt.assemble_workflow",
     "assemble_workflow.local": "system_prompt.assemble_workflow.local",
+    "orchestrator": "system_prompt.orchestrator",
     "detect_user_intent": "system_prompt.detect_user_intent",
     "planner": "system_prompt.planner",
     "info": "system_prompt.info",
@@ -494,6 +496,13 @@ class TokenUsageHookProvider:
 # Skills directory – lives at <project_root>/skills/
 # ---------------------------------------------------------------------------
 _SKILLS_DIR = Path(__file__).parent.parent / "skills"
+
+# Runtime-authored ("scratch") skills the orchestrator writes via create_skill.
+# Kept in a subdirectory so they are easy to identify/clean and never collide
+# with the curated project skills. Registered as a second AgentSkills source
+# (the skill loader only discovers immediate child dirs, so a nested subdir must
+# be passed as its own source).
+_SCRATCH_SKILLS_DIR = _SKILLS_DIR / "_scratch"
 
 # Story-agent skills live in a separate directory so the ComfyUI agents
 # (Brain / Researcher / Error-checker), which scan the whole _SKILLS_DIR, never
@@ -1484,4 +1493,180 @@ def create_error_checker_agent(
     # Single-turn — no persistent conversation history needed.
     agent.conversation_manager = SlidingWindowConversationManager(window_size=2)
     return agent
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator — the free-agent entry point (replaces triage + rigid routing)
+# ---------------------------------------------------------------------------
+
+def create_orchestrator_agent(
+    llm: str | None = None,
+    ollama_model: str | None = None,
+    anthropic_model: str | None = None,
+    extra_tools: list | None = None,
+    **kwargs,
+) -> Agent:
+    """Create the Orchestrator agent — a single, free agent that owns the turn.
+
+    Instead of a triage classifier fanning requests out to fixed handlers, the
+    orchestrator holds the full toolset directly, can delegate to the specialist
+    agents (passed in as ``extra_tools`` by the pipeline), can spawn ad-hoc
+    subagents, and can author skills at runtime. It decides for itself how to
+    fulfil the user's intent.
+
+    Reads ``llm.pipeline.orchestrator`` from settings.json (format
+    ``'provider,model'``); defaults to ``claude,claude-haiku-4-5``. Env var
+    ``ORCHESTRATOR_LLM`` overrides the combined setting;
+    ``ORCHESTRATOR_OLLAMA_MODEL`` / ``ORCHESTRATOR_ANTHROPIC_MODEL`` override the
+    provider-specific model.
+
+    Args:
+        llm: ``'claude'`` | ``'ollama'`` | a DashScope provider. Falls back to settings.
+        ollama_model: Ollama model override.
+        anthropic_model: Anthropic model override.
+        extra_tools: Extra @tool callables to append (the pipeline's delegation tools).
+        **kwargs: Forwarded to the Strands Agent constructor.
+
+    The built agent carries ``agent._agentskills_plugin`` so the pipeline can wire
+    ``create_skill`` to re-scan the live plugin.
+    """
+    if ollama_model and llm is None:
+        llm = "ollama"
+    # The orchestrator assembles workflows too, so reset the per-session guard.
+    reset_patch_workflow_guard()
+
+    _raw = str(_cfg("ORCHESTRATOR_LLM", "pipeline", "orchestrator", default="claude,claude-haiku-4-5"))
+    _settings_llm, _settings_model = _parse_llm_setting(_raw)
+    resolved_llm = llm or _settings_llm or "claude"
+
+    if resolved_llm == "ollama":
+        resolved_ollama = (
+            ollama_model
+            or os.environ.get("ORCHESTRATOR_OLLAMA_MODEL")
+            or _settings_model
+            or "qwen3-vl:30b"
+        )
+        resolved_anthropic = (
+            anthropic_model
+            or os.environ.get("ORCHESTRATOR_ANTHROPIC_MODEL")
+            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
+        )
+    else:  # claude / dashscope
+        resolved_anthropic = (
+            anthropic_model
+            or os.environ.get("ORCHESTRATOR_ANTHROPIC_MODEL")
+            or _settings_model
+            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
+        )
+        resolved_ollama = ollama_model or "qwen3-vl:30b"
+
+    system_prompt = _load_system_prompt("orchestrator")
+
+    # Load BOTH the curated project skills and any runtime-authored scratch skills.
+    # A missing _scratch dir is safely skipped by the loader. Keep a reference to
+    # the plugin so create_skill can call set_available_skills() on it live.
+    skills_plugin = AgentSkills(skills=[str(_SKILLS_DIR), str(_SCRATCH_SKILLS_DIR)])
+    loaded = [s.name for s in skills_plugin.get_available_skills()]
+    if loaded:
+        print(f"[agentY:orchestrator] Loaded skills: {', '.join(loaded)}")
+
+    tools = list(ORCHESTRATOR_TOOLS) + list(extra_tools or [])
+
+    extra_hooks = kwargs.pop("hooks", [])
+    orch_hooks = [TokenUsageHookProvider(role="orchestrator"), ComfyUIInterruptHook(), *extra_hooks]
+
+    agent = _make_agent(
+        role="orchestrator",
+        llm=resolved_llm,
+        dashscope_model=_settings_model,
+        system_prompt=system_prompt,
+        tools=tools,
+        ollama_model=resolved_ollama,
+        anthropic_model=resolved_anthropic,
+        plugins=[skills_plugin],
+        hooks=orch_hooks,
+        **kwargs,
+    )
+    agent._agentskills_plugin = skills_plugin
+    return agent
+
+
+# Meta-tool identities to exclude from a subagent's toolset (keeps subagents
+# depth-1: they cannot spawn further subagents or author skills).
+def _subagent_full_tools() -> list:
+    from src.tools import (  # local import avoids import-time cycles
+        ORCHESTRATOR_TOOLS as _OT,
+        create_skill as _cs,
+        list_skills as _ls,
+        remove_skill as _rs,
+        spawn_subagent as _sp,
+    )
+    _meta = {id(_cs), id(_ls), id(_rs), id(_sp)}
+    return [t for t in _OT if id(t) not in _meta]
+
+
+def build_subagent(toolset: str = "full", model: str | None = None) -> Agent:
+    """Build a fresh, single-use subagent with a curated toolset.
+
+    Used by the ``spawn_subagent`` tool. Subagents are depth-1: the ``full``
+    toolset excludes the self-extension meta-tools so a subagent cannot spawn
+    further subagents.
+
+    Args:
+        toolset: research|assembly|info|story|web|vision|full.
+        model: Optional ``'provider,model'`` override.
+
+    Returns:
+        A ready-to-invoke Strands Agent.
+    """
+    ts = (toolset or "full").strip().lower()
+    prov: str | None = None
+    mdl: str | None = None
+    if model:
+        _p, _, _m = model.partition(",")
+        prov = (_p.strip().lower() or None)
+        mdl = (_m.strip() or None)
+
+    def _mk(anthropic=None, ollama=None):
+        return {
+            "llm": prov,
+            "anthropic_model": anthropic or (mdl if prov in (None, "claude") else None),
+            "ollama_model": ollama or (mdl if prov == "ollama" else None),
+        }
+
+    if ts == "research":
+        return create_query_templates_agent(**_mk())
+    if ts == "assembly":
+        return create_assemble_workflow_agent(**_mk())
+    if ts == "info":
+        return create_info_agent(**_mk())
+    if ts == "story":
+        return create_story_agent(**_mk())
+    if ts == "web":
+        return create_search_web_agent(**_mk())
+    if ts == "vision":
+        return create_vision_agent(anthropic_model=mdl if prov in (None, "claude") else None,
+                                   ollama_model=mdl if prov == "ollama" else None)
+
+    # "full": a general agent with the whole non-meta toolset.
+    resolved_llm = prov or str(_cfg("ORCHESTRATOR_LLM", "pipeline", "orchestrator",
+                                    default="claude")).partition(",")[0].strip() or "claude"
+    system_prompt = (
+        "You are a focused subagent working on a single, self-contained task handed "
+        "to you by an orchestrator. Use your tools to complete it, then return a "
+        "concise result. For ComfyUI generation, assemble and validate the workflow "
+        "and call signal_workflow_ready(workflow_path) as your final step — never "
+        "submit_prompt. Do not ask clarifying questions; make reasonable assumptions."
+    )
+    return _make_agent(
+        role="subagent",
+        llm=resolved_llm,
+        dashscope_model=mdl or "",
+        system_prompt=system_prompt,
+        tools=_subagent_full_tools(),
+        ollama_model=(mdl if resolved_llm == "ollama" else None) or "qwen3-vl:30b",
+        anthropic_model=(mdl if resolved_llm not in ("ollama",) else None)
+        or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5")),
+        hooks=[TokenUsageHookProvider(role="subagent"), ComfyUIInterruptHook()],
+    )
 
