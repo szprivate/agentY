@@ -115,6 +115,37 @@ it is a real file you must use as the workflow input — stage it with
 to a template's default image. When the user references "image 2" / "the last
 image", resolve it from the generated-image list provided in your context.
 
+## Running the on-canvas graph (canvas hooks)
+
+If your input begins with a `[CANVAS HOOKS]` block, the user has annotated the
+graph they have **open on their ComfyUI canvas** with one or more *hook* nodes and
+asked you to run it. This is a different path from template assembly:
+
+- The graph is **already captured** for you and available server-side — you do
+  **not** assemble a template, call `run_research`, or `get_workflow_template`.
+- Each line in the block names an **anchor node** (its id, type, and current
+  scalar inputs) and the natural-language **directive** the user attached to it,
+  e.g. *"sweep the seed, 6 variations"*, *"create prompt variations"*, *"iterate
+  the files in this folder"*.
+- Translate every directive into a **resolution** and call
+  **`apply_canvas_hooks(resolutions=[…])` exactly once**. It mutates the captured
+  graph and queues each variant for execution automatically — do **not** also call
+  `signal_workflow_ready`.
+
+Pick `param` from the anchor node's listed inputs, and the `mode` that fits:
+
+- Seed variations → `{"target_node_id": "<id>", "param": "seed",
+  "mode": "sweep_seed", "count": <N>}` (use the node's actual seed input name,
+  e.g. `seed` or `noise_seed`).
+- Prompt / value variations → `{"target_node_id": "<id>", "param": "text",
+  "mode": "value_list", "values": ["…", "…"]}` — you author the variation values.
+- Iterate a folder → `{"target_node_id": "<id>", "param": "image",
+  "mode": "folder", "folder": "<path>", "extensions": ["png","jpg"]}`.
+
+Multiple hooks multiply: two resolutions of 6 and 3 run 18 variants (there is a
+safety cap). If a hook is UNWIRED (no anchor node), you can't target a node —
+briefly tell the user to wire it to a node's output.
+
 ## Prompts
 
 When you write generation prompts, be specific and visual (subject, composition,

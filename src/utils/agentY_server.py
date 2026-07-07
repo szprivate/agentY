@@ -397,7 +397,9 @@ def _parse_think_chunk(chunk: str, state: dict) -> tuple[str, str]:
 # ── SSE pipeline runner ───────────────────────────────────────────────────────
 
 def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
-                         out_q: "queue.Queue", req_id: str) -> None:
+                         out_q: "queue.Queue", req_id: str,
+                         canvas_prompt: dict | None = None,
+                         canvas_hooks: list | None = None) -> None:
     """Drive the pipeline for one turn on a private event loop, pushing SSE dicts
     to *out_q*. Interactive asks register on ``_reply_registry`` so POST
     /agentY/reply can feed the answer thread-safely. Terminates *out_q* with None.
@@ -559,7 +561,10 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
     qa_queue: asyncio.Queue = asyncio.Queue()
 
     async def _run() -> None:
-        async for event in pipeline.stream_async(content, qa_reply_queue=qa_queue):
+        async for event in pipeline.stream_async(
+            content, qa_reply_queue=qa_queue,
+            canvas_prompt=canvas_prompt, canvas_hooks=canvas_hooks,
+        ):
             if isinstance(event, dict):
                 _translate(event)
 
@@ -1032,6 +1037,25 @@ def _build_app():
         loop.call_soon_threadsafe(q.put_nowait, text)
         return jsonify({"ok": True})
 
+    # ── Switch an agent's model (same as the /switch_model command) ─────────
+    @app.route("/agentY/switch_model", methods=["POST", "OPTIONS"])
+    def switch_model_route():
+        if request.method == "OPTIONS":
+            return "", 204
+        body = request.get_json(silent=True) or {}
+        target = (body.get("target") or "all").strip()
+        spec = (body.get("spec") or "").strip()
+        if not spec:
+            return jsonify({"ok": False, "error": "no model spec"}), 400
+        try:
+            result = _switch_model([target, spec])
+        except Exception as exc:  # noqa: BLE001
+            logger.error("switch_model failed: %s", exc, exc_info=True)
+            return jsonify({"ok": False, "error": str(exc)}), 500
+        messages = [r.get("data", "") for r in result if isinstance(r, dict)]
+        ok = not any("❌" in m or "⚠️" in m for m in messages)
+        return jsonify({"ok": ok, "messages": messages})
+
     # ── Stop the current run ───────────────────────────────────────────────
     @app.route("/agentY/stop", methods=["POST", "OPTIONS"])
     def stop_run():
@@ -1073,6 +1097,13 @@ def _build_app():
         # Canvas-selected inputs lead (they carry the user's chosen order), then
         # any chat attachments.
         image_paths = canvas_paths + image_paths
+        # Canvas-hook mode: the captured API-format prompt of the user's on-canvas
+        # graph + the hook directives attached to it. Present only when the graph
+        # has AgentYHook nodes; drives the "run my canvas graph" execution path.
+        canvas_prompt = body.get("canvas_prompt")
+        if not isinstance(canvas_prompt, dict):
+            canvas_prompt = None
+        canvas_hooks = [h for h in (body.get("canvas_hooks") or []) if isinstance(h, dict)]
         thread_id = body.get("thread_id")
         if not thread_id or cs.get_thread(thread_id) is None:
             thread_id = cs.create_thread(thread_id=thread_id)
@@ -1121,7 +1152,9 @@ def _build_app():
         q: queue.Queue = queue.Queue()
         rid = uuid.uuid4().hex
         threading.Thread(target=_run_pipeline_stream,
-                         args=(thread_id, message, image_paths, q, rid), daemon=True).start()
+                         args=(thread_id, message, image_paths, q, rid),
+                         kwargs={"canvas_prompt": canvas_prompt, "canvas_hooks": canvas_hooks},
+                         daemon=True).start()
 
         def gen():
             yield _sse({"type": "thread", "id": thread_id})

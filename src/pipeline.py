@@ -415,6 +415,10 @@ class Pipeline:
         # delegation tools are closures over this Pipeline so they always hit the
         # current specialist instances (surviving /switch_model rebuilds).
         self._orchestrator_agent: Agent | None = None
+        # Canvas-hook mode (set per-turn): the spliced base API prompt of the
+        # user's on-canvas graph + the hook directives attached to it.
+        self._canvas_base_prompt: dict | None = None
+        self._canvas_hooks: list = []
         self._delegation_tools: list = self._build_delegation_tools()
         if orchestrator_agent is not None:
             self.set_orchestrator(orchestrator_agent)
@@ -811,6 +815,72 @@ class Pipeline:
             return await _run_specialist(self._planner_agent, "PLANNER", request)
 
         @_tool
+        async def apply_canvas_hooks(resolutions: list) -> str:
+            """Run the user's ON-CANVAS graph, expanded per the canvas hooks.
+
+            Use this ONLY when a ``[CANVAS HOOKS]`` block is present. It runs the
+            graph the user has open (already captured this turn) — do NOT assemble
+            a template or call ``run_research``. Each resolution mutates ONE input
+            of one anchor node across a set of values; the batch is the Cartesian
+            product of all resolutions (capped), and each variant is queued for
+            execution automatically.
+
+            Each resolution is an object::
+
+                {"target_node_id": "12", "param": "seed",
+                 "mode": "sweep_seed", "count": 6}
+                {"target_node_id": "4", "param": "text", "mode": "value_list",
+                 "values": ["a cat, cinematic", "a dog, cinematic"]}
+                {"target_node_id": "9", "param": "image", "mode": "folder",
+                 "folder": "C:/inputs", "extensions": ["png", "jpg"]}
+
+            ``param`` is the input/widget name on the anchor node (see its inputs
+            in the ``[CANVAS HOOKS]`` block). Modes: ``sweep_seed`` (needs
+            ``count``, optional integer ``start``), ``value_list`` (needs
+            ``values``), ``folder`` (needs ``folder``, optional ``extensions`` and
+            ``use_full_path``). Call this ONCE with all resolutions.
+
+            Args:
+                resolutions: list of per-node mutation specs (see above).
+            """
+            import os as _os
+            import tempfile as _tempfile
+            from src.utils.canvas_hooks import build_batch as _build_batch
+            from src.utils.workflow_signal import append_workflow_path as _append
+
+            base = getattr(self, "_canvas_base_prompt", None)
+            if not base:
+                return json.dumps({
+                    "error": "no on-canvas graph is loaded for this turn — "
+                             "apply_canvas_hooks is only valid with a [CANVAS HOOKS] block."
+                })
+            try:
+                cap = int(_os.environ.get("AGENTY_MAX_CANVAS_BATCH", "25") or "25")
+            except ValueError:
+                cap = 25
+            prompts, notes = _build_batch(base, list(resolutions or []), cap=cap)
+            if not prompts:
+                return json.dumps({"error": "no batch was produced", "notes": notes})
+            out_dir = Path(_tempfile.mkdtemp(prefix="agenty_canvas_"))
+            paths: list[str] = []
+            for i, p in enumerate(prompts):
+                fp = out_dir / f"canvas_{i:03d}.json"
+                fp.write_text(json.dumps(p), encoding="utf-8")
+                _append(str(fp))
+                paths.append(str(fp))
+            if self._verbose:
+                print(f"pipeline: apply_canvas_hooks queued {len(paths)} canvas variant(s).")
+            return json.dumps({
+                "status": "queued",
+                "count": len(paths),
+                "notes": notes,
+                "message": (
+                    f"{len(paths)} canvas graph variant(s) queued for execution — "
+                    "your work here is done; do NOT call signal_workflow_ready."
+                ),
+            })
+
+        @_tool
         async def classify_intent(message: str) -> str:
             """Classify the user's message intent (advisory — you still decide).
 
@@ -836,7 +906,7 @@ class Pipeline:
                 return json.dumps({"error": str(exc)})
 
         return [run_research, run_info, run_story, run_dop, run_web_search,
-                run_planner, classify_intent]
+                run_planner, classify_intent, apply_canvas_hooks]
 
     def _ensure_orch_clean_history(self) -> None:
         """Sanitize the orchestrator's message list (drop orphaned tool blocks)."""
@@ -959,6 +1029,14 @@ class Pipeline:
             if self._verbose:
                 print("pipeline: pinned hard constraints:\n" + "\n".join(f"  - {c}" for c in constraints))
 
+        # Canvas-hook mode: prepend the directive block so the orchestrator runs
+        # the on-canvas graph via apply_canvas_hooks (above the hard constraints).
+        if self._canvas_base_prompt is not None and self._canvas_hooks:
+            from src.utils.canvas_hooks import describe_hooks
+            hooks_block = describe_hooks(self._canvas_hooks, self._canvas_base_prompt)
+            if hooks_block:
+                pin = hooks_block + "\n" + pin
+
         if isinstance(user_input, list):
             gallery = self._format_image_gallery()
             blocks = list(user_input)
@@ -968,7 +1046,8 @@ class Pipeline:
             return blocks
         return pin + self._prepend_gallery(self._annotate_attachments(user_input, user_text))
 
-    async def _astream_orchestrator(self, user_input, *, qa_reply_queue: asyncio.Queue | None = None):
+    async def _astream_orchestrator(self, user_input, *, qa_reply_queue: asyncio.Queue | None = None,
+                                    canvas_prompt: dict | None = None, canvas_hooks: list | None = None):
         """Stream the orchestrator for one turn, then run any signalled workflow.
 
         This replaces the triage → route → handler block: the orchestrator owns
@@ -989,6 +1068,23 @@ class Pipeline:
                 self._session.last_user_input_images = _imgs
         synth = TriageResult(intent=MessageIntent.new_request, response=None,
                              confidence=1.0, run_qa=False)
+
+        # Canvas-hook mode: the user annotated their on-canvas graph. Splice the
+        # hook nodes out of the captured API prompt and stash the clean base for
+        # apply_canvas_hooks; describe the hooks in the orchestrator input.
+        self._canvas_base_prompt = None
+        self._canvas_hooks = [h for h in (canvas_hooks or []) if isinstance(h, dict)]
+        if isinstance(canvas_prompt, dict) and canvas_prompt:
+            try:
+                from src.utils.canvas_hooks import splice_hook_nodes
+                cleaned, removed = splice_hook_nodes(canvas_prompt)
+                self._canvas_base_prompt = cleaned
+                if self._verbose:
+                    print(f"pipeline: canvas-hook mode — {len(self._canvas_hooks)} hook(s), "
+                          f"spliced {len(removed)} hook node(s); base graph has "
+                          f"{len(cleaned)} node(s).")
+            except Exception as exc:  # noqa: BLE001
+                print(f"pipeline: canvas-hook splice failed ({exc}); ignoring canvas graph.")
 
         self._ensure_orch_clean_history()
         orch_input = self._build_orchestrator_input(user_input, user_text)
@@ -1100,7 +1196,8 @@ class Pipeline:
                 }
             ]
 
-    async def stream_async(self, user_input, *, qa_reply_queue: asyncio.Queue | None = None):  # noqa: ANN201
+    async def stream_async(self, user_input, *, qa_reply_queue: asyncio.Queue | None = None,
+                           canvas_prompt: dict | None = None, canvas_hooks: list | None = None):  # noqa: ANN201
         """Async generator compatible with Chainlit's streaming loop.
 
         Runs the Researcher synchronously (it's a single-turn spec dump),
@@ -1127,7 +1224,10 @@ class Pipeline:
         # and the rigid router entirely. ─────────────────────────────────────
         if self._free_agent and self._orchestrator_agent is not None:
             _trace("pipeline.stream_async: orchestrator begin")
-            async for event in self._astream_orchestrator(user_input, qa_reply_queue=qa_reply_queue):
+            async for event in self._astream_orchestrator(
+                user_input, qa_reply_queue=qa_reply_queue,
+                canvas_prompt=canvas_prompt, canvas_hooks=canvas_hooks,
+            ):
                 yield event
             _trace("pipeline.stream_async: orchestrator done")
             return
