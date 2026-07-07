@@ -33,6 +33,7 @@ from src.utils.chat_summary import summarize_conversation, log_agent_messages, l
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
 from src.utils.comfyui_progress import stream_comfyui_job as _stream_comfyui_job
 from src.utils.progress_signal import drain as _drain_progress
+from src.utils.tool_activity import drain as _drain_tools, clear as _clear_tools
 from src.utils.costs import compute_cost_from_usage
 from src.utils.models import AgentSession, ChatSummary, GeneratedImage, MessageIntent, TriageResult
 from src.utils.triage import detect_user_intent as _triage, route as _route
@@ -993,6 +994,8 @@ class Pipeline:
         orch_input = self._build_orchestrator_input(user_input, user_text)
         current_input: Any = orch_input
         _snap = self._usage_snapshot(self._orchestrator_agent)
+        # Drop any tool-activity left over from a previous turn.
+        _clear_tools()
 
         while True:
             interrupt_result = None
@@ -1008,6 +1011,12 @@ class Pipeline:
                                 break
                 for _prog_line in _drain_progress():
                     yield {"data": _prog_line}
+                # Surface the agent's tool calls + results inline in the chat.
+                for _ta in _drain_tools():
+                    yield {"tool_activity": _ta}
+            # Flush any tool activity emitted after the last streamed event.
+            for _ta in _drain_tools():
+                yield {"tool_activity": _ta}
             yield {"_orchestrator_done": True}
 
             if interrupt_result is None:

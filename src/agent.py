@@ -493,6 +493,82 @@ class TokenUsageHookProvider:
 
 
 # ---------------------------------------------------------------------------
+# Tool-activity hook – surfaces the agent's tool calls + results to the chat UI
+# ---------------------------------------------------------------------------
+
+def _summarize_tool_result(result: object, cap: int = 800) -> str:
+    """Reduce a Strands ToolResult to a short display string.
+
+    A ToolResult is ``{"status": ..., "content": [{"text"|"json": ...}, ...]}``.
+    Joins the content blocks' text/json into one string, truncated to *cap*.
+    """
+    try:
+        parts: list[str] = []
+        content = result.get("content") if isinstance(result, dict) else None
+        for block in (content or []):
+            if not isinstance(block, dict):
+                parts.append(str(block))
+            elif "text" in block:
+                parts.append(str(block["text"]))
+            elif "json" in block:
+                parts.append(json.dumps(block["json"], ensure_ascii=False))
+            else:
+                parts.append(str(block))
+        text = " ".join(p for p in parts if p).strip()
+        if not text and isinstance(result, dict):
+            text = str(result.get("status", ""))
+    except Exception:  # noqa: BLE001
+        text = str(result)
+    return _truncate_activity(text, cap)
+
+
+def _truncate_activity(s: object, cap: int = 800) -> str:
+    s = str(s)
+    return s if len(s) <= cap else s[:cap] + f" …(+{len(s) - cap} chars)"
+
+
+class ToolActivityHookProvider:
+    """Pushes each tool call (name + input) and result to ``tool_activity`` so the
+    chat UI can render what the agent is doing, inline in the conversation."""
+
+    def register_hooks(self, registry: HookRegistry, **kwargs) -> None:  # noqa: ARG002
+        from strands.hooks.events import BeforeToolCallEvent, AfterToolCallEvent
+        registry.add_callback(BeforeToolCallEvent, self._on_before)
+        registry.add_callback(AfterToolCallEvent, self._on_after)
+
+    def _on_before(self, event, **kwargs) -> None:  # noqa: ANN001, ARG002
+        try:
+            from src.utils.tool_activity import push
+            tu = getattr(event, "tool_use", None) or {}
+            push({
+                "phase": "call",
+                "id": tu.get("toolUseId", ""),
+                "name": tu.get("name", "tool"),
+                "input": _truncate_activity(tu.get("input", {})),
+            })
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _on_after(self, event, **kwargs) -> None:  # noqa: ANN001, ARG002
+        try:
+            from src.utils.tool_activity import push
+            tu = getattr(event, "tool_use", None) or {}
+            exc = getattr(event, "exception", None)
+            if exc is not None:
+                summary = f"error: {exc}"
+            else:
+                summary = _summarize_tool_result(getattr(event, "result", None))
+            push({
+                "phase": "result",
+                "id": tu.get("toolUseId", ""),
+                "name": tu.get("name", "tool"),
+                "result": summary,
+            })
+        except Exception:  # noqa: BLE001
+            pass
+
+
+# ---------------------------------------------------------------------------
 # Skills directory – lives at <project_root>/skills/
 # ---------------------------------------------------------------------------
 _SKILLS_DIR = Path(__file__).parent.parent / "skills"
@@ -1573,7 +1649,8 @@ def create_orchestrator_agent(
     tools = list(ORCHESTRATOR_TOOLS) + list(extra_tools or [])
 
     extra_hooks = kwargs.pop("hooks", [])
-    orch_hooks = [TokenUsageHookProvider(role="orchestrator"), ComfyUIInterruptHook(), *extra_hooks]
+    orch_hooks = [TokenUsageHookProvider(role="orchestrator"), ToolActivityHookProvider(),
+                  ComfyUIInterruptHook(), *extra_hooks]
 
     agent = _make_agent(
         role="orchestrator",

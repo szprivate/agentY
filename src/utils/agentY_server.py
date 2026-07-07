@@ -69,6 +69,9 @@ _thread_brain_cache: dict[str, list] = {}
 # generator's async task awaits the queue; POST /agentY/reply feeds it thread-safely.
 _reply_lock = threading.Lock()
 _reply_registry: dict[str, tuple] = {}
+# Active pipeline runs: request_id -> {"loop", "task"}. POST /agentY/stop cancels
+# the task (halting the agent loop) and interrupts any running ComfyUI job.
+_run_registry: dict[str, dict] = {}
 
 
 # ── Slash commands (mirrors the frontend popup list) ──────────────────────────
@@ -513,6 +516,12 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
             out_q.put({"type": "exec", "state": "end"})
             return
 
+        # Tool use --------------------------------------------------------------
+        ta = event.get("tool_activity")
+        if ta is not None:
+            out_q.put({"type": "tool", **ta})
+            return
+
         # Reasoning -------------------------------------------------------------
         rt = event.get("reasoningText")
         if rt:
@@ -548,23 +557,33 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     qa_queue: asyncio.Queue = asyncio.Queue()
-    with _reply_lock:
-        _reply_registry[req_id] = (loop, qa_queue)
 
     async def _run() -> None:
         async for event in pipeline.stream_async(content, qa_reply_queue=qa_queue):
             if isinstance(event, dict):
                 _translate(event)
 
+    # Run the pipeline as a cancellable task so POST /agentY/stop can halt it.
+    task = loop.create_task(_run())
+    with _reply_lock:
+        _reply_registry[req_id] = (loop, qa_queue)
+        _run_registry[req_id] = {"loop": loop, "task": task, "thread_id": thread_id}
+
+    stopped = False
     try:
-        loop.run_until_complete(_run())
+        loop.run_until_complete(task)
         _check_outputs()
+    except asyncio.CancelledError:
+        # User pressed Stop → the task was cancelled from /agentY/stop.
+        stopped = True
+        logger.info("pipeline run %s stopped by user", req_id)
     except Exception as exc:
         logger.error("pipeline stream error: %s", exc, exc_info=True)
         out_q.put({"type": "error", "message": str(exc)})
     finally:
         with _reply_lock:
             _reply_registry.pop(req_id, None)
+            _run_registry.pop(req_id, None)
         text = "".join(assistant_parts).strip()
         if text:
             try:
@@ -576,12 +595,55 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
             loop.run_until_complete(pipeline._await_pending_compression())  # type: ignore[attr-defined]
         except Exception:
             pass
+        if stopped:
+            out_q.put({"type": "system", "data": "⏹ Stopped."})
         out_q.put({"type": "done"})
         out_q.put(None)
         try:
             loop.close()
         except Exception:
             pass
+
+
+# ── Stop / interrupt helpers ──────────────────────────────────────────────────
+
+def _interrupt_comfy() -> None:
+    """Best-effort: tell ComfyUI to interrupt any running job (POST /interrupt)."""
+    try:
+        from src.utils.comfyui_client import get_client
+        get_client().post("/interrupt", json_data={})
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("ComfyUI interrupt failed: %s", exc)
+
+
+def _cancel_run(req_id: str) -> bool:
+    """Cancel the active pipeline run *req_id* and interrupt ComfyUI.
+
+    Returns True when a matching run was found and its cancellation scheduled.
+    Always interrupts ComfyUI (harmless when nothing is running) so a Stop during
+    a GPU generation halts the job too, not just the agent loop.
+    """
+    _interrupt_comfy()
+    with _reply_lock:
+        entry = _run_registry.get(req_id)
+    if not entry:
+        return False
+    loop, task = entry.get("loop"), entry.get("task")
+    if loop is None or task is None:
+        return False
+    try:
+        loop.call_soon_threadsafe(task.cancel)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("could not cancel run %s: %s", req_id, exc)
+        return False
+    return True
+
+
+def _cancel_run_by_thread(thread_id: str) -> bool:
+    """Cancel the active run for *thread_id* (fallback when no request_id is known)."""
+    with _reply_lock:
+        rid = next((k for k, v in _run_registry.items() if v.get("thread_id") == thread_id), None)
+    return _cancel_run(rid) if rid else False
 
 
 # ── Slash-command handlers (return a list of SSE event dicts) ─────────────────
@@ -969,6 +1031,24 @@ def _build_app():
         loop, q = entry
         loop.call_soon_threadsafe(q.put_nowait, text)
         return jsonify({"ok": True})
+
+    # ── Stop the current run ───────────────────────────────────────────────
+    @app.route("/agentY/stop", methods=["POST", "OPTIONS"])
+    def stop_run():
+        if request.method == "OPTIONS":
+            return "", 204
+        body = request.get_json(silent=True) or {}
+        req_id = body.get("request_id")
+        thread_id = body.get("thread_id")
+        found = _cancel_run(req_id) if req_id else False
+        # Fallback: if the request_id was unknown (e.g. Stop pressed before it
+        # reached the client), cancel by thread. _cancel_run already interrupts
+        # ComfyUI; ensure we do so even when nothing matched.
+        if not found and thread_id:
+            found = _cancel_run_by_thread(thread_id)
+        if not found:
+            _interrupt_comfy()
+        return jsonify({"ok": True, "cancelled": found})
 
     # ── Chat (SSE) ─────────────────────────────────────────────────────────
     @app.route("/agentY/chat", methods=["POST", "OPTIONS"])
