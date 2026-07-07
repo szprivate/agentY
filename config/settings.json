@@ -65,7 +65,7 @@
       "num_ctx": 32768,
       "max_tokens": 16384,
       "repeat_penalty": 1.1,
-      "think": true
+      "think": false
     },
 
     "anthropic": {
