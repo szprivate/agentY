@@ -171,6 +171,18 @@ class AgentChat {
     }
   }
 
+  // Persist the rendered panel (collapsible think/step blocks and all) to the
+  // backend so it survives page reloads / new sessions, not just in-session
+  // switches. Fire-and-forget.
+  _savePanel() {
+    if (!this.threadId) return;
+    fetch(backendBase() + "/agentY/threads/" + this.threadId + "/panel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ html: this.logEl.innerHTML }),
+    }).catch(() => {});
+  }
+
   newThread() {
     this._saveCurrentDom();
     this.threadId = null;
@@ -208,6 +220,14 @@ class AgentChat {
       const r = await fetch(backendBase() + "/agentY/threads/" + id);
       if (!r.ok) return;
       const t = await r.json();
+      // Prefer the persisted rendered panel — collapsible think/step blocks
+      // intact, survives page reloads — and only fall back to the text-only
+      // message log for threads that were never rendered (e.g. pre-dating this).
+      if (t.panel_html) {
+        this.logEl.innerHTML = t.panel_html;
+        this.logEl.scrollTop = this.logEl.scrollHeight;
+        return;
+      }
       for (const m of t.messages || []) {
         if (m.role === "user") this._userMsg(m.content);
         else if (m.role === "assistant") this._assistantMsg(m.content);
@@ -369,6 +389,7 @@ class AgentChat {
         this.curAssistant = null;
         this.streaming = false;
         this._setBusy(false);
+        this._savePanel();  // persist the rendered panel so blocks survive reloads
         this._loadThreads();
         break;
     }

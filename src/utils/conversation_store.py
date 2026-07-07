@@ -116,6 +116,11 @@ def init_db() -> None:
                 last_prior_summary  TEXT,
                 updated_at          REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS thread_panel (
+                thread_id   TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+                html        TEXT NOT NULL,
+                updated_at  REAL NOT NULL
+            );
             """
         )
     _INITIALISED = True
@@ -318,3 +323,31 @@ def load_state(thread_id: str) -> Optional[dict[str, Any]]:
         "last_brainbriefing": row["last_brainbriefing"],
         "last_prior_summary": row["last_prior_summary"],
     }
+
+
+# ---------------------------------------------------------------------------
+# Rendered chat panel (for restoring the exact UI — collapsible think/step
+# blocks and all — when a thread is reopened, incl. after a page reload)
+# ---------------------------------------------------------------------------
+
+def save_panel(thread_id: str, html: str) -> None:
+    """Persist the thread's rendered chat-panel HTML (the live DOM, including
+    collapsible think/step blocks), so reopening the thread restores it exactly
+    rather than rebuilding from the text-only message log."""
+    init_db()
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO thread_panel(thread_id, html, updated_at) VALUES (?,?,?)
+            ON CONFLICT(thread_id) DO UPDATE SET html=excluded.html, updated_at=excluded.updated_at
+            """,
+            (thread_id, html or "", time.time()),
+        )
+
+
+def get_panel(thread_id: str) -> Optional[str]:
+    """Return the saved rendered panel HTML for *thread_id*, or None."""
+    init_db()
+    with _connect() as conn:
+        row = conn.execute("SELECT html FROM thread_panel WHERE thread_id=?", (thread_id,)).fetchone()
+    return row["html"] if row is not None else None

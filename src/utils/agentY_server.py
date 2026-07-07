@@ -830,7 +830,18 @@ def _build_app():
         t = cs.get_thread(tid)
         if t is None:
             return jsonify({"error": "not found"}), 404
+        # The rendered panel HTML (collapsible think/step blocks) restores the
+        # exact UI on reopen; the message list is the text-only fallback.
+        t["panel_html"] = cs.get_panel(tid)
         return jsonify(t)
+
+    @app.route("/agentY/threads/<tid>/panel", methods=["POST", "OPTIONS"])
+    def thread_panel(tid):
+        if request.method == "OPTIONS":
+            return "", 204
+        body = request.get_json(silent=True) or {}
+        cs.save_panel(tid, body.get("html", ""))
+        return jsonify({"ok": True})
 
     @app.route("/agentY/threads/clear", methods=["POST", "OPTIONS"])
     def threads_clear():
