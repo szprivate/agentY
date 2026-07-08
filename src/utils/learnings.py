@@ -27,7 +27,23 @@ from typing import Any
 
 # Path to the self-learning skill file that the learnings agent appends to.
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
-_SKILL_PATH = _PROJECT_ROOT / "skills" / "assemble_workflow-learnings" / "SKILL.md"
+_SKILL_PATH = _PROJECT_ROOT / "skills" / "assemble-workflow-learnings" / "SKILL.md"
+
+# YAML frontmatter the Strands skill loader requires. Without it the loader
+# rejects the whole file ("SKILL.md must start with --- frontmatter delimiter"),
+# so the writer injects this header whenever the file lacks one.
+_SKILL_FRONTMATTER = (
+    "---\n"
+    "name: assemble-workflow-learnings\n"
+    "description: Auto-populated learnings from past workflow-assembly sessions. "
+    "Activate this skill when assembling or patching a ComfyUI workflow, "
+    "especially if you notice repeated tool calls to fix the same assembly "
+    "sub-problem or the same validation error recurring. The entries below "
+    "document past problems and proven solutions — consult them before retrying "
+    "a failing pattern.\n"
+    "allowed-tools: \n"
+    "---\n"
+)
 
 # Hard cap on conversation text sent to the learnings agent to avoid blowing up
 # the context window of a small local model.
@@ -180,6 +196,14 @@ def _append_to_skill(entries: str) -> None:
 
     if not new_lines:
         return
+
+    # Ensure the file begins with valid YAML frontmatter — older files were
+    # created headerless, which makes the Strands loader skip the skill entirely.
+    if not existing.lstrip().startswith("---"):
+        body = existing.lstrip("\r\n")
+        _SKILL_PATH.write_text(
+            _SKILL_FRONTMATTER + (("\n" + body) if body else ""), encoding="utf-8"
+        )
 
     append_block = "\n" + "\n".join(new_lines) + "\n"
     with _SKILL_PATH.open("a", encoding="utf-8") as fh:

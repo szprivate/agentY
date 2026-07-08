@@ -1,6 +1,6 @@
 ---
 name: story-storyboard
-description: Mode C of the Story agent — turn a whole storyline into a production blueprint for a short film: a story bible plus the entire story split into Kling multi-shot SEQUENCES of <=10s each, ending with a single machine-readable JSON spec. Activate when the storyboard director (or the user) asks for a short-film / storyboard breakdown to be rendered as video sequences.
+description: "Mode C of the Story agent — turn a whole storyline into a production blueprint for a short film: a story bible plus the entire story split into Kling multi-shot SEQUENCES of <=10s each, ending with a single machine-readable JSON spec. Activate when the storyboard director (or the user) asks for a short-film / storyboard breakdown to be rendered as video sequences."
 allowed-tools:
 ---
 
