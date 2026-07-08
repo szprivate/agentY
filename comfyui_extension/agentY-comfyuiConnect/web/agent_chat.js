@@ -44,7 +44,7 @@ const SLASH_FALLBACK = [
   { name: "/images", description: "List images generated in this thread" },
   { name: "/clearhistory", description: "Delete all conversation history" },
   { name: "/switch_model", description: "Switch an agent's LLM" },
-  { name: "/add_workflow", description: "Add a ComfyUI workflow" },
+  { name: "/add_workflow", description: "Add a workflow (JSON path, or 'canvas <name>' for the open graph)" },
   { name: "/resend", description: "Resend the first user message" },
   { name: "/remove_workflow", description: "Remove a workflow by name" },
 ];
@@ -669,9 +669,11 @@ class AgentChat {
     // Mark these canvas files as consumed so an unchanged, still-selected node
     // isn't re-sent on the next message.
     for (const ci of canvasInputs) if (ci._nodeId != null) this._consumed[ci._nodeId] = ci.value;
-    // Hooks are the signal to run the on-canvas graph — capture it as an API
-    // prompt only when hooks are present (avoids overhead on normal turns).
-    const canvasPrompt = canvasHooks.length ? await this._captureCanvasGraph() : null;
+    // Always capture the on-canvas graph as an API prompt so the agent can act
+    // on it — hooks drive the "run my canvas graph" path, and "add the workflow
+    // open in the canvas" (chat or /add_workflow canvas <name>) needs it too.
+    // graphToPrompt() is what ComfyUI runs on every Queue, so the cost is negligible.
+    const canvasPrompt = await this._captureCanvasGraph();
     await this._stream({
       thread_id: this.threadId,
       message: text,

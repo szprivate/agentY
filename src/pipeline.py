@@ -881,6 +881,42 @@ class Pipeline:
             })
 
         @_tool
+        async def add_canvas_workflow(name: str, description: str = "") -> str:
+            """Save the workflow currently open in the ComfyUI canvas as a custom template.
+
+            Use when the user asks to add / save the graph they have open in the
+            canvas (e.g. "add the workflow open in the canvas", "save this graph
+            as a template"). The on-canvas graph is captured automatically each
+            turn; this registers it in the custom-template corpus exactly as if
+            the user had added a JSON file, and regenerates the recipe database so
+            the new template is immediately usable. Hook nodes are stripped out.
+
+            Args:
+                name: A short template name (filename-safe stem, no spaces/slashes).
+                description: Optional one-line description; auto-generated if omitted.
+            """
+            base = getattr(self, "_canvas_base_prompt", None)
+            if not base:
+                return json.dumps({
+                    "error": "no workflow is open in the canvas this turn — ask the user to "
+                             "open a graph in ComfyUI, then try again."
+                })
+            try:
+                from src.utils.workflow_admin import register_workflow, format_recipe_counts
+                res = await asyncio.to_thread(register_workflow, dict(base), name)
+                return json.dumps({
+                    "status": "added",
+                    "name": res["name"],
+                    "template_file": res["template_file"],
+                    "description": res["description"],
+                    "recipes": res["recipes"],
+                    "message": (f"Canvas workflow saved as '{res['name']}'. "
+                                f"{format_recipe_counts(res['recipes'])}."),
+                })
+            except Exception as exc:  # noqa: BLE001
+                return json.dumps({"error": str(exc)})
+
+        @_tool
         async def classify_intent(message: str) -> str:
             """Classify the user's message intent (advisory — you still decide).
 
@@ -906,7 +942,7 @@ class Pipeline:
                 return json.dumps({"error": str(exc)})
 
         return [run_research, run_info, run_story, run_dop, run_web_search,
-                run_planner, classify_intent, apply_canvas_hooks]
+                run_planner, classify_intent, apply_canvas_hooks, add_canvas_workflow]
 
     def _ensure_orch_clean_history(self) -> None:
         """Sanitize the orchestrator's message list (drop orphaned tool blocks)."""

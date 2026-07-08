@@ -84,7 +84,7 @@ SLASH_COMMANDS = [
     {"name": "/images",          "description": "List images generated in this thread (reference them by number)"},
     {"name": "/clearhistory",    "description": "Delete all conversation history (keeps the current thread)"},
     {"name": "/switch_model",    "description": "Switch an agent's LLM — /switch_model <agent|all> <provider,model> (use 'all' for every agent)"},
-    {"name": "/add_workflow",    "description": "Add a ComfyUI workflow — /add_workflow <path/to/workflow.json>"},
+    {"name": "/add_workflow",    "description": "Add a ComfyUI workflow — /add_workflow <path/to/workflow.json> OR /add_workflow canvas <name> for the graph open in the canvas"},
     {"name": "/resend",          "description": "Resend the first user message of the current thread"},
     {"name": "/remove_workflow", "description": "Remove a workflow by name — /remove_workflow <template_name>"},
 ]
@@ -657,7 +657,7 @@ def _sys(text: str) -> dict:
     return {"type": "system", "data": text}
 
 
-def _handle_command(thread_id: str, text: str) -> list[dict]:
+def _handle_command(thread_id: str, text: str, canvas_prompt: dict | None = None) -> list[dict]:
     low = text.strip().lower()
     parts = text.strip().split(None, 2)
     cmd = parts[0].lower()
@@ -715,7 +715,15 @@ def _handle_command(thread_id: str, text: str) -> list[dict]:
 
     if cmd in ("/add_workflow", "add_workflow"):
         if len(parts) < 2:
-            return [_sys("⚠️ Usage: `/add_workflow <path_to_workflow.json>`")]
+            return [_sys("⚠️ Usage: `/add_workflow <path_to_workflow.json>` — or "
+                         "`/add_workflow canvas <name>` to add the graph open in the canvas.")]
+        # `/add_workflow canvas <name>` adds the workflow currently open in the
+        # ComfyUI canvas (captured this turn) instead of a JSON file on disk.
+        if parts[1].strip().lower() == "canvas":
+            name = parts[2].strip() if len(parts) > 2 else ""
+            if not name:
+                return [_sys("⚠️ Usage: `/add_workflow canvas <name>` — a name for the template is required.")]
+            return _add_canvas_workflow(canvas_prompt, name)
         return _add_workflow(parts[1].strip())
 
     if cmd in ("/remove_workflow", "remove_workflow"):
@@ -733,56 +741,41 @@ def _handle_command(thread_id: str, text: str) -> list[dict]:
 
 
 def _add_workflow(path_str: str) -> list[dict]:
-    from agenty_core.paths import corpus_root
     wf_path = Path(path_str)
     if not wf_path.exists():
         return [_sys(f"❌ File not found: `{wf_path}`")]
     try:
-        from src.utils.workflow_parser import parse_workflow, _custom_index_path
+        from src.utils.workflow_admin import register_workflow, format_recipe_counts
         wf_data = json.loads(wf_path.read_text(encoding="utf-8"))
-        stem = wf_path.stem
-        parse_workflow(wf_data, name=stem, update_index=True)
-        description = ""
-        try:
-            import importlib.util as ilu
-            bs_path = str(_project_root() / "scripts" / "build_skill.py")
-            mod = sys.modules.get("_agenty_build_skill")
-            if mod is None:
-                spec = ilu.spec_from_file_location("_agenty_build_skill", bs_path)
-                mod = ilu.module_from_spec(spec)
-                sys.modules["_agenty_build_skill"] = mod
-                spec.loader.exec_module(mod)
-            description = mod._generate_workflow_template_description(wf_data, stem)
-        except Exception as exc:
-            description = ""
-            logger.warning("description generation failed: %s", exc)
-        tpl_path = corpus_root() / "config" / "workflow_templates.json"
-        tpl = json.loads(tpl_path.read_text(encoding="utf-8")) if tpl_path.exists() else {}
-        if stem not in tpl:
-            tpl[stem] = description
-            tpl_path.write_text(json.dumps(tpl, indent=4, ensure_ascii=False) + "\n", encoding="utf-8")
-        return [_sys(f"✅ Workflow `{stem}` registered in `{_custom_index_path()}`."
-                     + (f"\n\n**Description:**\n{description}" if description else ""))]
+        res = register_workflow(wf_data, wf_path.stem, source_path=wf_path)
+        return [_sys(f"✅ Workflow `{res['name']}` added — {format_recipe_counts(res['recipes'])}."
+                     + (f"\n\n**Description:**\n{res['description']}" if res['description'] else ""))]
     except Exception as exc:
         return [_sys(f"❌ Failed to add workflow: {exc}")]
 
 
-def _remove_workflow(name: str) -> list[dict]:
-    from agenty_core.paths import corpus_root
+def _add_canvas_workflow(canvas_prompt: dict | None, name: str) -> list[dict]:
+    """Add the workflow currently open in the ComfyUI canvas as a custom template."""
+    if not isinstance(canvas_prompt, dict) or not canvas_prompt:
+        return [_sys("❌ No workflow is open in the canvas (nothing was captured). "
+                     "Open a graph in ComfyUI and try again.")]
     try:
-        from src.utils.workflow_parser import workflow_remove, _custom_index_path
-        idx = workflow_remove(name)
-        tpl_path = corpus_root() / "config" / "workflow_templates.json"
-        if tpl_path.exists():
-            tpl = json.loads(tpl_path.read_text(encoding="utf-8"))
-            if name in tpl:
-                del tpl[name]
-                tpl_path.write_text(json.dumps(tpl, indent=4, ensure_ascii=False) + "\n", encoding="utf-8")
-        kebab = name.lower().replace("_", "-")
-        skill_dir = _project_root() / "skills" / kebab
-        if skill_dir.exists():
-            shutil.rmtree(skill_dir)
-        return [_sys(f"✅ Workflow `{name}` removed from `{idx}`.")]
+        from src.utils.canvas_hooks import splice_hook_nodes
+        from src.utils.workflow_admin import register_workflow, format_recipe_counts
+        clean, _removed = splice_hook_nodes(canvas_prompt)  # never persist hook nodes
+        res = register_workflow(clean, name)
+        return [_sys(f"✅ Canvas workflow added as `{res['name']}` — {format_recipe_counts(res['recipes'])}."
+                     + (f"\n\n**Description:**\n{res['description']}" if res['description'] else ""))]
+    except Exception as exc:
+        return [_sys(f"❌ Failed to add canvas workflow: {exc}")]
+
+
+def _remove_workflow(name: str) -> list[dict]:
+    try:
+        from src.utils.workflow_admin import remove_workflow, format_recipe_counts
+        res = remove_workflow(name)
+        note = "" if res["removed_file"] else " (no template file was on disk)"
+        return [_sys(f"✅ Workflow `{res['name']}` removed{note} — {format_recipe_counts(res['recipes'])}.")]
     except Exception as exc:
         return [_sys(f"❌ Failed to remove workflow: {exc}")]
 
@@ -1117,7 +1110,7 @@ def _build_app():
             "restart", "stop", "unload", "clearhistory", "images", "resend"
         }
         if is_slash:
-            result = _handle_command(thread_id, message)
+            result = _handle_command(thread_id, message, canvas_prompt=canvas_prompt)
             if result is None:  # /resend → replay first user message as a fresh turn
                 t = cs.get_thread(thread_id) or {}
                 first = next((m for m in t.get("messages", []) if m["role"] == "user"

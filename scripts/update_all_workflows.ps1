@@ -1,20 +1,19 @@
 #!/usr/bin/env pwsh
-$ScriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Definition
-$RepoRoot   = Split-Path -Parent $ScriptDir
-$templatesDir = Join-Path $RepoRoot 'comfyui_workflow_templates_custom\templates'
+# Rebuild the custom-template index.json for every workflow already present in
+# the canonical corpus templates folder (in agenty_core), then regenerate the
+# recipe database once. Use after dropping template JSON files into the folder
+# directly. Anchors on the canonical corpus, not a per-app path.
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$RepoRoot  = Split-Path -Parent $ScriptDir
+Set-Location $RepoRoot
 
-if (-not (Test-Path -Path $templatesDir)) {
-    Write-Error "Templates directory not found: $templatesDir"
-    exit 1
-}
+$py = @"
+from src.utils.workflow_admin import reindex_all, format_recipe_counts
+res = reindex_all()
+print(f"Reindexed {len(res['registered'])} template(s) - {format_recipe_counts(res['recipes'])}")
+if res['failed']:
+    print('Failed: ' + ', '.join(res['failed']))
+"@
 
-Get-ChildItem -Path $templatesDir -File | Where-Object { $_.Name -notmatch '^index' } | ForEach-Object {
-    $template = $_.FullName
-    Write-Host "Adding workflow from: $template"
-    & "$ScriptDir\add_workflow.ps1" $template
-    if (-not $?) {
-        Write-Warning "add_workflow.ps1 failed for: $template"
-    }
-}
-
-Write-Host 'All templates processed.'
+& python -X utf8 -c $py
+exit $LASTEXITCODE

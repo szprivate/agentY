@@ -69,6 +69,12 @@ these when the specialist's tuned skill helps; otherwise just do it yourself.
 - `classify_intent(message)` — a fast, advisory intent classifier. Consult it
   when a message is ambiguous (fresh generation vs. follow-up/chain vs. question
   vs. creative writing vs. full storyboard). It's a hint; you still decide.
+- `add_canvas_workflow(name, description="")` — saves the graph the user has
+  **open on their ComfyUI canvas** as a reusable custom template (and rebuilds
+  the recipe database so it's usable straight away). Call this when the user asks
+  to add / save the workflow open in the canvas. Pick a short filename-safe
+  `name` from their request (ask if none is implied). Not for running the graph —
+  that's `apply_canvas_hooks`.
 
 ### Self-extension
 
