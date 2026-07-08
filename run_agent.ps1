@@ -106,11 +106,6 @@ try {
     $env:COMFYUI_MODELS_REFRESHED = "1"  # prevent re-runs in child processes
     Write-Host ""
 
-    # ── Check and install missing custom nodes ───────────────────────────────
-    Write-Host "[run_agent] Checking for missing custom node dependencies..." -ForegroundColor Cyan
-    python scripts/check_missing_custom_nodes.py
-    Write-Host ""
-
     Write-Host ""
     Write-Host "Starting agentY chat host on http://${BindHost}:$Port ..." -ForegroundColor Cyan
     Write-Host "Open ComfyUI and click the agentY tab in the left sidebar." -ForegroundColor Green
