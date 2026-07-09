@@ -117,8 +117,8 @@ Identify all output nodes in the selected workflow template.
 - You MUST call `get_comfyui_dirs()` to obtain the server's `output_dir`.
 - Output nodes are those with `is_output_node: true` (e.g. `SaveImage`, `VHS_VideoCombine`, `SaveAudio`).
 - You MUST include every output node from `io.outputs` as an entry in the `output_nodes` array.
-- For each output node, set `output_path` to `<output_dir>/<task_subfolder>` where `task_subfolder` is a short, snake_case description of the task (e.g. `image_generation`, `video_i2v`, `image_edit`). This is the authoritative directory where ComfyUI will save results.
-- You MUST use the `output-paths` skill only for `task_subfolder` naming guidance — the base directory MUST always come from `get_comfyui_dirs().output_dir`.
+- For each output node, set `output_path` to the **media-kind bucket** for that saver: `agent/images` for image savers (`SaveImage`, `PreviewImage`), `agent/videos` for video savers (`VHS_VideoCombine`, `SaveVideo`), `agent/audio` for audio, `agent/models` for 3D. Paths are relative to `get_comfyui_dirs().output_dir`.
+- Use the `output-paths` skill for the class_type → bucket mapping. Routing is enforced automatically by `apply_brainbriefing` (it rewrites `filename_prefix` to `agent/<kind>/…` from the saver's class_type), so images always land in `agent/images/` and videos in `agent/videos/`.
 
 ---
 

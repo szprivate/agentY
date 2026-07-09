@@ -19,6 +19,7 @@ from src.tools.comfyui import (  # noqa: F401
     get_logs,
     get_system_stats,
     get_comfyui_dirs,
+    get_agent_output_dirs,
     # Prompt submission
     submit_prompt,
     # Batch: create iteration copies of a validated workflow
@@ -105,7 +106,7 @@ _SHARED_CORE_TOOLS = [
     # comfyui
     "interrupt_execution", "free_memory", "queue", "get_history",
     "get_prompt_status_by_id", "clear_history", "get_logs", "get_system_stats",
-    "get_comfyui_dirs", "submit_prompt", "duplicate_workflow", "get_node_schema",
+    "get_comfyui_dirs", "get_agent_output_dirs", "submit_prompt", "duplicate_workflow", "get_node_schema",
     "get_workflow_node_info", "search_nodes", "get_workflow_catalog",
     "get_workflow_template", "list_workflow_recipes", "get_workflow_recipe",
     "save_workflow", "open_workflow_in_canvas", "patch_workflow", "add_workflow_node",
@@ -180,6 +181,7 @@ QUERY_TEMPLATES_TOOLS: list = [
     get_workflow_recipe,  # build_new: source model files from recipe node_defaults
     check_model,         # verify model files exist in the ComfyUI installation
     get_comfyui_dirs,
+    get_agent_output_dirs,  # canonical agent image/video/scripts folders
     read_text_file,
     get_image_resolution,
     analyze_image,
@@ -240,6 +242,7 @@ ASSEMBLE_WORKFLOW_TOOLS: list = [
     get_workflow_node_info,
     # Server directories (resolve authoritative output path)
     get_comfyui_dirs,
+    get_agent_output_dirs,  # canonical agent image/video/scripts folders
     # Upload input images
     upload_image,
     get_image_resolution,
@@ -300,6 +303,7 @@ ORCHESTRATOR_TOOLS: list = [
     get_logs,
     get_system_stats,
     get_comfyui_dirs,
+    get_agent_output_dirs,
     submit_prompt,
     # Node inspection
     get_node_schema,

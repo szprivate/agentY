@@ -18,6 +18,9 @@ comfyui_workflow_templates_official_deprecated/
 .logs/
 output_images/
 output_workflows/
+# Agent scratch: scripts it writes (output/scripts) + code-change proposals
+# (output/proposals). Media itself lands under ComfyUI's output dir, not here.
+/output/
 /.files
 /memory
 

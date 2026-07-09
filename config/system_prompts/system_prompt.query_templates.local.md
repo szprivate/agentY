@@ -89,9 +89,9 @@ Identify all output nodes in the selected workflow template.
 - You MUST call `get_comfyui_dirs()` to obtain the server's `output_dir`.
 - Output nodes are those with `is_output_node: true` (e.g. `SaveImage`, `VHS_VideoCombine`, `SaveAudio`).
 - You MUST include every output node from `io.outputs` as an entry in the `output_nodes` array.
-- For each output node, set `output_path` to `<output_dir>/<task_subfolder>` where `task_subfolder` is a short, snake_case description of the task type.
-  Examples: `image_generation`, `video_i2v`, `image_edit`, `image_upscale`.
-- The base directory MUST always come from `get_comfyui_dirs().output_dir`.
+- For each output node, set `output_path` to the **media-kind bucket** for that saver, relative to `get_comfyui_dirs().output_dir`:
+  `agent/images` (image savers), `agent/videos` (video savers), `agent/audio` (audio), `agent/models` (3D).
+- Routing is enforced automatically by `apply_brainbriefing` from each saver's class_type.
 
 ---
 
