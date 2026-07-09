@@ -12,7 +12,7 @@ app.registerExtension({
       this.color = "#5c3a28";
       this.bgcolor = "#3a2a20";
       if (!this.title || this.title === "AgentYHook") this.title = "agentY hook";
-      this.size = [260, 130];
+      this.size = [280, 210];
       return r;
     };
   },

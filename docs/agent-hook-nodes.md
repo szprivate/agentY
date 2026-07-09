@@ -18,6 +18,30 @@ Confirmed decisions: (1) run the **canvas graph** (not a template), (2) anchor
 safety cap. The node is a **passthrough** (identity), recommended usage = wire the
 input only, leave the output dangling.
 
+## Node widgets & purposes
+
+The `AgentYHook` node carries four widgets:
+
+- **`directive`** (multiline) — the natural-language instruction / prompt.
+- **`purpose`** (`directive` | `workflow-standin`) — what the hook *is*:
+  - **`directive`** (default) — annotate the anchor node; the agent expands the
+    captured graph and runs it via `apply_canvas_hooks`.
+  - **`workflow-standin`** — the hook *stands in* for a workflow or Python script
+    the agent **generates** from `directive` (used here as a prompt). The agent
+    generates it, runs it via the normal generation contract
+    (`signal_workflow_ready`, or `run_script` for a script), using the wired
+    anchor output as input if one is connected (else text-to-media), and stages
+    the result onto the canvas as loader nodes. It does **not** call
+    `apply_canvas_hooks`. Chosen execution model: *generate → run → stage as
+    nodes* (no inline subgraph splicing).
+- **`mode`** (`auto`/`prompt-variations`/`seed-sweep`/`file-iterate`/`freeform`) —
+  a hint for a `directive` hook's expansion type; ignored for standins.
+- **`ignore`** (BOOLEAN) — disable the hook without deleting it. Ignored hooks are
+  filtered out client-side (`_collectCanvasHooks`) so they never reach the agent.
+
+`describe_hooks` groups the hooks by purpose in the `[CANVAS HOOKS]` block so the
+orchestrator applies the right path to each group.
+
 ## Why it fits cleanly
 
 - **Inertness is free.** ComfyUI only executes nodes on the path to an output
@@ -55,8 +79,8 @@ canvas (AgentYHook nodes)
 
 **Modified**
 - `comfyui_extension/agentY-comfyuiConnect/__init__.py` — the `AgentYHook` node
-  (wildcard `anchor` input, `directive`/`mode` widgets, identity passthrough) +
-  `NODE_CLASS_MAPPINGS`.
+  (wildcard `anchor` input, `directive`/`purpose`/`mode`/`ignore` widgets, identity
+  passthrough) + `NODE_CLASS_MAPPINGS`.
 - `comfyui_extension/agentY-comfyuiConnect/web/agent_chat.js` — hook collection +
   graph capture; `send()` ships `canvas_hooks` + `canvas_prompt`.
 - `src/pipeline.py` — `apply_canvas_hooks` tool (in `_build_delegation_tools`),

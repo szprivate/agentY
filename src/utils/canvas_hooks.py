@@ -149,40 +149,99 @@ def build_batch(base_prompt: dict, resolutions: list, cap: int = 25) -> tuple[li
     return prompts, notes
 
 
+_STANDIN_PURPOSES = {"workflow-standin", "workflow_standin", "standin", "workflow"}
+
+
+def _is_standin(hook: dict) -> bool:
+    """True if *hook* is a workflow-standin (vs. an annotation directive)."""
+    return str(hook.get("purpose", "directive") or "directive").strip().lower() in _STANDIN_PURPOSES
+
+
+def _anchor_inputs(hook: dict, base_prompt: dict | None) -> tuple:
+    """Return ``(anchor_id, scalar_inputs_dict)`` for a hook's anchor node."""
+    aid = hook.get("anchor_node_id")
+    inputs: dict = {}
+    if base_prompt and aid is not None and str(aid) in base_prompt:
+        raw = (base_prompt[str(aid)].get("inputs") or {})
+        inputs = {k: v for k, v in raw.items() if not isinstance(v, list)}
+    elif isinstance(hook.get("anchor_widgets"), dict):
+        inputs = hook["anchor_widgets"]
+    return aid, inputs
+
+
 def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
-    """Render the ``[CANVAS HOOKS]`` block injected into the orchestrator input."""
+    """Render the ``[CANVAS HOOKS]`` block injected into the orchestrator input.
+
+    Hooks come in two purposes (set on the node): *directive* hooks annotate an
+    anchor node and are run by expanding the captured graph via
+    ``apply_canvas_hooks``; *workflow-standin* hooks are self-contained generation
+    requests the agent fulfils by generating and running a workflow/script. Hooks
+    the user toggled to *ignore* are filtered out client-side before they reach
+    here, so every hook below is active.
+    """
     hooks = [h for h in (hooks or []) if isinstance(h, dict)]
     if not hooks:
         return ""
+    directive_hooks = [h for h in hooks if not _is_standin(h)]
+    standin_hooks = [h for h in hooks if _is_standin(h)]
+
     lines = [
-        "[CANVAS HOOKS — the user's ON-CANVAS graph has hook annotations (below) and "
-        "is already captured. IF the user is asking you to run/execute the workflow, "
-        "run THIS graph — do NOT assemble a template or call run_research — by "
-        "interpreting each directive against its anchor node and calling "
-        "apply_canvas_hooks(resolutions=[…]) ONCE to expand and run the batch. If the "
-        "user's message is unrelated (a question or a different request), answer that "
-        "and ignore these hooks. Each resolution targets an anchor node id below and "
-        "one of its inputs:]"
+        "[CANVAS HOOKS — the user's ON-CANVAS graph carries hook annotations (below) "
+        "and is already captured. IF the user is asking you to run/execute the "
+        "workflow, act on the hooks as described below. If the user's message is "
+        "unrelated (a question or a different request), answer that and ignore these "
+        "hooks.]"
     ]
-    for h in hooks:
-        aid = h.get("anchor_node_id")
-        atype = h.get("anchor_type") or "?"
-        directive = str(h.get("directive", "") or "").strip()
-        mode = h.get("mode", "auto")
-        inputs: dict = {}
-        if base_prompt and aid is not None and str(aid) in base_prompt:
-            raw = (base_prompt[str(aid)].get("inputs") or {})
-            inputs = {k: v for k, v in raw.items() if not isinstance(v, list)}
-        elif isinstance(h.get("anchor_widgets"), dict):
-            inputs = h["anchor_widgets"]
-        params = ", ".join(f"{k}={v!r}" for k, v in inputs.items()) or "(no scalar inputs)"
-        if aid is None:
-            lines.append(
-                f'- UNWIRED hook: "{directive}" (mode={mode}). No anchor node — ask '
-                "the user to wire it to a node's output, or apply globally only if "
-                "unambiguous."
-            )
-        else:
-            lines.append(f'- Node {aid} ({atype}) inputs[{params}] ← "{directive}" (mode={mode})')
+
+    if directive_hooks:
+        lines.append(
+            "\nDIRECTIVE hooks — expand and run THIS captured graph (do NOT assemble a "
+            "template or call run_research). Interpret each directive against its "
+            "anchor node and call apply_canvas_hooks(resolutions=[…]) ONCE to run the "
+            "batch. Each resolution targets an anchor node id below and one of its "
+            "inputs:"
+        )
+        for h in directive_hooks:
+            aid, inputs = _anchor_inputs(h, base_prompt)
+            atype = h.get("anchor_type") or "?"
+            directive = str(h.get("directive", "") or "").strip()
+            mode = h.get("mode", "auto")
+            params = ", ".join(f"{k}={v!r}" for k, v in inputs.items()) or "(no scalar inputs)"
+            if aid is None:
+                lines.append(
+                    f'- UNWIRED hook: "{directive}" (mode={mode}). No anchor node — ask '
+                    "the user to wire it to a node's output, or apply globally only if "
+                    "unambiguous."
+                )
+            else:
+                lines.append(f'- Node {aid} ({atype}) inputs[{params}] ← "{directive}" (mode={mode})')
+
+    if standin_hooks:
+        lines.append(
+            "\nWORKFLOW-STANDIN hooks — each is a self-contained generation request. "
+            "For each one, GENERATE a ComfyUI workflow that fulfils the prompt (or, "
+            "when a workflow doesn't fit, a Python script written into the scripts dir "
+            "from get_agent_output_dirs()), then run it via the normal generation "
+            "contract — signal_workflow_ready for a workflow, or run the script — and "
+            "let the outputs stage onto the canvas as loader nodes. Do NOT call "
+            "apply_canvas_hooks for these. If an anchor is wired, its output is the "
+            "INPUT to what you generate (e.g. upload that image/video and bind it to "
+            "the loader); if nothing is wired, treat the prompt as a text-to-media "
+            "request. Media routing (agent/images, agent/videos, …) is enforced "
+            "automatically:"
+        )
+        for h in standin_hooks:
+            aid, inputs = _anchor_inputs(h, base_prompt)
+            prompt = str(h.get("directive", "") or "").strip()
+            if aid is None:
+                lines.append(f'- STANDIN (no input wired) — generate & run → "{prompt}"')
+            else:
+                atype = h.get("anchor_type") or "?"
+                params = ", ".join(f"{k}={v!r}" for k, v in inputs.items()) or "(no scalar inputs)"
+                lines.append(
+                    f'- STANDIN, input from node {aid} ({atype}) inputs[{params}] — '
+                    f'generate & run → "{prompt}"'
+                )
+
     lines.append("")
     return "\n".join(lines)

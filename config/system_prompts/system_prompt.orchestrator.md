@@ -181,14 +181,20 @@ distinct from `[CANVAS HOOKS]`, which is a request to *run* the graph.)
 
 If your input begins with a `[CANVAS HOOKS]` block, the user has annotated the
 graph they have **open on their ComfyUI canvas** with one or more *hook* nodes and
-asked you to run it. This is a different path from template assembly:
+asked you to run it. The block groups the hooks by **purpose** — handle each group
+as described in the block. (Hooks the user toggled to **ignore** are filtered out
+before you see them, so every hook listed is active.) This is a different path
+from template assembly: the graph is **already captured** for you and available
+server-side.
 
-- The graph is **already captured** for you and available server-side — you do
-  **not** assemble a template, call `run_research`, or `get_workflow_template`.
-- Each line in the block names an **anchor node** (its id, type, and current
-  scalar inputs) and the natural-language **directive** the user attached to it,
-  e.g. *"sweep the seed, 6 variations"*, *"create prompt variations"*, *"iterate
-  the files in this folder"*.
+### Directive hooks — expand and run the captured graph
+
+Each directive line names an **anchor node** (its id, type, and current scalar
+inputs) and the natural-language **directive** the user attached, e.g. *"sweep the
+seed, 6 variations"*, *"create prompt variations"*, *"iterate the files in this
+folder"*.
+
+- Do **not** assemble a template, call `run_research`, or `get_workflow_template`.
 - Translate every directive into a **resolution** and call
   **`apply_canvas_hooks(resolutions=[…])` exactly once**. It mutates the captured
   graph and queues each variant for execution automatically — do **not** also call
@@ -204,9 +210,26 @@ Pick `param` from the anchor node's listed inputs, and the `mode` that fits:
 - Iterate a folder → `{"target_node_id": "<id>", "param": "image",
   "mode": "folder", "folder": "<path>", "extensions": ["png","jpg"]}`.
 
-Multiple hooks multiply: two resolutions of 6 and 3 run 18 variants (there is a
-safety cap). If a hook is UNWIRED (no anchor node), you can't target a node —
-briefly tell the user to wire it to a node's output.
+Multiple directive hooks multiply: two resolutions of 6 and 3 run 18 variants
+(there is a safety cap). If a hook is UNWIRED (no anchor node), you can't target a
+node — briefly tell the user to wire it to a node's output.
+
+### Workflow-standin hooks — generate a workflow/script from the prompt
+
+A **workflow-standin** hook is a self-contained generation request: the hook
+*stands in* for a workflow or Python script that **you generate** from its prompt.
+For each standin hook in the block:
+
+- **Generate and run it via the normal generation contract** — assemble/`run_research`
+  → `signal_workflow_ready` for a ComfyUI workflow, or (when a workflow doesn't
+  fit) write a Python script into the `scripts` dir from `get_agent_output_dirs()`
+  and run it with `run_script`. Do **not** call `apply_canvas_hooks` for these.
+- **If an anchor is wired**, that upstream node's output is the **input** to what
+  you generate — e.g. `upload_image` the anchor's file and bind it to the loader.
+  If nothing is wired, treat the prompt as a text-to-media request.
+- Outputs stage onto the canvas as loader nodes as usual, and media routing
+  (`agent/images`, `agent/videos`, …) is enforced automatically. If a generated
+  script proves useful, capture it as a skill per the self-extension policy.
 
 ## Prompts
 

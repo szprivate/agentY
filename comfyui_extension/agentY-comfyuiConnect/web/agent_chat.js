@@ -908,12 +908,14 @@ class AgentChat {
     const hooks = [];
     for (const hn of this._hookNodes()) {
       const w = this._widgetSnapshot(hn);
+      if (w.ignore === true || w.ignore === "true") continue; // hook disabled — skip it
       const directive = String(w.directive || "").trim();
       if (!directive) continue; // an empty hook is a no-op
       const anchor = this._anchorFor(hn);
       hooks.push({
         hook_node_id: String(hn.id),
         directive,
+        purpose: String(w.purpose || "directive"),
         mode: String(w.mode || "auto"),
         anchor_node_id: anchor ? String(anchor.id) : null,
         anchor_type: anchor ? String(anchor.type || anchor.comfyClass || "") : null,

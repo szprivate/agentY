@@ -55,15 +55,23 @@ _ANY = _AnyType("*")
 
 
 class AgentYHook:
-    """An agent directive attached to an upstream node's output.
+    """An agent instruction attached to the canvas. Two purposes:
 
-    Wire this node's ``anchor`` input from any node's output and type a directive
-    (e.g. "create prompt variations", "sweep the seed 6×", "iterate the files in
-    this folder"). On a normal ComfyUI run the node is inert — it's an identity
-    passthrough that nothing downstream needs, so it is never executed. When the
-    agentY agent runs the on-canvas graph, it reads this directive and applies it
-    to the anchored node.
+    * ``directive`` (default) — annotate an upstream node's output. Wire the
+      ``anchor`` input from any node's output and type a directive (e.g. "create
+      prompt variations", "sweep the seed 6×", "iterate the files in this
+      folder"). When the agentY agent runs the on-canvas graph, it applies the
+      directive to the anchored node and runs the expanded batch.
+    * ``workflow-standin`` — the hook stands in for a workflow or Python script
+      the agent generates from the ``directive`` field (used here as a prompt).
+      The agent generates it, runs it (using the wired ``anchor`` output as input
+      if one is connected, else treating the prompt as text-to-media), and stages
+      the result onto the canvas as loader nodes.
 
+    Toggle ``ignore`` to disable a hook without deleting it — the agent skips it.
+
+    On a normal ComfyUI Queue the node is always inert: it's an identity
+    passthrough that nothing downstream needs, so it is never executed.
     Recommended usage: wire only the ``anchor`` input and leave the output
     unwired (the node is then pruned entirely on a normal run). Splicing it inline
     also works — the agent removes it from the graph before running.
@@ -76,12 +84,20 @@ class AgentYHook:
                 "directive": ("STRING", {
                     "multiline": True,
                     "default": "",
-                    "placeholder": "e.g. sweep the seed, 6 variations",
+                    "placeholder": (
+                        "directive: e.g. sweep the seed, 6 variations  •  "
+                        "standin: e.g. upscale 2x and add film grain"
+                    ),
                 }),
+                "purpose": (
+                    ["directive", "workflow-standin"],
+                    {"default": "directive"},
+                ),
                 "mode": (
                     ["auto", "prompt-variations", "seed-sweep", "file-iterate", "freeform"],
                     {"default": "auto"},
                 ),
+                "ignore": ("BOOLEAN", {"default": False, "label_on": "ignored", "label_off": "active"}),
             },
             "optional": {
                 "anchor": (_ANY, {}),
@@ -93,11 +109,13 @@ class AgentYHook:
     FUNCTION = "hook"
     CATEGORY = "agentY"
     DESCRIPTION = (
-        "Attach an agent directive to a node's output. Inert on a normal run; "
-        "applied by the agentY agent when it runs the on-canvas graph."
+        "Attach an agent instruction to the canvas. As a 'directive' it annotates a "
+        "node's output; as a 'workflow-standin' it stands in for a workflow/script "
+        "the agent generates from the prompt. Toggle 'ignore' to disable it. Inert "
+        "on a normal run; acted on by the agentY agent when it runs the graph."
     )
 
-    def hook(self, directive="", mode="auto", anchor=None):  # noqa: ANN001, ARG002
+    def hook(self, directive="", purpose="directive", mode="auto", ignore=False, anchor=None):  # noqa: ANN001, ARG002
         # Pure identity passthrough — only ever runs if spliced inline, in which
         # case it must not alter the data flowing through it.
         return (anchor,)
