@@ -912,15 +912,23 @@ class AgentChat {
       const directive = String(w.directive || "").trim();
       if (!directive) continue; // an empty hook is a no-op
       const anchor = this._anchorFor(hn);
+      // A hook wired FROM another hook is a downstream stage in a chain: its
+      // input is the predecessor's output (resolved at run time), so record
+      // prev_hook_id and leave anchor_node_id null. When the anchor is a real
+      // node (the common case) behavior is unchanged.
+      const anchorIsHook = !!anchor &&
+        (anchor.type === "AgentYHook" || anchor.comfyClass === "AgentYHook");
+      const realAnchor = anchor && !anchorIsHook ? anchor : null;
       hooks.push({
         hook_node_id: String(hn.id),
         directive,
         purpose: String(w.purpose || "directive"),
         mode: String(w.mode || "auto"),
-        anchor_node_id: anchor ? String(anchor.id) : null,
-        anchor_type: anchor ? String(anchor.type || anchor.comfyClass || "") : null,
-        anchor_title: anchor ? String(anchor.title || "") : null,
-        anchor_widgets: anchor ? this._widgetSnapshot(anchor) : {},
+        prev_hook_id: anchorIsHook ? String(anchor.id) : null,
+        anchor_node_id: realAnchor ? String(realAnchor.id) : null,
+        anchor_type: realAnchor ? String(realAnchor.type || realAnchor.comfyClass || "") : null,
+        anchor_title: realAnchor ? String(realAnchor.title || "") : null,
+        anchor_widgets: realAnchor ? this._widgetSnapshot(realAnchor) : {},
       });
     }
     return hooks;

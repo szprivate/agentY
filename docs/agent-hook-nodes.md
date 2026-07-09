@@ -42,6 +42,30 @@ The `AgentYHook` node carries four widgets:
 `describe_hooks` groups the hooks by purpose in the `[CANVAS HOOKS]` block so the
 orchestrator applies the right path to each group.
 
+## Chaining standin hooks (pipelines)
+
+Wire one hook's `passthrough` output into another hook's `anchor` input to build a
+**pipeline**: each stage's output becomes the next stage's input. This is a
+*workflow-standin* concept (directives mutate the captured graph and don't chain).
+
+- **Detection** — `_collectCanvasHooks` (JS) checks whether a hook's anchor is
+  itself an `AgentYHook`; if so it records `prev_hook_id` (the upstream hook) and
+  leaves `anchor_node_id` null. A hook wired from a **real** node is unchanged
+  (`prev_hook_id: null`), so non-chained hooks behave exactly as before.
+- **Ordering** — `_order_standin_chains` (`canvas_hooks.py`) follows `prev_hook_id`
+  links into ordered chains (standalone standins are chains of length 1; forks and
+  cycles are broken defensively). `describe_hooks` renders multi-stage chains as a
+  numbered **WORKFLOW-STANDIN CHAIN** with stage 1's real input noted.
+- **Execution** — the orchestrator runs each stage with **`run_workflow_now`**
+  (`pipeline.py`), a synchronous run that submits the workflow, waits, stages the
+  outputs, and returns their paths so the agent can `upload_image` one and bind it
+  to the next stage's loader. This is the threading the deferred
+  `signal_workflow_ready` handoff can't do (it runs post-turn in a batch).
+  Mid-turn outputs are tracked in `_chain_output_paths` so they survive the
+  end-of-turn `current_output_paths` reset and still stage onto the canvas.
+- A stage better done by a script can use `run_script`; its output feeds the next
+  stage the same way.
+
 ## Why it fits cleanly
 
 - **Inertness is free.** ComfyUI only executes nodes on the path to an output

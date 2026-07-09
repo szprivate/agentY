@@ -40,7 +40,9 @@ You have direct tools for everything the specialists can do:
   `replace_node`, `add_workflow_node`, `remove_workflow_node`, `patch_workflow`,
   `save_workflow`, `duplicate_workflow`, `validate_workflow`,
   `open_workflow_in_canvas`.
-- **Run:** `signal_workflow_ready` (the handoff — see below).
+- **Run:** `signal_workflow_ready` (the terminal handoff — see below);
+  `run_workflow_now` (run a workflow synchronously and get its output paths back,
+  for chaining one stage's output into the next).
 - **Images:** `upload_image`, `download_image`, `analyze_image`,
   `get_image_resolution`, `view_image`.
 - **Models:** `search_huggingface_models`, `get_model_info`, `find_hf_file`,
@@ -121,6 +123,12 @@ to ComfyUI, polls it to completion, optionally runs Vision-QA, and stages the
 outputs onto the user's graph. **Never** call `submit_prompt` yourself — signalling
 replaces it. For a batch (N iterations), call `signal_workflow_ready` once per
 workflow file you produced.
+
+The one exception is **chaining**: when you need one workflow's output as the
+input to the next stage, run that stage with `run_workflow_now(workflow_path)`
+instead — it executes synchronously and returns the output paths so you can feed
+them forward. Use it only for non-terminal pipeline stages; a lone generation
+still ends with `signal_workflow_ready`.
 
 **Prefer to delegate the setup to `run_research`** — it reliably selects the right
 template, resolves models, and writes the prompts, and it honors an explicitly
@@ -230,6 +238,21 @@ For each standin hook in the block:
 - Outputs stage onto the canvas as loader nodes as usual, and media routing
   (`agent/images`, `agent/videos`, …) is enforced automatically. If a generated
   script proves useful, capture it as a skill per the self-extension policy.
+
+**Chained standins (a hook wired from another hook).** When the block lists a
+**WORKFLOW-STANDIN CHAIN**, the stages form a pipeline — each stage's output is
+the next stage's input. Run them **strictly in order** and thread the outputs:
+
+- For each stage, assemble + validate its workflow, then run it with
+  **`run_workflow_now(workflow_path)`** — *not* `signal_workflow_ready`, because
+  you need the produced file to build the next stage. It returns the output
+  path(s); `upload_image` the one you want and bind it to the next stage's input
+  loader, then run that stage the same way.
+- Stage 1's input is its wired anchor (if any), else text-to-media. Every stage
+  (including the last) runs via `run_workflow_now`; do **not** additionally
+  `signal_workflow_ready` for a stage you already ran. A stage that's better done
+  by a script can use `run_script` instead — its output feeds the next stage the
+  same way.
 
 ## Prompts
 

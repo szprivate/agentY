@@ -157,6 +157,46 @@ def _is_standin(hook: dict) -> bool:
     return str(hook.get("purpose", "directive") or "directive").strip().lower() in _STANDIN_PURPOSES
 
 
+def _order_standin_chains(standin_hooks: list) -> list:
+    """Group standin hooks into ordered chains via their ``prev_hook_id`` links.
+
+    A hook wired FROM another standin hook is a downstream stage; ``prev_hook_id``
+    names its predecessor. Returns a list of chains, each an ordered list of hooks
+    (a standalone standin is a chain of length 1). Heads are hooks whose
+    predecessor is absent or not itself a standin; successors are followed one at
+    a time (a fork just starts a new chain), and cycles are broken defensively.
+    """
+    by_id = {str(h.get("hook_node_id")): h for h in standin_hooks if h.get("hook_node_id") is not None}
+    # next_of[pred_id] = successor hook (first one wins if a stage forks).
+    next_of: dict = {}
+    for h in standin_hooks:
+        prev = h.get("prev_hook_id")
+        if prev is not None and str(prev) in by_id and str(prev) not in next_of:
+            next_of[str(prev)] = h
+
+    def _is_head(h: dict) -> bool:
+        prev = h.get("prev_hook_id")
+        return prev is None or str(prev) not in by_id
+
+    chains: list = []
+    seen: set = set()
+    for h in standin_hooks:
+        if not _is_head(h) or str(h.get("hook_node_id")) in seen:
+            continue
+        chain, cur = [], h
+        while cur is not None and str(cur.get("hook_node_id")) not in seen:
+            seen.add(str(cur.get("hook_node_id")))
+            chain.append(cur)
+            cur = next_of.get(str(cur.get("hook_node_id")))
+        chains.append(chain)
+    # Any hooks left unvisited (e.g. caught in a cycle) become their own chains.
+    for h in standin_hooks:
+        if str(h.get("hook_node_id")) not in seen:
+            seen.add(str(h.get("hook_node_id")))
+            chains.append([h])
+    return chains
+
+
 def _anchor_inputs(hook: dict, base_prompt: dict | None) -> tuple:
     """Return ``(anchor_id, scalar_inputs_dict)`` for a hook's anchor node."""
     aid = hook.get("anchor_node_id")
@@ -217,31 +257,54 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
                 lines.append(f'- Node {aid} ({atype}) inputs[{params}] ← "{directive}" (mode={mode})')
 
     if standin_hooks:
-        lines.append(
-            "\nWORKFLOW-STANDIN hooks — each is a self-contained generation request. "
-            "For each one, GENERATE a ComfyUI workflow that fulfils the prompt (or, "
-            "when a workflow doesn't fit, a Python script written into the scripts dir "
-            "from get_agent_output_dirs()), then run it via the normal generation "
-            "contract — signal_workflow_ready for a workflow, or run the script — and "
-            "let the outputs stage onto the canvas as loader nodes. Do NOT call "
-            "apply_canvas_hooks for these. If an anchor is wired, its output is the "
-            "INPUT to what you generate (e.g. upload that image/video and bind it to "
-            "the loader); if nothing is wired, treat the prompt as a text-to-media "
-            "request. Media routing (agent/images, agent/videos, …) is enforced "
-            "automatically:"
-        )
-        for h in standin_hooks:
+        chains = _order_standin_chains(standin_hooks)
+        singles = [c[0] for c in chains if len(c) == 1]
+        multis = [c for c in chains if len(c) > 1]
+
+        def _input_desc(h: dict) -> str:
             aid, inputs = _anchor_inputs(h, base_prompt)
-            prompt = str(h.get("directive", "") or "").strip()
             if aid is None:
-                lines.append(f'- STANDIN (no input wired) — generate & run → "{prompt}"')
-            else:
-                atype = h.get("anchor_type") or "?"
-                params = ", ".join(f"{k}={v!r}" for k, v in inputs.items()) or "(no scalar inputs)"
-                lines.append(
-                    f'- STANDIN, input from node {aid} ({atype}) inputs[{params}] — '
-                    f'generate & run → "{prompt}"'
-                )
+                return "no input wired — treat the prompt as text-to-media"
+            atype = h.get("anchor_type") or "?"
+            params = ", ".join(f"{k}={v!r}" for k, v in inputs.items()) or "(no scalar inputs)"
+            return f"input from node {aid} ({atype}) inputs[{params}]"
+
+        if singles:
+            lines.append(
+                "\nWORKFLOW-STANDIN hooks — each is a self-contained generation request. "
+                "For each one, GENERATE a ComfyUI workflow that fulfils the prompt (or, "
+                "when a workflow doesn't fit, a Python script written into the scripts "
+                "dir from get_agent_output_dirs()), then run it via the normal "
+                "generation contract — signal_workflow_ready for a workflow, or run the "
+                "script — and let the outputs stage onto the canvas as loader nodes. Do "
+                "NOT call apply_canvas_hooks for these. If an anchor is wired, its output "
+                "is the INPUT to what you generate (e.g. upload that image/video and bind "
+                "it to the loader); if nothing is wired, treat the prompt as a "
+                "text-to-media request. Media routing (agent/images, agent/videos, …) is "
+                "enforced automatically:"
+            )
+            for h in singles:
+                prompt = str(h.get("directive", "") or "").strip()
+                lines.append(f'- STANDIN, {_input_desc(h)} — generate & run → "{prompt}"')
+
+        if multis:
+            lines.append(
+                "\nWORKFLOW-STANDIN CHAINS — a chain of hooks wired output→input. Run the "
+                "stages STRICTLY IN ORDER, feeding each stage's OUTPUT as the next "
+                "stage's INPUT. For each stage: GENERATE a workflow (or script) from its "
+                "prompt, then run it with run_workflow_now(workflow_path) — NOT "
+                "signal_workflow_ready, because you need each stage's output file to "
+                "build the next. Take the output path it returns, upload_image it, and "
+                "bind it to the next stage's input loader. Stage 1's input is its wired "
+                "anchor (if any), else text-to-media; the final stage's output is the "
+                "result. Do NOT call apply_canvas_hooks for these:"
+            )
+            for ci, chain in enumerate(multis, 1):
+                head_in = _input_desc(chain[0])
+                lines.append(f"  Chain {ci} (stage 1 {head_in}):")
+                for si, h in enumerate(chain, 1):
+                    prompt = str(h.get("directive", "") or "").strip()
+                    lines.append(f'    {si}. "{prompt}"')
 
     lines.append("")
     return "\n".join(lines)

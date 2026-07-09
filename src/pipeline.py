@@ -420,6 +420,10 @@ class Pipeline:
         # user's on-canvas graph + the hook directives attached to it.
         self._canvas_base_prompt: dict | None = None
         self._canvas_hooks: list = []
+        # Outputs produced mid-turn by run_workflow_now (chained hook stages).
+        # Tracked so they survive the end-of-turn current_output_paths reset and
+        # still get staged onto the canvas. Empty on every non-chain turn.
+        self._chain_output_paths: list = []
         # Snapshot of the nodes the user has selected on the canvas this turn
         # (id/type/title/widgets), so the orchestrator can read — and, via
         # set_canvas_node_params, write back — arbitrary node parameters.
@@ -886,6 +890,56 @@ class Pipeline:
             })
 
         @_tool
+        async def run_workflow_now(workflow_path: str) -> str:
+            """Run a validated workflow NOW (synchronously) and return its output paths.
+
+            Use this ONLY to CHAIN stages — when you need one workflow's OUTPUT as
+            the INPUT to the next (a canvas hook chain, or any
+            generate-then-transform pipeline like upscale→animate). Unlike
+            ``signal_workflow_ready`` (which defers execution to the end of the
+            turn and can't feed a later stage), this submits the workflow now,
+            waits for ComfyUI to finish, stages the results onto the canvas, and
+            returns the absolute output file paths — so you can ``upload_image`` one
+            and bind it to the next stage's loader, then run that stage.
+
+            For a single, terminal generation use ``signal_workflow_ready`` instead;
+            do NOT also signal a workflow you already ran here.
+
+            Args:
+                workflow_path: Absolute path to a validated workflow JSON file
+                    (assemble + validate it first, exactly as for signalling).
+            """
+            from src.executor import execute_workflow as _execute_workflow
+
+            base = self._session.current_output_paths
+            before = len(base)
+            brief = self._last_brainbriefing_json or "{}"
+            try:
+                async for _line in _execute_workflow(
+                    workflow_path, brief, user_message="", verbose=self._verbose,
+                    collected_paths=base, run_qa=False,
+                ):
+                    if self._verbose:
+                        print(f"[run_workflow_now] {_line}")
+            except Exception as exc:  # noqa: BLE001
+                return json.dumps({"error": f"execution failed: {exc}"})
+            new = list(base[before:])
+            # Preserve these past the end-of-turn current_output_paths reset so
+            # they're still staged onto the canvas.
+            self._chain_output_paths.extend(new)
+            if self._verbose:
+                print(f"pipeline: run_workflow_now produced {len(new)} output(s).")
+            return json.dumps({
+                "status": "done",
+                "outputs": new,
+                "message": (
+                    f"{len(new)} output(s) produced and staged onto the canvas. To "
+                    "chain: upload_image one of these paths and bind it to the next "
+                    "stage's loader, then run that stage."
+                ) if new else "Workflow ran but produced no output files.",
+            })
+
+        @_tool
         async def add_canvas_workflow(name: str, description: str = "") -> str:
             """Save the workflow currently open in the ComfyUI canvas as a custom template.
 
@@ -995,8 +1049,8 @@ class Pipeline:
                 return json.dumps({"error": str(exc)})
 
         return [run_research, run_info, run_story, run_dop, run_web_search,
-                run_planner, classify_intent, apply_canvas_hooks, add_canvas_workflow,
-                set_canvas_node_params]
+                run_planner, classify_intent, apply_canvas_hooks, run_workflow_now,
+                add_canvas_workflow, set_canvas_node_params]
 
     def _ensure_orch_clean_history(self) -> None:
         """Sanitize the orchestrator's message list (drop orphaned tool blocks)."""
@@ -1208,6 +1262,7 @@ class Pipeline:
         # apply_canvas_hooks; describe the hooks in the orchestrator input.
         self._canvas_base_prompt = None
         self._canvas_hooks = [h for h in (canvas_hooks or []) if isinstance(h, dict)]
+        self._chain_output_paths = []
         # Arbitrary selected nodes (id/type/title/widgets) the orchestrator can
         # read and write back via set_canvas_node_params.
         self._canvas_selection = [n for n in (canvas_selection or []) if isinstance(n, dict)]
@@ -1262,7 +1317,10 @@ class Pipeline:
                 # Executor handoff — drain the workflow-signal mailbox and run.
                 workflow_paths = _get_workflow_signal()
                 workflow_paths = self._expand_variations(workflow_paths, self._last_brainbriefing_json or "")
-                self._session.current_output_paths.clear()
+                # Reset this turn's outputs before the deferred batch, but KEEP any
+                # produced mid-turn by run_workflow_now (chained stages) so they're
+                # still staged. Non-chain turns have none, so this equals .clear().
+                self._session.current_output_paths[:] = list(self._chain_output_paths)
                 exec_paths = self._session.current_output_paths
                 _qa_fail_event: dict | None = None
                 if workflow_paths:
