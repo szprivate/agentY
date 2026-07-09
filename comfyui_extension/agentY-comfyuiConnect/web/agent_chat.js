@@ -90,6 +90,7 @@ class AgentChat {
     this._injectStyles();
     this._build();
     this._loadCommands();
+    this._loadModels();
     this._loadThreads();
     this.newThread();
   }
@@ -206,18 +207,44 @@ class AgentChat {
       this.targetSel.append(el("option", { value: val, textContent: label }));
     }
     this.modelSel = el("select", { className: "ay-mmodel", title: "Switch model" });
-    this.modelSel.append(el("option", { value: "", textContent: "🔀 Switch model…" }));
-    for (const [group, models] of Object.entries(MODEL_PRESETS)) {
-      const og = el("optgroup", { label: group });
-      for (const [spec, label] of models) og.append(el("option", { value: spec, textContent: label }));
-      this.modelSel.append(og);
-    }
+    // Seed with the static presets; _loadModels() replaces this at startup with
+    // the vendors/models actually available (Ollama installed list, and
+    // Anthropic/DashScope only when their API key is set).
+    this._populateModelSelect(MODEL_PRESETS);
     this.modelSel.addEventListener("change", () => this._applyModel());
     return el("div", { className: "ay-modelbar" }, [
       el("span", { className: "ay-mlabel", textContent: "Model" }),
       this.modelSel,
       this.targetSel,
     ]);
+  }
+
+  // Rebuild the model dropdown from a { "<vendor>": [[spec,label],…] } map,
+  // preserving the current selection where possible.
+  _populateModelSelect(groups) {
+    const sel = this.modelSel;
+    const cur = sel.value;
+    sel.innerHTML = "";
+    sel.append(el("option", { value: "", textContent: "🔀 Switch model…" }));
+    for (const [group, models] of Object.entries(groups || {})) {
+      if (!models || !models.length) continue;
+      const og = el("optgroup", { label: group });
+      for (const [spec, label] of models) og.append(el("option", { value: spec, textContent: label }));
+      sel.append(og);
+    }
+    if (cur) sel.value = cur;
+  }
+
+  // Fetch the live vendor/model list from the host; fall back to static presets.
+  async _loadModels() {
+    try {
+      const r = await fetch(backendBase() + "/agentY/models");
+      if (r.ok) {
+        const groups = await r.json();
+        if (groups && Object.keys(groups).length) { this._populateModelSelect(groups); return; }
+      }
+    } catch (_) {}
+    this._populateModelSelect(MODEL_PRESETS);
   }
 
   async _applyModel() {
@@ -505,6 +532,10 @@ class AgentChat {
         this.curAssistant = null;
         this.injectNode(ev);
         break;
+      case "canvas_patch":
+        this.curAssistant = null;
+        this._applyCanvasPatch(ev);
+        break;
       case "system":
         this.curAssistant = null;
         this._sys(ev.data);
@@ -626,6 +657,7 @@ class AgentChat {
     const text = this.input.value.trim();
     const canvasInputs = this._collectCanvasInputs();
     const canvasHooks = this._collectCanvasHooks();
+    const canvasSelection = this._collectCanvasSelection();
     if (!text && this.attachments.length === 0 && canvasInputs.length === 0 &&
         canvasHooks.length === 0) return;
 
@@ -680,6 +712,7 @@ class AgentChat {
       image_paths: imgs,
       canvas_inputs: canvasInputs.map((c) => ({ value: c.value, kind: c.kind })),
       canvas_hooks: canvasHooks,
+      canvas_selection: canvasSelection,
       canvas_prompt: canvasPrompt,
     });
   }
@@ -784,6 +817,58 @@ class AgentChat {
       out.push(info);
     }
     return out;
+  }
+
+  // Snapshot every selected node (ANY type) with its widget parameter values, so
+  // the agent can read and — via set_canvas_node_params → the canvas_patch SSE
+  // event — write back arbitrary parameters (e.g. read/alter a prompt node).
+  _collectCanvasSelection() {
+    const out = [];
+    for (const n of this._orderedSelectedNodes()) {
+      const widgets = this._widgetSnapshot(n);
+      if (!Object.keys(widgets).length) continue; // nothing readable/editable
+      out.push({
+        id: String(n.id),
+        type: String((n && (n.type || n.comfyClass)) || ""),
+        title: String((n && n.title) || ""),
+        widgets,
+      });
+    }
+    return out;
+  }
+
+  // Apply an agent-initiated node edit to the live graph (no refresh, no re-queue).
+  _applyCanvasPatch(ev) {
+    const graph = app.graph;
+    const nid = Number(ev.node_id);
+    const node = graph && (graph.getNodeById
+      ? graph.getNodeById(nid)
+      : (graph._nodes || []).find((n) => Number(n.id) === nid));
+    if (!node) {
+      this._sys(`⚠️ Could not apply edit — node #${ev.node_id} is no longer on the canvas.`);
+      return;
+    }
+    const params = ev.params || {};
+    const applied = [];
+    for (const [name, value] of Object.entries(params)) {
+      const w = (node.widgets || []).find((x) => x && x.name === name);
+      if (!w) continue; // unknown widget on this node — skip
+      // Keep combo widgets valid: register a new option value if needed.
+      if (w.options && Array.isArray(w.options.values) &&
+          typeof value !== "object" && !w.options.values.includes(value)) {
+        w.options.values.push(value);
+      }
+      w.value = value;
+      try { if (w.callback) w.callback(value, app.canvas, node); } catch (_) {}
+      applied.push(name);
+    }
+    app.graph.setDirtyCanvas(true, true);
+    const title = (node.title || node.type || ("#" + ev.node_id));
+    if (applied.length) {
+      this._sys(`✏️ Updated **${title}** — set ${applied.map((a) => "`" + a + "`").join(", ")}.`);
+    } else {
+      this._sys(`⚠️ No matching widget on **${title}** to update.`);
+    }
   }
 
   // ── canvas hooks (AgentYHook nodes) ──────────────────────────────────────────

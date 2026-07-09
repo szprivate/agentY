@@ -716,6 +716,15 @@ def _make_agent(
     if plugins:
         agent_kwargs["plugins"] = plugins
     agent_kwargs.update(kwargs)
+    # Every agent — not just the orchestrator — reports its tool calls to the
+    # shared tool_activity buffer, so the chat panel shows ANY tool call the
+    # pipeline makes (delegate specialists, the executor, subagents), matching
+    # what the CLI prints. Append centrally, de-duped, so a factory that already
+    # supplied one (the orchestrator) isn't double-hooked.
+    _hooks = list(agent_kwargs.get("hooks") or [])
+    if not any(isinstance(h, ToolActivityHookProvider) for h in _hooks):
+        _hooks.append(ToolActivityHookProvider())
+        agent_kwargs["hooks"] = _hooks
     agent = Agent(**agent_kwargs)
     # Attach light-weight cost metadata so callers can compute run cost.
     try:

@@ -399,7 +399,8 @@ def _parse_think_chunk(chunk: str, state: dict) -> tuple[str, str]:
 def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
                          out_q: "queue.Queue", req_id: str,
                          canvas_prompt: dict | None = None,
-                         canvas_hooks: list | None = None) -> None:
+                         canvas_hooks: list | None = None,
+                         canvas_selection: list | None = None) -> None:
     """Drive the pipeline for one turn on a private event loop, pushing SSE dicts
     to *out_q*. Interactive asks register on ``_reply_registry`` so POST
     /agentY/reply can feed the answer thread-safely. Terminates *out_q* with None.
@@ -524,6 +525,12 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
             out_q.put({"type": "tool", **ta})
             return
 
+        # Canvas node edit — apply to the live graph in the panel -----------------
+        cp = event.get("canvas_patch")
+        if cp is not None:
+            out_q.put({"type": "canvas_patch", **cp})
+            return
+
         # Reasoning -------------------------------------------------------------
         rt = event.get("reasoningText")
         if rt:
@@ -564,6 +571,7 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
         async for event in pipeline.stream_async(
             content, qa_reply_queue=qa_queue,
             canvas_prompt=canvas_prompt, canvas_hooks=canvas_hooks,
+            canvas_selection=canvas_selection,
         ):
             if isinstance(event, dict):
                 _translate(event)
@@ -928,6 +936,188 @@ def _dispatch_to_agent(message: str, image_paths: list[str], node_id: str | None
     threading.Thread(target=_run, name="agentY-review-dispatch", daemon=True).start()
 
 
+# ── Model discovery (for the panel's quick-switch dropdown) ───────────────────
+
+# Curated catalogs for the cloud vendors. Ollama is enumerated live from the
+# running server. Each entry is [ "<provider>,<model>", "Display name" ] — the
+# provider,model string is exactly what /switch_model expects.
+_ANTHROPIC_MODELS = [
+    ["claude,claude-haiku-4-5", "Claude Haiku 4.5"],
+    ["claude,claude-sonnet-4-5", "Claude Sonnet 4.5"],
+]
+_DASHSCOPE_MODELS = [
+    ["dashscope,qwen3.6-flash", "Qwen3.6 Flash"],
+    ["dashscope,qwen-plus", "Qwen Plus"],
+    ["dashscope,qwen3.7-plus", "Qwen3.7 Plus"],
+    ["dashscope,qwen-max", "Qwen Max"],
+]
+
+
+def _available_models() -> dict:
+    """Return {vendor: [[spec, label], …]} for every vendor currently usable.
+
+    A vendor is included only when it can actually be reached: Anthropic /
+    DashScope when their API key is set, Ollama when its server answers (its
+    installed models are listed live via ``GET {host}/api/tags``).
+    """
+    groups: dict[str, list] = {}
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        groups["Anthropic"] = list(_ANTHROPIC_MODELS)
+    if os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("ALIBABA_API_KEY"):
+        groups["Alibaba (DashScope)"] = list(_DASHSCOPE_MODELS)
+    try:
+        import requests  # noqa: PLC0415
+        from src.agent import _cfg  # noqa: PLC0415
+        host = str(_cfg("OLLAMA_HOST", "ollama", "host", default="http://localhost:11434"))
+        resp = requests.get(f"{host}/api/tags", timeout=3)
+        resp.raise_for_status()
+        names = sorted({m.get("name", "") for m in resp.json().get("models", []) if m.get("name")})
+        if names:
+            groups["Ollama"] = [[f"ollama,{n}", n] for n in names]
+    except Exception as exc:  # noqa: BLE001 — Ollama not running ⇒ hide the vendor
+        logger.debug("Ollama model list unavailable: %s", exc)
+    return groups
+
+
+# ── Application settings (.env auth keys + config/settings.json) ──────────────
+
+# Auth / host keys surfaced in the settings modal even when absent from .env, so
+# the user can fill them in. Any additional keys already present in .env are
+# merged in on read.
+_KNOWN_ENV_KEYS = [
+    "HF_TOKEN", "ANTHROPIC_API_KEY", "COMFYUI_API_KEY", "DASHSCOPE_API_KEY",
+    "AGENTY_UI_HOST", "AGENTY_UI_PORT", "AGENTY_CONVERSATION_DB",
+]
+
+
+def _env_path() -> Path:
+    return _project_root() / ".env"
+
+
+def _settings_path() -> Path:
+    return _project_root() / "config" / "settings.json"
+
+
+def _read_env_file() -> dict:
+    """Parse the .env file into {KEY: value} (ignores comments / blank lines)."""
+    out: dict[str, str] = {}
+    path = _env_path()
+    if not path.exists():
+        return out
+    for line in path.read_text(encoding="utf-8").splitlines():
+        s = line.strip()
+        if not s or s.startswith("#") or "=" not in s:
+            continue
+        key, _, val = s.partition("=")
+        out[key.strip()] = val.strip()
+    return out
+
+
+def _update_env_file(updates: dict) -> None:
+    """Write KEY=value updates into .env, preserving comments and key order.
+
+    Existing keys are replaced in place; new keys are appended. ``os.environ`` is
+    updated too so freshly-built agents pick the values up without a restart."""
+    path = _env_path()
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True) if path.exists() else []
+    seen: set[str] = set()
+    for i, raw in enumerate(lines):
+        s = raw.strip()
+        if not s or s.startswith("#") or "=" not in s:
+            continue
+        key = s.split("=", 1)[0].strip()
+        if key in updates:
+            nl = "\n" if raw.endswith("\n") else ""
+            lines[i] = f"{key}={updates[key]}{nl}"
+            seen.add(key)
+    missing = [k for k in updates if k not in seen]
+    if missing:
+        if lines and not lines[-1].endswith("\n"):
+            lines[-1] = lines[-1] + "\n"
+        for k in missing:
+            lines.append(f"{k}={updates[k]}\n")
+    path.write_text("".join(lines), encoding="utf-8")
+    for k, v in updates.items():
+        os.environ[str(k)] = str(v)
+
+
+def _diff_leaves(old, new, prefix: tuple = ()) -> list:
+    """Yield (path_tuple, value) for every scalar/list leaf in *new* that differs
+    from *old* (recursing into dicts). Used to apply only the changed values to
+    settings.json, so untouched lines — and their comments — stay byte-identical."""
+    changes: list = []
+    if isinstance(new, dict):
+        base = old if isinstance(old, dict) else {}
+        for k, v in new.items():
+            changes.extend(_diff_leaves(base.get(k), v, prefix + (k,)))
+    else:
+        if old != new:
+            changes.append((prefix, new))
+    return changes
+
+
+def _find_leaf_line(lines: list, path: tuple) -> int:
+    """Index of the line defining leaf *path* in a standard 2-space-indented JSON
+    file (one key per line; objects open with a trailing '{' and close on their
+    own line). Returns -1 if not found. Full-line ``//`` comments are ignored."""
+    stack: list[str] = []
+    for i, raw in enumerate(lines):
+        s = raw.strip()
+        if not s or s.startswith("//"):
+            continue
+        if s[0] in "}]":
+            if stack:
+                stack.pop()
+            continue
+        m = re.match(r'"((?:[^"\\]|\\.)*)"\s*:\s*(.*)$', s)
+        if not m:
+            continue
+        key = m.group(1)
+        rest = m.group(2).rstrip().rstrip(",")
+        cur = tuple(stack) + (key,)
+        if rest.endswith("{") or rest.endswith("["):
+            stack.append(key)
+        elif cur == tuple(path):
+            return i
+    return -1
+
+
+def _update_settings_file(new_settings: dict) -> list:
+    """Apply changed leaves from *new_settings* onto config/settings.json in
+    place, preserving comments/formatting. Returns the list of applied paths."""
+    path = _settings_path()
+    text = path.read_text(encoding="utf-8")
+    from src.agent import _load_settings  # comment-stripping parser
+    current = _load_settings()
+    updates = _diff_leaves(current, new_settings)
+    if not updates:
+        return []
+    lines = text.splitlines(keepends=True)
+    bare = [l.rstrip("\n") for l in lines]
+    applied: list = []
+    for pathv, value in updates:
+        idx = _find_leaf_line(bare, pathv)
+        if idx < 0:
+            continue  # only existing leaves are edited
+        raw = lines[idx]
+        nl = "\n" if raw.endswith("\n") else ""
+        body = raw[:-len(nl)] if nl else raw
+        m = re.match(r'^(\s*"(?:[^"\\]|\\.)*"\s*:\s*)(.*)$', body)
+        if not m:
+            continue
+        trailing_comma = "," if m.group(2).rstrip().endswith(",") else ""
+        lines[idx] = f"{m.group(1)}{json.dumps(value, ensure_ascii=False)}{trailing_comma}{nl}"
+        applied.append(".".join(str(p) for p in pathv))
+    path.write_text("".join(lines), encoding="utf-8")
+    # Invalidate the cached settings so _cfg() / future agent rebuilds see them.
+    try:
+        import src.agent as _agentmod
+        _agentmod._SETTINGS = {}
+    except Exception:  # noqa: BLE001
+        pass
+    return applied
+
+
 # ── Flask application ─────────────────────────────────────────────────────────
 
 def _sse(obj: dict) -> str:
@@ -955,6 +1145,43 @@ def _build_app():
     @app.route("/agentY/commands", methods=["GET"])
     def commands():
         return jsonify(SLASH_COMMANDS)
+
+    # ── Available models (per vendor) for the quick-switch dropdown ─────────
+    @app.route("/agentY/models", methods=["GET"])
+    def models():
+        return jsonify(_available_models())
+
+    # ── Application settings (.env auth keys + config/settings.json) ────────
+    @app.route("/agentY/settings", methods=["GET", "POST", "OPTIONS"])
+    def settings_route():
+        if request.method == "OPTIONS":
+            return "", 204
+        if request.method == "GET":
+            from src.agent import _load_settings
+            env = {k: "" for k in _KNOWN_ENV_KEYS}
+            env.update(_read_env_file())
+            return jsonify({
+                "env": env,
+                "env_keys": list(dict.fromkeys(_KNOWN_ENV_KEYS + list(env.keys()))),
+                "settings": _load_settings(),
+                "model_groups": _available_models(),
+            })
+        # POST — persist env and/or settings.json changes.
+        body = request.get_json(silent=True) or {}
+        result: dict = {"ok": True}
+        try:
+            env_updates = body.get("env")
+            if isinstance(env_updates, dict) and env_updates:
+                _update_env_file({str(k): "" if v is None else str(v)
+                                  for k, v in env_updates.items()})
+                result["env_updated"] = sorted(env_updates.keys())
+            settings_updates = body.get("settings")
+            if isinstance(settings_updates, dict) and settings_updates:
+                result["settings_updated"] = _update_settings_file(settings_updates)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("settings save failed: %s", exc, exc_info=True)
+            return jsonify({"ok": False, "error": str(exc)}), 500
+        return jsonify(result)
 
     # ── Threads ────────────────────────────────────────────────────────────
     @app.route("/agentY/threads", methods=["GET", "POST", "OPTIONS"])
@@ -1097,6 +1324,9 @@ def _build_app():
         if not isinstance(canvas_prompt, dict):
             canvas_prompt = None
         canvas_hooks = [h for h in (body.get("canvas_hooks") or []) if isinstance(h, dict)]
+        # Arbitrary selected nodes (any type) with their widget values, so the
+        # agent can read/alter their parameters and write the change back live.
+        canvas_selection = [n for n in (body.get("canvas_selection") or []) if isinstance(n, dict)]
         thread_id = body.get("thread_id")
         if not thread_id or cs.get_thread(thread_id) is None:
             thread_id = cs.create_thread(thread_id=thread_id)
@@ -1146,7 +1376,8 @@ def _build_app():
         rid = uuid.uuid4().hex
         threading.Thread(target=_run_pipeline_stream,
                          args=(thread_id, message, image_paths, q, rid),
-                         kwargs={"canvas_prompt": canvas_prompt, "canvas_hooks": canvas_hooks},
+                         kwargs={"canvas_prompt": canvas_prompt, "canvas_hooks": canvas_hooks,
+                                 "canvas_selection": canvas_selection},
                          daemon=True).start()
 
         def gen():

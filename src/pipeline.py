@@ -34,6 +34,7 @@ from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
 from src.utils.comfyui_progress import stream_comfyui_job as _stream_comfyui_job
 from src.utils.progress_signal import drain as _drain_progress
 from src.utils.tool_activity import drain as _drain_tools, clear as _clear_tools
+from src.utils.canvas_patch import drain as _drain_canvas_patch, clear as _clear_canvas_patch
 from src.utils.costs import compute_cost_from_usage
 from src.utils.models import AgentSession, ChatSummary, GeneratedImage, MessageIntent, TriageResult
 from src.utils.triage import detect_user_intent as _triage, route as _route
@@ -419,6 +420,10 @@ class Pipeline:
         # user's on-canvas graph + the hook directives attached to it.
         self._canvas_base_prompt: dict | None = None
         self._canvas_hooks: list = []
+        # Snapshot of the nodes the user has selected on the canvas this turn
+        # (id/type/title/widgets), so the orchestrator can read — and, via
+        # set_canvas_node_params, write back — arbitrary node parameters.
+        self._canvas_selection: list = []
         self._delegation_tools: list = self._build_delegation_tools()
         if orchestrator_agent is not None:
             self.set_orchestrator(orchestrator_agent)
@@ -917,6 +922,54 @@ class Pipeline:
                 return json.dumps({"error": str(exc)})
 
         @_tool
+        async def set_canvas_node_params(node_id: str, params: dict) -> str:
+            """Write parameter values back onto a node selected on the ComfyUI canvas.
+
+            Use when the user asks you to change a value on a node they have
+            selected — e.g. "rewrite this prompt", "set steps to 30", "bump the
+            CFG". The nodes the user selected are listed in the ``[CANVAS
+            SELECTION]`` block with their current widget values; read the value
+            there, then call this to apply your change. The edit lands on the live
+            graph instantly (no browser refresh, no re-queue). It does NOT run the
+            graph — the user queues it themselves when ready.
+
+            Args:
+                node_id: The id of a node from the ``[CANVAS SELECTION]`` block.
+                params: Mapping of widget name -> new value, e.g.
+                    ``{"text": "a rainy neon street"}`` or ``{"steps": 30, "cfg": 6.5}``.
+                    Only include the widgets you are changing.
+            """
+            sel = getattr(self, "_canvas_selection", []) or []
+            node = next((n for n in sel if str(n.get("id")) == str(node_id)), None)
+            if node is None:
+                ids = ", ".join(str(n.get("id")) for n in sel) or "(none selected)"
+                return json.dumps({
+                    "error": f"node '{node_id}' is not in the current canvas selection. "
+                             f"Selected node ids: {ids}."
+                })
+            if not isinstance(params, dict) or not params:
+                return json.dumps({"error": "params must be a non-empty mapping of widget -> value."})
+            widgets = node.get("widgets", {}) or {}
+            unknown = [k for k in params if k not in widgets]
+            from src.utils.canvas_patch import push as _push_patch
+            _push_patch({
+                "node_id": str(node_id),
+                "params": params,
+                "node_title": node.get("title") or node.get("type") or "",
+            })
+            result = {
+                "status": "applied",
+                "node_id": str(node_id),
+                "node": node.get("title") or node.get("type"),
+                "changed": params,
+            }
+            if unknown:
+                # Not fatal — the frontend adds the widget if it can — but flag it.
+                result["warning"] = (f"widget(s) {unknown} were not in the node's known "
+                                     "widgets; applied anyway if the node accepts them.")
+            return json.dumps(result)
+
+        @_tool
         async def classify_intent(message: str) -> str:
             """Classify the user's message intent (advisory — you still decide).
 
@@ -942,7 +995,8 @@ class Pipeline:
                 return json.dumps({"error": str(exc)})
 
         return [run_research, run_info, run_story, run_dop, run_web_search,
-                run_planner, classify_intent, apply_canvas_hooks, add_canvas_workflow]
+                run_planner, classify_intent, apply_canvas_hooks, add_canvas_workflow,
+                set_canvas_node_params]
 
     def _ensure_orch_clean_history(self) -> None:
         """Sanitize the orchestrator's message list (drop orphaned tool blocks)."""
@@ -1045,6 +1099,42 @@ class Pipeline:
             )
         return lines
 
+    def _describe_canvas_selection(self) -> str:
+        """Render the selected canvas nodes + their params as a context block.
+
+        The orchestrator reads a node's current values here ("read this prompt")
+        and edits them by calling ``set_canvas_node_params(node_id, params)``.
+        Returns "" when nothing informative is selected (loader-only selections
+        are already handled as inputs, so they're skipped to avoid noise).
+        """
+        sel = getattr(self, "_canvas_selection", []) or []
+        if not sel:
+            return ""
+        lines: list[str] = []
+        for n in sel:
+            widgets = n.get("widgets") or {}
+            if not isinstance(widgets, dict) or not widgets:
+                continue
+            nid = n.get("id")
+            ntype = n.get("type") or "?"
+            title = n.get("title") or ntype
+            head = f"- node #{nid} [{ntype}]" + (f' "{title}"' if title and title != ntype else "")
+            lines.append(head)
+            for wname, wval in widgets.items():
+                sval = str(wval)
+                if len(sval) > 400:
+                    sval = sval[:400] + "…"
+                lines.append(f"    • {wname} = {sval!r}")
+        if not lines:
+            return ""
+        return (
+            "[CANVAS SELECTION — nodes the user has selected on the ComfyUI graph, "
+            "with their current parameter values. To change a value, call "
+            "set_canvas_node_params(node_id, {widget: new_value}); the edit lands on "
+            "the live canvas. Do not run the graph unless asked.]\n"
+            + "\n".join(lines)
+        )
+
     def _build_orchestrator_input(self, user_input, user_text: str):
         """Assemble the orchestrator's input: hard constraints + gallery + message.
 
@@ -1073,6 +1163,13 @@ class Pipeline:
             if hooks_block:
                 pin = hooks_block + "\n" + pin
 
+        # Canvas selection: the nodes the user has selected on the graph, with
+        # their current parameter values. Lets the orchestrator read a node ("read
+        # this prompt") and write it back via set_canvas_node_params.
+        sel_block = self._describe_canvas_selection()
+        if sel_block:
+            pin = pin + sel_block + "\n\n"
+
         if isinstance(user_input, list):
             gallery = self._format_image_gallery()
             blocks = list(user_input)
@@ -1083,7 +1180,8 @@ class Pipeline:
         return pin + self._prepend_gallery(self._annotate_attachments(user_input, user_text))
 
     async def _astream_orchestrator(self, user_input, *, qa_reply_queue: asyncio.Queue | None = None,
-                                    canvas_prompt: dict | None = None, canvas_hooks: list | None = None):
+                                    canvas_prompt: dict | None = None, canvas_hooks: list | None = None,
+                                    canvas_selection: list | None = None):
         """Stream the orchestrator for one turn, then run any signalled workflow.
 
         This replaces the triage → route → handler block: the orchestrator owns
@@ -1110,6 +1208,9 @@ class Pipeline:
         # apply_canvas_hooks; describe the hooks in the orchestrator input.
         self._canvas_base_prompt = None
         self._canvas_hooks = [h for h in (canvas_hooks or []) if isinstance(h, dict)]
+        # Arbitrary selected nodes (id/type/title/widgets) the orchestrator can
+        # read and write back via set_canvas_node_params.
+        self._canvas_selection = [n for n in (canvas_selection or []) if isinstance(n, dict)]
         if isinstance(canvas_prompt, dict) and canvas_prompt:
             try:
                 from src.utils.canvas_hooks import splice_hook_nodes
@@ -1126,8 +1227,9 @@ class Pipeline:
         orch_input = self._build_orchestrator_input(user_input, user_text)
         current_input: Any = orch_input
         _snap = self._usage_snapshot(self._orchestrator_agent)
-        # Drop any tool-activity left over from a previous turn.
+        # Drop any tool-activity / canvas-patch left over from a previous turn.
         _clear_tools()
+        _clear_canvas_patch()
 
         while True:
             interrupt_result = None
@@ -1146,9 +1248,14 @@ class Pipeline:
                 # Surface the agent's tool calls + results inline in the chat.
                 for _ta in _drain_tools():
                     yield {"tool_activity": _ta}
-            # Flush any tool activity emitted after the last streamed event.
+                # Push any node edits back to the live canvas.
+                for _cp in _drain_canvas_patch():
+                    yield {"canvas_patch": _cp}
+            # Flush any tool activity / canvas edits emitted after the last event.
             for _ta in _drain_tools():
                 yield {"tool_activity": _ta}
+            for _cp in _drain_canvas_patch():
+                yield {"canvas_patch": _cp}
             yield {"_orchestrator_done": True}
 
             if interrupt_result is None:
@@ -1175,6 +1282,13 @@ class Pipeline:
                             _qa_fail_event = line
                             break
                         yield {"data": f"\n{line}"}
+                        # Surface any tool calls the executor's agents make (QA,
+                        # error-check) so they aren't stranded in the buffer.
+                        for _ta in _drain_tools():
+                            yield {"tool_activity": _ta}
+                    # Flush executor-phase tool activity after the batch finishes.
+                    for _ta in _drain_tools():
+                        yield {"tool_activity": _ta}
 
                 if _qa_fail_event:
                     if qa_reply_queue is not None:
@@ -1233,7 +1347,8 @@ class Pipeline:
             ]
 
     async def stream_async(self, user_input, *, qa_reply_queue: asyncio.Queue | None = None,
-                           canvas_prompt: dict | None = None, canvas_hooks: list | None = None):  # noqa: ANN201
+                           canvas_prompt: dict | None = None, canvas_hooks: list | None = None,
+                           canvas_selection: list | None = None):  # noqa: ANN201
         """Async generator compatible with Chainlit's streaming loop.
 
         Runs the Researcher synchronously (it's a single-turn spec dump),
@@ -1263,6 +1378,7 @@ class Pipeline:
             async for event in self._astream_orchestrator(
                 user_input, qa_reply_queue=qa_reply_queue,
                 canvas_prompt=canvas_prompt, canvas_hooks=canvas_hooks,
+                canvas_selection=canvas_selection,
             ):
                 yield event
             _trace("pipeline.stream_async: orchestrator done")

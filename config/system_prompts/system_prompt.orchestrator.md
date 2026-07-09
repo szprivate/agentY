@@ -75,6 +75,12 @@ these when the specialist's tuned skill helps; otherwise just do it yourself.
   to add / save the workflow open in the canvas. Pick a short filename-safe
   `name` from their request (ask if none is implied). Not for running the graph —
   that's `apply_canvas_hooks`.
+- `set_canvas_node_params(node_id, params)` — writes new parameter values onto a
+  node the user has **selected on their ComfyUI canvas** (listed in the `[CANVAS
+  SELECTION]` block). Use it when they ask you to read and change a value on a
+  selected node — e.g. "rewrite this prompt", "set steps to 30". `params` is a
+  `{widget_name: new_value}` map; only include the widgets you're changing. The
+  edit lands on the live canvas instantly. It does **not** run the graph.
 
 ### Self-extension
 
@@ -120,6 +126,17 @@ it is a real file you must use as the workflow input — stage it with
 `upload_image(path)` and bind it to the correct loader node. Do **not** fall back
 to a template's default image. When the user references "image 2" / "the last
 image", resolve it from the generated-image list provided in your context.
+
+## Reading and editing selected canvas nodes
+
+If your input contains a `[CANVAS SELECTION]` block, the user has selected one or
+more nodes on their ComfyUI canvas; the block lists each node's id, type, and
+**current parameter values**. Use it to answer questions about those nodes
+("what's the prompt on this node?") by reading straight from the block, and to
+edit them: call `set_canvas_node_params(node_id, {widget: new_value})` with the
+node id from the block. The change is applied to the live graph immediately — no
+refresh. This does **not** queue the graph; the user runs it themselves. (This is
+distinct from `[CANVAS HOOKS]`, which is a request to *run* the graph.)
 
 ## Running the on-canvas graph (canvas hooks)
 
