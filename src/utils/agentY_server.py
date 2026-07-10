@@ -1443,6 +1443,31 @@ def _build_app():
             logger.error("token_usage failed: %s", exc, exc_info=True)
             return jsonify({"ok": False, "error": str(exc)}), 500
 
+    # ── Purge the token-usage log (irreversible) ────────────────────────────
+    @app.route("/agentY/token_usage/clear", methods=["POST", "OPTIONS"])
+    def token_usage_clear():
+        if request.method == "OPTIONS":
+            return "", 204
+        try:
+            from src.agent import _load_settings
+            rel = (_load_settings() or {}).get("tokens_usage_log", "./.logs/tokens_usage.log")
+            path = _project_root() / rel
+            cleared = 0
+            if path.exists():
+                # Count entries for feedback, then truncate in place. The token
+                # hook opens the log per-write in append mode (no long-held
+                # handle), so truncating here can't race with a live write.
+                try:
+                    with path.open("r", encoding="utf-8", errors="replace") as fh:
+                        cleared = sum(1 for _ in fh)
+                except Exception:  # noqa: BLE001
+                    cleared = 0
+                path.open("w", encoding="utf-8").close()
+            return jsonify({"ok": True, "cleared_lines": cleared})
+        except Exception as exc:  # noqa: BLE001
+            logger.error("token_usage clear failed: %s", exc, exc_info=True)
+            return jsonify({"ok": False, "error": str(exc)}), 500
+
     # ── Application settings (.env auth keys + config/settings.json) ────────
     @app.route("/agentY/settings", methods=["GET", "POST", "OPTIONS"])
     def settings_route():
