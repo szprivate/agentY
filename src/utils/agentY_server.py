@@ -1263,8 +1263,17 @@ def _build_app():
         ``direct_passthrough`` stops Werkzeug from re-buffering the body, and the
         no-cache / no-transform / X-Accel-Buffering headers stop any intermediary
         (or the browser) from coalescing frames — so events reach the panel as
-        soon as they're yielded rather than in a batch."""
-        resp = Response(stream_with_context(generator), mimetype="text/event-stream")
+        soon as they're yielded rather than in a batch.
+
+        Because ``direct_passthrough`` bypasses Werkzeug's usual str→bytes
+        encoding, the WSGI server asserts every chunk is ``bytes``. Our
+        generators yield ``str`` (``_sse`` frames, keep-alive comments), so
+        encode each chunk to UTF-8 here — the single boundary every SSE stream
+        passes through."""
+        def _encoded():
+            for chunk in generator:
+                yield chunk.encode("utf-8") if isinstance(chunk, str) else chunk
+        resp = Response(stream_with_context(_encoded()), mimetype="text/event-stream")
         resp.headers["Cache-Control"] = "no-cache, no-transform"
         resp.headers["X-Accel-Buffering"] = "no"
         resp.headers["Connection"] = "keep-alive"
