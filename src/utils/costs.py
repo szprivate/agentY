@@ -5,10 +5,12 @@ from typing import Dict, Optional, Tuple
 # ---------------------------------------------------------------------------
 # Utilities to compute token costs for runs.
 #
-# Pricing data sourced from official pricing pages (verified April 2026):
+# Pricing data sourced from official pricing pages (verified April 2026;
+# Qwen/DashScope added July 2026):
 #   Anthropic : https://platform.claude.com/docs/en/about-claude/pricing
 #   OpenAI    : https://developers.openai.com/api/docs/pricing
 #   Google    : https://ai.google.dev/gemini-api/docs/pricing
+#   Alibaba   : https://www.alibabacloud.com/help/en/model-studio/model-pricing
 #
 # Rules:
 #   - Ollama models are free (cost per token = 0).
@@ -106,11 +108,48 @@ GEMINI_PRICES: Dict[str, Tuple[float, float]] = {
     "gemini-1.5-flash-8b":            _mtok(0.03750, 0.15),
 }
 
+# ---------------------------------------------------------------------------
+# Alibaba / Qwen (DashScope · Model Studio, OpenAI-compatible API)
+# Source: https://www.alibabacloud.com/help/en/model-studio/model-pricing (Jul 2026)
+#
+# Prices are the **International** (Singapore) endpoint — the app's default
+# base_url is dashscope-intl.aliyuncs.com. Values are the first input tier
+# (the ≤256K/≤32K band; the app's turns sit far below it) and the *non-thinking*
+# output price (thinking mode is off by default; enabling it raises the output
+# rate, e.g. qwen-plus $1.20→$4.00 — override via COST_*_PROVIDER_DASHSCOPE if
+# you turn it on or switch to the mainland endpoint, which is ~60-70% cheaper).
+# ---------------------------------------------------------------------------
+QWEN_PRICES: Dict[str, Tuple[float, float]] = {
+    # Flash — cost-optimized; the agentY pipeline's default across every stage
+    "qwen3.6-flash":  _mtok(0.25, 1.50),
+    "qwen3.5-flash":  _mtok(0.10, 0.40),
+    "qwen-flash":     _mtok(0.05, 0.40),
+    # Plus — balanced
+    "qwen3.7-plus":   _mtok(0.40, 1.60),
+    "qwen3.6-plus":   _mtok(0.50, 3.00),
+    "qwen3.5-plus":   _mtok(0.40, 2.40),
+    "qwen-plus":      _mtok(0.40, 1.20),
+    # Max — flagship
+    "qwen3.7-max":    _mtok(2.50, 7.50),
+    "qwen3-max":      _mtok(1.20, 6.00),
+    "qwen-max":       _mtok(1.60, 6.40),
+    # Turbo — legacy budget tier
+    "qwen-turbo":     _mtok(0.05, 0.20),
+    # Vision-language
+    "qwen-vl-max":    _mtok(0.80, 3.20),
+    "qwen3-vl-plus":  _mtok(0.20, 1.60),
+    "qwen-vl-plus":   _mtok(0.21, 0.63),
+}
+
+# DashScope / Model Studio provider aliases (mirror of llm_functions._DASHSCOPE_PROVIDERS)
+_DASHSCOPE_PROVIDERS = {"dashscope", "modelstudio", "qwen", "alibaba"}
+
 # Unified lookup table (all keys lower-cased)
 _ALL_PRICES: Dict[str, Tuple[float, float]] = {
     **{k.lower(): v for k, v in ANTHROPIC_PRICES.items()},
     **{k.lower(): v for k, v in OPENAI_PRICES.items()},
     **{k.lower(): v for k, v in GEMINI_PRICES.items()},
+    **{k.lower(): v for k, v in QWEN_PRICES.items()},
 }
 
 
@@ -206,6 +245,8 @@ def get_model_prices_for(obj) -> Tuple[float, float]:
         return _mtok(1.25, 10.00)   # Gemini 2.5 Pro default
     if "gpt" in model_id.lower() or provider in ("openai",):
         return _mtok(2.50, 15.00)   # GPT-5.4 default
+    if "qwen" in model_id.lower() or provider.lower() in _DASHSCOPE_PROVIDERS:
+        return _mtok(0.40, 1.20)    # qwen-plus-class default (Model Studio Intl)
 
     # Unknown hosted model - conservative estimate
     return _mtok(3.00, 15.00)
