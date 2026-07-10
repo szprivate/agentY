@@ -107,8 +107,8 @@ Write-Host "  agentY is ready. Next steps:" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  1. Fill in your API keys in .env (HF_TOKEN, ANTHROPIC_API_KEY, COMFYUI_API_KEY)." -ForegroundColor Yellow
 Write-Host ""
-Write-Host "  2. Install the ComfyUI chat UI (once):" -ForegroundColor Yellow
-Write-Host "       copy comfyui_extension\agentY-comfyuiConnect  ->  <ComfyUI>\custom_nodes\" -ForegroundColor White
+Write-Host "  2. Install the ComfyUI chat UI (once) - separate repo:" -ForegroundColor Yellow
+Write-Host "       git clone https://github.com/szprivate/agentY-comfyuiConnect  <ComfyUI>\custom_nodes\agentY-comfyuiConnect" -ForegroundColor White
 Write-Host "     then restart ComfyUI." -ForegroundColor White
 Write-Host ""
 Write-Host "  3. Start the agent chat host:" -ForegroundColor Yellow

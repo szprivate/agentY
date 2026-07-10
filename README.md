@@ -30,7 +30,7 @@ An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanony
 
 ```
 ComfyUI  (your browser)
-  └─ agentY sidebar tab  ── comfyui_extension/agentY-comfyuiConnect
+  └─ agentY sidebar tab  ── agentY-comfyuiConnect  (separate repo, in <ComfyUI>/custom_nodes/)
         │  HTTP + SSE (default http://127.0.0.1:5000)
         ▼
   agentY chat host  ── src/agenty_ui_server.py  →  src/utils/agentY_server.py
@@ -97,10 +97,12 @@ DASHSCOPE_API_KEY=...           # Alibaba Model Studio (DashScope) — for Qwen 
 
 ### 4. Install the ComfyUI chat UI (once)
 
-Copy the companion custom node into ComfyUI and restart it once:
+The chat UI is a **separate custom-node repo**,
+[`agentY-comfyuiConnect`](https://github.com/szprivate/agentY-comfyuiConnect).
+Clone it into ComfyUI's `custom_nodes/` and restart ComfyUI once:
 
 ```powershell
-copy -r comfyui_extension\agentY-comfyuiConnect  <ComfyUI>\custom_nodes\
+git clone https://github.com/szprivate/agentY-comfyuiConnect  <ComfyUI>\custom_nodes\agentY-comfyuiConnect
 ```
 
 After the restart, ComfyUI's left sidebar shows an **agentY** tab.

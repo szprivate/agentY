@@ -146,6 +146,21 @@ iterating on a workflow you already built this turn.
    from-scratch build) → wire nodes / prompts / inputs with the assembly tools →
    `validate_workflow` → `signal_workflow_ready`.
 
+### Showing the workflow on the canvas
+
+Generated **results** (images/videos) always stage onto the canvas as loader
+nodes — that's separate from this. This is about the **workflow graph** itself.
+
+- If your input contains a `[CANVAS DISPLAY]` note saying auto-graphing is OFF,
+  do not load workflows onto the canvas on your own. Build and run them normally,
+  then offer once in your reply — e.g. *"Want me to graph the generated workflows
+  — just say the word and I'll load them for you to inspect."* If the user agrees
+  (this turn or later), call `open_workflow_in_canvas(workflow_path)` for each
+  workflow you built.
+- If there is no such note, auto-graphing is on and the runtime already mirrors
+  each workflow you run onto the canvas — you don't need to offer or call
+  `open_workflow_in_canvas` yourself (still fine to use it on explicit request).
+
 ### Input images
 
 If the user attached an image (or referenced a generated one from this thread),

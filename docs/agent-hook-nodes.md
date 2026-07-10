@@ -97,15 +97,15 @@ canvas (AgentYHook nodes)
 ## Files
 
 **New**
-- `comfyui_extension/agentY-comfyuiConnect/web/agent_hook.js` — node coloring.
+- `agentY-comfyuiConnect/ (separate repo) web/agent_hook.js` — node coloring.
 - `src/utils/canvas_hooks.py` — `splice_hook_nodes`, `build_batch`,
   `enumerate_folder`, `describe_hooks`.
 
 **Modified**
-- `comfyui_extension/agentY-comfyuiConnect/__init__.py` — the `AgentYHook` node
+- `agentY-comfyuiConnect/ (separate repo) __init__.py` — the `AgentYHook` node
   (wildcard `anchor` input, `directive`/`purpose`/`mode`/`ignore` widgets, identity
   passthrough) + `NODE_CLASS_MAPPINGS`.
-- `comfyui_extension/agentY-comfyuiConnect/web/agent_chat.js` — hook collection +
+- `agentY-comfyuiConnect/ (separate repo) web/agent_chat.js` — hook collection +
   graph capture; `send()` ships `canvas_hooks` + `canvas_prompt`.
 - `src/pipeline.py` — `apply_canvas_hooks` tool (in `_build_delegation_tools`),
   `canvas_prompt`/`canvas_hooks` kwargs threaded through

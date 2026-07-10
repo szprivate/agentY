@@ -53,6 +53,20 @@ def _load_config() -> dict:
     return {}
 
 
+def _autoload_workflows_into_canvas() -> bool:
+    """Whether to mirror each executed workflow onto the ComfyUI canvas.
+
+    Priority: env ``AGENTY_CANVAS_AUTOLOAD`` (1/0) overrides; otherwise the
+    ``autoload_workflows_into_canvas`` setting in settings.json (default False).
+    Off by default — workflows still build and run, but the graph is only loaded
+    onto the canvas when the user asks (the agent offers to).
+    """
+    env = os.environ.get("AGENTY_CANVAS_AUTOLOAD")
+    if env is not None:
+        return env.strip().lower() not in ("0", "false", "no", "off", "")
+    return bool(_load_config().get("autoload_workflows_into_canvas", False))
+
+
 def _output_dir() -> Path:
     """Return the fallback directory where ComfyUI output files are saved."""
     cfg = _load_config()
@@ -236,11 +250,12 @@ def _submit_workflow(workflow_path: str, client_id: str = "") -> str:
     if client.api_key:
         payload["extra_data"] = {"api_key_comfy_org": client.api_key}
 
-    # Mirror the exact workflow onto the ComfyUI canvas so the user always sees
-    # what actually ran. Best-effort and non-fatal; disable with
-    # AGENTY_CANVAS_AUTOLOAD=0. The open_workflow_in_canvas tool also stays
-    # available for on-demand ("show me the workflow") calls by the agent.
-    if os.environ.get("AGENTY_CANVAS_AUTOLOAD", "1") != "0":
+    # Mirror the exact workflow onto the ComfyUI canvas so the user sees what
+    # actually ran. Off by default (autoload_workflows_into_canvas in
+    # settings.json / AGENTY_CANVAS_AUTOLOAD env); best-effort and non-fatal. The
+    # open_workflow_in_canvas tool stays available for on-demand ("show me the
+    # workflow") calls by the agent when the user asks.
+    if _autoload_workflows_into_canvas():
         try:
             from agenty_core.tools.comfyui import open_workflow_in_canvas as _canvas
             _canvas(workflow_path, name=p.stem)

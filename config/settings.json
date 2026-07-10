@@ -1,5 +1,10 @@
 {
   "comfyui_url": "http://127.0.0.1:8188",
+  // Address the ComfyUI sidebar connects to (the agentY chat host / agent
+  // server). One URL: host + port combined. Change the port here to move the
+  // backend; it applies on the next launch (run_agent.ps1 /
+  // python -m src.agenty_ui_server).
+  "agent_server_url": "http://127.0.0.1:5000",
   "system_prompts": {
     "orchestrator": "system_prompt.orchestrator.md",
     "query_templates": "system_prompt.query_templates.md",
@@ -19,8 +24,16 @@
   "comfyui_custom_templates_dir": "./comfyui_workflow_templates_custom/templates/",
   "output_dir": "./output_images/",
   "output_workflows_dir": "./output_workflows/",
+  // Fallback only — the live value is read from ComfyUI's --user-directory flag
+  // (/system_stats) and shown in the settings UI. This is used when ComfyUI is
+  // unreachable.
   "comfyui_user_dir": "D:\\ai\\ComfyUI\\user\\default",
   "conversation_db": "./memory/conversations.sqlite",
+  // Auto-open every workflow the agent runs onto the ComfyUI canvas so you can
+  // inspect it. Off by default: workflows still build and run, but the graph is
+  // not loaded unless you ask (the agent offers to). Env override:
+  // AGENTY_CANVAS_AUTOLOAD (1/0).
+  "autoload_workflows_into_canvas": false,
   "message_history_log": "./.logs/message_history.log",
   "tokens_usage_log": "./.logs/tokens_usage.log",
 
@@ -70,7 +83,11 @@
 
     "anthropic": {
       "model": "claude-haiku-4-5",
-      "max_tokens": 16384
+      "max_tokens": 16384,
+      // Extended thinking (reasoning). Off by default; turn on to let Claude
+      // reason before answering. Env override: ANTHROPIC_THINK (1/0). The
+      // thinking budget is min(4096, max_tokens-1024) tokens.
+      "think": false
     },
 
     // Alibaba Model Studio (Dashscope) — Qwen models via the OpenAI-compatible API.
@@ -80,7 +97,12 @@
     "dashscope": {
       "base_url": "https://ws-buzgri7bv429rf4a.eu-central-1.maas.aliyuncs.com/compatible-mode/v1",
       "model": "qwen-plus",
-      "max_tokens": 8192
+      "max_tokens": 8192,
+      // Qwen "thinking" (reasoning) mode. Off by default (reasoning_content breaks
+      // the multi-turn tool loop). Env override: DASHSCOPE_ENABLE_THINKING (1/0).
+      // NOTE: token/context caching is automatic (implicit) for Qwen via the
+      // OpenAI-compatible API — no flag needed; cache hits show in the token log.
+      "enable_thinking": false
     },
 
     "history_window": 12

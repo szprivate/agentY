@@ -1,7 +1,7 @@
 # run_agent.ps1 - Launch the agentY headless chat host (ComfyUI sidebar backend)
 #
 # The UI now lives inside ComfyUI (the "agentY" tab in the left sidebar, provided
-# by comfyui_extension/agentY-comfyuiConnect). This script starts the backend the
+# by the separate agentY-comfyuiConnect repo). This script starts the backend the
 # sidebar talks to over HTTP/SSE on http://127.0.0.1:<Port>. No Chainlit, Docker,
 # Postgres, or MinIO.
 #
@@ -42,8 +42,8 @@ if ($Help) {
     Write-Host "  -Debug                           Enable hang/stall tracing to .logs/debug.log."
     Write-Host "  -Help                            Show this help message and exit."
     Write-Host ""
-    Write-Host "The chat UI is the agentY tab in ComfyUI's left sidebar. Install once:"
-    Write-Host "  copy comfyui_extension\agentY-comfyuiConnect into <ComfyUI>\custom_nodes\ and restart ComfyUI."
+    Write-Host "The chat UI is the agentY tab in ComfyUI's left sidebar (separate repo). Install once:"
+    Write-Host "  git clone https://github.com/szprivate/agentY-comfyuiConnect into <ComfyUI>\custom_nodes\ and restart ComfyUI."
     Write-Host ""
     exit 0
 }

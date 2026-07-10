@@ -1224,6 +1224,24 @@ class Pipeline:
         if sel_block:
             pin = pin + sel_block + "\n\n"
 
+        # When canvas auto-graphing is off, the user opted out of having every
+        # generated workflow loaded onto their canvas — so tell the orchestrator
+        # to offer it instead of doing it silently.
+        try:
+            from src.executor import _autoload_workflows_into_canvas as _autoload
+            if not _autoload():
+                pin = pin + (
+                    "[CANVAS DISPLAY] Auto-graphing of generated workflows onto the "
+                    "ComfyUI canvas is OFF. Build and run workflows as usual, but do NOT "
+                    "load them onto the canvas automatically. After you produce a result, "
+                    "offer once, in your reply: \"Want me to graph the generated "
+                    "workflows — just say the word and I'll load them for you to "
+                    "inspect.\" If the user agrees (now or in a later turn), call "
+                    "open_workflow_in_canvas(workflow_path) for each workflow you built.\n\n"
+                )
+        except Exception:  # noqa: BLE001
+            pass
+
         if isinstance(user_input, list):
             gallery = self._format_image_gallery()
             blocks = list(user_input)

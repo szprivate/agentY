@@ -672,6 +672,27 @@ def _make_agent(
     else:
         model_id = anthropic_model or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
         tokens = max_tokens or int(_cfg("ANTHROPIC_MAX_TOKENS", "anthropic", "max_tokens", default=4096))
+        _an_params: dict = {
+            "system": [
+                {
+                    "type": "text",
+                    "text": system_prompt,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+        }
+        # Extended thinking (reasoning). Off by default — parallels the Ollama
+        # `think` and DashScope `enable_thinking` toggles so the switch is
+        # available for every provider. When on, Claude reasons before answering;
+        # the budget must be < max_tokens, so bump max_tokens if it's too small.
+        _an_think_raw = _cfg("ANTHROPIC_THINK", "anthropic", "think", default=False)
+        _an_think = _an_think_raw if isinstance(_an_think_raw, bool) else \
+            str(_an_think_raw).strip().lower() in ("1", "true", "yes", "on")
+        if _an_think:
+            budget = max(1024, min(4096, tokens - 1024))
+            if tokens <= budget:
+                tokens = budget + 1024
+            _an_params["thinking"] = {"type": "enabled", "budget_tokens": budget}
         model = AnthropicModel(
             model_id=model_id,
             max_tokens=tokens,
@@ -685,17 +706,9 @@ def _make_agent(
             # and log noise on every tool call. Local estimation has no effect on
             # cost accounting (which reads real accumulated_usage from responses).
             use_native_token_count=False,
-            params={
-                "system": [
-                    {
-                        "type": "text",
-                        "text": system_prompt,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ]
-            },
+            params=_an_params,
         )
-        print(f"[agentY:{role}] Using Anthropic — {model_id}")
+        print(f"[agentY:{role}] Using Anthropic — {model_id} (thinking={_an_think})")
 
     window_size = int(_cfg("AGENT_HISTORY_WINDOW", "history_window", default=40))
     agent_kwargs: dict = {

@@ -4,7 +4,7 @@ agentY – headless chat host launcher.
 
 Replaces the Chainlit GUI entry point. It builds the pipeline once and serves the
 bridge + chat host (:mod:`src.utils.agentY_server`) that the ComfyUI-native chat
-sidebar (``comfyui_extension/agentY-comfyuiConnect``) talks to over HTTP/SSE. There
+sidebar (the separate ``agentY-comfyuiConnect`` repo) talks to over HTTP/SSE. There
 is no web GUI here — the UI lives inside ComfyUI.
 
 Launch:
@@ -71,6 +71,40 @@ def _unload_ollama_models() -> None:
         print(f"[agenty-ui] Ollama unload skipped: {exc}")
 
 
+def _agent_server_url_defaults() -> tuple[str, int]:
+    """Default (host, port) for the chat host, read from config/settings.json.
+
+    The single ``agent_server_url`` setting (e.g. ``http://127.0.0.1:5000``) is
+    the source of truth; host + port are derived from it. Env vars
+    (AGENTY_UI_HOST / AGENTY_UI_PORT) still override, and a CLI flag overrides
+    everything. Falls back to 127.0.0.1:5000 if the file/URL is absent or
+    unparseable.
+    """
+    host, port = "127.0.0.1", 5000
+    try:
+        import json
+        from urllib.parse import urlsplit
+
+        cfg_path = _project_root / "config" / "settings.json"
+        if cfg_path.exists():
+            cfg = json.loads(
+                "".join(ln for ln in cfg_path.read_text(encoding="utf-8").splitlines(keepends=True)
+                        if not ln.lstrip().startswith("//"))
+            )
+            url = str(cfg.get("agent_server_url", "")).strip()
+            if url:
+                if "//" not in url:
+                    url = "//" + url  # allow a bare host:port
+                parts = urlsplit(url)
+                if parts.hostname:
+                    host = parts.hostname
+                if parts.port:
+                    port = parts.port
+    except Exception:
+        pass
+    return host, port
+
+
 def _port_in_use(host: str, port: int) -> bool:
     """True if a TCP listener is already accepting connections on host:port.
 
@@ -91,11 +125,13 @@ def _port_in_use(host: str, port: int) -> bool:
 
 
 def main() -> None:
+    # Defaults come from settings.json (agent_server_url); env vars override; a CLI flag wins.
+    _def_host, _def_port = _agent_server_url_defaults()
     parser = argparse.ArgumentParser(description="agentY headless chat host (ComfyUI sidebar backend)")
-    parser.add_argument("--host", default=os.environ.get("AGENTY_UI_HOST", "127.0.0.1"),
-                        help="Bind address (default: 127.0.0.1).")
-    parser.add_argument("--port", type=int, default=int(os.environ.get("AGENTY_UI_PORT", "5000")),
-                        help="Port (default: 5000).")
+    parser.add_argument("--host", default=os.environ.get("AGENTY_UI_HOST", _def_host),
+                        help=f"Bind address (default from settings.json agent_server_url: {_def_host}).")
+    parser.add_argument("--port", type=int, default=int(os.environ.get("AGENTY_UI_PORT", str(_def_port))),
+                        help=f"Port (default from settings.json agent_server_url: {_def_port}).")
     parser.add_argument("--no-unload", action="store_true",
                         help="Skip unloading Ollama models before startup.")
     args = parser.parse_args()
@@ -130,7 +166,7 @@ def main() -> None:
     print("  agentY chat host is running.")
     print(f"  Backend:  {url}   (health: {url}/agentY/health)")
     print("  UI:       open ComfyUI and click the agentY tab in the left sidebar.")
-    print("            (install comfyui_extension/agentY-comfyuiConnect into")
+    print("            (install the separate agentY-comfyuiConnect repo into")
     print("             <ComfyUI>/custom_nodes/ and restart ComfyUI once).")
     print("  Stop:     Ctrl+C, or type /stop in the chat.")
     print("=" * 64 + "\n")

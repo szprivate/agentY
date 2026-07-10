@@ -2,7 +2,7 @@
 agentY bridge + chat host — runs on localhost:5000.
 
 This is the backend for the **ComfyUI-native agentY chat UI** (the sidebar
-custom-node panel in ``comfyui_extension/agentY-comfyuiConnect``). It replaces the
+custom-node panel in the separate ``agentY-comfyuiConnect`` repo). It replaces the
 Chainlit GUI: the pipeline runs here, conversations persist to a local SQLite
 store (:mod:`src.utils.conversation_store`), and — crucially — generated media is
 **not** streamed back as inline images. Instead the executor's output files are
@@ -165,6 +165,24 @@ def _comfy_input_dir() -> Path | None:
     except Exception as exc:
         logger.debug("input-dir resolve via settings failed: %s", exc)
     return _COMFY_INPUT_DIR
+
+
+def _effective_comfyui_user_dir() -> str | None:
+    """The live ComfyUI --user-directory (from /system_stats argv), or None.
+
+    Used so the settings UI shows the directory ComfyUI was actually launched
+    with, rather than the static fallback in settings.json.
+    """
+    try:
+        from src.utils.comfyui_client import get_client, parse_argv_dir_flag
+        stats = get_client().get("/system_stats")
+        argv = stats.get("system", {}).get("argv", []) if isinstance(stats, dict) else []
+        d = parse_argv_dir_flag(argv, "--user-directory")
+        if d:
+            return str(Path(d).resolve())
+    except Exception as exc:
+        logger.debug("effective user-dir resolve failed: %s", exc)
+    return None
 
 
 def _stage_into_comfy_input(path: str) -> str | None:
@@ -394,6 +412,54 @@ def _parse_think_chunk(chunk: str, state: dict) -> tuple[str, str]:
     return "".join(normal), "".join(think)
 
 
+# ── Conversation auto-title (short 2-3 word summary, like Claude chat) ────────
+
+_TITLE_SYSTEM = (
+    "You write ultra-short chat titles. Given the user's first message, reply "
+    "with a 2-4 word title in Title Case that summarises the topic. No quotes, "
+    "no punctuation, no trailing period, no explanation — output ONLY the title."
+)
+
+
+def _clean_title(raw: str) -> str:
+    """Normalise an LLM title reply to a clean 2-4 word label (or '' if unusable)."""
+    if not raw:
+        return ""
+    # Strip any <think> reasoning a Qwen/thinking model may prepend.
+    t = re.sub(r"<think>.*?</think>", "", raw, flags=re.S).strip()
+    # First non-empty line only.
+    t = next((ln.strip() for ln in t.splitlines() if ln.strip()), "")
+    t = t.strip().strip('"').strip("'").strip("`*").strip()
+    t = t.rstrip(".!,;:").strip()
+    words = t.split()
+    if len(words) > 6:
+        t = " ".join(words[:6])
+    return t[:48]
+
+
+def _generate_and_set_title(thread_id: str, user_text: str) -> None:
+    """Background worker: ask the cheap ``llm_functions`` model for a short title
+    and rename the thread. Best-effort — leaves the first-message title on any
+    failure (e.g. no API key / provider unreachable)."""
+    try:
+        from src.utils.llm_functions import LLMFunctions
+        llm = LLMFunctions.from_settings()
+        messages = [
+            {"role": "system", "content": _TITLE_SYSTEM},
+            {"role": "user", "content": user_text[:2000]},
+        ]
+        loop = asyncio.new_event_loop()
+        try:
+            raw = loop.run_until_complete(llm.chat(messages))
+        finally:
+            loop.close()
+        title = _clean_title(raw)
+        if title:
+            cs.rename_thread(thread_id, title)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("auto-title failed for %s: %s", thread_id, exc)
+
+
 # ── SSE pipeline runner ───────────────────────────────────────────────────────
 
 def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
@@ -416,6 +482,22 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
     if image_paths and session is not None:
         session.last_user_input_images = image_paths
     content = _build_content(message, image_paths)
+
+    # First assistant turn of a thread → generate a short 2-3 word title in the
+    # background (like Claude chat), joined before `done` (see finally). The
+    # user message is already persisted, so 0 assistant messages ⇒ first turn.
+    title_thread = None
+    try:
+        _existing = (cs.get_thread(thread_id) or {}).get("messages", [])
+        _first_turn = not any(m.get("role") == "assistant" for m in _existing)
+    except Exception:
+        _first_turn = False
+    if _first_turn and message and message.strip():
+        title_thread = threading.Thread(
+            target=_generate_and_set_title, args=(thread_id, message.strip()),
+            name="agentY-autotitle", daemon=True,
+        )
+        title_thread.start()
 
     sent_paths: set[str] = set(getattr(session, "current_output_paths", []) or [])
     assistant_parts: list[str] = []
@@ -567,14 +649,43 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
     asyncio.set_event_loop(loop)
     qa_queue: asyncio.Queue = asyncio.Queue()
 
+    # Flush the tool-activity / canvas-edit buffers to the SSE stream. The
+    # pipeline only drains these right after each Strands event, so when the
+    # model goes quiet mid-turn (executing a tool, generating a long tool call)
+    # the panel stalls and then burst-updates seconds behind the CLI. A tiny
+    # background pump drains them on a short timer instead, keeping the panel in
+    # lock-step. The buffers drain atomically (deque under a lock), so the pump
+    # and the pipeline's own drain never double-emit an event.
+    from src.utils.tool_activity import drain as _drain_tool_activity
+    from src.utils.canvas_patch import drain as _drain_canvas_activity
+
+    def _flush_activity() -> None:
+        for _ta in _drain_tool_activity():
+            _translate({"tool_activity": _ta})
+        for _cp in _drain_canvas_activity():
+            _translate({"canvas_patch": _cp})
+
+    async def _pump() -> None:
+        while True:
+            await asyncio.sleep(0.2)
+            _flush_activity()
+
     async def _run() -> None:
-        async for event in pipeline.stream_async(
-            content, qa_reply_queue=qa_queue,
-            canvas_prompt=canvas_prompt, canvas_hooks=canvas_hooks,
-            canvas_selection=canvas_selection,
-        ):
-            if isinstance(event, dict):
-                _translate(event)
+        pump = asyncio.ensure_future(_pump())
+        try:
+            async for event in pipeline.stream_async(
+                content, qa_reply_queue=qa_queue,
+                canvas_prompt=canvas_prompt, canvas_hooks=canvas_hooks,
+                canvas_selection=canvas_selection,
+            ):
+                if isinstance(event, dict):
+                    _translate(event)
+        finally:
+            pump.cancel()
+            try:
+                await pump
+            except asyncio.CancelledError:
+                pass
 
     # Run the pipeline as a cancellable task so POST /agentY/stop can halt it.
     task = loop.create_task(_run())
@@ -597,6 +708,7 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
         with _reply_lock:
             _reply_registry.pop(req_id, None)
             _run_registry.pop(req_id, None)
+        _flush_activity()  # emit any tool/canvas activity left after the last event
         text = "".join(assistant_parts).strip()
         if text:
             try:
@@ -608,6 +720,10 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
             loop.run_until_complete(pipeline._await_pending_compression())  # type: ignore[attr-defined]
         except Exception:
             pass
+        # Let the background auto-title finish (first turn only) so the thread
+        # list shows the short summary when the panel refreshes on `done`.
+        if title_thread is not None:
+            title_thread.join(timeout=6.0)
         if stopped:
             out_q.put({"type": "system", "data": "⏹ Stopped."})
         out_q.put({"type": "done"})
@@ -984,9 +1100,13 @@ def _available_models() -> dict:
 # Auth / host keys surfaced in the settings modal even when absent from .env, so
 # the user can fill them in. Any additional keys already present in .env are
 # merged in on read.
+# Auth/connection keys surfaced in the settings UI's ".env" section. Host/port
+# (agent_server_url) and the conversation DB live in settings.json now, not here. The
+# DashScope endpoint sits right beneath its API key; it is pre-seeded from
+# settings.json (llm.dashscope.base_url) in the GET so the field is never blank.
 _KNOWN_ENV_KEYS = [
-    "HF_TOKEN", "ANTHROPIC_API_KEY", "COMFYUI_API_KEY", "DASHSCOPE_API_KEY",
-    "AGENTY_UI_HOST", "AGENTY_UI_PORT", "AGENTY_CONVERSATION_DB",
+    "HF_TOKEN", "ANTHROPIC_API_KEY", "COMFYUI_API_KEY",
+    "DASHSCOPE_API_KEY", "DASHSCOPE_BASE_URL",
 ]
 
 
@@ -1137,6 +1257,20 @@ def _build_app():
         resp.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
         return resp
 
+    def _sse_response(generator):
+        """Wrap an SSE generator in a Response with buffering defeated.
+
+        ``direct_passthrough`` stops Werkzeug from re-buffering the body, and the
+        no-cache / no-transform / X-Accel-Buffering headers stop any intermediary
+        (or the browser) from coalescing frames — so events reach the panel as
+        soon as they're yielded rather than in a batch."""
+        resp = Response(stream_with_context(generator), mimetype="text/event-stream")
+        resp.headers["Cache-Control"] = "no-cache, no-transform"
+        resp.headers["X-Accel-Buffering"] = "no"
+        resp.headers["Connection"] = "keep-alive"
+        resp.direct_passthrough = True
+        return resp
+
     # ── Health / commands ──────────────────────────────────────────────────
     @app.route("/agentY/health", methods=["GET"])
     def health():
@@ -1158,12 +1292,23 @@ def _build_app():
             return "", 204
         if request.method == "GET":
             from src.agent import _load_settings
+            settings = _load_settings()
             env = {k: "" for k in _KNOWN_ENV_KEYS}
             env.update(_read_env_file())
+            # Show the DashScope endpoint (beneath its API key) even when it's not
+            # overridden in .env — seed it from settings.json so it's never blank.
+            if not env.get("DASHSCOPE_BASE_URL"):
+                ds_url = ((settings.get("llm") or {}).get("dashscope") or {}).get("base_url", "")
+                if ds_url:
+                    env["DASHSCOPE_BASE_URL"] = ds_url
+            # Show ComfyUI's live --user-directory rather than the static fallback.
+            live_user_dir = _effective_comfyui_user_dir()
+            if live_user_dir:
+                settings["comfyui_user_dir"] = live_user_dir
             return jsonify({
                 "env": env,
                 "env_keys": list(dict.fromkeys(_KNOWN_ENV_KEYS + list(env.keys()))),
-                "settings": _load_settings(),
+                "settings": settings,
                 "model_groups": _available_models(),
             })
         # POST — persist env and/or settings.json changes.
@@ -1358,18 +1503,22 @@ def _build_app():
                         threading.Thread(target=_run_pipeline_stream,
                                          args=(thread_id, resend_text, [], q, rid), daemon=True).start()
                         while True:
-                            item = q.get()
+                            try:
+                                item = q.get(timeout=15)
+                            except queue.Empty:
+                                yield ": keep-alive\n\n"
+                                continue
                             if item is None:
                                 break
                             yield _sse(item)
-                    return Response(stream_with_context(gen_resend()), mimetype="text/event-stream")
+                    return _sse_response(gen_resend())
 
             def gen_cmd():
                 yield _sse({"type": "thread", "id": thread_id})
                 for ev in result:
                     yield _sse(ev)
                 yield _sse({"type": "done"})
-            return Response(stream_with_context(gen_cmd()), mimetype="text/event-stream")
+            return _sse_response(gen_cmd())
 
         # Normal turn → run the pipeline and stream SSE.
         q: queue.Queue = queue.Queue()
@@ -1384,11 +1533,15 @@ def _build_app():
             yield _sse({"type": "thread", "id": thread_id})
             yield _sse({"type": "request", "request_id": rid})
             while True:
-                item = q.get()
+                try:
+                    item = q.get(timeout=15)
+                except queue.Empty:
+                    yield ": keep-alive\n\n"  # keep the stream warm / defeat idle buffering
+                    continue
                 if item is None:
                     break
                 yield _sse(item)
-        return Response(stream_with_context(gen()), mimetype="text/event-stream")
+        return _sse_response(gen())
 
     # ── Legacy bridge endpoints ────────────────────────────────────────────
     @app.route("/agentY/pending_previews", methods=["GET", "OPTIONS"])
