@@ -25,14 +25,34 @@ IMG_EXTS = {"png", "jpg", "jpeg", "webp", "bmp", "gif", "tiff"}
 VID_EXTS = {"mp4", "mov", "webm", "mkv", "avi"}
 
 
+def _anchor_links(inputs: dict) -> list:
+    """Return each wired ``anchor`` link ``[node_id, slot]`` on a hook, in slot
+    order. The anchor input auto-grows, so its names are ``anchor``/``anchor0``/… ."""
+    def _idx(name: str) -> int:
+        suf = name[len("anchor"):]
+        return int(suf) if suf.isdigit() else -1  # bare "anchor" sorts first
+
+    keys = [k for k in (inputs or {})
+            if k == "anchor" or (k.startswith("anchor") and k[len("anchor"):].isdigit())]
+    out = []
+    for k in sorted(keys, key=_idx):
+        v = inputs.get(k)
+        if isinstance(v, list) and len(v) == 2:
+            out.append(v)
+    return out
+
+
 def splice_hook_nodes(prompt: dict) -> tuple[dict, list[str]]:
     """Return ``(clean_prompt, removed_ids)``.
 
     Removes every ``AgentYHook`` node from an API-format *prompt*. For an inline
     hook (its output feeds a downstream node) each downstream input is rewired to
-    the hook's own ``anchor`` source so the graph stays connected. A dangling hook
-    (nothing consumes it) is simply dropped. Works whether or not ComfyUI's
-    ``graphToPrompt`` already pruned the hook.
+    the hook's own ``anchor`` source so the graph stays connected. The anchor
+    input auto-grows (``anchor``, ``anchor0``, ``anchor1``, …), so a hook may have
+    several wired inputs; the first (lowest-slot) is used for the rewire, matching
+    the node's passthrough. A dangling hook (nothing consumes it) is simply
+    dropped. Works whether or not ComfyUI's ``graphToPrompt`` already pruned the
+    hook.
     """
     if not isinstance(prompt, dict):
         return prompt, []
@@ -43,8 +63,7 @@ def splice_hook_nodes(prompt: dict) -> tuple[dict, list[str]]:
         return clean, []
     for hid in hook_ids:
         node = clean.get(hid, {}) or {}
-        anchor = (node.get("inputs") or {}).get("anchor")
-        src = anchor if (isinstance(anchor, list) and len(anchor) == 2) else None
+        src = next(iter(_anchor_links(node.get("inputs") or {})), None)
         # Rewire any consumer of this hook's output back to the hook's source.
         for other in clean.values():
             if not isinstance(other, dict):
@@ -197,16 +216,38 @@ def _order_standin_chains(standin_hooks: list) -> list:
     return chains
 
 
-def _anchor_inputs(hook: dict, base_prompt: dict | None) -> tuple:
-    """Return ``(anchor_id, scalar_inputs_dict)`` for a hook's anchor node."""
-    aid = hook.get("anchor_node_id")
-    inputs: dict = {}
-    if base_prompt and aid is not None and str(aid) in base_prompt:
-        raw = (base_prompt[str(aid)].get("inputs") or {})
-        inputs = {k: v for k, v in raw.items() if not isinstance(v, list)}
-    elif isinstance(hook.get("anchor_widgets"), dict):
-        inputs = hook["anchor_widgets"]
-    return aid, inputs
+def _all_anchor_inputs(hook: dict, base_prompt: dict | None) -> list:
+    """Return ``[(anchor_id, anchor_type, scalar_inputs_dict), …]`` for every
+    real-node input wired to a hook.
+
+    The anchor input auto-grows, so a hook may gather several inputs (carried in
+    the ``anchors`` list). Falls back to the singular ``anchor_node_id`` field for
+    older frontends that only send one.
+    """
+    entries: list = []
+    plural = hook.get("anchors")
+    if isinstance(plural, list) and plural:
+        for a in plural:
+            if isinstance(a, dict) and a.get("node_id") is not None:
+                entries.append((str(a["node_id"]), a.get("type"), a.get("widgets")))
+    elif hook.get("anchor_node_id") is not None:
+        entries.append((str(hook["anchor_node_id"]), hook.get("anchor_type"),
+                        hook.get("anchor_widgets")))
+
+    out: list = []
+    seen: set = set()
+    for aid, atype, widgets in entries:
+        if aid in seen:
+            continue
+        seen.add(aid)
+        inputs: dict = {}
+        if base_prompt and aid in base_prompt:
+            raw = (base_prompt[aid].get("inputs") or {})
+            inputs = {k: v for k, v in raw.items() if not isinstance(v, list)}
+        elif isinstance(widgets, dict):
+            inputs = widgets
+        out.append((aid, atype or "?", inputs))
+    return out
 
 
 def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
@@ -242,19 +283,20 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             "inputs:"
         )
         for h in directive_hooks:
-            aid, inputs = _anchor_inputs(h, base_prompt)
-            atype = h.get("anchor_type") or "?"
+            anchors = _all_anchor_inputs(h, base_prompt)
             directive = str(h.get("directive", "") or "").strip()
             mode = h.get("mode", "auto")
-            params = ", ".join(f"{k}={v!r}" for k, v in inputs.items()) or "(no scalar inputs)"
-            if aid is None:
+            if not anchors:
                 lines.append(
                     f'- UNWIRED hook: "{directive}" (mode={mode}). No anchor node — ask '
                     "the user to wire it to a node's output, or apply globally only if "
                     "unambiguous."
                 )
             else:
-                lines.append(f'- Node {aid} ({atype}) inputs[{params}] ← "{directive}" (mode={mode})')
+                # One line per anchor — the directive applies to each wired node.
+                for aid, atype, inputs in anchors:
+                    params = ", ".join(f"{k}={v!r}" for k, v in inputs.items()) or "(no scalar inputs)"
+                    lines.append(f'- Node {aid} ({atype}) inputs[{params}] ← "{directive}" (mode={mode})')
 
     if standin_hooks:
         chains = _order_standin_chains(standin_hooks)
@@ -262,12 +304,16 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
         multis = [c for c in chains if len(c) > 1]
 
         def _input_desc(h: dict) -> str:
-            aid, inputs = _anchor_inputs(h, base_prompt)
-            if aid is None:
+            anchors = _all_anchor_inputs(h, base_prompt)
+            if not anchors:
                 return "no input wired — treat the prompt as text-to-media"
-            atype = h.get("anchor_type") or "?"
-            params = ", ".join(f"{k}={v!r}" for k, v in inputs.items()) or "(no scalar inputs)"
-            return f"input from node {aid} ({atype}) inputs[{params}]"
+            parts = []
+            for aid, atype, inputs in anchors:
+                params = ", ".join(f"{k}={v!r}" for k, v in inputs.items()) or "(no scalar inputs)"
+                parts.append(f"node {aid} ({atype}) inputs[{params}]")
+            if len(parts) == 1:
+                return f"input from {parts[0]}"
+            return "inputs from " + "; ".join(parts)
 
         if singles:
             lines.append(
