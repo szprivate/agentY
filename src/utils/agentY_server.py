@@ -1118,6 +1118,134 @@ def _settings_path() -> Path:
     return _project_root() / "config" / "settings.json"
 
 
+# ── Token-usage overview ──────────────────────────────────────────────────────
+# Parse the token-usage log (written by src.agent.TokenUsageHookProvider) into
+# per-model aggregates for the "Token Usage" panel. Each line looks like:
+#   2026-07-10 13:20:22 [orchestrator] tool=patch_workflow
+#     delta=+623303in/+247out/+0cache_read/+0cache_write
+#     total=…  cost=$53.16/tokens=… model=claude/claude-haiku-4-5
+# The *delta* fields (per-call increments) are what we sum — the *total* column
+# is a running accumulation and must not be summed. ``model=`` is recent; lines
+# that predate it fall back to their role (keyed ``role:<role>``).
+_RE_TOKENS_HEAD = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+\[([^\]]+)\]")
+_RE_TOKENS_DELTA = re.compile(
+    r"delta=\+?(-?\d+)in/\+?(-?\d+)out/\+?(-?\d+)cache_read/\+?(-?\d+)cache_write"
+)
+_RE_TOKENS_MODEL = re.compile(r"\bmodel=(\S+)")
+
+
+def _parse_token_usage(from_ts: float | None, to_ts: float | None) -> dict:
+    """Aggregate the token-usage log by model within [from_ts, to_ts] (epoch secs).
+
+    Returns ``all_models`` (every model key ever seen — for the filter dropdown,
+    independent of the window), ``rows`` (per-model input/output/cache/cost/calls
+    inside the window), the summed ``total``, and the log's overall time range.
+    """
+    from src.agent import _load_settings
+    from src.utils.costs import compute_cost_from_usage
+
+    class _Meta:
+        """Minimal stand-in carrying model metadata for cost lookup."""
+        __slots__ = ("_cost_meta",)
+
+        def __init__(self, provider: str, model_id: str) -> None:
+            self._cost_meta = {
+                "provider": provider,
+                "model_id": model_id,
+                "is_ollama": provider == "ollama",
+            }
+
+    rel = (_load_settings() or {}).get("tokens_usage_log", "./.logs/tokens_usage.log")
+    path = _project_root() / rel
+
+    all_models: set[str] = set()
+    agg: dict[str, dict] = {}
+    log_min: float | None = None
+    log_max: float | None = None
+
+    def _bucket(key: str) -> dict:
+        b = agg.get(key)
+        if b is None:
+            b = {"model": key, "input": 0, "output": 0,
+                 "cache_read": 0, "cache_write": 0, "cost": 0.0, "calls": 0}
+            agg[key] = b
+        return b
+
+    if path.exists():
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                head = _RE_TOKENS_HEAD.match(line)
+                if not head:
+                    continue
+                delta = _RE_TOKENS_DELTA.search(line)
+                if not delta:
+                    continue
+                try:
+                    ts = time.mktime(time.strptime(head.group(1), "%Y-%m-%d %H:%M:%S"))
+                except (ValueError, OverflowError):
+                    continue
+
+                mm = _RE_TOKENS_MODEL.search(line)
+                model = mm.group(1) if mm else ""
+                key = model or f"role:{head.group(2)}"
+
+                # Dropdown + log range span the whole file, not just the window.
+                all_models.add(key)
+                if log_min is None or ts < log_min:
+                    log_min = ts
+                if log_max is None or ts > log_max:
+                    log_max = ts
+
+                if (from_ts is not None and ts < from_ts) or (to_ts is not None and ts > to_ts):
+                    continue
+
+                # Clamp negatives: a fresh agent resets its accumulator, so the
+                # first post-reset delta is already correct and never negative.
+                d_in = max(0, int(delta.group(1)))
+                d_out = max(0, int(delta.group(2)))
+                d_cr = max(0, int(delta.group(3)))
+                d_cw = max(0, int(delta.group(4)))
+
+                b = _bucket(key)
+                b["input"] += d_in
+                b["output"] += d_out
+                b["cache_read"] += d_cr
+                b["cache_write"] += d_cw
+                b["calls"] += 1
+
+                # Recompute cost from *this delta* (the logged cost column is
+                # cumulative and cannot be summed). Only possible when the model
+                # is known; role-only historical lines contribute 0 cost.
+                if model:
+                    provider, _, model_id = model.partition("/")
+                    try:
+                        cost, _ = compute_cost_from_usage(
+                            {"inputTokens": d_in, "outputTokens": d_out,
+                             "cacheReadInputTokens": d_cr, "cacheWriteInputTokens": d_cw},
+                            _Meta(provider, model_id),
+                        )
+                        b["cost"] += cost
+                    except Exception:
+                        pass
+
+    rows = sorted(agg.values(), key=lambda r: r["input"] + r["output"], reverse=True)
+    total = {"input": 0, "output": 0, "cache_read": 0,
+             "cache_write": 0, "cost": 0.0, "calls": 0}
+    for r in rows:
+        for k in total:
+            total[k] += r[k]
+        r["cost"] = round(r["cost"], 4)
+    total["cost"] = round(total["cost"], 4)
+
+    return {
+        "ok": True,
+        "all_models": sorted(all_models),
+        "rows": rows,
+        "total": total,
+        "log_range": {"min": log_min, "max": log_max},
+    }
+
+
 def _read_env_file() -> dict:
     """Parse the .env file into {KEY: value} (ignores comments / blank lines)."""
     out: dict[str, str] = {}
@@ -1293,6 +1421,27 @@ def _build_app():
     @app.route("/agentY/models", methods=["GET"])
     def models():
         return jsonify(_available_models())
+
+    # ── Token-usage overview (input/output per model, filterable by time) ───
+    @app.route("/agentY/token_usage", methods=["GET", "OPTIONS"])
+    def token_usage():
+        if request.method == "OPTIONS":
+            return "", 204
+
+        def _num(name):
+            v = request.args.get(name)
+            if v in (None, "", "null"):
+                return None
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return None
+
+        try:
+            return jsonify(_parse_token_usage(_num("from"), _num("to")))
+        except Exception as exc:  # noqa: BLE001
+            logger.error("token_usage failed: %s", exc, exc_info=True)
+            return jsonify({"ok": False, "error": str(exc)}), 500
 
     # ── Application settings (.env auth keys + config/settings.json) ────────
     @app.route("/agentY/settings", methods=["GET", "POST", "OPTIONS"])

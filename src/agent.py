@@ -25,7 +25,7 @@ from strands.hooks.events import AfterToolCallEvent
 # Removed `handoff_to_user` tool registration — not used by agents anymore.
 
 from src.utils.comfyui_interrupt_hook import ComfyUIInterruptHook
-from src.utils.costs import compute_cost_from_usage
+from src.utils.costs import compute_cost_from_usage, _extract_meta
 
 from src.tools import (
     QUERYTEMPLATES_TOOLS,
@@ -478,11 +478,22 @@ class TokenUsageHookProvider:
                 except Exception:
                     cost_str = ""
 
+                # Record which model produced this usage so the Token Usage
+                # overview can filter by model. Older log lines predate this
+                # field; the parser falls back to the role for those.
+                model_str = ""
+                try:
+                    _prov, _mid, _ = _extract_meta(event.agent)
+                    if _prov or _mid:
+                        model_str = f"{_prov}/{_mid}"
+                except Exception:
+                    model_str = ""
+
                 log_entry = (
                     f"{ts} [{self._role}] tool={tool_display} "
                     f"delta=+{d_in}in/+{d_out}out/+{d_cr}cache_read/+{d_cw}cache_write"
                     f"  total={in_tok}in/{out_tok}out/{cache_read}cache_read/{cache_write}cache_write"
-                    f"{cost_str}\n"
+                    f"{cost_str} model={model_str}\n"
                 )
                 with self._log_path.open("a", encoding="utf-8") as f:
                     f.write(log_entry)
