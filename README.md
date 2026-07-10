@@ -26,15 +26,30 @@ An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanony
 
 ---
 
+## The four repos
+
+agentY ships as a small stack of repositories. The installer below wires them all
+up; this is what each one is:
+
+| Repo | Location | Role |
+|---|---|---|
+| **agentY** (this repo) | your working copy | The Strands chat host / pipeline (`run_agent.ps1`). |
+| **[agenty_core](https://github.com/szprivate/agenty_core)** | sibling folder next to `agentY` | Shared ComfyUI/HuggingFace/web/file tool layer + the canonical template/recipe corpus. Installed **editable** (`-e ../agenty_core`); **required**. |
+| **[agentY-comfyuiConnect](https://github.com/szprivate/agentY-comfyuiConnect)** | `<ComfyUI>/custom_nodes/` | The chat UI — the **agentY** tab in ComfyUI's left sidebar. |
+| **[agentY-mcp](https://github.com/szprivate/agentY-mcp)** | sibling folder next to `agentY` | The alternative **MCP-server / Claude-Desktop** front end (also consumes `agenty_core`). Optional. |
+
+---
+
 ## Architecture
 
 ```
 ComfyUI  (your browser)
-  └─ agentY sidebar tab  ── agentY-comfyuiConnect  (separate repo, in <ComfyUI>/custom_nodes/)
+  └─ agentY sidebar tab  ── agentY-comfyuiConnect  (in <ComfyUI>/custom_nodes/)
         │  HTTP + SSE (default http://127.0.0.1:5000)
         ▼
   agentY chat host  ── src/agenty_ui_server.py  →  src/utils/agentY_server.py
         │  runs the Strands pipeline; persists to SQLite
+        │  tool layer ── ../agenty_core  (editable install)
         ├──HTTP/WS──►  ComfyUI  (submit workflows, stage outputs into /input)
         └──►  memory/conversations.sqlite  (threads, messages, gallery, resume state)
 ```
@@ -45,9 +60,10 @@ The chat host is a normal agentY process (Claude/Ollama, same `config/settings.j
 
 ## Requirements
 
-- **Python 3.11+**
+- **[uv](https://docs.astral.sh/uv/getting-started/installation/)** (Python 3.11+ env manager) and **git** on your PATH
 - A running **ComfyUI** instance (default: `http://127.0.0.1:8188`)
 - An **Anthropic API key** (for Claude) _and/or_ a local **Ollama** installation
+- A **Hugging Face token** (for gated-model downloads)
 
 No Docker, Postgres, or MinIO.
 
@@ -62,26 +78,55 @@ git clone https://github.com/szprivate/agentY.git
 cd agentY
 ```
 
-### 2. Run the install script (recommended)
+### 2. Run the installer (recommended)
 
 ```powershell
 .\install_agent.ps1
 ```
 
-It creates the `.venv` (via `uv`), installs `requirements.txt`, and copies `.env_example` → `.env`.
+The installer sets up the **whole stack** in one pass:
 
-**Manual setup** instead:
+1. checks for `git` + `uv`;
+2. clones the sibling repos it needs — **agenty_core** (required) and **agentY-mcp** (optional) — next to `agentY` if they aren't there already, and fast-forwards them if they are;
+3. creates agentY's `.venv` (via `uv`) and installs `requirements.txt` (which pulls in `agenty_core` editable);
+4. copies `.env_example` → `.env` and **prompts** you for `HF_TOKEN`, `ANTHROPIC_API_KEY`, and the optional `COMFYUI_API_KEY` / `DASHSCOPE_API_KEY` (Enter keeps an existing value);
+5. **finds your ComfyUI** (auto-detects common paths, otherwise asks) and clones **agentY-comfyuiConnect** into its `custom_nodes/`, optionally pointing `settings.json` at your ComfyUI URL;
+6. sets up **agentY-mcp**'s own venv + `.env` and reuses the tokens you just entered.
+
+Useful flags:
 
 ```powershell
-python -m venv .venv
-.venv\Scripts\activate          # macOS/Linux: source .venv/bin/activate
-pip install -r requirements.txt
-copy .env_example .env
+.\install_agent.ps1 -ComfyUIPath "D:\ai\ComfyUI"   # skip ComfyUI auto-detection
+.\install_agent.ps1 -SkipMcp                        # don't set up agentY-mcp
+.\install_agent.ps1 -SkipComfyNode                  # headless host only, no ComfyUI node
+.\install_agent.ps1 -NonInteractive                 # no prompts (CI / re-runs)
+.\install_agent.ps1 -Help
 ```
+
+<details>
+<summary><b>Manual setup</b> (instead of the installer)</summary>
+
+```powershell
+# agenty_core must sit next to agentY (requirements.txt installs it editable)
+git clone https://github.com/szprivate/agenty_core.git ..\agenty_core
+
+# agentY itself
+uv venv .venv
+.venv\Scripts\activate          # macOS/Linux: source .venv/bin/activate
+uv pip install -r requirements.txt
+copy .env_example .env
+
+# the ComfyUI chat UI (restart ComfyUI afterwards)
+git clone https://github.com/szprivate/agentY-comfyuiConnect  <ComfyUI>\custom_nodes\agentY-comfyuiConnect
+
+# (optional) the MCP / Claude Desktop front end
+git clone https://github.com/szprivate/agentY-mcp.git ..\agentY-mcp
+```
+</details>
 
 ### 3. Configure secrets
 
-Edit `.env`:
+The installer prompts for these; to edit them later, open `.env`:
 
 ```dotenv
 HF_TOKEN=hf_...                 # Hugging Face token (for gated model downloads)
@@ -95,11 +140,11 @@ DASHSCOPE_API_KEY=...           # Alibaba Model Studio (DashScope) — for Qwen 
 # AGENTY_CONVERSATION_DB=./memory/conversations.sqlite
 ```
 
-### 4. Install the ComfyUI chat UI (once)
+### 4. The ComfyUI chat UI
 
-The chat UI is a **separate custom-node repo**,
-[`agentY-comfyuiConnect`](https://github.com/szprivate/agentY-comfyuiConnect).
-Clone it into ComfyUI's `custom_nodes/` and restart ComfyUI once:
+The installer clones [`agentY-comfyuiConnect`](https://github.com/szprivate/agentY-comfyuiConnect)
+into ComfyUI's `custom_nodes/` for you. If you skipped that step (or ComfyUI
+wasn't found), install it by hand and restart ComfyUI once:
 
 ```powershell
 git clone https://github.com/szprivate/agentY-comfyuiConnect  <ComfyUI>\custom_nodes\agentY-comfyuiConnect

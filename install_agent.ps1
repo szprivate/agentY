@@ -1,118 +1,390 @@
 <#
 .SYNOPSIS
-    Install script for the agentY project.
-    Works on Windows PowerShell 5.1+ and PowerShell 7+, and macOS/Linux with PowerShell 7+.
+    One-shot installer / bootstrapper for the full agentY stack.
 
-    The UI is the "agentY" tab inside ComfyUI (the agentY-comfyuiConnect custom
-    node). There is no Chainlit, Docker, Postgres, or MinIO anymore — conversations
-    persist to a local SQLite file.
+    Sets up the four repos that make up agentY, prompts for the secrets it needs,
+    and drops the chat UI into your ComfyUI:
+
+      * agentY                (this repo)  - the Strands chat host / pipeline
+      * agenty_core           (sibling)    - shared ComfyUI/HF/web/file tool layer
+                                             (installed editable; required)
+      * agentY-mcp            (sibling)    - the MCP-server / Claude-Desktop variant
+                                             (optional; skip with -SkipMcp)
+      * agentY-comfyuiConnect (into ComfyUI\custom_nodes) - the sidebar chat UI
+
+    The UI is the "agentY" tab inside ComfyUI. There is no Chainlit, Docker,
+    Postgres, or MinIO - conversations persist to a local SQLite file.
+
+    Runs on Windows PowerShell 5.1+ and PowerShell 7+ (Windows/macOS/Linux).
+
+.PARAMETER ComfyUIPath
+    Path to your ComfyUI install (the folder containing custom_nodes\). If omitted
+    the script auto-detects common locations and otherwise asks.
+
+.PARAMETER ParentDir
+    Where the sibling repos (agenty_core, agentY-mcp) live / will be cloned.
+    Defaults to this repo's parent directory.
+
+.PARAMETER SkipMcp
+    Do not clone / set up the agentY-mcp sibling repo.
+
+.PARAMETER SkipComfyNode
+    Do not touch ComfyUI (skip locating it and installing the sidebar node).
+
+.PARAMETER NonInteractive
+    Never prompt. Use existing values / defaults only (for CI or re-runs).
+
+.EXAMPLE
+    .\install_agent.ps1
+.EXAMPLE
+    .\install_agent.ps1 -ComfyUIPath "D:\ai\ComfyUI" -SkipMcp
 #>
+
+[CmdletBinding()]
+param(
+    [switch]$Help,
+    [string]$ComfyUIPath = "",
+    [string]$ParentDir   = "",
+    [switch]$SkipMcp,
+    [switch]$SkipComfyNode,
+    [switch]$NonInteractive
+)
 
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = "Stop"
+
+# -- UI helpers ---------------------------------------------------------------
+function Write-Header  { param([string]$Text) Write-Host ""; Write-Host "===  $Text  ===" -ForegroundColor Cyan }
+function Write-Success { param([string]$Text) Write-Host "  [ok] $Text" -ForegroundColor Green }
+function Write-Info    { param([string]$Text) Write-Host "  [i]  $Text" -ForegroundColor Yellow }
+function Write-Fail    { param([string]$Text) Write-Host "  [!]  $Text" -ForegroundColor Red }
+function Exit-WithError { param([string]$Message, [int]$Code = 1) Write-Host ""; Write-Fail $Message; exit $Code }
+
+if ($Help) {
+    Get-Help $MyInvocation.MyCommand.Definition -Detailed
+    exit 0
+}
 
 $Script:OnWindows = $true
 if (Get-Variable -Name IsWindows -Scope Global -ErrorAction SilentlyContinue) {
     $Script:OnWindows = [bool]$IsWindows
 }
 
-function Write-Header  { param([string]$Text) Write-Host ""; Write-Host "---  $Text  ---" -ForegroundColor Cyan }
-function Write-Success { param([string]$Text) Write-Host "  [ok] $Text" -ForegroundColor Green }
-function Write-Info    { param([string]$Text) Write-Host "  [i]  $Text" -ForegroundColor Yellow }
-function Write-Fail    { param([string]$Text) Write-Host "  [!]  $Text" -ForegroundColor Red }
-function Exit-WithError { param([string]$Message, [int]$Code = 1) Write-Fail $Message; exit $Code }
-
 $ProjectRoot = $PSScriptRoot
 if (-not $ProjectRoot) { $ProjectRoot = (Get-Location).Path }
+if (-not $ParentDir)   { $ParentDir = Split-Path -Parent $ProjectRoot }
 
-# ---------------------------------------------------------------------------
-# 1. Preflight
-# ---------------------------------------------------------------------------
-Write-Header "1 / 4  Preflight checks"
+# -- Low-level helpers --------------------------------------------------------
+function Write-TextNoBom {
+    # Write UTF-8 without a BOM - python-dotenv / json readers dislike a leading BOM.
+    param([string]$Path, [string]$Text)
+    $enc = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($Path, $Text, $enc)
+}
 
+function Get-EnvValue {
+    param([string]$File, [string]$Key)
+    if (-not (Test-Path $File)) { return $null }
+    foreach ($line in (Get-Content -LiteralPath $File)) {
+        if ($line -match "^\s*$([regex]::Escape($Key))\s*=") {
+            return ($line -replace "^\s*$([regex]::Escape($Key))\s*=\s*", '').Trim()
+        }
+    }
+    return $null
+}
+
+function Set-EnvValue {
+    param([string]$File, [string]$Key, [string]$Value)
+    $lines = @()
+    if (Test-Path $File) { $lines = @(Get-Content -LiteralPath $File) }
+    $done = $false
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match "^\s*$([regex]::Escape($Key))\s*=") {
+            $lines[$i] = "$Key=$Value"; $done = $true; break
+        }
+    }
+    if (-not $done) { $lines += "$Key=$Value" }
+    Write-TextNoBom $File (($lines -join "`r`n") + "`r`n")
+}
+
+function Test-Placeholder {
+    # Treat the .env_example stubs and blanks as "not yet set".
+    param([string]$Value)
+    if (-not $Value) { return $true }
+    return ($Value -match '^(hf_\.\.\.|sk-ant-\.\.\.|comfyui-\.\.\.|sk-\.\.\.)$')
+}
+
+function Format-Masked {
+    param([string]$Value)
+    if (Test-Placeholder $Value) { return "(not set)" }
+    if ($Value.Length -le 8) { return ('*' * $Value.Length) }
+    return $Value.Substring(0, 4) + ('*' * 4) + '...'
+}
+
+function Read-Secret {
+    # Prompt for a secret, keeping the existing value on <Enter>. Returns the
+    # resolved value and writes it into $File when the user supplies a new one.
+    param([string]$File, [string]$Key, [string]$Label, [string]$HelpText)
+    $cur   = Get-EnvValue $File $Key
+    $isSet = -not (Test-Placeholder $cur)
+    if ($NonInteractive) {
+        if ($isSet) { return $cur } else { return "" }
+    }
+    Write-Host ""
+    Write-Host "  $Label" -ForegroundColor White
+    if ($HelpText) { Write-Host "    $HelpText" -ForegroundColor DarkGray }
+    $suffix = if ($isSet) { " [Enter = keep $(Format-Masked $cur)]" } else { " [Enter = skip]" }
+    $entered = Read-Host "    $Key$suffix"
+    if ($entered.Trim() -ne "") {
+        Set-EnvValue $File $Key $entered.Trim()
+        Write-Success "$Key set"
+        return $entered.Trim()
+    }
+    if ($isSet) { return $cur }
+    return ""
+}
+
+function Invoke-Native {
+    # Run a native command, streaming its output straight to the host (so it does
+    # not pollute the return value), then report success from $LASTEXITCODE. Note:
+    # we do NOT redirect stderr (2>&1) - under $ErrorActionPreference='Stop' that
+    # would turn git/uv's normal stderr progress into a terminating error.
+    param([string]$What, [scriptblock]$Block, [switch]$AllowFail)
+    & $Block | Out-Host
+    $code = $LASTEXITCODE
+    if ($code -ne 0) {
+        if ($AllowFail) { Write-Info "$What returned $code (continuing)."; return $false }
+        Exit-WithError "$What failed (exit $code)."
+    }
+    return $true
+}
+
+function Ensure-Repo {
+    # Clone $Url into $Dir if missing; otherwise best-effort fast-forward pull.
+    param([string]$Name, [string]$Url, [string]$Dir, [switch]$Required)
+    if (Test-Path (Join-Path $Dir ".git")) {
+        Write-Info "$Name present at $Dir - updating (git pull --ff-only)"
+        Invoke-Native "git pull ($Name)" { git -C $Dir pull --ff-only } -AllowFail | Out-Null
+        Write-Success "$Name up to date"
+        return
+    }
+    if ((Test-Path $Dir) -and (Get-ChildItem -LiteralPath $Dir -Force -ErrorAction SilentlyContinue)) {
+        Write-Info "$Name exists at $Dir but is not a git checkout - leaving it untouched"
+        return
+    }
+    Write-Info "Cloning $Name -> $Dir"
+    $ok = Invoke-Native "git clone ($Name)" { git clone $Url $Dir } -AllowFail:(-not $Required)
+    if ($ok) { Write-Success "$Name cloned" }
+    elseif ($Required) { Exit-WithError "Could not clone required repo $Name from $Url." }
+}
+
+function Setup-Venv {
+    # Create (if missing) a uv venv in $Dir and install its requirements.txt.
+    param([string]$Name, [string]$Dir)
+    $venv = Join-Path $Dir ".venv"
+    $pyRel = if ($Script:OnWindows) { "Scripts\python.exe" } else { "bin/python" }
+    $py = Join-Path $venv $pyRel
+    Push-Location $Dir
+    try {
+        if (-not ((Test-Path $venv) -and (Test-Path $py))) {
+            if (Test-Path $venv) { Write-Info "$Name .venv incomplete - recreating"; Remove-Item -Recurse -Force $venv }
+            Write-Info "Creating $Name .venv (uv venv)"
+            Invoke-Native "uv venv ($Name)" { uv venv .venv } | Out-Null
+        } else {
+            Write-Info "$Name .venv already exists"
+        }
+        $req = Join-Path $Dir "requirements.txt"
+        if (-not (Test-Path $req)) { Exit-WithError "requirements.txt not found in $Dir." }
+        Write-Info "Installing $Name dependencies (uv pip install -r requirements.txt)"
+        Invoke-Native "uv pip install ($Name)" { uv pip install -r requirements.txt } | Out-Null
+    } finally { Pop-Location }
+    Write-Success "$Name environment ready"
+}
+
+function Ensure-EnvFile {
+    param([string]$Dir)
+    $envFile    = Join-Path $Dir ".env"
+    $envExample = Join-Path $Dir ".env_example"
+    if (-not (Test-Path $envFile)) {
+        if (-not (Test-Path $envExample)) { Exit-WithError ".env_example not found in $Dir." }
+        Copy-Item $envExample $envFile
+        Write-Info "Created .env from .env_example in $Dir"
+    }
+    return $envFile
+}
+
+function Test-ComfyUIDir {
+    param([string]$Path)
+    if (-not $Path -or -not (Test-Path $Path)) { return $null }
+    # Accept the ComfyUI root, or a common wrapper folder one level up.
+    foreach ($cand in @($Path, (Join-Path $Path "ComfyUI"), (Join-Path $Path "ComfyUI_windows_portable\ComfyUI"))) {
+        if (Test-Path (Join-Path $cand "custom_nodes")) { return (Resolve-Path $cand).Path }
+    }
+    return $null
+}
+
+function Find-ComfyUI {
+    param([string]$Hint)
+    $candidates = @()
+    if ($Hint) { $candidates += $Hint }
+    if ($Script:OnWindows) {
+        foreach ($drive in @("D:", "E:", "C:")) {
+            $candidates += @(
+                "$drive\ai\ComfyUI", "$drive\AI\ComfyUI", "$drive\ComfyUI",
+                "$drive\ai\comfyui__", "$drive\ai\ComfyUI_windows_portable\ComfyUI",
+                "$drive\ComfyUI_windows_portable\ComfyUI"
+            )
+        }
+        if ($env:USERPROFILE) { $candidates += "$env:USERPROFILE\ComfyUI" }
+    } else {
+        if ($env:HOME) { $candidates += @("$env:HOME/ComfyUI", "$env:HOME/comfyui") }
+    }
+    foreach ($c in $candidates) {
+        $hit = Test-ComfyUIDir $c
+        if ($hit) { return $hit }
+    }
+    return $null
+}
+
+# =============================================================================
+Write-Host ""
+Write-Host "  agentY stack installer" -ForegroundColor Cyan
+Write-Host "  repo root: $ProjectRoot" -ForegroundColor DarkGray
+Write-Host "  siblings : $ParentDir" -ForegroundColor DarkGray
+
+# -- 1. Preflight -------------------------------------------------------------
+Write-Header "1 / 6  Preflight"
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    Exit-WithError "'git' is not on PATH. Install Git and re-run."
+}
+Write-Success "git found"
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
-    Exit-WithError "'uv' is not installed or not on PATH. Install it from https://docs.astral.sh/uv/getting-started/installation/"
+    Exit-WithError "'uv' is not on PATH. Install it: https://docs.astral.sh/uv/getting-started/installation/"
 }
 Write-Success "uv found: $(uv --version)"
 
-# ---------------------------------------------------------------------------
-# 2. Virtual environment
-# ---------------------------------------------------------------------------
-Write-Header "2 / 4  Virtual environment"
-
-$Script:VenvDir = Join-Path $ProjectRoot ".venv"
-if ($Script:OnWindows) {
-    $Script:VenvPython     = Join-Path $Script:VenvDir "Scripts\python.exe"
-    $Script:ActivateScript = Join-Path $Script:VenvDir "Scripts\Activate.ps1"
-} else {
-    $Script:VenvPython     = Join-Path $Script:VenvDir "bin/python"
-    $Script:ActivateScript = Join-Path $Script:VenvDir "bin/Activate.ps1"
+# -- 2. Sibling repos (agenty_core, agentY-mcp) -------------------------------
+Write-Header "2 / 6  Sibling repos"
+$CoreDir = Join-Path $ParentDir "agenty_core"
+Ensure-Repo -Name "agenty_core" -Url "https://github.com/szprivate/agenty_core.git" -Dir $CoreDir -Required
+if (-not (Test-Path (Join-Path $CoreDir "pyproject.toml"))) {
+    Exit-WithError "agenty_core looks incomplete at $CoreDir (no pyproject.toml). agentY's requirements.txt installs it editable via '-e ../agenty_core'."
 }
 
-$venvLooksValid = (Test-Path $Script:VenvDir) -and (Test-Path $Script:VenvPython)
-if (-not $venvLooksValid) {
-    if (Test-Path $Script:VenvDir) {
-        Write-Info ".venv exists but appears incomplete - recreating"
-        Remove-Item -Recurse -Force $Script:VenvDir
+$McpDir = Join-Path $ParentDir "agentY-mcp"
+if (-not $SkipMcp) {
+    Ensure-Repo -Name "agentY-mcp" -Url "https://github.com/szprivate/agentY-mcp.git" -Dir $McpDir
+} else {
+    Write-Info "Skipping agentY-mcp (-SkipMcp)"
+}
+
+# -- 3. agentY environment ----------------------------------------------------
+Write-Header "3 / 6  agentY environment"
+Setup-Venv -Name "agentY" -Dir $ProjectRoot
+
+# -- 4. Secrets (.env) --------------------------------------------------------
+Write-Header "4 / 6  Secrets (.env)"
+$EnvFile = Ensure-EnvFile $ProjectRoot
+if ($NonInteractive) {
+    Write-Info "Non-interactive: leaving .env values as-is. Edit $EnvFile to set keys."
+} else {
+    Write-Host "  Press Enter to keep an existing value or skip an optional one." -ForegroundColor DarkGray
+}
+$hfToken  = Read-Secret $EnvFile "HF_TOKEN"          "Hugging Face token (gated model downloads)"       "Create at https://huggingface.co/  (account -> Access Tokens)"
+$null     = Read-Secret $EnvFile "ANTHROPIC_API_KEY" "Anthropic API key (Claude) - recommended"         "Create at https://platform.claude.com/"
+$comfyKey = Read-Secret $EnvFile "COMFYUI_API_KEY"   "ComfyUI API key (optional - auth / API nodes)"    "https://platform.comfy.org/profile/api-keys  - blank for a local ComfyUI"
+$null     = Read-Secret $EnvFile "DASHSCOPE_API_KEY" "DashScope / Alibaba Model Studio key (optional)"  "For Qwen models: https://bailian.console.alibabacloud.com/"
+Write-Success "agentY .env ready ($EnvFile)"
+
+# -- 5. ComfyUI: locate + install the sidebar node ----------------------------
+Write-Header "5 / 6  ComfyUI sidebar node"
+$ResolvedComfy = $null
+if ($SkipComfyNode) {
+    Write-Info "Skipping ComfyUI node install (-SkipComfyNode)"
+} else {
+    $ResolvedComfy = Test-ComfyUIDir $ComfyUIPath
+    if (-not $ResolvedComfy) { $ResolvedComfy = Find-ComfyUI $ComfyUIPath }
+    if ($ResolvedComfy) {
+        Write-Success "Found ComfyUI: $ResolvedComfy"
+        if (-not $NonInteractive) {
+            $ans = Read-Host "    Use this ComfyUI? [Y/n] (or type another path)"
+            if ($ans.Trim() -and $ans.Trim() -notmatch '^(y|yes)$') {
+                if ($ans.Trim() -match '^(n|no)$') { $ResolvedComfy = $null }
+                else { $ResolvedComfy = Test-ComfyUIDir $ans.Trim() }
+            }
+        }
     }
-    Write-Info "Creating .venv with uv ..."
-    Push-Location $ProjectRoot
-    try {
-        uv venv .venv
-        if ($LASTEXITCODE -ne 0) { Exit-WithError "uv venv failed." }
-    } finally { Pop-Location }
-    Write-Success ".venv created"
-} else {
-    Write-Info ".venv already exists - skipping creation"
-}
-& $Script:ActivateScript
-Write-Success ".venv activated"
+    if (-not $ResolvedComfy -and -not $NonInteractive) {
+        $entered = Read-Host "    ComfyUI folder (contains custom_nodes\), or Enter to skip"
+        if ($entered.Trim()) {
+            $ResolvedComfy = Test-ComfyUIDir $entered.Trim()
+            if (-not $ResolvedComfy) { Write-Fail "That folder doesn't look like a ComfyUI install - skipping." }
+        }
+    }
 
-# ---------------------------------------------------------------------------
-# 3. Python dependencies
-# ---------------------------------------------------------------------------
-Write-Header "3 / 4  Python dependencies"
+    if ($ResolvedComfy) {
+        $nodeDir = Join-Path (Join-Path $ResolvedComfy "custom_nodes") "agentY-comfyuiConnect"
+        Ensure-Repo -Name "agentY-comfyuiConnect" -Url "https://github.com/szprivate/agentY-comfyuiConnect.git" -Dir $nodeDir
+        Write-Success "Sidebar node installed under $ResolvedComfy\custom_nodes - restart ComfyUI once."
 
-Push-Location $ProjectRoot
-try {
-    $RequirementsFile = Join-Path $ProjectRoot "requirements.txt"
-    if (-not (Test-Path $RequirementsFile)) { Exit-WithError "requirements.txt not found at $RequirementsFile." }
-    Write-Info "Installing requirements.txt ..."
-    uv pip install -r requirements.txt
-    if ($LASTEXITCODE -ne 0) { Exit-WithError "uv pip install -r requirements.txt failed." }
-} finally { Pop-Location }
-Write-Success "Python dependencies installed"
-
-# ---------------------------------------------------------------------------
-# 4. .env setup
-# ---------------------------------------------------------------------------
-Write-Header "4 / 4  .env setup"
-
-$EnvFile    = Join-Path $ProjectRoot ".env"
-$EnvExample = Join-Path $ProjectRoot ".env_example"
-if (-not (Test-Path $EnvFile)) {
-    if (-not (Test-Path $EnvExample)) { Exit-WithError ".env_example not found. Cannot create .env." }
-    Copy-Item $EnvExample $EnvFile
-    Write-Info "Copied .env_example -> .env"
-} else {
-    Write-Info ".env already exists - skipping copy"
+        # Offer to point settings.json at this ComfyUI's URL (single key, opt-in).
+        $settings = Join-Path $ProjectRoot "config\settings.json"
+        if (-not $NonInteractive -and (Test-Path $settings)) {
+            $raw = Get-Content -LiteralPath $settings -Raw
+            $curUrl = ""
+            if ($raw -match '"comfyui_url"\s*:\s*"([^"]*)"') { $curUrl = $Matches[1] }
+            $newUrl = Read-Host "    ComfyUI URL for settings.json [Enter = keep $curUrl]"
+            if ($newUrl.Trim() -and $newUrl.Trim() -ne $curUrl) {
+                $raw2 = [regex]::Replace($raw, '("comfyui_url"\s*:\s*")[^"]*(")', "`${1}$($newUrl.Trim())`${2}")
+                Write-TextNoBom $settings $raw2
+                Write-Success "settings.json comfyui_url -> $($newUrl.Trim())"
+            }
+        }
+    } else {
+        Write-Info "No ComfyUI configured. Install the node later:"
+        Write-Host  "       git clone https://github.com/szprivate/agentY-comfyuiConnect  <ComfyUI>\custom_nodes\agentY-comfyuiConnect" -ForegroundColor White
+    }
 }
 
-# ---------------------------------------------------------------------------
-# Done
-# ---------------------------------------------------------------------------
+# -- 6. agentY-mcp environment (optional) -------------------------------------
+Write-Header "6 / 6  agentY-mcp environment"
+if ($SkipMcp -or -not (Test-Path (Join-Path $McpDir "requirements.txt"))) {
+    Write-Info "Skipping agentY-mcp environment."
+} else {
+    Setup-Venv -Name "agentY-mcp" -Dir $McpDir
+    $mcpEnv = Ensure-EnvFile $McpDir
+    # The MCP host (Claude Desktop) supplies the model, so agentY-mcp only needs
+    # HF_TOKEN + COMFYUI_API_KEY. Reuse what we just collected for agentY.
+    if (-not (Test-Placeholder $hfToken))  { Set-EnvValue $mcpEnv "HF_TOKEN"        $hfToken;  Write-Info "Propagated HF_TOKEN to agentY-mcp .env" }
+    if (-not (Test-Placeholder $comfyKey)) { Set-EnvValue $mcpEnv "COMFYUI_API_KEY" $comfyKey; Write-Info "Propagated COMFYUI_API_KEY to agentY-mcp .env" }
+    Write-Success "agentY-mcp ready ($McpDir)"
+}
+
+# -- Done ---------------------------------------------------------------------
 Write-Header "Setup complete"
 Write-Host ""
-Write-Host "  agentY is ready. Next steps:" -ForegroundColor Cyan
+Write-Host "  Installed:" -ForegroundColor Cyan
+Write-Host "    - agentY        $ProjectRoot" -ForegroundColor White
+Write-Host "    - agenty_core   $CoreDir  (editable dependency)" -ForegroundColor White
+if (-not $SkipMcp -and (Test-Path (Join-Path $McpDir 'requirements.txt'))) {
+    Write-Host "    - agentY-mcp    $McpDir" -ForegroundColor White
+}
+if ($ResolvedComfy) {
+    Write-Host "    - sidebar node  $ResolvedComfy\custom_nodes\agentY-comfyuiConnect" -ForegroundColor White
+}
 Write-Host ""
-Write-Host "  1. Fill in your API keys in .env (HF_TOKEN, ANTHROPIC_API_KEY, COMFYUI_API_KEY)." -ForegroundColor Yellow
+Write-Host "  Next steps:" -ForegroundColor Cyan
+Write-Host "    1. Start the agent chat host:" -ForegroundColor Yellow
+Write-Host "         .\run_agent.ps1" -ForegroundColor White
+if ($ResolvedComfy) {
+    Write-Host "    2. Restart ComfyUI, then click the 'agentY' tab in its left sidebar." -ForegroundColor Yellow
+} else {
+    Write-Host "    2. Install agentY-comfyuiConnect into ComfyUI\custom_nodes and restart ComfyUI." -ForegroundColor Yellow
+}
+if (-not $SkipMcp -and (Test-Path (Join-Path $McpDir 'requirements.txt'))) {
+    Write-Host "    3. (optional) Register agentY-mcp with Claude Desktop - see $McpDir\README.md" -ForegroundColor Yellow
+}
 Write-Host ""
-Write-Host "  2. Install the ComfyUI chat UI (once) - separate repo:" -ForegroundColor Yellow
-Write-Host "       git clone https://github.com/szprivate/agentY-comfyuiConnect  <ComfyUI>\custom_nodes\agentY-comfyuiConnect" -ForegroundColor White
-Write-Host "     then restart ComfyUI." -ForegroundColor White
-Write-Host ""
-Write-Host "  3. Start the agent chat host:" -ForegroundColor Yellow
-Write-Host "       ./run_agent.ps1" -ForegroundColor White
-Write-Host ""
-Write-Host "  4. Open ComfyUI and click the agentY tab in the left sidebar." -ForegroundColor Yellow
+Write-Host "  Review secrets/paths anytime in:  $EnvFile" -ForegroundColor DarkGray
+Write-Host "  ComfyUI URL + model dirs live in: $ProjectRoot\config\settings.json" -ForegroundColor DarkGray
 Write-Host ""

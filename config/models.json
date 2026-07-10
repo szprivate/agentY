@@ -215,6 +215,7 @@
       "full_encoder_small_decoder.safetensors",
       "lotusDepth\\lotus-depth-g-v1-0_VAE.safetensors",
       "taeltx_2.safetensors",
+      "triposplat_vae_decoder_fp16.safetensors",
       "vae\\diffusion_pytorch_model.safetensors",
       "vae\\flux2-vae.safetensors",
       "vae\\triposplat_vae_decoder_fp16.safetensors"
@@ -345,6 +346,7 @@
       "qwen_image_fp8_e4m3fn.safetensors",
       "transformer\\diffusion_pytorch_model-00001-of-00005.safetensors",
       "transformer\\diffusion_pytorch_model.safetensors",
+      "triposplat_fp16.safetensors",
       "z-image-turbo-fp8-e4m3fn.safetensors",
       "z_image_turbo_bf16.safetensors"
     ],
@@ -355,6 +357,7 @@
       "clip_vision\\dino_v3_vit_h.safetensors",
       "clip_vision_g.safetensors",
       "clip_vision_h.safetensors",
+      "dino_v3_vit_h.safetensors",
       "models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth",
       "sigclip_vision_patch14_384.safetensors"
     ],
@@ -426,9 +429,6 @@
       "moge_2_vitl_normal_fp16.safetensors"
     ],
     "optical_flow": [],
-    "detection": [
-      "mediapipe_face_fp32.safetensors"
-    ],
     ".cache": [],
     "animatediff_models": [],
     "animatediff_motion_lora": [],
@@ -559,6 +559,8 @@
     ],
     "kjnodes_fonts": [],
     "rmbg": [
+      "BEN2\\BEN2_Base.pth",
+      "INSPYRENET\\inspyrenet.safetensors",
       "RMBG-2.0\\model.safetensors"
     ],
     "LLM": [],

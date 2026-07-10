@@ -27,13 +27,13 @@
   // Fallback only — the live value is read from ComfyUI's --user-directory flag
   // (/system_stats) and shown in the settings UI. This is used when ComfyUI is
   // unreachable.
-  "comfyui_user_dir": "D:\\ai\\ComfyUI\\user\\default",
+  "comfyui_user_dir": "\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\user_dir",
   "conversation_db": "./memory/conversations.sqlite",
   // Auto-open every workflow the agent runs onto the ComfyUI canvas so you can
   // inspect it. Off by default: workflows still build and run, but the graph is
   // not loaded unless you ask (the agent offers to). Env override:
   // AGENTY_CANVAS_AUTOLOAD (1/0).
-  "autoload_workflows_into_canvas": false,
+  "autoload_workflows_into_canvas": true,
   "message_history_log": "./.logs/message_history.log",
   "tokens_usage_log": "./.logs/tokens_usage.log",
 
