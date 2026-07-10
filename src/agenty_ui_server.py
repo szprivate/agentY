@@ -71,6 +71,25 @@ def _unload_ollama_models() -> None:
         print(f"[agenty-ui] Ollama unload skipped: {exc}")
 
 
+def _port_in_use(host: str, port: int) -> bool:
+    """True if a TCP listener is already accepting connections on host:port.
+
+    Guards against launching a second host on top of a leftover one: on Windows
+    SO_REUSEADDR lets the second bind "succeed" silently, so the stale instance
+    keeps answering with old code. A quick connect probe catches that regardless
+    of platform.
+    """
+    import socket
+
+    target = "127.0.0.1" if host in ("0.0.0.0", "", "::") else host
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        try:
+            return s.connect_ex((target, port)) == 0
+        except OSError:
+            return False
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="agentY headless chat host (ComfyUI sidebar backend)")
     parser.add_argument("--host", default=os.environ.get("AGENTY_UI_HOST", "127.0.0.1"),
@@ -80,6 +99,16 @@ def main() -> None:
     parser.add_argument("--no-unload", action="store_true",
                         help="Skip unloading Ollama models before startup.")
     args = parser.parse_args()
+
+    # Fail fast if a host is already serving this port — otherwise a leftover
+    # instance would keep answering with stale code while this one silently does
+    # nothing (see _port_in_use). run_agent.ps1 frees the port before launching;
+    # this covers bare `python -m src.agenty_ui_server` launches too.
+    if _port_in_use(args.host, args.port):
+        print(f"[agenty-ui] ERROR: port {args.port} is already in use — another agentY "
+              f"host appears to be running. Stop it first (run_agent.ps1 frees the port "
+              f"automatically on launch), or use --port <other>.", file=sys.stderr)
+        sys.exit(1)
 
     if not args.no_unload:
         _unload_ollama_models()

@@ -99,6 +99,31 @@ try {
         }
     }
 
+    # ── Free the target port ────────────────────────────────────────────────
+    # A previous host whose Ctrl+C didn't fully stop it can linger; on Windows
+    # SO_REUSEADDR then lets that stale instance keep answering with OLD code, so
+    # a plain restart isn't enough (new routes 404). Stop any leftover agentY host
+    # still bound to $Port before launching a fresh one. A non-agentY process on
+    # the port is reported but never killed.
+    try {
+        $bound = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+                 Select-Object -ExpandProperty OwningProcess -Unique
+        foreach ($procId in $bound) {
+            if (-not $procId) { continue }
+            $cim = Get-CimInstance Win32_Process -Filter "ProcessId = $procId" -ErrorAction SilentlyContinue
+            if ($cim -and $cim.CommandLine -like "*agenty_ui_server*") {
+                Write-Host "[run_agent] Port $Port held by a leftover agentY host (PID $procId) - stopping it." -ForegroundColor Yellow
+                Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+            } elseif ($cim) {
+                $pname = (Get-Process -Id $procId -ErrorAction SilentlyContinue).Name
+                Write-Host "[run_agent] WARNING: port $Port is held by PID $procId ($pname), which is not an agentY host - leaving it alone. Use -Port to pick another port." -ForegroundColor Red
+            }
+        }
+        if ($bound) { Start-Sleep -Milliseconds 500 }
+    } catch {
+        Write-Host "[run_agent] Port check skipped: $($_.Exception.Message)" -ForegroundColor DarkYellow
+    }
+
     # ── Refresh ComfyUI model caches ────────────────────────────────────────
     Write-Host "[run_agent] Refreshing ComfyUI model cache..." -ForegroundColor Cyan
     $env:COMFYUI_MODELS_REFRESHED = ""   # clear any leftover value from a previous run in this session
