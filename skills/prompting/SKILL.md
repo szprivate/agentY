@@ -1,5 +1,5 @@
 ---
-name: prompt-craft
+name: prompting
 description: ComfyUI prompt engineering — universal CLIP/weight syntax plus per-model prompt rules loaded on demand from references/. Activate whenever composing a generation or edit prompt.
 allowed-tools:
 ---
