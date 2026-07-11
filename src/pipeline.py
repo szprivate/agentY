@@ -39,7 +39,12 @@ from src.utils.costs import compute_cost_from_usage
 from src.utils.models import AgentSession, ChatSummary, GeneratedImage, MessageIntent, TriageResult
 from src.utils.triage import detect_user_intent as _triage, route as _route
 from src.utils.workflow_signal import clear_and_get as _get_workflow_signal
-from src.executor import execute_workflow as _execute_workflow, execute_workflows_batch as _execute_workflows_batch
+from src.executor import (
+    execute_workflow as _execute_workflow,
+    execute_workflows_batch as _execute_workflows_batch,
+    clear_exec_errors as _clear_exec_errors,
+    get_and_clear_exec_errors as _get_exec_errors,
+)
 from src.utils.memory import format_memories, memory_add, memory_search
 from src.tools.memory_tools import set_session_id as _set_memory_session_id
 from src.tools.comfyui import clear_tool_caches as _clear_tool_caches
@@ -1303,6 +1308,14 @@ class Pipeline:
         # Drop any tool-activity / canvas-patch left over from a previous turn.
         _clear_tools()
         _clear_canvas_patch()
+        _clear_exec_errors()
+
+        # Bounded ComfyUI auto-fix: when the Executor reports an execution error,
+        # the orchestrator is re-driven with the structured failure (node/type,
+        # exception, traceback) and its diagnostic tools to fix + re-signal. Capped
+        # so a genuinely broken graph can't loop forever.
+        _exec_fix_attempts = 0
+        _MAX_EXEC_FIX = 3
 
         while True:
             interrupt_result = None
@@ -1340,12 +1353,16 @@ class Pipeline:
                 # still staged. Non-chain turns have none, so this equals .clear().
                 self._session.current_output_paths[:] = list(self._chain_output_paths)
                 exec_paths = self._session.current_output_paths
+                _outputs_before = len(exec_paths)  # chain outputs already staged
                 _qa_fail_event: dict | None = None
                 if workflow_paths:
                     if self._verbose:
                         count = len(workflow_paths)
                         tag = f"{count} workflows (batch)" if count > 1 else workflow_paths[0]
                         print(f"pipeline: Orchestrator signaled {tag} ready.")
+                    # Fresh error mailbox for this run; the executor records any
+                    # structured ComfyUI failure into it while it streams.
+                    _clear_exec_errors()
                     async for line in _execute_workflows_batch(
                         workflow_paths,
                         self._last_brainbriefing_json or "",
@@ -1365,6 +1382,33 @@ class Pipeline:
                     # Flush executor-phase tool activity after the batch finishes.
                     for _ta in _drain_tools():
                         yield {"tool_activity": _ta}
+
+                # ── ComfyUI execution error → bounded orchestrator auto-fix ──── #
+                # Only when THIS batch produced no new outputs (a genuine failure);
+                # a partially-successful batch keeps its outputs and doesn't loop.
+                _exec_errors = _get_exec_errors() if not _qa_fail_event else []
+                if _exec_errors and len(exec_paths) == _outputs_before:
+                    _exec_fix_attempts += 1
+                    _err = _exec_errors[0]
+                    if _exec_fix_attempts <= _MAX_EXEC_FIX:
+                        yield {"data": (f"\n\n_🔧 ComfyUI run failed — diagnosing and fixing "
+                                        f"(attempt {_exec_fix_attempts}/{_MAX_EXEC_FIX})…_")}
+                        current_input = self._build_exec_fix_prompt(
+                            user_text, _err, _exec_fix_attempts, _MAX_EXEC_FIX
+                        )
+                        continue
+                    # Attempts exhausted — surface the failure and stop.
+                    _det = _err.get("details") or {}
+                    _nt = _det.get("node_type", "?")
+                    yield {"data": (f"\n\n❌ ComfyUI run still failing after {_MAX_EXEC_FIX} fix "
+                                    f"attempt(s) (last error in `{_nt}`: "
+                                    f"{_det.get('exception_message') or _err.get('error')}). "
+                                    "Stopping so you can take a look.")}
+                    self._record_chat_summary(user_text, synth, status="failed",
+                                              raw_json=self._last_brainbriefing_json)
+                    self._record_agent_usage(self._orchestrator_agent, _snap)
+                    self._session.last_agent = "orchestrator"
+                    return
 
                 if _qa_fail_event:
                     if qa_reply_queue is not None:
@@ -1870,6 +1914,57 @@ class Pipeline:
             f"Fix plan:\n{fix_plan}\n\n"
             "Apply the fix to the current workflow. Re-validate every change, then call "
             "`signal_workflow_ready(workflow_path)` with the corrected workflow once it is ready."
+        )
+
+    def _build_exec_fix_prompt(
+        self,
+        user_text: str,
+        exec_error_event: dict,
+        attempt: int,
+        max_attempts: int,
+    ) -> str:
+        """Build an orchestrator retry prompt from a ComfyUI *execution* failure.
+
+        Feeds the structured failure (node id/type, exception, traceback tail) back
+        to the orchestrator and points it at the right diagnostic tool per failure
+        class, then asks it to re-``signal_workflow_ready`` with the fix. This is the
+        free-agent analog of the legacy error-checker: the orchestrator itself
+        diagnoses and repairs, grounded in the real ComfyUI error.
+        """
+        details: dict = exec_error_event.get("details") or {}
+        node_type = details.get("node_type", "") or "?"
+        node_id = details.get("node_id", "") or "?"
+        exc_type = details.get("exception_type", "") or ""
+        exc_msg = details.get("exception_message", "") or exec_error_event.get("error", "")
+        wf_path = exec_error_event.get("workflow_path", "") or ""
+
+        tb = details.get("traceback") or []
+        if isinstance(tb, list):
+            tb_text = "".join(str(x) for x in tb)
+        else:
+            tb_text = str(tb)
+        tb_tail = "\n".join(tb_text.splitlines()[-15:]).strip()
+
+        return (
+            f"The ComfyUI workflow you just signalled FAILED to execute "
+            f"(fix attempt {attempt}/{max_attempts}).\n\n"
+            f"**User's original request:** {user_text}\n\n"
+            f"**Failing node:** {node_type} (id {node_id})\n"
+            f"**Exception:** {exc_type}: {exc_msg}\n"
+            + (f"**Workflow file:** {wf_path}\n" if wf_path else "")
+            + (f"\n**Traceback (tail):**\n```\n{tb_tail}\n```\n" if tb_tail else "")
+            + "\nDiagnose the root cause and fix it, then re-run. Match the failure to the right tool:\n"
+            "- **Unknown / missing node type** (e.g. the node class isn't recognised): call "
+            "`find_custom_node_for(node_type)` to locate the pack, then `install_custom_node(source)`. "
+            "Installed nodes need a ComfyUI restart before they load — tell the user if a restart is required.\n"
+            "- **Missing model / checkpoint / LoRA file**: resolve and fetch it with "
+            "`check_model` / `search_huggingface_models` / `download_hf_model`, then point the loader at the real filename.\n"
+            "- **Bad widget value, wrong enum, or a type/link mismatch**: inspect the node's real schema with "
+            "`get_node_schema(node_type)` (valid inputs, types, and enum options), fix the offending value or wiring, "
+            "and confirm with `validate_workflow(workflow_path)`.\n\n"
+            "Apply the fix to the workflow, re-validate, then call `signal_workflow_ready(workflow_path)` with the "
+            "corrected workflow. If the cause is genuinely unfixable here (e.g. a node needs a restart you can't do, "
+            "or a required model can't be found), stop and explain what the user needs to do instead of re-signalling."
         )
 
     async def _run_error_check(self, task_description: str) -> dict:

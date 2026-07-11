@@ -28,6 +28,9 @@ from src.tools.comfyui import (  # noqa: F401
     get_node_schema,
     get_workflow_node_info,
     search_nodes,
+    # Custom-node install + auto-heal (find the pack that provides a missing node)
+    find_custom_node_for,
+    install_custom_node,
     # Workflow templates
     get_workflow_catalog,
     get_workflow_template,
@@ -108,7 +111,8 @@ _SHARED_CORE_TOOLS = [
     "interrupt_execution", "free_memory", "queue", "get_history",
     "get_prompt_status_by_id", "clear_history", "get_logs", "get_system_stats",
     "get_comfyui_dirs", "get_agent_output_dirs", "submit_prompt", "duplicate_workflow", "get_node_schema",
-    "get_workflow_node_info", "search_nodes", "get_workflow_catalog",
+    "get_workflow_node_info", "search_nodes", "find_custom_node_for", "install_custom_node",
+    "get_workflow_catalog",
     "get_workflow_template", "list_workflow_recipes", "get_workflow_recipe",
     "save_workflow", "open_workflow_in_canvas", "patch_workflow", "add_workflow_node",
     "remove_workflow_node", "update_workflow", "replace_node", "apply_brainbriefing",
@@ -310,6 +314,9 @@ ORCHESTRATOR_TOOLS: list = [
     get_node_schema,
     get_workflow_node_info,
     search_nodes,
+    # Custom-node install + auto-heal a missing node type
+    find_custom_node_for,
+    install_custom_node,
     # Templates + recipes
     get_workflow_catalog,
     get_workflow_template,

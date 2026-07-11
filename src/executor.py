@@ -41,6 +41,41 @@ from typing import AsyncGenerator
 logger = logging.getLogger("agentY.executor")
 
 
+# ---------------------------------------------------------------------------
+# Execution-error mailbox
+#
+# When a ComfyUI job fails, the WebSocket streamer produces a *structured*
+# failure (node id/type, exception, traceback). The executor still yields a
+# human-readable error line to the UI, but it ALSO records the structured
+# failure here so the orchestrator can read it after the batch and drive a
+# bounded diagnose-and-fix retry — without every executor consumer having to
+# know about a new yield type. Mirrors the workflow-signal mailbox pattern:
+# single event loop, one turn at a time, so a module-level list is safe.
+# ---------------------------------------------------------------------------
+_exec_errors: list[dict] = []
+
+
+def _record_exec_error(details: dict | None, workflow_path: str = "", error: str = "") -> None:
+    """Append one structured ComfyUI execution failure to the mailbox."""
+    _exec_errors.append({
+        "details": details or {},
+        "workflow_path": workflow_path,
+        "error": error or "ComfyUI execution failed",
+    })
+
+
+def get_and_clear_exec_errors() -> list[dict]:
+    """Return the recorded execution errors and clear the mailbox."""
+    out = list(_exec_errors)
+    _exec_errors.clear()
+    return out
+
+
+def clear_exec_errors() -> None:
+    """Drop any recorded execution errors (call before a fresh run)."""
+    _exec_errors.clear()
+
+
 def _project_root() -> Path:
     return Path(__file__).parent.parent.resolve()
 
@@ -764,6 +799,10 @@ async def execute_workflow(
         error_msg = f"❌ ComfyUI execution error: {error_result.get('error')}"
         logger.error("executor: %s", error_msg)
         yield error_msg
+        # Record the *structured* failure (node id/type, exception, traceback) to
+        # the mailbox so the orchestrator can auto-fix; the line above still shows.
+        _record_exec_error(error_result.get("details"), workflow_path,
+                           error_result.get("error", ""))
         return
 
     if history is None:
@@ -882,6 +921,11 @@ async def execute_workflows_batch(
             error_msg = f"{label}❌ ComfyUI execution error: {error_result.get('error')}"
             logger.error("executor: %s", error_msg)
             yield error_msg
+            # Record the structured failure for the orchestrator auto-fix loop (see
+            # the single-workflow path). Batch iterations usually share one root
+            # cause (same graph, different seed) and fail fast at validation time.
+            _record_exec_error(error_result.get("details"), _wf_path,
+                               error_result.get("error", ""))
             continue  # move on to the next iteration, don't abort the whole batch
 
         if history is None:

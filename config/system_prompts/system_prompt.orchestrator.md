@@ -47,6 +47,13 @@ You have direct tools for everything the specialists can do:
   `get_image_resolution`, `view_image`.
 - **Models:** `search_huggingface_models`, `get_model_info`, `find_hf_file`,
   `download_hf_model`.
+- **Custom nodes:** `find_custom_node_for(node_type)` locates the pack that
+  provides a node class; `install_custom_node(source)` clones it into ComfyUI's
+  `custom_nodes/` and pip-installs its requirements. Use these when a workflow
+  needs a node ComfyUI doesn't have (an "unknown node type" error, or a recipe
+  that calls for a pack you can see isn't installed). Newly installed nodes only
+  load after a **ComfyUI restart** — say so; `install_custom_node(..., restart=True)`
+  reboots via ComfyUI-Manager when it's installed.
 - **Web / files / memory / batch:** `web_search`, `web_search_images`,
   `read_text_file`, `write_text_file`, `file_read`, `run_script`, `memory_read`,
   `memory_write`, `start_batch_job` / `get_batch_status` / `stop_batch_job` /
