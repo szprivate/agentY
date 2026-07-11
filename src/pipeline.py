@@ -1072,6 +1072,32 @@ class Pipeline:
                       f"{len(msgs) - len(cleaned)} orphaned tool message(s).")
             agent.messages[:] = cleaned
 
+    def _learn_from_orchestrator_turn(self, msg_start: int) -> None:
+        """Fire the learnings agent on this turn's orchestrator activity.
+
+        Passes only the messages produced since the turn started (not the whole
+        sliding window) so the analyser focuses on the failure→fix arc that just
+        played out and stays cheap. ``maybe_run_learnings`` self-gates on the
+        tool-call count, so trivial turns are skipped; substantial ones (a
+        repeated error the agent finally resolved, or a user correction it acted
+        on) get a concise ``problem | solution`` line appended to the learnings
+        skill + FAISS. Best-effort — never raises into the turn.
+        """
+        agent = self._orchestrator_agent
+        if agent is None:
+            return
+        try:
+            msgs = list(getattr(agent, "messages", []) or [])
+            # Normal case: this turn's messages are the tail from msg_start. If the
+            # sliding window trimmed the front mid-turn (msg_start now past the end),
+            # fall back to a bounded recent tail so we still learn from what happened.
+            turn_messages = msgs[msg_start:] if 0 <= msg_start < len(msgs) else msgs[-50:]
+            if turn_messages:
+                maybe_run_learnings(turn_messages, session_id=self._session.session_id)
+        except Exception as exc:  # noqa: BLE001
+            if self._verbose:
+                print(f"pipeline: orchestrator learnings trigger failed ({exc}).")
+
     def _template_brand_index(self) -> dict[str, set[str]]:
         """Return {template_name: {brand_tokens}} for every catalog template.
 
@@ -1302,6 +1328,9 @@ class Pipeline:
                 print(f"pipeline: canvas-hook splice failed ({exc}); ignoring canvas graph.")
 
         self._ensure_orch_clean_history()
+        # Mark where this turn's messages begin so the learnings pass (fired on
+        # completion) analyses only what just happened, not the whole window.
+        _orch_msg_start = len(getattr(self._orchestrator_agent, "messages", []) or [])
         orch_input = self._build_orchestrator_input(user_input, user_text)
         current_input: Any = orch_input
         _snap = self._usage_snapshot(self._orchestrator_agent)
@@ -1433,6 +1462,7 @@ class Pipeline:
                 self._record_agent_usage(self._orchestrator_agent, _snap)
                 self._session.last_agent = "orchestrator"
                 log_agent_messages("ORCHESTRATOR", list(self._orchestrator_agent.messages))
+                self._learn_from_orchestrator_turn(_orch_msg_start)
                 if self._verbose:
                     print("pipeline: Orchestrator finished.")
                 return
