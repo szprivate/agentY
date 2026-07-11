@@ -47,4 +47,13 @@ of these into `references/<model>.md` and add an index row when it earns its own
   editing: conversational follow-ups ("keep everything, change lighting to golden hour and jacket to leather") — auto semantic masking
   character_consistency: upload reference images + assign names in the prompt
   avoid: ["4k / trending on artstation / masterpiece spam", "re-describing a reference — name it and state the change"]
+
+- model: Seedream 4.x (ByteDance)
+  kind: image (text-to-image + edit in one model); up to 6 reference images
+  # Prompts like Nano-Banana — instruction-style edit + multi-reference. Reuse that mental model.
+  t2i_formula: Subject + Style + Composition + Lighting/Atmosphere + [camera/perspective]
+  edit_formula: "Action + Object + Attributes" (actions: remove / replace / add / change / transform)
+  edit_preserve: state what to keep ("keep the font unchanged", "preserve layout")
+  multi_ref: upload ~2 images per blend; describe how elements combine; iterate on the previous result
+  strengths: [2K fast, accurate charts/diagrams/text, style range photoreal→anime]
 ```

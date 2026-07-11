@@ -19,10 +19,14 @@ allowed-tools:
 ## Model index
 | Model family | Fragment |
 |---|---|
-| Flux (dev / schnell / Klein) | `references/flux.md` |
-| WAN 2.1 / 2.2 — video | `references/wan.md` |
+| Flux 1 & 2 (dev / schnell / Klein / Krea) | `references/flux.md` |
+| Z-Image / Z-Image-Turbo | `references/z-image.md` |
+| LTX-2 / LTX-2.3 — video + audio | `references/ltx-2.md` |
+| WAN 2.1 / 2.2 / 2.6 / VACE — video | `references/wan.md` |
 | Kling 2.x / 3.0 — video, multishot | `references/kling.md` |
-| SD 1.5 · SDXL · SD3/3.5 · Qwen Image Edit · Nano Banana | `references/other-models.md` |
+| Veo 3 — video + audio | `references/veo.md` |
+| Ideogram — text-to-image, typography / text rendering | `references/ideogram.md` |
+| SD 1.5 · SDXL · SD3/3.5 · Qwen Image Edit · Nano Banana · Seedream | `references/other-models.md` |
 
 _New model family? Add a `references/<model>.md` fragment in the compact schema
 (see any existing fragment) and add a row here._
