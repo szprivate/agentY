@@ -1468,6 +1468,29 @@ def _build_app():
             logger.error("token_usage clear failed: %s", exc, exc_info=True)
             return jsonify({"ok": False, "error": str(exc)}), 500
 
+    # ── Message-history log viewer (self-contained HTML + raw log feed) ─────
+    # The viewer page (scripts/log_viewer.html) is served here so it can fetch
+    # the log same-origin; opened from the ComfyUI panel via web/agent_log_viewer.js.
+    @app.route("/agentY/log_viewer", methods=["GET"])
+    def log_viewer():
+        page = _project_root() / "scripts" / "log_viewer.html"
+        if not page.exists():
+            return "log_viewer.html not found", 404
+        html = page.read_text(encoding="utf-8", errors="replace")
+        return Response(html, mimetype="text/html; charset=utf-8")
+
+    @app.route("/agentY/message_history", methods=["GET", "OPTIONS"])
+    def message_history():
+        if request.method == "OPTIONS":
+            return "", 204
+        from src.agent import _load_settings
+        rel = (_load_settings() or {}).get("message_history_log", "./.logs/message_history.log")
+        path = _project_root() / rel
+        if not path.exists():
+            return Response("", mimetype="text/plain; charset=utf-8", status=404)
+        text = path.read_text(encoding="utf-8", errors="replace")
+        return Response(text, mimetype="text/plain; charset=utf-8")
+
     # ── Application settings (.env auth keys + config/settings.json) ────────
     @app.route("/agentY/settings", methods=["GET", "POST", "OPTIONS"])
     def settings_route():
