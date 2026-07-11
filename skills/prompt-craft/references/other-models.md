@@ -48,7 +48,7 @@ of these into `references/<model>.md` and add an index row when it earns its own
   character_consistency: upload reference images + assign names in the prompt
   avoid: ["4k / trending on artstation / masterpiece spam", "re-describing a reference — name it and state the change"]
 
-- model: Seedream 4.x (ByteDance)
+- model: Seedream 4.x / 5.0 (ByteDance)   # note: Seedream = image; Seedance = video (see seedance.md)
   kind: image (text-to-image + edit in one model); up to 6 reference images
   # Prompts like Nano-Banana — instruction-style edit + multi-reference. Reuse that mental model.
   t2i_formula: Subject + Style + Composition + Lighting/Atmosphere + [camera/perspective]

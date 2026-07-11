@@ -25,6 +25,7 @@ allowed-tools:
 | WAN 2.1 / 2.2 / 2.6 / VACE — video | `references/wan.md` |
 | Kling 2.x / 3.0 — video, multishot | `references/kling.md` |
 | Veo 3 — video + audio | `references/veo.md` |
+| Seedance 2.0 — video, reference-to-video | `references/seedance.md` |
 | Ideogram — text-to-image, typography / text rendering | `references/ideogram.md` |
 | SD 1.5 · SDXL · SD3/3.5 · Qwen Image Edit · Nano Banana · Seedream | `references/other-models.md` |
 
