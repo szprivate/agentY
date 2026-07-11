@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agentY — Message History Log Viewer</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --panel:#fff; --ink:#1a1d21; --muted:#666; --line:#e2e5ea;
+    --accent:#3b6ef5; --chip:#eef1f6; --code:#f2f3f5; --hl:#ffe58a;
+    --user:#2e7d32; --assistant:#5a3fd6; --tool:#b26a00; --toolres:#0277bd;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#15171c; --panel:#1e2128; --ink:#e6e8ec; --muted:#9aa0aa; --line:#2c313b;
+      --accent:#6f97ff; --chip:#262b34; --code:#161a20; --hl:#7a6320;
+      --user:#7bd88f; --assistant:#b6a6ff; --tool:#f0b866; --toolres:#67c1ef;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#15171c; --panel:#1e2128; --ink:#e6e8ec; --muted:#9aa0aa; --line:#2c313b;
+    --accent:#6f97ff; --chip:#262b34; --code:#161a20; --hl:#7a6320;
+    --user:#7bd88f; --assistant:#b6a6ff; --tool:#f0b866; --toolres:#67c1ef;
+  }
+  :root[data-theme="light"]{
+    --bg:#f6f7f9; --panel:#fff; --ink:#1a1d21; --muted:#666; --line:#e2e5ea;
+    --accent:#3b6ef5; --chip:#eef1f6; --code:#f2f3f5; --hl:#ffe58a;
+    --user:#2e7d32; --assistant:#5a3fd6; --tool:#b26a00; --toolres:#0277bd;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  header{position:sticky;top:0;z-index:10;background:var(--panel);border-bottom:1px solid var(--line);
+    padding:10px 16px;display:flex;flex-direction:column;gap:8px}
+  .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  h1{font-size:15px;margin:0;font-weight:650}
+  .muted{color:var(--muted)}
+  button,input,select{font:inherit;color:var(--ink);background:var(--panel);
+    border:1px solid var(--line);border-radius:7px;padding:6px 10px}
+  button{cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+  input[type=search]{min-width:220px;flex:1}
+  input[type=date]{padding:5px 8px}
+  .drop{margin:40px auto;max-width:560px;padding:48px 24px;text-align:center;
+    border:2px dashed var(--line);border-radius:14px;background:var(--panel);color:var(--muted)}
+  .drop.hot{border-color:var(--accent);color:var(--ink)}
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chip{padding:3px 9px;border-radius:999px;background:var(--chip);border:1px solid transparent;
+    cursor:pointer;font-size:12px;user-select:none;display:inline-flex;gap:6px;align-items:center}
+  .chip.off{opacity:.4}
+  .chip .dot{width:9px;height:9px;border-radius:50%}
+  .chip .n{color:var(--muted);font-variant-numeric:tabular-nums}
+  main{max-width:1100px;margin:0 auto;padding:14px 16px 80px}
+  .stat{font-size:12px;color:var(--muted)}
+  .card{background:var(--panel);border:1px solid var(--line);border-left-width:4px;
+    border-radius:9px;margin:8px 0;overflow:hidden}
+  .card>.head{display:flex;gap:10px;align-items:center;padding:9px 12px;cursor:pointer}
+  .card>.head:hover{background:var(--chip)}
+  .badge{font-size:11px;font-weight:650;padding:2px 8px;border-radius:6px;color:#fff;white-space:nowrap}
+  .ts{font-variant-numeric:tabular-nums;color:var(--muted);font-size:12px;white-space:nowrap}
+  .preview{color:var(--muted);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+  .cnt{font-size:11px;color:var(--muted);white-space:nowrap}
+  .body{border-top:1px solid var(--line);padding:10px 12px;display:none}
+  .card.open .body{display:block}
+  .card.open>.head{background:var(--chip)}
+  pre{margin:0;white-space:pre-wrap;word-break:break-word;background:var(--code);
+    padding:10px;border-radius:7px;font:12px/1.5 "SF Mono",Consolas,"Liberation Mono",monospace;overflow-x:auto}
+  .msg{border:1px solid var(--line);border-radius:8px;margin:7px 0;overflow:hidden}
+  .msg>.mh{padding:4px 10px;font-size:11px;font-weight:650;color:#fff}
+  .msg .mc{padding:8px 10px}
+  .block{margin:6px 0}
+  .block .lbl{font-size:11px;font-weight:650;text-transform:uppercase;letter-spacing:.03em;margin-bottom:2px}
+  .tool .lbl{color:var(--tool)} .toolres .lbl{color:var(--toolres)}
+  .txt{white-space:pre-wrap;word-break:break-word}
+  mark{background:var(--hl);color:inherit;border-radius:2px;padding:0 1px}
+  .pager{display:flex;gap:8px;align-items:center;justify-content:center;margin:16px 0}
+  .toolpill{display:inline-block;background:var(--chip);border-radius:6px;padding:1px 7px;
+    font:12px/1.5 "SF Mono",Consolas,monospace;color:var(--tool);font-weight:650}
+  .skillpill{color:#fff;background:var(--accent)}
+  .toggle{font-size:11px;color:var(--accent);cursor:pointer;user-select:none}
+  a.themeToggle{margin-left:auto;cursor:pointer;color:var(--muted);font-size:12px;text-decoration:none}
+  details.raw{margin-top:6px}
+  details.raw summary{cursor:pointer;color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <h1>agentY · Message-History Log Viewer</h1>
+    <span id="fileinfo" class="muted"></span>
+    <a class="themeToggle" id="themeToggle">◐ theme</a>
+  </div>
+  <div class="row" id="controls" style="display:none">
+    <input type="search" id="search" placeholder="Search text within chunks…">
+    <label class="stat">from <input type="date" id="from"></label>
+    <label class="stat">to <input type="date" id="to"></label>
+    <select id="sort">
+      <option value="asc">oldest first</option>
+      <option value="desc">newest first</option>
+    </select>
+    <button id="expandAll">Expand page</button>
+    <button id="collapseAll">Collapse</button>
+    <button id="export">Export filtered</button>
+    <button id="reload">Load another file</button>
+  </div>
+  <div class="row chips" id="typeChips" style="display:none"></div>
+  <div class="row"><span class="stat" id="stats"></span></div>
+</header>
+
+<div class="drop" id="drop">
+  <p style="font-size:16px;margin:0 0 6px"><strong>Drop <code>message_history.log</code> here</strong></p>
+  <p style="margin:0 0 14px">or</p>
+  <p><button class="primary" id="pick">Choose log file…</button></p>
+  <input type="file" id="file" accept=".log,.txt,text/plain" style="display:none">
+  <p class="stat" style="margin-top:18px">Everything is parsed locally in your browser — nothing is uploaded.</p>
+</div>
+
+<main id="list"></main>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const el = (t,c,txt)=>{const e=document.createElement(t);if(c)e.className=c;if(txt!=null)e.textContent=txt;return e;};
+
+// ---- theme toggle ----
+$("#themeToggle").onclick = ()=>{
+  const cur = document.documentElement.getAttribute("data-theme");
+  const next = cur==="dark" ? "light" : cur==="light" ? "dark"
+    : (matchMedia("(prefers-color-scheme: dark)").matches ? "light" : "dark");
+  document.documentElement.setAttribute("data-theme", next);
+};
+
+// ---- color per type ----
+const SEP = /^={10,}\s*$/;
+const BANNER = /^\[(.+?)\]\s*$/;
+function hue(label){let h=0;for(const c of label)h=(h*31+c.charCodeAt(0))>>>0;return h%360;}
+function colorFor(label){
+  const known={ "MESSAGE HISTORY":210, "RESEARCHER":275, "ORCHESTRATOR":150, "TRIAGE":30,
+    "INFO":190, "STORY":330, "DOP":260, "SCOUT":95, "QUERY_TEMPLATES":300 };
+  const h = (label in known) ? known[label] : hue(label);
+  return `hsl(${h} 62% 45%)`;
+}
+
+// ---- parse ----
+function parseLog(text){
+  const lines = text.split("\n");
+  const raw = [];               // {label, headerLine, lines:[]}
+  let cur = null, prevSep = false;
+  for(const line of lines){
+    const isSep = SEP.test(line);
+    const m = BANNER.exec(line);
+    if(m && prevSep){                       // a real banner only follows a separator
+      if(cur) raw.push(cur);
+      cur = {banner:m[1], body:[]};
+    } else if(cur && !isSep){
+      cur.body.push(line);
+    }
+    prevSep = isSep;
+  }
+  if(cur) raw.push(cur);
+
+  // classify banner
+  const parsed = raw.map(s=>{
+    const b = s.banner;
+    let type="other", agent=b, ts=null, count=null;
+    let mm;
+    if((mm=/^MESSAGE HISTORY — (\d+) message/.exec(b))){ type="history"; agent="MESSAGE HISTORY"; count=+mm[1]; }
+    else if((mm=/^(.+?) MESSAGES — (.+?) — (\d+) message/.exec(b))){ type="msgs"; agent=mm[1]; ts=mm[2]; count=+mm[3]; }
+    else if((mm=/^(.+?) — (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)$/.exec(b))){ type="exchange"; agent=mm[1]; ts=mm[2]; }
+    return {type, agent, ts, count, banner:b, body:s.body.join("\n").replace(/^\n+|\n+$/g,"")};
+  });
+
+  // merge  [X MESSAGES] + following [MESSAGE HISTORY]  → one chunk
+  const out=[];
+  for(let i=0;i<parsed.length;i++){
+    const s=parsed[i], nx=parsed[i+1];
+    if(s.type==="msgs" && nx && nx.type==="history"){
+      out.push({type:"messages", agent:s.agent, ts:s.ts, count:nx.count!=null?nx.count:s.count, body:nx.body});
+      i++;
+    } else if(s.type==="history"){
+      out.push({type:"messages", agent:s.agent, ts:s.ts, count:s.count, body:s.body});
+    } else {
+      out.push(s);
+    }
+  }
+  // assign a day to every chunk; undated chunks (standalone MESSAGE HISTORY, e.g.
+  // brain-stage dumps) inherit the day of the most recent dated chunk so date
+  // filters don't silently drop them. ts stays null so no fake time is displayed.
+  let lastDay=null;
+  out.forEach((s,i)=>{ s.id=i;
+    if(s.ts){ s.day=s.ts.slice(0,10); lastDay=s.day; } else { s.day=lastDay; }
+    s.search=(s.agent+" "+s.body).toLowerCase(); });
+  return out;
+}
+
+// ---- state ----
+let SECTIONS=[], activeTypes=new Set(), PAGE=0; const PER=25;
+
+function computeChips(){
+  const counts={};
+  for(const s of SECTIONS) counts[s.agent]=(counts[s.agent]||0)+1;
+  const wrap=$("#typeChips"); wrap.innerHTML=""; wrap.style.display="flex";
+  activeTypes = new Set(Object.keys(counts));
+  Object.keys(counts).sort((a,b)=>counts[b]-counts[a]).forEach(lbl=>{
+    const chip=el("span","chip"); chip.dataset.lbl=lbl;
+    const dot=el("span","dot"); dot.style.background=colorFor(lbl);
+    chip.append(dot, el("span",null,lbl), el("span","n","· "+counts[lbl]));
+    chip.onclick=()=>{ chip.classList.toggle("off");
+      if(activeTypes.has(lbl))activeTypes.delete(lbl); else activeTypes.add(lbl);
+      PAGE=0; render(); };
+    wrap.append(chip);
+  });
+}
+
+function filtered(){
+  const q=$("#search").value.trim().toLowerCase();
+  const from=$("#from").value, to=$("#to").value;
+  let r=SECTIONS.filter(s=>{
+    if(!activeTypes.has(s.agent)) return false;
+    if(q && !s.search.includes(q)) return false;
+    if(from && (!s.day || s.day<from)) return false;
+    if(to && (!s.day || s.day>to)) return false;
+    return true;
+  });
+  if($("#sort").value==="desc") r=r.slice().reverse();
+  return r;
+}
+
+function esc(t){return t.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
+function highlight(node,q){
+  if(!q) return;
+  const walk=document.createTreeWalker(node,NodeFilter.SHOW_TEXT);
+  const hits=[]; let n; const ql=q.toLowerCase();
+  while((n=walk.nextNode())){ if(n.nodeValue.toLowerCase().includes(ql)) hits.push(n); }
+  for(const t of hits){
+    const frag=document.createDocumentFragment(); const s=t.nodeValue; let i=0,idx;
+    const low=s.toLowerCase();
+    while((idx=low.indexOf(ql,i))>=0){ frag.append(s.slice(i,idx)); const mk=el("mark",null,s.slice(idx,idx+q.length)); frag.append(mk); i=idx+q.length; }
+    frag.append(s.slice(i)); t.parentNode.replaceChild(frag,t);
+  }
+}
+
+// render one Strands message list into readable blocks
+function renderMessages(jsonText){
+  let data; try{ data=JSON.parse(jsonText); }catch(e){ const p=el("pre",null,jsonText); return p; }
+  if(!Array.isArray(data)){ const p=el("pre",null,jsonText); return p; }
+  const box=el("div");
+  for(const msg of data){
+    const role=msg.role||"?";
+    const m=el("div","msg");
+    const h=el("div","mh",role.toUpperCase());
+    h.style.background = role==="user"?"var(--user)":role==="assistant"?"var(--assistant)":"#777";
+    m.append(h);
+    const mc=el("div","mc");
+    const content = Array.isArray(msg.content)?msg.content:[{text:typeof msg.content==="string"?msg.content:JSON.stringify(msg.content)}];
+    for(const c of content){
+      if(c.text!=null){ const b=el("div","block"); b.append(el("div","txt",c.text)); mc.append(b); }
+      else if(c.toolUse){
+        const b=el("div","block tool"); b.append(el("div","lbl","tool call"));
+        const nm=c.toolUse.name||"?";
+        const pill=el("span", nm==="skills"?"toolpill skillpill":"toolpill", nm==="skills"?("skills → "+(c.toolUse.input&&c.toolUse.input.skill_name||"?")):nm);
+        b.append(pill);
+        const inp=el("pre",null,JSON.stringify(c.toolUse.input||{},null,2)); inp.style.marginTop="4px"; b.append(inp);
+        mc.append(b);
+      }
+      else if(c.toolResult){
+        const b=el("div","block toolres"); b.append(el("div","lbl","tool result"+(c.toolResult.status?(" · "+c.toolResult.status):"")));
+        const rc=c.toolResult.content||[];
+        const txt=rc.map(x=>x.text!=null?x.text:(x.json!=null?JSON.stringify(x.json,null,2):JSON.stringify(x))).join("\n");
+        b.append(el("pre",null,txt.length>4000?txt.slice(0,4000)+"\n…[truncated]":txt));
+        mc.append(b);
+      } else {
+        mc.append(el("pre",null,JSON.stringify(c,null,2)));
+      }
+    }
+    m.append(mc); box.append(m);
+  }
+  const det=el("details","raw"); det.append(el("summary",null,"raw JSON")); det.append(el("pre",null,jsonText));
+  box.append(det);
+  return box;
+}
+
+function buildBody(s){
+  const q=$("#search").value.trim();
+  let node;
+  if(s.type==="messages"){ node=renderMessages(s.body); }
+  else if(s.type==="exchange"){
+    node=el("div");
+    const parts=s.body.split(/\n--- (INPUT|OUTPUT) ---\n/);
+    // parts: [pre, 'INPUT', inputBody, 'OUTPUT', outputBody] (roughly)
+    if(parts.length>=3){
+      for(let i=1;i<parts.length;i+=2){
+        const b=el("div","block"); b.append(el("div","lbl",parts[i]));
+        b.append(el("pre",null,parts[i+1]||"")); node.append(b);
+      }
+    } else { node.append(el("pre",null,s.body)); }
+  } else { node=el("pre",null,s.body); }
+  highlight(node,q);
+  return node;
+}
+
+function card(s){
+  const c=el("div","card"); c.style.borderLeftColor=colorFor(s.agent);
+  const head=el("div","head");
+  const badge=el("span","badge",s.agent); badge.style.background=colorFor(s.agent);
+  head.append(badge);
+  if(s.ts) head.append(el("span","ts",s.ts));
+  if(s.count!=null) head.append(el("span","cnt",s.count+" msg"));
+  const prev=el("span","preview", s.type==="messages" ? "message history" : s.body.replace(/\s+/g," ").slice(0,160));
+  head.append(prev);
+  const body=el("div","body");
+  let built=false;
+  head.onclick=()=>{ c.classList.toggle("open");
+    if(!built && c.classList.contains("open")){ body.append(buildBody(s)); built=true; } };
+  c.append(head,body);
+  return c;
+}
+
+function render(){
+  const list=$("#list"); list.innerHTML="";
+  const rows=filtered();
+  const pages=Math.max(1,Math.ceil(rows.length/PER));
+  if(PAGE>=pages)PAGE=pages-1; if(PAGE<0)PAGE=0;
+  const slice=rows.slice(PAGE*PER,PAGE*PER+PER);
+  $("#stats").textContent = `${rows.length.toLocaleString()} chunk(s) match · showing ${slice.length} · page ${PAGE+1}/${pages}`;
+  const frag=document.createDocumentFragment();
+  for(const s of slice) frag.append(card(s));
+  list.append(frag);
+  if(pages>1){
+    const p=el("div","pager");
+    const prev=el("button",null,"‹ Prev"); prev.disabled=PAGE===0; prev.onclick=()=>{PAGE--;render();scrollTo(0,0);};
+    const nxt=el("button",null,"Next ›"); nxt.disabled=PAGE>=pages-1; nxt.onclick=()=>{PAGE++;render();scrollTo(0,0);};
+    p.append(prev, el("span","stat",`page ${PAGE+1} / ${pages}`), nxt); list.append(p);
+  }
+}
+
+// ---- load ----
+function load(text, name, size){
+  SECTIONS=parseLog(text);
+  $("#drop").style.display="none";
+  $("#controls").style.display="flex";
+  $("#fileinfo").textContent = `${name} · ${(size/1048576).toFixed(1)} MB · ${SECTIONS.length.toLocaleString()} chunks`;
+  const days=SECTIONS.map(s=>s.day).filter(Boolean).sort();
+  if(days.length){ const lo=days[0], hi=days[days.length-1];
+    for(const id of ["#from","#to"]){ $(id).min=lo; $(id).max=hi; $(id).value=""; } }  // range hint; blank = all
+  computeChips(); PAGE=0; render();
+}
+function readFile(f){ const r=new FileReader(); r.onload=()=>load(r.result,f.name,f.size); r.readAsText(f); }
+
+$("#pick").onclick=()=>$("#file").click();
+$("#file").onchange=e=>{ if(e.target.files[0]) readFile(e.target.files[0]); };
+const drop=$("#drop");
+["dragenter","dragover"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add("hot");}));
+["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove("hot");}));
+drop.addEventListener("drop",e=>{ const f=e.dataTransfer.files[0]; if(f) readFile(f); });
+
+let deb; $("#search").oninput=()=>{clearTimeout(deb);deb=setTimeout(()=>{PAGE=0;render();},200);};
+$("#from").onchange=()=>{PAGE=0;render();}; $("#to").onchange=()=>{PAGE=0;render();};
+$("#sort").onchange=()=>{PAGE=0;render();};
+$("#expandAll").onclick=()=>document.querySelectorAll(".card").forEach(c=>{ if(!c.classList.contains("open"))c.querySelector(".head").click(); });
+$("#collapseAll").onclick=()=>document.querySelectorAll(".card.open").forEach(c=>c.classList.remove("open"));
+$("#reload").onclick=()=>{ $("#drop").style.display="block"; $("#controls").style.display="none"; $("#typeChips").style.display="none"; $("#list").innerHTML=""; $("#stats").textContent=""; $("#fileinfo").textContent=""; };
+$("#export").onclick=()=>{
+  const rows=filtered();
+  const sep="=".repeat(80);
+  const text=rows.map(s=>{
+    const hdr = s.type==="messages" ? `[${s.agent} MESSAGES — ${s.ts||"?"} — ${s.count} message(s)]`
+      : `[${s.banner||s.agent}]`;
+    return `${sep}\n${hdr}\n${sep}\n${s.body}\n`;
+  }).join("\n");
+  const blob=new Blob([text],{type:"text/plain"});
+  const a=el("a"); a.href=URL.createObjectURL(blob); a.download="message_history.filtered.log"; a.click();
+};
+</script>
+</body>
+</html>
