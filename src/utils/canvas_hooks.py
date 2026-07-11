@@ -366,30 +366,37 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
 
         if multis:
             lines.append(
-                "\nWORKFLOW-STANDIN CHAINS — a chain of hooks wired output→input. Run the "
-                "stages STRICTLY IN ORDER, feeding each stage's OUTPUT(s) as the next "
-                "stage's INPUT(s). For each stage: GENERATE a workflow (or script) from its "
-                "prompt, then run it with run_workflow_now(workflow_path) — NOT "
-                "signal_workflow_ready, because you need each stage's output(s) to "
-                "build the next. A stage may pass SEVERAL outputs of any type; the "
-                "per-stage slot map below shows which output feeds which input. An "
-                "exported output can be a workflow output FILE (image/video/audio) OR a "
-                "VALUE you compute from the run (e.g. 'generate a video AND calculate its "
-                "length' → the video file is one output, the length is another that you "
-                "derive with a tool/script). Forward each per the slot map: upload_image "
-                "and bind for media, or inject the computed scalar into the next stage's "
-                "workflow (as a widget value) or prompt. Stage 1's input is its wired "
-                "anchor (if any), else text-to-media; the final stage's output is the "
+                "\nWORKFLOW-STANDIN CHAINS — hooks wired output→input, run STRICTLY IN "
+                "ORDER. Run each stage with run_workflow_now(workflow_path) (NOT "
+                "signal_workflow_ready) so you capture its output(s) to build the next "
+                "stage.\n"
+                "CRITICAL — every stage AFTER stage 1 RECEIVES the previous stage's "
+                "output as its INPUT; it is NEVER a fresh text-to-media request. For "
+                "stages 2+ do NOT call run_research and do NOT build a text-to-image "
+                "workflow: take the incoming file(s) as the input image/video and build "
+                "an image-to-image / edit / image-to-video (or scalar-consuming) workflow "
+                "that binds them — upload_image the produced media and wire it into the "
+                "loader, or inject a computed scalar as a widget/prompt value. The "
+                "per-stage slot map shows which output feeds which input. A stage may "
+                "export SEVERAL outputs of any type: a workflow output FILE "
+                "(image/video/audio) OR a VALUE you compute from the run (e.g. 'generate "
+                "a video AND calculate its length' → the video is one output, the length "
+                "another you derive with a tool/script). Stage 1's input is its wired "
+                "anchor if any, else text-to-media; the final stage's output is the "
                 "result. Do NOT call apply_canvas_hooks for these:"
             )
             for ci, chain in enumerate(multis, 1):
-                head_in = _input_desc(chain[0])
-                lines.append(f"  Chain {ci} (stage 1 {head_in}):")
+                lines.append(f"  Chain {ci}:")
                 prev = None
                 for si, h in enumerate(chain, 1):
                     prompt = str(h.get("directive", "") or "").strip()
-                    wiring = _chain_wiring(h, prev.get("hook_node_id")) if prev else ""
-                    lines.append(f'    {si}. "{prompt}"{_output_desc(h)}{wiring}')
+                    if prev is None:
+                        in_tag = f"input = {_input_desc(h)}"
+                    else:
+                        wiring = _chain_wiring(h, prev.get("hook_node_id"))
+                        in_tag = ("INPUT = stage %d's output — image-to-media/EDIT, NOT "
+                                  "text-to-image%s" % (si - 1, wiring))
+                    lines.append(f'    Stage {si} [{in_tag}]: "{prompt}"{_output_desc(h)}')
                     prev = h
 
         bake_hooks = [h for h in standin_hooks if _wants_bake(h)]

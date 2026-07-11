@@ -1488,7 +1488,29 @@ def _build_app():
         path = _project_root() / rel
         if not path.exists():
             return Response("", mimetype="text/plain; charset=utf-8", status=404)
-        text = path.read_text(encoding="utf-8", errors="replace")
+        # The log grows without bound (tens of MB); shipping the whole thing makes
+        # the in-browser viewer hang on load. Default to the last ~2 MB of history,
+        # trimmed to a clean record boundary; ?full=1 returns everything on demand.
+        full = str(request.args.get("full", "")).strip().lower() in ("1", "true", "yes")
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+        tail_bytes = 2 * 1024 * 1024
+        if full or size <= tail_bytes:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        else:
+            with path.open("rb") as fh:
+                fh.seek(size - tail_bytes)
+                chunk = fh.read()
+            text = chunk.decode("utf-8", errors="replace")
+            # Start on a record separator (a line of '=') so the viewer's parser
+            # doesn't choke on a half record at the cut point.
+            cut = text.find("\n====")
+            if cut > 0:
+                text = text[cut + 1:]
+            text = ("[showing the last ~2 MB of history — append ?full=1 to the URL "
+                    "for the complete log]\n\n") + text
         return Response(text, mimetype="text/plain; charset=utf-8")
 
     # ── Application settings (.env auth keys + config/settings.json) ────────
