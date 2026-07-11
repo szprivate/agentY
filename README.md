@@ -1,8 +1,8 @@
 # agentY
 
-An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanonymous/ComfyUI) workflows through natural language. Built on the [Strands Agents SDK](https://github.com/strands-agents/sdk-python), it supports Claude and Ollama as LLM backends and is driven from a **chat panel that lives inside ComfyUI** — a sidebar tab provided by a small companion custom node.
+An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanonymous/ComfyUI) workflows through natural language. Built on the [Strands Agents SDK](https://github.com/strands-agents/sdk-python), it runs on Claude, Ollama, or Alibaba/DashScope (Qwen) models and is driven from a **chat panel that lives inside ComfyUI** — a sidebar tab provided by a small companion custom node.
 
-> **The UI is now native to ComfyUI.** The old Chainlit web GUI (with its Postgres
+> **The UI is native to ComfyUI.** The old Chainlit web GUI (with its Postgres
 > thread store and MinIO file storage, all in Docker) has been removed. You chat
 > with the agent in ComfyUI's left sidebar; conversations persist to a local
 > **SQLite** file; and instead of showing generated media inline, the agent drops
@@ -13,16 +13,18 @@ An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanony
 
 ## Features
 
-- **Natural language → ComfyUI workflow** — describe what you want; the pipeline builds, submits, and QA-checks the workflow automatically.
+- **Natural language → ComfyUI workflow** — describe what you want; a free **Orchestrator agent** builds, submits, and QA-checks the workflow automatically.
+- **Free-agent orchestration** — one Orchestrator owns each turn with the full toolset. It calls tools directly, **delegates** to specialists (research / assembly / info / story / DOP / planner / web), spawns ad-hoc subagents, and can even **author skills live**. No brittle intent classifier or fixed routing.
 - **Image & video generation** — Flux, WAN2.1/2.2, Qwen, HunyuanVideo, and many other models.
 - **Image editing** — reference-based editing, inpainting, upscaling, and more.
 - **Results as graph nodes** — every generated image/video is added to the open ComfyUI graph as a `LoadImage` / video-loader node (staged into ComfyUI's input dir), instead of being shown inline. The chat carries the agent's *text*.
+- **Canvas hook nodes** — annotate the graph with **`agentY hook`** nodes ("sweep the seed 6×", "upscale then add film grain") and let the agent run them; chain hooks for multi-step tasks and **bake** a chain into reusable native ComfyUI **subgraphs** (see [Canvas nodes](#canvas-nodes)).
 - **Persistent chat history** — threads, messages, and the per-thread image gallery are stored in a self-contained local **SQLite** database (`memory/conversations.sqlite`). No Docker, Postgres, or S3.
 - **Slash commands** — `/restart`, `/stop`, `/unload`, `/clear_vram`, `/images`, `/clearhistory`, `/switch_model`, `/add_workflow`, `/remove_workflow`, `/resend` — with an in-panel autocomplete popup.
+- **In-panel Settings & token usage** — edit auth keys (`.env`) and `config/settings.json`, and review per-model token cost, from ComfyUI's own Settings panel (no file editing required).
 - **FAISS memory** — long-term memory via mem0 + local Ollama embeddings (`nomic-embed-text`).
 - **Hugging Face model management** — search, check local availability, and download models on demand.
-- **Multiple LLM backends** — Claude and Ollama, configurable per pipeline stage.
-- **Skills system** — drop shell/Python scripts into `skills/` and they become agent-callable tools.
+- **Multiple LLM backends** — Claude, Ollama, and Alibaba/DashScope (Qwen), configurable per pipeline stage.
 
 ---
 
@@ -35,7 +37,7 @@ up; this is what each one is:
 |---|---|---|
 | **agentY** (this repo) | your working copy | The Strands chat host / pipeline (`run_agent.ps1`). |
 | **[agenty_core](https://github.com/szprivate/agenty_core)** | sibling folder next to `agentY` | Shared ComfyUI/HuggingFace/web/file tool layer + the canonical template/recipe corpus. Installed **editable** (`-e ../agenty_core`); **required**. |
-| **[agentY-comfyuiConnect](https://github.com/szprivate/agentY-comfyuiConnect)** | `<ComfyUI>/custom_nodes/` | The chat UI — the **agentY** tab in ComfyUI's left sidebar. |
+| **[agentY-comfyuiConnect](https://github.com/szprivate/agentY-comfyuiConnect)** | `<ComfyUI>/custom_nodes/` | The **agentY** sidebar tab **and** the canvas nodes (`agentY hook`, `agentY python`). |
 | **[agentY-mcp](https://github.com/szprivate/agentY-mcp)** | sibling folder next to `agentY` | The alternative **MCP-server / Claude-Desktop** front end (also consumes `agenty_core`). Optional. |
 
 ---
@@ -44,17 +46,19 @@ up; this is what each one is:
 
 ```
 ComfyUI  (your browser)
-  └─ agentY sidebar tab  ── agentY-comfyuiConnect  (in <ComfyUI>/custom_nodes/)
+  ├─ agentY sidebar tab   ┐
+  └─ agentY hook / python │── agentY-comfyuiConnect  (in <ComfyUI>/custom_nodes/)
+     nodes on the canvas  ┘
         │  HTTP + SSE (default http://127.0.0.1:5000)
         ▼
   agentY chat host  ── src/agenty_ui_server.py  →  src/utils/agentY_server.py
-        │  runs the Strands pipeline; persists to SQLite
+        │  Orchestrator agent (+ specialist delegates, Executor stage)
         │  tool layer ── ../agenty_core  (editable install)
-        ├──HTTP/WS──►  ComfyUI  (submit workflows, stage outputs into /input)
+        ├──HTTP/WS──►  ComfyUI  (submit workflows, run Vision-QA, stage outputs into /input)
         └──►  memory/conversations.sqlite  (threads, messages, gallery, resume state)
 ```
 
-The chat host is a normal agentY process (Claude/Ollama, same `config/settings.json`). The ComfyUI custom node is only the **frontend + a graph-load hook** — it talks to the host over HTTP/SSE and injects loader nodes when the agent produces output.
+Each user turn is owned by the **Orchestrator** agent (a normal Claude/Ollama/Qwen model, per `config/settings.json`). It has the full toolset and can call the specialist agents as delegates. When it finishes assembling a workflow it hands off to the **Executor** (ComfyUI submission → completion polling → optional Ollama Vision-QA → staging outputs as loader nodes). The ComfyUI custom node is the **frontend + canvas nodes + a graph-load hook** — it talks to the host over HTTP/SSE.
 
 ---
 
@@ -62,8 +66,9 @@ The chat host is a normal agentY process (Claude/Ollama, same `config/settings.j
 
 - **[uv](https://docs.astral.sh/uv/getting-started/installation/)** (Python 3.11+ env manager) and **git** on your PATH
 - A running **ComfyUI** instance (default: `http://127.0.0.1:8188`)
-- An **Anthropic API key** (for Claude) _and/or_ a local **Ollama** installation
+- At least one LLM backend: an **Anthropic API key** (Claude), a local **Ollama** install, and/or a **DashScope / Alibaba Model Studio key** (Qwen)
 - A **Hugging Face token** (for gated-model downloads)
+- **Ollama** with `nomic-embed-text` pulled if you want long-term FAISS memory
 
 No Docker, Postgres, or MinIO.
 
@@ -116,7 +121,7 @@ uv venv .venv
 uv pip install -r requirements.txt
 copy .env_example .env
 
-# the ComfyUI chat UI (restart ComfyUI afterwards)
+# the ComfyUI sidebar + canvas nodes (restart ComfyUI afterwards)
 git clone https://github.com/szprivate/agentY-comfyuiConnect  <ComfyUI>\custom_nodes\agentY-comfyuiConnect
 
 # (optional) the MCP / Claude Desktop front end
@@ -126,21 +131,22 @@ git clone https://github.com/szprivate/agentY-mcp.git ..\agentY-mcp
 
 ### 3. Configure secrets
 
-The installer prompts for these; to edit them later, open `.env`:
+The installer prompts for these; to edit them later, open `.env` **or** use the in-panel Settings (see below):
 
 ```dotenv
 HF_TOKEN=hf_...                 # Hugging Face token (for gated model downloads)
 ANTHROPIC_API_KEY=sk-ant-...    # for Claude
+DASHSCOPE_API_KEY=...           # Alibaba Model Studio (DashScope) — for Qwen models
 COMFYUI_API_KEY=comfyui-...     # only if your ComfyUI requires auth / uses API nodes
-DASHSCOPE_API_KEY=...           # Alibaba Model Studio (DashScope) — for Qwen models (optional)
 
 # Optional
 # AGENTY_UI_HOST=127.0.0.1
 # AGENTY_UI_PORT=5000
 # AGENTY_CONVERSATION_DB=./memory/conversations.sqlite
+# AGENTY_PYTHON_NODE_DISABLED=1   # make the agentY python node a no-op (see Canvas nodes)
 ```
 
-### 4. The ComfyUI chat UI
+### 4. The ComfyUI sidebar + canvas nodes
 
 The installer clones [`agentY-comfyuiConnect`](https://github.com/szprivate/agentY-comfyuiConnect)
 into ComfyUI's `custom_nodes/` for you. If you skipped that step (or ComfyUI
@@ -150,11 +156,14 @@ wasn't found), install it by hand and restart ComfyUI once:
 git clone https://github.com/szprivate/agentY-comfyuiConnect  <ComfyUI>\custom_nodes\agentY-comfyuiConnect
 ```
 
-After the restart, ComfyUI's left sidebar shows an **agentY** tab.
+After the restart you get, from the one node pack:
+- the **agentY** tab in ComfyUI's left sidebar (the chat panel);
+- the **agentY** node category with **`agentY hook`** and **`agentY python`** (see [Canvas nodes](#canvas-nodes));
+- an **Open agentY Settings…** entry and a **token-usage** view in ComfyUI's Settings panel.
 
 ### 5. Configure defaults (optional)
 
-Edit `config/settings.json` to point at your ComfyUI instance and set default LLMs:
+`config/settings.json` points at your ComfyUI instance and sets the per-stage LLMs. The **Orchestrator** is the model that drives each turn; the other keys set the specialist delegates and the Executor's Vision-QA model. Any value is `"provider,model"`:
 
 ```jsonc
 {
@@ -162,21 +171,29 @@ Edit `config/settings.json` to point at your ComfyUI instance and set default LL
   "conversation_db": "./memory/conversations.sqlite",
   "llm": {
     "pipeline": {
-      "query_templates":   "ollama,qwen3-coder:30b",
-      "assemble_workflow": "claude,claude-haiku-4-5",
-      "detect_user_intent":"ollama,qwen3.6:27b"
+      "orchestrator":          "dashscope,qwen3.6-flash",  // drives each turn
+      "assemble_workflow":     "dashscope,qwen3.6-flash",  // workflow-assembly delegate
+      "query_templates":       "dashscope,qwen3.6-flash",  // template/recipe research delegate
+      "executor_vision_model": "dashscope,qwen3.6-flash"   // Vision-QA of results
+      // …info, story, search_web, dop, planner, learnings, error_checker, llm_functions…
+    },
+    "dashscope": {
+      // Public International endpoint; for mainland China use
+      // https://dashscope.aliyuncs.com/compatible-mode/v1
+      "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+      "model": "qwen-plus"
     }
   }
 }
 ```
 
-Each `"pipeline"` value uses the format `"provider,model"` — `"claude,claude-haiku-4-5"`, `"ollama,qwen3.5:9b"`, or `"dashscope,qwen-plus"`. **`dashscope`** routes to **Alibaba Model Studio** (Qwen models over its OpenAI-compatible API) — set `DASHSCOPE_API_KEY` in `.env`; tune the endpoint/default under the `dashscope` block in `settings.json` (defaults to the International endpoint). Aliases `qwen` / `modelstudio` / `alibaba` also work.
+Each `"provider,model"` value can be `"claude,claude-haiku-4-5"`, `"ollama,qwen3-coder:30b"`, or `"dashscope,qwen3.6-flash"`. **`dashscope`** routes to **Alibaba Model Studio** (Qwen over its OpenAI-compatible API) — set `DASHSCOPE_API_KEY` in `.env`; aliases `qwen` / `modelstudio` / `alibaba` also work. You can change any stage live from chat with `/switch_model` (e.g. `/switch_model orchestrator claude,claude-sonnet-4-5`).
 
 ---
 
 ## Usage
 
-Start the chat host (it builds the pipeline and serves the sidebar backend):
+Start the chat host (it builds the agent and serves the sidebar backend):
 
 ```powershell
 # Default — backend on http://127.0.0.1:5000
@@ -206,9 +223,29 @@ Each finished image/video appears as a **loader node on your graph**. Type `/` i
 > If the backend runs on a non-default URL, set it in the browser console:
 > `localStorage.agentY_backend = "http://host:port"`.
 
+### Canvas nodes
+
+Installing `agentY-comfyuiConnect` adds two nodes under the **agentY** category. They let you drive the agent *from the graph itself*:
+
+- **`agentY hook`** — an instruction attached to the canvas. Wire any node's output into its **auto-growing `anchor` input(s)** and type a directive. Two purposes:
+  - *directive* — annotate an existing node ("sweep the seed 6×", "iterate the files in this folder"); the agent expands and runs your on-canvas graph.
+  - *workflow-standin* — the agent generates and runs a workflow (or Python script) from the prompt, using the wired input(s) if any.
+
+  Its `passthrough` **outputs also auto-grow**, and all slots are type-agnostic, so one hook can gather several inputs and export several results — image, video, **or scalars (string/int/float)** — to the next hook. Wire hooks output→input to build a **multi-step chain**. A hook is inert on a normal *Queue Prompt* (it's a pure passthrough the agent removes before running), so it never affects a manual run. Toggle `ignore` to disable a hook without deleting it.
+
+- **`agentY python`** — runs an agent-authored Python snippet as a node. It's used by *baking* (below): a value the agent computed at runtime (e.g. a video's length) is placed here so it becomes a genuine, re-runnable output. ⚠️ **It executes arbitrary Python whenever the graph runs** — meant for your own, self-hosted, agent-built workflows; don't run baked workflows from untrusted sources. Set `AGENTY_PYTHON_NODE_DISABLED=1` to make it a no-op.
+
+**Bake a chain into subgraphs.** Turn on `bake_to_canvas` on your standin hooks. When you ask the agent to run the graph, it nests each stage's generated workflow into a ComfyUI **subgraph** (with inputs/outputs matching the hook's slots), **adds** those subgraphs to your canvas *next to the hook nodes* (nothing is removed), and wires them to mirror the chain. The result is a self-contained native workflow you can re-run **without the agent** — the multi-step task, "baked."
+
 ### LLM configuration priority
 
-Each value resolves in order — first match wins: **CLI flag → environment variable → `config/settings.json` → hard-coded default.**
+Each value resolves in order — first match wins: **CLI flag → environment variable → `config/settings.json` → hard-coded default.** You can also change any stage live with `/switch_model <stage> <provider,model>`.
+
+### In-panel settings & token usage
+
+Open ComfyUI's **Settings** panel → **agentY**:
+- **Open agentY Settings…** edits your auth keys (`.env`) and everything in `config/settings.json` (models per stage, directories, toggles) with a comment-preserving save — no file editing.
+- **Open Token Usage…** (also the **📊** button in the chat panel's top bar) breaks down cost per model / per agent role from the persisted token log, with a **🗑 Clear log** button to purge it.
 
 ### Memory
 
@@ -226,7 +263,7 @@ Long-term memory is stored in a local FAISS index (`memory/agenty_memory.faiss`)
 .\scripts\remove_workflow.ps1 your_workflow_api
 ```
 
-You can also do this from the chat with `/add_workflow <path>` and `/remove_workflow <name>`. Custom templates live in `comfyui_workflow_templates_custom/templates/`.
+You can also do this from the chat with `/add_workflow <path>` (or `/add_workflow canvas <name>` to register the open graph) and `/remove_workflow <name>`. Custom templates live in `comfyui_workflow_templates_custom/templates/`; the shared template/recipe corpus lives in **agenty_core**.
 
 ---
 
