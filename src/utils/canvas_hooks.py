@@ -176,6 +176,18 @@ def _is_standin(hook: dict) -> bool:
     return str(hook.get("purpose", "directive") or "directive").strip().lower() in _STANDIN_PURPOSES
 
 
+def _wants_bake(hook: dict) -> bool:
+    """True if *hook* has the ``bake_to_canvas`` switch on (bake to a subgraph)."""
+    v = hook.get("bake")
+    return v is True or str(v).strip().lower() in ("true", "1", "yes", "on")
+
+
+def _export_count(hook: dict) -> int:
+    """How many outputs this standin should export (wired output slots, ≥1)."""
+    n = int(hook.get("outputs_wired") or 0) or int(hook.get("output_count") or 0)
+    return max(n, 1)
+
+
 def _order_standin_chains(standin_hooks: list) -> list:
     """Group standin hooks into ordered chains via their ``prev_hook_id`` links.
 
@@ -315,6 +327,22 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
                 return f"input from {parts[0]}"
             return "inputs from " + "; ".join(parts)
 
+        def _output_desc(h: dict) -> str:
+            n = _export_count(h)
+            if n <= 1:
+                return ""
+            return (f"; EXPORTS {n} outputs — wire the workflow's {n} results to this "
+                    "hook's outputs (any type: image/video/string/int/float)")
+
+        def _chain_wiring(h: dict, prev_id) -> str:
+            """Slot map for the links feeding *h* from stage *prev_id* (out→in)."""
+            pl = [l for l in (h.get("prev_links") or [])
+                  if isinstance(l, dict) and str(l.get("from_hook_id")) == str(prev_id)]
+            if not pl:
+                return ""
+            parts = [f"{l.get('to_input', 'anchor')} ← out{l.get('from_output_slot', 0)}" for l in pl]
+            return "  [" + ", ".join(parts) + "]"
+
         if singles:
             lines.append(
                 "\nWORKFLOW-STANDIN hooks — each is a self-contained generation request. "
@@ -324,33 +352,75 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
                 "generation contract — signal_workflow_ready for a workflow, or run the "
                 "script — and let the outputs stage onto the canvas as loader nodes. Do "
                 "NOT call apply_canvas_hooks for these. If an anchor is wired, its output "
-                "is the INPUT to what you generate (e.g. upload that image/video and bind "
-                "it to the loader); if nothing is wired, treat the prompt as a "
-                "text-to-media request. Media routing (agent/images, agent/videos, …) is "
-                "enforced automatically:"
+                "is the INPUT to what you generate (e.g. upload that image/video, or feed "
+                "a wired string/number, and bind it to the workflow); if nothing is wired, "
+                "treat the prompt as a text-to-media request. A standin may export MORE "
+                "THAN ONE output — the hook's outputs auto-grow and carry ANY type (image, "
+                "video, but also string, int, float), so a stage can hand several typed "
+                "results to the next hook. Media routing (agent/images, agent/videos, …) "
+                "is enforced automatically:"
             )
             for h in singles:
                 prompt = str(h.get("directive", "") or "").strip()
-                lines.append(f'- STANDIN, {_input_desc(h)} — generate & run → "{prompt}"')
+                lines.append(f'- STANDIN, {_input_desc(h)}{_output_desc(h)} — generate & run → "{prompt}"')
 
         if multis:
             lines.append(
                 "\nWORKFLOW-STANDIN CHAINS — a chain of hooks wired output→input. Run the "
-                "stages STRICTLY IN ORDER, feeding each stage's OUTPUT as the next "
-                "stage's INPUT. For each stage: GENERATE a workflow (or script) from its "
+                "stages STRICTLY IN ORDER, feeding each stage's OUTPUT(s) as the next "
+                "stage's INPUT(s). For each stage: GENERATE a workflow (or script) from its "
                 "prompt, then run it with run_workflow_now(workflow_path) — NOT "
-                "signal_workflow_ready, because you need each stage's output file to "
-                "build the next. Take the output path it returns, upload_image it, and "
-                "bind it to the next stage's input loader. Stage 1's input is its wired "
+                "signal_workflow_ready, because you need each stage's output(s) to "
+                "build the next. A stage may pass SEVERAL outputs of any type; the "
+                "per-stage slot map below shows which output feeds which input. An "
+                "exported output can be a workflow output FILE (image/video/audio) OR a "
+                "VALUE you compute from the run (e.g. 'generate a video AND calculate its "
+                "length' → the video file is one output, the length is another that you "
+                "derive with a tool/script). Forward each per the slot map: upload_image "
+                "and bind for media, or inject the computed scalar into the next stage's "
+                "workflow (as a widget value) or prompt. Stage 1's input is its wired "
                 "anchor (if any), else text-to-media; the final stage's output is the "
                 "result. Do NOT call apply_canvas_hooks for these:"
             )
             for ci, chain in enumerate(multis, 1):
                 head_in = _input_desc(chain[0])
                 lines.append(f"  Chain {ci} (stage 1 {head_in}):")
+                prev = None
                 for si, h in enumerate(chain, 1):
                     prompt = str(h.get("directive", "") or "").strip()
-                    lines.append(f'    {si}. "{prompt}"')
+                    wiring = _chain_wiring(h, prev.get("hook_node_id")) if prev else ""
+                    lines.append(f'    {si}. "{prompt}"{_output_desc(h)}{wiring}')
+                    prev = h
+
+        bake_hooks = [h for h in standin_hooks if _wants_bake(h)]
+        if bake_hooks:
+            lines.append(
+                "\nBAKE TO CANVAS — one or more standin hooks above has 'bake_to_canvas' "
+                "ON. After you have GENERATED and validated each such stage's workflow, do "
+                "NOT stop at running it: call bake_hooks_to_canvas(stages=[…]) to nest each "
+                "generated workflow into a ComfyUI subgraph whose inputs/outputs MATCH that "
+                "hook's slots, place the subgraphs on the same canvas, and wire them to "
+                "mirror the hook chain — baking the multi-step task into a reusable native "
+                "workflow the user can re-run without you. For each baked stage pass: "
+                "workflow_path (the generated workflow), hook_node_id, exposed inputs "
+                "(a node_id+input_name per anchor, in slot order — where the wired input "
+                "binds inside the workflow), exposed outputs (a node_id+output_slot per "
+                "exported result, any type), and prev_hook_ids (its predecessor stage[s]). "
+                "For a value you computed OUTSIDE the graph at runtime (e.g. a measured "
+                "length via run_script), pass it in the stage's `computed_outputs`: the "
+                "SAME Python snippet, plus which inner outputs feed it (node_id + "
+                "output_slot, bound as in0, in1, …). Bake injects an AgentYPython node "
+                "running that snippet and exposes its result, so the value is reproduced "
+                "on re-run without you. Stages NOT marked bake are generated/run as usual, "
+                "not baked. The baked subgraphs are ADDED to the canvas next to the hook "
+                "nodes — the hooks are NOT removed."
+            )
+            for h in bake_hooks:
+                hid = h.get("hook_node_id")
+                lines.append(
+                    f'  - bake hook {hid}: "{str(h.get("directive", "") or "").strip()}" '
+                    f'({_input_desc(h)}; exports {_export_count(h)} output(s))'
+                )
 
     lines.append("")
     return "\n".join(lines)

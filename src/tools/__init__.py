@@ -71,6 +71,7 @@ from src.tools.memory_tools import memory_read, memory_write  # noqa: F401
 from src.tools.web_search import web_search, web_search_images  # noqa: F401
 # agentY-only pipeline handoff (not part of the shared agenty_core layer)
 from src.tools.workflow_handoff import signal_workflow_ready  # noqa: F401
+from src.tools.bake import bake_hooks_to_canvas  # noqa: F401
 # Orchestrator meta-tools: live skill authoring + ad-hoc subagents (agentY-only)
 from src.tools.orchestration import (  # noqa: F401
     create_skill,
@@ -328,6 +329,8 @@ ORCHESTRATOR_TOOLS: list = [
     check_model,
     # Handoff to the executor (assemble → signal, never submit_prompt directly)
     signal_workflow_ready,
+    # Bake a chain of standin workflows into canvas subgraphs (bake_to_canvas hook)
+    bake_hooks_to_canvas,
     # Image handling
     upload_image,
     view_image,
