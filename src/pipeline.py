@@ -1408,6 +1408,7 @@ class Pipeline:
                                               raw_json=self._last_brainbriefing_json)
                     self._record_agent_usage(self._orchestrator_agent, _snap)
                     self._session.last_agent = "orchestrator"
+                    log_agent_messages("ORCHESTRATOR", list(self._orchestrator_agent.messages))
                     return
 
                 if _qa_fail_event:
@@ -1424,12 +1425,14 @@ class Pipeline:
                                               raw_json=self._last_brainbriefing_json)
                     self._record_agent_usage(self._orchestrator_agent, _snap)
                     self._session.last_agent = "orchestrator"
+                    log_agent_messages("ORCHESTRATOR", list(self._orchestrator_agent.messages))
                     return
 
                 self._record_chat_summary(user_text, synth, status="completed",
                                           raw_json=self._last_brainbriefing_json)
                 self._record_agent_usage(self._orchestrator_agent, _snap)
                 self._session.last_agent = "orchestrator"
+                log_agent_messages("ORCHESTRATOR", list(self._orchestrator_agent.messages))
                 if self._verbose:
                     print("pipeline: Orchestrator finished.")
                 return

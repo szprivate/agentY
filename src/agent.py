@@ -1582,7 +1582,7 @@ def create_error_checker_agent(
 
     system_prompt = _load_system_prompt("error_checker")
 
-    # Load skills so the troubleshooting skill is available.
+    # Load project skills (available to the error checker if it needs them).
     ec_plugins: list = []
     if _SKILLS_DIR.is_dir():
         skills_plugin = AgentSkills(skills=str(_SKILLS_DIR))

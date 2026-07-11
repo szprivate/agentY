@@ -1,185 +1,69 @@
 ---
 name: prompt-craft
-description: ComfyUI prompt engineering — CLIP syntax, weight modifiers, model-specific strategies. Activate whenever the Researcher composes the generation prompt (step 7).
+description: ComfyUI prompt engineering — universal CLIP/weight syntax plus per-model prompt rules loaded on demand from references/. Activate whenever composing a generation or edit prompt.
 allowed-tools:
 ---
 
 # ComfyUI Prompt Engineering
-# Based on artokun/comfyui-mcp
-# Copyright (c) 2024 Arthur R Longbottom
-# MIT License - https://github.com/artokun/comfyui-mcp/LICENSE
+# Universal rules based on artokun/comfyui-mcp — Copyright (c) 2024 Arthur R Longbottom, MIT
+# Per-model fragments (references/) are agentY-authored.
 
+**How to use this skill:**
+1. The **universal rules** below apply to every prompt.
+2. Then read the **one** `references/*.md` fragment for the model family you are
+   building for (take the family from the recipe / brainbriefing `model`). It
+   carries that model's prompt formula, length target, negative policy, sampler
+   constraints, and pitfalls.
+3. Do **not** load fragments you don't need — that's the whole point of the split.
 
-## CLIP Basics
+## Model index
+| Model family | Fragment |
+|---|---|
+| Flux (dev / schnell / Klein) | `references/flux.md` |
+| WAN 2.1 / 2.2 — video | `references/wan.md` |
+| Kling 2.x / 3.0 — video, multishot | `references/kling.md` |
+| SD 1.5 · SDXL · SD3/3.5 · Qwen Image Edit · Nano Banana | `references/other-models.md` |
+
+_New model family? Add a `references/<model>.md` fragment in the compact schema
+(see any existing fragment) and add a row here._
+
+---
+
+## Universal rules
+
+### CLIP token basics
 - 77-token limit per chunk; words = 1–3 tokens each. Tokens past the limit are **silently dropped**.
-- Use `BREAK` to force a new 77-token chunk for long prompts.
+- `BREAK` forces a new 77-token chunk for long prompts.
+- Flux / SD3 / Gemini / instruction-edit models do **not** use CLIP weighting — see their fragment.
 
-## Weight Syntax
+### Weight syntax (CLIP models — SD 1.5 / SDXL)
 | Syntax | Weight |
 |--------|--------|
-| `(word:N)` | Explicit (0.0–2.0; >1.5 causes artifacts) |
+| `(word:N)` | explicit 0.0–2.0 ( >1.5 → artifacts ) |
 | `(word)` / `((word))` / `(((word)))` | 1.1 / 1.21 / 1.331 |
 | `[word]` / `[[word]]` | 0.909 / 0.826 |
 
 Phrases work: `(red sports car:1.3)`. Nesting is multiplicative.
 
-## Embeddings
-Syntax: `embedding:name` (file must exist in `models/embeddings/`).  
-Use in **negatives** for SD 1.5 / SDXL: `embedding:easynegative`, `embedding:badhandv4`, `embedding:negativeXL_D`.
+### Embeddings
+`embedding:name` — file must exist in `models/embeddings/`. Use in **negatives** for SD 1.5 / SDXL (e.g. `embedding:easynegative`, `embedding:badhandv4`).
 
-## Model Quick-Reference
+### Prompt order (SD 1.5 / SDXL)
+Quality → Subject → Subject details → Action/pose → Environment → Composition → Lighting → Style → Technical quality.
 
-### SD 1.5
-- **Negative: critical.** Use quality tags + embeddings.
-- Positive: `(masterpiece:1.2), (best quality:1.2), subject, details, style`
-- Negative: `worst quality, low quality, blurry, bad anatomy, bad hands, extra fingers, watermark, embedding:easynegative`
-- Tag-based (danbooru style) works well. Keep under 77 tokens or use `BREAK`.
+### LoRA triggers
+Place the LoRA's exact trigger word(s) naturally in the prompt (check the model page). Multiple LoRAs: one trigger each; keep node strength at default unless tuning.
 
-### SDXL
-- **Negative: moderate importance.**
-- Natural language preferred over tags. Dual CLIP supports ~154 tokens natively — no `BREAK` needed unless prompt exceeds ~154 tokens.
-- Use `CLIPTextEncodeSDXL` for separate `text_g` (global concept) / `text_l` (local detail) control.
-- Turbo/Lightning variants: use minimal or empty negative.
-
-### Flux
-- **No negative prompt** — omit the negative entirely.
-- T5-XXL encoder: write natural descriptive sentences, not tag lists.
-- Long prompts (200+ tokens) work fine.
-- **Don't use** quality tags (`masterpiece`, `best quality`) — describe quality in prose.
-
-### SD3 / SD3.5
-- Triple CLIP (CLIP-L + CLIP-G + T5-XXL). Long natural language prompts.
-- Minimal negatives (`low quality, blurry` is enough).
-
-## Prompt Order (SD 1.5 / SDXL)
-1. Quality modifiers → 2. Subject → 3. Subject details → 4. Action/pose → 5. Environment → 6. Composition → 7. Lighting → 8. Style → 9. Technical quality
-
-## LoRA Trigger Words
-Place the LoRA's exact trigger word(s) naturally in the prompt. Check the model page for triggers. Multiple LoRAs: one trigger each; keep node strength at default unless tuning.
-
-## BREAK Example
+### BREAK example
 ```
 masterpiece, detailed Japanese garden, cherry blossoms, koi pond, morning mist
 BREAK
 8k uhd, photorealistic, volumetric lighting, depth of field, golden hour
 ```
 
----
-
-## Video & API Model Guides
-
-### WAN 2.1 / 2.2 (T2V and I2V)
-**Prompt formula:** `Subject (desc) + Scene (desc) + Motion (desc) + Camera language + Atmosphere + Styling`  
-**Target length:** 80–120 words. Under-specify → model fills in random defaults; over-specify → details ignored.
-
-**T2V:** Write full natural language. Describe who/what, setting, action, camera, and lighting explicitly.  
-**I2V:** The image defines *what*. Focus the prompt entirely on *how things move* — camera behavior, subject motion, environmental effects, speed. Do **not** redescribe the image content.
-
-**Camera verbs that work reliably (2.2 > 2.1):** dolly-in, dolly-out, pull back, pan left/right, tilt up/down, tracking shot, orbital shot, bird's-eye, low-angle. Use **one** camera move per generation. Whip pan is unreliable on both versions.
-
-**Negative prompt (supported):** `worst quality, low quality, blurry, static, morphing, warping, flickering, deformed face, extra fingers, watermark, subtitle`
-
-**WAN 2.2 vs 2.1:** Prompt approach is identical for both versions. Camera direction is more reliable in 2.2.
-
----
-
-### Kling (2.x / 3.0)
-**Prompt formula:** `Subject (specific details) + Action (precise movement) + Context (3–5 elements) + Style (camera, lighting, mood)`  
-Write like a film director giving scene instructions, not like an image prompt.
-
-**Hard limits (API-enforced):** positive prompt ≤ 2500 characters · negative prompt ≤ 2500 characters. Prompts exceeding these are rejected — not silently truncated.
-
-**Key principles:**
-- Always specify camera behavior explicitly — without it, the model guesses and output looks static or random.
-- Anchor hands/limbs to objects to prevent floating (`"fingers grip the edge of the cup"` not `"she moves her hands"`).
-- For I2V: describe motion only; never redescribe the image.
-- Use motion endpoints to prevent hangs: `"spins, then settles back into place"`.
-- Negative prompts are recommended: `smiling, cartoonish, smooth plastic skin, floating limbs, sliding feet, text morphing`
-
-**Kling 3.0 additions:** Multi-shot up to 6 shots in one prompt — label each explicitly (`Shot 1: …, Shot 2: …`). Native audio/dialogue: name speakers explicitly. Reference images addressable as `@image1`, `@image2`.
-
-**Physics tip (walking):** Describe weight transfer explicitly — `"each step lands heel-first, rolls forward with visible weight transfer"` — to prevent the AI moonwalk.
-
----
-
-### Kling 3.0 — Multishot
-**Prompt formula per shot:** `[CHARACTER LOCK] + [ENVIRONMENT] + [TRANSITION CUE] + [SUBJECT MOTION] + [CAMERA MOVE] + [END STATE] + [STYLE]`  
-Label shots explicitly: `Shot 1: … Shot 2: …` up to 6 shots per generation.
-
-**Hard limits (API-enforced):** entire multi-shot prompt ≤ 2500 characters total · negative prompt ≤ 2500 characters. With 6 shots this leaves ~400 characters per shot — keep each shot description tight.
-
-**Character lock:** Paste the **exact same** character description at the start of every shot. Never paraphrase — Kling anchors identity to this string.
-
-**Transition cues (shot 2+):** Open each shot with one of: `Continuous from previous shot:` / `Immediately following:` / `Moments later:` / `Reverse angle:`
-
-**Motion rules:**
-- Write subject motion and camera motion as separate sentences.
-- Be specific: `"she slowly raises her right hand"` not `"she moves"`.
-- One gesture OR one camera move per 5s shot — not both.
-
-**Camera vocabulary:** `slow push-in` · `pull-back reveal` · `static locked` · `orbit/arc shot` · `crane up` · `handheld drift` · `rack focus`
-
-**End-frame handoff:** Describe the subject's final position at the end of each shot. Open the next shot referencing that state — this is what creates continuity across separate generations.
-
-**Negative prompt (apply to all shots):** `blurry, deformed hands, morphing face, identity change, flickering, jerky motion, warped background, two people`
-
-**Failure modes:**
-
-| Problem | Fix |
-|---|---|
-| Face changes between shots | Verbatim character lock + use last-frame input image |
-| Camera drifts on locked shot | Add `"camera does not move under any circumstances"` |
-| Lighting inconsistency | Copy-paste lighting string — don't paraphrase it |
-| Motion doesn't complete | One action per shot; extend to 8–10s if needed |
-| Shots feel disconnected | Missing end-frame handoff |
-| Accessories disappear | Name them in the character lock phrase every shot |
-
----
-
-### Qwen Image Edit (2511 / fp8) / Flux Klein Image Edit
-This model takes an **instruction** rather than a descriptive prompt. It uses dual encoding (Qwen2.5-VL semantic + VAE appearance), so it understands both high-level meaning and low-level pixel appearance.
-
-**Instruction patterns that work:**
-- `"Keep [X], change [Y] to [Z]"`
-- `"Replace the [material/object] with [reference], preserve [geometry/lighting]"`
-- `"Enhance [attribute], leave [other elements] unchanged"`
-- Multi-image: `"Apply the leather texture from Figure 2 to the chair in Figure 1, keep the frame unchanged, match lighting."`
-
-**Do:**
-- Be explicit and short. One clear edit goal per instruction.
-- Specify what must stay unchanged — the model uses this to preserve identity and geometry.
-
-**Don't:**
-- Stack multiple conflicting edits in one pass.
-- Use tag-soup or quality keywords — this is an instruction model, not CLIP.
-- Use `photorealistic`, `3D render` etc. — say `photograph` for realism.
-- Pack the negative prompt with keywords; use natural language describing what you don't want.
-
----
-
-### Nano Banana 2 / Nano Banana Pro (Gemini Image)
-**Nano Banana 2** — best for editing, style transfer, iteration. **Nano Banana Pro** — best for complex layouts, infographics, text rendering, brand consistency. Both support up to 14 reference images (10 objects + 4 characters).
-
-**Both models:** Natural language only — no tag soups, no quality keywords like `masterpiece`. They reason through prompts before generating. ALWAYS refer to the input images as @img1 for the first image, @img2 for the second, etc.
-
-**Prompt formula:** `Subject + Action + Location/Context + Composition + Lighting/Atmosphere + Style + [optional: text/constraint]`  
-Example: `"A stoic robot barista with glowing blue optics preparing espresso in a rain-soaked Tokyo alley at night. Low-angle tracking shot. Neon reflections on wet pavement. Cinematic, desaturated teal-orange grade."`
-
-**Text rendering (Pro especially):** Enclose desired text in quotes in the prompt. Specify font style: `"bold white sans-serif"` or `"Century Gothic"`. For complex text-heavy images, first describe the text concepts conversationally, then request the image.
-
-**Editing (conversational):** If an output is 80% right, don't regenerate — issue a follow-up instruction: `"Keep everything, change the lighting to golden hour and make the jacket leather."` The model does semantic masking automatically.
-
-**Character consistency:** Upload reference images and assign names in the prompt. Supports up to 14 references.
-
-**Don't:** Use `4k, trending on artstation, masterpiece` spam. Don't re-describe a reference image; just name it and specify the change.
-
----
-
-## Common Mistakes
-1. Negative prompt or CFG > 1 with Flux → artifacts
-2. Tag-style prompts for Flux / SD3 → use sentences
-3. Missing `BREAK` on 60+ word prompts → silent truncation
-4. Weight > 1.5 → artifacts / color bleed
-5. Conflicting weighted terms → confuses model
-6. Wrong LoRA trigger word → concept doesn't activate
-7. Quality tags (`masterpiece`) in Flux prompts → ignored
+## Universal mistakes
+1. Weight > 1.5 → artifacts / color bleed.
+2. Conflicting weighted terms → confuses the model.
+3. Missing `BREAK` on 60+ word CLIP prompts → silent truncation.
+4. Wrong LoRA trigger word → concept doesn't activate.
+5. Applying CLIP tricks (weights, tag-soup) to a model whose fragment says prose / instruction only.

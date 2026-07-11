@@ -89,4 +89,4 @@ Signal the workflow as ready for the Executor.
 - **`update_workflow` fix pass returns error** → report remaining errors with `task_id` and stop; do not call `update_workflow` again.
 - **Missing model** → report with `task_id` and stop.
 - **Template not found** → report with `task_id` and stop; do not guess an alternative.
-- **Workflow execution failure** → activate the `troubleshooting` skill.
+- **Workflow execution failure** → read the error/traceback, apply one targeted `update_workflow` fix if the cause is clear (bad value, wrong node input); otherwise report with `task_id` and stop.

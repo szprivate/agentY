@@ -100,4 +100,4 @@ you MUST activate the `batch-handoff` skill and follow its step-by-step procedur
 - **`update_workflow` returns error** → read the message, fix the patches, retry immediately.
 - **Missing model in brainbriefing** → Researcher error; report with `task_id` and stop.
 - **Template not found** → report with `task_id` and stop; do not guess an alternative.
-- **Troubleshooting** → if a workflow fails, activate the `troubleshooting` skill to check for fixes.
+- **Workflow execution failure** → read the error/traceback, apply one targeted `update_workflow` fix if the cause is clear (bad value, wrong node input); otherwise report with `task_id` and stop.

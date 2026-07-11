@@ -18,8 +18,8 @@ If any error lines are returned, also call `get_logs(keyword="traceback", max_li
 ### 2. Check for silent failures
 If step 1 returns no errors, call `get_logs(keyword="warning", max_lines=80)` and scan for warnings that indicate bad output (e.g. "nan values", "black image", "invalid latent").
 
-### 3. Evaluate using the troubleshooting skill
-If any errors or critical warnings are present, activate the `troubleshooting` skill to identify the root cause and plan a concrete fix.
+### 3. Evaluate the failure
+If any errors or critical warnings are present, read the error/traceback details to identify the root cause and plan a concrete fix.
 
 - **Fixable** (wrong model path, OOM, dtype mismatch, missing node input, invalid connection): set `status: "error_fixable"` and write a concrete `fix_plan` the Brain can follow to rebuild or patch the workflow.
 - **Not fixable** (unknown crash, missing model that cannot be resolved, GPU hardware error): set `status: "error_unfixable"` and write a clear `user_message`.

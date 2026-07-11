@@ -145,7 +145,7 @@ If `get_workflow_recipe` reports the database is missing, select a generic scaff
 | `audio`                 | any `audio` template |
 | `3d`                    | any `3d` template |
 
-If no close match exists, pick the simplest `txt2img` template, then continue from Step 3 (planning the node graph yourself from `comfyui-core` pipeline patterns).
+If no close match exists, pick the simplest `txt2img` template, then continue from Step 3 (planning the node graph yourself from the standard pipeline shape: model loader → conditioning → sampler → VAE decode → save/output node).
 
 ---
 
@@ -155,5 +155,5 @@ If no close match exists, pick the simplest `txt2img` template, then continue fr
 - **Never reuse node IDs** that appear in `remove_nodes` — assign fresh IDs to all added nodes.
 - **Preserve paired nodes** — when the recipe lists a node with `min_instances >= 2`, both/all copies must be present and wired to their distinct roles.
 - **Always wire output nodes** (`SaveImage`, `VHS_VideoCombine`, `CreateVideo`, ...) to the final IMAGE/LATENT/AUDIO output. An unconnected output node fails validation.
-- **All connections must be type-safe** — verify output index and type via `get_node_schema` when unsure. See `comfyui-core` references/common-nodes.md for standard node types.
+- **All connections must be type-safe** — verify input names, output slot indices, and types via `get_node_schema` when unsure (it is the authoritative, always-current source for this ComfyUI instance).
 - **`signal_workflow_ready` is NOT called in this skill** — return `workflow_path` to the Brain, which handles handoff per its step 2 constraints.
