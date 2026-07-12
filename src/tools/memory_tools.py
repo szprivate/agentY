@@ -15,12 +15,17 @@ from __future__ import annotations
 
 from strands import tool
 
-from src.utils.memory import format_memories, memory_add, memory_search
+from src.utils.memory import MEMORY_NAMESPACE, format_memories, memory_add, memory_search
 
 # ---------------------------------------------------------------------------
 # Module-level session binding
 # The Pipeline sets this once via set_session_id() so individual tool calls
 # don't need to carry the session_id as an LLM-visible parameter.
+#
+# NOTE: both memory tools now read from and write to the single shared
+# ``MEMORY_NAMESPACE`` (so a lesson learned in one session is recalled in every
+# other), not this per-session id. The binding is retained for any caller that
+# still relies on it, but memory_read / memory_write ignore it by design.
 # ---------------------------------------------------------------------------
 
 _SESSION_ID: str = "default"
@@ -59,7 +64,7 @@ def memory_read(query: str) -> str:
         A formatted list of relevant memories, or a message indicating no
         matches were found.
     """
-    results = memory_search(query, session_id=_SESSION_ID, limit=5)
+    results = memory_search(query, session_id=MEMORY_NAMESPACE, limit=5)
     text = format_memories(results)
     if not text:
         return "(no relevant memories found)"
@@ -87,7 +92,21 @@ def memory_write(content: str) -> str:
                  all exterior scene workflows."
 
     Returns:
-        Confirmation that the memory was stored.
+        Confirmation of what was actually stored (or a clear notice if it was not).
     """
-    memory_add(content, session_id=_SESSION_ID)
-    return f"Stored in long-term memory: {content}"
+    text = (content or "").strip()
+    if not text:
+        return "Nothing to store — the content was empty."
+    # Store verbatim (memory_add defaults to infer=False) so the exact sentence
+    # persists, and inspect the result rather than assuming success: mem0 returns
+    # the rows it created, so we can tell the model the truth about what landed.
+    result = memory_add(text, session_id=MEMORY_NAMESPACE, metadata={"source": "user"})
+    stored = isinstance(result, dict) and any(
+        r.get("event") == "ADD" for r in result.get("results", [])
+    )
+    if stored:
+        return f"Stored in long-term memory: {text}"
+    return (
+        "Could not confirm the memory was stored — the memory layer returned no new "
+        f"entry (it may be disabled). NOT saved: {text}"
+    )

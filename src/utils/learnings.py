@@ -3,11 +3,16 @@ agentY – Self-learning layer: analyses Assemble Workflow message history after
 
 After any Assemble Workflow session where the agent used **more than 5 tool calls**, this
 module fires the ``learnings agent`` asynchronously.  The learnings agent
-scans the message history for repeated failure→fix patterns and appends concise
-1–2-sentence learnings to ``skills/brain-learnings/SKILL.md``.
+scans the message history for repeated failure→fix patterns and stores concise
+1–2-sentence learnings in **long-term memory** (the local FAISS store).
 
-The agent also leverages the FAISS memory layer to cross-reference previously
-stored learnings, avoiding duplicate entries across sessions.
+Long-term memory is the single source of truth for these learnings: they are
+stored under the shared ``MEMORY_NAMESPACE`` so every agent can recall them at
+generation time via the ``memory_read`` tool (and inspect/edit them in the memory
+viewer). The learnings agent also reads that same store to cross-reference prior
+learnings and avoid duplicate entries. The ``assemble-workflow-learnings`` skill
+is now a static pointer that nudges the agents to consult memory — it no longer
+holds the learnings itself, so the two can never drift apart.
 
 Public API
 ----------
@@ -25,25 +30,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-# Path to the self-learning skill file that the learnings agent appends to.
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
-_SKILL_PATH = _PROJECT_ROOT / "skills" / "assemble-workflow-learnings" / "SKILL.md"
-
-# YAML frontmatter the Strands skill loader requires. Without it the loader
-# rejects the whole file ("SKILL.md must start with --- frontmatter delimiter"),
-# so the writer injects this header whenever the file lacks one.
-_SKILL_FRONTMATTER = (
-    "---\n"
-    "name: assemble-workflow-learnings\n"
-    "description: Auto-populated learnings from past workflow-assembly sessions. "
-    "Activate this skill when assembling or patching a ComfyUI workflow, "
-    "especially if you notice repeated tool calls to fix the same assembly "
-    "sub-problem or the same validation error recurring. The entries below "
-    "document past problems and proven solutions — consult them before retrying "
-    "a failing pattern.\n"
-    "allowed-tools: \n"
-    "---\n"
-)
 
 # Hard cap on conversation text sent to the learnings agent to avoid blowing up
 # the context window of a small local model.
@@ -169,46 +156,29 @@ def format_messages_as_transcript(messages: list[dict]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# SKILL.md writer
+# Learnings persistence
 # ---------------------------------------------------------------------------
 
-def _append_to_skill(entries: str) -> None:
-    """Append *entries* (one line per learning) to the SKILL.md learnings log.
+def _store_learnings(response: str) -> int:
+    """Persist each learning line from *response* to long-term memory (FAISS).
 
-    Entries that already appear verbatim in the file are silently skipped to
-    prevent duplicates caused by re-runs.
+    Stores verbatim under the shared ``MEMORY_NAMESPACE`` (via ``memory_add``,
+    which defaults to ``infer=False``). The learnings agent is already prompted
+    with prior learnings and asked to emit only *new* ones, so this does not
+    re-dedup here. Returns the number of lines stored. Best-effort.
     """
-    _SKILL_PATH.parent.mkdir(parents=True, exist_ok=True)
-    existing = _SKILL_PATH.read_text(encoding="utf-8") if _SKILL_PATH.exists() else ""
+    from src.utils.memory import MEMORY_NAMESPACE, memory_add
 
-    new_lines: list[str] = []
-    for line in entries.splitlines():
+    stored = 0
+    for line in response.splitlines():
         line = line.strip()
         if not line or line == "NO_NEW_LEARNINGS":
             continue
-        # Skip if an identical entry already exists (basic dedup).
-        # Compare only the problem|solution portion (after the date prefix).
-        parts = line.split("|", 1)
-        key = parts[1].strip() if len(parts) > 1 else line
-        if key in existing:
-            continue
-        new_lines.append(line)
-
-    if not new_lines:
-        return
-
-    # Ensure the file begins with valid YAML frontmatter — older files were
-    # created headerless, which makes the Strands loader skip the skill entirely.
-    if not existing.lstrip().startswith("---"):
-        body = existing.lstrip("\r\n")
-        _SKILL_PATH.write_text(
-            _SKILL_FRONTMATTER + (("\n" + body) if body else ""), encoding="utf-8"
-        )
-
-    append_block = "\n" + "\n".join(new_lines) + "\n"
-    with _SKILL_PATH.open("a", encoding="utf-8") as fh:
-        fh.write(append_block)
-    print(f"[learnings] Appended {len(new_lines)} new learning(s) to {_SKILL_PATH}")
+        memory_add(line, session_id=MEMORY_NAMESPACE, metadata={"source": "learnings_agent"})
+        stored += 1
+    if stored:
+        print(f"[learnings] Stored {stored} new learning(s) in long-term memory.")
+    return stored
 
 
 # ---------------------------------------------------------------------------
@@ -230,10 +200,10 @@ async def _run_learnings_async(messages: list[dict], session_id: str) -> None:
         # Retrieve relevant past learnings from FAISS memory for deduplication context.
         past_learnings_block = ""
         try:
-            from src.utils.memory import memory_search, memory_add
+            from src.utils.memory import MEMORY_NAMESPACE, memory_search
             past_hits = memory_search(
                 "assemble_workflow tool call failure pattern solution",
-                session_id="learnings_global",
+                session_id=MEMORY_NAMESPACE,
                 limit=10,
             )
             if past_hits:
@@ -263,18 +233,11 @@ async def _run_learnings_async(messages: list[dict], session_id: str) -> None:
             print("[learnings] No new learnings found for this session.")
             return
 
-        # Persist new learnings to the SKILL.md file.
-        _append_to_skill(response)
-
-        # Also store each learning as a FAISS memory for cross-session recall.
+        # Persist new learnings to long-term memory (the single source of truth).
         try:
-            from src.utils.memory import memory_add
-            for line in response.splitlines():
-                line = line.strip()
-                if line and line != "NO_NEW_LEARNINGS":
-                    memory_add(line, session_id="learnings_global", metadata={"source": "learnings_agent"})
+            _store_learnings(response)
         except Exception as mem_exc:
-            print(f"[learnings] Warning: could not store learnings in FAISS memory: {mem_exc}")
+            print(f"[learnings] Warning: could not store learnings in memory: {mem_exc}")
 
     except Exception as exc:
         # Never raise — this is a background best-effort enhancement.
@@ -336,8 +299,8 @@ def record_user_advice_learning(
     """Record a learning derived from a Assemble Workflow failure that was resolved by user advice.
 
     Fires in a background thread (fire-and-forget).  Calls the learnings agent
-    to produce a concise entry from the error and advice, then appends it to
-    ``skills/assemble_workflow-learnings/SKILL.md`` and the FAISS memory store.
+    to produce a concise entry from the error and advice, then stores it in
+    long-term memory (the local FAISS store) for cross-session recall.
 
     Args:
         error_context: Short description of what the Brain failed to do.
@@ -363,15 +326,10 @@ def record_user_advice_learning(
             response = str(agent(prompt)).strip()
             if not response or response == "NO_NEW_LEARNINGS":
                 return
-            _append_to_skill(response)
             try:
-                from src.utils.memory import memory_add
-                for line in response.splitlines():
-                    line = line.strip()
-                    if line and line != "NO_NEW_LEARNINGS":
-                        memory_add(line, session_id="learnings_global", metadata={"source": "learnings_agent"})
+                _store_learnings(response)
             except Exception as mem_exc:
-                print(f"[learnings] Warning: could not store user-advice learning in FAISS: {mem_exc}")
+                print(f"[learnings] Warning: could not store user-advice learning in memory: {mem_exc}")
         except Exception as exc:
             print(f"[learnings] WARNING: record_user_advice_learning failed: {exc}")
 

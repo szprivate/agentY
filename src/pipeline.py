@@ -45,7 +45,7 @@ from src.executor import (
     clear_exec_errors as _clear_exec_errors,
     get_and_clear_exec_errors as _get_exec_errors,
 )
-from src.utils.memory import format_memories, memory_add, memory_search
+from src.utils.memory import MEMORY_NAMESPACE, format_memories, memory_add, memory_search
 from src.tools.memory_tools import set_session_id as _set_memory_session_id
 from src.tools.comfyui import clear_tool_caches as _clear_tool_caches
 # Deterministic brain happy-path: the mechanical assembly (load template ->
@@ -4032,7 +4032,7 @@ class Pipeline:
         prepended to any agent prompt.
         """
         try:
-            results = memory_search(user_text, session_id=self._session.session_id, limit=5)
+            results = memory_search(user_text, session_id=MEMORY_NAMESPACE, limit=5)
             return format_memories(results)
         except Exception as exc:
             if self._verbose:
@@ -4040,39 +4040,38 @@ class Pipeline:
             return ""
 
     def _auto_save_memory(self, user_text: str, raw_json: str) -> None:
-        """Distil a compact memory from a completed researcher→brain run.
+        """Append one trimmed, verbatim request-log line to long-term memory.
 
-        Builds a brief, self-contained sentence from the task description and
-        selected template name, then calls ``memory_add`` so future sessions
-        can recall the user\'s workflow preferences.  Runs synchronously but
-        is entirely best-effort — any error is swallowed.
+        Records *which template + resolution* a completed run used, with a short
+        intent snippet, so preferences accumulate over time and can be recalled.
+        Deliberately compact — the full prompt is NOT stored (it was the noisiest
+        part of the old telemetry). Written verbatim to the shared
+        ``MEMORY_NAMESPACE`` and tagged ``source=request_log`` so it sits beside
+        the learnings and explicit notes in one inspectable store. Best-effort.
         """
         try:
             data = json.loads(raw_json)
             task_desc = data.get("task", {}).get("description", "")
             template_name = data.get("template", {}).get("name") or ""
-            positive_prompt = data.get("prompt", {}).get("positive", "")
             width = data.get("resolution_width")
             height = data.get("resolution_height")
 
             parts: list[str] = []
-            if task_desc:
-                parts.append(task_desc)
             if template_name:
-                parts.append(f"using template '{template_name}'")
+                parts.append(f"template '{template_name}'")
             if width and height:
-                parts.append(f"at {width}x{height}")
-            if positive_prompt:
-                short_prompt = positive_prompt[:120].rstrip()
-                if len(positive_prompt) > 120:
-                    short_prompt += "…"
-                parts.append(f"| prompt: {short_prompt}")
+                parts.append(f"{width}x{height}")
+            if task_desc:
+                short = task_desc[:80].rstrip()
+                if len(task_desc) > 80:
+                    short += "…"
+                parts.append(short)
 
             if not parts:
                 return
 
-            memory_text = "User requested: " + ", ".join(parts) + "."
-            memory_add(memory_text, session_id=self._session.session_id)
+            memory_text = "Generated: " + ", ".join(parts) + "."
+            memory_add(memory_text, session_id=MEMORY_NAMESPACE, metadata={"source": "request_log"})
             if self._verbose:
                 print(f"[memory] Saved: {memory_text[:100]}")
         except Exception as exc:

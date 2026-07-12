@@ -31,6 +31,15 @@ _PROJECT_ROOT = Path(__file__).parent.parent.parent
 _SETTINGS_PATH = _PROJECT_ROOT / "config" / "settings.json"
 _MEMORY_DIR = _PROJECT_ROOT / "memory"
 
+# Single shared namespace for all durable long-term memory. Explicit writes
+# (memory_write), the learnings agent, the trimmed request log, and retrieval all
+# target this one ``user_id`` so everything the agent knows lives in one place and
+# is recalled together — rather than being fragmented across per-session ids where
+# each turn could only see its own writes. Kept as "learnings_global" (its historic
+# name) so the lessons already stored under that id stay in place without a
+# migration; it is now the home for every memory kind, not just learnings.
+MEMORY_NAMESPACE = "learnings_global"
+
 _settings_cache: dict = {}
 _settings_lock = threading.Lock()
 
@@ -194,20 +203,34 @@ def memory_search(query: str, session_id: str = "default", limit: int = 5) -> li
         return []
 
 
-def memory_add(content: str, session_id: str = "default", metadata: dict | None = None) -> None:
-    """Persist *content* as a memory for *session_id*.
+def memory_add(
+    content: str,
+    session_id: str = MEMORY_NAMESPACE,
+    metadata: dict | None = None,
+    infer: bool = False,
+) -> dict | None:
+    """Persist *content* to long-term memory for *session_id*.
 
-    mem0 internally extracts atomic facts via the configured Ollama LLM,
-    deduplicates against existing memories, and stores the embeddings in FAISS.
-    This is best-effort — any error is logged and silently swallowed.
+    ``infer=False`` (the default) stores the sentence **verbatim**. We deliberately
+    do NOT route through mem0's LLM fact-extraction/dedup by default: the small
+    local extraction model frequently distils *zero* facts from instruction-style
+    content (e.g. "Nano Banana Pro and Nano Banana 2 are distinct models — never
+    substitute one for the other") and silently drops it, so an explicit "remember
+    this" would vanish while the caller was told it was saved. Pass ``infer=True``
+    only when you deliberately want mem0 to distil atomic facts from a longer text.
+
+    Returns mem0's add result (``{"results": [{"id", "event", ...}]}``) so callers
+    can confirm what actually landed, or ``None`` when memory is disabled or the
+    write errored. Best-effort — never raises.
     """
     if not _is_enabled():
-        return
+        return None
     try:
         client = mem0_client()
-        client.add(content, user_id=session_id, metadata=metadata or {})
+        return client.add(content, user_id=session_id, metadata=metadata or {}, infer=infer)
     except Exception as exc:
         print(f"[memory] add error: {exc}")
+        return None
 
 
 def memory_get_all(session_id: str = "default") -> list[dict]:
