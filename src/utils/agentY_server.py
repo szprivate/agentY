@@ -24,6 +24,15 @@ Chat UI
     POST /agentY/chat        (SSE)              stream a turn; body {thread_id,message,image_paths}
     POST /agentY/reply                          answer an interactive ask  {request_id,text}
 
+Viewers (self-contained HTML pages served here so they fetch same-origin)
+    GET  /agentY/log_viewer                     message-history log viewer page
+    GET  /agentY/message_history                raw message-history log feed
+    GET  /agentY/memory_viewer                  long-term-memory viewer page
+    GET  /agentY/memory                          list stored long-term memories -> {memories}
+    POST /agentY/memory/update                   edit one memory      {id,text}
+    POST /agentY/memory/delete                   delete selected      {ids}
+    POST /agentY/memory/clear                    purge all memory
+
 Legacy ComfyUI -> agent image-review bridge (kept)
     GET  /agentY/pending_previews
     POST /agentY/review
@@ -1537,6 +1546,79 @@ def _build_app():
             text = ("[showing the last ~2 MB of history — append ?full=1 to the URL "
                     "for the complete log]\n\n") + text
         return Response(text, mimetype="text/plain; charset=utf-8")
+
+    # ── Long-term-memory viewer (self-contained HTML + JSON CRUD feed) ──────
+    # The page (scripts/memory_viewer.html) is served here so it fetches the
+    # memory feed same-origin; opened from the ComfyUI panel via
+    # web/agent_memory_viewer.js. Listing reads the FAISS docstore directly (no
+    # Ollama needed); edit/delete/purge go through the mem0 client.
+    @app.route("/agentY/memory_viewer", methods=["GET"])
+    def memory_viewer():
+        page = _project_root() / "scripts" / "memory_viewer.html"
+        if not page.exists():
+            return "memory_viewer.html not found", 404
+        html = page.read_text(encoding="utf-8", errors="replace")
+        return Response(html, mimetype="text/html; charset=utf-8")
+
+    @app.route("/agentY/memory", methods=["GET", "OPTIONS"])
+    def memory_list():
+        if request.method == "OPTIONS":
+            return "", 204
+        try:
+            from src.utils.memory import memory_list_raw
+            items = memory_list_raw()
+            return jsonify({"ok": True, "count": len(items), "memories": items})
+        except Exception as exc:  # noqa: BLE001
+            logger.error("memory list failed: %s", exc, exc_info=True)
+            return jsonify({"ok": False, "error": str(exc)}), 500
+
+    @app.route("/agentY/memory/update", methods=["POST", "OPTIONS"])
+    def memory_update_route():
+        if request.method == "OPTIONS":
+            return "", 204
+        body = request.get_json(silent=True) or {}
+        mid = str(body.get("id") or "").strip()
+        text = body.get("text")
+        if not mid or not isinstance(text, str) or not text.strip():
+            return jsonify({"ok": False, "error": "id and non-empty text are required"}), 400
+        try:
+            from src.utils.memory import memory_update
+            memory_update(mid, text.strip())
+            return jsonify({"ok": True, "id": mid})
+        except Exception as exc:  # noqa: BLE001
+            logger.error("memory update failed: %s", exc, exc_info=True)
+            return jsonify({"ok": False, "error": str(exc)}), 500
+
+    @app.route("/agentY/memory/delete", methods=["POST", "OPTIONS"])
+    def memory_delete_route():
+        if request.method == "OPTIONS":
+            return "", 204
+        body = request.get_json(silent=True) or {}
+        ids = body.get("ids")
+        if ids is None and body.get("id"):
+            ids = [body.get("id")]
+        ids = [str(i) for i in (ids or []) if str(i).strip()]
+        if not ids:
+            return jsonify({"ok": False, "error": "no memory ids given"}), 400
+        try:
+            from src.utils.memory import memory_delete_ids
+            res = memory_delete_ids(ids)
+            return jsonify({"ok": True, **res})
+        except Exception as exc:  # noqa: BLE001
+            logger.error("memory delete failed: %s", exc, exc_info=True)
+            return jsonify({"ok": False, "error": str(exc)}), 500
+
+    @app.route("/agentY/memory/clear", methods=["POST", "OPTIONS"])
+    def memory_clear_route():
+        if request.method == "OPTIONS":
+            return "", 204
+        try:
+            from src.utils.memory import memory_purge
+            res = memory_purge()
+            return jsonify({"ok": True, **res})
+        except Exception as exc:  # noqa: BLE001
+            logger.error("memory clear failed: %s", exc, exc_info=True)
+            return jsonify({"ok": False, "error": str(exc)}), 500
 
     # ── Application settings (.env auth keys + config/settings.json) ────────
     @app.route("/agentY/settings", methods=["GET", "POST", "OPTIONS"])

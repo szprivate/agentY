@@ -240,3 +240,84 @@ def format_memories(memories: list[dict], header: str = "## Relevant memories fr
         score_hint = f" (relevance: {score:.2f})" if score is not None else ""
         lines.append(f"- {text}{score_hint}")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Admin helpers — power the long-term-memory viewer (list / edit / delete /
+# purge). Listing reads the on-disk FAISS docstore directly so the viewer needs
+# neither Ollama nor a live client and can show memories across every session;
+# mutations go through the mem0 client so the vector index stays consistent.
+# ---------------------------------------------------------------------------
+
+_COLLECTION_NAME = "agenty_memory"
+
+
+def _store_path() -> Path:
+    """Path to the FAISS collection JSON on disk (matches ``_build_config``)."""
+    store_dir = _get("MEMORY_STORE_DIR", "memory", "store_dir", default="memory")
+    return (_PROJECT_ROOT / store_dir).resolve() / f"{_COLLECTION_NAME}.json"
+
+
+def memory_list_raw() -> list[dict]:
+    """Return every stored long-term memory straight from the FAISS docstore.
+
+    Reads the collection JSON directly, so it needs neither Ollama nor a live
+    mem0 client and lists memories across every ``user_id``/session. Each item is
+    ``{id, text, user_id, created_at, updated_at, attributed_to, hash}``, sorted
+    newest first. Returns ``[]`` when the store doesn't exist yet or on any error.
+    """
+    path = _store_path()
+    if not path.exists():
+        return []
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8", errors="replace") or "{}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[memory] list_raw parse error: {exc}")
+        return []
+    docstore = raw.get("docstore") if isinstance(raw, dict) else None
+    if not isinstance(docstore, dict):
+        return []
+    out: list[dict] = []
+    for mid, payload in docstore.items():
+        if not isinstance(payload, dict):
+            continue
+        out.append({
+            "id": mid,
+            "text": payload.get("data") or payload.get("memory") or "",
+            "user_id": payload.get("user_id"),
+            "created_at": payload.get("created_at"),
+            "updated_at": payload.get("updated_at"),
+            "attributed_to": payload.get("attributed_to"),
+            "hash": payload.get("hash"),
+        })
+    # Newest first; ISO-8601 timestamps sort correctly as plain strings.
+    out.sort(key=lambda m: (m.get("updated_at") or m.get("created_at") or ""), reverse=True)
+    return out
+
+
+def memory_update(memory_id: str, text: str) -> None:
+    """Overwrite a single memory's text (re-embeds via the mem0 client)."""
+    mem0_client().update(memory_id, text)
+
+
+def memory_delete_ids(ids: list[str]) -> dict:
+    """Delete each memory id via the mem0 client.
+
+    Returns ``{"deleted": n, "errors": [{"id", "error"}, …]}`` so the caller can
+    report partial failures instead of aborting the whole batch on the first bad id.
+    """
+    client = mem0_client()
+    deleted, errors = 0, []
+    for mid in ids or []:
+        try:
+            client.delete(mid)
+            deleted += 1
+        except Exception as exc:  # noqa: BLE001
+            errors.append({"id": mid, "error": str(exc)})
+    return {"deleted": deleted, "errors": errors}
+
+
+def memory_purge() -> dict:
+    """Delete every stored memory across all sessions. Returns delete_ids' report."""
+    ids = [m["id"] for m in memory_list_raw()]
+    return memory_delete_ids(ids)

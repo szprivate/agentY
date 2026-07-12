@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agentY — Long-Term Memory Viewer</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --panel:#fff; --ink:#1a1d21; --muted:#666; --line:#e2e5ea;
+    --accent:#3b6ef5; --chip:#eef1f6; --code:#f2f3f5; --hl:#ffe58a;
+    --danger:#d64545; --ok:#2e7d32;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#15171c; --panel:#1e2128; --ink:#e6e8ec; --muted:#9aa0aa; --line:#2c313b;
+      --accent:#6f97ff; --chip:#262b34; --code:#161a20; --hl:#7a6320;
+      --danger:#e5736f; --ok:#7bd88f;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#15171c; --panel:#1e2128; --ink:#e6e8ec; --muted:#9aa0aa; --line:#2c313b;
+    --accent:#6f97ff; --chip:#262b34; --code:#161a20; --hl:#7a6320;
+    --danger:#e5736f; --ok:#7bd88f;
+  }
+  :root[data-theme="light"]{
+    --bg:#f6f7f9; --panel:#fff; --ink:#1a1d21; --muted:#666; --line:#e2e5ea;
+    --accent:#3b6ef5; --chip:#eef1f6; --code:#f2f3f5; --hl:#ffe58a;
+    --danger:#d64545; --ok:#2e7d32;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  header{position:sticky;top:0;z-index:10;background:var(--panel);border-bottom:1px solid var(--line);
+    padding:10px 16px;display:flex;flex-direction:column;gap:8px}
+  .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  h1{font-size:15px;margin:0;font-weight:650}
+  .muted{color:var(--muted)}
+  button,input,select,textarea{font:inherit;color:var(--ink);background:var(--panel);
+    border:1px solid var(--line);border-radius:7px;padding:6px 10px}
+  button{cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+  button.danger{color:#fff;background:var(--danger);border-color:var(--danger)}
+  button.danger:hover{filter:brightness(1.06)}
+  button:disabled{opacity:.45;cursor:default}
+  button:disabled:hover{border-color:var(--line);filter:none}
+  input[type=search]{min-width:240px;flex:1}
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chip{padding:3px 9px;border-radius:999px;background:var(--chip);border:1px solid transparent;
+    cursor:pointer;font-size:12px;user-select:none;display:inline-flex;gap:6px;align-items:center}
+  .chip.off{opacity:.4}
+  .chip .dot{width:9px;height:9px;border-radius:50%}
+  .chip .n{color:var(--muted);font-variant-numeric:tabular-nums}
+  main{max-width:1000px;margin:0 auto;padding:14px 16px 90px}
+  .stat{font-size:12px;color:var(--muted)}
+  .empty{margin:40px auto;max-width:560px;padding:48px 24px;text-align:center;
+    border:2px dashed var(--line);border-radius:14px;background:var(--panel);color:var(--muted)}
+  .card{background:var(--panel);border:1px solid var(--line);border-left-width:4px;
+    border-left-color:var(--accent);border-radius:9px;margin:8px 0;overflow:hidden}
+  .card.sel{border-left-color:var(--ok);box-shadow:0 0 0 1px var(--ok) inset}
+  .card>.head{display:flex;gap:10px;align-items:flex-start;padding:10px 12px}
+  .card .chk{margin-top:2px}
+  .card .txt{flex:1;white-space:pre-wrap;word-break:break-word;cursor:text}
+  .card .meta{display:flex;flex-wrap:wrap;gap:10px;padding:0 12px 10px 40px;font-size:11.5px;color:var(--muted)}
+  .card .meta .tag{background:var(--chip);border-radius:6px;padding:1px 7px;font-variant-numeric:tabular-nums}
+  .card .acts{display:flex;gap:6px;flex-shrink:0}
+  .card .acts button{padding:4px 9px;font-size:12px}
+  textarea.edit{width:100%;min-height:88px;resize:vertical;font:13px/1.5 inherit;
+    background:var(--code);border-radius:7px;padding:9px}
+  mark{background:var(--hl);color:inherit;border-radius:2px;padding:0 1px}
+  a.themeToggle{margin-left:auto;cursor:pointer;color:var(--muted);font-size:12px;text-decoration:none}
+  .toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:30;
+    background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:9px;font-size:13px;
+    box-shadow:0 6px 24px rgba(0,0,0,.28);opacity:0;transition:opacity .2s;pointer-events:none;max-width:80vw}
+  .toast.show{opacity:1}
+  .toast.err{background:var(--danger);color:#fff}
+  .spacer{flex:1}
+</style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <h1>agentY · Long-Term Memory</h1>
+    <span id="fileinfo" class="muted"></span>
+    <a class="themeToggle" id="themeToggle">◐ theme</a>
+  </div>
+  <div class="row" id="controls">
+    <input type="search" id="search" placeholder="Search memories…">
+    <select id="sort">
+      <option value="new">newest first</option>
+      <option value="old">oldest first</option>
+      <option value="az">A → Z</option>
+    </select>
+    <button id="selAll">Select all</button>
+    <button id="selNone">Clear selection</button>
+    <button id="delSel" class="danger" disabled>Delete selected</button>
+    <span class="spacer"></span>
+    <button id="reload">↻ Reload</button>
+    <button id="purge" class="danger">Purge all memory</button>
+  </div>
+  <div class="row chips" id="userChips" style="display:none"></div>
+  <div class="row"><span class="stat" id="stats"></span></div>
+</header>
+
+<main id="list"></main>
+<div class="empty" id="empty" style="display:none"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const el = (t,c,txt)=>{const e=document.createElement(t);if(c)e.className=c;if(txt!=null)e.textContent=txt;return e;};
+
+// ---- theme toggle ----
+$("#themeToggle").onclick = ()=>{
+  const cur = document.documentElement.getAttribute("data-theme");
+  const next = cur==="dark" ? "light" : cur==="light" ? "dark"
+    : (matchMedia("(prefers-color-scheme: dark)").matches ? "light" : "dark");
+  document.documentElement.setAttribute("data-theme", next);
+};
+
+// ---- state ----
+let MEM=[];                         // [{id,text,user_id,created_at,updated_at,...}]
+const SELECTED=new Set();           // selected memory ids
+let activeUsers=new Set();          // user_id filter (chips)
+let toastTimer=null;
+
+function toast(msg, isErr){
+  const t=$("#toast"); t.textContent=msg; t.classList.toggle("err",!!isErr); t.classList.add("show");
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove("show"), isErr?4200:2200);
+}
+
+function fmtDate(iso){
+  if(!iso) return "";
+  const d=new Date(iso); if(isNaN(d)) return iso;
+  return d.toLocaleString(undefined,{year:"numeric",month:"short",day:"2-digit",hour:"2-digit",minute:"2-digit"});
+}
+function esc(t){return String(t).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
+
+// ---- colour per user_id (stable hash) ----
+function hue(s){let h=0;for(const c of String(s))h=(h*31+c.charCodeAt(0))>>>0;return h%360;}
+function colorFor(u){ return u==="default" ? "hsl(210 62% 48%)" : `hsl(${hue(u)} 60% 48%)`; }
+
+// ---- chips (per user_id, only when >1 distinct) ----
+function computeChips(){
+  const counts={};
+  for(const m of MEM){ const u=m.user_id||"(none)"; counts[u]=(counts[u]||0)+1; }
+  const keys=Object.keys(counts);
+  const wrap=$("#userChips");
+  activeUsers=new Set(keys);
+  if(keys.length<=1){ wrap.style.display="none"; wrap.innerHTML=""; return; }
+  wrap.innerHTML=""; wrap.style.display="flex";
+  keys.sort((a,b)=>counts[b]-counts[a]).forEach(u=>{
+    const chip=el("span","chip");
+    const dot=el("span","dot"); dot.style.background=colorFor(u);
+    chip.append(dot, el("span",null,u), el("span","n","· "+counts[u]));
+    chip.onclick=()=>{ chip.classList.toggle("off");
+      if(activeUsers.has(u))activeUsers.delete(u); else activeUsers.add(u);
+      render(); };
+    wrap.append(chip);
+  });
+}
+
+function filtered(){
+  const q=$("#search").value.trim().toLowerCase();
+  let r=MEM.filter(m=>{
+    if(!activeUsers.has(m.user_id||"(none)")) return false;
+    if(q && !(m.text||"").toLowerCase().includes(q)) return false;
+    return true;
+  });
+  const sort=$("#sort").value;
+  if(sort==="az") r=r.slice().sort((a,b)=>(a.text||"").localeCompare(b.text||""));
+  else if(sort==="old") r=r.slice().reverse();   // MEM is newest-first from the host
+  return r;
+}
+
+// highlight the search term inside a text node holder
+function withHighlight(container, text, q){
+  if(!q){ container.textContent=text; return; }
+  const low=text.toLowerCase(), ql=q.toLowerCase(); let i=0,idx;
+  container.textContent="";
+  while((idx=low.indexOf(ql,i))>=0){
+    if(idx>i) container.append(text.slice(i,idx));
+    container.append(el("mark",null,text.slice(idx,idx+q.length)));
+    i=idx+q.length;
+  }
+  container.append(text.slice(i));
+}
+
+function updateSelUI(){
+  $("#delSel").disabled = SELECTED.size===0;
+  $("#delSel").textContent = SELECTED.size ? `Delete selected (${SELECTED.size})` : "Delete selected";
+}
+
+function card(m){
+  const q=$("#search").value.trim();
+  const c=el("div","card"); c.style.borderLeftColor=colorFor(m.user_id);
+  if(SELECTED.has(m.id)) c.classList.add("sel");
+
+  const chk=el("input","chk"); chk.type="checkbox"; chk.checked=SELECTED.has(m.id);
+  chk.title="Select";
+  chk.onclick=(e)=>{ e.stopPropagation();
+    if(chk.checked)SELECTED.add(m.id); else SELECTED.delete(m.id);
+    c.classList.toggle("sel",chk.checked); updateSelUI(); };
+
+  const txt=el("div","txt"); withHighlight(txt, m.text||"", q);
+  txt.title="Click to edit";
+
+  const editBtn=el("button",null,"Edit");
+  const delBtn=el("button","danger","Delete");
+  const acts=el("div","acts"); acts.append(editBtn, delBtn);
+
+  const head=el("div","head"); head.append(chk, txt, acts);
+
+  const meta=el("div","meta");
+  if(m.user_id) meta.append(el("span","tag","session: "+m.user_id));
+  if(m.created_at) meta.append(el("span",null,"created "+fmtDate(m.created_at)));
+  if(m.updated_at && m.updated_at!==m.created_at) meta.append(el("span",null,"edited "+fmtDate(m.updated_at)));
+  c.append(head, meta);
+
+  // inline edit
+  function enterEdit(){
+    if(head.querySelector("textarea")) return;
+    const ta=el("textarea","edit"); ta.value=m.text||"";
+    const save=el("button","primary","Save");
+    const cancel=el("button",null,"Cancel");
+    const bar=el("div","acts"); bar.append(save,cancel);
+    head.innerHTML=""; head.append(chk);
+    const col=el("div"); col.style.flex="1"; col.append(ta);
+    head.append(col); head.append(bar);
+    ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
+    cancel.onclick=()=>render();
+    save.onclick=async()=>{
+      const val=ta.value.trim();
+      if(!val){ toast("Memory text can't be empty.", true); return; }
+      if(val===(m.text||"")){ render(); return; }
+      save.disabled=cancel.disabled=true; save.textContent="Saving…";
+      const ok=await apiUpdate(m.id, val);
+      if(ok){ m.text=val; m.updated_at=new Date().toISOString(); toast("Memory updated."); }
+      render();
+    };
+  }
+  txt.onclick=enterEdit;
+  editBtn.onclick=enterEdit;
+  delBtn.onclick=async()=>{
+    if(!confirm("Delete this memory permanently?\n\n"+(m.text||"").slice(0,200))) return;
+    delBtn.disabled=true; delBtn.textContent="…";
+    const ok=await apiDelete([m.id]);
+    if(ok){ MEM=MEM.filter(x=>x.id!==m.id); SELECTED.delete(m.id); toast("Memory deleted."); computeChips(); render(); }
+    else { delBtn.disabled=false; delBtn.textContent="Delete"; }
+  };
+  return c;
+}
+
+function render(){
+  const rows=filtered();
+  const list=$("#list"); list.innerHTML="";
+  const empty=$("#empty");
+  if(!MEM.length){
+    empty.style.display="block";
+    empty.innerHTML="<p style='font-size:16px;margin:0 0 6px'><strong>No long-term memories yet</strong></p>"+
+      "<p style='margin:0'>agentY writes here when it learns a durable preference or fix. "+
+      "They'll appear as you use it.</p>";
+  } else if(!rows.length){
+    empty.style.display="block";
+    empty.innerHTML="<p style='margin:0'>No memories match your filters.</p>";
+  } else {
+    empty.style.display="none";
+  }
+  const frag=document.createDocumentFragment();
+  for(const m of rows) frag.append(card(m));
+  list.append(frag);
+  $("#stats").textContent = MEM.length
+    ? `${rows.length.toLocaleString()} of ${MEM.length.toLocaleString()} memories shown`
+    : "";
+  updateSelUI();
+}
+
+// ---- API ----
+async function apiList(){
+  try{
+    const r=await fetch("/agentY/memory",{cache:"no-store"});
+    const j=await r.json();
+    if(!r.ok || !j.ok) throw new Error(j.error||("HTTP "+r.status));
+    MEM=Array.isArray(j.memories)?j.memories:[];
+    $("#fileinfo").textContent = `${MEM.length.toLocaleString()} stored`;
+    computeChips(); render();
+  }catch(e){
+    $("#fileinfo").textContent="";
+    $("#empty").style.display="block";
+    $("#empty").innerHTML="<p style='margin:0'><strong>Couldn't load memory</strong></p>"+
+      "<p class='stat' style='margin-top:8px'>"+esc(String(e))+"</p>"+
+      "<p class='stat' style='margin-top:8px'>Is the agentY host running and this page served from it (/agentY/memory_viewer)?</p>";
+  }
+}
+async function apiUpdate(id, text){
+  try{
+    const r=await fetch("/agentY/memory/update",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({id,text})});
+    const j=await r.json();
+    if(!r.ok || !j.ok) throw new Error(j.error||("HTTP "+r.status));
+    return true;
+  }catch(e){ toast("Update failed: "+e, true); return false; }
+}
+async function apiDelete(ids){
+  try{
+    const r=await fetch("/agentY/memory/delete",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({ids})});
+    const j=await r.json();
+    if(!r.ok || !j.ok) throw new Error(j.error||("HTTP "+r.status));
+    if(j.errors && j.errors.length) toast(`Deleted ${j.deleted}, ${j.errors.length} failed.`, true);
+    return true;
+  }catch(e){ toast("Delete failed: "+e, true); return false; }
+}
+async function apiPurge(){
+  try{
+    const r=await fetch("/agentY/memory/clear",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+    const j=await r.json();
+    if(!r.ok || !j.ok) throw new Error(j.error||("HTTP "+r.status));
+    return j;
+  }catch(e){ toast("Purge failed: "+e, true); return null; }
+}
+
+// ---- toolbar ----
+$("#reload").onclick=apiList;
+$("#search").oninput=(()=>{let d;return()=>{clearTimeout(d);d=setTimeout(render,180);};})();
+$("#sort").onchange=render;
+$("#selAll").onclick=()=>{ for(const m of filtered()) SELECTED.add(m.id); render(); };
+$("#selNone").onclick=()=>{ SELECTED.clear(); render(); };
+$("#delSel").onclick=async()=>{
+  const ids=[...SELECTED];
+  if(!ids.length) return;
+  if(!confirm(`Delete ${ids.length} selected memor${ids.length===1?"y":"ies"} permanently?`)) return;
+  $("#delSel").disabled=true;
+  const ok=await apiDelete(ids);
+  if(ok){ MEM=MEM.filter(m=>!SELECTED.has(m.id)); SELECTED.clear(); toast("Selected memories deleted."); computeChips(); }
+  render();
+};
+$("#purge").onclick=async()=>{
+  if(!MEM.length){ toast("Memory is already empty."); return; }
+  if(!confirm(`Purge ALL ${MEM.length} memories?\n\nThis erases the agent's entire long-term memory and cannot be undone.`)) return;
+  if(!confirm("Are you absolutely sure? This is irreversible.")) return;
+  $("#purge").disabled=true; $("#purge").textContent="Purging…";
+  const res=await apiPurge();
+  $("#purge").disabled=false; $("#purge").textContent="Purge all memory";
+  if(res){ toast(`Purged ${res.deleted} memories.`); SELECTED.clear(); await apiList(); }
+};
+
+apiList();
+</script>
+</body>
+</html>
