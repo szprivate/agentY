@@ -452,7 +452,7 @@ def _generate_and_set_title(thread_id: str, user_text: str) -> None:
         try:
             raw = loop.run_until_complete(llm.chat(messages))
         finally:
-            loop.close()
+            _close_loop(loop)
         title = _clean_title(raw)
         if title:
             cs.rename_thread(thread_id, title)
@@ -461,6 +461,26 @@ def _generate_and_set_title(thread_id: str, user_text: str) -> None:
 
 
 # ── SSE pipeline runner ───────────────────────────────────────────────────────
+
+def _close_loop(loop) -> None:
+    """Finalize pending async generators, then close *loop*.
+
+    Every per-run loop drives async generators (the pipeline stream, the executor,
+    the ComfyUI ws-progress stream). On a Stop/cancel or an error these are torn
+    down asynchronously — their aclose()/athrow() finalizers get scheduled on the
+    loop — so closing it out from under them raises "Task was destroyed but it is
+    pending! … async_generator_athrow". Draining shutdown_asyncgens first drives
+    those finalizers to completion.
+    """
+    try:
+        loop.run_until_complete(loop.shutdown_asyncgens())
+    except Exception:
+        pass
+    try:
+        loop.close()
+    except Exception:
+        pass
+
 
 def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
                          out_q: "queue.Queue", req_id: str,
@@ -736,10 +756,7 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
             out_q.put({"type": "system", "data": "⏹ Stopped."})
         out_q.put({"type": "done"})
         out_q.put(None)
-        try:
-            loop.close()
-        except Exception:
-            pass
+        _close_loop(loop)
 
 
 # ── Stop / interrupt helpers ──────────────────────────────────────────────────
@@ -1055,7 +1072,7 @@ def _dispatch_to_agent(message: str, image_paths: list[str], node_id: str | None
         try:
             loop.run_until_complete(_stream())
         finally:
-            loop.close()
+            _close_loop(loop)
 
     threading.Thread(target=_run, name="agentY-review-dispatch", daemon=True).start()
 
