@@ -1279,6 +1279,22 @@ class Pipeline:
         except Exception:  # noqa: BLE001
             pass
 
+        # Recall relevant long-term memory (past preferences + failure→fix lessons)
+        # and surface it up front, so the orchestrator ALWAYS sees it before building
+        # even if it never calls memory_read itself. Guaranteed recall is the point of
+        # the store — leaving it to a discretionary tool call means a model that skips
+        # the call never learns from the 60+ lessons on record. memory_read stays
+        # available for pulling more detail on demand. Best-effort (returns "" on any
+        # error or when memory is disabled); labelled so it reads as recalled context,
+        # not a fresh instruction.
+        memory_ctx = self._get_memory_context(user_text)
+        if memory_ctx:
+            pin = pin + (
+                "[RECALLED FROM LONG-TERM MEMORY — honor any stated preference below "
+                "and avoid repeating a failure noted here; call memory_read for more.]\n"
+                + memory_ctx + "\n\n"
+            )
+
         if isinstance(user_input, list):
             gallery = self._format_image_gallery()
             blocks = list(user_input)
@@ -4032,7 +4048,9 @@ class Pipeline:
         prepended to any agent prompt.
         """
         try:
-            results = memory_search(user_text, session_id=MEMORY_NAMESPACE, limit=5)
+            # A relevance floor keeps this always-on inject clean: only genuinely
+            # related preferences/lessons surface, so trivial turns add no noise.
+            results = memory_search(user_text, session_id=MEMORY_NAMESPACE, limit=5, min_score=0.5)
             return format_memories(results)
         except Exception as exc:
             if self._verbose:

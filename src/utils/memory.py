@@ -184,20 +184,72 @@ def mem0_client() -> Any:
 # Public helpers
 # ---------------------------------------------------------------------------
 
-def memory_search(query: str, session_id: str = "default", limit: int = 5) -> list[dict]:
-    """Return up to *limit* memories relevant to *query* for *session_id*.
+def memory_search(
+    query: str,
+    session_id: str = MEMORY_NAMESPACE,
+    limit: int = 5,
+    min_score: float = 0.0,
+) -> list[dict]:
+    """Return up to *limit* memories most relevant to *query* for *session_id*.
 
-    Returns an empty list if memory is disabled or on any error.
+    Ranks by cosine similarity directly against the FAISS index rather than going
+    through mem0's ``Memory.search``. mem0 2.0.2's hybrid ``score_and_rank`` is
+    broken for the FAISS backend: the provider hands it the raw L2 *distance*
+    (lower = better) but the scorer treats it as a *similarity* and sorts
+    descending, so it returns near-inverted results (the best matches sink, the
+    worst float to the top and saturate at score 1.0). We embed the query with
+    mem0's own (normalised) embedder, search the index, map hits back through the
+    provider's ``index_to_id``/``docstore``, and score cosine = ``1 - d/2`` (unit
+    vectors). ``min_score`` drops weak matches (useful for always-on recall).
+
+    Each result is ``{"id", "memory", "score", "user_id"}``, best first. Returns
+    ``[]`` if memory is disabled, the store is empty, or on any error.
     """
     if not _is_enabled():
         return []
     try:
+        import numpy as np
+
         client = mem0_client()
-        results = client.search(query, filters={"user_id": session_id}, limit=limit)
-        # mem0 may return a dict {"results": [...]} or a plain list
-        if isinstance(results, dict):
-            return results.get("results", [])
-        return results or []
+        vs = client.vector_store
+        index = getattr(vs, "index", None)
+        if index is None or getattr(index, "ntotal", 0) == 0:
+            return []
+
+        vec = np.asarray(client.embedding_model.embed(query, "search"), dtype="float32").reshape(1, -1)
+        # Over-fetch so per-user filtering still yields up to `limit` hits.
+        k = min(int(index.ntotal), max(limit * 5, 20))
+        distances, positions = index.search(vec, k)
+
+        out: list[dict] = []
+        for dist, pos in zip(distances[0], positions[0]):
+            pos = int(pos)
+            if pos < 0:
+                continue
+            vid = vs.index_to_id.get(pos)
+            if vid is None:
+                vid = vs.index_to_id.get(str(pos))
+            payload = vs.docstore.get(vid) if vid is not None else None
+            if not isinstance(payload, dict):
+                continue
+            if session_id and payload.get("user_id") != session_id:
+                continue
+            text = payload.get("data") or payload.get("memory") or ""
+            if not text:
+                continue
+            # IndexFlatL2 returns squared L2; for unit vectors d = 2 - 2cos.
+            score = 1.0 - float(dist) / 2.0
+            if score < min_score:
+                continue
+            out.append({
+                "id": vid,
+                "memory": text,
+                "score": round(score, 4),
+                "user_id": payload.get("user_id"),
+            })
+            if len(out) >= limit:
+                break
+        return out
     except Exception as exc:
         print(f"[memory] search error: {exc}")
         return []
