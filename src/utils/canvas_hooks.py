@@ -27,13 +27,22 @@ VID_EXTS = {"mp4", "mov", "webm", "mkv", "avi"}
 
 def _anchor_links(inputs: dict) -> list:
     """Return each wired ``anchor`` link ``[node_id, slot]`` on a hook, in slot
-    order. The anchor input auto-grows, so its names are ``anchor``/``anchor0``/… ."""
+    order. The anchor input auto-grows, so its names are ``anchor``/``anchor0``/… .
+    The V3 Autogrow schema prefixes them with the group name (``anchors.anchor0``),
+    so match the trailing ``anchorN`` after an optional ``group.`` prefix — else the
+    rewire in ``splice_hook_nodes`` disconnects inline hooks instead of wiring them."""
+    def _tail(name: str) -> str:
+        return name.rsplit(".", 1)[-1]  # drop any "anchors." group prefix
+
     def _idx(name: str) -> int:
-        suf = name[len("anchor"):]
+        suf = _tail(name)[len("anchor"):]
         return int(suf) if suf.isdigit() else -1  # bare "anchor" sorts first
 
-    keys = [k for k in (inputs or {})
-            if k == "anchor" or (k.startswith("anchor") and k[len("anchor"):].isdigit())]
+    def _is_anchor(k: str) -> bool:
+        t = _tail(k)
+        return t == "anchor" or (t.startswith("anchor") and t[len("anchor"):].isdigit())
+
+    keys = [k for k in (inputs or {}) if _is_anchor(k)]
     out = []
     for k in sorted(keys, key=_idx):
         v = inputs.get(k)
@@ -354,11 +363,10 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
                 "NOT call apply_canvas_hooks for these. If an anchor is wired, its output "
                 "is the INPUT to what you generate (e.g. upload that image/video, or feed "
                 "a wired string/number, and bind it to the workflow); if nothing is wired, "
-                "treat the prompt as a text-to-media request. A standin may export MORE "
-                "THAN ONE output — the hook's outputs auto-grow and carry ANY type (image, "
-                "video, but also string, int, float), so a stage can hand several typed "
-                "results to the next hook. Media routing (agent/images, agent/videos, …) "
-                "is enforced automatically:"
+                "treat the prompt as a text-to-media request. A single standin may PRODUCE "
+                "SEVERAL results (e.g. 'make 4 angle images') and even run more than one "
+                "workflow — that's fine; every produced file/value is captured. Media "
+                "routing (agent/images, agent/videos, …) is enforced automatically:"
             )
             for h in singles:
                 prompt = str(h.get("directive", "") or "").strip()
@@ -381,7 +389,11 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
                 "export SEVERAL outputs of any type: a workflow output FILE "
                 "(image/video/audio) OR a VALUE you compute from the run (e.g. 'generate "
                 "a video AND calculate its length' → the video is one output, the length "
-                "another you derive with a tool/script). Stage 1's input is its wired "
+                "another you derive with a tool/script). run_workflow_now returns EVERY "
+                "produced file — if a stage yields multiple files (e.g. 'make 4 images'), "
+                "forward ALL of them to the next stage (upload_image each and wire them "
+                "into the next workflow's loader(s) or a batch), not just the first. "
+                "Stage 1's input is its wired "
                 "anchor if any, else text-to-media; the final stage's output is the "
                 "result. Do NOT call apply_canvas_hooks for these:"
             )
