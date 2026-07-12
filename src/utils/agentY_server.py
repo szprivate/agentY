@@ -658,8 +658,16 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
     # and the pipeline's own drain never double-emit an event.
     from src.utils.tool_activity import drain as _drain_tool_activity
     from src.utils.canvas_patch import drain as _drain_canvas_activity
+    from src.utils.progress_signal import drain as _drain_progress_lines
 
     def _flush_activity() -> None:
+        # Executor progress emitted from inside a tool call (e.g. run_workflow_now,
+        # which drives chained hook stages) only reaches the CLI unless drained
+        # here — the pipeline's own loop is blocked awaiting the tool. Draining the
+        # progress buffer on the pump's short timer streams it to the panel live.
+        # drain() is atomic, so this never double-emits with the pipeline's drain.
+        for _line in _drain_progress_lines():
+            _translate({"data": _line})
         for _ta in _drain_tool_activity():
             _translate({"tool_activity": _ta})
         for _cp in _drain_canvas_activity():

@@ -32,7 +32,7 @@ from src.tools.image_handling import set_vision_agent as _set_vision_agent
 from src.utils.chat_summary import summarize_conversation, log_agent_messages, log_agent_exchange
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
 from src.utils.comfyui_progress import stream_comfyui_job as _stream_comfyui_job
-from src.utils.progress_signal import drain as _drain_progress
+from src.utils.progress_signal import drain as _drain_progress, push as _push_progress
 from src.utils.tool_activity import drain as _drain_tools, clear as _clear_tools
 from src.utils.canvas_patch import drain as _drain_canvas_patch, clear as _clear_canvas_patch
 from src.utils.costs import compute_cost_from_usage
@@ -924,6 +924,12 @@ class Pipeline:
                     workflow_path, brief, user_message="", verbose=self._verbose,
                     collected_paths=base, run_qa=False,
                 ):
+                    # Surface each executor line in the chat panel too — this runs
+                    # inside a tool call, so the pipeline's own event loop isn't
+                    # draining meanwhile; the progress buffer (drained live by the
+                    # server pump) is what carries it to the panel instead of the
+                    # CLI only.
+                    _push_progress(str(_line))
                     if self._verbose:
                         print(f"[run_workflow_now] {_line}")
             except Exception as exc:  # noqa: BLE001
