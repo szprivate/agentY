@@ -949,7 +949,8 @@ def _rebuild_agent(agent_name: str, provider: str, model: str, llm_spec: str) ->
     """Rebuild one pipeline agent with the given provider/model and swap it into
     the live pipeline. Returns None on success, or an error string."""
     from src.agent import (
-        _DASHSCOPE_PROVIDERS, _settings as get_settings,
+        _DASHSCOPE_PROVIDERS, _OPENAI_PROVIDERS, _GEMINI_PROVIDERS,
+        _settings as get_settings,
         create_orchestrator_agent,
         create_query_templates_agent, create_assemble_workflow_agent, create_info_agent,
         create_story_agent, create_detect_user_intent_agent, create_planner_agent,
@@ -958,9 +959,10 @@ def _rebuild_agent(agent_name: str, provider: str, model: str, llm_spec: str) ->
     if _agent_ref is None:
         return "pipeline not initialised"
 
-    # DashScope factories read their model from settings; update it so the rebuilt
-    # agent picks up the requested Qwen model.
-    if provider in _DASHSCOPE_PROVIDERS:
+    # OpenAI-compatible providers (DashScope/OpenAI/Gemini) read their model from
+    # settings; update it so the rebuilt agent picks up the requested model.
+    _OPENAI_COMPAT = _DASHSCOPE_PROVIDERS | _OPENAI_PROVIDERS | _GEMINI_PROVIDERS
+    if provider in _OPENAI_COMPAT:
         get_settings().setdefault("llm", {}).setdefault("pipeline", {})[agent_name] = llm_spec
 
     # The orchestrator is rebuilt specially: its tool list must include the
@@ -968,7 +970,7 @@ def _rebuild_agent(agent_name: str, provider: str, model: str, llm_spec: str) ->
     # context) via set_orchestrator rather than a plain setattr.
     if agent_name == "orchestrator":
         kwargs = {"llm": provider, "extra_tools": getattr(_agent_ref, "_delegation_tools", None)}
-        if provider not in _DASHSCOPE_PROVIDERS and model:
+        if provider not in _OPENAI_COMPAT and model:
             kwargs["ollama_model" if provider == "ollama" else "anthropic_model"] = model
         try:
             _agent_ref.set_orchestrator(create_orchestrator_agent(**kwargs))
@@ -988,7 +990,7 @@ def _rebuild_agent(agent_name: str, provider: str, model: str, llm_spec: str) ->
         "planner": "_planner_agent", "error_checker": "_error_checker_agent", "dop": "_dop_agent",
     }[agent_name]
     kwargs = {"llm": provider}
-    if provider not in _DASHSCOPE_PROVIDERS and model:
+    if provider not in _OPENAI_COMPAT and model:
         kwargs["ollama_model" if provider == "ollama" else "anthropic_model"] = model
     try:
         setattr(_agent_ref, attr, factory(**kwargs))
@@ -1015,9 +1017,10 @@ def _switch_model(args: list[str]) -> list[dict]:
     provider, _, model = llm_spec.partition(",")
     provider = provider.strip().lower()
     model = model.strip()
-    from src.agent import _DASHSCOPE_PROVIDERS
-    if provider not in ({"claude", "ollama"} | _DASHSCOPE_PROVIDERS):
-        return [_sys(f"❌ Unknown provider `{provider}`. Use `claude`, `ollama`, or `dashscope`.")]
+    from src.agent import _DASHSCOPE_PROVIDERS, _OPENAI_PROVIDERS, _GEMINI_PROVIDERS
+    if provider not in ({"claude", "ollama"} | _DASHSCOPE_PROVIDERS | _OPENAI_PROVIDERS | _GEMINI_PROVIDERS):
+        return [_sys(f"❌ Unknown provider `{provider}`. Use `claude`, `ollama`, "
+                     "`dashscope`, `openai`, or `google`.")]
 
     # ── all: switch every pipeline agent in one go ──────────────────────────
     if agent_name == "all":
@@ -1087,34 +1090,243 @@ def _dispatch_to_agent(message: str, image_paths: list[str], node_id: str | None
 
 
 # ── Model discovery (for the panel's quick-switch dropdown) ───────────────────
+#
+# The cloud vendors are enumerated **live** from their own ``/models`` endpoints
+# so the dropdown never drifts as new models ship (Anthropic's list, and whatever
+# the configured DashScope endpoint actually serves — which can include DeepSeek,
+# GLM, Kimi alongside Qwen). Results are curated (snapshot/translation/OCR noise
+# dropped), cached briefly, and fall back to the static catalogs below when an
+# endpoint is unreachable. Each entry is [ "<provider>,<model>", "Display name" ]
+# — the provider,model string is exactly what /switch_model expects.
 
-# Curated catalogs for the cloud vendors. Ollama is enumerated live from the
-# running server. Each entry is [ "<provider>,<model>", "Display name" ] — the
-# provider,model string is exactly what /switch_model expects.
-_ANTHROPIC_MODELS = [
+# Fallbacks — used only when a provider's /models endpoint can't be reached.
+_ANTHROPIC_FALLBACK = [
+    ["claude,claude-opus-4-8", "Claude Opus 4.8"],
+    ["claude,claude-sonnet-5", "Claude Sonnet 5"],
     ["claude,claude-haiku-4-5", "Claude Haiku 4.5"],
     ["claude,claude-sonnet-4-5", "Claude Sonnet 4.5"],
 ]
-_DASHSCOPE_MODELS = [
+_DASHSCOPE_FALLBACK = [
     ["dashscope,qwen3.6-flash", "Qwen3.6 Flash"],
-    ["dashscope,qwen-plus", "Qwen Plus"],
     ["dashscope,qwen3.7-plus", "Qwen3.7 Plus"],
-    ["dashscope,qwen-max", "Qwen Max"],
+    ["dashscope,qwen3-max", "Qwen3 Max"],
+    ["dashscope,qwen3-coder-plus", "Qwen3 Coder Plus"],
+    ["dashscope,deepseek-v4-pro", "DeepSeek V4 Pro"],
 ]
+_OPENAI_FALLBACK = [
+    ["openai,gpt-4o", "gpt-4o"],
+    ["openai,gpt-4o-mini", "gpt-4o-mini"],
+    ["openai,o3", "o3"],
+]
+_GEMINI_FALLBACK = [
+    ["google,gemini-2.5-pro", "gemini-2.5-pro"],
+    ["google,gemini-2.5-flash", "gemini-2.5-flash"],
+]
+
+# Live-list cache (avoid hitting the endpoints on every panel load).
+_MODEL_CACHE: dict = {}
+_MODEL_CACHE_TTL = 300  # seconds
+
+# DashScope curation: drop dated snapshots and the translation / OCR variants —
+# they bloat the dropdown without adding a distinct chat/coding/vision model.
+_DS_SNAPSHOT_RE = re.compile(r"-\d{4}-\d{2}-\d{2}$")
+
+# Cosmetic label prettifiers.
+_MODEL_BRAND = {"qwen": "Qwen", "deepseek": "DeepSeek", "glm": "GLM",
+                "kimi": "Kimi", "claude": "Claude"}
+_MODEL_ACRONYM = {"vl": "VL", "ocr": "OCR", "moe": "MoE", "mt": "MT",
+                  "a2b": "A2B", "a3b": "A3B", "a10b": "A10B", "a17b": "A17B",
+                  "a22b": "A22B", "a35b": "A35B"}
+
+
+def _dashscope_keep(mid: str) -> bool:
+    """True if *mid* is a real, distinct model worth listing (not noise)."""
+    if _DS_SNAPSHOT_RE.search(mid):
+        return False
+    if mid.startswith("qwen-mt") or "-mt-" in mid:
+        return False
+    if "ocr" in mid:
+        return False
+    return True
+
+
+def _prettify_model_id(mid: str) -> str:
+    """Turn a raw model id into a readable label (e.g. deepseek-v4-pro → DeepSeek V4 Pro)."""
+    words: list[str] = []
+    for tok in mid.split("-"):
+        low = tok.lower()
+        if low in _MODEL_ACRONYM:
+            words.append(_MODEL_ACRONYM[low])
+            continue
+        m = re.match(r"^([a-z]+)(.*)$", tok)
+        if m and m.group(1) in _MODEL_BRAND:  # brand prefix: qwen3.6 → Qwen3.6
+            words.append(_MODEL_BRAND[m.group(1)] + m.group(2))
+        elif tok:
+            words.append(tok[:1].upper() + tok[1:])
+    return " ".join(words) or mid
+
+
+def _fetch_anthropic_models(key: str) -> list[list[str]]:
+    """Live Anthropic model list (newest first) via GET /v1/models."""
+    import requests  # noqa: PLC0415
+    rows: list[tuple[str, list[str]]] = []
+    after: str | None = None
+    for _ in range(10):  # pagination guard
+        params: dict = {"limit": 1000}
+        if after:
+            params["after_id"] = after
+        resp = requests.get(
+            "https://api.anthropic.com/v1/models",
+            headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
+            params=params, timeout=6,
+        )
+        resp.raise_for_status()
+        j = resp.json()
+        for m in j.get("data", []):
+            mid = m.get("id")
+            if mid:
+                rows.append((m.get("created_at", ""),
+                             [f"claude,{mid}", m.get("display_name") or mid]))
+        if not j.get("has_more"):
+            break
+        after = j.get("last_id")
+        if not after:
+            break
+    rows.sort(key=lambda t: t[0], reverse=True)
+    return [pair for _, pair in rows]
+
+
+def _fetch_dashscope_models(key: str, base_url: str) -> list[list[str]]:
+    """Live DashScope model list via the OpenAI-compatible GET {base}/models.
+
+    Curated (snapshot/translation/OCR variants dropped) and sorted by id so
+    families group together.
+    """
+    import requests  # noqa: PLC0415
+    if not base_url:
+        raise ValueError("no DashScope base_url configured")
+    resp = requests.get(base_url.rstrip("/") + "/models",
+                        headers={"Authorization": f"Bearer {key}"}, timeout=6)
+    resp.raise_for_status()
+    ids = sorted({m.get("id", "") for m in resp.json().get("data", []) if m.get("id")})
+    return [[f"dashscope,{mid}", _prettify_model_id(mid)]
+            for mid in ids if _dashscope_keep(mid)]
+
+
+# OpenAI curation: keep chat / reasoning models, drop the non-conversational ones
+# (embeddings, audio, image, moderation, …) that the /models endpoint also lists.
+_OPENAI_KEEP_RE = re.compile(r"^(gpt-|chatgpt|o[1-9])")
+_OPENAI_DROP = ("embedding", "whisper", "tts", "audio", "realtime", "transcribe",
+                "image", "dall-e", "moderation", "search", "instruct")
+_GEMINI_DROP = ("embedding", "aqa", "imagen", "-vision")
+
+
+def _openai_keep(mid: str) -> bool:
+    if not _OPENAI_KEEP_RE.match(mid):
+        return False
+    return not any(s in mid for s in _OPENAI_DROP)
+
+
+def _gemini_keep(mid: str) -> bool:
+    if "gemini" not in mid:
+        return False
+    return not any(s in mid for s in _GEMINI_DROP)
+
+
+def _fetch_openai_models(key: str, base_url: str) -> list[list[str]]:
+    """Live OpenAI model list (chat/reasoning only), newest first, via GET /models."""
+    import requests  # noqa: PLC0415
+    resp = requests.get(base_url.rstrip("/") + "/models",
+                        headers={"Authorization": f"Bearer {key}"}, timeout=6)
+    resp.raise_for_status()
+    rows: list[tuple[int, list[str]]] = []
+    for m in resp.json().get("data", []):
+        mid = m.get("id", "")
+        if mid and _openai_keep(mid):
+            rows.append((int(m.get("created", 0) or 0), [f"openai,{mid}", mid]))
+    rows.sort(key=lambda t: t[0], reverse=True)
+    return [pair for _, pair in rows]
+
+
+def _fetch_gemini_models(key: str, base_url: str) -> list[list[str]]:
+    """Live Gemini model list via the OpenAI-compatible GET {base}/models.
+
+    Ids arrive namespaced (``models/gemini-…``); the ``models/`` prefix is stripped
+    so the spec matches what the pipeline expects (``google,gemini-…``).
+    """
+    import requests  # noqa: PLC0415
+    resp = requests.get(base_url.rstrip("/") + "/models",
+                        headers={"Authorization": f"Bearer {key}"}, timeout=6)
+    resp.raise_for_status()
+    ids = {(m.get("id", "") or "").split("/")[-1] for m in resp.json().get("data", [])}
+    keep = sorted(mid for mid in ids if mid and _gemini_keep(mid))
+    return [[f"google,{mid}", mid] for mid in keep]
 
 
 def _available_models() -> dict:
     """Return {vendor: [[spec, label], …]} for every vendor currently usable.
 
-    A vendor is included only when it can actually be reached: Anthropic /
-    DashScope when their API key is set, Ollama when its server answers (its
-    installed models are listed live via ``GET {host}/api/tags``).
+    Cloud vendors are enumerated live from their ``/models`` endpoints (cached for
+    ``_MODEL_CACHE_TTL`` seconds); if an endpoint is unreachable the static
+    ``*_FALLBACK`` catalog is used instead. Ollama's installed models are listed
+    live via ``GET {host}/api/tags``. A vendor appears only when reachable /
+    configured.
     """
+    now = time.time()
+    cached = _MODEL_CACHE.get("groups")
+    if cached is not None and (now - _MODEL_CACHE.get("ts", 0)) < _MODEL_CACHE_TTL:
+        return cached
+
     groups: dict[str, list] = {}
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        groups["Anthropic"] = list(_ANTHROPIC_MODELS)
-    if os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("ALIBABA_API_KEY"):
-        groups["Alibaba (DashScope)"] = list(_DASHSCOPE_MODELS)
+
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
+    if anthropic_key:
+        try:
+            models = _fetch_anthropic_models(anthropic_key)
+            groups["Anthropic"] = models or list(_ANTHROPIC_FALLBACK)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Anthropic live model list failed (%s); using fallback", exc)
+            groups["Anthropic"] = list(_ANTHROPIC_FALLBACK)
+
+    dashscope_key = os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("ALIBABA_API_KEY")
+    if dashscope_key:
+        try:
+            from src.agent import _cfg  # noqa: PLC0415
+            base = str(_cfg("DASHSCOPE_BASE_URL", "dashscope", "base_url", default="")) \
+                or os.environ.get("DASHSCOPE_BASE_URL", "")
+            models = _fetch_dashscope_models(dashscope_key, base)
+            groups["Alibaba (DashScope)"] = models or list(_DASHSCOPE_FALLBACK)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("DashScope live model list failed (%s); using fallback", exc)
+            groups["Alibaba (DashScope)"] = list(_DASHSCOPE_FALLBACK)
+
+    # OpenAI and Google Gemini appear only when their key is configured — same
+    # gate as the vendors above ("don't show if not set up").
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    if openai_key:
+        try:
+            from src.agent import _cfg  # noqa: PLC0415
+            base = str(_cfg("OPENAI_BASE_URL", "openai", "base_url",
+                            default="https://api.openai.com/v1")) or "https://api.openai.com/v1"
+            models = _fetch_openai_models(openai_key, base)
+            groups["OpenAI"] = models or list(_OPENAI_FALLBACK)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("OpenAI live model list failed (%s); using fallback", exc)
+            groups["OpenAI"] = list(_OPENAI_FALLBACK)
+
+    gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    if gemini_key:
+        try:
+            from src.agent import _cfg  # noqa: PLC0415
+            base = str(_cfg("GEMINI_BASE_URL", "google", "base_url",
+                            default="https://generativelanguage.googleapis.com/v1beta/openai/")) \
+                or "https://generativelanguage.googleapis.com/v1beta/openai/"
+            models = _fetch_gemini_models(gemini_key, base)
+            groups["Google (Gemini)"] = models or list(_GEMINI_FALLBACK)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Gemini live model list failed (%s); using fallback", exc)
+            groups["Google (Gemini)"] = list(_GEMINI_FALLBACK)
+
     try:
         import requests  # noqa: PLC0415
         from src.agent import _cfg  # noqa: PLC0415
@@ -1126,6 +1338,9 @@ def _available_models() -> dict:
             groups["Ollama"] = [[f"ollama,{n}", n] for n in names]
     except Exception as exc:  # noqa: BLE001 — Ollama not running ⇒ hide the vendor
         logger.debug("Ollama model list unavailable: %s", exc)
+
+    _MODEL_CACHE["groups"] = groups
+    _MODEL_CACHE["ts"] = now
     return groups
 
 
@@ -1141,6 +1356,7 @@ def _available_models() -> dict:
 _KNOWN_ENV_KEYS = [
     "HF_TOKEN", "ANTHROPIC_API_KEY", "COMFYUI_API_KEY",
     "DASHSCOPE_API_KEY", "DASHSCOPE_BASE_URL",
+    "OPENAI_API_KEY", "GEMINI_API_KEY",
 ]
 
 

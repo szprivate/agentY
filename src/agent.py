@@ -112,6 +112,11 @@ def _parse_llm_setting(value: str) -> tuple[str, str]:
 # OpenAI-compatible endpoint. Use any of them in settings.json, e.g.
 # "query_templates": "dashscope,qwen-plus".
 _DASHSCOPE_PROVIDERS = {"dashscope", "modelstudio", "qwen", "alibaba"}
+# OpenAI and Google Gemini are also driven through the OpenAI-compatible client
+# (Gemini via its OpenAI-compat endpoint), gated on their own API keys. Use e.g.
+# "orchestrator": "openai,gpt-4o" or "orchestrator": "google,gemini-2.5-pro".
+_OPENAI_PROVIDERS = {"openai", "gpt"}
+_GEMINI_PROVIDERS = {"google", "gemini"}
 
 
 class AnthropicModel(_BaseAnthropicModel):
@@ -682,6 +687,40 @@ def _make_agent(
             params={"max_tokens": ds_max_tokens, "extra_body": {"enable_thinking": _ds_think}},
         )
         print(f"[agentY:{role}] Using Alibaba Model Studio (DashScope) — {model_id} (thinking={_ds_think})")
+    elif llm in _OPENAI_PROVIDERS:
+        # OpenAI proper, via the same OpenAI-compatible Strands client. The model id
+        # threads in through ``dashscope_model`` (the shared openai-compatible model
+        # slot the factories populate from settings).
+        from strands.models.openai import OpenAIModel
+        model_id = dashscope_model or str(_cfg("OPENAI_MODEL", "openai", "model", default="gpt-4o"))
+        base_url = str(_cfg("OPENAI_BASE_URL", "openai", "base_url", default="https://api.openai.com/v1"))
+        api_key = os.environ.get("OPENAI_API_KEY") or ""
+        if not api_key:
+            print(f"[agentY:{role}] WARNING: OPENAI_API_KEY not set — OpenAI calls will fail.")
+        oc_max_tokens = max_tokens or int(_cfg("OPENAI_MAX_TOKENS", "openai", "max_tokens", default=8192))
+        model = OpenAIModel(
+            client_args={"api_key": api_key, "base_url": base_url},
+            model_id=model_id,
+            params={"max_tokens": oc_max_tokens},
+        )
+        print(f"[agentY:{role}] Using OpenAI — {model_id}")
+    elif llm in _GEMINI_PROVIDERS:
+        # Google Gemini through its OpenAI-compatible endpoint (same client). Key
+        # from GEMINI_API_KEY or GOOGLE_API_KEY.
+        from strands.models.openai import OpenAIModel
+        model_id = dashscope_model or str(_cfg("GEMINI_MODEL", "google", "model", default="gemini-2.5-flash"))
+        base_url = str(_cfg("GEMINI_BASE_URL", "google", "base_url",
+                            default="https://generativelanguage.googleapis.com/v1beta/openai/"))
+        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or ""
+        if not api_key:
+            print(f"[agentY:{role}] WARNING: GEMINI_API_KEY/GOOGLE_API_KEY not set — Gemini calls will fail.")
+        oc_max_tokens = max_tokens or int(_cfg("GEMINI_MAX_TOKENS", "google", "max_tokens", default=8192))
+        model = OpenAIModel(
+            client_args={"api_key": api_key, "base_url": base_url},
+            model_id=model_id,
+            params={"max_tokens": oc_max_tokens},
+        )
+        print(f"[agentY:{role}] Using Google Gemini — {model_id}")
     else:
         model_id = anthropic_model or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
         tokens = max_tokens or int(_cfg("ANTHROPIC_MAX_TOKENS", "anthropic", "max_tokens", default=4096))
