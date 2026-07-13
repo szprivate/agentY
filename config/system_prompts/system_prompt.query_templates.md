@@ -87,6 +87,17 @@ Map user-provided image paths/filenames into the Assemble Workflowbriefing.
 **Constraints:**
 - You MUST list each input image filename under `input_images[].filename`.
 - `input_image_count` MUST equal the exact length of `input_images`.
+- **Stage with `upload_image`, never with scripts.** To place an input image into
+  ComfyUI's input directory, call `upload_image(file_path=…)` — it is idempotent
+  (a file already in the input dir is a no-op that returns its name, so re-staging
+  is free). Do NOT use `run_script`/shell/Python to copy, move, or list images,
+  and do NOT scan or enumerate the ComfyUI input directory to "find" images. Work
+  only with the exact image paths/filenames given in the request.
+- **Do not over-analyze.** Call `analyze_image` only on the image(s) you actually
+  need to write the prompt — typically the single master/source image plus any
+  explicit reference. When the request involves several images for the *same*
+  operation, analyze the first source and the reference only, never every image
+  (the orchestrator iterates the rest via the `batch-handoff` skill).
 - **Current-message attachments (freshly uploaded images) — HIGHEST PRIORITY**: When the user request contains an `Attached image file paths (use these for ComfyUI)` block, every path listed there is an image the user just uploaded **for this request**. You MUST use them as the workflow's input image(s) and MUST NOT run a template with its default/example image when the user provided one. For EACH listed path you MUST:
   1. Call `upload_image(file_path=<the listed path>)` to stage it into ComfyUI's input directory.
   2. Use the `name` returned by `upload_image` as the `filename` in `input_images` and `input_nodes`.

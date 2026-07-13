@@ -185,6 +185,30 @@ def upload_image(
             return json.dumps({"error": f"File not found: {file_path}"})
 
         filename = os.path.basename(file_path)
+
+        # Idempotency: if this file is already staged in ComfyUI's input dir, don't
+        # re-upload it — return its bare filename instead. Covers (a) the user
+        # pointing at a file that already lives in the input dir, and (b) a second
+        # agent re-staging a file that was already staged this turn. Only for flat
+        # input uploads (no subfolder) and when not explicitly overwriting.
+        # Best-effort: any failure falls through to a normal upload.
+        if image_type == "input" and not subfolder and not overwrite:
+            try:
+                from agenty_core.tools.comfyui import get_comfyui_dirs  # lazy: avoid import cycle
+                input_dir = (json.loads(get_comfyui_dirs()) or {}).get("input_dir")
+                if input_dir:
+                    staged = os.path.join(input_dir, filename)
+                    same_path = os.path.abspath(file_path) == os.path.abspath(staged)
+                    if os.path.isfile(staged) and (
+                        same_path or os.path.getsize(staged) == os.path.getsize(file_path)
+                    ):
+                        return json.dumps({
+                            "name": filename, "subfolder": "", "type": "input",
+                            "note": "already staged in ComfyUI input dir; upload skipped",
+                        })
+            except Exception:
+                pass
+
         with open(file_path, "rb") as f:
             files = {"image": (filename, f, "image/png")}
             data = {"type": image_type, "overwrite": str(overwrite).lower()}
