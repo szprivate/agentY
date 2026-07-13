@@ -1,6 +1,6 @@
 # agentY
 
-An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanonymous/ComfyUI) workflows through natural language. Built on the [Strands Agents SDK](https://github.com/strands-agents/sdk-python), it runs on Claude, Ollama, or Alibaba/DashScope (Qwen) models and is driven from a **chat panel that lives inside ComfyUI** — a sidebar tab provided by a small companion custom node.
+An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanonymous/ComfyUI) workflows through natural language. Built on the [Strands Agents SDK](https://github.com/strands-agents/sdk-python), it runs on Claude, Ollama, Alibaba/DashScope (Qwen), OpenAI (GPT), or Google (Gemini) models and is driven from a **chat panel that lives inside ComfyUI** — a sidebar tab provided by a small companion custom node.
 
 > **The UI is native to ComfyUI.** The old Chainlit web GUI (with its Postgres
 > thread store and MinIO file storage, all in Docker) has been removed. You chat
@@ -15,6 +15,7 @@ An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanony
 
 - **Natural language → ComfyUI workflow** — describe what you want; a free **Orchestrator agent** builds, submits, and QA-checks the workflow automatically.
 - **Free-agent orchestration** — one Orchestrator owns each turn with the full toolset. It calls tools directly, **delegates** to specialists (research / assembly / info / story / DOP / planner / web), spawns ad-hoc subagents, and can even **author skills live**. No brittle intent classifier or fixed routing.
+- **Custom-node creator** — point the agent at a model's GitHub repo (`create_custom_node`) and it clones the repo, reads its docs + inference code, and writes a self-contained **ComfyUI custom-node pack** (`__init__.py`, `nodes.py`, `requirements.txt`, `README.md`, `pyproject.toml`) into `output/custom_nodes/<name>/` — ready to publish as its own repo.
 - **Image & video generation** — Flux, WAN2.1/2.2, Qwen, HunyuanVideo, and many other models.
 - **Image editing** — reference-based editing, inpainting, upscaling, and more.
 - **Results as graph nodes** — every generated image/video is added to the open ComfyUI graph as a `LoadImage` / video-loader node (staged into ComfyUI's input dir), instead of being shown inline. The chat carries the agent's *text*.
@@ -24,7 +25,7 @@ An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanony
 - **In-panel Settings & token usage** — edit auth keys (`.env`) and `config/settings.json`, and review per-model token cost, from ComfyUI's own Settings panel (no file editing required).
 - **FAISS memory** — long-term memory via mem0 + local Ollama embeddings (`nomic-embed-text`).
 - **Hugging Face model management** — search, check local availability, and download models on demand.
-- **Multiple LLM backends** — Claude, Ollama, and Alibaba/DashScope (Qwen), configurable per pipeline stage.
+- **Multiple LLM backends** — Claude, Ollama, Alibaba/DashScope (Qwen), OpenAI (GPT), and Google (Gemini), configurable per pipeline stage. The `/switch_model` dropdown is **discovered live** from each provider's model list (a vendor appears only when its API key is set), so it never goes stale.
 
 ---
 
@@ -58,7 +59,7 @@ ComfyUI  (your browser)
         └──►  memory/conversations.sqlite  (threads, messages, gallery, resume state)
 ```
 
-Each user turn is owned by the **Orchestrator** agent (a normal Claude/Ollama/Qwen model, per `config/settings.json`). It has the full toolset and can call the specialist agents as delegates. When it finishes assembling a workflow it hands off to the **Executor** (ComfyUI submission → completion polling → optional Ollama Vision-QA → staging outputs as loader nodes). The ComfyUI custom node is the **frontend + canvas nodes + a graph-load hook** — it talks to the host over HTTP/SSE.
+Each user turn is owned by the **Orchestrator** agent (a normal Claude / Ollama / Qwen / GPT / Gemini model, per `config/settings.json`). It has the full toolset and can call the specialist agents as delegates. When it finishes assembling a workflow it hands off to the **Executor** (ComfyUI submission → completion polling → optional Ollama Vision-QA → staging outputs as loader nodes). The ComfyUI custom node is the **frontend + canvas nodes + a graph-load hook** — it talks to the host over HTTP/SSE.
 
 ---
 
@@ -66,7 +67,7 @@ Each user turn is owned by the **Orchestrator** agent (a normal Claude/Ollama/Qw
 
 - **[uv](https://docs.astral.sh/uv/getting-started/installation/)** (Python 3.11+ env manager) and **git** on your PATH
 - A running **ComfyUI** instance (default: `http://127.0.0.1:8188`)
-- At least one LLM backend: an **Anthropic API key** (Claude), a local **Ollama** install, and/or a **DashScope / Alibaba Model Studio key** (Qwen)
+- At least one LLM backend: an **Anthropic API key** (Claude), a local **Ollama** install, a **DashScope / Alibaba Model Studio key** (Qwen), an **OpenAI API key** (GPT), and/or a **Google Gemini API key**
 - A **Hugging Face token** (for gated-model downloads)
 - **Ollama** with `nomic-embed-text` pulled if you want long-term FAISS memory
 
@@ -137,6 +138,8 @@ The installer prompts for these; to edit them later, open `.env` **or** use the 
 HF_TOKEN=hf_...                 # Hugging Face token (for gated model downloads)
 ANTHROPIC_API_KEY=sk-ant-...    # for Claude
 DASHSCOPE_API_KEY=...           # Alibaba Model Studio (DashScope) — for Qwen models
+OPENAI_API_KEY=sk-...           # for OpenAI (GPT) models
+GEMINI_API_KEY=...              # for Google Gemini models (GOOGLE_API_KEY also works)
 COMFYUI_API_KEY=comfyui-...     # only if your ComfyUI requires auth / uses API nodes
 
 # Optional
@@ -187,7 +190,7 @@ After the restart you get, from the one node pack:
 }
 ```
 
-Each `"provider,model"` value can be `"claude,claude-haiku-4-5"`, `"ollama,qwen3-coder:30b"`, or `"dashscope,qwen3.6-flash"`. **`dashscope`** routes to **Alibaba Model Studio** (Qwen over its OpenAI-compatible API) — set `DASHSCOPE_API_KEY` in `.env`; aliases `qwen` / `modelstudio` / `alibaba` also work. You can change any stage live from chat with `/switch_model` (e.g. `/switch_model orchestrator claude,claude-sonnet-4-5`).
+Each `"provider,model"` value can be `"claude,claude-opus-4-8"`, `"ollama,qwen3-coder:30b"`, `"dashscope,qwen3.6-flash"`, `"openai,gpt-4o"`, or `"google,gemini-2.5-pro"`. **`dashscope`** routes to **Alibaba Model Studio** (Qwen over its OpenAI-compatible API) — set `DASHSCOPE_API_KEY` in `.env`; aliases `qwen` / `modelstudio` / `alibaba` also work. **`openai`** and **`google`** (alias `gemini`) route to OpenAI and Google Gemini respectively (Gemini via its OpenAI-compatible endpoint) — set `OPENAI_API_KEY` / `GEMINI_API_KEY` in `.env`. You can change any stage live from chat with `/switch_model` (e.g. `/switch_model orchestrator claude,claude-opus-4-8`); its model picker is discovered live from each configured provider, so only vendors whose key is set appear.
 
 ---
 
