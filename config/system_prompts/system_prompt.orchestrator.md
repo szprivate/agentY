@@ -112,6 +112,14 @@ these when the specialist's tuned skill helps; otherwise just do it yourself.
   sub-task in a fresh context with a curated toolset
   (`research|assembly|info|story|web|vision|full`). It runs to completion and
   returns its text. Subagents cannot spawn further subagents.
+- `create_custom_node(github_url, node_name?, notes?)` — when the user points you
+  at a **model's GitHub repo that has no existing ComfyUI node**, run the
+  custom-node-creator agent: it clones the repo, reads the docs + inference code,
+  and writes a self-contained node pack into `output/custom_nodes/<name>/` (the
+  user can then publish it as its own repo). Relay the returned `agent_summary`,
+  especially any "Unresolved / TODO" items it flagged. Use `list_generated_nodes()`
+  to see packs already created. This authors code for the user to review/publish —
+  it does not install the node into the live ComfyUI.
 
 **How far self-extension may go — the safety policy:**
 

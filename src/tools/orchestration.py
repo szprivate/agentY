@@ -13,6 +13,10 @@ boxed into a fixed triage → route decision tree, the orchestrator can extend
 - ``spawn_subagent`` builds a fresh Strands agent with a curated toolset and runs
   it to completion on a focused sub-task, returning its text. Subagents are
   depth-1 (they do not themselves get ``spawn_subagent``) so cost stays bounded.
+- ``create_custom_node`` / ``list_generated_nodes`` run the **custom-node-creator**
+  agent: given a model's GitHub repo, it clones the repo, reads the docs +
+  inference code, and authors a self-contained ComfyUI custom-node pack under
+  ``output/custom_nodes/`` that the user can publish as its own repo.
 
 The tools are bound to the live orchestrator via :func:`set_orchestrator_context`
 (mirrors ``image_handling.set_vision_agent``): the orchestrator's ``AgentSkills``
@@ -21,10 +25,13 @@ plugin instance is stashed module-side so ``create_skill`` can re-scan it.
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import json
+import os
 import re
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Any, Optional
 
@@ -278,3 +285,221 @@ async def spawn_subagent(task: str, toolset: str = "full", model: Optional[str] 
             sub.messages.clear()
         except Exception:  # noqa: BLE001
             pass
+
+
+# ---------------------------------------------------------------------------
+# custom-node-creator — build a ComfyUI custom node from a model's GitHub repo
+# ---------------------------------------------------------------------------
+
+def _generated_nodes_dir() -> Path:
+    """Where authored node packs land: ``<repo>/output/custom_nodes/`` (git-ignored).
+
+    Each pack is a self-contained folder the user can turn into its own GitHub repo.
+    """
+    return _project_root() / "output" / "custom_nodes"
+
+
+_GITHUB_SHORTHAND = re.compile(r"^[\w.-]+/[\w.-]+$")
+
+
+def _normalize_github_url(url: str) -> tuple[str, Optional[str]]:
+    """Return ``(clone_url, branch|None)`` from a user-supplied GitHub reference.
+
+    Accepts a full ``https://github.com/owner/repo`` URL, ``owner/repo`` shorthand,
+    and ``.../tree/<branch>`` or ``.../blob/<branch>/...`` deep links (branch
+    extracted). Unrecognised strings are returned unchanged for git to validate.
+    """
+    u = (url or "").strip()
+    if _GITHUB_SHORTHAND.match(u):
+        return f"https://github.com/{u}.git", None
+    u = u.split("#", 1)[0].split("?", 1)[0].strip()
+    m = re.match(
+        r"^(https?://github\.com/[\w.-]+/[\w.-]+?)(?:\.git)?(?:/(?:tree|blob)/([^/]+).*)?/?$",
+        u,
+    )
+    if m:
+        return m.group(1) + ".git", m.group(2)
+    return u, None
+
+
+async def _git_clone_shallow(
+    clone_url: str, branch: Optional[str], dest: Path, timeout: int = 240
+) -> tuple[bool, str]:
+    """Shallow-clone *clone_url* into *dest*, skipping LFS blobs (weights).
+
+    We want the repo's docs + source, not gigabytes of model weights, so
+    ``GIT_LFS_SKIP_SMUDGE`` fetches LFS pointer files instead of the real blobs.
+    Returns ``(ok, error_text)``.
+    """
+    args = ["git", "clone", "--depth", "1", "--no-tags", "--single-branch"]
+    if branch:
+        args += ["--branch", branch]
+    args += [clone_url, str(dest)]
+    env = {**os.environ, "GIT_LFS_SKIP_SMUDGE": "1", "GIT_TERMINAL_PROMPT": "0"}
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env=env,
+        )
+    except FileNotFoundError:
+        return False, "git executable not found on PATH"
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc)
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except Exception:  # noqa: BLE001
+            pass
+        return False, f"git clone timed out after {timeout}s"
+    if proc.returncode != 0:
+        return False, (out or b"").decode("utf-8", "replace")[-1500:]
+    return True, ""
+
+
+@tool
+async def create_custom_node(
+    github_url: str,
+    node_name: Optional[str] = None,
+    notes: Optional[str] = None,
+) -> str:
+    """Turn a model's GitHub repo into a self-contained ComfyUI custom-node pack.
+
+    Use this when the user points you at a **model repository that has no existing
+    ComfyUI node** and wants one built. It runs the **custom-node-creator** agent:
+    the repo is shallow-cloned locally (LFS weights skipped), the agent reads its
+    README/docs/inference code, and it authors a complete, importable node pack —
+    ``__init__.py`` (the ``NODE_CLASS_MAPPINGS``), ``nodes.py`` (the node classes +
+    implementation), ``requirements.txt``, ``README.md``, and ``pyproject.toml`` —
+    into ``output/custom_nodes/<node_name>/``.
+
+    That folder is self-contained and git-ignored by agentY, so the user can ``cd``
+    into it, ``git init``, and push it as its own GitHub repo, or copy it into
+    ``ComfyUI/custom_nodes/`` to test. The agent implements the documented behaviour
+    faithfully and marks anything it could not determine from the docs with a
+    ``TODO`` stub, listed under "Unresolved / TODO" in the pack's README — so read
+    the returned ``agent_summary`` and relay those gaps to the user.
+
+    Args:
+        github_url: The model repo — a full ``https://github.com/owner/repo`` URL,
+            ``owner/repo`` shorthand, or a ``/tree/<branch>`` deep link.
+        node_name: Optional name for the pack/output folder (slugified). Defaults to
+            the repo name.
+        notes: Optional extra guidance for the agent (which capability to expose,
+            preferred inputs/outputs, constraints).
+
+    Returns:
+        A JSON string: ``status`` (ok|incomplete), ``node_name``, ``pack_dir``,
+        ``files_written``, ``has_init_py``, the agent's ``agent_summary`` (with its
+        Unresolved/TODO notes), and ``next_steps``.
+    """
+    url = (github_url or "").strip()
+    if not url:
+        return json.dumps({"error": "github_url is required (a GitHub repo URL or owner/repo)."})
+    clone_url, branch = _normalize_github_url(url)
+
+    # Output pack dir under the git-ignored output/ tree; never clobber an existing pack.
+    raw_name = node_name or clone_url.rstrip("/").split("/")[-1]
+    slug = _slugify(raw_name.replace(".git", "")) or "custom-node"
+    packs_root = _generated_nodes_dir()
+    pack_dir = packs_root / slug
+    _n = 2
+    while pack_dir.exists() and any(pack_dir.iterdir()):
+        pack_dir = packs_root / f"{slug}-{_n}"
+        _n += 1
+    try:
+        pack_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"error": f"Could not create output folder {pack_dir}: {exc}"})
+
+    # Shallow-clone the repo so the agent can read the actual docs + inference code.
+    tmp_root = Path(tempfile.mkdtemp(prefix="cnc_clone_"))
+    repo_dir = tmp_root / "repo"
+    ok, err = await _git_clone_shallow(clone_url, branch, repo_dir)
+    if not ok:
+        shutil.rmtree(tmp_root, ignore_errors=True)
+        return json.dumps({
+            "error": f"Could not clone {clone_url}: {err}",
+            "hint": "Ensure it is a public GitHub repo reachable from this machine; "
+                    "private repos need git credentials configured on PATH.",
+        })
+
+    # Build and run the custom-node-creator agent (lazy import avoids a cycle).
+    try:
+        from src.agent import create_custom_node_creator_agent
+        agent = create_custom_node_creator_agent()
+    except Exception as exc:  # noqa: BLE001
+        shutil.rmtree(tmp_root, ignore_errors=True)
+        return json.dumps({"error": f"Could not build custom-node-creator agent: {exc}"})
+
+    task = (
+        "Build a ComfyUI custom-node pack for the model in this repository.\n\n"
+        f"repo_url: {clone_url}\n"
+        f"repo_dir (local clone to READ): {repo_dir}\n"
+        f"pack_dir (empty output folder to FILL): {pack_dir}\n"
+        f"node_name: {slug}\n"
+        f"notes: {notes or '(none)'}\n\n"
+        "Read the repo, understand how the model loads and runs, then write every "
+        "pack file (__init__.py, nodes.py, requirements.txt, README.md, "
+        "pyproject.toml) into pack_dir using write_text_file. Follow your system "
+        "instructions exactly — keep __init__.py import cheap, do heavy imports "
+        "inside the node FUNCTION, and mark anything undetermined with a TODO stub. "
+        "When done, return your summary including every Unresolved/TODO item."
+    )
+    agent_summary = ""
+    try:
+        result = await agent.invoke_async(task)
+        agent_summary = str(result).strip()
+    except Exception as exc:  # noqa: BLE001
+        agent_summary = f"[custom-node-creator agent error: {exc}]"
+    finally:
+        try:
+            agent.messages.clear()
+        except Exception:  # noqa: BLE001
+            pass
+        shutil.rmtree(tmp_root, ignore_errors=True)
+
+    files = sorted(str(p.relative_to(pack_dir)) for p in pack_dir.rglob("*") if p.is_file())
+    has_init = (pack_dir / "__init__.py").is_file()
+    status = "ok" if (has_init and files) else "incomplete"
+    return json.dumps({
+        "status": status,
+        "node_name": slug,
+        "pack_dir": str(pack_dir),
+        "repo_url": clone_url,
+        "files_written": files,
+        "has_init_py": has_init,
+        "agent_summary": agent_summary[:4000],
+        "next_steps": (
+            f"Review the pack at {pack_dir}. To publish it as its own GitHub repo: "
+            "cd into that folder, `git init`, commit, and push. To test it, copy or "
+            "symlink the folder into ComfyUI/custom_nodes/ and restart ComfyUI."
+        ),
+    }, indent=2)
+
+
+@tool
+def list_generated_nodes() -> str:
+    """List the ComfyUI custom-node packs the custom-node-creator has written.
+
+    Returns:
+        A JSON string with each pack's name, absolute path, file count, and whether
+        it has an ``__init__.py`` (i.e. looks importable by ComfyUI).
+    """
+    root = _generated_nodes_dir()
+    out: list[dict[str, Any]] = []
+    if root.is_dir():
+        for child in sorted(root.iterdir()):
+            if not child.is_dir() or child.name.startswith("."):
+                continue
+            n_files = sum(1 for p in child.rglob("*") if p.is_file())
+            out.append({
+                "name": child.name,
+                "path": str(child),
+                "files": n_files,
+                "has_init_py": (child / "__init__.py").is_file(),
+            })
+    return json.dumps({"generated_nodes": out, "count": len(out)})

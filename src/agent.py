@@ -40,6 +40,7 @@ from src.tools import (
     LEARNINGS_TOOLS,
     VISION_AGENT_TOOLS,
     DOP_TOOLS,
+    CUSTOM_NODE_TOOLS,
     reset_patch_workflow_guard,
 )
 from src.steering import get_ASSEMBLEWORKFLOW_steering_handlers, get_QUERYTEMPLATES_steering_handlers
@@ -260,6 +261,7 @@ _SYSTEM_PROMPT_FILE: dict[str, str] = {
     "error_checker": "system_prompt.error_checker",
     "qa_checker": "system_prompt.qaChecker",
     "vision_agent": "system_prompt.vision_agent",
+    "custom_node_creator": "system_prompt.custom_node_creator",
 }
 
 
@@ -1604,6 +1606,80 @@ def create_error_checker_agent(
     return agent
 
 
+def create_custom_node_creator_agent(
+    llm: str | None = None,
+    ollama_model: str | None = None,
+    anthropic_model: str | None = None,
+    **kwargs,
+) -> Agent:
+    """Create the **custom-node-creator** agent.
+
+    Given a local clone of a model's GitHub repo and an empty output folder, this
+    agent reads the repo's README/docs/inference code and authors a self-contained
+    ComfyUI custom-node pack (``__init__.py`` + ``nodes.py`` + ``requirements.txt``
+    + ``README.md`` + ``pyproject.toml``). It is invoked by the ``create_custom_node``
+    orchestrator tool, which handles cloning and output-dir setup around it.
+
+    Writing correct node code from docs is a demanding code-generation task, so this
+    role reads ``llm.pipeline.custom_node_creator`` from settings.json and, when unset,
+    falls back to the **assemble_workflow** (builder) setting — guaranteed to resolve in
+    any environment that already builds workflows. Point ``pipeline.custom_node_creator``
+    at a stronger coding model (e.g. a Qwen-coder or a Claude Sonnet/Opus) for better
+    results. Env var ``CUSTOM_NODE_CREATOR_LLM`` overrides the full setting;
+    ``CUSTOM_NODE_CREATOR_OLLAMA_MODEL`` / ``CUSTOM_NODE_CREATOR_ANTHROPIC_MODEL``
+    override the model.
+
+    Args:
+        llm: ``'claude'`` | ``'ollama'`` | a DashScope provider. Falls back to settings.
+        ollama_model: Ollama model override.
+        anthropic_model: Anthropic model override.
+        **kwargs: Forwarded to the Strands Agent constructor.
+    """
+    if ollama_model and llm is None:
+        llm = "ollama"
+
+    # Fall back to the builder (assemble_workflow) setting so no extra config is
+    # needed out of the box — that role is always configured on a working install.
+    _builder_default = str(_cfg("ASSEMBLEWORKFLOW_LLM", "pipeline", "assemble_workflow", default="claude,claude-haiku-4-5"))
+    _raw = str(_cfg("CUSTOM_NODE_CREATOR_LLM", "pipeline", "custom_node_creator", default=_builder_default))
+    _settings_llm, _settings_model = _parse_llm_setting(_raw)
+    resolved_llm = llm or _settings_llm or "claude"
+
+    if resolved_llm == "ollama":
+        resolved_ollama = (
+            ollama_model
+            or os.environ.get("CUSTOM_NODE_CREATOR_OLLAMA_MODEL")
+            or _settings_model
+            or "qwen3-coder:30b"
+        )
+        resolved_anthropic = (
+            anthropic_model
+            or os.environ.get("CUSTOM_NODE_CREATOR_ANTHROPIC_MODEL")
+            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
+        )
+    else:  # claude / dashscope
+        resolved_anthropic = (
+            anthropic_model
+            or os.environ.get("CUSTOM_NODE_CREATOR_ANTHROPIC_MODEL")
+            or _settings_model
+            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
+        )
+        resolved_ollama = ollama_model or "qwen3-coder:30b"
+
+    system_prompt = _load_system_prompt("custom_node_creator")
+    agent = _make_agent(
+        role="custom_node_creator",
+        llm=resolved_llm,
+        dashscope_model=_settings_model,
+        system_prompt=system_prompt,
+        tools=CUSTOM_NODE_TOOLS,
+        ollama_model=resolved_ollama,
+        anthropic_model=resolved_anthropic,
+        **kwargs,
+    )
+    return agent
+
+
 # ---------------------------------------------------------------------------
 # Orchestrator — the free-agent entry point (replaces triage + rigid routing)
 # ---------------------------------------------------------------------------
@@ -1710,8 +1786,10 @@ def _subagent_full_tools() -> list:
         list_skills as _ls,
         remove_skill as _rs,
         spawn_subagent as _sp,
+        create_custom_node as _cn,
+        list_generated_nodes as _lgn,
     )
-    _meta = {id(_cs), id(_ls), id(_rs), id(_sp)}
+    _meta = {id(_cs), id(_ls), id(_rs), id(_sp), id(_cn), id(_lgn)}
     return [t for t in _OT if id(t) not in _meta]
 
 

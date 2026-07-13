@@ -81,6 +81,9 @@ from src.tools.orchestration import (  # noqa: F401
     list_skills,
     remove_skill,
     spawn_subagent,
+    # custom-node-creator: build a ComfyUI custom node from a model's GitHub repo
+    create_custom_node,
+    list_generated_nodes,
 )
 # Fully deterministic (no-LLM) workflow assembly (shared agenty_core layer)
 from src.tools.assembly_deterministic import assemble_workflow_deterministic  # noqa: F401
@@ -241,6 +244,24 @@ ERROR_CHECKER_TOOLS: list = [
     get_system_stats,
 ]
 
+# ---------------------------------------------------------------------------
+# custom-node-creator tools – read a cloned model repo, author a ComfyUI custom
+# node pack into the output folder. Code-authoring only: file I/O, repo
+# inspection (run_script), a web-search fallback for thin READMEs, and memory.
+# It does NOT get execution/assembly tools — it writes a pack, it doesn't run one.
+# ---------------------------------------------------------------------------
+CUSTOM_NODE_TOOLS: list = [
+    read_text_file,
+    write_text_file,
+    file_read,
+    run_script,        # inspect the cloned repo (list files, grep for entry points)
+    get_agent_output_dirs,
+    web_search,        # fallback when the repo's own docs are thin
+    memory_read,
+    memory_write,
+    stop,
+]
+
 ASSEMBLE_WORKFLOW_TOOLS: list = [
     # Node inspection (schema lookup only – no model checking)
     get_node_schema,
@@ -372,6 +393,9 @@ ORCHESTRATOR_TOOLS: list = [
     list_skills,
     remove_skill,
     spawn_subagent,
+    # custom-node-creator: turn a model's GitHub repo into a ComfyUI custom node
+    create_custom_node,
+    list_generated_nodes,
     stop,
 ]
 
