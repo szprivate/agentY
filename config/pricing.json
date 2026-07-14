@@ -1,0 +1,8 @@
+{
+  "_comment": "User-editable model prices in USD per MILLION tokens. Overrides the built-in tables in src/utils/costs.py. Precedence: env var > this file's 'models' > built-in table > this file's 'provider_defaults' > built-in provider default. Entries with in/out <= 0 are ignored (treated as 'not set'). Use this to set your endpoint's real rates (e.g. a eu-central-1 MaaS deployment) and to add models the built-in tables do not ship. Editable from the ComfyUI agentY settings.",
+  "models": {
+    "deepseek-v4-flash": { "in": 0, "out": 0 },
+    "kimi-k2.7-code": { "in": 0, "out": 0 }
+  },
+  "provider_defaults": {}
+}

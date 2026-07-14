@@ -24,7 +24,7 @@ Extract from the user message: subject, style, input images, requested template,
 **Constraints:**
 - **Annotation detection**: If the user attaches an annotated image (drawn on, circled, scribbled, or marked up) alongside their message, you MUST activate the `annotation` skill immediately and follow its steps instead of the normal template-selection and input-image steps (steps 2–4). Trigger signals: words like *annotation*, *annotated*, *I marked*, *I drew*, *I circled*, *my sketch*, *the scribble*, *indicated area*, or any image the user explicitly describes as a mark-up or drawing on a prior result.
 - You MUST set `input_image_count` to the exact count of input images in the request (0 if none).
-- You MUST analyse any user-provided images via `analyze_image` and incorporate findings into the prompt.
+- **Input images are already prepared for you.** The orchestrator stages the input image(s) and provides a text description of each in the request. You do NOT stage, upload, or visually analyse images — there is no `upload_image` or `analyze_image` tool in your set. Work from the description(s) in the request; if a description is missing, base the prompt on the user's textual request. `get_image_resolution` (dimensions only) is still available for parameter resolution.
 - You SHOULD extract batch count and set `count_iter` (minimum 1, maximum 20; default 1). Trigger phrases: *"batch of 5"*, *"run it 4 times"*, *"make 10 images"*.
 - You SHOULD set `variations: true` if the user requests distinct results (phrases like *"3 variations"*, *"5 versions"*, *"give me 4 different styles"*). Default `variations: false`.
 - **`batch_request`** (same workflow, only parameters vary): set `count_iter > 1` and a single `template_name`. The workflow structure is identical across all iterations — only inputs (seed, prompt tokens, etc.) are substituted. Trigger phrases: *"make 5 versions with different seeds"*, *"4 variations changing only the ethnicity"*.
@@ -36,25 +36,14 @@ Extract from the user message: subject, style, input images, requested template,
 
 ---
 
-### Image Analysis Strategy
+### Image analysis is done upstream
 
-When the user provides images, choose the appropriate analysis mode for `analyze_image`:
-
-**Use `mode="describe"` (default) when:**
-- Identifying content type (portrait, landscape, product, scene)
-- Determining style, aesthetic, or mood
-- Checking technical quality (blurry, noisy, overexposed)
-- Extracting visible text or watermarks
-- Single-image analysis for workflow selection
-- Color/lighting reference extraction (general description sufficient)
-
-**Use `mode="full"` ONLY when:**
-- Comparing multiple images for identity/consistency (e.g., "are these the same character?")
-- Precise spatial reasoning required (e.g., "position X exactly where Y is in the frame")
-- User explicitly requests detailed pixel-level analysis
-- Multi-image composition tasks requiring simultaneous pixel comparison
-
-**Default to `mode="describe"` unless you have a specific reason to use `mode="full"`.**
+You do **not** inspect image pixels. The orchestrator analyses each input image
+before delegating and hands you the resulting description in the request. Read
+those descriptions and fold the relevant details (content type, style, mood,
+technical quality, visible text) into template selection and the prompt. If you
+need a detail that isn't in the provided description, note it as a WARNING in
+`blockers` rather than trying to open the image — you have no image-analysis tool.
 
 ---
 
@@ -82,21 +71,36 @@ Identify all input nodes in the selected workflow template.
 ---
 
 ### 4. Record input image filenames
-Map user-provided image paths/filenames into the Assemble Workflowbriefing.
+Map the already-staged input images into the Assemble Workflowbriefing. The
+orchestrator has already uploaded them to ComfyUI's input directory before
+delegating — **you do not stage anything.**
 
 **Constraints:**
-- You MUST list each input image filename under `input_images[].filename`.
+- You MUST list each input image filename under `input_images[].filename`, using
+  the staged filename the orchestrator provides in the request (the bare name in
+  ComfyUI's input dir). Do NOT upload, copy, move, scan, or enumerate images, and
+  do NOT use `run_script`/shell/Python to touch them — there is no `upload_image`
+  in your set. Work only with the exact filenames/paths given in the request.
 - `input_image_count` MUST equal the exact length of `input_images`.
-- **Current-message attachments (freshly uploaded images) — HIGHEST PRIORITY**: When the user request contains an `Attached image file paths (use these for ComfyUI)` block, every path listed there is an image the user just uploaded **for this request**. You MUST use them as the workflow's input image(s) and MUST NOT run a template with its default/example image when the user provided one. For EACH listed path you MUST:
-  1. Call `upload_image(file_path=<the listed path>)` to stage it into ComfyUI's input directory.
-  2. Use the `name` returned by `upload_image` as the `filename` in `input_images` and `input_nodes`.
-  3. Set `path` in `input_nodes` to `<get_comfyui_dirs().input_dir>/<name>` (the uploaded name — do NOT reuse the original attachment path).
-  4. Set `input_image_count` to the number of attached images (NEVER 0 when images are attached). If your best-matching template has no image input, switch to an image-consuming template (edit / img2img / img2video / inpaint) that uses the attachment.
-- **Prior-session outputs as inputs**: If the conversation summary (injected as `[CONVERSATION SUMMARY FROM PRIOR ROUND]`) contains an `OUTPUT_PATHS` line, and the current task requires one of those files as input (e.g. "use the image we just generated"), you MUST:
-  1. Call `upload_image(file_path=<full path from OUTPUT_PATHS>)` for each such file.
-  2. Use the `name` value returned by `upload_image` as the `filename` in `input_images` and `input_nodes`.
-  3. Set `path` in `input_nodes` to the full path of the uploaded file: `<get_comfyui_dirs().input_dir>/<name>` (where `name` is returned by `upload_image`). Do NOT use the original path from `OUTPUT_PATHS`.
-  - **Never guess or fabricate filenames** — always upload and use the returned name.
+- For each input node, set `path` in `input_nodes` to
+  `<get_comfyui_dirs().input_dir>/<staged filename>` and reuse that same staged
+  filename as the `filename` in `input_images`. Never guess or fabricate names —
+  use exactly what the orchestrator gave you.
+- **Current-message attachments (freshly uploaded images) — HIGHEST PRIORITY**:
+  When the request lists staged input filenames for images the user just attached,
+  you MUST use them as the workflow's input image(s) and MUST NOT run a template
+  with its default/example image. Set `input_image_count` to the number of
+  attached images (NEVER 0 when images are attached). If your best-matching
+  template has no image input, switch to an image-consuming template (edit /
+  img2img / img2video / inpaint) that uses the attachment.
+- **Multi-input batch → set up ONE workflow.** When the request applies the *same*
+  operation to several input images (e.g. "apply the light from image 6 to the
+  first 5 images", "upscale all of these"), you are preparing a SINGLE base
+  workflow that the orchestrator will iterate — you are NOT processing all N
+  images. The orchestrator gives you only the FIRST source image plus any fixed
+  reference (e.g. "image 6"); wire just those two and set `input_image_count` to
+  those two. Do NOT `iterate` over the other images — the orchestrator's
+  `batch-handoff` (Mode C) stages and swaps the rest.
 
 ---
 
@@ -131,6 +135,16 @@ Identify all output nodes in the selected workflow template.
 Compose the generation prompt for the selected model family.
 
 **Constraints:**
+- **Author your own prompt text only when the request calls for it.** Two cases:
+  - **Prompt variations over a batch** (the user asked for distinct results —
+    `variations: true`, phrases like *"3 variations"*, *"5 different styles"*, or a
+    multi-batch that changes prompt tokens per iteration): compose the set of
+    distinct prompts yourself, one per variation.
+  - **Everything else** (a single generation, or a batch that only varies seeds):
+    write ONE prompt. Faithfully render the user's own description into the model
+    family's format — do not invent, embellish, or re-imagine the subject/style
+    the user already specified. When the user gave explicit prompt text, carry it
+    through with only the formatting the model family requires.
 - If the selected template is `Kling3_multiShot`: you MUST activate the `kling-multishot` skill and follow its **Query Templates — Prompt composition** section instead of the rules below. Do NOT use `prompting` for this template.
 - You MUST activate the `prompting` skill and follow its model-family rules exactly (all other templates).
 - You MUST NOT pad prompts with filler phrases or generic quality tokens.

@@ -1,14 +1,14 @@
 ---
 name: batch-handoff
-description: Step-by-step procedure for handing off multi-iteration batch workflows to the Executor. Activate in Brain step 3 (Handoff) when count_iter > 1.
-allowed-tools: duplicate_workflow, update_workflow, signal_workflow_ready, read_text_file
+description: Step-by-step procedure for handing off multi-iteration batch workflows to the Executor. Activate when count_iter > 1, or when applying the SAME workflow to multiple input images (Mode C: swap the input image per iteration instead of building N separate workflows).
+allowed-tools: duplicate_workflow, update_workflow, signal_workflow_ready, read_text_file, upload_image, upload_image_multiple
 ---
 
 # Batch Handoff Multi-Iteration Procedure
 
-Activate this skill when `count_iter > 1` in the brainbriefing.
+Activate this skill when `count_iter > 1` in the brainbriefing, or when the user asked to apply one workflow to several input images (Mode C).
 
-There are two batch modes. Determine the mode from the brainbriefing:
+There are three batch modes. Determine the mode from the request / brainbriefing:
 - `variations == true` AND `count_iter > 1` â†’ **Variations mode**
 - `variations == false` AND `count_iter > 1` â†’ **Identical mode**
 
@@ -59,7 +59,54 @@ All iterations use the **same** assembled workflow. Seeds are randomised automat
 
 ---
 
-## Rules (both modes)
+## Mode C: Multiple input images (same workflow, swap the input per iteration)
+
+Use this when the user asks to apply the SAME operation to several input images
+-- e.g. "apply the light from image 6 to the first 5 images", "upscale all of
+these", "relight each of these photos". Do NOT build a separate workflow per
+image; assemble ONE workflow, then swap only the iterated input image per copy.
+
+Before this skill runs, the base workflow was assembled + validated ONCE, with
+the FIRST iterated image bound to the source `LoadImage` node and any FIXED
+reference input (e.g. a lighting/style reference such as "image 6") bound to its
+own loader.
+
+Identify from the assembled workflow:
+- `source_node_id`: the `LoadImage` node whose image changes each iteration. If
+  the template has more than one image loader, the FIXED reference loader must
+  NOT change -- the other loader is the source.
+- `images`: the ordered list of input files to iterate over (image 1 ... image N).
+  `count_iter` here equals the number of iterated input images.
+
+### Step-by-step
+
+0. **Stage all iterated images up front (one call):** call
+   `upload_image_multiple(file_paths=[<image2 path>, ..., <imageN path>])` to stage
+   images 2 ... N in a single tool call, and read each staged `name` from the
+   returned `results`. (Idempotent per file — already-staged files just return
+   their name.) You may skip this and stage per-iteration with `upload_image`
+   instead, but the single batch call is cheaper.
+
+1. **Iteration 1 -- base workflow** (image 1 is already bound):
+   - Call `signal_workflow_ready(base_workflow_path)`.
+
+2. **Iterations 2 ... N** (for each imageK where K = 2 to N):
+   - Use the staged `name` for imageK (from step 0, or stage it now with
+     `upload_image(file_path=<imageK path>)` -> returned `name`).
+   - `duplicate_workflow(base_workflow_path)` -> record `new_path`.
+   - `update_workflow(new_path, patches=[{"node_id": "<source_node_id>", "input_name": "image", "value": "<name>"}])`.
+     Patch ONLY the source loader's `image` widget -- leave the fixed reference
+     loader and everything else untouched. If `status: "error"` -> fix and retry (max 3).
+   - `signal_workflow_ready(new_path)`.
+
+3. **Final call**: `signal_workflow_ready` on the last image MUST be your last tool call.
+
+Never re-upload or re-patch the fixed reference input -- it is staged once and
+stays bound across every iteration.
+
+---
+
+## Rules (all modes)
 
 - You MUST NOT call `submit_prompt` â€” the Executor handles submission automatically after each `signal_workflow_ready`.
 - You MUST NOT skip any iteration â€” every `count_iter` must result in a `signal_workflow_ready` call.

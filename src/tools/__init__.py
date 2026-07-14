@@ -55,6 +55,7 @@ from src.tools.comfyui import (  # noqa: F401
 )
 from src.tools.image_handling import (  # noqa: F401
     upload_image,
+    upload_image_multiple,
     view_image,
     get_image_resolution,
     analyze_image,
@@ -69,6 +70,11 @@ from src.tools.huggingface import (  # noqa: F401
 )
 from src.tools.file_tools import read_text_file, write_text_file  # noqa: F401
 from src.tools.iterate import iterate  # noqa: F401
+# NOTE: the deterministic-assembly tool (agenty_core.tools.assembly_deterministic)
+# is intentionally NOT re-exported here. The free-agent orchestrator assembles via
+# apply_brainbriefing + LLM-supervised patch/validate; the old headless
+# _try_deterministic_brain fast-path that used it was removed (it silently
+# mis-assembled some templates).
 from src.tools.shell import run_script  # noqa: F401
 from src.tools.memory_tools import memory_read, memory_write  # noqa: F401
 from src.tools.web_search import web_search, web_search_images  # noqa: F401
@@ -85,8 +91,6 @@ from src.tools.orchestration import (  # noqa: F401
     create_custom_node,
     list_generated_nodes,
 )
-# Fully deterministic (no-LLM) workflow assembly (shared agenty_core layer)
-from src.tools.assembly_deterministic import assemble_workflow_deterministic  # noqa: F401
 # Headless batch jobs — shared with agentY-mcp via agenty_core
 from src.tools.batch import (  # noqa: F401
     start_batch_job,
@@ -180,7 +184,13 @@ SEARCH_WEB_TOOLS: list = [
 DOP_TOOLS: list = []
 
 # ---------------------------------------------------------------------------
-# Query Templates tools – template lookup, asset upload, model resolution.
+# Query Templates tools – template lookup, model resolution, prompting.
+#
+# The researcher is deliberately scoped to template retrieval + prompt writing.
+# Image PREP (staging + visual analysis) is the orchestrator's job now, so
+# upload_image and analyze_image are intentionally NOT in this set — the
+# orchestrator stages inputs and passes their descriptions in the request.
+# get_image_resolution stays (cheap, reads dimensions off disk; no image bytes).
 # ---------------------------------------------------------------------------
 QUERY_TEMPLATES_TOOLS: list = [
     get_workflow_catalog,
@@ -192,9 +202,7 @@ QUERY_TEMPLATES_TOOLS: list = [
     get_agent_output_dirs,  # canonical agent image/video/scripts folders
     read_text_file,
     get_image_resolution,
-    analyze_image,
-    upload_image,  # needed to stage prior-session outputs as new inputs
-    download_image,  # fetch a web reference image to disk, then stage via upload_image
+    download_image,  # fetch a web reference image to disk for a style reference
     run_script,  # needed for skills (e.g. image-downsize)
     # Web search
     web_search,
@@ -271,6 +279,7 @@ ASSEMBLE_WORKFLOW_TOOLS: list = [
     get_agent_output_dirs,  # canonical agent image/video/scripts folders
     # Upload input images
     upload_image,
+    upload_image_multiple,
     get_image_resolution,
     # Workflow assembly, modification & validation
     get_workflow_template,
@@ -338,10 +347,18 @@ ORCHESTRATOR_TOOLS: list = [
     # Custom-node install + auto-heal a missing node type
     find_custom_node_for,
     install_custom_node,
-    # Templates + recipes
-    get_workflow_catalog,
+    # Templates + recipes.
+    # NOTE: the two *browse* tools — get_workflow_catalog and
+    # list_workflow_recipes — are intentionally NOT given to the orchestrator.
+    # Template/recipe *selection* is delegated to run_research (the
+    # query_templates specialist); without a browse menu the orchestrator cannot
+    # keyword-match its way into the wrong template/upscale/relight workflow.
+    # The by-name loaders stay so the orchestrator can LOAD what run_research
+    # already chose (or a [HARD CONSTRAINTS]-pinned name) for assembly:
+    #   get_workflow_template(name)         — load the selected template
+    #   get_workflow_recipe(task, model)    — fetch the recipe for a build_new
+    #                                         briefing run_research produced
     get_workflow_template,
-    list_workflow_recipes,
     get_workflow_recipe,
     # Workflow assembly / modification / validation
     duplicate_workflow,
@@ -359,8 +376,9 @@ ORCHESTRATOR_TOOLS: list = [
     signal_workflow_ready,
     # Bake a chain of standin workflows into canvas subgraphs (bake_to_canvas hook)
     bake_hooks_to_canvas,
-    # Image handling
+    # Image handling (the orchestrator owns input prep: stage + analyze)
     upload_image,
+    upload_image_multiple,  # stage several inputs in one call
     view_image,
     get_image_resolution,
     analyze_image,

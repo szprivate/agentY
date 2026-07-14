@@ -1832,7 +1832,27 @@ def _subagent_full_tools() -> list:
     return [t for t in _OT if id(t) not in _meta]
 
 
-def build_subagent(toolset: str = "full", model: str | None = None) -> Agent:
+def _load_subagent_skill(name: str) -> str:
+    """Return a skill's body (frontmatter stripped) to bake into a subagent's
+    system prompt as its main procedure. Looks in the curated skills/ dir first,
+    then the runtime _scratch dir. Returns '' if not found."""
+    for base in (_SKILLS_DIR, _SCRATCH_SKILLS_DIR):
+        try:
+            p = base / name / "SKILL.md"
+            if p.is_file():
+                txt = p.read_text(encoding="utf-8")
+                if txt.startswith("---"):
+                    parts = txt.split("---", 2)
+                    if len(parts) == 3:
+                        txt = parts[2]
+                return txt.strip()
+        except Exception:  # noqa: BLE001
+            continue
+    return ""
+
+
+def build_subagent(toolset: str = "full", model: str | None = None,
+                   tools: list[str] | None = None, skill: str | None = None) -> Agent:
     """Build a fresh, single-use subagent with a curated toolset.
 
     Used by the ``spawn_subagent`` tool. Subagents are depth-1: the ``full``
@@ -1840,8 +1860,14 @@ def build_subagent(toolset: str = "full", model: str | None = None) -> Agent:
     further subagents.
 
     Args:
-        toolset: research|assembly|info|story|web|vision|full.
+        toolset: research|assembly|info|story|web|vision|full (ignored when
+            ``tools`` is given).
         model: Optional ``'provider,model'`` override.
+        tools: Optional explicit list of tool NAMES — builds a lean, single-purpose
+            agent with ONLY those tools (fewer tool defs = less context + better
+            tool-selection for small models). Takes priority over ``toolset``.
+        skill: Optional skill name whose body is baked into the subagent's system
+            prompt as its procedure (its "main skill").
 
     Returns:
         A ready-to-invoke Strands Agent.
@@ -1860,6 +1886,39 @@ def build_subagent(toolset: str = "full", model: str | None = None) -> Agent:
             "anthropic_model": anthropic or (mdl if prov in (None, "claude") else None),
             "ollama_model": ollama or (mdl if prov == "ollama" else None),
         }
+
+    # Explicit minimal toolset (highest priority): a lean, single-purpose agent
+    # with ONLY the named tools, optionally with a skill baked in as its procedure.
+    if tools:
+        avail = {getattr(t, "tool_name", getattr(t, "__name__", "")): t
+                 for t in _subagent_full_tools()}
+        chosen = [avail[n] for n in tools if n in avail]
+        if not chosen:
+            raise ValueError(f"none of the requested subagent tools exist: {tools}")
+        resolved_llm = prov or str(_cfg("ORCHESTRATOR_LLM", "pipeline", "orchestrator",
+                                        default="claude")).partition(",")[0].strip() or "claude"
+        sp = (
+            "You are a focused subagent handed a single, self-contained task by an "
+            "orchestrator. Use ONLY the tools you were given to complete it, then "
+            "return a concise result. For ComfyUI generation, assemble and validate "
+            "the workflow and call signal_workflow_ready(workflow_path) as your final "
+            "step — never submit_prompt. Do not ask clarifying questions; make "
+            "reasonable assumptions."
+        )
+        skill_body = _load_subagent_skill(skill) if skill else ""
+        if skill_body:
+            sp += "\n\n## Your procedure — follow this exactly\n\n" + skill_body
+        return _make_agent(
+            role="subagent",
+            llm=resolved_llm,
+            dashscope_model=mdl or "",
+            system_prompt=sp,
+            tools=chosen,
+            ollama_model=(mdl if resolved_llm == "ollama" else None) or "qwen3-vl:30b",
+            anthropic_model=(mdl if resolved_llm not in ("ollama",) else None)
+            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5")),
+            hooks=[TokenUsageHookProvider(role="subagent"), ComfyUIInterruptHook()],
+        )
 
     if ts == "research":
         return create_query_templates_agent(**_mk())

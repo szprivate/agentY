@@ -48,13 +48,6 @@ from src.executor import (
 from src.utils.memory import MEMORY_NAMESPACE, format_memories, memory_add, memory_search
 from src.tools.memory_tools import set_session_id as _set_memory_session_id
 from src.tools.comfyui import clear_tool_caches as _clear_tool_caches
-# Deterministic brain happy-path: the mechanical assembly (load template ->
-# apply briefing -> validate) lives in the shared assembly_deterministic module;
-# the pipeline calls it, then signals. signal_workflow_ready is a Strands
-# DecoratedFunctionTool, so use __wrapped__ to call it directly.
-from agenty_core.tools.assembly_deterministic import assemble_workflow_deterministic as _assemble_workflow_deterministic
-from src.tools.workflow_handoff import signal_workflow_ready as _det_signal_tool
-_det_signal_ready = _det_signal_tool.__wrapped__
 # Deterministic download+rerun: resolve a named missing model on HF and fetch it
 # into ComfyUI's extra model path, then retry the query_templates.
 from agenty_core.tools.huggingface import find_hf_file as _find_hf_file
@@ -1298,11 +1291,35 @@ class Pipeline:
         if isinstance(user_input, list):
             gallery = self._format_image_gallery()
             blocks = list(user_input)
+            # Token control: by default the orchestrator receives image bytes (so a
+            # vision-capable seat can route on pixels). Set AGENTY_ORCH_IMAGES=0 to
+            # send only the attached file paths (already listed in the text block) —
+            # the orchestrator delegates visual understanding to run_research, so
+            # dropping the bytes removes every input image from each of its tool-call
+            # round-trips and slashes context for small/expensive orchestrator models.
+            if os.environ.get("AGENTY_ORCH_IMAGES", "1") == "0":
+                blocks = [b for b in blocks
+                          if not (isinstance(b, dict) and "image" in b)]
             prefix = pin + (gallery + "\n\n" if gallery else "")
             if prefix:
                 blocks.insert(0, {"text": prefix})
             return blocks
         return pin + self._prepend_gallery(self._annotate_attachments(user_input, user_text))
+
+    def _log_orchestrator(self) -> None:
+        """Write the orchestrator's message history to message_history.log — once
+        per turn. Called from the terminal branches AND from a ``finally`` in
+        ``stream_async``, so a turn that never reaches a terminal branch (user
+        ``/stop``, an exception, or a hang) is still captured. Idempotent via the
+        per-turn ``_orch_turn_logged`` flag (reset at the start of each turn).
+        """
+        if getattr(self, "_orch_turn_logged", False):
+            return
+        self._orch_turn_logged = True
+        try:
+            log_agent_messages("ORCHESTRATOR", list(self._orchestrator_agent.messages))
+        except Exception:  # noqa: BLE001
+            pass
 
     async def _astream_orchestrator(self, user_input, *, qa_reply_queue: asyncio.Queue | None = None,
                                     canvas_prompt: dict | None = None, canvas_hooks: list | None = None,
@@ -1459,7 +1476,7 @@ class Pipeline:
                                               raw_json=self._last_brainbriefing_json)
                     self._record_agent_usage(self._orchestrator_agent, _snap)
                     self._session.last_agent = "orchestrator"
-                    log_agent_messages("ORCHESTRATOR", list(self._orchestrator_agent.messages))
+                    self._log_orchestrator()
                     return
 
                 if _qa_fail_event:
@@ -1476,14 +1493,14 @@ class Pipeline:
                                               raw_json=self._last_brainbriefing_json)
                     self._record_agent_usage(self._orchestrator_agent, _snap)
                     self._session.last_agent = "orchestrator"
-                    log_agent_messages("ORCHESTRATOR", list(self._orchestrator_agent.messages))
+                    self._log_orchestrator()
                     return
 
                 self._record_chat_summary(user_text, synth, status="completed",
                                           raw_json=self._last_brainbriefing_json)
                 self._record_agent_usage(self._orchestrator_agent, _snap)
                 self._session.last_agent = "orchestrator"
-                log_agent_messages("ORCHESTRATOR", list(self._orchestrator_agent.messages))
+                self._log_orchestrator()
                 self._learn_from_orchestrator_turn(_orch_msg_start)
                 if self._verbose:
                     print("pipeline: Orchestrator finished.")
@@ -1550,12 +1567,19 @@ class Pipeline:
         # and the rigid router entirely. ─────────────────────────────────────
         if self._free_agent and self._orchestrator_agent is not None:
             _trace("pipeline.stream_async: orchestrator begin")
-            async for event in self._astream_orchestrator(
-                user_input, qa_reply_queue=qa_reply_queue,
-                canvas_prompt=canvas_prompt, canvas_hooks=canvas_hooks,
-                canvas_selection=canvas_selection,
-            ):
-                yield event
+            self._orch_turn_logged = False  # reset per turn; _log_orchestrator sets it
+            try:
+                async for event in self._astream_orchestrator(
+                    user_input, qa_reply_queue=qa_reply_queue,
+                    canvas_prompt=canvas_prompt, canvas_hooks=canvas_hooks,
+                    canvas_selection=canvas_selection,
+                ):
+                    yield event
+            finally:
+                # Log on ANY exit: normal completion, exception, or cancellation
+                # (user /stop or a hang) — so every request lands in the log, not
+                # just the ones that reach a terminal branch.
+                self._log_orchestrator()
             _trace("pipeline.stream_async: orchestrator done")
             return
 
@@ -4538,87 +4562,6 @@ class Pipeline:
             pass
         return None
 
-    def _try_deterministic_brain(self, raw_json: str) -> str | None:
-        """Mechanical brain happy-path with no LLM.
-
-        A ``ready`` briefing that names a standard template needs no reasoning:
-        load the template, apply the briefing (the same deterministic patcher the
-        LLM would call), and signal. Returns the signalled workflow path on
-        success, or ``None`` to fall back to the LLM brain — for a missing/build
-        template, batch/variations, an annotation (2-image control) job, a
-        non-standard node, or an ``apply_brainbriefing`` error the model should
-        fix. Any exception also falls back.
-        """
-        def _bail(reason: str) -> None:
-            if self._verbose:
-                print(f"pipeline: deterministic brain declined — {reason}")
-            return None
-
-        try:
-            bb = json.loads(raw_json)
-        except Exception:  # noqa: BLE001
-            return _bail("raw_json not parseable")
-        if not isinstance(bb, dict) or bb.get("status") != "ready":
-            return _bail(f"status={bb.get('status') if isinstance(bb, dict) else '?'}")
-        tmpl = bb.get("template") or {}
-        name = tmpl.get("name") if isinstance(tmpl, dict) else None
-        if not name or name in ("build_new", "Kling3_multiShot"):
-            return _bail(f"template={name!r}")
-        # Genuine variation/batch jobs need the brain's image-batch skill.
-        if bb.get("variations") or bb.get("batch_request"):
-            return _bail("variations/batch")
-        # NOTE: a bare count_iter>1 WITHOUT variations is a spurious researcher
-        # over-count — the multiprompt expansion (_expand_variations) only fires
-        # when variations is also true, so the LLM batch path just signals N
-        # workflows that all fail. Don't bail on it: the deterministic path
-        # renders one workflow, far more reliable than the failing batch.
-        # input_image_count is likewise checked AFTER assembly against the
-        # template's actual image loaders (the briefing's count is often inflated
-        # because recipe ports aggregate several member templates).
-        try:
-            res = json.loads(_assemble_workflow_deterministic(raw_json))
-            # Aux models the template references but that aren't installed (and
-            # the researcher never named as blockers, e.g. a VAE/LoRA) surface in
-            # missing_models. Download them and re-assemble once so they don't
-            # force an LLM round-trip or a 400 at submission.
-            _mm = res.get("missing_models") or []
-            if res.get("status") != "ready" and _mm and not os.environ.get("AGENTY_DISABLE_DOWNLOADS"):
-                if self._verbose:
-                    print(f"pipeline: deterministic assembly needs {len(_mm)} model(s): "
-                          f"{', '.join(m.rsplit(chr(92),1)[-1] for m in _mm[:4])} — downloading …")
-                if self._attempt_model_downloads(_mm):
-                    res = json.loads(_assemble_workflow_deterministic(raw_json))
-            if res.get("status") != "ready":
-                return _bail(f"assembly status={res.get('status')} "
-                             f"missing_models={res.get('missing_models')} "
-                             f"problems={str(res.get('problems'))[:400]}")
-            wf_path = res.get("workflow_path")
-            if not wf_path:
-                return _bail("assembly returned no workflow_path")
-            try:
-                wf = json.load(open(wf_path, encoding="utf-8"))
-                _nodes = [n for n in wf.values() if isinstance(n, dict)]
-                # BatchImagesNode needs the brain's replace_node step (1.2.1); defer.
-                if any(n.get("class_type") == "BatchImagesNode" for n in _nodes):
-                    return None
-                # A genuine 2-image annotation / control-image job — the template
-                # has two image loaders whose roles the brain must assign — is
-                # deferred to the LLM. A spurious input_image_count on a
-                # single-loader template is ignored (assembly already bound it).
-                if bb.get("input_image_count") == 2 and sum(
-                    1 for n in _nodes if n.get("class_type")
-                    in ("LoadImage", "LoadImageMask", "LoadImageOutput")
-                ) >= 2:
-                    return _bail("2 image loaders — annotation/control needs LLM")
-            except Exception:  # noqa: BLE001
-                pass
-            _det_signal_ready(wf_path)
-            return wf_path
-        except Exception as exc:  # noqa: BLE001
-            if self._verbose:
-                print(f"pipeline: deterministic brain path errored ({exc}); LLM fallback.")
-            return None
-
     async def _astream_brain_stage(
         self,
         raw_json: str,
@@ -4647,15 +4590,6 @@ class Pipeline:
         current_input: Any = brain_prompt
         _brain_snap = self._usage_snapshot(self._assemble_workflow)
 
-        # Deterministic happy-path DISABLED. The LLM workflow-assembly agent now
-        # owns assembly end to end: it calls apply_brainbriefing and then fixes any
-        # resulting errors (get_node_schema / update_workflow / replace_node) before
-        # signalling. The mechanical _try_deterministic_brain path skipped the model
-        # but silently mis-assembled some templates (e.g. Nano Banana — snapping a
-        # staged input image to the template's default), so it is no longer used.
-        # (_try_deterministic_brain is retained, uncalled, for easy revert.)
-        _skip_brain_llm = False
-
         # Track whether a brain-assembly failure was resolved via user advice.
         _assembly_fail_error: str | None = None
         _assembly_fail_advice: str | None = None
@@ -4668,20 +4602,15 @@ class Pipeline:
             interrupt_result = None
 
             yield {"_brain_start": True}
-            if _skip_brain_llm:
-                # Deterministic path already assembled + signalled; skip the model
-                # for this first pass and go straight to the executor below.
-                _skip_brain_llm = False
-            else:
-                async for event in self._assemble_workflow.stream_async(current_input):
-                    yield event
-                    if "result" in event:
-                        agent_result = event["result"]
-                        if getattr(agent_result, "stop_reason", None) == "interrupt":
-                            for intr in getattr(agent_result, "interrupts", []):
-                                if getattr(intr, "name", None) == INTERRUPT_NAME:
-                                    interrupt_result = intr
-                                    break
+            async for event in self._assemble_workflow.stream_async(current_input):
+                yield event
+                if "result" in event:
+                    agent_result = event["result"]
+                    if getattr(agent_result, "stop_reason", None) == "interrupt":
+                        for intr in getattr(agent_result, "interrupts", []):
+                            if getattr(intr, "name", None) == INTERRUPT_NAME:
+                                interrupt_result = intr
+                                break
             yield {"_brain_done": True}
 
             if interrupt_result is None:

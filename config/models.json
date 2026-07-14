@@ -343,6 +343,7 @@
       "longcat_image_edit_bf16.safetensors",
       "lotusDepth\\lotus-depth-d-v1-1.safetensors",
       "ltx-2.3-22b-distilled-1.1_transformer_fp8.safetensors",
+      "qwen_image_2512_fp8_e4m3fn.safetensors",
       "qwen_image_fp8_e4m3fn.safetensors",
       "transformer\\diffusion_pytorch_model-00001-of-00005.safetensors",
       "transformer\\diffusion_pytorch_model.safetensors",
