@@ -1,5 +1,7 @@
 from __future__ import annotations
+import json
 import os
+from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 # ---------------------------------------------------------------------------
@@ -216,10 +218,60 @@ def _extract_meta(obj) -> Tuple[str, str, bool]:
 # Public API
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# config/pricing.json — user-editable overrides (per MILLION tokens), also
+# exposed in the ComfyUI settings UI. Overrides the built-in tables above so the
+# viewer's cost column can track a specific endpoint (e.g. a eu-central-1 MaaS
+# deployment) and models the tables don't ship (deepseek, kimi, …). Cached by
+# mtime; malformed / non-positive entries are skipped so partial files are safe.
+# ---------------------------------------------------------------------------
+_PRICING_PATH = Path(__file__).resolve().parents[2] / "config" / "pricing.json"
+_pricing_cache: Optional[dict] = None
+_pricing_mtime: Optional[float] = None
+
+
+def _load_pricing_overrides() -> dict:
+    """Return ``{"models": {name: (in_per_tok, out_per_tok)}, "providers": {…}}``
+    from config/pricing.json (values there are USD per million tokens)."""
+    global _pricing_cache, _pricing_mtime
+    try:
+        mtime = _PRICING_PATH.stat().st_mtime
+    except OSError:
+        _pricing_cache, _pricing_mtime = {"models": {}, "providers": {}}, None
+        return _pricing_cache
+    if _pricing_cache is not None and _pricing_mtime == mtime:
+        return _pricing_cache
+
+    def _pair(d: dict):
+        try:
+            i, o = float(d.get("in", 0) or 0), float(d.get("out", 0) or 0)
+        except (TypeError, ValueError):
+            return None
+        return _mtok(i, o) if (i > 0 or o > 0) else None
+
+    models: dict = {}
+    providers: dict = {}
+    try:
+        raw = json.loads(_PRICING_PATH.read_text(encoding="utf-8"))
+        for name, d in (raw.get("models") or {}).items():
+            if isinstance(d, dict) and (p := _pair(d)):
+                models[str(name).lower().strip()] = p
+        for prov, d in (raw.get("provider_defaults") or {}).items():
+            if isinstance(d, dict) and (p := _pair(d)):
+                providers[str(prov).lower().strip()] = p
+    except Exception:  # noqa: BLE001 — a broken file must never break costing
+        pass
+    _pricing_cache = {"models": models, "providers": providers}
+    _pricing_mtime = mtime
+    return _pricing_cache
+
+
 def get_model_prices_for(obj) -> Tuple[float, float]:
     """Return (input_usd_per_token, output_usd_per_token) for the model in *obj*.
 
-    Returns (0.0, 0.0) for Ollama models.
+    Returns (0.0, 0.0) for Ollama models. Precedence: env var >
+    config/pricing.json (models) > built-in tables > config/pricing.json
+    (provider_defaults) > built-in provider default.
     """
     provider, model_id, is_ollama = _extract_meta(obj)
     if is_ollama:
@@ -230,13 +282,29 @@ def get_model_prices_for(obj) -> Tuple[float, float]:
     if env:
         return env
 
-    # 2. Exact / prefix match in pricing tables
+    over = _load_pricing_overrides()
+
+    # 2. config/pricing.json model override (exact, then prefix)
+    if model_id:
+        key = model_id.lower().strip()
+        if key in over["models"]:
+            return over["models"][key]
+        for mk, pv in over["models"].items():
+            if key.startswith(mk) or mk.startswith(key):
+                return pv
+
+    # 3. Exact / prefix match in the built-in pricing tables
     if model_id:
         prices = _lookup_prices(model_id)
         if prices:
             return prices
 
-    # 3. Provider-level defaults
+    # 4. config/pricing.json provider default
+    pk = (provider or "").lower().strip()
+    if pk in over["providers"]:
+        return over["providers"][pk]
+
+    # 5. Provider-level defaults
     if provider in ("ollama",):
         return (0.0, 0.0)
     if "claude" in model_id.lower() or provider in ("claude", "anthropic"):

@@ -1368,6 +1368,25 @@ def _settings_path() -> Path:
     return _project_root() / "config" / "settings.json"
 
 
+def _pricing_config_path() -> Path:
+    return _project_root() / "config" / "pricing.json"
+
+
+def _load_pricing_config() -> dict:
+    """Return config/pricing.json (user-editable model prices, USD per Mtok)."""
+    try:
+        return json.loads(_pricing_config_path().read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return {"models": {}, "provider_defaults": {}}
+
+
+def _save_pricing_config(data: dict) -> None:
+    """Persist the whole config/pricing.json (replaces the file)."""
+    _pricing_config_path().write_text(
+        json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
+
 # ── Token-usage overview ──────────────────────────────────────────────────────
 # Parse the token-usage log (written by src.agent.TokenUsageHookProvider) into
 # per-model aggregates for the "Token Usage" panel. Each line looks like:
@@ -1912,6 +1931,7 @@ def _build_app():
                 "env_keys": list(dict.fromkeys(_KNOWN_ENV_KEYS + list(env.keys()))),
                 "settings": settings,
                 "model_groups": _available_models(),
+                "pricing": _load_pricing_config(),
             })
         # POST — persist env and/or settings.json changes.
         body = request.get_json(silent=True) or {}
@@ -1925,6 +1945,10 @@ def _build_app():
             settings_updates = body.get("settings")
             if isinstance(settings_updates, dict) and settings_updates:
                 result["settings_updated"] = _update_settings_file(settings_updates)
+            pricing_updates = body.get("pricing")
+            if isinstance(pricing_updates, dict):
+                _save_pricing_config(pricing_updates)
+                result["pricing_updated"] = True
         except Exception as exc:  # noqa: BLE001
             logger.error("settings save failed: %s", exc, exc_info=True)
             return jsonify({"ok": False, "error": str(exc)}), 500
