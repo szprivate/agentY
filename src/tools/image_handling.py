@@ -50,6 +50,23 @@ def set_vision_agent(agent: Agent) -> None:
 _MAX_IMAGE_BYTES = int(5 * 1024 * 1024 * 0.72)   # ~3.6 MB raw → ~4.8 MB base64
 _OPTIMAL_LONG_EDGE = 1568            # Claude resizes beyond this anyway
 
+
+def _input_long_edge() -> int:
+    """Max long edge (px) for downsized input images. ``AGENTY_INPUT_MAX_DIM``
+    overrides the Claude-tuned default (1568) — lower it (e.g. 1024 or 768) to cut
+    per-image tokens for smaller vision models. Applies to every image staged as a
+    vision block or sent to analyze_image; leave unset to keep Claude behaviour.
+    """
+    raw = os.environ.get("AGENTY_INPUT_MAX_DIM", "").strip()
+    if raw:
+        try:
+            v = int(raw)
+            if v > 0:
+                return v
+        except ValueError:
+            pass
+    return _OPTIMAL_LONG_EDGE
+
 _FORMAT_MAP: dict[str, str] = {
     "png":  "png",
     "jpg":  "jpeg",
@@ -87,17 +104,18 @@ def _downsize(data: bytes, img_fmt: str) -> tuple[bytes, str]:
         img_fmt if the image was converted (e.g. PNG → JPEG) to meet size limits.
     """
     _SAFE_IMAGE_BYTES = _MAX_IMAGE_BYTES - 64 * 1024  # small headroom; _MAX_IMAGE_BYTES already base64-adjusted
+    _cap = _input_long_edge()  # 1568 by default; AGENTY_INPUT_MAX_DIM lowers it for small VLMs
 
     if len(data) <= _SAFE_IMAGE_BYTES:
         img = Image.open(io.BytesIO(data))
-        if max(img.width, img.height) <= _OPTIMAL_LONG_EDGE:
+        if max(img.width, img.height) <= _cap:
             return data, img_fmt
 
     img = Image.open(io.BytesIO(data))
     long_edge = max(img.width, img.height)
 
-    if long_edge > _OPTIMAL_LONG_EDGE:
-        ratio = _OPTIMAL_LONG_EDGE / long_edge
+    if long_edge > _cap:
+        ratio = _cap / long_edge
         new_w, new_h = int(img.width * ratio), int(img.height * ratio)
         img = img.resize((new_w, new_h), Image.LANCZOS)
 

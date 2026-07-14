@@ -93,11 +93,19 @@ Map user-provided image paths/filenames into the Assemble Workflowbriefing.
   is free). Do NOT use `run_script`/shell/Python to copy, move, or list images,
   and do NOT scan or enumerate the ComfyUI input directory to "find" images. Work
   only with the exact image paths/filenames given in the request.
-- **Do not over-analyze.** Call `analyze_image` only on the image(s) you actually
-  need to write the prompt — typically the single master/source image plus any
-  explicit reference. When the request involves several images for the *same*
-  operation, analyze the first source and the reference only, never every image
-  (the orchestrator iterates the rest via the `batch-handoff` skill).
+- **Multi-input batch → set up ONE workflow, touch only two images.** When the
+  request applies the *same* operation to several input images (e.g. "apply the
+  light from image 6 to the first 5 images", "upscale all of these"), you are
+  preparing a SINGLE base workflow that the orchestrator will iterate — you are
+  NOT processing all N images. Use the FIRST source image plus any explicitly
+  named reference (e.g. "image 6"), and call `upload_image`,
+  `get_image_resolution`, and `analyze_image` on **those two images only**. Do
+  NOT stage, measure, analyze, or `iterate` over the other images — the
+  orchestrator's `batch-handoff` (Mode C) stages and swaps the rest. Set
+  `input_image_count` to the two you set up (source + reference).
+- **Otherwise, don't over-analyze.** For a normal single-/few-image request, call
+  `analyze_image` and `get_image_resolution` only on the master/source image plus
+  any explicit reference — never redundantly on images you are not wiring.
 - **Current-message attachments (freshly uploaded images) — HIGHEST PRIORITY**: When the user request contains an `Attached image file paths (use these for ComfyUI)` block, every path listed there is an image the user just uploaded **for this request**. You MUST use them as the workflow's input image(s) and MUST NOT run a template with its default/example image when the user provided one. For EACH listed path you MUST:
   1. Call `upload_image(file_path=<the listed path>)` to stage it into ComfyUI's input directory.
   2. Use the `name` returned by `upload_image` as the `filename` in `input_images` and `input_nodes`.

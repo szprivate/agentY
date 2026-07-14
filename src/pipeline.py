@@ -1291,6 +1291,15 @@ class Pipeline:
         if isinstance(user_input, list):
             gallery = self._format_image_gallery()
             blocks = list(user_input)
+            # Token control: by default the orchestrator receives image bytes (so a
+            # vision-capable seat can route on pixels). Set AGENTY_ORCH_IMAGES=0 to
+            # send only the attached file paths (already listed in the text block) —
+            # the orchestrator delegates visual understanding to run_research, so
+            # dropping the bytes removes every input image from each of its tool-call
+            # round-trips and slashes context for small/expensive orchestrator models.
+            if os.environ.get("AGENTY_ORCH_IMAGES", "1") == "0":
+                blocks = [b for b in blocks
+                          if not (isinstance(b, dict) and "image" in b)]
             prefix = pin + (gallery + "\n\n" if gallery else "")
             if prefix:
                 blocks.insert(0, {"text": prefix})

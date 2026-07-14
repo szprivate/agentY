@@ -219,10 +219,14 @@ already in ComfyUI's input dir just returns its name without re-copying.
 
 **Same operation over several input images** (e.g. "apply the light from image 6
 to the first 5 images", "upscale all of these"): do NOT build one workflow per
-image. Run `run_research` and assemble **once** — first source image + any fixed
-reference (e.g. the lighting reference "image 6") — then activate the
-`batch-handoff` skill (Mode C) to duplicate that workflow and swap only the source
-`LoadImage` per file. The fixed reference stays bound across every iteration.
+image, and do NOT hand all N images to `run_research`. Call `run_research` with
+**only the first source image + any fixed reference** (name just those two in the
+request, e.g. "relight <image 1> using <image 6> as the lighting reference") and
+assemble that base workflow **once**. Then activate the `batch-handoff` skill
+(Mode C): stage images 2…N with `upload_image` and, for each, duplicate the base
+workflow and swap only the source `LoadImage`. The fixed reference stays bound
+across every iteration. This keeps `run_research` fast (two images, not N) and the
+per-item work down to a cheap upload + patch.
 
 ## File discipline (where things go)
 
