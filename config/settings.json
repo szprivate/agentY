@@ -18,7 +18,8 @@
     "vision_agent": "system_prompt.vision_agent.md",
     "story": "system_prompt.story.md",
     "search_web": "system_prompt.search_web.md",
-    "dop": "system_prompt.dop.md"
+    "dop": "system_prompt.dop.md",
+    "custom_node_creator": "system_prompt.custom_node_creator.md"
   },
   "comfyui_models_dir": "L:\\software\\comfyui\\Models",
   "comfyui_custom_templates_dir": "./comfyui_workflow_templates_custom/templates/",
@@ -59,18 +60,19 @@
     "pipeline": {
       "orchestrator": "dashscope,qwen3.6-flash",
       "query_templates": "dashscope,qwen3.6-flash",
-      "assemble_workflow": "dashscope,qwen3.6-flash",
+      "assemble_workflow": "dashscope,qwen3.6-plus",
+      "custom_node_creator": "dashscope,kimi-k2.7-code",
       "detect_user_intent": "dashscope,qwen3.6-flash",
-      "info": "dashscope,qwen3.6-flash",
+      "info": "dashscope,qwen-flash",
       "story": "dashscope,qwen3.6-flash",
       "search_web": "dashscope,qwen3.6-flash",
       "dop": "dashscope,qwen3.6-flash",
       "planner": "dashscope,qwen3.6-flash",
-      "learnings": "dashscope,qwen3.6-flash",
+      "learnings": "dashscope,deepseek-v4-flash",
       "error_checker": "dashscope,qwen3.6-flash",
       "build_skill": "dashscope,qwen3.6-flash",
-      "llm_functions": "dashscope,qwen3.6-flash",
-      "executor_vision_model": "dashscope,qwen3.6-flash"
+      "llm_functions": "dashscope,qwen-flash",
+      "executor_vision_model": "dashscope,qwen-flash"
     },
 
     "ollama": {
