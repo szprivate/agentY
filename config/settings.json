@@ -108,5 +108,45 @@
     },
 
     "history_window": 12
+  },
+
+  "memory": {
+    // Long-term agent memory (mem0). The vector store is ALWAYS local FAISS on
+    // disk (./memory) — only the embedder (and the rarely-used fact-extraction
+    // LLM) call out to a provider. Set "enabled": false to turn memory off.
+    "enabled": true,
+    "store_dir": "memory",
+
+    // Embedder — turns text into vectors for FAISS. "provider" is:
+    //   "ollama"  fully local, needs Ollama running (model e.g. nomic-embed-text),
+    //   "openai"  any OpenAI-compatible endpoint. Leave base_url blank for real
+    //             OpenAI; for DashScope/Qwen set base_url to the compatible-mode
+    //             URL and api_key_env to DASHSCOPE_API_KEY (a good model is
+    //             text-embedding-v3 with embedding_dims 1024). The key itself is
+    //             read from that .env var, never stored here.
+    // NOTE: changing the embedder or embedding_dims makes the existing on-disk
+    // index incompatible — delete memory/agenty_memory.* so it rebuilds at the
+    // new size. Env overrides: MEMORY_EMBEDDER_PROVIDER / MEMORY_EMBED_MODEL /
+    // MEMORY_EMBED_DIMS / MEMORY_EMBEDDER_BASE_URL / MEMORY_EMBEDDER_API_KEY_ENV.
+    "embedder": {
+      "provider": "ollama",
+      "model": "nomic-embed-text",
+      "embedding_dims": 768,
+      "base_url": "",
+      "api_key_env": "OPENAI_API_KEY"
+    },
+
+    // Fact-extraction LLM — only used for "infer" writes (dedup / atomic-fact
+    // extraction). The default write path stores text verbatim and never calls
+    // it, so this can usually be left as-is. Same provider choices as the
+    // embedder; a blank "model" falls back to the llm_functions pipeline model.
+    // Env overrides: MEMORY_LLM_PROVIDER / MEMORY_LLM_MODEL /
+    // MEMORY_LLM_BASE_URL / MEMORY_LLM_API_KEY_ENV.
+    "llm": {
+      "provider": "ollama",
+      "model": "",
+      "base_url": "",
+      "api_key_env": "OPENAI_API_KEY"
+    }
   }
 }
