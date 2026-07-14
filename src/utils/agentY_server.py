@@ -1382,6 +1382,7 @@ _RE_TOKENS_DELTA = re.compile(
     r"delta=\+?(-?\d+)in/\+?(-?\d+)out/\+?(-?\d+)cache_read/\+?(-?\d+)cache_write"
 )
 _RE_TOKENS_MODEL = re.compile(r"\bmodel=(\S+)")
+_RE_TOKENS_TOTAL = re.compile(r"total=(\d+)in/")
 
 
 def _parse_token_usage(from_ts: float | None, to_ts: float | None) -> dict:
@@ -1494,6 +1495,54 @@ def _parse_token_usage(from_ts: float | None, to_ts: float | None) -> dict:
         "total": total,
         "log_range": {"min": log_min, "max": log_max},
     }
+
+
+# A gap larger than this between consecutive token-log lines starts a new "run"
+# (one user turn is a contiguous burst of tool calls; the next turn follows a pause).
+_RUN_GAP_SECS = 180.0
+
+
+def _last_run_from_ts() -> float | None:
+    """Epoch-secs start of the most recent run in the token log.
+
+    A "run" is one orchestrator turn. The orchestrator's cumulative accumulator
+    resets each turn, so a turn-start is an ``[orchestrator]`` line whose ``total``
+    input equals its own ``delta`` input (a fresh accumulator) — the last such line
+    starts the last run. Falls back to a time-gap heuristic (consecutive lines
+    within ``_RUN_GAP_SECS`` are one run) when the log has no orchestrator lines
+    (e.g. a legacy/non-free-agent run). Returns ``None`` on an empty/absent log.
+    """
+    from src.agent import _load_settings  # local import — matches _parse_token_usage
+    rel = (_load_settings() or {}).get("tokens_usage_log", "./.logs/tokens_usage.log")
+    path = _project_root() / rel
+    if not path.exists():
+        return None
+    ts_all: list[float] = []
+    orch_starts: list[float] = []
+    with path.open("r", encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            head = _RE_TOKENS_HEAD.match(line)
+            if not head:
+                continue
+            try:
+                ts = time.mktime(time.strptime(head.group(1), "%Y-%m-%d %H:%M:%S"))
+            except (ValueError, OverflowError):
+                continue
+            ts_all.append(ts)
+            if head.group(2).strip() == "orchestrator":
+                dm = _RE_TOKENS_DELTA.search(line)
+                tm = _RE_TOKENS_TOTAL.search(line)
+                if dm and tm and int(tm.group(1)) == int(dm.group(1)):
+                    orch_starts.append(ts)
+    if orch_starts:
+        return orch_starts[-1]
+    if not ts_all:
+        return None
+    ts_all.sort()
+    j = len(ts_all) - 1
+    while j > 0 and (ts_all[j] - ts_all[j - 1]) <= _RUN_GAP_SECS:
+        j -= 1
+    return ts_all[j]
 
 
 def _read_env_file() -> dict:
@@ -1688,6 +1737,8 @@ def _build_app():
                 return None
 
         try:
+            if request.args.get("scope") == "last_run":
+                return jsonify(_parse_token_usage(_last_run_from_ts(), None))
             return jsonify(_parse_token_usage(_num("from"), _num("to")))
         except Exception as exc:  # noqa: BLE001
             logger.error("token_usage failed: %s", exc, exc_info=True)

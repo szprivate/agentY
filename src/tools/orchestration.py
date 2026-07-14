@@ -236,7 +236,8 @@ _SUBAGENT_TOOLSETS = ("research", "assembly", "info", "story", "web", "vision", 
 
 
 @tool
-async def spawn_subagent(task: str, toolset: str = "full", model: Optional[str] = None) -> str:
+async def spawn_subagent(task: str, toolset: str = "full", model: Optional[str] = None,
+                         tools: Optional[list] = None, skill: Optional[str] = None) -> str:
     """Spin up a fresh subagent with a focused toolset to handle a sub-task.
 
     Use this to **isolate a heavy or self-contained sub-task** in its own clean
@@ -244,6 +245,12 @@ async def spawn_subagent(task: str, toolset: str = "full", model: Optional[str] 
     result back into your plan. The subagent runs to completion and returns its
     final text. Subagents cannot themselves spawn further subagents (depth-1),
     so keep the task well-scoped.
+
+    **Prefer a MINIMAL explicit ``tools`` list over a preset** — a subagent with
+    only the ~6 tools its task needs carries far fewer tool definitions per call
+    (less context, faster, and small models pick the right tool far more reliably
+    from 6 than from 60). Pair it with a ``skill`` to give the subagent a fixed
+    procedure. Fall back to a preset ``toolset`` only when you want a broad agent.
 
     Choose ``toolset`` by the job:
       - ``research``  — resolve a ComfyUI template/models/prompt into a brainbriefing.
@@ -256,25 +263,33 @@ async def spawn_subagent(task: str, toolset: str = "full", model: Optional[str] 
 
     Args:
         task: The complete instruction for the subagent (self-contained).
-        toolset: One of research|assembly|info|story|web|vision|full.
+        toolset: One of research|assembly|info|story|web|vision|full. Ignored when
+            ``tools`` is given.
         model: Optional 'provider,model' override (e.g. 'claude,claude-sonnet-4-5').
+        tools: Optional explicit list of tool NAMES for a lean, single-purpose
+            agent (e.g. ["upload_image","get_workflow_template","apply_brainbriefing",
+            "validate_workflow","duplicate_workflow","signal_workflow_ready"]).
+            Takes priority over ``toolset``.
+        skill: Optional skill name whose steps are baked into the subagent's prompt
+            as its procedure (e.g. "batch-handoff").
 
     Returns:
         The subagent's final text output (or a JSON error string).
     """
     ts = (toolset or "full").strip().lower()
-    if ts not in _SUBAGENT_TOOLSETS:
+    if not tools and ts not in _SUBAGENT_TOOLSETS:
         return json.dumps({
-            "error": f"Unknown toolset '{toolset}'. Choose one of: {', '.join(_SUBAGENT_TOOLSETS)}."
+            "error": f"Unknown toolset '{toolset}'. Choose one of: {', '.join(_SUBAGENT_TOOLSETS)}, "
+                     f"or pass an explicit `tools` list of tool names."
         })
     try:
         from src.agent import build_subagent  # lazy import — avoids circular import
     except Exception as exc:  # noqa: BLE001
         return json.dumps({"error": f"Could not load subagent builder: {exc}"})
     try:
-        sub = build_subagent(toolset=ts, model=model)
+        sub = build_subagent(toolset=ts, model=model, tools=tools, skill=skill)
     except Exception as exc:  # noqa: BLE001
-        return json.dumps({"error": f"Failed to build subagent ({ts}): {exc}"})
+        return json.dumps({"error": f"Failed to build subagent: {exc}"})
     try:
         result = await sub.invoke_async(task)
         return str(result)
