@@ -36,9 +36,9 @@ those inline. Spawning has overhead; use it when the isolation pays for itself.
    before any compute is spent.
 3. **Pick the MINIMAL toolset** — the exact tool names the plan needs, nothing
    else. Typical bundles:
-   - same-op over N images → `upload_image`, `get_workflow_template`,
-     `apply_brainbriefing`, `validate_workflow`, `duplicate_workflow`,
-     `signal_workflow_ready`
+   - same-op over N images → `upload_image_multiple` (stage them all in one call),
+     `get_workflow_template`, `apply_brainbriefing`, `validate_workflow`,
+     `duplicate_workflow`, `signal_workflow_ready`
    - from-scratch build → `get_workflow_recipe`, `get_node_schema`,
      `add_workflow_node`, `update_workflow`, `validate_workflow`,
      `signal_workflow_ready`

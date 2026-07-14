@@ -1,7 +1,7 @@
 ---
 name: batch-handoff
 description: Step-by-step procedure for handing off multi-iteration batch workflows to the Executor. Activate when count_iter > 1, or when applying the SAME workflow to multiple input images (Mode C: swap the input image per iteration instead of building N separate workflows).
-allowed-tools: duplicate_workflow, update_workflow, signal_workflow_ready, read_text_file, upload_image
+allowed-tools: duplicate_workflow, update_workflow, signal_workflow_ready, read_text_file, upload_image, upload_image_multiple
 ---
 
 # Batch Handoff Multi-Iteration Procedure
@@ -80,13 +80,19 @@ Identify from the assembled workflow:
 
 ### Step-by-step
 
+0. **Stage all iterated images up front (one call):** call
+   `upload_image_multiple(file_paths=[<image2 path>, ..., <imageN path>])` to stage
+   images 2 ... N in a single tool call, and read each staged `name` from the
+   returned `results`. (Idempotent per file — already-staged files just return
+   their name.) You may skip this and stage per-iteration with `upload_image`
+   instead, but the single batch call is cheaper.
+
 1. **Iteration 1 -- base workflow** (image 1 is already bound):
    - Call `signal_workflow_ready(base_workflow_path)`.
 
 2. **Iterations 2 ... N** (for each imageK where K = 2 to N):
-   - Stage it: `upload_image(file_path=<imageK path>)` -> record the returned
-     `name`. (Idempotent: a file already in ComfyUI's input dir returns its name
-     without re-copying, so do not worry about duplicates.)
+   - Use the staged `name` for imageK (from step 0, or stage it now with
+     `upload_image(file_path=<imageK path>)` -> returned `name`).
    - `duplicate_workflow(base_workflow_path)` -> record `new_path`.
    - `update_workflow(new_path, patches=[{"node_id": "<source_node_id>", "input_name": "image", "value": "<name>"}])`.
      Patch ONLY the source loader's `image` widget -- leave the fixed reference

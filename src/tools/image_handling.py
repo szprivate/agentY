@@ -180,6 +180,56 @@ def _downsize(data: bytes, img_fmt: str) -> tuple[bytes, str]:
 # Tools
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _upload_one(
+    file_path: str,
+    subfolder: str = "",
+    image_type: str = "input",
+    overwrite: bool = False,
+) -> dict:
+    """Core single-image upload shared by ``upload_image`` and
+    ``upload_image_multiple``. Returns a plain ``dict`` (not a JSON string):
+    the ComfyUI ``{name, subfolder, type}`` response, an idempotency skip note,
+    or ``{"error": ...}``.
+    """
+    if not os.path.isfile(file_path):
+        return {"error": f"File not found: {file_path}"}
+
+    filename = os.path.basename(file_path)
+
+    # Idempotency: if this file is already staged in ComfyUI's input dir, don't
+    # re-upload it — return its bare filename instead. Covers (a) the user
+    # pointing at a file that already lives in the input dir, and (b) a second
+    # agent re-staging a file that was already staged this turn. Only for flat
+    # input uploads (no subfolder) and when not explicitly overwriting.
+    # Best-effort: any failure falls through to a normal upload.
+    if image_type == "input" and not subfolder and not overwrite:
+        try:
+            from agenty_core.tools.comfyui import get_comfyui_dirs  # lazy: avoid import cycle
+            input_dir = (json.loads(get_comfyui_dirs()) or {}).get("input_dir")
+            if input_dir:
+                staged = os.path.join(input_dir, filename)
+                same_path = os.path.abspath(file_path) == os.path.abspath(staged)
+                if os.path.isfile(staged) and (
+                    same_path or os.path.getsize(staged) == os.path.getsize(file_path)
+                ):
+                    return {
+                        "name": filename, "subfolder": "", "type": "input",
+                        "note": "already staged in ComfyUI input dir; upload skipped",
+                    }
+        except Exception:
+            pass
+
+    try:
+        with open(file_path, "rb") as f:
+            files = {"image": (filename, f, "image/png")}
+            data = {"type": image_type, "overwrite": str(overwrite).lower()}
+            if subfolder:
+                data["subfolder"] = subfolder
+            return get_client().post("/upload/image", data=data, files=files)
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @tool
 def upload_image(
     file_path: str,
@@ -188,6 +238,9 @@ def upload_image(
     overwrite: bool = False,
 ) -> dict:
     """Upload an image file to the ComfyUI input directory for use in workflows.
+
+    To stage several images at once, prefer ``upload_image_multiple`` — one tool
+    call instead of N.
 
     Args:
         file_path: Local path to the image file.
@@ -198,43 +251,72 @@ def upload_image(
         image_type: 'input', 'output', or 'temp' (default 'input').
         overwrite: Overwrite existing file with the same name.
     """
-    try:
-        if not os.path.isfile(file_path):
-            return json.dumps({"error": f"File not found: {file_path}"})
+    return json.dumps(_upload_one(file_path, subfolder, image_type, overwrite))
 
-        filename = os.path.basename(file_path)
 
-        # Idempotency: if this file is already staged in ComfyUI's input dir, don't
-        # re-upload it — return its bare filename instead. Covers (a) the user
-        # pointing at a file that already lives in the input dir, and (b) a second
-        # agent re-staging a file that was already staged this turn. Only for flat
-        # input uploads (no subfolder) and when not explicitly overwriting.
-        # Best-effort: any failure falls through to a normal upload.
-        if image_type == "input" and not subfolder and not overwrite:
-            try:
-                from agenty_core.tools.comfyui import get_comfyui_dirs  # lazy: avoid import cycle
-                input_dir = (json.loads(get_comfyui_dirs()) or {}).get("input_dir")
-                if input_dir:
-                    staged = os.path.join(input_dir, filename)
-                    same_path = os.path.abspath(file_path) == os.path.abspath(staged)
-                    if os.path.isfile(staged) and (
-                        same_path or os.path.getsize(staged) == os.path.getsize(file_path)
-                    ):
-                        return json.dumps({
-                            "name": filename, "subfolder": "", "type": "input",
-                            "note": "already staged in ComfyUI input dir; upload skipped",
-                        })
-            except Exception:
-                pass
+@tool
+def upload_image_multiple(
+    file_paths: list,
+    subfolder: str = "",
+    image_type: str = "input",
+    overwrite: bool = False,
+) -> str:
+    """Upload several image files to ComfyUI's input directory in one call.
 
-        with open(file_path, "rb") as f:
-            files = {"image": (filename, f, "image/png")}
-            data = {"type": image_type, "overwrite": str(overwrite).lower()}
-            if subfolder:
-                data["subfolder"] = subfolder
-            return json.dumps(get_client().post("/upload/image", data=data, files=files))
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+    Thin batch wrapper over ``upload_image`` — use it when staging multiple input
+    images for the same turn (a multi-image edit, or the source + reference of a
+    Mode C batch) so you make one tool call instead of N. Each file goes through
+    the same idempotent logic as ``upload_image`` (a file already in the input dir
+    is a no-op) and is reported individually, so a single bad path does not lose
+    the others.
+
+    Args:
+        file_paths: List of local paths to the image files to stage. A JSON array
+                    string or a comma/newline-separated string is also accepted.
+        subfolder: Subfolder inside the target directory. Defaults to the input
+                   root (``""``) — LoadImage on some ComfyUI builds cannot read
+                   input subdirectories, so agent inputs are staged flat and
+                   referenced by bare filename.
+        image_type: 'input', 'output', or 'temp' (default 'input').
+        overwrite: Overwrite existing files with the same name.
+
+    Returns:
+        JSON ``{"results": [...], "uploaded": N, "skipped": M, "failed": K}``.
+        Each ``results`` entry mirrors ``upload_image``'s response with the source
+        ``file_path`` added. Reference a staged image in a ``LoadImage`` node by
+        its returned ``name``.
+    """
+    # Be forgiving about how the list arrives — models sometimes pass a stringified
+    # array or a delimited string instead of a real list.
+    if isinstance(file_paths, str):
+        try:
+            parsed = json.loads(file_paths)
+            file_paths = parsed if isinstance(parsed, list) else [file_paths]
+        except Exception:
+            file_paths = [p.strip() for p in re.split(r"[,\n]", file_paths) if p.strip()]
+    if not isinstance(file_paths, (list, tuple)):
+        return json.dumps({"error": f"file_paths must be a list, got {type(file_paths).__name__}"})
+
+    results = []
+    uploaded = skipped = failed = 0
+    for fp in file_paths:
+        r = _upload_one(str(fp), subfolder, image_type, overwrite)
+        entry = dict(r) if isinstance(r, dict) else {"raw": r}
+        entry["file_path"] = str(fp)
+        if entry.get("error"):
+            failed += 1
+        elif "already staged" in str(entry.get("note", "")):
+            skipped += 1
+        else:
+            uploaded += 1
+        results.append(entry)
+
+    return json.dumps({
+        "results": results,
+        "uploaded": uploaded,
+        "skipped": skipped,
+        "failed": failed,
+    })
 
 
 @tool

@@ -25,7 +25,7 @@ Extract from the user message: subject, style, input images, requested template,
 
 **Constraints:**
 - You MUST set `input_image_count` to the exact count of input images in the request (0 if none).
-- You MUST analyse any user-provided images via `analyze_image` and incorporate findings into the prompt.
+- **Input images are already prepared for you.** The orchestrator stages the input image(s) and provides a text description of each in the request. You do NOT stage, upload, or visually analyse images — there is no `upload_image` or `analyze_image` tool in your set. Work from the description(s) in the request; if a description is missing, base the prompt on the user's textual request. `get_image_resolution` (dimensions only) is still available.
 - You SHOULD extract batch count and set `count_iter` (minimum 1, maximum 20; default 1). Trigger phrases: *"batch of 5"*, *"run it 4 times"*, *"make 10 images"*.
 - You SHOULD set `variations: true` if the user requests distinct results (phrases like *"3 variations"*, *"5 versions"*, *"give me 4 different styles"*). Default `variations: false`.
 - **`batch_request`** (same workflow, only parameters vary): set `count_iter > 1` and a single `template_name`. The workflow structure is identical across all iterations — only inputs (seed, prompt tokens, etc.) are substituted. Trigger phrases: *"make 5 versions with different seeds"*, *"4 variations changing only the ethnicity"*.
@@ -60,13 +60,16 @@ Identify all input nodes in the selected workflow template.
 Map user-provided image paths/filenames into the brainbriefing.
 
 **Constraints:**
-- You MUST list each input image filename under `input_images[].filename`.
+- The orchestrator has already staged the input images into ComfyUI's input dir
+  and gives you their staged filenames in the request — **you do not upload
+  anything** (there is no `upload_image` in your set).
+- You MUST list each staged input image filename under `input_images[].filename`.
 - `input_image_count` MUST equal the exact length of `input_images`.
-- **Prior-session outputs as inputs**: If the conversation summary (injected as `[CONVERSATION SUMMARY FROM PRIOR ROUND]`) contains an `OUTPUT_PATHS` line, and the current task requires one of those files as input (e.g. "use the image we just generated"), you MUST:
-  1. Call `upload_image(file_path=<full path from OUTPUT_PATHS>)` for each such file.
-  2. Use the `name` value returned by `upload_image` as the `filename` in `input_images` and `input_nodes`.
-  3. Set `path` in `input_nodes` to the full path of the uploaded file: `<get_comfyui_dirs().input_dir>/<name>` (where `name` is returned by `upload_image`). Do NOT use the original path from `OUTPUT_PATHS`.
-  - **Never guess or fabricate filenames** — always upload and use the returned name.
+- For each input node, set `path` in `input_nodes` to
+  `<get_comfyui_dirs().input_dir>/<staged filename>` and reuse the staged filename
+  as the `filename` in `input_images`. Never guess or fabricate names — use exactly
+  the staged filenames the orchestrator provided (including for prior-session
+  outputs the orchestrator re-staged).
 
 ---
 
@@ -99,6 +102,13 @@ Identify all output nodes in the selected workflow template.
 Compose the generation prompt for the selected model family.
 
 **Constraints:**
+- **Author your own prompt text only when the request calls for it.** If the user
+  asked for distinct results (`variations: true`, "3 variations", "5 different
+  styles", or a multi-batch that varies prompt tokens), compose one distinct prompt
+  per variation. Otherwise write ONE prompt that faithfully renders the user's own
+  description — do not invent or embellish the subject/style they already gave; if
+  the user supplied explicit prompt text, carry it through with only the formatting
+  the model family needs.
 - If the selected template is `Kling3_multiShot`: set `prompt.positive` to the user's raw request text verbatim. Add a WARNING to `blockers`: `"Kling multishot prompt requires manual review."` Do NOT apply the rules below for this template.
 - Write a natural language prompt describing the subject, style, lighting, and composition.
 - Do not add quality tags, CLIP syntax, or filler phrases.

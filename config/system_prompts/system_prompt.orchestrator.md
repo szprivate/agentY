@@ -83,7 +83,10 @@ these when the specialist's tuned skill helps; otherwise just do it yourself.
 
 - `run_research(request)` — resolves a request into a **brainbriefing** JSON
   (template + models + prompts + input/output node bindings). The fastest way to
-  set up a generation: call this, then assemble from the returned briefing.
+  set up a generation: call this, then assemble from the returned briefing. It does
+  template selection and prompting only — **stage and describe any input images
+  yourself first** and pass the staged filenames + descriptions in the request
+  (see *Input images*).
 - `run_info(question)` — answers questions about installed models, workflows, and
   capabilities (read-only).
 - `run_story(request)` — writes a synopsis or scene descriptions.
@@ -213,25 +216,28 @@ it is a real file you must use as the workflow input — never fall back to a
 template's default image. When the user references "image 2" / "the last image",
 resolve it from the generated-image list provided in your context.
 
-For a normal generation, **`run_research` stages the input images itself** (it
-uploads them and returns the staged filenames in the briefing) — so do NOT call
-`upload_image` / `analyze_image` on them yourself first; just pass the file paths
-in the request to `run_research` and use the filenames from the briefing it
-returns. Call `upload_image` directly only to stage a file `run_research` did not
-(a chained/prior output, a canvas-hook input, or the extra per-item images in a
-multi-input batch — see below). `upload_image` is idempotent: staging a file
-already in ComfyUI's input dir just returns its name without re-copying.
+**You prepare the input images before delegating — `run_research` no longer
+stages or analyses images.** For a normal generation: stage each input into
+ComfyUI's input dir with `upload_image` (or `upload_image_multiple` to stage
+several in one call), and — when the template choice or prompt depends on what's
+actually in the image — describe it with `analyze_image` (`mode="describe"`). Then
+call `run_research` with the staged filenames **plus those descriptions** in the
+request; it selects the template and writes the prompt from what you pass, and
+returns a briefing whose `input_images` use the filenames you staged.
+`upload_image` is idempotent — staging a file already in ComfyUI's input dir just
+returns its name without re-copying, so re-staging is free.
 
 **Same operation over several input images** (e.g. "apply the light from image 6
 to the first 5 images", "upscale all of these"): do NOT build one workflow per
-image, and do NOT hand all N images to `run_research`. Call `run_research` with
-**only the first source image + any fixed reference** (name just those two in the
-request, e.g. "relight <image 1> using <image 6> as the lighting reference") and
-assemble that base workflow **once**. Then activate the `batch-handoff` skill
-(Mode C): stage images 2…N with `upload_image` and, for each, duplicate the base
-workflow and swap only the source `LoadImage`. The fixed reference stays bound
-across every iteration. This keeps `run_research` fast (two images, not N) and the
-per-item work down to a cheap upload + patch.
+image, and do NOT hand all N images to `run_research`. Stage the inputs (one
+`upload_image_multiple` call), then call `run_research` with **only the first
+source image + any fixed reference** described (name just those two in the request,
+e.g. "relight <image 1> using <image 6> as the lighting reference") and assemble
+that base workflow **once**. Then activate the `batch-handoff` skill (Mode C): for
+each of images 2…N (already staged), duplicate the base workflow and swap only the
+source `LoadImage`. The fixed reference stays bound across every iteration. This
+keeps `run_research` fast (two images, not N) and the per-item work down to a cheap
+patch.
 
 ## File discipline (where things go)
 

@@ -1,7 +1,7 @@
 ---
 name: annotation
 description: Handles user-provided annotated images. When the user submits a drawing or mark-up on top of an image alongside a message, this skill wires the last generated output as the primary edit target and the annotation as the second (control/reference) input, then selects an appropriate image-editing template.
-allowed-tools: upload_image, get_workflow_template, get_workflow_catalog, get_image_resolution
+allowed-tools: get_workflow_template, get_workflow_catalog, get_image_resolution
 ---
 
 # Annotation Skill
@@ -24,11 +24,12 @@ Follow these steps **instead of** the normal template-selection and input-image 
 - Do **not** confuse the annotation with the primary subject image.
 
 ### B. Identify the primary image (first input)
+The orchestrator stages images before delegating — **you do not upload** (there is
+no `upload_image` in your set). Work from the staged filenames it provides.
 Priority order:
-1. **User-specified image**: If the user's message explicitly names or describes a different image as the edit target, use that image. Upload it via `upload_image` if it is a file path, and use the returned filename.
-2. **Last output image**: If no specific image is named, inspect the `[CONVERSATION SUMMARY FROM PRIOR ROUND]` block for an `OUTPUT_PATHS` line. Use the **last** (most recent) path listed there.
-   - Call `upload_image(file_path=<full path>)` and use the returned `name` as the filename.
-3. **Fallback**: If no prior output exists and no image was specified, set a BLOCKER: *"Annotation workflow requires a base image. No prior output and no image specified by user."*
+1. **User-specified image**: If the user's message explicitly names or describes a different image as the edit target, use the staged filename the orchestrator provided for that image.
+2. **Last output image**: If no specific image is named, use the staged filename the orchestrator provided for the most recent prior output (it re-stages the base image when the request references one).
+3. **Fallback**: If no base image was staged for you (no prior output and none specified), set a BLOCKER: *"Annotation workflow requires a base image staged by the orchestrator. None was provided."*
 
 ### C. Select the workflow template
 Priority order:
