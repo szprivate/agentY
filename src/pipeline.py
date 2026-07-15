@@ -4167,12 +4167,6 @@ class Pipeline:
             Pick the template and write the prompt; output the decision JSON.
         """).strip()
 
-        # Inject the template catalog so the Researcher picks an EXACT real name
-        # without having to call get_workflow_catalog (and cannot hallucinate one).
-        catalog_block = self._format_template_catalog()
-        if catalog_block:
-            prompt = catalog_block + "\n\n" + prompt
-
         # Prepend relevant long-term memories (past style/template preferences).
         memory_ctx = self._get_memory_context(user_text)
         if memory_ctx:
@@ -4213,6 +4207,14 @@ class Pipeline:
                 f"(use any prompt text or details from it):\n{_trimmed}"
             )
             self._session.last_info_response = None  # consume once
+
+        # Inject the template NAME list as the FRONT (stable) prefix so the
+        # Researcher picks an EXACT real name without a tool call and cannot
+        # hallucinate one. Front placement keeps it a cacheable prefix (the
+        # variable memory/request follow it).
+        catalog_block = self._format_template_catalog()
+        if catalog_block:
+            prompt = catalog_block + "\n\n" + prompt
 
         return prompt, user_text
 
@@ -4403,20 +4405,24 @@ class Pipeline:
         return got
 
     def _format_template_catalog(self) -> str:
-        """Render the template catalog (name: description) for injection into the
-        Researcher's prompt, so it selects an EXACT real name without a tool call.
-        Cached per pipeline."""
+        """Render the template NAME list for injection into the Researcher's prompt,
+        so it selects an EXACT real name without a tool call. Names only (they are
+        self-describing: task + model), which is ~1k tokens for the whole catalog —
+        far leaner than dumping the full get_workflow_catalog result (~5k tokens),
+        and it cannot hallucinate a name. The model may still call
+        get_workflow_catalog for a description if a name is ambiguous. Cached per
+        pipeline. Placed as a stable prompt prefix so implicit caching amortises it."""
         if getattr(self, "_catalog_block_cache", None) is None:
             block = ""
             try:
                 from src.tools import get_workflow_catalog as _gwc  # noqa: PLC0415
                 cat = json.loads(getattr(_gwc, "func", _gwc)())
                 if isinstance(cat, dict) and cat:
-                    lines = [f"- {name}: {str(desc)[:140]}"
-                             for name, desc in sorted(cat.items())]
                     block = ("AVAILABLE TEMPLATES — set template.name to EXACTLY one of "
-                             "these names (or \"build_new\" if none fit):\n"
-                             + "\n".join(lines))
+                             "these names (or \"build_new\" if none fit); the name encodes "
+                             "task + model, and you may call get_workflow_catalog for a "
+                             "description if a name is ambiguous:\n"
+                             + ", ".join(sorted(cat.keys())))
             except Exception:  # noqa: BLE001
                 block = ""
             self._catalog_block_cache = block
