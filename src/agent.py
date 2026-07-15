@@ -307,6 +307,12 @@ def _load_system_prompt(llm: str) -> str:
             text = text.replace("{{BRAINBRIEF_EXAMPLE}}", example_text)
         else:
             print(f"[agentY] Warning: brainbrief_example.json not found at {example_path.resolve()}")
+    if "{{DECISION_EXAMPLE}}" in text:
+        example_path = Path(__file__).parent.parent / "config" / "researcher_decision_example.json"
+        if example_path.exists():
+            text = text.replace("{{DECISION_EXAMPLE}}", example_path.read_text(encoding="utf-8"))
+        else:
+            print(f"[agentY] Warning: researcher_decision_example.json not found at {example_path.resolve()}")
     return text
 
 

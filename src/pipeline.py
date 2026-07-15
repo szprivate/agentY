@@ -118,6 +118,27 @@ class BrainBriefing(BaseModel):
     # notes_for_executor: Optional[str] = Field(default=None, description="Additional notes for the Brain")
 
 
+class ResearcherDecision(BaseModel):
+    """The Researcher's THIN output contract (Option B).
+
+    The Researcher only makes the two judgment calls it is good at — pick a
+    template and author the prompt — plus a little request metadata. The pipeline
+    then assembles the full :class:`BrainBriefing` by merging this decision with
+    the deterministic scaffold (``build_briefing_scaffold``), which owns every
+    mechanical field (input/output/prompt node bindings, paths, model checks).
+    All mechanical fields are therefore ABSENT here by design.
+    """
+    status: str = Field(default="ready", description="'ready' or 'blocked'")
+    blockers: List[str] = Field(default_factory=list, description="Request-level blockers only (e.g. no template fits, request too unclear). Missing-model blockers are detected downstream.")
+    task: Task
+    template: BriefTemplate
+    prompt: BriefPrompt
+    count_iter: int = Field(default=1, description="Batch iterations (1 = single run, N > 1 = batch)")
+    variations: bool = Field(default=False, description="True when each iteration should use a distinct prompt")
+    resolution_width: Optional[Any] = Field(default=None, description="Requested width in px, or null to let the template/scaffold decide")
+    resolution_height: Optional[Any] = Field(default=None, description="Requested height in px, or null")
+
+
 # ---------------------------------------------------------------------------
 # Multiprompt variations helper
 # ---------------------------------------------------------------------------
@@ -4118,6 +4139,9 @@ class Pipeline:
     # How many times to reject a content-free 'blocked' briefing before accepting
     # it (avoids exhausting all retries into a fail when a model is truly missing).
     _MAX_EMPTY_BLOCKER_RETRIES = 2
+    # How many times to reject a hallucinated (non-catalog) template name before
+    # falling back to build_new. Common after a history-clear + constrain fallback.
+    _MAX_BAD_TEMPLATE_RETRIES = 2
     # Auto self-correction rounds when the brain ends without calling
     # signal_workflow_ready (common with local models that stop early).
     _MAX_BRAIN_AUTORETRIES = 2
@@ -4140,8 +4164,14 @@ class Pipeline:
             User request:
             {user_text}
 
-            Resolve all fields and output the brainbriefing JSON.
+            Pick the template and write the prompt; output the decision JSON.
         """).strip()
+
+        # Inject the template catalog so the Researcher picks an EXACT real name
+        # without having to call get_workflow_catalog (and cannot hallucinate one).
+        catalog_block = self._format_template_catalog()
+        if catalog_block:
+            prompt = catalog_block + "\n\n" + prompt
 
         # Prepend relevant long-term memories (past style/template preferences).
         memory_ctx = self._get_memory_context(user_text)
@@ -4239,10 +4269,10 @@ class Pipeline:
         return None
 
     def _constrain_briefing(self, user_request: str, messages: list) -> str | None:
-        """Force a schema-valid BrainBriefing JSON via a constrained, tool-free
+        """Force a schema-valid ResearcherDecision JSON via a constrained, tool-free
         model call that cannot spiral. Uses the researcher's own gathered context
-        (chosen template, installed models, image descriptions) so the output is a
-        REAL briefing for the request, not a stub.
+        (chosen template, image descriptions) so the output is a REAL decision for
+        the request, not a stub. The pipeline assembles the full briefing from it.
 
         Drives whichever backend the researcher (``pipeline.query_templates``) uses:
         an OpenAI-compatible endpoint (DashScope/Qwen, OpenAI, Gemini) via
@@ -4262,22 +4292,37 @@ class Pipeline:
         if not api_key:
             return None
         ctx = self._flatten_researcher_context(messages)
-        schema = BrainBriefing.model_json_schema()
+        schema = ResearcherDecision.model_json_schema()
+        # Inject the template catalog so the constrained call can ONLY pick a real
+        # template name (history clears can wipe the catalog the researcher fetched,
+        # otherwise inviting a hallucinated name that the scaffold then blocks on).
+        catalog_hint = ""
+        try:
+            from src.tools import get_workflow_catalog as _gwc  # noqa: PLC0415
+            _cat = json.loads(getattr(_gwc, "func", _gwc)())
+            if isinstance(_cat, dict) and _cat:
+                names = ", ".join(sorted(_cat.keys()))
+                catalog_hint = ("\n\nAVAILABLE TEMPLATE NAMES (template.name MUST be "
+                                f"one of these exactly, or \"build_new\"):\n{names[:6000]}")
+        except Exception:  # noqa: BLE001
+            pass
         sys_msg = (
-            "You finalise the researcher's work into ONE brainbriefing JSON "
-            "conforming to the schema. Use the USER REQUEST and RESEARCH "
-            "CONTEXT (tool results: the chosen template name, installed model "
-            "files, any image description). status MUST be 'ready' (use 'blocked' "
-            "only if a required model/template is missing). Use the real template "
-            "name and the actual prompt text from the request. Never describe this "
-            "instruction — output only the JSON briefing for the request. No prose, "
-            "no markdown.\n\nThe JSON MUST validate against this JSON Schema:\n"
-            + json.dumps(schema)
+            "You finalise the researcher's work into ONE decision JSON conforming "
+            "to the schema: the chosen template name, the authored prompt, and task "
+            "metadata ONLY — no node bindings or paths (those are added later). Use "
+            "the USER REQUEST and RESEARCH CONTEXT (tool results: the chosen template "
+            "name, any image description). status MUST be 'ready' (use 'blocked' only "
+            "if no template fits or the request is truly unclear). Use the real "
+            "template name and the actual prompt text from the request. Never "
+            "describe this instruction — output only the JSON decision for the "
+            "request. No prose, no markdown.\n\nThe JSON MUST validate against this "
+            "JSON Schema:\n" + json.dumps(schema)
         )
         user_msg = (
             f"USER REQUEST:\n{user_request[:2000]}\n\n"
-            f"RESEARCH CONTEXT (researcher's tool calls + results):\n{ctx}\n\n"
-            "Output the brainbriefing JSON for the user request now."
+            f"RESEARCH CONTEXT (researcher's tool calls + results):\n{ctx}"
+            f"{catalog_hint}\n\n"
+            "Output the decision JSON for the user request now."
         )
         try:
             from openai import OpenAI  # noqa: PLC0415
@@ -4357,63 +4402,142 @@ class Pipeline:
                 pass
         return got
 
-    def _apply_scaffold_override(self, briefing: "BrainBriefing",
-                                 staged_inputs: list | None) -> "BrainBriefing":
-        """Overwrite the MECHANICAL brainbriefing fields with deterministically
-        scaffolded values (input/output/prompt node bindings), keeping the LLM's
-        authored fields (prompt, task, template, count_iter, variations).
+    def _format_template_catalog(self) -> str:
+        """Render the template catalog (name: description) for injection into the
+        Researcher's prompt, so it selects an EXACT real name without a tool call.
+        Cached per pipeline."""
+        if getattr(self, "_catalog_block_cache", None) is None:
+            block = ""
+            try:
+                from src.tools import get_workflow_catalog as _gwc  # noqa: PLC0415
+                cat = json.loads(getattr(_gwc, "func", _gwc)())
+                if isinstance(cat, dict) and cat:
+                    lines = [f"- {name}: {str(desc)[:140]}"
+                             for name, desc in sorted(cat.items())]
+                    block = ("AVAILABLE TEMPLATES — set template.name to EXACTLY one of "
+                             "these names (or \"build_new\" if none fit):\n"
+                             + "\n".join(lines))
+            except Exception:  # noqa: BLE001
+                block = ""
+            self._catalog_block_cache = block
+        return self._catalog_block_cache
 
-        Safe-merge for the transition period:
-          * ``input_nodes``/``input_images`` are overridden ONLY when the
-            orchestrator passed a structured ``staged_inputs`` list (``None`` ⇒
-            keep the LLM's, so nothing is wiped when inputs arrive only as prose).
-          * ``output_nodes`` are overridden only when the scaffold found savers
-            (a template that ships no saver keeps the LLM's best guess).
-          * scaffold model blockers (missing files) are unioned in.
-        Any failure (e.g. ComfyUI unreachable) leaves the briefing untouched.
+    def _catalog_names(self) -> list[str]:
+        """Sorted template names from get_workflow_catalog (cached per pipeline)."""
+        if getattr(self, "_catalog_names_cache", None) is None:
+            names: list[str] = []
+            try:
+                from src.tools import get_workflow_catalog as _gwc  # noqa: PLC0415
+                cat = json.loads(getattr(_gwc, "func", _gwc)())
+                if isinstance(cat, dict):
+                    names = sorted(cat.keys())
+            except Exception:  # noqa: BLE001
+                names = []
+            self._catalog_names_cache = names
+        return self._catalog_names_cache
+
+    @staticmethod
+    def _name_tokens(name: str) -> set:
+        _common = {"api", "image", "video", "text", "to", "the", "of", "and",
+                   "workflow", "dev", "template", "gen", "generation", "using",
+                   "model", "new", "base", "simple", "basic", "default"}
+        return set(re.findall(r"[a-z0-9]+", name.lower())) - _common
+
+    def _match_template(self, name: str) -> str | None:
+        """Resolve *name* to a real catalog template (exact, case-insensitive, then
+        token-overlap fuzzy ≥ 0.6). Returns ``None`` when nothing plausibly matches
+        (i.e. the name is hallucinated). Trusts the name if the catalog is empty."""
+        names = self._catalog_names()
+        if not names:
+            return name
+        if name in names:
+            return name
+        low = {n.lower(): n for n in names}
+        if name.lower() in low:
+            return low[name.lower()]
+        q = self._name_tokens(name)
+        if not q:
+            return None
+        best, bscore = None, 0.0
+        for n in names:
+            t = self._name_tokens(n)
+            if not t:
+                continue
+            sc = len(q & t) / min(len(q), len(t))
+            if sc > bscore:
+                best, bscore = n, sc
+        return best if bscore >= 0.6 else None
+
+    def _closest_catalog_names(self, name: str, k: int = 8) -> list[str]:
+        """The k catalog names sharing the most tokens with *name* (for a nudge)."""
+        q = self._name_tokens(name)
+        scored = sorted(self._catalog_names(),
+                        key=lambda n: len(q & self._name_tokens(n)), reverse=True)
+        return scored[:k]
+
+    def _assemble_briefing(self, decision: "ResearcherDecision",
+                           staged_inputs: list | None) -> "BrainBriefing":
+        """Merge the Researcher's thin decision with the deterministic scaffold
+        into a full :class:`BrainBriefing` (Option B).
+
+        The scaffold owns every mechanical field (input/output/prompt node
+        bindings, paths, model checks); the decision owns the authored prompt,
+        task, template, and batch metadata. Missing-model blockers surface here
+        (via the scaffold's ``check_model``). ``build_new`` and any scaffold
+        failure fall back to a briefing built from the decision alone.
         """
-        tname = (briefing.template.name or "").strip()
-        if not tname or tname.lower() in ("build_new", "none"):
-            return briefing
-        try:
-            from src.tools.briefing_scaffold import build_briefing_scaffold  # noqa: PLC0415
-            res = ({"width": briefing.resolution_width, "height": briefing.resolution_height}
-                   if briefing.resolution_width and briefing.resolution_height else None)
-            sc = build_briefing_scaffold(
-                tname, staged_inputs=staged_inputs, task_type=briefing.task.type,
-                task_description=briefing.task.description, count_iter=briefing.count_iter,
-                variations=briefing.variations, resolution=res)
-        except Exception as exc:  # noqa: BLE001
-            if self._verbose:
-                print(f"pipeline: scaffold override skipped ({exc})")
-            return briefing
+        tname = (decision.template.name or "").strip()
+        res = ({"width": decision.resolution_width, "height": decision.resolution_height}
+               if decision.resolution_width and decision.resolution_height else None)
+        sc: dict | None = None
+        if tname and tname.lower() not in ("build_new", "none"):
+            try:
+                from src.tools.briefing_scaffold import build_briefing_scaffold  # noqa: PLC0415
+                sc = build_briefing_scaffold(
+                    tname, staged_inputs=staged_inputs, task_type=decision.task.type,
+                    task_description=decision.task.description, count_iter=decision.count_iter,
+                    variations=decision.variations, resolution=res)
+            except Exception as exc:  # noqa: BLE001
+                if self._verbose:
+                    print(f"pipeline: scaffold assembly failed ({exc}); "
+                          f"building briefing from decision alone.")
+                sc = None
 
+        if sc is None:
+            # build_new / scaffold unavailable: minimal briefing from the decision.
+            sc = {
+                "input_images": [], "input_nodes": [], "input_image_count": 0,
+                "output_nodes": [], "resolution_width": (res or {}).get("width"),
+                "resolution_height": (res or {}).get("height"), "prompt_nodes": [],
+                "positive_prompt_node_id": None, "blockers": [],
+            }
         sc.pop("_scaffold_meta", None)
-        try:
-            if staged_inputs is not None:
-                briefing.input_nodes = [InputImage(**n) for n in sc.get("input_nodes", [])]
-                briefing.input_images = [BriefInputImage(**n) for n in sc.get("input_images", [])]
-                briefing.input_image_count = sc.get("input_image_count", 0)
-            if sc.get("output_nodes"):
-                briefing.output_nodes = [OutputNode(**n) for n in sc["output_nodes"]]
-            briefing.positive_prompt_node_id = sc.get("positive_prompt_node_id")
-            # Union real (non-WARNING) scaffold blockers — e.g. a missing model file.
-            sc_blockers = [b for b in sc.get("blockers", [])
-                           if b and not str(b).startswith("WARNING")]
-            if sc_blockers:
-                have = set(briefing.blockers or [])
-                briefing.blockers = list(briefing.blockers or []) + \
-                    [b for b in sc_blockers if b not in have]
-                briefing.status = "blocked"
-        except (ValidationError, TypeError) as exc:
-            if self._verbose:
-                print(f"pipeline: scaffold override produced invalid fields ({exc}); "
-                      f"keeping LLM briefing.")
-            return briefing
+
+        # Merge the LLM's authored fields over the scaffold skeleton.
+        sc["template"] = {"name": (tname or "build_new")}
+        sc["task"] = {"type": decision.task.type, "description": decision.task.description}
+        sc["prompt"] = {"positive": decision.prompt.positive, "negative": decision.prompt.negative}
+        sc["count_iter"] = decision.count_iter
+        sc["variations"] = decision.variations
+        # positive_prompt_node_id only matters for per-variation splicing.
+        if not (decision.variations or decision.count_iter > 1):
+            sc["positive_prompt_node_id"] = None
+
+        # Blockers: request-level (from the LLM) ∪ real model blockers (from the
+        # scaffold). WARNING-prefixed scaffold notes stay non-fatal.
+        scaffold_blockers = [b for b in sc.get("blockers", [])
+                             if b and not str(b).startswith("WARNING")]
+        warnings = [b for b in sc.get("blockers", []) if str(b).startswith("WARNING")]
+        request_blockers = list(decision.blockers or [])
+        real_blockers = request_blockers + [b for b in scaffold_blockers if b not in request_blockers]
+        sc["blockers"] = real_blockers + warnings
+        sc["status"] = "blocked" if (real_blockers or decision.status == "blocked") else "ready"
+
+        briefing = BrainBriefing.model_validate(sc)
         if self._verbose:
-            print(f"pipeline: scaffold override applied (template={tname}, "
+            print(f"pipeline: briefing assembled (template={briefing.template.name}, "
                   f"in={len(briefing.input_nodes)} out={len(briefing.output_nodes)} "
-                  f"pos_node={briefing.positive_prompt_node_id}).")
+                  f"pos_node={briefing.positive_prompt_node_id} status={briefing.status}).")
         return briefing
 
     async def _arun_researcher(self, user_input, staged_inputs: list | None = None):
@@ -4438,6 +4562,7 @@ class Pipeline:
         # rather than a terse correction that assumes prior context.
         _context_reset = False
         _eb_retries = 0  # empty-blocker rejections (bounded, then accept the block)
+        _bad_tmpl_retries = 0  # hallucinated-template rejections (bounded → build_new)
         _downloaded = False  # attempted a named-missing-model download once
         _researcher_snap = self._usage_snapshot(self._researcher)
 
@@ -4532,86 +4657,113 @@ class Pipeline:
                 print(f"pipeline: Researcher finished ({label}). Extracting brainbriefing …")
 
             raw_json = _extract_json(last_response)
-            briefing = None
+            decision = None
             if raw_json is not None:
                 try:
-                    briefing = BrainBriefing.model_validate(json.loads(raw_json))
+                    decision = ResearcherDecision.model_validate(json.loads(raw_json))
                 except (json.JSONDecodeError, ValidationError) as exc:
                     last_error = str(exc)
                     if self._verbose:
                         print(f"pipeline: Researcher ({label}) validation failed: {last_error}")
-                    briefing = None
+                    decision = None
             else:
                 last_error = "No JSON object found in the output."
 
             # #1 schema-constrained emission: if the free-text output didn't yield a
-            # valid briefing, force one from the draft via a tool-free JSON-mode call
+            # valid decision, force one from the draft via a tool-free JSON-mode call
             # (response_format=json_object, schema in the prompt) — which cannot run away.
-            if briefing is None:
+            if decision is None:
                 constrained = self._constrain_briefing(user_input, list(self._researcher.messages))
                 if constrained:
                     try:
-                        cand = BrainBriefing.model_validate(json.loads(constrained))
+                        cand = ResearcherDecision.model_validate(json.loads(constrained))
                         tname = (cand.template.name or "").lower()
-                        # Reject a meta/stub briefing (model describing the instruction
-                        # rather than producing a briefing for the request).
+                        # Reject a meta/stub decision (model describing the instruction
+                        # rather than deciding for the request).
                         if cand.status not in ("ready", "blocked") or \
-                                "draft" in tname or "researcher" in tname or not tname:
-                            last_error = "schema-constrained emission produced a stub/meta briefing"
-                            briefing = None
+                                "draft" in tname or "researcher" in tname:
+                            last_error = "schema-constrained emission produced a stub/meta decision"
+                            decision = None
                         else:
-                            briefing = cand
+                            decision = cand
                             if self._verbose:
-                                print("pipeline: briefing recovered via schema-constrained emission.")
+                                print("pipeline: decision recovered via schema-constrained emission.")
                     except (json.JSONDecodeError, ValidationError) as exc:
                         last_error = f"schema-constrained emission still invalid: {exc}"
-                        briefing = None
+                        decision = None
 
-            if briefing is None:
+            if decision is None:
                 continue
 
             # A content-free block (status='blocked' with no concrete blocker) is
-            # usually an agent error — the model is often installed. Retry a bounded
-            # number of times, nudging it to name the blocker or proceed ready; if it
-            # still insists, accept the block (a clean 'blocked', not a fail).
-            if briefing.status == "blocked" and not any(
-                    isinstance(b, str) and b.strip() for b in (briefing.blockers or [])):
+            # usually an agent error. Retry a bounded number of times, nudging it to
+            # name the blocker or proceed ready; if it still insists, accept the block.
+            if decision.status == "blocked" and not any(
+                    isinstance(b, str) and b.strip() for b in (decision.blockers or [])):
                 if _eb_retries < self._MAX_EMPTY_BLOCKER_RETRIES:
                     _eb_retries += 1
                     last_error = (
-                        "You set status='blocked' but listed no concrete blocker. If a "
-                        "specific model file or template is genuinely missing, name it "
-                        "exactly in 'blockers'. Otherwise the requirements ARE met — set "
-                        "status='ready' and produce the full brainbriefing."
+                        "You set status='blocked' but listed no concrete blocker. If no "
+                        "template genuinely fits or the request is truly unclear, name "
+                        "that in 'blockers'. Otherwise set status='ready' and return your "
+                        "template + prompt decision."
                     )
                     if self._verbose:
-                        print(f"pipeline: rejected empty-blocker briefing "
+                        print(f"pipeline: rejected empty-blocker decision "
                               f"({_eb_retries}/{self._MAX_EMPTY_BLOCKER_RETRIES}); retrying.")
                     _context_reset = True
                     continue
                 if self._verbose:
                     print("pipeline: empty-blocker persisted — accepting the block.")
 
-            # Deterministic download+rerun: if blocked on a named missing model,
-            # resolve it on HF and fetch it into ComfyUI's extra model path, then
-            # retry so the researcher can proceed. Once per request; a no-op when
-            # downloads are disabled (download_hf_model fails fast).
+            # Validate the template pick against the catalog. A hallucinated name
+            # (common after a history-clear → constrain fallback, e.g. 'img2img')
+            # would otherwise make the scaffold block. Snap near-misses to the real
+            # name; retry a bounded number of times with suggestions; then build_new.
+            _tname = (decision.template.name or "").strip()
+            if _tname and _tname.lower() not in ("build_new", "none"):
+                _match = self._match_template(_tname)
+                if _match is None:
+                    if _bad_tmpl_retries < self._MAX_BAD_TEMPLATE_RETRIES:
+                        _bad_tmpl_retries += 1
+                        _suggest = ", ".join(self._closest_catalog_names(_tname))
+                        last_error = (
+                            f"Template '{_tname}' does not exist. Choose an EXACT name "
+                            f"from get_workflow_catalog. Closest available: {_suggest}. "
+                            f"If none genuinely fit, set template.name to \"build_new\".")
+                        if self._verbose:
+                            print(f"pipeline: rejected hallucinated template '{_tname}' "
+                                  f"({_bad_tmpl_retries}/{self._MAX_BAD_TEMPLATE_RETRIES}); retrying.")
+                        _context_reset = True
+                        continue
+                    if self._verbose:
+                        print(f"pipeline: template '{_tname}' unresolved after retries — "
+                              f"falling back to build_new.")
+                    decision.template.name = "build_new"
+                elif _match != _tname:
+                    if self._verbose:
+                        print(f"pipeline: snapped template '{_tname}' → '{_match}'.")
+                    decision.template.name = _match
+
+            # Assemble the full briefing: merge the decision with the deterministic
+            # scaffold (which owns node bindings + runs check_model). Missing-model
+            # blockers surface here.
+            briefing = self._assemble_briefing(decision, staged_inputs)
+
+            # Deterministic download+rerun: if the scaffold flagged a named missing
+            # model, resolve it on HF and fetch it into ComfyUI's extra model path,
+            # then retry. Once per request; a no-op when downloads are disabled.
             if briefing.status == "blocked" and not _downloaded and any(
                     isinstance(b, str) and b.strip() for b in (briefing.blockers or [])):
                 _downloaded = True
                 if self._attempt_model_downloads(briefing.blockers or []):
                     _context_reset = True
                     last_error = ("The previously-missing model(s) have now been "
-                                  "downloaded and are available. Reassess and produce "
-                                  "the full brainbriefing with status='ready'.")
+                                  "downloaded and are available. Reassess and return your "
+                                  "template + prompt decision with status='ready'.")
                     if self._verbose:
                         print("pipeline: downloaded missing model(s); retrying researcher.")
                     continue
-
-            # Deterministic scaffold override: replace the LLM's hand-assembled
-            # mechanical fields (input/output/prompt node bindings) with values
-            # derived from the template graph, keeping its authored prompt/task.
-            briefing = self._apply_scaffold_override(briefing, staged_inputs)
 
             raw_json = briefing.model_dump_json(indent=2)
             if self._verbose:

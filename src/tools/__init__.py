@@ -187,35 +187,21 @@ DOP_TOOLS: list = []
 # Query Templates tools – template lookup, model resolution, prompting.
 #
 # The researcher is deliberately scoped to template retrieval + prompt writing.
-# Image PREP (staging + visual analysis) is the orchestrator's job now, so
-# upload_image and analyze_image are intentionally NOT in this set — the
-# orchestrator stages inputs and passes their descriptions in the request.
-# get_image_resolution stays (cheap, reads dimensions off disk; no image bytes).
+# Option B (thin decision contract): the Researcher only picks a template and
+# writes the prompt. The deterministic scaffold (build_briefing_scaffold) owns
+# EVERY mechanical field — node bindings, paths, model checks, resolution — so
+# the researcher needs none of those tools. Trimming the set is what actually
+# caps the call count: a tool that isn't here cannot be called.
+#   - get_workflow_catalog: browse templates to pick one (its only discovery need)
+#   - stop: clean termination
+# Deliberately excluded: get_workflow_template, get_comfyui_dirs, check_model,
+# get_image_resolution, read_text_file, run_script, iterate, memory_*, web_search*,
+# all HF tools — the scaffold or orchestrator handles each of these downstream,
+# and the model writes prompts from its own knowledge. A tool absent here cannot
+# be called, which is what actually caps the researcher's call count.
 # ---------------------------------------------------------------------------
 QUERY_TEMPLATES_TOOLS: list = [
     get_workflow_catalog,
-    get_workflow_template,
-    list_workflow_recipes,
-    get_workflow_recipe,  # build_new: source model files from recipe node_defaults
-    check_model,         # verify model files exist in the ComfyUI installation
-    get_comfyui_dirs,
-    get_agent_output_dirs,  # canonical agent image/video/scripts folders
-    read_text_file,
-    get_image_resolution,
-    download_image,  # fetch a web reference image to disk for a style reference
-    run_script,  # needed for skills (e.g. image-downsize)
-    # Web search
-    web_search,
-    web_search_images,
-    iterate,
-    calculator,
-    memory_read,
-    memory_write,
-    # HuggingFace – discover and download missing models
-    search_huggingface_models,
-    get_model_info,
-    find_hf_file,       # locate a file by name across HF (API + DDG fallback)
-    download_hf_model,
     stop,
 ]
 

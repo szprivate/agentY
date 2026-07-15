@@ -1,0 +1,19 @@
+{
+  "status": "ready | blocked",
+  "blockers": [],
+  "task": {
+    "type": "image generation | image edit | image edit with controlnet | inpaint outpaint | text to video | image to video | first last frame to video | video to video | upscale | audio | 3d",
+    "description": "one sentence summary of what is being generated"
+  },
+  "template": {
+    "name": "exact template name from get_workflow_catalog, or build_new"
+  },
+  "prompt": {
+    "positive": "the generation prompt, written for the template's model family",
+    "negative": "negative prompt, or null"
+  },
+  "count_iter": 1,
+  "variations": false,
+  "resolution_width": null,
+  "resolution_height": null
+}
