@@ -63,8 +63,8 @@ Map each brainbriefing value to the correct node input:
 
 | brainbriefing field | Target node input |
 |---------------------|-------------------|
-| `prompt.positive` | `CLIPTextEncode.text` (positive node) |
-| `prompt.negative` | `CLIPTextEncode.text` (negative node), or skip if `null` |
+| `prompt.positive` | The positive prompt node's **real** prompt slot — `text` for `CLIPTextEncode`, but `prompt` for API / partner nodes (`OpenAIGPTImageNodeV2`, `GeminiNanoBanana2`, `IdeogramV3`, …). If `prompt_nodes` names the node + slot, use exactly that. Otherwise verify the slot with `get_node_schema`. **Never assume `text`.** |
+| `prompt.negative` | The negative prompt node's real slot (as above), or skip if `null` |
 | `resolution_width` | `EmptyLatentImage.width` (or equivalent) |
 | `resolution_height` | `EmptyLatentImage.height` (or equivalent) |
 | `input_nodes[].path` | `LoadImage.image` / `VHS_LoadImagePath.image` (per `input_nodes[].node`) |
@@ -90,7 +90,8 @@ Model paths come from the brainbriefing (Query Templates-verified via `check_mod
 
 Build three arrays:
 
-**`patches`** — set scalar inputs on nodes you are keeping:
+**`patches`** — set scalar inputs on nodes you are keeping (use each node's real
+prompt slot — `text` for CLIPTextEncode, `prompt` for API/partner nodes):
 ```json
 [
   { "node_id": "<existing_id>", "input_name": "text", "value": "<positive_prompt>" },

@@ -99,6 +99,22 @@ class OutputNode(BaseModel):
     output_path: str = Field(description="Full directory path where the node will save its output")
 
 
+class PromptNode(BaseModel):
+    """A prompt-text injection target, traced deterministically from the template graph.
+
+    Crucially carries the node's **real** input slot name so the prompt lands in
+    the correct field — ``text`` for CLIPTextEncode-style nodes but ``prompt`` for
+    API / partner nodes (OpenAIGPTImageNodeV2, Gemini*, Ideogram*, …). This is the
+    one piece of slot knowledge the scaffold resolves; it MUST survive to
+    ``apply_brainbriefing`` (its exact-slot path) or every downstream consumer
+    falls back to guessing ``text`` and mis-binds API-node prompts.
+    """
+    node_id: str = Field(description="Node ID in the workflow JSON")
+    role: str = Field(description="'positive' or 'negative'")
+    slot: str = Field(description="Real input slot for the prompt text (e.g. 'text' for CLIPTextEncode, 'prompt' for API/partner nodes)")
+    node: str = Field(default="", description="ComfyUI node class name (informational)")
+
+
 class BrainBriefing(BaseModel):
     """Structured handoff document from the Query Templates to the Assemble Workflow."""
     status: str = Field(description="'ready' or 'blocked'")
@@ -114,6 +130,7 @@ class BrainBriefing(BaseModel):
     prompt: BriefPrompt
     count_iter: int = Field(default=1, description="Number of batch iterations to generate (1 = single run, N > 1 = batch)")
     variations: bool = Field(default=False, description="True when each iteration should use a distinct prompt from multiprompt.json")
+    prompt_nodes: List[PromptNode] = Field(default_factory=list, description="Deterministic per-node prompt-injection targets (node_id + role + real input slot) traced from the template graph. Used by apply_brainbriefing's exact-slot path so API-node prompts land in 'prompt', not 'text'.")
     positive_prompt_node_id: Optional[str] = Field(default=None, description="ComfyUI node ID of the positive prompt text node (used to splice per-variation prompts into workflow copies)")
     # notes_for_executor: Optional[str] = Field(default=None, description="Additional notes for the Brain")
 
@@ -173,6 +190,7 @@ def _apply_multiprompt_variations(
     base_workflow_path: str,
     positive_prompt_node_id: str,
     *,
+    slot: str = "text",
     verbose: bool = True,
 ) -> list[str]:
     """Expand one base workflow into N per-variation copies using multiprompt.json.
@@ -191,8 +209,10 @@ def _apply_multiprompt_variations(
 
     Args:
         base_workflow_path:     Absolute path to the validated base workflow.
-        positive_prompt_node_id: Node ID whose ``inputs.text`` field receives
-                                 the per-variation prompt text.
+        positive_prompt_node_id: Node ID whose prompt-text input receives the
+                                 per-variation prompt text.
+        slot:                    Real input slot name on that node ("text" for
+                                 CLIPTextEncode, "prompt" for API/partner nodes).
         verbose:                 Log progress to stdout when True.
     """
     mp_file = _MULTIPROMPT_PATH
@@ -244,7 +264,7 @@ def _apply_multiprompt_variations(
                     print(f"pipeline: WARNING: prompt node '{positive_prompt_node_id}' not found "
                           f"in {target.name} — skipping prompt patch for variation {idx}.")
             else:
-                node.setdefault("inputs", {})["text"] = prompt_text
+                node.setdefault("inputs", {})[slot] = prompt_text
                 target.write_text(json.dumps(data, indent=2), encoding="utf-8")
                 if verbose:
                     print(f"pipeline: variation {idx}/{len(prompts)} → {target.name}")
@@ -5298,11 +5318,22 @@ class Pipeline:
                       "running base workflow as-is.")
             return workflow_paths
 
+        # Real prompt slot for this node ("prompt" for API/partner nodes, else
+        # "text"), taken from the briefing's deterministic prompt_nodes trace so a
+        # batched API workflow's per-variation prompts don't get spliced into a
+        # non-existent "text" field.
+        pos_slot = next(
+            (pn.get("slot", "text") for pn in (briefing.get("prompt_nodes") or [])
+             if str(pn.get("node_id")) == str(node_id) and pn.get("role") == "positive"),
+            "text",
+        )
+
         # Use only the first base workflow (Brain should signal exactly one)
         base_path = workflow_paths[0]
         expanded = _apply_multiprompt_variations(
             base_path,
             node_id,
+            slot=pos_slot,
             verbose=self._verbose,
         )
         if self._verbose and len(expanded) > 1:
