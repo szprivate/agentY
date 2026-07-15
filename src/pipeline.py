@@ -397,7 +397,7 @@ class Pipeline:
     def __init__(
         self,
         query_templates: Agent,
-        assemble_workflow: Agent,
+        assemble_workflow: Agent | None,
         *,
         info_agent: Agent | None = None,
         story_agent: Agent | None = None,
@@ -5430,7 +5430,12 @@ def create_pipeline(
         ollama_model=researcher_ollama_model,
         anthropic_model=researcher_anthropic_model,
     )
-    brain = create_assemble_workflow_agent(
+    # The Brain (assemble_workflow) agent is used ONLY by the legacy
+    # free_agent=False router path. In free-agent mode workflow assembly is
+    # deterministic (prepare_workflow) with the fix_workflow_assembly /
+    # generate_new_workflow specialists, so the Brain is never invoked — don't
+    # build it (mirrors the triage_agent gate below).
+    brain = None if free_agent else create_assemble_workflow_agent(
         llm=brain_llm,
         anthropic_model=brain_anthropic_model,
         ollama_model=brain_ollama_model,
