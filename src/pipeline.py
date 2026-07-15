@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field, ValidationError
 from strands import Agent
 from strands.types.exceptions import MaxTokensReachedException
 
-from src.agent import create_assemble_workflow_agent, create_dop_agent, create_error_checker_agent, create_info_agent, create_orchestrator_agent, create_planner_agent, create_query_templates_agent, create_search_web_agent, create_story_agent, create_detect_user_intent_agent, create_vision_agent, _settings
+from src.agent import create_assemble_workflow_agent, create_dop_agent, create_error_checker_agent, create_fix_workflow_assembly_agent, create_info_agent, create_orchestrator_agent, create_planner_agent, create_query_templates_agent, create_search_web_agent, create_story_agent, create_detect_user_intent_agent, create_vision_agent, _settings
 from src.tools.image_handling import set_vision_agent as _set_vision_agent
 from src.utils.chat_summary import summarize_conversation, log_agent_messages, log_agent_exchange
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
@@ -429,6 +429,9 @@ class Pipeline:
         )
         self._planner_agent: Agent = planner_agent or create_planner_agent()
         self._error_checker_agent: Agent = error_checker_agent or create_error_checker_agent()
+        # Consolidated workflow-repair specialist (assembly errors + execution
+        # errors). Built lazily on first use to keep pipeline construction light.
+        self._fix_agent: Agent | None = None
         self._search_web_agent: Agent = scout_agent or create_search_web_agent()
         self._dop_agent: Agent = dop_agent or create_dop_agent()
         # Orchestrator (the free-agent entry point) + its delegation tools. The
@@ -1508,20 +1511,35 @@ class Pipeline:
                     for _ta in _drain_tools():
                         yield {"tool_activity": _ta}
 
-                # ── ComfyUI execution error → bounded orchestrator auto-fix ──── #
+                # ── ComfyUI execution error → consolidated fixer repair ──────── #
                 # Only when THIS batch produced no new outputs (a genuine failure);
                 # a partially-successful batch keeps its outputs and doesn't loop.
+                # The fix_workflow_assembly specialist diagnoses + repairs the
+                # workflow; the orchestrator then just re-signals it to re-run.
                 _exec_errors = _get_exec_errors() if not _qa_fail_event else []
                 if _exec_errors and len(exec_paths) == _outputs_before:
                     _exec_fix_attempts += 1
                     _err = _exec_errors[0]
-                    if _exec_fix_attempts <= _MAX_EXEC_FIX:
-                        yield {"data": (f"\n\n_🔧 ComfyUI run failed — diagnosing and fixing "
+                    _wp_fail = _err.get("workflow_path") or (workflow_paths[0] if workflow_paths else "")
+                    if _exec_fix_attempts <= _MAX_EXEC_FIX and _wp_fail:
+                        yield {"data": (f"\n\n_🔧 ComfyUI run failed — repairing "
                                         f"(attempt {_exec_fix_attempts}/{_MAX_EXEC_FIX})…_")}
-                        current_input = self._build_exec_fix_prompt(
-                            user_text, _err, _exec_fix_attempts, _MAX_EXEC_FIX
-                        )
-                        continue
+                        _fix = await self._run_fix_workflow_assembly(_wp_fail, exec_error=_err)
+                        for _ta in _drain_tools():
+                            yield {"tool_activity": _ta}
+                        if _fix.get("status") == "ready":
+                            current_input = (
+                                f"The workflow at {_wp_fail} was just repaired after a run "
+                                f"failure. Call signal_workflow_ready(\"{_wp_fail}\") to re-run "
+                                f"it. Do not change or re-research anything else.")
+                            continue
+                        yield {"data": (f"\n\n❌ Repair could not fix the run failure "
+                                        f"({_fix.get('error') or 'still invalid'}). Stopping.")}
+                        self._record_chat_summary(user_text, synth, status="failed",
+                                                  raw_json=self._last_brainbriefing_json)
+                        self._record_agent_usage(self._orchestrator_agent, _snap)
+                        self._session.last_agent = "orchestrator"
+                        return
                     # Attempts exhausted — surface the failure and stop.
                     _det = _err.get("details") or {}
                     _nt = _det.get("node_type", "?")
@@ -4192,6 +4210,8 @@ class Pipeline:
     # How many times to reject a hallucinated (non-catalog) template name before
     # falling back to build_new. Common after a history-clear + constrain fallback.
     _MAX_BAD_TEMPLATE_RETRIES = 2
+    # Wall-clock cap for one fix_workflow_assembly repair turn.
+    _FIX_ASSEMBLY_TIMEOUT = 120.0
     # Auto self-correction rounds when the brain ends without calling
     # signal_workflow_ready (common with local models that stop early).
     _MAX_BRAIN_AUTORETRIES = 2
@@ -4654,12 +4674,86 @@ class Pipeline:
                 print(f"pipeline: deterministic assembly patched OK; server offline — {wf}")
             return {"status": "ready", "workflow_path": wf, "unvalidated": True}
 
-        _push_progress("🩹 Workflow needs a repair pass …")
+        _push_progress("🩹 Workflow has issues — running the repair specialist …")
         if self._verbose:
             print(f"pipeline: apply_brainbriefing errors — problems={problems} "
                   f"server_errors={res.get('server_errors')}")
-        return {"status": "needs_fix", "workflow_path": wf,
-                "problems": problems, "server_errors": res.get("server_errors", {})}
+        return await self._run_fix_workflow_assembly(
+            wf, problems=problems, server_errors=res.get("server_errors", {}))
+
+    def _ensure_fix_agent(self) -> "Agent":
+        if self._fix_agent is None:
+            self._fix_agent = create_fix_workflow_assembly_agent()
+        return self._fix_agent
+
+    async def _run_fix_workflow_assembly(
+        self, workflow_path: str, *, problems: list | None = None,
+        server_errors: dict | None = None, exec_error: dict | None = None,
+    ) -> dict:
+        """Run the consolidated repair specialist on a broken workflow.
+
+        Handles both assembly errors (``problems``/``server_errors``) and
+        execution errors (``exec_error``). Returns
+        ``{"status": "ready"|"needs_fix"|"failed", "workflow_path": ...}``.
+        The agent patches the workflow file in place; it does not signal or submit.
+        """
+        agent = self._ensure_fix_agent()
+        try:
+            agent.messages.clear()
+        except Exception:  # noqa: BLE001
+            pass
+
+        if exec_error:
+            det = exec_error.get("details") or {}
+            tb = det.get("traceback") or []
+            tb_tail = "\n".join(("".join(str(x) for x in tb) if isinstance(tb, list)
+                                 else str(tb)).splitlines()[-15:]).strip()
+            prompt = (
+                f"EXECUTION ERROR — ComfyUI failed to run the workflow.\n\n"
+                f"workflow_path: {workflow_path}\n"
+                f"Failing node: {det.get('node_type', '?')} (id {det.get('node_id', '?')})\n"
+                f"Exception: {det.get('exception_type', '')}: "
+                f"{det.get('exception_message', '') or exec_error.get('error', '')}\n"
+                + (f"\nTraceback (tail):\n{tb_tail}\n" if tb_tail else "")
+                + "\nDiagnose the failing node, apply the minimal fix, and re-validate. "
+                "Do NOT signal or submit."
+            )
+        else:
+            prompt = (
+                f"ASSEMBLY ERROR — apply_brainbriefing reported validation problems.\n\n"
+                f"workflow_path: {workflow_path}\n"
+                f"problems: {json.dumps(problems or [])[:2000]}\n"
+                f"server_errors: {json.dumps(server_errors or {})[:1500]}\n\n"
+                "Fix each problem with the smallest change, then re-validate. "
+                "Do NOT signal or submit."
+            )
+
+        _push_progress("🩹 Repairing the workflow …")
+        try:
+            async with asyncio.timeout(self._FIX_ASSEMBLY_TIMEOUT):
+                await agent.invoke_async(prompt)
+        except (TimeoutError, asyncio.TimeoutError):
+            _push_progress("⚠️ Repair timed out.")
+            return {"status": "failed", "workflow_path": workflow_path,
+                    "error": "repair agent timed out"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "failed", "workflow_path": workflow_path, "error": str(exc)}
+
+        # Re-validate: a clean validate (or an unreachable server) means ready.
+        try:
+            from src.tools import validate_workflow as _vw  # noqa: PLC0415
+            vres = json.loads(getattr(_vw, "func", _vw)(workflow_path))
+        except Exception:  # noqa: BLE001
+            vres = {}
+        vstatus = vres.get("status")
+        if vstatus == "ok" or self._server_unreachable(vres.get("server_errors")) \
+                or (not vres.get("problems") and not vres.get("server_errors")):
+            _push_progress("✅ Workflow repaired.")
+            return {"status": "ready", "workflow_path": workflow_path}
+        _push_progress("⚠️ Workflow still has issues after repair.")
+        return {"status": "needs_fix", "workflow_path": workflow_path,
+                "problems": vres.get("problems", []),
+                "server_errors": vres.get("server_errors", {})}
 
     @staticmethod
     def _server_unreachable(server_errors) -> bool:

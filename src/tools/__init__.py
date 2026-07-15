@@ -304,6 +304,40 @@ ASSEMBLE_WORKFLOW_TOOLS: list = [
 ]
 
 # ---------------------------------------------------------------------------
+# fix_workflow_assembly tools – the CONSOLIDATED workflow-repair specialist.
+# Fires on two triggers, with the same toolset:
+#   * assembly-time: apply_brainbriefing returned status:error with `problems`
+#   * execution-time: ComfyUI failed to run the workflow (node/model error)
+# It diagnoses the failing node, patches the graph, and re-validates. It does NOT
+# select templates or write prompts (that is prepare_workflow's job) and does NOT
+# submit for execution (the pipeline re-runs it). Includes node install + model
+# download so it can heal missing-node / missing-model execution failures.
+# ---------------------------------------------------------------------------
+FIX_WORKFLOW_ASSEMBLY_TOOLS: list = [
+    # Diagnose
+    get_node_schema,
+    get_workflow_node_info,
+    search_nodes,
+    # Repair
+    update_workflow,
+    replace_node,
+    save_workflow,
+    validate_workflow,
+    # Heal missing node types (execution failures)
+    find_custom_node_for,
+    install_custom_node,
+    # Heal missing model files
+    check_model,
+    search_huggingface_models,
+    get_model_info,
+    find_hf_file,
+    download_hf_model,
+    # Server dirs (resolve paths when patching)
+    get_comfyui_dirs,
+    stop,
+]
+
+# ---------------------------------------------------------------------------
 # Orchestrator tools – the union of every real capability the specialists have
 # (execution, node inspection, template/recipe lookup, assembly, image handling,
 # HuggingFace, web search, files, memory, batch, iteration) PLUS the meta-tools

@@ -41,6 +41,7 @@ from src.tools import (
     VISION_AGENT_TOOLS,
     DOP_TOOLS,
     CUSTOM_NODE_TOOLS,
+    FIX_WORKFLOW_ASSEMBLY_TOOLS,
     reset_patch_workflow_guard,
 )
 from src.steering import get_ASSEMBLEWORKFLOW_steering_handlers, get_QUERYTEMPLATES_steering_handlers
@@ -1642,6 +1643,77 @@ def create_error_checker_agent(
     )
     # Single-turn — no persistent conversation history needed.
     agent.conversation_manager = SlidingWindowConversationManager(window_size=2)
+    return agent
+
+
+def create_fix_workflow_assembly_agent(
+    llm: str | None = None,
+    ollama_model: str | None = None,
+    anthropic_model: str | None = None,
+    **kwargs,
+) -> Agent:
+    """Create the Fix Workflow Assembly agent — the consolidated workflow-repair
+    specialist.
+
+    Invoked on demand (never on the happy path) for two triggers:
+      * assembly-time: ``apply_brainbriefing`` returned ``status:error`` with
+        concrete ``problems``;
+      * execution-time: ComfyUI failed to run the workflow (bad node/model).
+    It diagnoses the failing node, patches the graph with a minimal change, and
+    re-validates. It does not select templates or write prompts.
+
+    Reads ``llm.pipeline.fix_workflow_assembly`` from settings.json
+    (``'provider,model'``); falls back to the assemble_workflow (Brain) setting.
+    Env var ``FIXWORKFLOWASSEMBLY_LLM`` overrides the full setting.
+    """
+    if ollama_model and llm is None:
+        llm = "ollama"
+
+    _ASSEMBLEWORKFLOW_default = str(_cfg("ASSEMBLEWORKFLOW_LLM", "pipeline", "assemble_workflow", default="claude,claude-haiku-4-5"))
+    _raw = str(_cfg("FIXWORKFLOWASSEMBLY_LLM", "pipeline", "fix_workflow_assembly", default=_ASSEMBLEWORKFLOW_default))
+    _settings_llm, _settings_model = _parse_llm_setting(_raw)
+    resolved_llm = llm or _settings_llm or "claude"
+
+    if resolved_llm == "claude":
+        resolved_anthropic = (
+            anthropic_model
+            or os.environ.get("FIXWORKFLOWASSEMBLY_ANTHROPIC_MODEL")
+            or _settings_model
+            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
+        )
+        resolved_ollama = ollama_model or "qwen3-coder:32b"
+    else:  # ollama
+        resolved_ollama = (
+            ollama_model
+            or os.environ.get("FIXWORKFLOWASSEMBLY_OLLAMA_MODEL")
+            or _settings_model
+            or "qwen3-coder:32b"
+        )
+        resolved_anthropic = (
+            anthropic_model
+            or os.environ.get("FIXWORKFLOWASSEMBLY_ANTHROPIC_MODEL")
+            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
+        )
+
+    system_prompt = _load_system_prompt("fix_workflow_assembly")
+
+    fx_plugins: list = []
+    if _SKILLS_DIR.is_dir():
+        fx_plugins.append(AgentSkills(skills=str(_SKILLS_DIR)))
+
+    agent = _make_agent(
+        role="fix_workflow_assembly",
+        llm=resolved_llm,
+        dashscope_model=_settings_model,
+        system_prompt=system_prompt,
+        tools=FIX_WORKFLOW_ASSEMBLY_TOOLS,
+        ollama_model=resolved_ollama,
+        anthropic_model=resolved_anthropic,
+        plugins=fx_plugins or None,
+        **kwargs,
+    )
+    # Short-lived repair turns — a small window keeps context lean.
+    agent.conversation_manager = SlidingWindowConversationManager(window_size=4)
     return agent
 
 
