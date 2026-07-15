@@ -749,7 +749,7 @@ class Pipeline:
             return out
 
         @_tool
-        async def run_research(request: str) -> str:
+        async def run_research(request: str, staged_inputs: list | None = None) -> str:
             """Resolve a request into a validated ComfyUI **brainbriefing** JSON.
 
             Returns the brainbriefing (template + models + prompts + input/output
@@ -758,11 +758,16 @@ class Pipeline:
 
             Args:
                 request: A natural-language description of what to generate/edit.
+                staged_inputs: The input image(s) you already staged, as an ordered
+                    list of ``{"filename": "<name in ComfyUI input dir>", "role":
+                    "master_image|reference_image|mask|control_image|depth_map"}``.
+                    Pass ``[]`` for pure text-to-image/video (no inputs). Supplying
+                    this lets the input-node bindings be resolved deterministically.
             """
             raw_json = None
             error = None
             researcher_output = ""
-            async for _ev in self._arun_researcher(request):
+            async for _ev in self._arun_researcher(request, staged_inputs):
                 if isinstance(_ev, dict) and "_researcher_done" in _ev:
                     raw_json = _ev.get("raw_json")
                     error = _ev.get("error")
@@ -4352,7 +4357,66 @@ class Pipeline:
                 pass
         return got
 
-    async def _arun_researcher(self, user_input):
+    def _apply_scaffold_override(self, briefing: "BrainBriefing",
+                                 staged_inputs: list | None) -> "BrainBriefing":
+        """Overwrite the MECHANICAL brainbriefing fields with deterministically
+        scaffolded values (input/output/prompt node bindings), keeping the LLM's
+        authored fields (prompt, task, template, count_iter, variations).
+
+        Safe-merge for the transition period:
+          * ``input_nodes``/``input_images`` are overridden ONLY when the
+            orchestrator passed a structured ``staged_inputs`` list (``None`` ⇒
+            keep the LLM's, so nothing is wiped when inputs arrive only as prose).
+          * ``output_nodes`` are overridden only when the scaffold found savers
+            (a template that ships no saver keeps the LLM's best guess).
+          * scaffold model blockers (missing files) are unioned in.
+        Any failure (e.g. ComfyUI unreachable) leaves the briefing untouched.
+        """
+        tname = (briefing.template.name or "").strip()
+        if not tname or tname.lower() in ("build_new", "none"):
+            return briefing
+        try:
+            from src.tools.briefing_scaffold import build_briefing_scaffold  # noqa: PLC0415
+            res = ({"width": briefing.resolution_width, "height": briefing.resolution_height}
+                   if briefing.resolution_width and briefing.resolution_height else None)
+            sc = build_briefing_scaffold(
+                tname, staged_inputs=staged_inputs, task_type=briefing.task.type,
+                task_description=briefing.task.description, count_iter=briefing.count_iter,
+                variations=briefing.variations, resolution=res)
+        except Exception as exc:  # noqa: BLE001
+            if self._verbose:
+                print(f"pipeline: scaffold override skipped ({exc})")
+            return briefing
+
+        sc.pop("_scaffold_meta", None)
+        try:
+            if staged_inputs is not None:
+                briefing.input_nodes = [InputImage(**n) for n in sc.get("input_nodes", [])]
+                briefing.input_images = [BriefInputImage(**n) for n in sc.get("input_images", [])]
+                briefing.input_image_count = sc.get("input_image_count", 0)
+            if sc.get("output_nodes"):
+                briefing.output_nodes = [OutputNode(**n) for n in sc["output_nodes"]]
+            briefing.positive_prompt_node_id = sc.get("positive_prompt_node_id")
+            # Union real (non-WARNING) scaffold blockers — e.g. a missing model file.
+            sc_blockers = [b for b in sc.get("blockers", [])
+                           if b and not str(b).startswith("WARNING")]
+            if sc_blockers:
+                have = set(briefing.blockers or [])
+                briefing.blockers = list(briefing.blockers or []) + \
+                    [b for b in sc_blockers if b not in have]
+                briefing.status = "blocked"
+        except (ValidationError, TypeError) as exc:
+            if self._verbose:
+                print(f"pipeline: scaffold override produced invalid fields ({exc}); "
+                      f"keeping LLM briefing.")
+            return briefing
+        if self._verbose:
+            print(f"pipeline: scaffold override applied (template={tname}, "
+                  f"in={len(briefing.input_nodes)} out={len(briefing.output_nodes)} "
+                  f"pos_node={briefing.positive_prompt_node_id}).")
+        return briefing
+
+    async def _arun_researcher(self, user_input, staged_inputs: list | None = None):
         """Run the Researcher, streaming its token output as Strands events.
 
         Streams the Researcher's token output (including tool-use events) so
@@ -4543,6 +4607,11 @@ class Pipeline:
                     if self._verbose:
                         print("pipeline: downloaded missing model(s); retrying researcher.")
                     continue
+
+            # Deterministic scaffold override: replace the LLM's hand-assembled
+            # mechanical fields (input/output/prompt node bindings) with values
+            # derived from the template graph, keeping its authored prompt/task.
+            briefing = self._apply_scaffold_override(briefing, staged_inputs)
 
             raw_json = briefing.model_dump_json(indent=2)
             if self._verbose:

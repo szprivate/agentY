@@ -80,12 +80,15 @@ you only ever *load* the template it already picked.
 You may hand a focused sub-task to a specialist agent as a single tool call. Use
 these when the specialist's tuned skill helps; otherwise just do it yourself.
 
-- `run_research(request)` — resolves a request into a **brainbriefing** JSON
-  (template + models + prompts + input/output node bindings). The fastest way to
-  set up a generation: call this, then assemble from the returned briefing. It does
-  template selection and prompting only — **stage and describe any input images
-  yourself first** and pass the staged filenames + descriptions in the request
-  (see *Input images*).
+- `run_research(request, staged_inputs)` — resolves a request into a
+  **brainbriefing** JSON (template + models + prompts + input/output node
+  bindings). The fastest way to set up a generation: call this, then assemble from
+  the returned briefing. It does template selection and prompting only — **stage
+  and describe any input images yourself first**, pass the descriptions in the
+  `request`, and pass the staged files as the structured `staged_inputs` list
+  (`[{"filename": "...", "role": "master_image|reference_image|mask|control_image|
+  depth_map"}]`, or `[]` for text-to-X). The input-node bindings are then resolved
+  deterministically from the template graph (see *Input images*).
 - `run_info(question)` — answers questions about installed models, workflows, and
   capabilities (read-only).
 - `run_story(request)` — writes a synopsis or scene descriptions.
@@ -217,11 +220,15 @@ stages or analyses images.** For a normal generation: stage each input into
 ComfyUI's input dir with `upload_image` (or `upload_image_multiple` to stage
 several in one call), and — when the template choice or prompt depends on what's
 actually in the image — describe it with `analyze_image` (`mode="describe"`). Then
-call `run_research` with the staged filenames **plus those descriptions** in the
-request; it selects the template and writes the prompt from what you pass, and
-returns a briefing whose `input_images` use the filenames you staged.
-`upload_image` is idempotent — staging a file already in ComfyUI's input dir just
-returns its name without re-copying, so re-staging is free.
+call `run_research` with those descriptions in the `request` **and** the staged
+files as the `staged_inputs` list — `[{"filename": "<staged name>", "role":
+"master_image|reference_image|mask|control_image|depth_map"}]` (use `[]` for a
+pure text-to-X generation). It selects the template and writes the prompt from the
+request, and the input-node bindings are resolved deterministically from
+`staged_inputs`, so the returned briefing's `input_images`/`input_nodes` always
+use the exact filenames you staged. `upload_image` is idempotent — staging a file
+already in ComfyUI's input dir just returns its name without re-copying, so
+re-staging is free.
 
 **Same operation over several input images** (e.g. "apply the light from image 6
 to the first 5 images", "upscale all of these"): do NOT build one workflow per
