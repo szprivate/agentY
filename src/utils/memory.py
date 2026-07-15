@@ -1,11 +1,15 @@
 """
-agentY – Local FAISS memory layer using mem0 + nomic-embed-text.
+agentY – FAISS memory layer (mem0).
 
-All storage is fully local — no external API calls:
-  • Vector store : FAISS (persisted to ./memory/ on disk)
-  • Embeddings   : nomic-embed-text via Ollama (768-dim)
-  • Fact-extract : Ollama (same LLM as llm_functions) for mem0's internal
-                   deduplication/extraction pipeline
+  • Vector store : FAISS (persisted to ./memory/ on disk) — always local.
+  • Embeddings   : configurable provider (config/settings.json ▸ memory.embedder).
+                   "ollama" (default, fully local, e.g. nomic-embed-text 768-dim)
+                   or "openai" — any OpenAI-compatible endpoint incl. DashScope/
+                   Qwen — so a host without Ollama can still run memory.
+  • Fact-extract : configurable LLM (memory.llm); only used for infer=True writes.
+
+Switching the embedder (or its dims) makes the existing on-disk index
+incompatible — purge memory/agenty_memory.* so it rebuilds at the new size.
 
 Public API
 ----------
@@ -91,17 +95,81 @@ def _is_enabled() -> bool:
     return from_settings not in ("0", "false", "no", "off")
 
 
+_PROVIDER_ENV = {
+    "embedder": {"provider": "MEMORY_EMBEDDER_PROVIDER", "base_url": "MEMORY_EMBEDDER_BASE_URL",
+                 "api_key_env": "MEMORY_EMBEDDER_API_KEY_ENV"},
+    "llm": {"provider": "MEMORY_LLM_PROVIDER", "base_url": "MEMORY_LLM_BASE_URL",
+            "api_key_env": "MEMORY_LLM_API_KEY_ENV"},
+}
+
+
+def _mem_provider(kind: str) -> str:
+    """Provider for the memory *embedder* or *llm*: 'ollama' (default, fully local)
+    or 'openai' (any OpenAI-compatible endpoint, incl. DashScope/Qwen — no Ollama)."""
+    val = _get(_PROVIDER_ENV[kind]["provider"], "memory", kind, "provider", default="ollama")
+    return (val or "ollama").strip().lower()
+
+
+def _openai_compat_cfg(kind: str, extra: dict) -> dict:
+    """mem0 config block for an OpenAI-compatible embedder/llm — real OpenAI when
+    base_url is blank, or DashScope/Qwen (etc.) when it points at the compatible-mode
+    URL. The key is read from the env var named in settings (default OPENAI_API_KEY),
+    so secrets stay in .env and are never persisted to settings.json."""
+    base_url = _get(_PROVIDER_ENV[kind]["base_url"], "memory", kind, "base_url", default="").strip()
+    key_env = (_get(_PROVIDER_ENV[kind]["api_key_env"], "memory", kind, "api_key_env",
+                    default="OPENAI_API_KEY").strip() or "OPENAI_API_KEY")
+    cfg = dict(extra)
+    cfg["api_key"] = os.environ.get(key_env, "")
+    if base_url:
+        cfg["openai_base_url"] = base_url
+    return cfg
+
+
 def _build_config() -> dict:
-    """Return the mem0 MemoryConfig dict sourced from env / settings.json."""
+    """Return the mem0 MemoryConfig dict sourced from env / settings.json.
+
+    The vector store is always local FAISS. The embedder and the (rarely used)
+    fact-extraction LLM each choose their provider independently — "ollama" or
+    "openai"-compatible — via the ``memory`` block in config/settings.json, so a
+    machine without Ollama can run memory off a key it already has (e.g. DashScope).
+    """
     ollama_host = _get("OLLAMA_HOST", "llm", "ollama", "host", default="http://localhost:11434")
-    embed_model = _get("MEMORY_EMBED_MODEL", "memory", "embed_model", default="nomic-embed-text")
-    embed_dims = int(_get("MEMORY_EMBED_DIMS", "memory", "embed_model_dims", default="768"))
-    # Default extraction LLM to the same lightweight model used for triage/functions
-    #  so we reuse a model that is already warm in Ollama's context.
+
+    # ── Embedder (turns text into vectors for FAISS) ─────────────────────────
+    embed_provider = _mem_provider("embedder")
+    # Legacy flat keys (memory.embed_model / memory.embed_model_dims) still honoured.
+    embed_model = _get("MEMORY_EMBED_MODEL", "memory", "embedder", "model",
+                       default=_get("__unset__", "memory", "embed_model",
+                                    default="nomic-embed-text" if embed_provider == "ollama"
+                                    else "text-embedding-v3"))
+    embed_dims = int(_get("MEMORY_EMBED_DIMS", "memory", "embedder", "embedding_dims",
+                          default=_get("__unset__", "memory", "embed_model_dims",
+                                       default="768" if embed_provider == "ollama" else "1024")))
+    if embed_provider == "ollama":
+        embedder = {"provider": "ollama", "config": {
+            "model": embed_model, "ollama_base_url": ollama_host, "embedding_dims": embed_dims}}
+    else:
+        embedder = {"provider": "openai", "config": _openai_compat_cfg(
+            "embedder", {"model": embed_model, "embedding_dims": embed_dims})}
+
+    # ── Fact-extraction LLM (only invoked for infer=True writes) ─────────────
+    llm_provider = _mem_provider("llm")
     llm_model = _get(
-        "MEMORY_LLM_MODEL", "memory", "llm_model",
-        default=_get("LLM_FUNCTIONS_MODEL", "llm", "pipeline", "llm_functions", default="qwen3.5:9b"),
+        "MEMORY_LLM_MODEL", "memory", "llm", "model",
+        default=_get("__unset__", "memory", "llm_model",
+                     default=_get("LLM_FUNCTIONS_MODEL", "llm", "pipeline", "llm_functions",
+                                  default="qwen3.5:9b")),
     )
+    # The llm_functions default is a "provider,model" spec — keep only the model part.
+    if "," in llm_model:
+        llm_model = llm_model.rsplit(",", 1)[-1].strip()
+    if llm_provider == "ollama":
+        llm = {"provider": "ollama", "config": {
+            "model": llm_model, "ollama_base_url": ollama_host, "temperature": 0.1}}
+    else:
+        llm = {"provider": "openai", "config": _openai_compat_cfg(
+            "llm", {"model": llm_model, "temperature": 0.1})}
+
     store_dir = str(
         (_PROJECT_ROOT / _get("MEMORY_STORE_DIR", "memory", "store_dir", default="memory")).resolve()
     )
@@ -116,22 +184,8 @@ def _build_config() -> dict:
                 "embedding_model_dims": embed_dims,
             },
         },
-        "embedder": {
-            "provider": "ollama",
-            "config": {
-                "model": embed_model,
-                "ollama_base_url": ollama_host,
-                "embedding_dims": embed_dims,
-            },
-        },
-        "llm": {
-            "provider": "ollama",
-            "config": {
-                "model": llm_model,
-                "ollama_base_url": ollama_host,
-                "temperature": 0.1,
-            },
-        },
+        "embedder": embedder,
+        "llm": llm,
         "history_db_path": history_db,
         "version": "v1.1",
     }
@@ -168,15 +222,16 @@ def mem0_client() -> Any:
             return _mem0_client
         _MEMORY_DIR.mkdir(parents=True, exist_ok=True)
         cfg = _build_config()
-        # Ensure the embedding model is available in Ollama before first use.
-        embed_model = cfg["embedder"]["config"]["model"]
-        ollama_host = cfg["embedder"]["config"]["ollama_base_url"]
-        _ensure_model(embed_model, ollama_host)
+        # Only Ollama needs a local pull; OpenAI-compatible providers are remote.
+        if cfg["embedder"]["provider"] == "ollama":
+            _ensure_model(cfg["embedder"]["config"]["model"],
+                          cfg["embedder"]["config"]["ollama_base_url"])
 
         from mem0 import Memory
         _mem0_client = Memory.from_config(config_dict=cfg)
         print(f"[memory] FAISS memory layer initialised  (path={cfg['vector_store']['config']['path']},"
-              f" embed={embed_model}, llm={cfg['llm']['config']['model']})")
+              f" embed={cfg['embedder']['provider']}:{cfg['embedder']['config']['model']},"
+              f" llm={cfg['llm']['provider']}:{cfg['llm']['config']['model']})")
         return _mem0_client
 
 
