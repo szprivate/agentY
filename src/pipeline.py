@@ -775,37 +775,6 @@ class Pipeline:
             return out
 
         @_tool
-        async def run_research(request: str, staged_inputs: list | None = None) -> str:
-            """Resolve a request into a validated ComfyUI **brainbriefing** JSON.
-
-            Returns the brainbriefing (template + models + prompts + input/output
-            node bindings). Feed the result to ``apply_brainbriefing`` to assemble
-            the workflow, then ``signal_workflow_ready``.
-
-            Args:
-                request: A natural-language description of what to generate/edit.
-                staged_inputs: The input image(s) you already staged, as an ordered
-                    list of ``{"filename": "<name in ComfyUI input dir>", "role":
-                    "master_image|reference_image|mask|control_image|depth_map"}``.
-                    Pass ``[]`` for pure text-to-image/video (no inputs). Supplying
-                    this lets the input-node bindings be resolved deterministically.
-            """
-            raw_json = None
-            error = None
-            researcher_output = ""
-            async for _ev in self._arun_researcher(request, staged_inputs):
-                if isinstance(_ev, dict) and "_researcher_done" in _ev:
-                    raw_json = _ev.get("raw_json")
-                    error = _ev.get("error")
-                    researcher_output = _ev.get("researcher_output", "")
-            if error:
-                return json.dumps({"error": error})
-            if raw_json:
-                self._last_brainbriefing_json = raw_json
-                return raw_json
-            return researcher_output or json.dumps({"error": "researcher produced no briefing"})
-
-        @_tool
         async def prepare_workflow(request: str, staged_inputs: list | None = None) -> str:
             """Research + assemble a generation request into a READY ComfyUI workflow.
 

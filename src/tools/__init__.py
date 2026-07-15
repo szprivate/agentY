@@ -396,39 +396,20 @@ ORCHESTRATOR_TOOLS: list = [
     get_comfyui_dirs,
     get_agent_output_dirs,
     submit_prompt,
-    # Node inspection
-    get_node_schema,
-    get_workflow_node_info,
-    search_nodes,
-    # Custom-node install + auto-heal a missing node type
-    find_custom_node_for,
-    install_custom_node,
-    # Templates + recipes.
-    # NOTE: the two *browse* tools — get_workflow_catalog and
-    # list_workflow_recipes — are intentionally NOT given to the orchestrator.
-    # Template/recipe *selection* is delegated to run_research (the
-    # query_templates specialist); without a browse menu the orchestrator cannot
-    # keyword-match its way into the wrong template/upscale/relight workflow.
-    # The by-name loaders stay so the orchestrator can LOAD what run_research
-    # already chose (or a [HARD CONSTRAINTS]-pinned name) for assembly:
-    #   get_workflow_template(name)         — load the selected template
-    #   get_workflow_recipe(task, model)    — fetch the recipe for a build_new
-    #                                         briefing run_research produced
-    get_workflow_template,
-    get_workflow_recipe,
-    # Workflow assembly / modification / validation
+    # Workflow SET-UP is delegated to prepare_workflow (research + deterministic
+    # assembly). Workflow REPAIR (assembly + execution errors) and BUILD-FROM-
+    # SCRATCH are the fix_workflow_assembly / generate_new_workflow specialists,
+    # invoked inside prepare_workflow / the pipeline. So the orchestrator no longer
+    # carries template-load, node-inspection, apply/patch/validate, node-install,
+    # or HF-download tools — that whole surface moved off its critical path.
+    # It keeps only:
+    #   duplicate_workflow + update_workflow — for the batch-handoff skill
+    #     (duplicate the assembled base per iteration and swap the input); these
+    #     move to a deterministic pipeline loop in a later phase.
     duplicate_workflow,
-    save_workflow,
-    open_workflow_in_canvas,
-    patch_workflow,
-    add_workflow_node,
-    remove_workflow_node,
     update_workflow,
-    replace_node,
-    apply_brainbriefing,
-    validate_workflow,
-    check_model,
-    # Handoff to the executor (assemble → signal, never submit_prompt directly)
+    open_workflow_in_canvas,
+    # Handoff to the executor (prepare_workflow → signal, never submit directly)
     signal_workflow_ready,
     # Bake a chain of standin workflows into canvas subgraphs (bake_to_canvas hook)
     bake_hooks_to_canvas,
@@ -439,11 +420,6 @@ ORCHESTRATOR_TOOLS: list = [
     get_image_resolution,
     analyze_image,
     download_image,
-    # HuggingFace – discover + download models
-    search_huggingface_models,
-    get_model_info,
-    find_hf_file,
-    download_hf_model,
     # Files / shell / web
     read_text_file,
     write_text_file,
