@@ -338,6 +338,42 @@ FIX_WORKFLOW_ASSEMBLY_TOOLS: list = [
 ]
 
 # ---------------------------------------------------------------------------
+# generate_new_workflow tools – build a ComfyUI workflow from scratch when no
+# template fits (template.name == "build_new"). Follows the assemble-new-workflow
+# skill: fetch the recipe, load the closest member template as a scaffold, and
+# conform it to the recipe (nodes, wiring, boundary ports). Does NOT select a
+# template for a normal request (that's prepare_workflow) and does NOT submit.
+# ---------------------------------------------------------------------------
+GENERATE_NEW_WORKFLOW_TOOLS: list = [
+    # Recipe knowledge base (task -> model -> node clusters)
+    get_workflow_recipe,
+    list_workflow_recipes,
+    # Scaffold from a recipe member template
+    get_workflow_template,
+    # Node inspection
+    get_node_schema,
+    get_workflow_node_info,
+    search_nodes,
+    # Build / modify
+    add_workflow_node,
+    remove_workflow_node,
+    update_workflow,
+    replace_node,
+    save_workflow,
+    validate_workflow,
+    # Models
+    check_model,
+    search_huggingface_models,
+    get_model_info,
+    find_hf_file,
+    download_hf_model,
+    # Server dirs
+    get_comfyui_dirs,
+    get_agent_output_dirs,
+    stop,
+]
+
+# ---------------------------------------------------------------------------
 # Orchestrator tools – the union of every real capability the specialists have
 # (execution, node inspection, template/recipe lookup, assembly, image handling,
 # HuggingFace, web search, files, memory, batch, iteration) PLUS the meta-tools

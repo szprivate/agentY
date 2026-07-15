@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field, ValidationError
 from strands import Agent
 from strands.types.exceptions import MaxTokensReachedException
 
-from src.agent import create_assemble_workflow_agent, create_dop_agent, create_error_checker_agent, create_fix_workflow_assembly_agent, create_info_agent, create_orchestrator_agent, create_planner_agent, create_query_templates_agent, create_search_web_agent, create_story_agent, create_detect_user_intent_agent, create_vision_agent, _settings
+from src.agent import create_assemble_workflow_agent, create_dop_agent, create_error_checker_agent, create_fix_workflow_assembly_agent, create_generate_new_workflow_agent, create_info_agent, create_orchestrator_agent, create_planner_agent, create_query_templates_agent, create_search_web_agent, create_story_agent, create_detect_user_intent_agent, create_vision_agent, _settings
 from src.tools.image_handling import set_vision_agent as _set_vision_agent
 from src.utils.chat_summary import summarize_conversation, log_agent_messages, log_agent_exchange
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
@@ -432,6 +432,8 @@ class Pipeline:
         # Consolidated workflow-repair specialist (assembly errors + execution
         # errors). Built lazily on first use to keep pipeline construction light.
         self._fix_agent: Agent | None = None
+        # Build-from-scratch specialist (template.name == "build_new"). Lazy.
+        self._generate_agent: Agent | None = None
         self._search_web_agent: Agent = scout_agent or create_search_web_agent()
         self._dop_agent: Agent = dop_agent or create_dop_agent()
         # Orchestrator (the free-agent entry point) + its delegation tools. The
@@ -4212,6 +4214,8 @@ class Pipeline:
     _MAX_BAD_TEMPLATE_RETRIES = 2
     # Wall-clock cap for one fix_workflow_assembly repair turn.
     _FIX_ASSEMBLY_TIMEOUT = 120.0
+    # Wall-clock cap for one generate_new_workflow (build-from-scratch) turn.
+    _GENERATE_WORKFLOW_TIMEOUT = 240.0
     # Auto self-correction rounds when the brain ends without calling
     # signal_workflow_ready (common with local models that stop early).
     _MAX_BRAIN_AUTORETRIES = 2
@@ -4639,8 +4643,8 @@ class Pipeline:
 
         tname = (briefing.template.name or "").strip()
         if not tname or tname.lower() in ("build_new", "none"):
-            _push_progress("🆕 No template fits — a new workflow must be built.")
-            return {"status": "build_new", "briefing": briefing.model_dump_json()}
+            _push_progress("🆕 No template fits — building a new workflow …")
+            return await self._run_generate_new_workflow(briefing)
 
         _push_progress(f"🧩 Assembling workflow from template '{tname}' …")
         try:
@@ -4754,6 +4758,50 @@ class Pipeline:
         return {"status": "needs_fix", "workflow_path": workflow_path,
                 "problems": vres.get("problems", []),
                 "server_errors": vres.get("server_errors", {})}
+
+    def _ensure_generate_agent(self) -> "Agent":
+        if self._generate_agent is None:
+            self._generate_agent = create_generate_new_workflow_agent()
+        return self._generate_agent
+
+    async def _run_generate_new_workflow(self, briefing: "BrainBriefing") -> dict:
+        """Build a workflow from scratch for a build_new briefing via the
+        generate_new_workflow specialist. Returns
+        ``{"status": "ready"|"failed", "workflow_path": ...}``.
+        """
+        agent = self._ensure_generate_agent()
+        try:
+            agent.messages.clear()
+        except Exception:  # noqa: BLE001
+            pass
+        prompt = (
+            "Build a ComfyUI workflow from scratch for this build_new briefing. "
+            "Follow the assemble-new-workflow skill, apply the briefing's input/"
+            "prompt/output bindings, validate the graph, and end your reply with a "
+            "line `workflow_path: <path>`.\n\nbrainbriefing:\n"
+            + briefing.model_dump_json(indent=2)[:6000]
+        )
+        _push_progress("🆕 Building a new workflow from scratch …")
+        out = ""
+        try:
+            async with asyncio.timeout(self._GENERATE_WORKFLOW_TIMEOUT):
+                out = str(await agent.invoke_async(prompt))
+        except (TimeoutError, asyncio.TimeoutError):
+            _push_progress("⚠️ Build-from-scratch timed out.")
+            return {"status": "failed", "error": "generate agent timed out"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "failed", "error": str(exc)}
+
+        m = re.search(r"workflow_path[\"']?\s*[:=]\s*[\"']?([^\s\"'\n]+)", out)
+        wf = (m.group(1).strip() if m else "") or (_latest_output_workflow() or "")
+        if wf and os.path.exists(wf):
+            _push_progress("✅ New workflow built.")
+            if self._verbose:
+                print(f"pipeline: generate_new_workflow produced — {wf}")
+            return {"status": "ready", "workflow_path": wf}
+        return {"status": "failed",
+                "error": "generate agent did not produce a workflow file",
+                "output": out[:400]}
 
     @staticmethod
     def _server_unreachable(server_errors) -> bool:

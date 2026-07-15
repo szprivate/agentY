@@ -42,6 +42,7 @@ from src.tools import (
     DOP_TOOLS,
     CUSTOM_NODE_TOOLS,
     FIX_WORKFLOW_ASSEMBLY_TOOLS,
+    GENERATE_NEW_WORKFLOW_TOOLS,
     reset_patch_workflow_guard,
 )
 from src.steering import get_ASSEMBLEWORKFLOW_steering_handlers, get_QUERYTEMPLATES_steering_handlers
@@ -1714,6 +1715,74 @@ def create_fix_workflow_assembly_agent(
     )
     # Short-lived repair turns — a small window keeps context lean.
     agent.conversation_manager = SlidingWindowConversationManager(window_size=4)
+    return agent
+
+
+def create_generate_new_workflow_agent(
+    llm: str | None = None,
+    ollama_model: str | None = None,
+    anthropic_model: str | None = None,
+    **kwargs,
+) -> Agent:
+    """Create the Generate New Workflow agent — builds a ComfyUI workflow from
+    scratch when no template fits (``template.name == "build_new"``).
+
+    Rare, on-demand: the researcher prefers templates, so this fires only when
+    nothing matches. It follows the ``assemble-new-workflow`` skill — fetch the
+    recipe, load the closest member template as a scaffold, and conform it to the
+    recipe (nodes, wiring, boundary ports). It does not select a template for a
+    normal request and does not submit for execution.
+
+    Reads ``llm.pipeline.generate_new_workflow`` from settings.json; falls back to
+    the assemble_workflow (Brain) setting. Env var ``GENERATENEWWORKFLOW_LLM``
+    overrides the full setting.
+    """
+    if ollama_model and llm is None:
+        llm = "ollama"
+
+    _ASSEMBLEWORKFLOW_default = str(_cfg("ASSEMBLEWORKFLOW_LLM", "pipeline", "assemble_workflow", default="claude,claude-haiku-4-5"))
+    _raw = str(_cfg("GENERATENEWWORKFLOW_LLM", "pipeline", "generate_new_workflow", default=_ASSEMBLEWORKFLOW_default))
+    _settings_llm, _settings_model = _parse_llm_setting(_raw)
+    resolved_llm = llm or _settings_llm or "claude"
+
+    if resolved_llm == "claude":
+        resolved_anthropic = (
+            anthropic_model
+            or os.environ.get("GENERATENEWWORKFLOW_ANTHROPIC_MODEL")
+            or _settings_model
+            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
+        )
+        resolved_ollama = ollama_model or "qwen3-coder:32b"
+    else:  # ollama
+        resolved_ollama = (
+            ollama_model
+            or os.environ.get("GENERATENEWWORKFLOW_OLLAMA_MODEL")
+            or _settings_model
+            or "qwen3-coder:32b"
+        )
+        resolved_anthropic = (
+            anthropic_model
+            or os.environ.get("GENERATENEWWORKFLOW_ANTHROPIC_MODEL")
+            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
+        )
+
+    system_prompt = _load_system_prompt("generate_new_workflow")
+
+    gn_plugins: list = []
+    if _SKILLS_DIR.is_dir():
+        gn_plugins.append(AgentSkills(skills=str(_SKILLS_DIR)))
+
+    agent = _make_agent(
+        role="generate_new_workflow",
+        llm=resolved_llm,
+        dashscope_model=_settings_model,
+        system_prompt=system_prompt,
+        tools=GENERATE_NEW_WORKFLOW_TOOLS,
+        ollama_model=resolved_ollama,
+        anthropic_model=resolved_anthropic,
+        plugins=gn_plugins or None,
+        **kwargs,
+    )
     return agent
 
 
