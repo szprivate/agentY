@@ -801,6 +801,56 @@ class Pipeline:
             return researcher_output or json.dumps({"error": "researcher produced no briefing"})
 
         @_tool
+        async def prepare_workflow(request: str, staged_inputs: list | None = None) -> str:
+            """Research + assemble a generation request into a READY ComfyUI workflow.
+
+            This is the one call to set up a generation. It selects the template,
+            writes the prompt, and assembles the workflow deterministically — then
+            you simply call ``signal_workflow_ready(workflow_path)``. Do NOT load the
+            template, apply the briefing, or inspect nodes yourself; that is all done
+            here.
+
+            Args:
+                request: A natural-language description of what to generate/edit.
+                staged_inputs: The input image(s) you already staged, an ordered list
+                    of ``{"filename": "<name in ComfyUI input dir>", "role":
+                    "master_image|reference_image|mask|control_image|depth_map"}``.
+                    Pass ``[]`` for pure text-to-image/video (no inputs).
+
+            Returns JSON with a ``status`` field:
+              * ``ready``     → ``workflow_path`` is assembled & validated; call
+                                ``signal_workflow_ready(workflow_path)`` next.
+              * ``blocked``   → ``blockers``: ask the user for the missing detail.
+              * ``needs_fix`` → ``workflow_path`` + ``problems``: repair with the
+                                assembly tools, then ``signal_workflow_ready``.
+              * ``build_new`` → ``briefing``: no template fit — build from scratch,
+                                then ``signal_workflow_ready``.
+              * ``error``     → ``error``: report it.
+            """
+            _push_progress("🔎 Researching template & prompt …")
+            raw_json = None
+            error = None
+            async for _ev in self._arun_researcher(request, staged_inputs):
+                if isinstance(_ev, dict) and "_researcher_done" in _ev:
+                    raw_json = _ev.get("raw_json")
+                    error = _ev.get("error")
+            if error:
+                _push_progress(f"⚠️ Research failed: {error}")
+                return json.dumps({"status": "error", "error": error})
+            if not raw_json:
+                return json.dumps({"status": "error", "error": "researcher produced no briefing"})
+            self._last_brainbriefing_json = raw_json
+            try:
+                briefing = BrainBriefing.model_validate(json.loads(raw_json))
+            except (json.JSONDecodeError, ValidationError) as exc:
+                return json.dumps({"status": "error", "error": f"invalid briefing: {exc}"})
+            if briefing.status == "blocked":
+                _push_progress("🚧 Blocked — need more information.")
+                return json.dumps({"status": "blocked", "blockers": briefing.blockers})
+            result = await self._assemble_deterministic(briefing)
+            return json.dumps(result)
+
+        @_tool
         async def run_info(question: str) -> str:
             """Answer a read-only question about installed models, workflows, or capabilities.
 
@@ -1059,8 +1109,8 @@ class Pipeline:
         # round-trip) was never used in practice and only enlarged the tool surface,
         # so it is no longer exposed. The detect_user_intent agent survives only for
         # the legacy free_agent=False router path.
-        return [run_research, run_info, run_story, run_dop, run_web_search,
-                run_planner, apply_canvas_hooks, run_workflow_now,
+        return [prepare_workflow, run_info, run_story, run_dop,
+                run_web_search, run_planner, apply_canvas_hooks, run_workflow_now,
                 add_canvas_workflow, set_canvas_node_params]
 
     def _ensure_orch_clean_history(self) -> None:
@@ -4548,6 +4598,80 @@ class Pipeline:
                   f"in={len(briefing.input_nodes)} out={len(briefing.output_nodes)} "
                   f"pos_node={briefing.positive_prompt_node_id} status={briefing.status}).")
         return briefing
+
+    async def _assemble_deterministic(self, briefing: "BrainBriefing") -> dict:
+        """Assemble the workflow from a briefing WITHOUT an LLM on the happy path.
+
+        `apply_brainbriefing` patches the template deterministically and validates
+        it server-side, so a template briefing needs no agent to become a ready
+        workflow. Returns one of:
+          * ``{"status": "ready", "workflow_path": ...}``          — done, signal it
+          * ``{"status": "needs_fix", "workflow_path", "problems", "server_errors"}``
+                                                                    — repair required
+          * ``{"status": "build_new", "briefing": <json>}``        — build from scratch
+          * ``{"status": "error", "error": ...}``                  — template load failed
+        (In Phase 1 the caller/orchestrator handles needs_fix/build_new; Phase 2/3
+        route them to the fix_workflow_assembly / generate_new_workflow agents.)
+        """
+        from src.tools import get_workflow_template as _gwt, apply_brainbriefing as _abb  # noqa: PLC0415
+        _gwt = getattr(_gwt, "func", _gwt)
+        _abb = getattr(_abb, "func", _abb)
+
+        tname = (briefing.template.name or "").strip()
+        if not tname or tname.lower() in ("build_new", "none"):
+            _push_progress("🆕 No template fits — a new workflow must be built.")
+            return {"status": "build_new", "briefing": briefing.model_dump_json()}
+
+        _push_progress(f"🧩 Assembling workflow from template '{tname}' …")
+        try:
+            tpl = json.loads(_gwt(tname))
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "error": f"template load failed: {exc}"}
+        wf = tpl.get("workflow_path")
+        if not wf or tpl.get("error"):
+            return {"status": "error", "error": tpl.get("error") or "template load failed"}
+
+        try:
+            res = json.loads(_abb(wf, briefing.model_dump_json()))
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "error": f"apply_brainbriefing failed: {exc}"}
+
+        if res.get("status") == "ok":
+            _push_progress("✅ Workflow assembled and validated.")
+            if self._verbose:
+                print(f"pipeline: deterministic assembly OK — {wf}")
+            return {"status": "ready", "workflow_path": res.get("workflow_path", wf)}
+
+        # Distinguish a real workflow defect from ComfyUI being unreachable. The
+        # patch itself is deterministic and already done; if there are no concrete
+        # `problems` and the only server_error is a connection failure, the workflow
+        # IS assembled — pre-validation is just deferred to execution. The fixer
+        # can't repair a down server, so treat it as ready (unvalidated).
+        problems = res.get("problems") or []
+        if not problems and self._server_unreachable(res.get("server_errors")):
+            _push_progress("✅ Workflow assembled (ComfyUI offline — validation deferred).")
+            if self._verbose:
+                print(f"pipeline: deterministic assembly patched OK; server offline — {wf}")
+            return {"status": "ready", "workflow_path": wf, "unvalidated": True}
+
+        _push_progress("🩹 Workflow needs a repair pass …")
+        if self._verbose:
+            print(f"pipeline: apply_brainbriefing errors — problems={problems} "
+                  f"server_errors={res.get('server_errors')}")
+        return {"status": "needs_fix", "workflow_path": wf,
+                "problems": problems, "server_errors": res.get("server_errors", {})}
+
+    @staticmethod
+    def _server_unreachable(server_errors) -> bool:
+        """True when server_errors is only a ComfyUI connection failure (env issue,
+        not a workflow defect)."""
+        if not isinstance(server_errors, dict):
+            return False
+        blob = json.dumps(server_errors).lower()
+        return any(s in blob for s in (
+            "connection refused", "max retries", "actively refused",
+            "failed to establish a new connection", "connectionerror",
+            "newconnectionerror", "10061", "timed out", "connection aborted"))
 
     async def _arun_researcher(self, user_input, staged_inputs: list | None = None):
         """Run the Researcher, streaming its token output as Strands events.
