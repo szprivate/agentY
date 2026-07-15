@@ -318,6 +318,23 @@ def _free_vram_for_comfyui() -> None:
         logger.debug("executor: Ollama unload attempt skipped/failed: %s", exc)
 
 
+def _clear_comfyui_history() -> None:
+    """Wipe ComfyUI's execution history before submitting this run's workflows.
+
+    ComfyUI's ``/history`` accumulates every past prompt's outputs; without this,
+    the agent can't tell whether an image in the history belongs to the current
+    generation or a previous one. Clearing it right before submission scopes the
+    history to this run. Wipes only the completed-history records — NOT the queue
+    (clearing the queue would cancel other jobs). Best-effort; non-fatal.
+    """
+    try:
+        from src.utils.comfyui_client import get_client
+        get_client().post("/history", json_data={"clear": True})
+        logger.debug("executor: cleared ComfyUI history before submission")
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("executor: could not clear ComfyUI history: %s", exc)
+
+
 def _extract_output_files(history: dict) -> list[dict]:
     """Return a flat list of ``{"filename", "subfolder", "type", "node_id"}`` dicts
     from a stripped history response.
@@ -764,6 +781,7 @@ async def execute_workflow(
 
     # ── 1. Submit ──────────────────────────────────────────────────────────
     _free_vram_for_comfyui()
+    _clear_comfyui_history()  # scope history to this run (no stale prior outputs)
     yield "🚀 Submitting workflow to ComfyUI…"
     client_id = uuid.uuid4().hex
     try:
@@ -868,6 +886,7 @@ async def execute_workflows_batch(
 
     # ── Phase 1: submit all ────────────────────────────────────────────────
     _free_vram_for_comfyui()
+    _clear_comfyui_history()  # once per batch — scope history to this run only
     # One client_id per prompt so each WebSocket subscription only receives
     # events for its own job.
     queued: list[tuple[str, str, str]] = []  # [(prompt_id, workflow_path, client_id), ...]
