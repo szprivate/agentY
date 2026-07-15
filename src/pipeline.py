@@ -1027,33 +1027,14 @@ class Pipeline:
                                      "widgets; applied anyway if the node accepts them.")
             return json.dumps(result)
 
-        @_tool
-        async def classify_intent(message: str) -> str:
-            """Classify the user's message intent (advisory — you still decide).
-
-            Consult this when a request is ambiguous and you're unsure how to route
-            it (e.g. is it a fresh generation, a follow-up/chain on prior output, a
-            plain question, creative writing, or a full storyboard?). Returns a JSON
-            object ``{"intent": ..., "confidence": ..., "run_qa": ...}``. Treat it as
-            a hint, not an order.
-
-            Args:
-                message: The user's message to classify.
-            """
-            if self._triage_agent is None:
-                return json.dumps({"error": "intent classifier not available"})
-            try:
-                res = await _triage(message, self._session, self._info_context, self._triage_agent)
-                return json.dumps({
-                    "intent": res.intent.value,
-                    "confidence": res.confidence,
-                    "run_qa": res.run_qa,
-                })
-            except Exception as exc:  # noqa: BLE001
-                return json.dumps({"error": str(exc)})
-
+        # NOTE: intent classification is the orchestrator's own job in free-agent
+        # mode — it routes natively by choosing which specialist tool to call. The
+        # former `classify_intent` advisory tool (a separate detect_user_intent LLM
+        # round-trip) was never used in practice and only enlarged the tool surface,
+        # so it is no longer exposed. The detect_user_intent agent survives only for
+        # the legacy free_agent=False router path.
         return [run_research, run_info, run_story, run_dop, run_web_search,
-                run_planner, classify_intent, apply_canvas_hooks, run_workflow_now,
+                run_planner, apply_canvas_hooks, run_workflow_now,
                 add_canvas_workflow, set_canvas_node_params]
 
     def _ensure_orch_clean_history(self) -> None:
@@ -4991,10 +4972,9 @@ def create_pipeline(
     )
     info_agent = create_info_agent()
     story_agent = create_story_agent()
-    # The intent classifier is still built: in free-agent mode it's no longer a
-    # gate, but the orchestrator can consult it on demand via the classify_intent
-    # tool. (It also drives the legacy pipeline path when free_agent=False.)
-    triage_agent = create_detect_user_intent_agent(
+    # Intent classification is the orchestrator's own job in free-agent mode, so the
+    # separate classifier is built ONLY for the legacy (free_agent=False) router path.
+    triage_agent = None if free_agent else create_detect_user_intent_agent(
         llm=triage_llm,
         ollama_model=triage_ollama_model,
         anthropic_model=triage_anthropic_model,
