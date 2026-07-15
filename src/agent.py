@@ -1199,7 +1199,7 @@ def create_SEARCHWEB_agent(
     tools as the Info agent but with a focused prompt and structured output so the
     Storyboard director can reliably consume the result.
 
-    Reads ``llm.pipeline.scout`` from settings.json (format ``'provider,model'``);
+    Reads ``llm.pipeline.search_web`` from settings.json (format ``'provider,model'``);
     falls back to the Info-agent setting, then ``claude-haiku-4-5``. Env var
     ``SEARCHWEB_LLM`` overrides the combined setting; ``SEARCHWEB_OLLAMA_MODEL`` /
     ``SEARCHWEB_ANTHROPIC_MODEL`` override the provider-specific model.
@@ -1341,7 +1341,7 @@ def create_DETECTUSERINTENT_agent(
 ) -> Agent:
     """Create the Detect User Intent agent — a stateless, tool-free intent classifier.
 
-    Reads ``llm.pipeline.triage`` from settings.json (format: ``'provider,model'``,
+    Reads ``llm.pipeline.detect_user_intent`` from settings.json (format: ``'provider,model'``,
     e.g. ``'ollama,qwen3:0.6b'`` or ``'claude,claude-haiku-4-5'``).
     Env var ``DETECTUSERINTENT_LLM`` overrides the full setting; ``DETECTUSERINTENT_OLLAMA_MODEL``
     or ``DETECTUSERINTENT_ANTHROPIC_MODEL`` override just the model.
