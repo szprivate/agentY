@@ -120,6 +120,30 @@ def _is_video_path(path: str) -> bool:
     return Path(path).suffix.lower() in _VIDEO_SUFFIXES
 
 
+# The canvas selection feeds the agent's inputs ONLY when the user asks for it
+# (or on the very first turn). This keeps a selection that drifts over the course
+# of a conversation from silently rebinding — or losing — the image input(s).
+_CANVAS_INPUT_INTENT = re.compile(
+    r"\b("
+    r"select(ed|ion)?|highlight(ed)?|marked|"
+    r"these\s+(nodes?|images?|photos?|pictures?|frames?|clips?|videos?|inputs?)|"
+    r"this\s+(image|photo|picture|node|selection|frame|clip|video|input)|"
+    r"the\s+selected|"
+    r"(on|from|in)\s+(the\s+)?(canvas|graph)|"
+    r"canvas\s+selection|"
+    r"the\s+nodes?\s+i\b"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _message_wants_canvas_inputs(message: str) -> bool:
+    """True when the user's message references the canvas selection as input —
+    e.g. "the selected images", "these nodes", "from the canvas". Gates whether
+    the CURRENT selection feeds the agent's inputs on this turn."""
+    return bool(_CANVAS_INPUT_INTENT.search(message or ""))
+
+
 def _project_root() -> Path:
     return Path(__file__).resolve().parent.parent.parent
 
@@ -2085,9 +2109,12 @@ def _build_app():
                 canvas_paths.append(resolved)
             else:
                 logger.warning("Unresolved canvas input: %r", ci)
-        # Canvas-selected inputs lead (they carry the user's chosen order), then
-        # any chat attachments.
-        image_paths = canvas_paths + image_paths
+        # NOTE: canvas_paths (the CURRENT selection's Load-Image/Video nodes) are
+        # merged into image_paths further down — but ONLY on the first turn or when
+        # the message references the selection (see the gate after thread_id is
+        # resolved). This stops a selection that drifts over the conversation from
+        # silently rebinding or dropping the image input(s). Chat attachments
+        # (body.image_paths) are always kept — they're explicit per-message uploads.
         # Canvas-hook mode: the captured API-format prompt of the user's on-canvas
         # graph + the hook directives attached to it. Present only when the graph
         # has AgentYHook nodes; drives the "run my canvas graph" execution path.
@@ -2101,6 +2128,23 @@ def _build_app():
         thread_id = body.get("thread_id")
         if not thread_id or cs.get_thread(thread_id) is None:
             thread_id = cs.create_thread(thread_id=thread_id)
+
+        # Gate the canvas selection as inputs: use the CURRENT selection only on
+        # the first turn of the thread, or when the message explicitly references
+        # the selection ("the selected images", "these nodes", "from the canvas").
+        # Otherwise a mid-conversation selection change would silently rebind the
+        # inputs — which is not what the user intends.
+        if canvas_paths:
+            _existing_msgs = (cs.get_thread(thread_id) or {}).get("messages", [])
+            _first_turn = not any(m.get("role") == "assistant" for m in _existing_msgs)
+            if _first_turn or _message_wants_canvas_inputs(message):
+                image_paths = canvas_paths + image_paths
+            else:
+                logger.info(
+                    "Canvas has %d selected input(s) but the message didn't reference "
+                    "the selection (and it's not the first turn) — ignoring them as inputs.",
+                    len(canvas_paths),
+                )
 
         # Persist the user's message (raw text).
         if message:
