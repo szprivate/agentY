@@ -4227,43 +4227,86 @@ class Pipeline:
                                 parts.append(f"tool result: {json.dumps(c['json'])[:800]}")
         return "\n".join(parts)[:14000]
 
+    @staticmethod
+    def _openai_compat_endpoint(provider: str) -> tuple[str, str] | None:
+        """Resolve ``(base_url, api_key)`` for an OpenAI-compatible provider token,
+        mirroring ``agent._make_agent``. Returns ``None`` for backends that are not
+        OpenAI-compatible (e.g. ``ollama``, ``anthropic``)."""
+        llm = (_settings().get("llm") or {})
+        p = provider.strip().lower()
+        if p in {"dashscope", "modelstudio", "qwen", "alibaba"}:
+            base_url = os.environ.get("DASHSCOPE_BASE_URL") or str(
+                (llm.get("dashscope") or {}).get(
+                    "base_url", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"))
+            api_key = os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("ALIBABA_API_KEY") or ""
+            return base_url, api_key
+        if p in {"openai", "gpt"}:
+            base_url = os.environ.get("OPENAI_BASE_URL") or str(
+                (llm.get("openai") or {}).get("base_url", "https://api.openai.com/v1"))
+            return base_url, (os.environ.get("OPENAI_API_KEY") or "")
+        if p in {"google", "gemini"}:
+            base_url = os.environ.get("GEMINI_BASE_URL") or str(
+                (llm.get("google") or {}).get(
+                    "base_url", "https://generativelanguage.googleapis.com/v1beta/openai/"))
+            api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or ""
+            return base_url, api_key
+        return None
+
     def _constrain_briefing(self, user_request: str, messages: list) -> str | None:
-        """Force a schema-valid BrainBriefing JSON via Ollama structured outputs
-        (format=schema, no tools) — which cannot spiral and must terminate. Uses the
-        researcher's own gathered context (chosen template, installed models, image
-        analysis) so the output is a REAL briefing for the request, not a stub.
-        Only applies to an Ollama researcher."""
-        st = _settings()
-        spec = str(((st.get("llm") or {}).get("pipeline") or {}).get("researcher", "")).strip()
-        if "ollama" not in spec.lower():
+        """Force a schema-valid BrainBriefing JSON via a constrained, tool-free
+        model call that cannot spiral. Uses the researcher's own gathered context
+        (chosen template, installed models, image descriptions) so the output is a
+        REAL briefing for the request, not a stub.
+
+        Drives whichever backend the researcher (``pipeline.query_templates``) uses:
+        an OpenAI-compatible endpoint (DashScope/Qwen, OpenAI, Gemini) via
+        ``response_format={"type": "json_object"}`` with the schema embedded in the
+        system prompt. Returns the raw JSON string, or ``None`` when the backend is
+        unsupported or the call fails."""
+        pipe = ((_settings().get("llm") or {}).get("pipeline") or {})
+        spec = str(pipe.get("query_templates") or pipe.get("researcher") or "").strip()
+        provider, _, model_id = spec.partition(",")
+        provider, model_id = provider.strip().lower(), model_id.strip()
+        if not model_id:
             return None
-        model_id = spec.split(",")[-1].strip()
-        host = str(((st.get("llm") or {}).get("ollama") or {}).get("host", "http://localhost:11434"))
+        endpoint = self._openai_compat_endpoint(provider)
+        if endpoint is None:
+            return None  # non-OpenAI-compatible backend — skip the net
+        base_url, api_key = endpoint
+        if not api_key:
+            return None
         ctx = self._flatten_researcher_context(messages)
+        schema = BrainBriefing.model_json_schema()
+        sys_msg = (
+            "You finalise the researcher's work into ONE brainbriefing JSON "
+            "conforming to the schema. Use the USER REQUEST and RESEARCH "
+            "CONTEXT (tool results: the chosen template name, installed model "
+            "files, any image description). status MUST be 'ready' (use 'blocked' "
+            "only if a required model/template is missing). Use the real template "
+            "name and the actual prompt text from the request. Never describe this "
+            "instruction — output only the JSON briefing for the request. No prose, "
+            "no markdown.\n\nThe JSON MUST validate against this JSON Schema:\n"
+            + json.dumps(schema)
+        )
+        user_msg = (
+            f"USER REQUEST:\n{user_request[:2000]}\n\n"
+            f"RESEARCH CONTEXT (researcher's tool calls + results):\n{ctx}\n\n"
+            "Output the brainbriefing JSON for the user request now."
+        )
         try:
-            import ollama  # noqa: PLC0415
-            schema = BrainBriefing.model_json_schema()
-            r = ollama.Client(host).chat(
+            from openai import OpenAI  # noqa: PLC0415
+            client = OpenAI(base_url=base_url, api_key=api_key)
+            r = client.chat.completions.create(
                 model=model_id,
                 messages=[
-                    {"role": "system", "content":
-                        "You finalise the researcher's work into ONE brainbriefing JSON "
-                        "conforming to the schema. Use the USER REQUEST and RESEARCH "
-                        "CONTEXT (tool results: the chosen template name, installed "
-                        "model files, any image analysis). status MUST be 'ready' "
-                        "(use 'blocked' only if a required model/template is missing). "
-                        "Use the real template name and the actual prompt text from the "
-                        "request. Never describe this instruction — output only the JSON "
-                        "briefing for the request. No prose, no markdown."},
-                    {"role": "user", "content":
-                        f"USER REQUEST:\n{user_request[:2000]}\n\n"
-                        f"RESEARCH CONTEXT (researcher's tool calls + results):\n{ctx}\n\n"
-                        "Output the brainbriefing JSON for the user request now."},
+                    {"role": "system", "content": sys_msg},
+                    {"role": "user", "content": user_msg},
                 ],
-                format=schema,
-                options={"num_ctx": 24576, "num_predict": 6144, "temperature": 0.1},
+                response_format={"type": "json_object"},
+                temperature=0.1,
+                max_tokens=6144,
             )
-            return r.message.content
+            return r.choices[0].message.content
         except Exception as exc:  # noqa: BLE001
             if self._verbose:
                 print(f"pipeline: schema-constrained briefing failed ({exc}).")
@@ -4457,8 +4500,8 @@ class Pipeline:
                 last_error = "No JSON object found in the output."
 
             # #1 schema-constrained emission: if the free-text output didn't yield a
-            # valid briefing, force one from the draft via Ollama structured outputs
-            # (format=schema, no tools, no thinking) — which cannot run away.
+            # valid briefing, force one from the draft via a tool-free JSON-mode call
+            # (response_format=json_object, schema in the prompt) — which cannot run away.
             if briefing is None:
                 constrained = self._constrain_briefing(user_input, list(self._researcher.messages))
                 if constrained:

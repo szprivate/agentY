@@ -8,7 +8,7 @@ Analyse the user request and all provided assets via tools, then output a single
 ## Parameters
 - **task_id** (required): Unique identifier — include in all status messages.
 - **user_message** (required): Raw user request.
-- **Assemble Workflowbriefing_schema** (required): Injected at runtime via `{{Assemble WorkflowBRIEF_EXAMPLE}}`.
+- **Assemble Workflowbriefing_schema** (required): Injected at runtime via `{{BRAINBRIEF_EXAMPLE}}`.
 
 ## Reference data
 - Model paths are relative to the external model directory configured on the ComfyUI server.
@@ -186,7 +186,7 @@ Output the final Assemble Workflowbriefing JSON.
 
 **Constraints:**
 - You MUST output raw JSON only — no markdown fences, no prose before or after.
-- Use exactly the keys from the schema example: `{{Assemble WorkflowBRIEF_EXAMPLE}}`
+- Use exactly the keys from the schema example: `{{BRAINBRIEF_EXAMPLE}}`
 - `input_image_count` MUST equal the exact length of `input_images`.
 
 ---
