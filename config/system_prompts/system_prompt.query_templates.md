@@ -19,15 +19,16 @@ Analyse the user request and all provided assets via tools, then output a single
 Every tool call costs time. Spend the minimum. A normal single-template request is done in **4–6 calls total** — hit that budget:
 
 1. **Pick the template** — activate the `workflow-templates` skill once, then `get_workflow_catalog` **once**.
-2. **`get_workflow_template(name)` — call it ONCE.** Its single result carries `io.inputs`, `io.outputs`, prompt nodes, and `models`. Reuse that one result for steps 3, 5, and 6. Do **not** re-call it per step.
+2. **`get_workflow_template(name)` — call it ONCE.** Its single result is **authoritative**: `nodes` (each with `id`, `class`, `title`, literal inputs), `io.inputs`, `io.outputs`, and `models`. Fill `input_nodes`, `prompt_nodes`, `output_nodes`, and the model list from THIS result. Do **not** re-call it per step, and do **not** `read_text_file` the `workflow_path` — read that file only in the rare case you cannot tell a prompt node's positive/negative role from its `title`/inputs.
 3. **`get_comfyui_dirs()` — call it ONCE.** It returns both `input_dir` and `output_dir`; reuse for input paths (step 4) and output paths (step 6).
-4. **`check_model([...all filenames...])` — call it ONCE, batched.** Never one call per model.
+4. **`check_model([...all filenames...])` — call it ONCE, batched, AFTER step 2.** Pass every model filename from the step-2 `models` list in a single call. Never call it per model, never before you have that list, never twice.
 5. **`get_image_resolution` — only when needed.** Skip it entirely if the request already states the input dimensions (e.g. `512x512`, `1024x768`) — use those verbatim.
 6. **`prompting` skill** — activate once (required for prompt quality).
 
 Rules:
 - **Do not narrate.** Do not emit a sentence before each call explaining what you're about to do. Work silently; the only text you output is the final JSON.
-- **Escalation-only tools** (`web_search`, `web_search_images`, `find_hf_file`, `download_hf_model`, `search_huggingface_models`, extra `get_workflow_template`) are for the specific fallback paths that name them (missing model, unfamiliar style). Never use them on the happy path.
+- **Never call `iterate`.** You prepare ONE base workflow; the orchestrator handles any batch iteration. `iterate` is never part of a briefing.
+- **Escalation-only tools** (`web_search`, `web_search_images`, `find_hf_file`, `download_hf_model`, `search_huggingface_models`, extra `get_workflow_template`, `read_text_file` on the workflow) are for the specific fallback paths that name them (missing model, unfamiliar style, unresolvable prompt role). Never use them on the happy path.
 - You do **not** need the `output-paths` skill — its mapping is inlined in step 6 and routing is auto-enforced.
 
 ---
