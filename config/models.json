@@ -430,6 +430,9 @@
       "moge_2_vitl_normal_fp16.safetensors"
     ],
     "optical_flow": [],
+    "detection": [
+      "mediapipe_face_fp32.safetensors"
+    ],
     ".cache": [],
     "animatediff_models": [],
     "animatediff_motion_lora": [],

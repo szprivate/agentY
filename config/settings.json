@@ -28,7 +28,7 @@
   // Fallback only — the live value is read from ComfyUI's --user-directory flag
   // (/system_stats) and shown in the settings UI. This is used when ComfyUI is
   // unreachable.
-  "comfyui_user_dir": "\\\\bepic-storage01\\work\\0193_Never_Stop_Dreaming_Spec\\02_build\\comfy\\sebastian.zilius\\user_dir",
+  "comfyui_user_dir": "\\\\bepic-storage01\\work\\0206_ersteBank_duck\\02_build\\comfy\\sebastian.zilius\\user_dir",
   "conversation_db": "./memory/conversations.sqlite",
   // Auto-open every workflow the agent runs onto the ComfyUI canvas so you can
   // inspect it. Off by default: workflows still build and run, but the graph is
@@ -59,7 +59,7 @@
     
     "pipeline": {
       "orchestrator": "dashscope,qwen3.6-flash",
-      "query_templates": "dashscope,qwen3.6-flash",
+      "query_templates": "dashscope,qwen3.7-max",
       "assemble_workflow": "dashscope,qwen3.6-plus",
       "custom_node_creator": "dashscope,kimi-k2.7-code",
       "detect_user_intent": "dashscope,qwen3.6-flash",

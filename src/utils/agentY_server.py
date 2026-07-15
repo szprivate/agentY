@@ -657,6 +657,11 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
         # Tool use --------------------------------------------------------------
         ta = event.get("tool_activity")
         if ta is not None:
+            # Show which agent ran the tool: "[orchestrator] upload_image". The
+            # panel renders ta["name"] verbatim, so fold the agent label in here.
+            agent = ta.get("agent")
+            if agent and not str(ta.get("name", "")).startswith("["):
+                ta = {**ta, "name": f"[{agent}] {ta.get('name', 'tool')}"}
             out_q.put({"type": "tool", **ta})
             return
 

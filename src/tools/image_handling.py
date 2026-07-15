@@ -80,6 +80,50 @@ _FORMAT_MAP: dict[str, str] = {
 # Internal helpers
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _comfy_input_dir() -> Optional[str]:
+    """Best-effort lookup of ComfyUI's configured input directory, or ``None``.
+
+    Tries both the shared ``agenty_core`` module and the local ``src`` shim so it
+    works regardless of which package exposes ``get_comfyui_dirs`` at runtime.
+    """
+    for _imp in ("agenty_core.tools.comfyui", "src.tools.comfyui"):
+        try:
+            mod = __import__(_imp, fromlist=["get_comfyui_dirs"])
+            info = json.loads(mod.get_comfyui_dirs()) or {}
+            v = info.get("input_dir")
+            if v and v != "unknown":
+                return v
+        except Exception:  # noqa: BLE001 — best-effort; fall through to next source
+            continue
+    return None
+
+
+def _resolve_local_image(file_path: str) -> Optional[str]:
+    """Resolve a possibly-bare image path to an existing file on disk.
+
+    Tries, in order: the path as given (absolute or relative to CWD, expanding
+    ``~``), then CWD-joined, then ``<ComfyUI input dir>/<basename>``. The last
+    step is what makes canvas-selected images work: a ``LoadImage`` widget stores
+    its image by *bare filename* (e.g. ``photo.jpg``), and that file lives in
+    ComfyUI's input dir — not the agent's CWD. Returns the resolved path, or
+    ``None`` if the file is nowhere to be found.
+    """
+    if not file_path:
+        return None
+    p = Path(file_path).expanduser()
+    if p.is_file():
+        return str(p)
+    cwd_p = Path(os.getcwd()) / file_path
+    if cwd_p.is_file():
+        return str(cwd_p)
+    in_dir = _comfy_input_dir()
+    if in_dir:
+        staged = Path(in_dir) / os.path.basename(file_path)
+        if staged.is_file():
+            return str(staged)
+    return None
+
+
 def _detect_format(path_or_name: str, mime: str = "") -> Optional[str]:
     """Resolve the Strands image format string from a filename or MIME type."""
     ext = Path(path_or_name).suffix.lstrip(".").lower()
@@ -191,26 +235,30 @@ def _upload_one(
     the ComfyUI ``{name, subfolder, type}`` response, an idempotency skip note,
     or ``{"error": ...}``.
     """
-    if not os.path.isfile(file_path):
+    # Resolve bare/relative names against ComfyUI's input dir too, so images the
+    # user selected on the canvas (LoadImage widgets store just the filename) are
+    # found — not only paths relative to the agent's CWD.
+    resolved = _resolve_local_image(file_path)
+    if resolved is None:
         return {"error": f"File not found: {file_path}"}
 
-    filename = os.path.basename(file_path)
+    filename = os.path.basename(resolved)
 
     # Idempotency: if this file is already staged in ComfyUI's input dir, don't
     # re-upload it — return its bare filename instead. Covers (a) the user
-    # pointing at a file that already lives in the input dir, and (b) a second
+    # pointing at a file that already lives in the input dir, (b) a canvas
+    # LoadImage widget that references an input by bare name, and (c) a second
     # agent re-staging a file that was already staged this turn. Only for flat
     # input uploads (no subfolder) and when not explicitly overwriting.
     # Best-effort: any failure falls through to a normal upload.
     if image_type == "input" and not subfolder and not overwrite:
         try:
-            from agenty_core.tools.comfyui import get_comfyui_dirs  # lazy: avoid import cycle
-            input_dir = (json.loads(get_comfyui_dirs()) or {}).get("input_dir")
+            input_dir = _comfy_input_dir()
             if input_dir:
                 staged = os.path.join(input_dir, filename)
-                same_path = os.path.abspath(file_path) == os.path.abspath(staged)
+                same_path = os.path.abspath(resolved) == os.path.abspath(staged)
                 if os.path.isfile(staged) and (
-                    same_path or os.path.getsize(staged) == os.path.getsize(file_path)
+                    same_path or os.path.getsize(staged) == os.path.getsize(resolved)
                 ):
                     return {
                         "name": filename, "subfolder": "", "type": "input",
@@ -220,7 +268,7 @@ def _upload_one(
             pass
 
     try:
-        with open(file_path, "rb") as f:
+        with open(resolved, "rb") as f:
             files = {"image": (filename, f, "image/png")}
             data = {"type": image_type, "overwrite": str(overwrite).lower()}
             if subfolder:
@@ -487,12 +535,13 @@ def get_image_resolution(image_path: str) -> str:
     Args:
         image_path: Absolute or relative path to the image file on disk.
     """
-    try:
-        with Image.open(image_path) as img:
-            width, height = img.size
-        return json.dumps({"width": width, "height": height, "image_path": image_path})
-    except FileNotFoundError:
+    resolved = _resolve_local_image(image_path)
+    if resolved is None:
         return json.dumps({"error": f"File not found: {image_path}"})
+    try:
+        with Image.open(resolved) as img:
+            width, height = img.size
+        return json.dumps({"width": width, "height": height, "image_path": resolved})
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -544,11 +593,10 @@ def analyze_image(
     detected_mime = ""
 
     if file_path:
-        p = Path(file_path).expanduser()
-        if not p.exists():
-            p = Path(os.getcwd()) / file_path
-        if not p.exists():
+        resolved = _resolve_local_image(file_path)
+        if resolved is None:
             return {"status": "error", "content": [{"text": f"File not found: {file_path}"}]}
+        p = Path(resolved)
         source_name = str(p)
         try:
             data = p.read_bytes()

@@ -553,7 +553,15 @@ def _truncate_activity(s: object, cap: int = 800) -> str:
 
 class ToolActivityHookProvider:
     """Pushes each tool call (name + input) and result to ``tool_activity`` so the
-    chat UI can render what the agent is doing, inline in the conversation."""
+    chat UI can render what the agent is doing, inline in the conversation.
+
+    ``role`` labels which agent is running the tool (e.g. ``orchestrator``,
+    ``query_templates``, ``subagent``); the side panel renders it in brackets
+    before the tool name, so it's clear which agent made each call.
+    """
+
+    def __init__(self, role: str = "agent") -> None:
+        self._role = role
 
     def register_hooks(self, registry: HookRegistry, **kwargs) -> None:  # noqa: ARG002
         from strands.hooks.events import BeforeToolCallEvent, AfterToolCallEvent
@@ -567,6 +575,7 @@ class ToolActivityHookProvider:
             push({
                 "phase": "call",
                 "id": tu.get("toolUseId", ""),
+                "agent": self._role,
                 "name": tu.get("name", "tool"),
                 "input": _truncate_activity(tu.get("input", {})),
             })
@@ -585,6 +594,7 @@ class ToolActivityHookProvider:
             push({
                 "phase": "result",
                 "id": tu.get("toolUseId", ""),
+                "agent": self._role,
                 "name": tu.get("name", "tool"),
                 "result": summary,
             })
@@ -794,7 +804,7 @@ def _make_agent(
     # supplied one (the orchestrator) isn't double-hooked.
     _hooks = list(agent_kwargs.get("hooks") or [])
     if not any(isinstance(h, ToolActivityHookProvider) for h in _hooks):
-        _hooks.append(ToolActivityHookProvider())
+        _hooks.append(ToolActivityHookProvider(role=role))
         agent_kwargs["hooks"] = _hooks
     agent = Agent(**agent_kwargs)
     # Attach light-weight cost metadata so callers can compute run cost.
@@ -1938,7 +1948,7 @@ def create_orchestrator_agent(
     tools = list(ORCHESTRATOR_TOOLS) + list(extra_tools or [])
 
     extra_hooks = kwargs.pop("hooks", [])
-    orch_hooks = [TokenUsageHookProvider(role="orchestrator"), ToolActivityHookProvider(),
+    orch_hooks = [TokenUsageHookProvider(role="orchestrator"), ToolActivityHookProvider(role="orchestrator"),
                   ComfyUIInterruptHook(), *extra_hooks]
 
     agent = _make_agent(
