@@ -4208,10 +4208,10 @@ class Pipeline:
             )
             self._session.last_info_response = None  # consume once
 
-        # Inject the template NAME list as the FRONT (stable) prefix so the
-        # Researcher picks an EXACT real name without a tool call and cannot
-        # hallucinate one. Front placement keeps it a cacheable prefix (the
-        # variable memory/request follow it).
+        # Inject the template list (hybrid: bare names + a short note for cryptic
+        # ones) as the FRONT (stable) prefix so the Researcher picks an EXACT real
+        # name without a tool call and cannot hallucinate one. Front placement keeps
+        # it a cacheable prefix (the variable memory/request follow it).
         catalog_block = self._format_template_catalog()
         if catalog_block:
             prompt = catalog_block + "\n\n" + prompt
@@ -4298,16 +4298,8 @@ class Pipeline:
         # Inject the template catalog so the constrained call can ONLY pick a real
         # template name (history clears can wipe the catalog the researcher fetched,
         # otherwise inviting a hallucinated name that the scaffold then blocks on).
-        catalog_hint = ""
-        try:
-            from src.tools import get_workflow_catalog as _gwc  # noqa: PLC0415
-            _cat = json.loads(getattr(_gwc, "func", _gwc)())
-            if isinstance(_cat, dict) and _cat:
-                names = ", ".join(sorted(_cat.keys()))
-                catalog_hint = ("\n\nAVAILABLE TEMPLATE NAMES (template.name MUST be "
-                                f"one of these exactly, or \"build_new\"):\n{names[:6000]}")
-        except Exception:  # noqa: BLE001
-            pass
+        _cat_block = self._format_template_catalog()
+        catalog_hint = ("\n\n" + _cat_block) if _cat_block else ""
         sys_msg = (
             "You finalise the researcher's work into ONE decision JSON conforming "
             "to the schema: the chosen template name, the authored prompt, and task "
@@ -4404,25 +4396,36 @@ class Pipeline:
                 pass
         return got
 
+    @staticmethod
+    def _catalog_hint(desc) -> str:
+        """A short one-line task hint for a template (first sentence, tag-stripped)."""
+        d = re.sub(r"^\[[^\]]*\]\s*", "", str(desc)).split(". ")[0].strip()
+        return d[:60]
+
     def _format_template_catalog(self) -> str:
-        """Render the template NAME list for injection into the Researcher's prompt,
-        so it selects an EXACT real name without a tool call. Names only (they are
-        self-describing: task + model), which is ~1k tokens for the whole catalog —
-        far leaner than dumping the full get_workflow_catalog result (~5k tokens),
-        and it cannot hallucinate a name. The model may still call
-        get_workflow_catalog for a description if a name is ambiguous. Cached per
-        pipeline. Placed as a stable prompt prefix so implicit caching amortises it."""
+        """Render the template list for injection into the Researcher's prompt so it
+        selects an EXACT real name with no tool call (and cannot hallucinate one).
+
+        Each template is ``name: <first-sentence hint>``. This is data-driven —
+        templates the user adds appear automatically, each carrying its own
+        description as the hint, with NO heuristic or token list to maintain. The
+        hint is the description's first sentence (tag stripped), capped short, so
+        the whole catalog is ~2.6k tokens vs ~4.8k for full descriptions. Cached per
+        pipeline; placed as a stable prompt prefix so implicit caching amortises it.
+
+        (At several hundred templates this linear injection would grow large; the
+        next lever would be filtering to the request's task type before injecting.)"""
         if getattr(self, "_catalog_block_cache", None) is None:
             block = ""
             try:
                 from src.tools import get_workflow_catalog as _gwc  # noqa: PLC0415
                 cat = json.loads(getattr(_gwc, "func", _gwc)())
                 if isinstance(cat, dict) and cat:
+                    lines = [f"- {name}: {self._catalog_hint(cat[name])}"
+                             for name in sorted(cat)]
                     block = ("AVAILABLE TEMPLATES — set template.name to EXACTLY one of "
-                             "these names (or \"build_new\" if none fit); the name encodes "
-                             "task + model, and you may call get_workflow_catalog for a "
-                             "description if a name is ambiguous:\n"
-                             + ", ".join(sorted(cat.keys())))
+                             "these names (or \"build_new\" if none fit); each line is "
+                             "name: what it does:\n" + "\n".join(lines))
             except Exception:  # noqa: BLE001
                 block = ""
             self._catalog_block_cache = block
