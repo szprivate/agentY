@@ -2041,57 +2041,6 @@ class Pipeline:
             "`signal_workflow_ready(workflow_path)` with the corrected workflow once it is ready."
         )
 
-    def _build_exec_fix_prompt(
-        self,
-        user_text: str,
-        exec_error_event: dict,
-        attempt: int,
-        max_attempts: int,
-    ) -> str:
-        """Build an orchestrator retry prompt from a ComfyUI *execution* failure.
-
-        Feeds the structured failure (node id/type, exception, traceback tail) back
-        to the orchestrator and points it at the right diagnostic tool per failure
-        class, then asks it to re-``signal_workflow_ready`` with the fix. This is the
-        free-agent analog of the legacy error-checker: the orchestrator itself
-        diagnoses and repairs, grounded in the real ComfyUI error.
-        """
-        details: dict = exec_error_event.get("details") or {}
-        node_type = details.get("node_type", "") or "?"
-        node_id = details.get("node_id", "") or "?"
-        exc_type = details.get("exception_type", "") or ""
-        exc_msg = details.get("exception_message", "") or exec_error_event.get("error", "")
-        wf_path = exec_error_event.get("workflow_path", "") or ""
-
-        tb = details.get("traceback") or []
-        if isinstance(tb, list):
-            tb_text = "".join(str(x) for x in tb)
-        else:
-            tb_text = str(tb)
-        tb_tail = "\n".join(tb_text.splitlines()[-15:]).strip()
-
-        return (
-            f"The ComfyUI workflow you just signalled FAILED to execute "
-            f"(fix attempt {attempt}/{max_attempts}).\n\n"
-            f"**User's original request:** {user_text}\n\n"
-            f"**Failing node:** {node_type} (id {node_id})\n"
-            f"**Exception:** {exc_type}: {exc_msg}\n"
-            + (f"**Workflow file:** {wf_path}\n" if wf_path else "")
-            + (f"\n**Traceback (tail):**\n```\n{tb_tail}\n```\n" if tb_tail else "")
-            + "\nDiagnose the root cause and fix it, then re-run. Match the failure to the right tool:\n"
-            "- **Unknown / missing node type** (e.g. the node class isn't recognised): call "
-            "`find_custom_node_for(node_type)` to locate the pack, then `install_custom_node(source)`. "
-            "Installed nodes need a ComfyUI restart before they load — tell the user if a restart is required.\n"
-            "- **Missing model / checkpoint / LoRA file**: resolve and fetch it with "
-            "`check_model` / `search_huggingface_models` / `download_hf_model`, then point the loader at the real filename.\n"
-            "- **Bad widget value, wrong enum, or a type/link mismatch**: inspect the node's real schema with "
-            "`get_node_schema(node_type)` (valid inputs, types, and enum options), fix the offending value or wiring, "
-            "and confirm with `validate_workflow(workflow_path)`.\n\n"
-            "Apply the fix to the workflow, re-validate, then call `signal_workflow_ready(workflow_path)` with the "
-            "corrected workflow. If the cause is genuinely unfixable here (e.g. a node needs a restart you can't do, "
-            "or a required model can't be found), stop and explain what the user needs to do instead of re-signalling."
-        )
-
     async def _run_error_check(self, task_description: str) -> dict:
         """Invoke the error-checker agent and return a parsed verdict dict.
 
