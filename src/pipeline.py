@@ -1629,6 +1629,21 @@ class Pipeline:
                 }
             ]
 
+    @staticmethod
+    def _user_asked_for_subagent(text: str) -> bool:
+        """True only when the user's message explicitly asks to use/spawn a subagent.
+
+        Gates ``spawn_subagent`` so the orchestrator can't reach for it on routine
+        turns. Matches an explicit ``subagent`` mention, or a spawn/use/delegate
+        verb near the word ``agent``.
+        """
+        import re as _re
+        t = (text or "").lower()
+        if "subagent" in t or "sub-agent" in t or "sub agent" in t:
+            return True
+        return bool(_re.search(
+            r"\b(spawn|spin\s*up|launch|create|use|delegate\s+to)\b[^.?!]{0,30}\bagents?\b", t))
+
     async def stream_async(self, user_input, *, qa_reply_queue: asyncio.Queue | None = None,
                            canvas_prompt: dict | None = None, canvas_hooks: list | None = None,
                            canvas_selection: list | None = None):  # noqa: ANN201
@@ -1658,6 +1673,14 @@ class Pipeline:
         # and the rigid router entirely. ─────────────────────────────────────
         if self._free_agent and self._orchestrator_agent is not None:
             _trace("pipeline.stream_async: orchestrator begin")
+            # Gate spawn_subagent to an explicit user request only — a small
+            # orchestrator model otherwise spins up subagents for routine work the
+            # direct path already handles. Re-armed every turn from THIS message.
+            try:
+                from src.tools.orchestration import set_subagent_allowed as _set_sa
+                _set_sa(self._user_asked_for_subagent(self._extract_text(user_input)))
+            except Exception:  # noqa: BLE001
+                pass
             self._orch_turn_logged = False  # reset per turn; _log_orchestrator sets it
             try:
                 async for event in self._astream_orchestrator(
@@ -4114,8 +4137,35 @@ class Pipeline:
         try:
             # A relevance floor keeps this always-on inject clean: only genuinely
             # related preferences/lessons surface, so trivial turns add no noise.
-            results = memory_search(user_text, session_id=MEMORY_NAMESPACE, limit=5, min_score=0.5)
-            return format_memories(results)
+            #
+            # Two scopes are merged:
+            #   • GLOBAL (MEMORY_NAMESPACE): curated learnings + explicit notes —
+            #     the shared long-term memory, recalled in every conversation.
+            #   • THIS CONVERSATION (session id = thread): the auto request-log of
+            #     what the agent did here — recalled only within this thread.
+            # Legacy request-log lines that predate per-conversation scoping were
+            # written to the global namespace; drop them (prefix "Generated:") so
+            # old activity can't bleed across threads either.
+            deliberate = [
+                m for m in memory_search(user_text, session_id=MEMORY_NAMESPACE,
+                                         limit=5, min_score=0.5)
+                if not str(m.get("memory", "")).startswith("Generated:")
+            ]
+            own: list[dict] = []
+            sid = getattr(self._session, "session_id", None)
+            if sid and sid != MEMORY_NAMESPACE:
+                own = memory_search(user_text, session_id=sid, limit=3, min_score=0.5)
+            seen: set = set()
+            merged: list[dict] = []
+            for m in sorted(deliberate + own, key=lambda x: x.get("score", 0), reverse=True):
+                mid = m.get("id")
+                if mid in seen:
+                    continue
+                seen.add(mid)
+                merged.append(m)
+                if len(merged) >= 5:
+                    break
+            return format_memories(merged)
         except Exception as exc:
             if self._verbose:
                 print(f"[memory] context retrieval error: {exc}")
@@ -4125,11 +4175,13 @@ class Pipeline:
         """Append one trimmed, verbatim request-log line to long-term memory.
 
         Records *which template + resolution* a completed run used, with a short
-        intent snippet, so preferences accumulate over time and can be recalled.
-        Deliberately compact — the full prompt is NOT stored (it was the noisiest
-        part of the old telemetry). Written verbatim to the shared
-        ``MEMORY_NAMESPACE`` and tagged ``source=request_log`` so it sits beside
-        the learnings and explicit notes in one inspectable store. Best-effort.
+        intent snippet, so the agent can recall what it did earlier in THIS
+        conversation. Deliberately compact — the full prompt is NOT stored (it was
+        the noisiest part of the old telemetry). Written under the current
+        conversation's session id (NOT the global namespace) and tagged
+        ``source=request_log`` so it is recalled only within this conversation and
+        never bleeds into other threads — unlike curated learnings and explicit
+        notes, which are the shared long-term memory. Best-effort.
         """
         try:
             data = json.loads(raw_json)
@@ -4153,7 +4205,11 @@ class Pipeline:
                 return
 
             memory_text = "Generated: " + ", ".join(parts) + "."
-            memory_add(memory_text, session_id=MEMORY_NAMESPACE, metadata={"source": "request_log"})
+            # Per-conversation: scope to this thread's session id so it doesn't
+            # bleed into other conversations. Falls back to the global namespace
+            # only for the CLI (no thread), where there's a single session anyway.
+            _sid = getattr(self._session, "session_id", None) or MEMORY_NAMESPACE
+            memory_add(memory_text, session_id=_sid, metadata={"source": "request_log"})
             if self._verbose:
                 print(f"[memory] Saved: {memory_text[:100]}")
         except Exception as exc:

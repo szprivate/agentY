@@ -234,6 +234,19 @@ def remove_skill(name: str) -> str:
 
 _SUBAGENT_TOOLSETS = ("research", "assembly", "info", "story", "web", "vision", "full")
 
+# spawn_subagent is gated: it may run ONLY when the user's current message
+# explicitly asked for a subagent. The pipeline sets this per turn via
+# set_subagent_allowed() from a scan of the user's message; left False, the tool
+# refuses. This stops the orchestrator (a small model) from spinning up
+# subagents for routine work the direct path already handles.
+_SUBAGENT_ALLOWED: bool = False
+
+
+def set_subagent_allowed(allowed: bool) -> None:
+    """Arm/disarm ``spawn_subagent`` for the current turn (pipeline-controlled)."""
+    global _SUBAGENT_ALLOWED
+    _SUBAGENT_ALLOWED = bool(allowed)
+
 
 @tool
 async def spawn_subagent(task: str, toolset: str = "full", model: Optional[str] = None,
@@ -276,6 +289,13 @@ async def spawn_subagent(task: str, toolset: str = "full", model: Optional[str] 
     Returns:
         The subagent's final text output (or a JSON error string).
     """
+    if not _SUBAGENT_ALLOWED:
+        return json.dumps({
+            "error": "spawn_subagent is disabled for this turn. It runs ONLY when the "
+                     "user explicitly asks to use or spawn a subagent. Do this yourself "
+                     "with your own tools instead (e.g. prepare_workflow, "
+                     "duplicate_workflow / update_workflow, the batch-handoff skill)."
+        })
     ts = (toolset or "full").strip().lower()
     if not tools and ts not in _SUBAGENT_TOOLSETS:
         return json.dumps({

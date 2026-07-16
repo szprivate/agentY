@@ -375,6 +375,14 @@ def _restore_state(pipeline, thread_id: str) -> None:
                 pass
         pipeline._last_brainbriefing_json = st.get("last_brainbriefing")
         pipeline._last_prior_summary = st.get("last_prior_summary")
+    # Scope memory to THIS conversation: the pipeline's session id becomes the
+    # thread id, so the auto request-log is written and recalled per-conversation
+    # (no bleed between threads). Curated learnings + explicit notes stay in the
+    # global namespace and are still shared across conversations.
+    try:
+        pipeline._session.session_id = thread_id
+    except Exception:
+        pass
     agent = _memory_agent(pipeline)
     cached = _thread_brain_cache.get(thread_id)
     if agent is not None and hasattr(agent, "messages") and cached is not None:

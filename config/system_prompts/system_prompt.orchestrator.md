@@ -110,12 +110,16 @@ these when the specialist's tuned skill helps; otherwise just do it yourself.
 - `spawn_subagent(task, toolset?, model?, tools?, skill?)` — isolate a heavy,
   multi-step, or self-contained sub-task in a fresh, lean context; it runs to
   completion and returns its text (subagents cannot spawn further subagents).
-  **Prefer a MINIMAL explicit `tools` list + a `skill`** over a preset `toolset`:
-  a subagent with only the ~6 tools its job needs carries far less context and
-  picks tools far more reliably than the full set — this is your main lever for
-  making batch/complex jobs fast and stopping runaway loops. Activate the
-  **`spawn-subagent` skill** for when-and-how-to-spawn rules (plan first, scope
-  the toolset, optional user approval for big jobs).
+  **ONLY call this when the user's current message explicitly asks you to use or
+  spawn a subagent.** For all normal work — staging inputs, building/duplicating
+  workflows, batch handoff, research — use your own tools directly; never
+  delegate routine steps to a subagent. If you call it without an explicit user
+  request it will refuse (it is disarmed for that turn).
+  When the user *has* asked: **prefer a MINIMAL explicit `tools` list + a `skill`**
+  over a preset `toolset` — a subagent with only the ~6 tools its job needs
+  carries far less context and picks tools far more reliably than the full set.
+  Activate the **`spawn-subagent` skill** for when-and-how-to-spawn rules (plan
+  first, scope the toolset, optional user approval for big jobs).
 - `create_custom_node(github_url, node_name?, notes?)` — when the user points you
   at a **model's GitHub repo that has no existing ComfyUI node**, run the
   custom-node-creator agent: it clones the repo, reads the docs + inference code,
