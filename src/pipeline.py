@@ -1502,48 +1502,73 @@ class Pipeline:
                     for _ta in _drain_tools():
                         yield {"tool_activity": _ta}
 
-                # ── ComfyUI execution error → consolidated fixer repair ──────── #
-                # Only when THIS batch produced no new outputs (a genuine failure);
-                # a partially-successful batch keeps its outputs and doesn't loop.
-                # The fix_workflow_assembly specialist diagnoses + repairs the
-                # workflow; the orchestrator then just re-signals it to re-run.
+                # ── ComfyUI run failure → consolidated fixer repair ──────────── #
+                # Fire whenever the executor recorded a failure — INCLUDING a
+                # partial batch where some members succeeded. Previously the repair
+                # only ran when the batch produced zero outputs, so a batch where
+                # e.g. 3/5 succeeded silently accepted the 2 failures and never
+                # fixed or surfaced them. Each DISTINCT failed workflow is repaired
+                # and re-signalled; outputs that already succeeded are preserved
+                # across the retry, and unfixable failures in a partial batch are
+                # surfaced without discarding the successes.
                 _exec_errors = _get_exec_errors() if not _qa_fail_event else []
-                if _exec_errors and len(exec_paths) == _outputs_before:
+                if _exec_errors:
+                    _partial = len(exec_paths) > _outputs_before
+                    _failed: dict[str, dict] = {}
+                    for _e in _exec_errors:
+                        _wp = _e.get("workflow_path") or (workflow_paths[0] if workflow_paths else "")
+                        if _wp:
+                            _failed.setdefault(_wp, _e)
                     _exec_fix_attempts += 1
-                    _err = _exec_errors[0]
-                    _wp_fail = _err.get("workflow_path") or (workflow_paths[0] if workflow_paths else "")
-                    if _exec_fix_attempts <= _MAX_EXEC_FIX and _wp_fail:
-                        yield {"data": (f"\n\n_🔧 ComfyUI run failed — repairing "
-                                        f"(attempt {_exec_fix_attempts}/{_MAX_EXEC_FIX})…_")}
-                        _fix = await self._run_fix_workflow_assembly(_wp_fail, exec_error=_err)
-                        for _ta in _drain_tools():
-                            yield {"tool_activity": _ta}
-                        if _fix.get("status") == "ready":
+                    _repaired: list[str] = []
+                    _unfixable: list[str] = []
+                    if _exec_fix_attempts <= _MAX_EXEC_FIX and _failed:
+                        yield {"data": (f"\n\n_🔧 ComfyUI run failed for {len(_failed)} "
+                                        f"workflow(s){' (partial batch)' if _partial else ''} — "
+                                        f"repairing (attempt {_exec_fix_attempts}/{_MAX_EXEC_FIX})…_")}
+                        for _wp_fail, _err in _failed.items():
+                            _fix = await self._run_fix_workflow_assembly(_wp_fail, exec_error=_err)
+                            for _ta in _drain_tools():
+                                yield {"tool_activity": _ta}
+                            if _fix.get("status") == "ready":
+                                _repaired.append(_wp_fail)
+                            else:
+                                _unfixable.append(f"`{os.path.basename(_wp_fail)}` "
+                                                  f"({_fix.get('error') or 'still invalid'})")
+                        if _repaired:
+                            # Keep members that already succeeded so the retry
+                            # (which resets this turn's outputs) doesn't drop them.
+                            self._chain_output_paths.extend(exec_paths[_outputs_before:])
+                            _resig = "\n".join(f'signal_workflow_ready("{p}")' for p in _repaired)
+                            _note = f" Could not repair: {', '.join(_unfixable)}." if _unfixable else ""
                             current_input = (
-                                f"The workflow at {_wp_fail} was just repaired after a run "
-                                f"failure. Call signal_workflow_ready(\"{_wp_fail}\") to re-run "
-                                f"it. Do not change or re-research anything else.")
+                                f"{len(_repaired)} workflow(s) were just repaired after a run "
+                                f"failure. Re-run ONLY these by calling each of:\n{_resig}\n"
+                                f"Do not change or re-research anything else.{_note}")
                             continue
-                        yield {"data": (f"\n\n❌ Repair could not fix the run failure "
-                                        f"({_fix.get('error') or 'still invalid'}). Stopping.")}
+                    # No repair succeeded (attempts exhausted or nothing fixable).
+                    _err0 = next(iter(_failed.values()), {})
+                    _det = _err0.get("details") or {}
+                    _nt = _det.get("node_type", "?")
+                    _why = _det.get("exception_message") or _err0.get("error") or "unknown error"
+                    if _partial:
+                        # Some members succeeded — keep and report them; just flag
+                        # the ones that couldn't be produced instead of hard-failing.
+                        yield {"data": (f"\n\n⚠️ {len(_failed)} of the batch failed and could not be "
+                                        f"repaired (e.g. `{_nt}`: {_why}); keeping the "
+                                        f"{len(exec_paths) - _outputs_before} that succeeded.")}
+                        # fall through to the normal completion path below.
+                    else:
+                        _exhausted = _exec_fix_attempts > _MAX_EXEC_FIX
+                        yield {"data": (f"\n\n❌ ComfyUI run failed"
+                                        f"{f' after {_MAX_EXEC_FIX} fix attempt(s)' if _exhausted else ''} "
+                                        f"(error in `{_nt}`: {_why}). Stopping so you can take a look.")}
                         self._record_chat_summary(user_text, synth, status="failed",
                                                   raw_json=self._last_brainbriefing_json)
                         self._record_agent_usage(self._orchestrator_agent, _snap)
                         self._session.last_agent = "orchestrator"
+                        self._log_orchestrator()
                         return
-                    # Attempts exhausted — surface the failure and stop.
-                    _det = _err.get("details") or {}
-                    _nt = _det.get("node_type", "?")
-                    yield {"data": (f"\n\n❌ ComfyUI run still failing after {_MAX_EXEC_FIX} fix "
-                                    f"attempt(s) (last error in `{_nt}`: "
-                                    f"{_det.get('exception_message') or _err.get('error')}). "
-                                    "Stopping so you can take a look.")}
-                    self._record_chat_summary(user_text, synth, status="failed",
-                                              raw_json=self._last_brainbriefing_json)
-                    self._record_agent_usage(self._orchestrator_agent, _snap)
-                    self._session.last_agent = "orchestrator"
-                    self._log_orchestrator()
-                    return
 
                 if _qa_fail_event:
                     if qa_reply_queue is not None:

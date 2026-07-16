@@ -903,6 +903,11 @@ async def execute_workflows_batch(
             error_msg = f"❌ Submission failed for iteration {idx}/{total}: {exc}"
             logger.error("executor: %s", error_msg)
             yield error_msg
+            # Record it so the orchestrator auto-fix loop can see and repair this
+            # member — a submission (validation/400) failure was previously only
+            # yielded to the UI and left invisible to the fix loop, so a batch
+            # where some members failed on submission was silently accepted.
+            _record_exec_error(None, wf_path, str(exc))
 
     if not queued:
         yield "❌ All workflow submissions failed — nothing to poll."
