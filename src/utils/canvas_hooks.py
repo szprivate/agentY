@@ -301,6 +301,29 @@ def _output_targets(hook: dict) -> list:
     return out
 
 
+def inject_produced_value(base_prompt: dict, hook: dict, value) -> list[str]:
+    """Write a producer hook's single produced *value* into each REAL node input
+    its output feeds, returning the target ids actually written.
+
+    This is the **keep-live** delivery path (the alternative to baking + rewiring an
+    ``agentY text`` node into the target): the hook stays wired exactly as the user
+    drew it, but the base graph the server queues carries *value* at the wired
+    input — so a normal server-side run renders it without touching the canvas.
+    Targets not present in *base_prompt* (e.g. another hook consumed only as
+    context) are skipped, matching how ``build_batch`` guards its sweeps.
+    """
+    written: list[str] = []
+    if not isinstance(base_prompt, dict):
+        return written
+    for tid, _ttype, tin, _tintype, _ttitle in _output_targets(hook):
+        node = base_prompt.get(tid)
+        if not isinstance(node, dict) or not tin:
+            continue
+        node.setdefault("inputs", {})[tin] = value
+        written.append(tid)
+    return written
+
+
 def _hook_ids(hooks: list) -> set:
     """The set of node ids that are themselves hooks (for chain detection)."""
     return {str(h.get("hook_node_id")) for h in hooks if h.get("hook_node_id") is not None}
@@ -439,9 +462,9 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             "guess a node from the prose, and do NOT assemble a template or call "
             "run_research. Two ways to produce, by how many values the directive asks for:\n"
             "  • ONE value (e.g. a single composed prompt) → write it and call "
-            'place_canvas_text(hook_node_id="<hook id>", text="<value>") — it bakes an '
-            "'agentY text' node wired into the target input, so the value persists on a "
-            "normal run.\n"
+            'place_canvas_text(hook_node_id="<hook id>", text="<value>") — it delivers the '
+            "value to the target input (injected at run time if the hook is kept live, or "
+            "baked in if frozen — the hook's own setting) and drops an 'agentY text' node.\n"
             "  • SEVERAL values (a sweep/variations/folder) → call "
             "apply_canvas_hooks(resolutions=[…]) ONCE with target_node_id + param taken "
             "straight from the 'feeds' target (node id and input name); each variant runs "
@@ -474,9 +497,10 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             "generate images/video, do NOT call apply_canvas_hooks, and do NOT build or "
             "run a workflow. Use the wired context as the SUBJECT of the answer. When the "
             'answer is ready, call place_canvas_text(hook_node_id="<id>", text="<answer>") '
-            "ONCE per hook — it bakes an 'agentY text' node wired into the input the hook's "
-            "output feeds (shown as 'feeds …'), so the graph keeps the string on a normal "
-            "run. The answer also streams into the chat:"
+            "ONCE per hook — it delivers the string to the input the hook's output feeds "
+            "(shown as 'feeds …'; injected at run time if the hook is kept live, or baked in "
+            "if frozen — the hook's own setting) and drops an 'agentY text' node. The answer "
+            "also streams into the chat:"
         )
         for h in text_hooks:
             hid = h.get("hook_node_id")

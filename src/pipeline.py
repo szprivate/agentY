@@ -466,6 +466,9 @@ class Pipeline:
         # user's on-canvas graph + the hook directives attached to it.
         self._canvas_base_prompt: dict | None = None
         self._canvas_hooks: list = []
+        # Set when a keep-live producer hook injects a value into the base graph but
+        # queues no batch — the base graph is then run once at turn end (below).
+        self._canvas_keeplive_run: bool = False
         # Outputs produced mid-turn by run_workflow_now (chained hook stages).
         # Tracked so they survive the end-of-turn current_output_paths reset and
         # still get staged onto the canvas. Empty on every non-chain turn.
@@ -1111,17 +1114,50 @@ class Pipeline:
             if not str(text or "").strip():
                 return json.dumps({"error": "text is empty — write the answer first, then place it."})
             from src.utils.canvas_patch import push as _push_patch
+            from src.utils.canvas_hooks import inject_produced_value as _inject, _is_text
+
+            # Resolve this hook's freeze toggle. keep-live (freeze OFF, the default)
+            # leaves the hook wired and injects the value into the captured base
+            # graph; freeze ON bakes the value into the target (legacy rewire). When
+            # the frontend didn't send a `freeze` field at all (older extension),
+            # preserve the legacy bake so existing graphs behave as before.
+            hook = next((h for h in (self._canvas_hooks or [])
+                         if str(h.get("hook_node_id")) == str(hook_node_id)), None)
+            freeze = True
+            if hook is not None and "freeze" in hook:
+                freeze = bool(hook.get("freeze"))
+            keep_live = not freeze
+
+            injected: list[str] = []
+            if keep_live and hook is not None and isinstance(self._canvas_base_prompt, dict):
+                injected = _inject(self._canvas_base_prompt, hook, str(text))
+                # A PRODUCER (directive) hook whose output feeds a real node needs the
+                # canvas run once so the injected value renders; a TEXT hook only
+                # delivers a string for a later/other run, so it must not auto-generate.
+                if injected and not _is_text(hook):
+                    self._canvas_keeplive_run = True
+
             _push_patch({
                 "op": "place_text",
                 "hook_node_id": str(hook_node_id),
                 "text": str(text),
+                "keep_live": keep_live,
             })
+            if keep_live:
+                msg = ("Placed an 'agentY text' node on the canvas as a reference; left the "
+                       "hook wired and injected your answer into the graph at run time"
+                       + (f" (targets {', '.join(injected)})." if injected
+                          else " (no wired real-node target — reference only)."))
+            else:
+                msg = ("Placed an 'agentY text' node on the canvas carrying your answer and "
+                       "froze it into the input the hook's output fed.")
             return json.dumps({
                 "status": "placed",
                 "hook_node_id": str(hook_node_id),
                 "chars": len(text),
-                "message": ("Placed an 'agentY text' node on the canvas carrying your answer, "
-                            "wired where the hook's output went."),
+                "keep_live": keep_live,
+                "injected_targets": injected,
+                "message": msg,
             })
 
         # NOTE: intent classification is the orchestrator's own job in free-agent
@@ -1428,6 +1464,7 @@ class Pipeline:
         # apply_canvas_hooks; describe the hooks in the orchestrator input.
         self._canvas_base_prompt = None
         self._canvas_hooks = [h for h in (canvas_hooks or []) if isinstance(h, dict)]
+        self._canvas_keeplive_run = False
         self._chain_output_paths = []
         # Arbitrary selected nodes (id/type/title/widgets) the orchestrator can
         # read and write back via set_canvas_node_params.
@@ -1493,6 +1530,24 @@ class Pipeline:
             if interrupt_result is None:
                 # Executor handoff — drain the workflow-signal mailbox and run.
                 workflow_paths = _get_workflow_signal()
+                # Keep-live producers injected their value(s) into the captured base
+                # graph but queued no batch (no sweep / signal) — run the canvas once
+                # so those values render. Skipped when anything else was already
+                # queued (a sweep's build_batch deep-copies the injected base graph,
+                # so the values ride along there).
+                if (not workflow_paths and getattr(self, "_canvas_keeplive_run", False)
+                        and isinstance(self._canvas_base_prompt, dict) and self._canvas_base_prompt):
+                    try:
+                        import tempfile as _tf
+                        _kd = Path(_tf.mkdtemp(prefix="agenty_keeplive_"))
+                        _kp = _kd / "canvas_keeplive.json"
+                        _kp.write_text(json.dumps(self._canvas_base_prompt), encoding="utf-8")
+                        workflow_paths = [str(_kp)]
+                        if self._verbose:
+                            print("pipeline: keep-live canvas run — queued base graph with "
+                                  "injected producer value(s).")
+                    except Exception as _exc:  # noqa: BLE001
+                        print(f"pipeline: keep-live canvas run could not be queued ({_exc}).")
                 workflow_paths = self._expand_variations(workflow_paths, self._last_brainbriefing_json or "")
                 # Reset this turn's outputs before the deferred batch, but KEEP any
                 # produced mid-turn by run_workflow_now (chained stages) so they're

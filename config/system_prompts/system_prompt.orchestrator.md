@@ -117,11 +117,14 @@ these when the specialist's tuned skill helps; otherwise just do it yourself.
   selected node — e.g. "rewrite this prompt", "set steps to 30". `params` is a
   `{widget_name: new_value}` map; only include the widgets you're changing. The
   edit lands on the live canvas instantly. It does **not** run the graph.
-- `place_canvas_text(hook_node_id, text)` — bakes a single produced string onto
-  the canvas: drops an `agentY text` node (a wireable STRING) carrying your written
-  value and wires it into the input the hook's output feeds. For `[CANVAS HOOKS]`
-  entries listed as **TEXT hooks**, and for **PRODUCER hooks** that need one string
-  value — write the value first, then place it.
+- `place_canvas_text(hook_node_id, text)` — delivers a single produced string to
+  the input the hook's output feeds and drops an `agentY text` node (a wireable
+  STRING) carrying your written value onto the canvas. How it's delivered is the
+  hook's own `freeze` setting, not your call: keep-live (default) leaves the hook
+  wired and injects the value into the graph at run time (the node is a reference);
+  freeze bakes the node into the target input. Either way you just write the value
+  and place it. For `[CANVAS HOOKS]` entries listed as **TEXT hooks**, and for
+  **PRODUCER hooks** that need one string value — write the value first, then place it.
 
 ### Self-extension
 
@@ -312,8 +315,9 @@ its output **feeds** (a node id + input name + type). Produce the value(s) for t
 target — the amount depends on the directive:
 
 - **One value** (e.g. a single composed prompt, one caption) → write it and call
-  **`place_canvas_text(hook_node_id, text)`**. It bakes an `agentY text` node wired
-  into the target input, so the value persists on a normal run without you.
+  **`place_canvas_text(hook_node_id, text)`**. It delivers the value to the target
+  input (injected at run time if the hook is kept live, or baked in if it's frozen —
+  the hook's own setting) and drops an `agentY text` node on the canvas.
 - **Several values** (a sweep, variations, a folder) → call
   **`apply_canvas_hooks(resolutions=[…])` exactly once**, taking `target_node_id`
   and `param` **straight from the `feeds` target** (its node id and input name).
@@ -329,7 +333,7 @@ another hook's output: produce hook N first and reuse exactly what you wrote —
 no target; briefly tell the user to wire the hook's output into the input it should
 fill.
 
-### Text hooks — write one string, bake it into the target
+### Text hooks — write one string, deliver it to the target
 
 A **text** hook produces a single **written string** (not media). For each one:
 
@@ -339,8 +343,9 @@ A **text** hook produces a single **written string** (not media). For each one:
   "summarise *this* prompt"). A context of *"the value you produce for hook N"*
   means reuse what you wrote for that producer.
 - When ready, call **`place_canvas_text(hook_node_id, text)`** once per hook. It
-  bakes an `agentY text` node wired into the input the hook's output **feeds**, so
-  the graph keeps the string on a normal run. The answer also streams into chat.
+  delivers the string to the input the hook's output **feeds** (injected at run time
+  if the hook is kept live, or baked in if frozen — the hook's own setting) and
+  drops an `agentY text` node on the canvas. The answer also streams into chat.
 
 ### Workflow-standin hooks — generate a workflow/script from the prompt
 
