@@ -1,0 +1,120 @@
+# agentY settings — committed DEFAULTS.
+#
+# Machine-specific values (absolute paths, model pins, private endpoints) belong in
+# config/settings.local.json (gitignored), which is deep-merged OVER this file.
+# Effective precedence for any value: environment variable > settings.local.json > here.
+#
+# Only override in the local file the leaves that actually differ on your machine;
+# everything else is inherited from this file, so new defaults reach every install.
+
+comfyui_url = "http://127.0.0.1:8188"
+# Address the ComfyUI sidebar connects to (the agentY chat host / agent server).
+agent_server_url = "http://127.0.0.1:5000"
+
+# ComfyUI models dir — machine-specific, set it in settings.local.json. When blank,
+# agentY falls back to the directory ComfyUI reports via /system_stats.
+comfyui_models_dir = ""
+comfyui_custom_templates_dir = "./comfyui_workflow_templates_custom/templates/"
+output_dir = "./output_images/"
+output_workflows_dir = "./output_workflows/"
+# Fallback only — the live value is read from ComfyUI's --user-directory flag
+# (/system_stats). Set a machine path in settings.local.json for when ComfyUI is unreachable.
+comfyui_user_dir = ""
+conversation_db = "./memory/conversations.sqlite"
+# Auto-open every workflow the agent runs onto the ComfyUI canvas. Env: AGENTY_CANVAS_AUTOLOAD (1/0).
+autoload_workflows_into_canvas = false
+message_history_log = "./.logs/message_history.log"
+tokens_usage_log = "./.logs/tokens_usage.log"
+
+[system_prompts]
+orchestrator = "system_prompt.orchestrator.md"
+query_templates = "system_prompt.query_templates.md"
+assemble_workflow = "system_prompt.assemble_workflow.md"
+detect_user_intent = "system_prompt.detect_user_intent.md"
+planner = "system_prompt.planner.md"
+error_checker = "system_prompt.error_checker.md"
+info = "system_prompt.info.md"
+learnings = "system_prompt.learnings.md"
+qa_checker = "system_prompt.qaChecker.md"
+vision_agent = "system_prompt.vision_agent.md"
+story = "system_prompt.story.md"
+search_web = "system_prompt.search_web.md"
+dop = "system_prompt.dop.md"
+coder = "system_prompt.coder.md"
+
+[director]
+# Storyboard director: max Vision-QA attempts per visual step (env: DIRECTOR_AUTO_RETRIES).
+auto_retries = 2
+# Per-step user-approval gate: true = pause after each step (env: DIRECTOR_USER_APPROVAL_STEP).
+user_approval_step = false
+# Director-of-Photography pass before generation (env: DIRECTOR_APPLY_CINEMATOGRAPHY).
+apply_cinematography = true
+
+[llm]
+history_window = 12
+
+# Per-role model as "provider,model". These are safe cross-provider defaults (Claude
+# Haiku everywhere); override with your actual provider/models in settings.local.json.
+# Stronger models help most for query_templates, assemble_workflow, and coder.
+[llm.pipeline]
+orchestrator = "claude,claude-haiku-4-5"
+query_templates = "claude,claude-haiku-4-5"
+assemble_workflow = "claude,claude-haiku-4-5"
+coder = "claude,claude-haiku-4-5"
+detect_user_intent = "claude,claude-haiku-4-5"
+info = "claude,claude-haiku-4-5"
+story = "claude,claude-haiku-4-5"
+search_web = "claude,claude-haiku-4-5"
+dop = "claude,claude-haiku-4-5"
+planner = "claude,claude-haiku-4-5"
+learnings = "claude,claude-haiku-4-5"
+error_checker = "claude,claude-haiku-4-5"
+build_skill = "claude,claude-haiku-4-5"
+llm_functions = "claude,claude-haiku-4-5"
+executor_vision_model = "claude,claude-haiku-4-5"
+
+[llm.ollama]
+host = "http://localhost:11434"
+num_ctx = 32768
+max_tokens = 16384
+repeat_penalty = 1.1
+think = false
+
+[llm.anthropic]
+model = "claude-haiku-4-5"
+max_tokens = 16384
+# Extended thinking (reasoning). Off by default. Env: ANTHROPIC_THINK (1/0).
+think = false
+
+[llm.dashscope]
+# Alibaba Model Studio (DashScope) — Qwen via the OpenAI-compatible API. Put the key
+# in .env (DASHSCOPE_API_KEY); set a private/regional endpoint in settings.local.json.
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+model = "qwen-plus"
+max_tokens = 8192
+# Qwen thinking mode. Off by default. Env: DASHSCOPE_ENABLE_THINKING (1/0).
+enable_thinking = false
+
+[memory]
+# Long-term agent memory (mem0). The vector store is ALWAYS local FAISS (./memory);
+# only the embedder (and rarely the fact-extraction LLM) call a provider.
+enabled = true
+store_dir = "memory"
+
+# Embedder — turns text into vectors for FAISS. provider = "ollama" (local) or "openai"
+# (any OpenAI-compatible endpoint). Changing embedder/dims invalidates the on-disk index.
+# Env: MEMORY_EMBEDDER_PROVIDER / MEMORY_EMBED_MODEL / MEMORY_EMBED_DIMS / ...
+[memory.embedder]
+provider = "ollama"
+model = "nomic-embed-text"
+embedding_dims = 768
+base_url = ""
+api_key_env = "OPENAI_API_KEY"
+
+# Fact-extraction LLM — only used for "infer" writes; the default write path never
+# calls it. A blank model falls back to the llm_functions pipeline model.
+[memory.llm]
+provider = "ollama"
+model = ""
+base_url = ""
+api_key_env = "OPENAI_API_KEY"

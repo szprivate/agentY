@@ -40,7 +40,7 @@ from src.tools import (
     LEARNINGS_TOOLS,
     VISION_AGENT_TOOLS,
     DOP_TOOLS,
-    CUSTOM_NODE_TOOLS,
+    CODER_TOOLS,
     FIX_WORKFLOW_ASSEMBLY_TOOLS,
     GENERATE_NEW_WORKFLOW_TOOLS,
     reset_patch_workflow_guard,
@@ -53,24 +53,22 @@ from src.steering import get_ASSEMBLEWORKFLOW_steering_handlers, get_QUERYTEMPLA
 # ---------------------------------------------------------------------------
 
 def _load_settings() -> dict:
-    """Return the parsed settings.json, or {} if the file is absent/invalid."""
-    path = Path(__file__).parent.parent / "config" / "settings.json"
-    if path.exists():
-        try:
-            return json.loads("".join(ln for ln in path.read_text(encoding="utf-8").splitlines(keepends=True) if not ln.lstrip().startswith("//")))
-        except Exception:
-            pass
-    return {}
+    """Return the merged settings (TOML defaults ⊕ local JSON overrides), or {}.
 
-
-_SETTINGS: dict = {}  # populated lazily by _cfg()
+    Delegates to :mod:`src.utils.settings`, the single settings loader for the app.
+    """
+    from src.utils.settings import load_settings
+    return load_settings()
 
 
 def _settings() -> dict:
-    global _SETTINGS
-    if not _SETTINGS:
-        _SETTINGS = _load_settings()
-    return _SETTINGS
+    """The merged settings dict — the single shared cache (see src.utils.settings).
+
+    Returns the SAME cached object on every call, so a runtime override written into
+    it (e.g. by ``/switch_model``) is visible to every reader until the cache is
+    invalidated (a settings save) or the process restarts.
+    """
+    return _load_settings()
 
 
 def _cfg(env_var: str, *settings_path: str, default: str | int = "") -> str | int:
@@ -266,7 +264,7 @@ _SYSTEM_PROMPT_FILE: dict[str, str] = {
     "error_checker": "system_prompt.error_checker",
     "qa_checker": "system_prompt.qaChecker",
     "vision_agent": "system_prompt.vision_agent",
-    "custom_node_creator": "system_prompt.custom_node_creator",
+    "coder": "system_prompt.coder",
 }
 
 
@@ -1789,30 +1787,34 @@ def create_generate_new_workflow_agent(
     return agent
 
 
-def create_custom_node_creator_agent(
+def create_coder_agent(
+    skill: str | None = None,
     llm: str | None = None,
     ollama_model: str | None = None,
     anthropic_model: str | None = None,
     **kwargs,
 ) -> Agent:
-    """Create the **custom-node-creator** agent.
+    """Create the general **coder** agent.
 
-    Given a local clone of a model's GitHub repo and an empty output folder, this
-    agent reads the repo's README/docs/inference code and authors a self-contained
-    ComfyUI custom-node pack (``__init__.py`` + ``nodes.py`` + ``requirements.txt``
-    + ``README.md`` + ``pyproject.toml``). It is invoked by the ``create_custom_node``
-    orchestrator tool, which handles cloning and output-dir setup around it.
+    A focused code-authoring agent: given a self-contained coding task it reads the
+    relevant source/docs and writes or edits complete, importable code, then returns
+    a concise summary. The general contract (read before you write, honest TODO
+    stubs, never invent an API) lives in ``system_prompt.coder``; the domain
+    knowledge for a *particular* task is supplied as a **skill** whose ``SKILL.md``
+    body is baked into the prompt as the agent's procedure. For example
+    ``create_coder_agent(skill="custom-node-from-github")`` turns a cloned model repo
+    (staged by the ``create_custom_node`` tool) into a ComfyUI custom-node pack.
 
-    Writing correct node code from docs is a demanding code-generation task, so this
-    role reads ``llm.pipeline.custom_node_creator`` from settings.json and, when unset,
-    falls back to the **assemble_workflow** (builder) setting — guaranteed to resolve in
-    any environment that already builds workflows. Point ``pipeline.custom_node_creator``
-    at a stronger coding model (e.g. a Qwen-coder or a Claude Sonnet/Opus) for better
-    results. Env var ``CUSTOM_NODE_CREATOR_LLM`` overrides the full setting;
-    ``CUSTOM_NODE_CREATOR_OLLAMA_MODEL`` / ``CUSTOM_NODE_CREATOR_ANTHROPIC_MODEL``
-    override the model.
+    Writing correct code is a demanding generation task, so this role reads
+    ``llm.pipeline.coder`` from settings.json and, when unset, falls back to the
+    **assemble_workflow** (builder) setting — guaranteed to resolve on any working
+    install. Point ``pipeline.coder`` at a strong coding model (a Qwen/Kimi coder or a
+    Claude Sonnet/Opus). Env var ``CODER_LLM`` overrides the full setting;
+    ``CODER_OLLAMA_MODEL`` / ``CODER_ANTHROPIC_MODEL`` override the model.
 
     Args:
+        skill: Optional skill name whose SKILL.md body is baked into the prompt as
+            the agent's procedure (e.g. ``"custom-node-from-github"``).
         llm: ``'claude'`` | ``'ollama'`` | a DashScope provider. Falls back to settings.
         ollama_model: Ollama model override.
         anthropic_model: Anthropic model override.
@@ -1821,41 +1823,46 @@ def create_custom_node_creator_agent(
     if ollama_model and llm is None:
         llm = "ollama"
 
-    # Fall back to the builder (assemble_workflow) setting so no extra config is
-    # needed out of the box — that role is always configured on a working install.
+    # Resolve the coding model: coder → builder (assemble_workflow) default, which is
+    # always configured on a working install. Point pipeline.coder at a strong model.
     _builder_default = str(_cfg("ASSEMBLEWORKFLOW_LLM", "pipeline", "assemble_workflow", default="claude,claude-haiku-4-5"))
-    _raw = str(_cfg("CUSTOM_NODE_CREATOR_LLM", "pipeline", "custom_node_creator", default=_builder_default))
+    _raw = str(_cfg("CODER_LLM", "pipeline", "coder", default=_builder_default))
     _settings_llm, _settings_model = _parse_llm_setting(_raw)
     resolved_llm = llm or _settings_llm or "claude"
 
     if resolved_llm == "ollama":
         resolved_ollama = (
             ollama_model
-            or os.environ.get("CUSTOM_NODE_CREATOR_OLLAMA_MODEL")
+            or os.environ.get("CODER_OLLAMA_MODEL")
             or _settings_model
             or "qwen3-coder:30b"
         )
         resolved_anthropic = (
             anthropic_model
-            or os.environ.get("CUSTOM_NODE_CREATOR_ANTHROPIC_MODEL")
+            or os.environ.get("CODER_ANTHROPIC_MODEL")
             or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
         )
     else:  # claude / dashscope
         resolved_anthropic = (
             anthropic_model
-            or os.environ.get("CUSTOM_NODE_CREATOR_ANTHROPIC_MODEL")
+            or os.environ.get("CODER_ANTHROPIC_MODEL")
             or _settings_model
             or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
         )
         resolved_ollama = ollama_model or "qwen3-coder:30b"
 
-    system_prompt = _load_system_prompt("custom_node_creator")
+    system_prompt = _load_system_prompt("coder")
+    skill_body = _load_subagent_skill(skill) if skill else ""
+    if skill_body:
+        system_prompt = (system_prompt.rstrip()
+                         + "\n\n## Your procedure — follow this exactly\n\n"
+                         + skill_body)
     agent = _make_agent(
-        role="custom_node_creator",
+        role="coder",
         llm=resolved_llm,
         dashscope_model=_settings_model,
         system_prompt=system_prompt,
-        tools=CUSTOM_NODE_TOOLS,
+        tools=CODER_TOOLS,
         ollama_model=resolved_ollama,
         anthropic_model=resolved_anthropic,
         **kwargs,

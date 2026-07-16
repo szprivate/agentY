@@ -51,13 +51,8 @@ def _db_path() -> Path:
         return Path(env).expanduser()
     rel = "./memory/conversations.sqlite"
     try:
-        cfg_path = _project_root() / "config" / "settings.json"
-        if cfg_path.exists():
-            cfg = json.loads(
-                "".join(ln for ln in cfg_path.read_text(encoding="utf-8").splitlines(keepends=True)
-                        if not ln.lstrip().startswith("//"))
-            )
-            rel = cfg.get("conversation_db", rel)
+        from src.utils.settings import load_settings
+        rel = load_settings().get("conversation_db", rel)
     except Exception:
         pass
     p = Path(rel)

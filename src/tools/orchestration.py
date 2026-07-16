@@ -13,10 +13,11 @@ boxed into a fixed triage → route decision tree, the orchestrator can extend
 - ``spawn_subagent`` builds a fresh Strands agent with a curated toolset and runs
   it to completion on a focused sub-task, returning its text. Subagents are
   depth-1 (they do not themselves get ``spawn_subagent``) so cost stays bounded.
-- ``create_custom_node`` / ``list_generated_nodes`` run the **custom-node-creator**
-  agent: given a model's GitHub repo, it clones the repo, reads the docs +
-  inference code, and authors a self-contained ComfyUI custom-node pack under
-  ``output/custom_nodes/`` that the user can publish as its own repo.
+- ``create_custom_node`` / ``list_generated_nodes`` run the **coder** agent with the
+  ``custom-node-from-github`` skill: given a model's GitHub repo, the tool clones the
+  repo, then the agent reads the docs + inference code and authors a self-contained
+  ComfyUI custom-node pack under ``output/custom_nodes/`` that the user can publish as
+  its own repo.
 
 The tools are bound to the live orchestrator via :func:`set_orchestrator_context`
 (mirrors ``image_handling.set_vision_agent``): the orchestrator's ``AgentSkills``
@@ -323,7 +324,8 @@ async def spawn_subagent(task: str, toolset: str = "full", model: Optional[str] 
 
 
 # ---------------------------------------------------------------------------
-# custom-node-creator — build a ComfyUI custom node from a model's GitHub repo
+# create_custom_node — build a ComfyUI custom node from a model's GitHub repo
+# (coder agent + custom-node-from-github skill)
 # ---------------------------------------------------------------------------
 
 def _generated_nodes_dir() -> Path:
@@ -404,8 +406,9 @@ async def create_custom_node(
     """Turn a model's GitHub repo into a self-contained ComfyUI custom-node pack.
 
     Use this when the user points you at a **model repository that has no existing
-    ComfyUI node** and wants one built. It runs the **custom-node-creator** agent:
-    the repo is shallow-cloned locally (LFS weights skipped), the agent reads its
+    ComfyUI node** and wants one built. It runs the **coder** agent with the
+    ``custom-node-from-github`` skill: the repo is shallow-cloned locally (LFS
+    weights skipped), the agent reads its
     README/docs/inference code, and it authors a complete, importable node pack —
     ``__init__.py`` (the ``NODE_CLASS_MAPPINGS``), ``nodes.py`` (the node classes +
     implementation), ``requirements.txt``, ``README.md``, and ``pyproject.toml`` —
@@ -462,13 +465,15 @@ async def create_custom_node(
                     "private repos need git credentials configured on PATH.",
         })
 
-    # Build and run the custom-node-creator agent (lazy import avoids a cycle).
+    # Build and run the coder agent with the custom-node-from-github skill (lazy
+    # import avoids a cycle). The cloning + output-dir setup above is the fat-tool
+    # scaffold; the skill carries the ComfyUI-node domain knowledge.
     try:
-        from src.agent import create_custom_node_creator_agent
-        agent = create_custom_node_creator_agent()
+        from src.agent import create_coder_agent
+        agent = create_coder_agent(skill="custom-node-from-github")
     except Exception as exc:  # noqa: BLE001
         shutil.rmtree(tmp_root, ignore_errors=True)
-        return json.dumps({"error": f"Could not build custom-node-creator agent: {exc}"})
+        return json.dumps({"error": f"Could not build coder agent: {exc}"})
 
     task = (
         "Build a ComfyUI custom-node pack for the model in this repository.\n\n"
@@ -489,7 +494,7 @@ async def create_custom_node(
         result = await agent.invoke_async(task)
         agent_summary = str(result).strip()
     except Exception as exc:  # noqa: BLE001
-        agent_summary = f"[custom-node-creator agent error: {exc}]"
+        agent_summary = f"[coder agent error: {exc}]"
     finally:
         try:
             agent.messages.clear()
@@ -518,7 +523,7 @@ async def create_custom_node(
 
 @tool
 def list_generated_nodes() -> str:
-    """List the ComfyUI custom-node packs the custom-node-creator has written.
+    """List the ComfyUI custom-node packs the coder agent has written.
 
     Returns:
         A JSON string with each pack's name, absolute path, file count, and whether

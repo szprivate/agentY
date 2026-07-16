@@ -57,13 +57,8 @@ _ANTHROPIC_VERSION = "2023-06-01"
 
 
 def _load_settings() -> dict:
-    path = Path(__file__).parent.parent.parent / "config" / "settings.json"
-    if path.exists():
-        try:
-            return json.loads("".join(ln for ln in path.read_text(encoding="utf-8").splitlines(keepends=True) if not ln.lstrip().startswith("//")))
-        except Exception:
-            pass
-    return {}
+    from src.utils.settings import load_settings
+    return load_settings()
 
 
 def _parse_spec(spec: str) -> tuple[str, str]:

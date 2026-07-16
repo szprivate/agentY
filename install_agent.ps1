@@ -327,17 +327,23 @@ if ($SkipComfyNode) {
         Ensure-Repo -Name "agentY-comfyuiConnect" -Url "https://github.com/szprivate/agentY-comfyuiConnect.git" -Dir $nodeDir
         Write-Success "Sidebar node installed under $ResolvedComfy\custom_nodes - restart ComfyUI once."
 
-        # Offer to point settings.json at this ComfyUI's URL (single key, opt-in).
-        $settings = Join-Path $ProjectRoot "config\settings.json"
-        if (-not $NonInteractive -and (Test-Path $settings)) {
-            $raw = Get-Content -LiteralPath $settings -Raw
-            $curUrl = ""
-            if ($raw -match '"comfyui_url"\s*:\s*"([^"]*)"') { $curUrl = $Matches[1] }
-            $newUrl = Read-Host "    ComfyUI URL for settings.json [Enter = keep $curUrl]"
+        # Offer to set this ComfyUI's URL as a local override (settings.local.json).
+        # Committed defaults live in config/settings.default.toml (localhost); the
+        # local JSON is deep-merged over them and is gitignored.
+        $localSettings = Join-Path $ProjectRoot "config\settings.local.json"
+        if (-not $NonInteractive) {
+            $curUrl = "http://127.0.0.1:8188"
+            $obj = $null
+            if (Test-Path $localSettings) {
+                try { $obj = Get-Content -LiteralPath $localSettings -Raw | ConvertFrom-Json } catch { $obj = $null }
+                if ($obj -and $obj.comfyui_url) { $curUrl = [string]$obj.comfyui_url }
+            }
+            $newUrl = Read-Host "    ComfyUI URL for settings.local.json [Enter = keep $curUrl]"
             if ($newUrl.Trim() -and $newUrl.Trim() -ne $curUrl) {
-                $raw2 = [regex]::Replace($raw, '("comfyui_url"\s*:\s*")[^"]*(")', "`${1}$($newUrl.Trim())`${2}")
-                Write-TextNoBom $settings $raw2
-                Write-Success "settings.json comfyui_url -> $($newUrl.Trim())"
+                if (-not $obj) { $obj = [pscustomobject]@{} }
+                $obj | Add-Member -NotePropertyName comfyui_url -NotePropertyValue $newUrl.Trim() -Force
+                Write-TextNoBom $localSettings ($obj | ConvertTo-Json -Depth 10)
+                Write-Success "settings.local.json comfyui_url -> $($newUrl.Trim())"
             }
         }
     } else {
@@ -386,5 +392,5 @@ if (-not $SkipMcp -and (Test-Path (Join-Path $McpDir 'requirements.txt'))) {
 }
 Write-Host ""
 Write-Host "  Review secrets/paths anytime in:  $EnvFile" -ForegroundColor DarkGray
-Write-Host "  ComfyUI URL + model dirs live in: $ProjectRoot\config\settings.json" -ForegroundColor DarkGray
+Write-Host "  Defaults: $ProjectRoot\config\settings.default.toml  (overrides: settings.local.json)" -ForegroundColor DarkGray
 Write-Host ""

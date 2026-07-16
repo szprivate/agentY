@@ -38,19 +38,39 @@ _SETTINGS_CACHE: dict = {}
 
 
 def _load_project_settings() -> dict:
+    """Merged settings: committed TOML defaults ⊕ gitignored local JSON overrides.
+
+    Self-contained (this is a standalone script) — mirrors src.utils.settings so the
+    same precedence applies: settings.local.json is deep-merged over settings.default.toml.
+    """
     global _SETTINGS_CACHE
     if _SETTINGS_CACHE:
         return _SETTINGS_CACHE
-    cfg_path = PROJECT_ROOT / "config" / "settings.json"
-    if cfg_path.exists():
-        with open(cfg_path, encoding="utf-8") as fh:
-            raw = "".join(ln for ln in fh if not ln.lstrip().startswith("/"))
-        _SETTINGS_CACHE = json.loads(raw)
+    import tomllib
+
+    def _merge(base: dict, over: dict) -> dict:
+        out = dict(base)
+        for k, v in (over or {}).items():
+            out[k] = _merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+        return out
+
+    defaults: dict = {}
+    local: dict = {}
+    try:
+        with open(PROJECT_ROOT / "config" / "settings.default.toml", "rb") as fh:
+            defaults = tomllib.load(fh)
+    except Exception:
+        pass
+    try:
+        local = json.loads((PROJECT_ROOT / "config" / "settings.local.json").read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    _SETTINGS_CACHE = _merge(defaults, local)
     return _SETTINGS_CACHE
 
 
 def _settings_get(*path: str, default: str = "") -> str:
-    """Walk settings.json[path] with a default."""
+    """Walk the merged settings[path] with a default."""
     node: Any = _load_project_settings()
     for key in path:
         if not isinstance(node, dict):

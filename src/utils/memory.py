@@ -32,7 +32,6 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
-_SETTINGS_PATH = _PROJECT_ROOT / "config" / "settings.json"
 _MEMORY_DIR = _PROJECT_ROOT / "memory"
 
 # Single shared namespace for all durable long-term memory. Explicit writes
@@ -44,23 +43,10 @@ _MEMORY_DIR = _PROJECT_ROOT / "memory"
 # migration; it is now the home for every memory kind, not just learnings.
 MEMORY_NAMESPACE = "learnings_global"
 
-_settings_cache: dict = {}
-_settings_lock = threading.Lock()
-
-
 def _load_settings() -> dict:
-    global _settings_cache
-    if _settings_cache:
-        return _settings_cache
-    with _settings_lock:
-        if _settings_cache:
-            return _settings_cache
-        if _SETTINGS_PATH.exists():
-            try:
-                _settings_cache = json.loads("".join(ln for ln in _SETTINGS_PATH.read_text(encoding="utf-8").splitlines(keepends=True) if not ln.lstrip().startswith("//")))
-            except Exception:
-                _settings_cache = {}
-        return _settings_cache
+    """Merged settings (TOML defaults ⊕ local JSON overrides) via the app loader."""
+    from src.utils.settings import load_settings
+    return load_settings()
 
 
 def _get(env_var: str, *path: str, default: str = "") -> str:

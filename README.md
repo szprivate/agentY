@@ -22,7 +22,7 @@ An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanony
 - **Canvas hook nodes** — annotate the graph with **`agentY hook`** nodes ("sweep the seed 6×", "upscale then add film grain") and let the agent run them; chain hooks for multi-step tasks and **bake** a chain into reusable native ComfyUI **subgraphs** (see [Canvas nodes](#canvas-nodes)).
 - **Persistent chat history** — threads, messages, and the per-thread image gallery are stored in a self-contained local **SQLite** database (`memory/conversations.sqlite`). No Docker, Postgres, or S3.
 - **Slash commands** — `/restart`, `/stop`, `/unload`, `/clear_vram`, `/images`, `/clearhistory`, `/switch_model`, `/add_workflow`, `/remove_workflow`, `/resend` — with an in-panel autocomplete popup.
-- **In-panel Settings & token usage** — edit auth keys (`.env`) and `config/settings.json`, and review per-model token cost, from ComfyUI's own Settings panel (no file editing required).
+- **In-panel Settings & token usage** — edit auth keys (`.env`) and your settings (saved to `config/settings.local.json`), and review per-model token cost, from ComfyUI's own Settings panel (no file editing required).
 - **FAISS memory** — long-term memory via mem0 + local Ollama embeddings (`nomic-embed-text`).
 - **Hugging Face model management** — search, check local availability, and download models on demand.
 - **Multiple LLM backends** — Claude, Ollama, Alibaba/DashScope (Qwen), OpenAI (GPT), and Google (Gemini), configurable per pipeline stage. The `/switch_model` dropdown is **discovered live** from each provider's model list (a vendor appears only when its API key is set), so it never goes stale.
@@ -59,7 +59,7 @@ ComfyUI  (your browser)
         └──►  memory/conversations.sqlite  (threads, messages, gallery, resume state)
 ```
 
-Each user turn is owned by the **Orchestrator** agent (a normal Claude / Ollama / Qwen / GPT / Gemini model, per `config/settings.json`). It has the full toolset and can call the specialist agents as delegates. When it finishes assembling a workflow it hands off to the **Executor** (ComfyUI submission → completion polling → optional Ollama Vision-QA → staging outputs as loader nodes). The ComfyUI custom node is the **frontend + canvas nodes + a graph-load hook** — it talks to the host over HTTP/SSE.
+Each user turn is owned by the **Orchestrator** agent (a normal Claude / Ollama / Qwen / GPT / Gemini model, per `config/settings.default.toml` + `settings.local.json`). It has the full toolset and can call the specialist agents as delegates. When it finishes assembling a workflow it hands off to the **Executor** (ComfyUI submission → completion polling → optional Ollama Vision-QA → staging outputs as loader nodes). The ComfyUI custom node is the **frontend + canvas nodes + a graph-load hook** — it talks to the host over HTTP/SSE.
 
 ---
 
@@ -96,7 +96,7 @@ The installer sets up the **whole stack** in one pass:
 2. clones the sibling repos it needs — **agenty_core** (required) and **agentY-mcp** (optional) — next to `agentY` if they aren't there already, and fast-forwards them if they are;
 3. creates agentY's `.venv` (via `uv`) and installs `requirements.txt` (which pulls in `agenty_core` editable);
 4. copies `.env_example` → `.env` and **prompts** you for `HF_TOKEN`, `ANTHROPIC_API_KEY`, and the optional `COMFYUI_API_KEY` / `DASHSCOPE_API_KEY` (Enter keeps an existing value);
-5. **finds your ComfyUI** (auto-detects common paths, otherwise asks) and clones **agentY-comfyuiConnect** into its `custom_nodes/`, optionally pointing `settings.json` at your ComfyUI URL;
+5. **finds your ComfyUI** (auto-detects common paths, otherwise asks) and clones **agentY-comfyuiConnect** into its `custom_nodes/`, optionally pointing `settings.local.json` at your ComfyUI URL;
 6. sets up **agentY-mcp**'s own venv + `.env` and reuses the tokens you just entered.
 
 Useful flags:
@@ -166,7 +166,7 @@ After the restart you get, from the one node pack:
 
 ### 5. Configure defaults (optional)
 
-`config/settings.json` points at your ComfyUI instance and sets the per-stage LLMs. The **Orchestrator** is the model that drives each turn; the other keys set the specialist delegates and the Executor's Vision-QA model. Any value is `"provider,model"`:
+`config/settings.default.toml` holds the committed defaults; put your machine's values (ComfyUI URL/paths, per-stage LLMs, private endpoints) in `config/settings.local.json` (gitignored, deep-merged over the defaults). The **Orchestrator** is the model that drives each turn; the other keys set the specialist delegates and the Executor's Vision-QA model. Any model value is `"provider,model"`:
 
 ```jsonc
 {
@@ -242,12 +242,12 @@ Installing `agentY-comfyuiConnect` adds two nodes under the **agentY** category.
 
 ### LLM configuration priority
 
-Each value resolves in order — first match wins: **CLI flag → environment variable → `config/settings.json` → hard-coded default.** You can also change any stage live with `/switch_model <stage> <provider,model>`.
+Each value resolves in order — first match wins: **CLI flag → environment variable → `config/settings.local.json` → `config/settings.default.toml` → hard-coded default.** Committed defaults live in `settings.default.toml`; per-machine values (paths, model pins, private endpoints) go in the gitignored `settings.local.json`, which is deep-merged over the defaults. You can also change any stage live with `/switch_model <stage> <provider,model>`.
 
 ### In-panel settings & token usage
 
 Open ComfyUI's **Settings** panel → **agentY**:
-- **Open agentY Settings…** edits your auth keys (`.env`) and everything in `config/settings.json` (models per stage, directories, toggles) with a comment-preserving save — no file editing.
+- **Open agentY Settings…** edits your auth keys (`.env`) and every setting (models per stage, directories, toggles); changed values are saved as overrides in `config/settings.local.json`, leaving the committed defaults untouched — no file editing.
 - **Open Token Usage…** (also the **📊** button in the chat panel's top bar) breaks down cost per model / per agent role from the persisted token log, with a **🗑 Clear log** button to purge it.
 
 ### Memory

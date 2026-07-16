@@ -87,7 +87,7 @@ from src.tools.orchestration import (  # noqa: F401
     list_skills,
     remove_skill,
     spawn_subagent,
-    # custom-node-creator: build a ComfyUI custom node from a model's GitHub repo
+    # coder (custom-node-from-github skill): build a ComfyUI custom node from a repo
     create_custom_node,
     list_generated_nodes,
 )
@@ -239,12 +239,13 @@ ERROR_CHECKER_TOOLS: list = [
 ]
 
 # ---------------------------------------------------------------------------
-# custom-node-creator tools – read a cloned model repo, author a ComfyUI custom
-# node pack into the output folder. Code-authoring only: file I/O, repo
-# inspection (run_script), a web-search fallback for thin READMEs, and memory.
-# It does NOT get execution/assembly tools — it writes a pack, it doesn't run one.
+# coder tools – general code-authoring toolset for the `coder` agent (e.g. the
+# custom-node-from-github skill: read a cloned model repo, write a custom-node pack).
+# Code-authoring only: file I/O, repo inspection (run_script), a web-search
+# fallback for thin docs, and memory. It does NOT get execution/assembly tools —
+# it writes code, it doesn't run a workflow.
 # ---------------------------------------------------------------------------
-CUSTOM_NODE_TOOLS: list = [
+CODER_TOOLS: list = [
     read_text_file,
     write_text_file,
     file_read,
@@ -443,7 +444,7 @@ ORCHESTRATOR_TOOLS: list = [
     list_skills,
     remove_skill,
     spawn_subagent,
-    # custom-node-creator: turn a model's GitHub repo into a ComfyUI custom node
+    # coder (custom-node-from-github skill): turn a repo into a ComfyUI custom node
     create_custom_node,
     list_generated_nodes,
     stop,

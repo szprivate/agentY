@@ -181,20 +181,15 @@ def _comfy_input_dir() -> Path | None:
                 return _COMFY_INPUT_DIR
     except Exception as exc:
         logger.debug("input-dir resolve via argv failed: %s", exc)
-    # 2. Derive from settings.json comfyui_user_dir.
+    # 2. Derive from settings comfyui_user_dir.
     try:
-        cfg_path = _project_root() / "config" / "settings.json"
-        if cfg_path.exists():
-            cfg = json.loads(
-                "".join(ln for ln in cfg_path.read_text(encoding="utf-8").splitlines(keepends=True)
-                        if not ln.lstrip().startswith("//"))
-            )
-            ud = cfg.get("comfyui_user_dir")
-            if ud:
-                base = Path(ud).parent.parent
-                cand = base / "input"
-                if cand.exists():
-                    _COMFY_INPUT_DIR = cand
+        from src.utils.settings import load_settings
+        ud = load_settings().get("comfyui_user_dir")
+        if ud:
+            base = Path(ud).parent.parent
+            cand = base / "input"
+            if cand.exists():
+                _COMFY_INPUT_DIR = cand
     except Exception as exc:
         logger.debug("input-dir resolve via settings failed: %s", exc)
     return _COMFY_INPUT_DIR
@@ -1387,9 +1382,9 @@ def _available_models() -> dict:
 # the user can fill them in. Any additional keys already present in .env are
 # merged in on read.
 # Auth/connection keys surfaced in the settings UI's ".env" section. Host/port
-# (agent_server_url) and the conversation DB live in settings.json now, not here. The
-# DashScope endpoint sits right beneath its API key; it is pre-seeded from
-# settings.json (llm.dashscope.base_url) in the GET so the field is never blank.
+# (agent_server_url) and the conversation DB live in the settings files now, not here.
+# The DashScope endpoint sits right beneath its API key; it is pre-seeded from the
+# merged settings (llm.dashscope.base_url) in the GET so the field is never blank.
 _KNOWN_ENV_KEYS = [
     "HF_TOKEN", "ANTHROPIC_API_KEY", "COMFYUI_API_KEY",
     "DASHSCOPE_API_KEY", "DASHSCOPE_BASE_URL",
@@ -1399,10 +1394,6 @@ _KNOWN_ENV_KEYS = [
 
 def _env_path() -> Path:
     return _project_root() / ".env"
-
-
-def _settings_path() -> Path:
-    return _project_root() / "config" / "settings.json"
 
 
 def _pricing_config_path() -> Path:
@@ -1646,8 +1637,8 @@ def _update_env_file(updates: dict) -> None:
 
 def _diff_leaves(old, new, prefix: tuple = ()) -> list:
     """Yield (path_tuple, value) for every scalar/list leaf in *new* that differs
-    from *old* (recursing into dicts). Used to apply only the changed values to
-    settings.json, so untouched lines — and their comments — stay byte-identical."""
+    from *old* (recursing into dicts). Used to write only the changed leaves into
+    settings.local.json, so the local override file stays a minimal delta."""
     changes: list = []
     if isinstance(new, dict):
         base = old if isinstance(old, dict) else {}
@@ -1659,65 +1650,30 @@ def _diff_leaves(old, new, prefix: tuple = ()) -> list:
     return changes
 
 
-def _find_leaf_line(lines: list, path: tuple) -> int:
-    """Index of the line defining leaf *path* in a standard 2-space-indented JSON
-    file (one key per line; objects open with a trailing '{' and close on their
-    own line). Returns -1 if not found. Full-line ``//`` comments are ignored."""
-    stack: list[str] = []
-    for i, raw in enumerate(lines):
-        s = raw.strip()
-        if not s or s.startswith("//"):
-            continue
-        if s[0] in "}]":
-            if stack:
-                stack.pop()
-            continue
-        m = re.match(r'"((?:[^"\\]|\\.)*)"\s*:\s*(.*)$', s)
-        if not m:
-            continue
-        key = m.group(1)
-        rest = m.group(2).rstrip().rstrip(",")
-        cur = tuple(stack) + (key,)
-        if rest.endswith("{") or rest.endswith("["):
-            stack.append(key)
-        elif cur == tuple(path):
-            return i
-    return -1
-
-
 def _update_settings_file(new_settings: dict) -> list:
-    """Apply changed leaves from *new_settings* onto config/settings.json in
-    place, preserving comments/formatting. Returns the list of applied paths."""
-    path = _settings_path()
-    text = path.read_text(encoding="utf-8")
-    from src.agent import _load_settings  # comment-stripping parser
-    current = _load_settings()
+    """Persist changed leaves from *new_settings* as machine overrides in
+    config/settings.local.json (deep-merged over the committed TOML defaults),
+    leaving the defaults untouched. Returns the applied dotted paths.
+
+    Only leaves that differ from the current *effective* settings are written, so
+    the local override file stays a minimal delta rather than a full copy.
+    """
+    from src.utils.settings import load_settings, set_local
+    current = load_settings()
     updates = _diff_leaves(current, new_settings)
     if not updates:
         return []
-    lines = text.splitlines(keepends=True)
-    bare = [l.rstrip("\n") for l in lines]
+    override: dict = {}
     applied: list = []
     for pathv, value in updates:
-        idx = _find_leaf_line(bare, pathv)
-        if idx < 0:
-            continue  # only existing leaves are edited
-        raw = lines[idx]
-        nl = "\n" if raw.endswith("\n") else ""
-        body = raw[:-len(nl)] if nl else raw
-        m = re.match(r'^(\s*"(?:[^"\\]|\\.)*"\s*:\s*)(.*)$', body)
-        if not m:
-            continue
-        trailing_comma = "," if m.group(2).rstrip().endswith(",") else ""
-        lines[idx] = f"{m.group(1)}{json.dumps(value, ensure_ascii=False)}{trailing_comma}{nl}"
+        node = override
+        for k in pathv[:-1]:
+            node = node.setdefault(k, {})
+        node[pathv[-1]] = value
         applied.append(".".join(str(p) for p in pathv))
-    path.write_text("".join(lines), encoding="utf-8")
-    # Invalidate the cached settings so _cfg() / future agent rebuilds see them.
-    try:
-        import src.agent as _agentmod
-        _agentmod._SETTINGS = {}
-    except Exception:  # noqa: BLE001
-        pass
+    set_local(override)
+    # set_local dropped the central loader's cache (the single shared settings
+    # object), so agents rebuilt after this POST read the new values.
     return applied
 
 
@@ -1949,12 +1905,15 @@ def _build_app():
         if request.method == "OPTIONS":
             return "", 204
         if request.method == "GET":
+            import copy
             from src.agent import _load_settings
-            settings = _load_settings()
+            # Deep-copy: _load_settings() returns the shared cached merge, and we
+            # mutate `settings` below (live user dir) — must not poison the cache.
+            settings = copy.deepcopy(_load_settings())
             env = {k: "" for k in _KNOWN_ENV_KEYS}
             env.update(_read_env_file())
             # Show the DashScope endpoint (beneath its API key) even when it's not
-            # overridden in .env — seed it from settings.json so it's never blank.
+            # overridden in .env — seed it from the merged settings so it's never blank.
             if not env.get("DASHSCOPE_BASE_URL"):
                 ds_url = ((settings.get("llm") or {}).get("dashscope") or {}).get("base_url", "")
                 if ds_url:
@@ -1970,7 +1929,7 @@ def _build_app():
                 "model_groups": _available_models(),
                 "pricing": _load_pricing_config(),
             })
-        # POST — persist env and/or settings.json changes.
+        # POST — persist env and/or settings changes (settings → settings.local.json).
         body = request.get_json(silent=True) or {}
         result: dict = {"ok": True}
         try:

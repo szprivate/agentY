@@ -40,11 +40,8 @@ def _unload_ollama_models() -> None:
     import urllib.request
 
     try:
-        cfg_path = _project_root / "config" / "settings.json"
-        cfg = json.loads(
-            "".join(ln for ln in cfg_path.read_text(encoding="utf-8").splitlines(keepends=True)
-                    if not ln.lstrip().startswith("//"))
-        )
+        from src.utils.settings import load_settings
+        cfg = load_settings()
         llm = cfg.get("llm", {})
         host = llm.get("ollama", {}).get("host", "http://localhost:11434")
         models: set[str] = set()
@@ -82,15 +79,11 @@ def _agent_server_url_defaults() -> tuple[str, int]:
     """
     host, port = "127.0.0.1", 5000
     try:
-        import json
         from urllib.parse import urlsplit
+        from src.utils.settings import load_settings
 
-        cfg_path = _project_root / "config" / "settings.json"
-        if cfg_path.exists():
-            cfg = json.loads(
-                "".join(ln for ln in cfg_path.read_text(encoding="utf-8").splitlines(keepends=True)
-                        if not ln.lstrip().startswith("//"))
-            )
+        cfg = load_settings()
+        if cfg:
             url = str(cfg.get("agent_server_url", "")).strip()
             if url:
                 if "//" not in url:

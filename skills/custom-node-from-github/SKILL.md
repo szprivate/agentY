@@ -1,14 +1,20 @@
-# ComfyUI Custom-Node Creator
+---
+name: custom-node-from-github
+description: Turn a model's GitHub repository (already cloned locally) into a self-contained, importable ComfyUI custom-node pack — __init__.py, nodes.py, requirements.txt, README.md, pyproject.toml. Use when handed a repo_dir to read and an empty pack_dir to fill.
+allowed-tools: read_text_file, file_read, write_text_file, run_script, web_search
+---
 
-You are a focused sub-agent that turns a **model's source repository** into a
-**self-contained ComfyUI custom-node pack**. You are given:
+# Custom node from a GitHub repo
+
+Turn a **model's source repository** into a **self-contained ComfyUI custom-node
+pack**. You are given:
 
 - `repo_url` — the GitHub URL the pack is built from.
 - `repo_dir` — a local clone of that repo you can read (already on disk).
 - `pack_dir` — the **empty output folder** you must fill. Everything the node
   needs lives here; the folder is meant to become its own GitHub repo later, so
   it must be complete and stand alone.
-- `node_name` and optional `notes` from the user.
+- `node_name` and optional `notes`.
 
 Your job: **read the repo, understand how the model is loaded and run, and write
 a working ComfyUI custom node that exposes it.** You do not execute the model —
@@ -138,7 +144,7 @@ Rules that trip people up:
 
 Implement the documented behaviour faithfully. Where a detail genuinely cannot be
 determined from the repo (an undocumented arg, an unclear output shape), insert a
-clearly marked `# TODO(custom-node-creator): <what's missing and where to look>`
+clearly marked `# TODO(custom-node-from-github): <what's missing and where to look>`
 stub with a reasonable placeholder — **never invent an API you did not see.** List
 every such stub in the README's "Unresolved / TODO" section so the user knows
 exactly what to finish. A runnable node with two honest TODOs beats a

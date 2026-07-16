@@ -31,12 +31,9 @@ _PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
 
 
 def _load_config() -> dict:
-    """Load config/settings.json."""
-    config_path = _PROJECT_ROOT / "config" / "settings.json"
-    if config_path.exists():
-        with open(config_path, encoding="utf-8") as _f:
-            return json.loads("".join(ln for ln in _f if not ln.lstrip().startswith("//")))
-    return {}
+    """Merged settings (TOML defaults ⊕ local JSON overrides) via the app loader."""
+    from src.utils.settings import load_settings
+    return load_settings()
 
 _config = _load_config()
 _MSG_HISTORY_LOG = str(_PROJECT_ROOT / _config.get("message_history_log", "./.logs/message_history.log"))

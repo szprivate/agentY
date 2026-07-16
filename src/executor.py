@@ -81,11 +81,8 @@ def _project_root() -> Path:
 
 
 def _load_config() -> dict:
-    config_path = _project_root() / "config" / "settings.json"
-    if config_path.exists():
-        with open(config_path, encoding="utf-8") as f:
-            return json.loads("".join(ln for ln in f if not ln.lstrip().startswith("//")))
-    return {}
+    from src.utils.settings import load_settings
+    return load_settings()
 
 
 def _autoload_workflows_into_canvas() -> bool:

@@ -147,9 +147,10 @@ these when the specialist's tuned skill helps; otherwise just do it yourself.
   Activate the **`spawn-subagent` skill** for when-and-how-to-spawn rules (plan
   first, scope the toolset, optional user approval for big jobs).
 - `create_custom_node(github_url, node_name?, notes?)` — when the user points you
-  at a **model's GitHub repo that has no existing ComfyUI node**, run the
-  custom-node-creator agent: it clones the repo, reads the docs + inference code,
-  and writes a self-contained node pack into `output/custom_nodes/<name>/` (the
+  at a **model's GitHub repo that has no existing ComfyUI node**, run the coder
+  agent (custom-node-from-github skill): it clones the repo, reads the docs +
+  inference code, and writes a self-contained node pack into
+  `output/custom_nodes/<name>/` (the
   user can then publish it as its own repo). Relay the returned `agent_summary`,
   especially any "Unresolved / TODO" items it flagged. Use `list_generated_nodes()`
   to see packs already created. This authors code for the user to review/publish —
