@@ -29,7 +29,7 @@ from strands.types.exceptions import MaxTokensReachedException
 
 from src.agent import create_assemble_workflow_agent, create_dop_agent, create_error_checker_agent, create_fix_workflow_assembly_agent, create_generate_new_workflow_agent, create_info_agent, create_orchestrator_agent, create_planner_agent, create_query_templates_agent, create_search_web_agent, create_story_agent, create_detect_user_intent_agent, create_vision_agent, _settings
 from src.tools.image_handling import set_vision_agent as _set_vision_agent
-from src.utils.chat_summary import summarize_conversation, log_agent_messages, log_agent_exchange
+from src.utils.chat_summary import summarize_conversation, log_agent_messages, log_agent_exchange, set_log_thread
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
 from src.utils.comfyui_progress import stream_comfyui_job as _stream_comfyui_job
 from src.utils.progress_signal import drain as _drain_progress, push as _push_progress
@@ -1668,6 +1668,14 @@ class Pipeline:
         # turn has finished, otherwise this turn would see uncompressed history.
         _trace("pipeline.stream_async: await pending compression")
         await self._await_pending_compression()
+
+        # Stamp this conversation onto every message-history record for this turn
+        # so the log viewer can group records by conversation. session_id is the
+        # thread id in the side panel (see _restore_state); "default"/CLI otherwise.
+        try:
+            set_log_thread(getattr(self._session, "session_id", "") or "")
+        except Exception:  # noqa: BLE001
+            pass
 
         # ── Free-agent mode: the orchestrator owns the whole turn. Skip triage
         # and the rigid router entirely. ─────────────────────────────────────

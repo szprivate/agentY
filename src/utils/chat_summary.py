@@ -61,6 +61,24 @@ class _BytesSafeEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
+# Current conversation/thread id, stamped into every record header so the log
+# viewer can group records by conversation. The pipeline calls set_log_thread()
+# at the start of each turn; empty means "no thread" (CLI / legacy records).
+_THREAD_TAG = "thread:"
+_current_thread: str = ""
+
+
+def set_log_thread(thread_id: str) -> None:
+    """Set the conversation id stamped into subsequent message-history records."""
+    global _current_thread
+    _current_thread = str(thread_id or "")
+
+
+def _thread_seg() -> str:
+    """Header fragment identifying the current conversation, or '' when unset."""
+    return f"{_THREAD_TAG}{_current_thread} — " if _current_thread else ""
+
+
 def _log_message_history(messages: list[dict]) -> None:
     """Append the full message list as JSON to logs/message_history.log."""
     sep = "=" * 80
@@ -93,9 +111,10 @@ def log_agent_exchange(label: str, input_text: str | list | dict, output_text: s
         else str(input_text)
     )
     _history_logger.debug(
-        "%s\n[%s — %s]\n%s\n--- INPUT ---\n%s\n--- OUTPUT ---\n%s\n%s",
+        "%s\n[%s — %s%s]\n%s\n--- INPUT ---\n%s\n--- OUTPUT ---\n%s\n%s",
         sep,
         label,
+        _thread_seg(),
         ts,
         sep,
         input_repr,
@@ -118,9 +137,10 @@ def log_agent_messages(label: str, messages: list[dict]) -> None:
     sep = "=" * 80
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     _history_logger.debug(
-        "%s\n[%s MESSAGES — %s — %d message(s)]\n%s",
+        "%s\n[%s MESSAGES — %s%s — %d message(s)]\n%s",
         sep,
         label,
+        _thread_seg(),
         ts,
         len(messages),
         sep,
