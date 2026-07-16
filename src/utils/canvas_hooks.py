@@ -277,79 +277,214 @@ def _all_anchor_inputs(hook: dict, base_prompt: dict | None) -> list:
     return out
 
 
+def _output_targets(hook: dict) -> list:
+    """Return ``[(target_id, target_type, to_input, to_input_type, target_title), …]``
+    for every node input this hook's output is wired into — the producer's
+    DESTINATION(s). A hook is an upstream producer: it consumes its anchor inputs
+    as context and produces value(s) for its ``out``, which the user wires into a
+    real input. Knowing the exact target lets the agent fill/sweep the RIGHT input
+    (derived from the wire) instead of guessing "the connected node" from prose.
+    Empty when the hook's output is unwired.
+    """
+    out: list = []
+    seen: set = set()
+    for t in (hook.get("targets") or []):
+        if not (isinstance(t, dict) and t.get("node_id") is not None):
+            continue
+        key = (str(t["node_id"]), str(t.get("to_input") or ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((str(t["node_id"]), str(t.get("type") or "?"),
+                    str(t.get("to_input") or ""), str(t.get("to_input_type") or ""),
+                    str(t.get("title") or "")))
+    return out
+
+
+def _hook_ids(hooks: list) -> set:
+    """The set of node ids that are themselves hooks (for chain detection)."""
+    return {str(h.get("hook_node_id")) for h in hooks if h.get("hook_node_id") is not None}
+
+
+def _hook_predecessors(hook: dict, hook_ids: set) -> set:
+    """Ids of hooks whose output feeds one of *hook*'s inputs (its producers).
+
+    A hook depends on another when the latter is wired into one of its anchors
+    (``anchors[].node_id`` is a hook id) or recorded in ``prev_hook_ids``. Those
+    producers must run first so their value exists when this hook is processed.
+    """
+    ids: set = {str(p) for p in (hook.get("prev_hook_ids") or []) if str(p) in hook_ids}
+    for a in (hook.get("anchors") or []):
+        if isinstance(a, dict):
+            aid = str(a.get("node_id"))
+            if aid in hook_ids:
+                ids.add(aid)
+    if hook.get("prev_hook_id") is not None and str(hook["prev_hook_id"]) in hook_ids:
+        ids.add(str(hook["prev_hook_id"]))
+    ids.discard(str(hook.get("hook_node_id")))
+    return ids
+
+
+def _order_by_dependency(hooks: list) -> list:
+    """Order *hooks* so every producer precedes the hook(s) consuming its output.
+
+    A depth-first topological sort over the hook→hook wiring; input order is the
+    tie-breaker and any cycle is broken defensively (a hook already on the stack
+    is not revisited). This is what lets a producer bake its value before the
+    consumer reads it — the sequencing comes from the graph, not a live re-snapshot.
+    """
+    ids = _hook_ids(hooks)
+    by_id = {str(h.get("hook_node_id")): h for h in hooks if h.get("hook_node_id") is not None}
+    ordered: list = []
+    seen: set = set()
+
+    def visit(h: dict, stack: set) -> None:
+        hid = str(h.get("hook_node_id"))
+        if hid in seen or hid in stack:
+            return
+        stack.add(hid)
+        for pid in _hook_predecessors(h, ids):
+            if pid in by_id:
+                visit(by_id[pid], stack)
+        stack.discard(hid)
+        if hid not in seen:
+            seen.add(hid)
+            ordered.append(h)
+
+    for h in hooks:
+        visit(h, set())
+    return ordered
+
+
+def _input_context(hook: dict, base_prompt: dict | None, hook_ids: set) -> str:
+    """Describe what feeds *hook* (its context inputs).
+
+    An input wired from another HOOK is rendered as "the value you produce for
+    hook N" — never a dump of that hook's own widgets — so a chained producer
+    reuses the value it just wrote instead of mistaking the upstream hook's
+    directive for content. Real-node inputs list their scalar params as before.
+    """
+    anchors = _all_anchor_inputs(hook, base_prompt)
+    if not anchors:
+        return "no input wired"
+    parts: list = []
+    for aid, atype, inputs in anchors:
+        if aid in hook_ids:
+            parts.append(f"the value you produce for hook {aid}")
+        else:
+            params = ", ".join(f"{k}={v!r}" for k, v in inputs.items()) or "(no scalar inputs)"
+            parts.append(f"node {aid} ({atype}) inputs[{params}]")
+    return "; ".join(parts)
+
+
+def _target_context(hook: dict) -> str:
+    """Describe where *hook*'s output goes — the producer's destination input(s)."""
+    targets = _output_targets(hook)
+    if not targets:
+        return ""
+    parts: list = []
+    for tid, ttype, tin, tintype, _ttitle in targets:
+        tt = f", {tintype}" if tintype else ""
+        slot = f"`{tin}`" if tin else "an input"
+        parts.append(f"node {tid} ({ttype})'s {slot} input{tt}")
+    return "; ".join(parts)
+
+
 def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
     """Render the ``[CANVAS HOOKS]`` block injected into the orchestrator input.
 
-    Hooks come in two purposes (set on the node): *directive* hooks annotate an
-    anchor node and are run by expanding the captured graph via
-    ``apply_canvas_hooks``; *workflow-standin* hooks are self-contained generation
-    requests the agent fulfils by generating and running a workflow/script. Hooks
-    the user toggled to *ignore* are filtered out client-side before they reach
-    here, so every hook below is active.
+    Hooks are **upstream producers**: each consumes its wired anchor inputs as
+    context and produces value(s) for its ``out``, which the user wires into a real
+    node input. Three purposes: a *directive/producer* hook fills (or sweeps) the
+    input its output is wired to; a *text* hook writes a single string the agent
+    bakes there as an ``agentY text`` node; a *workflow-standin* hook stands in for
+    a workflow/script the agent generates. Hooks the user toggled to *ignore* are
+    filtered out client-side, so every hook below is active. Hooks are described in
+    dependency order so a producer is handled before the hook that consumes it.
     """
     hooks = [h for h in (hooks or []) if isinstance(h, dict)]
     if not hooks:
         return ""
+    hooks = _order_by_dependency(hooks)
+    hook_id_set = _hook_ids(hooks)
     text_hooks = [h for h in hooks if _is_text(h)]
     standin_hooks = [h for h in hooks if _is_standin(h)]
     directive_hooks = [h for h in hooks if not _is_standin(h) and not _is_text(h)]
 
     lines = [
         "[CANVAS HOOKS — the user's ON-CANVAS graph carries hook annotations (below) "
-        "and is already captured. IF the user is asking you to run/execute the "
-        "workflow, act on the hooks as described below. If the user's message is "
-        "unrelated (a question or a different request), answer that and ignore these "
-        "hooks.]"
+        "and is already captured. Each hook is an UPSTREAM PRODUCER: it reads its "
+        "wired anchor input(s) as context and produces value(s) for its output, which "
+        "is wired into a real node input. Your job is to PRODUCE those values — fill "
+        "or sweep the input each hook's output feeds — not to reach downstream and "
+        "guess which node to edit. IF the user is asking you to run/execute the "
+        "workflow, act on the hooks below. If the user's message is unrelated (a "
+        "question or a different request), answer that and ignore these hooks.]"
     ]
+
+    # When hooks feed each other, spell out the order so producers are done first.
+    if any(_hook_predecessors(h, hook_id_set) for h in hooks):
+        order = " → ".join(str(h.get("hook_node_id")) for h in hooks)
+        lines.append(
+            f"\nPROCESS ORDER (producers first): {order}. A hook whose input is 'the "
+            "value you produce for hook N' consumes another hook's output — produce hook "
+            "N FIRST and reuse exactly what you wrote as this hook's context; do NOT "
+            "re-read it from the graph."
+        )
 
     if directive_hooks:
         lines.append(
-            "\nDIRECTIVE hooks — expand and run THIS captured graph (do NOT assemble a "
-            "template or call run_research). Interpret each directive against its "
-            "anchor node and call apply_canvas_hooks(resolutions=[…]) ONCE to run the "
-            "batch. Each resolution targets an anchor node id below and one of its "
-            "inputs:"
+            "\nPRODUCER hooks — each produces value(s) for the node input its OUTPUT is "
+            "wired to (shown as 'feeds …' below); that wired input is the target — do NOT "
+            "guess a node from the prose, and do NOT assemble a template or call "
+            "run_research. Two ways to produce, by how many values the directive asks for:\n"
+            "  • ONE value (e.g. a single composed prompt) → write it and call "
+            'place_canvas_text(hook_node_id="<hook id>", text="<value>") — it bakes an '
+            "'agentY text' node wired into the target input, so the value persists on a "
+            "normal run.\n"
+            "  • SEVERAL values (a sweep/variations/folder) → call "
+            "apply_canvas_hooks(resolutions=[…]) ONCE with target_node_id + param taken "
+            "straight from the 'feeds' target (node id and input name); each variant runs "
+            "automatically — do NOT also signal_workflow_ready. Modes: value_list "
+            "(you author `values`), sweep_seed (`count`, optional `start`), folder "
+            "(`folder`, optional `extensions`)."
         )
         for h in directive_hooks:
-            anchors = _all_anchor_inputs(h, base_prompt)
+            hid = h.get("hook_node_id")
             directive = str(h.get("directive", "") or "").strip()
             mode = h.get("mode", "auto")
-            if not anchors:
+            ctx = _input_context(h, base_prompt, hook_id_set)
+            tgt = _target_context(h)
+            if not tgt:
                 lines.append(
-                    f'- UNWIRED hook: "{directive}" (mode={mode}). No anchor node — ask '
-                    "the user to wire it to a node's output, or apply globally only if "
-                    "unambiguous."
+                    f'- PRODUCER hook {hid} (context: {ctx}) — OUTPUT UNWIRED: no target '
+                    f'input. Ask the user to wire this hook\'s output into the node input it '
+                    f'should fill. Directive: "{directive}" (mode={mode})'
                 )
             else:
-                # One line per anchor — the directive applies to each wired node.
-                for aid, atype, inputs in anchors:
-                    params = ", ".join(f"{k}={v!r}" for k, v in inputs.items()) or "(no scalar inputs)"
-                    lines.append(f'- Node {aid} ({atype}) inputs[{params}] ← "{directive}" (mode={mode})')
+                lines.append(
+                    f'- PRODUCER hook {hid} (context: {ctx}) feeds {tgt} — produce the '
+                    f'value(s) for that input → "{directive}" (mode={mode})'
+                )
 
     if text_hooks:
         lines.append(
-            "\nTEXT hooks — each asks for a WRITTEN TEXT ANSWER, not media. WRITE the "
+            "\nTEXT hooks — each produces a single WRITTEN string (not media). WRITE the "
             "answer yourself (activate a relevant writing skill if it helps). Do NOT "
             "generate images/video, do NOT call apply_canvas_hooks, and do NOT build or "
-            "run a workflow. If an anchor is wired, use its content/prompt as the SUBJECT "
-            "or context of the answer. When the answer is ready, call "
-            'place_canvas_text(hook_node_id="<id>", text="<answer>") ONCE per hook — it '
-            "drops an 'agentY text' node on the canvas carrying the answer and wires it "
-            "where the hook's output went, so the graph keeps the string:"
+            "run a workflow. Use the wired context as the SUBJECT of the answer. When the "
+            'answer is ready, call place_canvas_text(hook_node_id="<id>", text="<answer>") '
+            "ONCE per hook — it bakes an 'agentY text' node wired into the input the hook's "
+            "output feeds (shown as 'feeds …'), so the graph keeps the string on a normal "
+            "run. The answer also streams into the chat:"
         )
         for h in text_hooks:
             hid = h.get("hook_node_id")
             directive = str(h.get("directive", "") or "").strip()
-            anchors = _all_anchor_inputs(h, base_prompt)
-            if anchors:
-                parts = []
-                for aid, atype, inputs in anchors:
-                    params = ", ".join(f"{k}={v!r}" for k, v in inputs.items()) or "(no scalar inputs)"
-                    parts.append(f"node {aid} ({atype}) inputs[{params}]")
-                ctx = "context from " + "; ".join(parts)
-            else:
-                ctx = "no input wired — answer from the prompt alone"
-            lines.append(f'- TEXT hook {hid} ({ctx}) — write & place → "{directive}"')
+            ctx = _input_context(h, base_prompt, hook_id_set)
+            tgt = _target_context(h)
+            where = f" feeds {tgt}" if tgt else " (output unwired — answer streams to chat only)"
+            lines.append(f'- TEXT hook {hid} (context: {ctx}){where} — write & place → "{directive}"')
 
     if standin_hooks:
         chains = _order_standin_chains(standin_hooks)

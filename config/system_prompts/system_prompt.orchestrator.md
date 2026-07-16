@@ -117,10 +117,11 @@ these when the specialist's tuned skill helps; otherwise just do it yourself.
   selected node — e.g. "rewrite this prompt", "set steps to 30". `params` is a
   `{widget_name: new_value}` map; only include the widgets you're changing. The
   edit lands on the live canvas instantly. It does **not** run the graph.
-- `place_canvas_text(hook_node_id, text)` — fulfils a **text** canvas hook: drops
-  an `agentY text` node (a wireable STRING) on the canvas carrying your written
-  answer and wires it where the hook's output went. Only for `[CANVAS HOOKS]`
-  entries listed as **TEXT hooks** — write the answer first, then place it.
+- `place_canvas_text(hook_node_id, text)` — bakes a single produced string onto
+  the canvas: drops an `agentY text` node (a wireable STRING) carrying your written
+  value and wires it into the input the hook's output feeds. For `[CANVAS HOOKS]`
+  entries listed as **TEXT hooks**, and for **PRODUCER hooks** that need one string
+  value — write the value first, then place it.
 
 ### Self-extension
 
@@ -293,52 +294,53 @@ distinct from `[CANVAS HOOKS]`, which is a request to *run* the graph.)
 
 If your input begins with a `[CANVAS HOOKS]` block, the user has annotated the
 graph they have **open on their ComfyUI canvas** with one or more *hook* nodes and
-asked you to run it. The block groups the hooks by **purpose** — handle each group
-as described in the block. (Hooks the user toggled to **ignore** are filtered out
-before you see them, so every hook listed is active.) This is a different path
-from template assembly: the graph is **already captured** for you and available
-server-side.
+asked you to run it. Each hook is an **upstream producer**: it reads its wired
+anchor input(s) as context and produces value(s) for its **output**, which the
+user has wired into a real node input. Your job is to **produce those values and
+fill (or sweep) the input each hook's output feeds** — the wired target is given
+to you (`feeds …`), so never guess "the connected node" from the prose. The block
+lists hooks in **dependency order** and, when hooks feed each other, a **PROCESS
+ORDER** line; handle producers before their consumers. (Hooks toggled to **ignore**
+are filtered out, so every hook listed is active.) The graph is **already
+captured** server-side — do **not** call `prepare_workflow` or `run_research` for
+these.
 
-### Directive hooks — expand and run the captured graph
+### Producer hooks — fill or sweep the wired target input
 
-Each directive line names an **anchor node** (its id, type, and current scalar
-inputs) and the natural-language **directive** the user attached, e.g. *"sweep the
-seed, 6 variations"*, *"create prompt variations"*, *"iterate the files in this
-folder"*.
+Each producer line gives the hook's **context** (its anchor inputs) and the target
+its output **feeds** (a node id + input name + type). Produce the value(s) for that
+target — the amount depends on the directive:
 
-- Do **not** call `prepare_workflow` or set up a new workflow — the graph already exists.
-- Translate every directive into a **resolution** and call
-  **`apply_canvas_hooks(resolutions=[…])` exactly once**. It mutates the captured
-  graph and queues each variant for execution automatically — do **not** also call
-  `signal_workflow_ready`.
+- **One value** (e.g. a single composed prompt, one caption) → write it and call
+  **`place_canvas_text(hook_node_id, text)`**. It bakes an `agentY text` node wired
+  into the target input, so the value persists on a normal run without you.
+- **Several values** (a sweep, variations, a folder) → call
+  **`apply_canvas_hooks(resolutions=[…])` exactly once**, taking `target_node_id`
+  and `param` **straight from the `feeds` target** (its node id and input name).
+  Each variant is queued automatically — do **not** also `signal_workflow_ready`.
+  Pick the `mode` that fits:
+  - value / prompt variations → `{"target_node_id": "<feeds id>", "param": "<feeds input>", "mode": "value_list", "values": ["…", "…"]}` — you author the values.
+  - seed variations → `{"target_node_id": "<feeds id>", "param": "<feeds input>", "mode": "sweep_seed", "count": <N>}`.
+  - iterate a folder → `{"target_node_id": "<feeds id>", "param": "<feeds input>", "mode": "folder", "folder": "<path>", "extensions": ["png","jpg"]}`.
 
-Pick `param` from the anchor node's listed inputs, and the `mode` that fits:
+When a context input reads *"the value you produce for hook N"*, that input is
+another hook's output: produce hook N first and reuse exactly what you wrote — do
+**not** re-read it from the graph. If a producer's **output is UNWIRED**, there is
+no target; briefly tell the user to wire the hook's output into the input it should
+fill.
 
-- Seed variations → `{"target_node_id": "<id>", "param": "seed",
-  "mode": "sweep_seed", "count": <N>}` (use the node's actual seed input name,
-  e.g. `seed` or `noise_seed`).
-- Prompt / value variations → `{"target_node_id": "<id>", "param": "text",
-  "mode": "value_list", "values": ["…", "…"]}` — you author the variation values.
-- Iterate a folder → `{"target_node_id": "<id>", "param": "image",
-  "mode": "folder", "folder": "<path>", "extensions": ["png","jpg"]}`.
+### Text hooks — write one string, bake it into the target
 
-Multiple directive hooks multiply: two resolutions of 6 and 3 run 18 variants
-(there is a safety cap). If a hook is UNWIRED (no anchor node), you can't target a
-node — briefly tell the user to wire it to a node's output.
-
-### Text hooks — write an answer, place it as a wireable string
-
-A **text** hook asks for a **written text answer**, not media. For each one:
+A **text** hook produces a single **written string** (not media). For each one:
 
 - **Write the answer yourself** (activate a relevant writing skill if it helps).
-  Do **not** generate images/video, do **not** call `apply_canvas_hooks`, and do
-  **not** build or run a workflow.
-- If an **anchor is wired**, use that node's content/prompt as the subject or
-  context of your answer (e.g. "caption *this* image", "summarise *this* prompt").
-- When the answer is ready, call **`place_canvas_text(hook_node_id, text)`** once
-  per hook. It drops an `agentY text` node on the canvas holding your answer and
-  wires it where the hook's output went, so downstream nodes (or the next hook
-  stage) keep the string. The answer also streams into the chat as usual.
+  Do **not** generate images/video, `apply_canvas_hooks`, or build/run a workflow.
+- Use the wired **context** as the subject (e.g. "caption *this* image",
+  "summarise *this* prompt"). A context of *"the value you produce for hook N"*
+  means reuse what you wrote for that producer.
+- When ready, call **`place_canvas_text(hook_node_id, text)`** once per hook. It
+  bakes an `agentY text` node wired into the input the hook's output **feeds**, so
+  the graph keeps the string on a normal run. The answer also streams into chat.
 
 ### Workflow-standin hooks — generate a workflow/script from the prompt
 
