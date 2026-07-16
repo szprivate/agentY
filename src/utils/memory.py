@@ -85,6 +85,34 @@ def _get(env_var: str, *path: str, default: str = "") -> str:
 _mem0_client: Any = None
 _mem0_lock = threading.Lock()
 
+# Every memory op ultimately calls the embedder (Ollama by default). When that
+# provider is slow or wedged — e.g. Ollama swapping the embed model into VRAM a
+# generation just filled, or an unreachable endpoint — an unbounded ``.embed()``
+# blocks its caller forever. The end-of-turn learnings write and the *next*
+# turn's recall both embed, so a single wedged call strands the following turn
+# ("agent stalls after 'Orchestrator finished', needs restart"). Bounding each
+# op means a hung embedder degrades to an empty/None result instead of hanging
+# the turn. The orphaned worker unwinds when the embedder returns or the process
+# exits (daemon threads).
+import concurrent.futures as _futures  # noqa: E402
+
+_MEM_OP_TIMEOUT = float(os.environ.get("AGENTY_MEMORY_OP_TIMEOUT", "20") or 20)
+_mem_executor = _futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="mem-op")
+
+
+def _bounded(fn: Any, default: Any, label: str) -> Any:
+    """Run blocking memory op *fn* under ``_MEM_OP_TIMEOUT``; return *default* on
+    timeout or error so a wedged embedder can never stall the caller."""
+    try:
+        return _mem_executor.submit(fn).result(timeout=_MEM_OP_TIMEOUT)
+    except _futures.TimeoutError:
+        print(f"[memory] {label} exceeded {_MEM_OP_TIMEOUT:.0f}s — skipping "
+              "(embedder slow or unreachable).")
+        return default
+    except Exception as exc:  # noqa: BLE001
+        print(f"[memory] {label} error: {exc}")
+        return default
+
 
 def _is_enabled() -> bool:
     """Return False when MEMORY_ENABLED=false or memory.enabled=false."""
@@ -207,7 +235,10 @@ def _ensure_model(model_id: str, host: str) -> None:
     import subprocess
     try:
         print(f"[memory] Pulling embedding model '{model_id}' via Ollama …")
-        subprocess.run(["ollama", "pull", model_id], check=True)
+        # Bounded so a wedged pull (mem0 client init holds _mem0_lock during this)
+        # can't hang the first memory op indefinitely.
+        subprocess.run(["ollama", "pull", model_id], check=True,
+                       timeout=float(os.environ.get("AGENTY_OLLAMA_PULL_TIMEOUT", "600") or 600))
     except Exception as exc:
         print(f"[memory] Warning: could not pull '{model_id}': {exc}")
 
@@ -262,7 +293,8 @@ def memory_search(
     """
     if not _is_enabled():
         return []
-    try:
+
+    def _do() -> list[dict]:
         import numpy as np
 
         client = mem0_client()
@@ -305,9 +337,8 @@ def memory_search(
             if len(out) >= limit:
                 break
         return out
-    except Exception as exc:
-        print(f"[memory] search error: {exc}")
-        return []
+
+    return _bounded(_do, [], "search")
 
 
 def memory_add(
@@ -332,27 +363,24 @@ def memory_add(
     """
     if not _is_enabled():
         return None
-    try:
-        client = mem0_client()
-        return client.add(content, user_id=session_id, metadata=metadata or {}, infer=infer)
-    except Exception as exc:
-        print(f"[memory] add error: {exc}")
-        return None
+    return _bounded(
+        lambda: mem0_client().add(content, user_id=session_id,
+                                  metadata=metadata or {}, infer=infer),
+        None, "add")
 
 
 def memory_get_all(session_id: str = "default") -> list[dict]:
     """Return all stored memories for *session_id*."""
     if not _is_enabled():
         return []
-    try:
-        client = mem0_client()
-        results = client.get_all(user_id=session_id)
+
+    def _do() -> list[dict]:
+        results = mem0_client().get_all(user_id=session_id)
         if isinstance(results, dict):
             return results.get("results", [])
         return results or []
-    except Exception as exc:
-        print(f"[memory] get_all error: {exc}")
-        return []
+
+    return _bounded(_do, [], "get_all")
 
 
 def format_memories(memories: list[dict], header: str = "## Relevant memories from past sessions") -> str:
