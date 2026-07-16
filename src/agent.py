@@ -614,11 +614,6 @@ _SKILLS_DIR = Path(__file__).parent.parent / "skills"
 # be passed as its own source).
 _SCRATCH_SKILLS_DIR = _SKILLS_DIR / "_scratch"
 
-# Story-agent skills live in a separate directory so the ComfyUI agents
-# (Brain / Researcher / Error-checker), which scan the whole _SKILLS_DIR, never
-# see the story modes — and the Story agent never sees the ComfyUI skills.
-_STORY_SKILLS_DIR = Path(__file__).parent.parent / "skills_story"
-
 
 def _make_agent(
     *,
@@ -1121,18 +1116,19 @@ def create_story_agent(
     anthropic_model: str | None = None,
     **kwargs,
 ) -> Agent:
-    """Create the Story agent — a creative writer with two skill-driven modes.
+    """Create a Story-writing agent — a creative writer driven by the story skills.
 
     The agent itself is a thin mode router (short system prompt); the detailed
-    instructions for each mode live in ``skills_story/``:
+    instructions live in the shared ``skills/`` directory as ordinary skills:
 
-    - ``story-synopsis`` (Mode A) — write a very short synopsis / logline.
-    - ``story-scene``    (Mode B) — expand a synopsis into consistent scene
-      descriptions for downstream start-frame + video generation.
+    - ``story-synopsis`` — write a very short synopsis / logline.
+    - ``story-scene``    — expand a synopsis into consistent scene descriptions.
+    - ``story-storyboard`` — split a whole story into ≤10s Kling sequences + JSON.
 
-    These skills are kept in a dedicated directory so the ComfyUI agents (which
-    scan ``skills/``) never see them, and the Story agent never sees the ComfyUI
-    skills.
+    NOTE: in free-agent mode the orchestrator handles story writing itself (it
+    loads these same skills directly), so this dedicated agent is **not** built on
+    the live path. It remains for the legacy ``free_agent=False`` router and as a
+    ``spawn_subagent(toolset="story")`` option.
 
     Reads ``llm.pipeline.story`` from settings.json (format: ``'provider,model'``),
     e.g. ``'claude,claude-haiku-4-5'`` or ``'ollama,qwen3.5:9b'``. Env var
@@ -1157,15 +1153,12 @@ def create_story_agent(
 
     system_prompt = _load_system_prompt("story")
 
-    # Load the story-only skills (Mode A / Mode B). Scoped to _STORY_SKILLS_DIR
-    # so this agent sees only its two modes.
+    # Load the shared skills directory; the story-* skills now live alongside the
+    # rest of the skills so the orchestrator (and any spawned subagent) can use them.
     story_plugins: list = []
-    if _STORY_SKILLS_DIR.is_dir():
-        skills_plugin = AgentSkills(skills=str(_STORY_SKILLS_DIR))
+    if _SKILLS_DIR.is_dir():
+        skills_plugin = AgentSkills(skills=str(_SKILLS_DIR))
         story_plugins.append(skills_plugin)
-        loaded = [s.name for s in skills_plugin.get_available_skills()]
-        if loaded:
-            print(f"[agentY:story] Loaded skills: {', '.join(loaded)}")
 
     if resolved_llm == "ollama":
         resolved_ollama = (

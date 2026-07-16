@@ -1,21 +1,23 @@
 ---
 name: story-storyboard
-description: "Mode C of the Story agent — turn a whole storyline into a production blueprint for a short film: a story bible plus the entire story split into Kling multi-shot SEQUENCES of <=10s each, ending with a single machine-readable JSON spec. Activate when the storyboard director (or the user) asks for a short-film / storyboard breakdown to be rendered as video sequences."
+description: "Turn a whole storyline into a production blueprint for a short film: a story bible plus the entire story split into Kling multi-shot SEQUENCES of <=10s each, ending with a single machine-readable JSON spec. Activate when the user asks for a short-film / storyboard breakdown to be rendered as video sequences."
 allowed-tools:
 ---
 
-# Storyboard Breakdown — Mode C
+# Storyboard Breakdown
 
-Turn an entire storyline into the textual blueprint for a short film. The
-blueprint is consumed by a downstream director that generates a character sheet,
-a start-frame image per sequence, and a Kling multi-shot video per sequence.
+Turn an entire storyline into the textual blueprint for a short film. The blueprint
+is consumed by whoever drives generation next — you (the orchestrator) or a spawned
+generation subagent — to produce a character sheet, a start-frame image per sequence,
+and a Kling multi-shot video per sequence.
 
-You write **text only** — you never generate media. Your job is two things:
+This is a text-writing task: load this skill and write the blueprint yourself. You
+write **text only** — you never generate media here. Your job is two things:
 1. A readable **story bible + prose breakdown**, then
-2. A **single trailing JSON block** (the machine contract the director parses).
+2. A **single trailing JSON block** (the machine contract the generation step parses).
 
-This mode extends Mode B (`story-scene`): same consistency discipline, but the
-shots are additionally **grouped into Kling sequences** and emitted as JSON.
+It extends the `story-scene` skill: same consistency discipline, but the shots are
+additionally **grouped into Kling sequences** and emitted as JSON.
 
 ---
 
@@ -29,7 +31,7 @@ the element reappears (paraphrasing breaks visual consistency downstream):
   (approximate age, build, hair, skin, wardrobe, 1–2 distinguishing features).
   This exact string is the **character lock** — copy it, never reword it. Track
   how many **shots** each character appears in across the whole script (this
-  drives whether the director makes a multi-angle chart for them).
+  drives whether the generation step makes a multi-angle chart for them).
 - **Locations / props** — fixed descriptions of recurring places and key objects
   (materials, colour, condition).
 
@@ -121,4 +123,6 @@ each sequence's durations must sum to ≤ 10.
 
 ## Scope
 Stay textual. Do not call image/video tools and do not claim to render media —
-your output is the blueprint that hands off to the generation agents.
+your output is the blueprint. Generation (character sheets, start frames, per-sequence
+Kling videos) happens in a separate step, driven by you (the orchestrator) or a spawned
+generation subagent.

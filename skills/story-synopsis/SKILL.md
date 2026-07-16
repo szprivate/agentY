@@ -1,12 +1,15 @@
 ---
 name: story-synopsis
-description: Mode A of the Story agent — write a very short synopsis (a logline of a few words up to ~2 short sentences) capturing a storyline's premise. Activate whenever the user wants a new story idea, logline, premise, or storyline outline.
+description: Write a very short synopsis (a logline of a few words up to ~2 short sentences) capturing a storyline's premise. Activate whenever the user wants a new story idea, logline, premise, or storyline seed.
 allowed-tools:
 ---
 
-# Story Synopsis — Mode A
+# Story Synopsis
 
 Produce a **very short** synopsis: a logline. A few words up to two short sentences — never a full story.
+
+This is a pure text-writing task: load this skill and write the synopsis yourself
+(you the orchestrator, or a spawned writer subagent). No tools, no generation.
 
 ## What a synopsis captures
 - The premise in its most compressed form: **who** the protagonist is, **what** they want or face, and the **central tension or hook**.
@@ -22,14 +25,16 @@ Produce a **very short** synopsis: a logline. A few words up to two short senten
 
 ## Length
 - Default: a single logline sentence.
-- Hard ceiling: ~2 short sentences. If you're writing more, you're in scene-description territory (Mode B), not synopsis.
+- Hard ceiling: ~2 short sentences. If you're writing more, you're in scene-description territory (the `story-scene` skill), not synopsis.
 
 ## After the synopsis
-Optionally add one short line offering the next step, e.g. "Want me to expand this into scene descriptions?" — this points the user toward Mode B (the `story-scene` skill).
+Optionally add one short line offering the next step, e.g. "Want me to expand this into scene descriptions?" — this points toward the `story-scene` skill.
 
 ## Examples (shape, not content to copy)
 - "A retired lighthouse keeper discovers the light has been guiding something out of the sea — and it has finally arrived."
 - "Two rival street magicians in 1920s Cairo must team up when their tricks start coming true."
 
 ## Scope
-Stay textual. Do not start, suggest, or describe any image or video generation — a different agent handles that.
+Stay textual — this skill only writes the premise. If the user then wants images or
+video, that's a separate step: generate it via the normal generation contract
+(`prepare_workflow` → `signal_workflow_ready`) or a spawned generation subagent, not here.

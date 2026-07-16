@@ -439,7 +439,9 @@ class Pipeline:
         # _compress_brain_history). Kept in sync with _assemble_workflow.
         self._brain = assemble_workflow
         self._info_agent: Agent = info_agent or create_info_agent()
-        self._story_agent: Agent = story_agent or create_story_agent()
+        # None in free-agent mode — the orchestrator writes stories itself via the
+        # story-* skills. Only the legacy free_agent=False router builds/uses this.
+        self._story_agent: Agent | None = story_agent
         # Free-agent mode routes every turn through the orchestrator, so the
         # triage classifier is not built (and not needed). It is only constructed
         # for the legacy pipeline path.
@@ -854,15 +856,6 @@ class Pipeline:
             return await _run_specialist(self._info_agent, "INFO", self._prepend_gallery(question))
 
         @_tool
-        async def run_story(request: str) -> str:
-            """Write a short synopsis or scene descriptions for a visual story.
-
-            Args:
-                request: What to write (e.g. "a 3-scene synopsis about …").
-            """
-            return await _run_specialist(self._story_agent, "STORY", request)
-
-        @_tool
         async def run_dop(text: str) -> str:
             """Rewrite a prompt/storyboard with concrete cinematography (light/camera/colour).
 
@@ -1097,15 +1090,49 @@ class Pipeline:
                                      "widgets; applied anyway if the node accepts them.")
             return json.dumps(result)
 
+        @_tool
+        async def place_canvas_text(hook_node_id: str, text: str) -> str:
+            """Place a written answer onto the canvas as a wireable string node.
+
+            Use this ONLY to fulfil a **TEXT canvas hook** (purpose='text') listed
+            in the ``[CANVAS HOOKS]`` block. After you have written the answer,
+            call this with the hook's node id and the final text. It drops an
+            ``agentY text`` node on the live canvas carrying *text* and wires its
+            STRING output wherever the hook's output was connected, so downstream
+            nodes (or the next hook stage) consume the string on a normal run — no
+            agent needed to reproduce it. The answer still streams into the chat as
+            usual; do NOT generate media, call ``apply_canvas_hooks``, or run a
+            workflow for a text hook.
+
+            Args:
+                hook_node_id: The id of the TEXT hook from the ``[CANVAS HOOKS]`` block.
+                text: The final written answer to place (plain text / markdown).
+            """
+            if not str(text or "").strip():
+                return json.dumps({"error": "text is empty — write the answer first, then place it."})
+            from src.utils.canvas_patch import push as _push_patch
+            _push_patch({
+                "op": "place_text",
+                "hook_node_id": str(hook_node_id),
+                "text": str(text),
+            })
+            return json.dumps({
+                "status": "placed",
+                "hook_node_id": str(hook_node_id),
+                "chars": len(text),
+                "message": ("Placed an 'agentY text' node on the canvas carrying your answer, "
+                            "wired where the hook's output went."),
+            })
+
         # NOTE: intent classification is the orchestrator's own job in free-agent
         # mode — it routes natively by choosing which specialist tool to call. The
         # former `classify_intent` advisory tool (a separate detect_user_intent LLM
         # round-trip) was never used in practice and only enlarged the tool surface,
         # so it is no longer exposed. The detect_user_intent agent survives only for
         # the legacy free_agent=False router path.
-        return [prepare_workflow, run_info, run_story, run_dop,
+        return [prepare_workflow, run_info, run_dop,
                 run_web_search, run_planner, apply_canvas_hooks, run_workflow_now,
-                add_canvas_workflow, set_canvas_node_params]
+                add_canvas_workflow, set_canvas_node_params, place_canvas_text]
 
     def _ensure_orch_clean_history(self) -> None:
         """Sanitize the orchestrator's message list (drop orphaned tool blocks)."""
@@ -5510,7 +5537,10 @@ def create_pipeline(
         ollama_model=brain_ollama_model,
     )
     info_agent = create_info_agent()
-    story_agent = create_story_agent()
+    # The dedicated Story agent is used ONLY by the legacy free_agent=False router.
+    # In free-agent mode the orchestrator writes stories itself (it loads the
+    # story-* skills directly), so don't build it (mirrors the brain/triage gates).
+    story_agent = None if free_agent else create_story_agent()
     # Intent classification is the orchestrator's own job in free-agent mode, so the
     # separate classifier is built ONLY for the legacy (free_agent=False) router path.
     triage_agent = None if free_agent else create_detect_user_intent_agent(

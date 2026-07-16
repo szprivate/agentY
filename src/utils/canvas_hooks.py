@@ -178,11 +178,17 @@ def build_batch(base_prompt: dict, resolutions: list, cap: int = 25) -> tuple[li
 
 
 _STANDIN_PURPOSES = {"workflow-standin", "workflow_standin", "standin", "workflow"}
+_TEXT_PURPOSES = {"text", "text-output", "text_output", "answer"}
 
 
 def _is_standin(hook: dict) -> bool:
     """True if *hook* is a workflow-standin (vs. an annotation directive)."""
     return str(hook.get("purpose", "directive") or "directive").strip().lower() in _STANDIN_PURPOSES
+
+
+def _is_text(hook: dict) -> bool:
+    """True if *hook* asks for a written text answer (no media, no workflow)."""
+    return str(hook.get("purpose", "directive") or "directive").strip().lower() in _TEXT_PURPOSES
 
 
 def _wants_bake(hook: dict) -> bool:
@@ -284,8 +290,9 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
     hooks = [h for h in (hooks or []) if isinstance(h, dict)]
     if not hooks:
         return ""
-    directive_hooks = [h for h in hooks if not _is_standin(h)]
+    text_hooks = [h for h in hooks if _is_text(h)]
     standin_hooks = [h for h in hooks if _is_standin(h)]
+    directive_hooks = [h for h in hooks if not _is_standin(h) and not _is_text(h)]
 
     lines = [
         "[CANVAS HOOKS — the user's ON-CANVAS graph carries hook annotations (below) "
@@ -318,6 +325,31 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
                 for aid, atype, inputs in anchors:
                     params = ", ".join(f"{k}={v!r}" for k, v in inputs.items()) or "(no scalar inputs)"
                     lines.append(f'- Node {aid} ({atype}) inputs[{params}] ← "{directive}" (mode={mode})')
+
+    if text_hooks:
+        lines.append(
+            "\nTEXT hooks — each asks for a WRITTEN TEXT ANSWER, not media. WRITE the "
+            "answer yourself (activate a relevant writing skill if it helps). Do NOT "
+            "generate images/video, do NOT call apply_canvas_hooks, and do NOT build or "
+            "run a workflow. If an anchor is wired, use its content/prompt as the SUBJECT "
+            "or context of the answer. When the answer is ready, call "
+            'place_canvas_text(hook_node_id="<id>", text="<answer>") ONCE per hook — it '
+            "drops an 'agentY text' node on the canvas carrying the answer and wires it "
+            "where the hook's output went, so the graph keeps the string:"
+        )
+        for h in text_hooks:
+            hid = h.get("hook_node_id")
+            directive = str(h.get("directive", "") or "").strip()
+            anchors = _all_anchor_inputs(h, base_prompt)
+            if anchors:
+                parts = []
+                for aid, atype, inputs in anchors:
+                    params = ", ".join(f"{k}={v!r}" for k, v in inputs.items()) or "(no scalar inputs)"
+                    parts.append(f"node {aid} ({atype}) inputs[{params}]")
+                ctx = "context from " + "; ".join(parts)
+            else:
+                ctx = "no input wired — answer from the prompt alone"
+            lines.append(f'- TEXT hook {hid} ({ctx}) — write & place → "{directive}"')
 
     if standin_hooks:
         chains = _order_standin_chains(standin_hooks)
