@@ -27,6 +27,7 @@ Chat UI
 Viewers (self-contained HTML pages served here so they fetch same-origin)
     GET  /agentY/log_viewer                     message-history log viewer page
     GET  /agentY/message_history                raw message-history log feed
+    POST /agentY/message_history/clear          purge the entire history log
     GET  /agentY/memory_viewer                  long-term-memory viewer page
     GET  /agentY/memory                          list stored long-term memories -> {memories}
     POST /agentY/memory/update                   edit one memory      {id,text}
@@ -1845,6 +1846,18 @@ def _build_app():
             text = ("[showing the last ~2 MB of history — append ?full=1 to the URL "
                     "for the complete log]\n\n") + text
         return Response(text, mimetype="text/plain; charset=utf-8")
+
+    @app.route("/agentY/message_history/clear", methods=["POST", "OPTIONS"])
+    def message_history_clear():
+        if request.method == "OPTIONS":
+            return "", 204
+        try:
+            from src.utils.chat_summary import purge_message_history
+            res = purge_message_history()
+            return jsonify({"ok": True, **res})
+        except Exception as exc:  # noqa: BLE001
+            logger.error("message history clear failed: %s", exc, exc_info=True)
+            return jsonify({"ok": False, "error": str(exc)}), 500
 
     # ── Long-term-memory viewer (self-contained HTML + JSON CRUD feed) ──────
     # The page (scripts/memory_viewer.html) is served here so it fetches the

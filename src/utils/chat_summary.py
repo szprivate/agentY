@@ -49,6 +49,34 @@ if not _history_logger.handlers:
     _history_logger.propagate = False
 
 
+def purge_message_history() -> dict:
+    """Truncate the message-history log to empty, keeping the file in place.
+
+    Backs the log viewer's "Purge history" button. The FileHandler holds the
+    log open in append mode, so we detach each handler's stream and truncate the
+    file; the next emit lazily reopens a fresh file. Truncating (not unlinking)
+    is what makes this safe on Windows, where an open file can't be deleted.
+    """
+    for handler in list(_history_logger.handlers):
+        if isinstance(handler, logging.FileHandler):
+            handler.acquire()
+            try:
+                try:
+                    if getattr(handler, "stream", None):
+                        handler.stream.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                handler.stream = None  # next emit() reopens in append mode
+            finally:
+                handler.release()
+    try:
+        with open(_MSG_HISTORY_LOG, "w", encoding="utf-8"):
+            pass
+    except FileNotFoundError:
+        pass
+    return {"path": _MSG_HISTORY_LOG}
+
+
 class _BytesSafeEncoder(json.JSONEncoder):
     """JSON encoder that replaces raw bytes with a placeholder string."""
 

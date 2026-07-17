@@ -40,6 +40,9 @@
   button{cursor:pointer}
   button:hover{border-color:var(--accent)}
   button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+  button.danger{color:#c0392b;border-color:#d9a7a1}
+  button.danger:hover{background:#c0392b;color:#fff;border-color:#c0392b}
+  button:disabled{opacity:.5;cursor:default}
   input[type=search]{min-width:220px;flex:1}
   input[type=date]{padding:5px 8px}
   .drop{margin:40px auto;max-width:560px;padding:48px 24px;text-align:center;
@@ -107,14 +110,15 @@
     <label class="stat">from <input type="date" id="from"></label>
     <label class="stat">to <input type="date" id="to"></label>
     <select id="sort">
-      <option value="asc">oldest first</option>
       <option value="desc">newest first</option>
+      <option value="asc">oldest first</option>
     </select>
     <button id="expandAll">Expand page</button>
     <button id="collapseAll">Collapse</button>
     <button id="export">Export filtered</button>
     <button id="reloadHost">↻ Reload from host</button>
     <button id="reload">Load another file</button>
+    <button id="purge" class="danger" title="Permanently clears the entire message_history.log on the agentY host">Purge history</button>
   </div>
   <div class="row chips" id="typeChips" style="display:none"></div>
   <div class="row"><span class="stat" id="stats"></span></div>
@@ -431,6 +435,24 @@ $("#collapseAll").onclick=()=>{
   document.querySelectorAll(".conv.open").forEach(g=>g.classList.remove("open"));
 };
 $("#reload").onclick=()=>{ $("#drop").style.display="block"; $("#controls").style.display="none"; $("#typeChips").style.display="none"; $("#list").innerHTML=""; $("#stats").textContent=""; $("#fileinfo").textContent=""; };
+// Purge the entire history on the host, then reload the (now-empty) log. Only
+// works when this page is served by the agentY host (POST is same-origin);
+// opened as a bare file:// the fetch fails and we say so in the stats line.
+$("#purge").onclick=async ()=>{
+  if(!confirm("Purge the ENTIRE message history?\n\nThis permanently clears message_history.log on the agentY host and cannot be undone.")) return;
+  const btn=$("#purge"), old=btn.textContent; btn.disabled=true; btn.textContent="Purging…";
+  try{
+    const r=await fetch("/agentY/message_history/clear",{method:"POST"});
+    let j={}; try{ j=await r.json(); }catch(e){}
+    if(!r.ok || j.ok===false) throw new Error(j.error||("HTTP "+r.status));
+    await loadFromHost(true);                     // reload the now-empty log
+    $("#stats").textContent="History purged.";
+  }catch(e){
+    $("#stats").textContent="Purge failed: "+e+" — only works when this page is served by the agentY host.";
+  }finally{
+    btn.disabled=false; btn.textContent=old;
+  }
+};
 $("#export").onclick=()=>{
   const rows=filtered();
   const sep="=".repeat(80);
