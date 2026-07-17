@@ -1730,7 +1730,11 @@ def _build_app():
     # ── Health / commands ──────────────────────────────────────────────────
     @app.route("/agentY/health", methods=["GET"])
     def health():
-        return jsonify({"status": "ok", "pipeline": _agent_ref is not None})
+        # project_root lets the panel tell the ComfyUI extension where this host
+        # lives (browser-mediated self-registration), so the "Start server" button
+        # can relaunch it later with no env var or manual config.
+        return jsonify({"status": "ok", "pipeline": _agent_ref is not None,
+                        "project_root": str(_project_root())})
 
     @app.route("/agentY/commands", methods=["GET"])
     def commands():
