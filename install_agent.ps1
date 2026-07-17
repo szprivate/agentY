@@ -327,6 +327,17 @@ if ($SkipComfyNode) {
         Ensure-Repo -Name "agentY-comfyuiConnect" -Url "https://github.com/szprivate/agentY-comfyuiConnect.git" -Dir $nodeDir
         Write-Success "Sidebar node installed under $ResolvedComfy\custom_nodes - restart ComfyUI once."
 
+        # Record where the agentY host lives so the sidebar's "Start server" button
+        # can relaunch run_agent.ps1 when the host is down. The agentY host also
+        # rewrites this on startup; this bootstrap makes the button work day-1,
+        # before the host has ever run. (Gitignored - machine-specific.)
+        if (Test-Path $nodeDir) {
+            $hostCfg = Join-Path $nodeDir ".agenty_host.json"
+            $cfgObj  = [pscustomobject]@{ project_root = $ProjectRoot; run_script = "run_agent.ps1" }
+            Write-TextNoBom $hostCfg ($cfgObj | ConvertTo-Json -Depth 5)
+            Write-Success "Recorded agentY host location for the 'Start server' button"
+        }
+
         # Offer to set this ComfyUI's URL as a local override (settings.local.json).
         # Committed defaults live in config/settings.default.toml (localhost); the
         # local JSON is deep-merged over them and is gitignored.

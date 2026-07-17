@@ -57,6 +57,7 @@ import uuid
 from pathlib import Path
 
 from src.utils import conversation_store as cs
+from src.utils import status_bus
 from src.utils.models import AgentSession
 
 logger = logging.getLogger("agentY.server")
@@ -533,6 +534,11 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
         out_q.put(None)
         return
 
+    # Surface CLI-side status notices (e.g. the FAISS memory layer initialising)
+    # in the panel too: for the life of this turn, status_bus fans notices out
+    # onto out_q as live ``status_line`` events (unregistered in finally).
+    status_bus.register_live(out_q)
+
     _restore_state(pipeline, thread_id)
     session = getattr(pipeline, "_session", None)
     if image_paths and session is not None:
@@ -774,6 +780,7 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
         logger.error("pipeline stream error: %s", exc, exc_info=True)
         out_q.put({"type": "error", "message": str(exc)})
     finally:
+        status_bus.unregister_live(out_q)
         with _reply_lock:
             _reply_registry.pop(req_id, None)
             _run_registry.pop(req_id, None)
@@ -1728,6 +1735,19 @@ def _build_app():
     def commands():
         return jsonify(SLASH_COMMANDS)
 
+    # ── CLI-side status notices (memory init, model pulls, …) ───────────────
+    # The panel drains this on connect (so startup lines that predate it still
+    # show) and after each turn; live lines during a turn arrive as SSE
+    # ``status_line`` events. ``since`` is the highest seq already shown, so this
+    # never re-returns a line already delivered live.
+    @app.route("/agentY/status", methods=["GET"])
+    def status_feed():
+        try:
+            since = int(request.args.get("since", "0") or 0)
+        except (TypeError, ValueError):
+            since = 0
+        return jsonify(status_bus.snapshot(since))
+
     # ── Available models (per vendor) for the quick-switch dropdown ─────────
     @app.route("/agentY/models", methods=["GET"])
     def models():
@@ -2223,6 +2243,26 @@ def _build_app():
 _server_thread: threading.Thread | None = None
 
 
+def _register_with_comfyui() -> None:
+    """Best-effort: tell the ComfyUI sidebar extension where this host lives, so its
+    "Start server" button can relaunch run_agent.ps1 when the host is down. Fire-
+    and-forget; never blocks or fails startup."""
+    def _do() -> None:
+        try:
+            from src.utils.settings import load_settings
+            import urllib.request
+            base = str(load_settings().get("comfyui_url", "http://127.0.0.1:8188")).rstrip("/")
+            body = json.dumps({"project_root": str(_project_root()),
+                               "run_script": "run_agent.ps1"}).encode("utf-8")
+            req = urllib.request.Request(base + "/agent/register_host", data=body,
+                                         headers={"Content-Type": "application/json"}, method="POST")
+            urllib.request.urlopen(req, timeout=5).read()
+            logger.info("registered agentY host location with the ComfyUI extension")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("host self-registration skipped: %s", exc)
+    threading.Thread(target=_do, name="agentY-register-host", daemon=True).start()
+
+
 def start_agentY_server(agent, host: str = "127.0.0.1", port: int = 5000) -> bool:
     """Start the agentY bridge + chat host in a background daemon thread."""
     global _server_thread, _agent_ref
@@ -2251,4 +2291,5 @@ def start_agentY_server(agent, host: str = "127.0.0.1", port: int = 5000) -> boo
     _server_thread = threading.Thread(target=_run, name="agentY-bridge-server", daemon=True)
     _server_thread.start()
     logger.info("agentY chat host started on http://%s:%d", host, port)
+    _register_with_comfyui()  # so the sidebar's "Start server" button knows where we live
     return True

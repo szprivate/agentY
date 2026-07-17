@@ -27,6 +27,8 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from src.utils.status_bus import notify
+
 # ---------------------------------------------------------------------------
 # Minimal settings reader (avoids circular-import with src.agent)
 # ---------------------------------------------------------------------------
@@ -220,13 +222,13 @@ def _ensure_model(model_id: str, host: str) -> None:
 
     import subprocess
     try:
-        print(f"[memory] Pulling embedding model '{model_id}' via Ollama …")
+        notify(f"[memory] Pulling embedding model '{model_id}' via Ollama …")
         # Bounded so a wedged pull (mem0 client init holds _mem0_lock during this)
         # can't hang the first memory op indefinitely.
         subprocess.run(["ollama", "pull", model_id], check=True,
                        timeout=float(os.environ.get("AGENTY_OLLAMA_PULL_TIMEOUT", "600") or 600))
     except Exception as exc:
-        print(f"[memory] Warning: could not pull '{model_id}': {exc}")
+        notify(f"[memory] Warning: could not pull '{model_id}': {exc}", level="warning")
 
 
 def mem0_client() -> Any:
@@ -246,9 +248,9 @@ def mem0_client() -> Any:
 
         from mem0 import Memory
         _mem0_client = Memory.from_config(config_dict=cfg)
-        print(f"[memory] FAISS memory layer initialised  (path={cfg['vector_store']['config']['path']},"
-              f" embed={cfg['embedder']['provider']}:{cfg['embedder']['config']['model']},"
-              f" llm={cfg['llm']['provider']}:{cfg['llm']['config']['model']})")
+        notify(f"[memory] FAISS memory layer initialised  (path={cfg['vector_store']['config']['path']},"
+               f" embed={cfg['embedder']['provider']}:{cfg['embedder']['config']['model']},"
+               f" llm={cfg['llm']['provider']}:{cfg['llm']['config']['model']})")
         return _mem0_client
 
 
