@@ -4586,33 +4586,171 @@ class Pipeline:
         return d[:60]
 
     def _format_template_catalog(self) -> str:
-        """Render the template list for injection into the Researcher's prompt so it
+        """Render the template catalog injected into the Researcher's prompt so it
         selects an EXACT real name with no tool call (and cannot hallucinate one).
 
-        Each template is ``name: <first-sentence hint>``. This is data-driven —
-        templates the user adds appear automatically, each carrying its own
-        description as the hint, with NO heuristic or token list to maintain. The
-        hint is the description's first sentence (tag stripped), capped short, so
-        the whole catalog is ~2.6k tokens vs ~4.8k for full descriptions. Cached per
-        pipeline; placed as a stable prompt prefix so implicit caching amortises it.
-
-        (At several hundred templates this linear injection would grow large; the
-        next lever would be filtering to the request's task type before injecting.)"""
+        Prefers a recipe-derived catalog organised ``task → model → template`` (the
+        two axes users actually specify), falling back to a flat ``name: hint`` list
+        if the recipe DB is unavailable. Cached per pipeline; placed as a stable
+        prompt prefix so implicit caching amortises it."""
         if getattr(self, "_catalog_block_cache", None) is None:
-            block = ""
-            try:
-                from src.tools import get_workflow_catalog as _gwc  # noqa: PLC0415
-                cat = json.loads(getattr(_gwc, "func", _gwc)())
-                if isinstance(cat, dict) and cat:
-                    lines = [f"- {name}: {self._catalog_hint(cat[name])}"
-                             for name in sorted(cat)]
-                    block = ("AVAILABLE TEMPLATES — set template.name to EXACTLY one of "
-                             "these names (or \"build_new\" if none fit); each line is "
-                             "name: what it does:\n" + "\n".join(lines))
-            except Exception:  # noqa: BLE001
-                block = ""
+            block = self._format_recipe_catalog()  # preferred: task → model → template
+            if not block:
+                block = self._format_flat_catalog()  # fallback: flat name: hint list
             self._catalog_block_cache = block
         return self._catalog_block_cache
+
+    def _load_recipe_tasks(self) -> list:
+        """The recipe DB's ``tasks`` list, loaded from the corpus (cached per pipeline)."""
+        if getattr(self, "_recipe_tasks_cache", None) is None:
+            tasks: list = []
+            try:
+                from agenty_core.paths import corpus_root  # noqa: PLC0415
+                p = corpus_root() / "config" / "workflow_recipes.json"
+                db = json.loads(p.read_text(encoding="utf-8"))
+                if isinstance(db, dict):
+                    tasks = db.get("tasks") or []
+            except Exception:  # noqa: BLE001
+                tasks = []
+            self._recipe_tasks_cache = tasks
+        return self._recipe_tasks_cache
+
+    # Trailing numeric version token: ``_2511`` (build date) or ``_2_3`` (semver-ish).
+    _VERSION_TOKEN_RE = re.compile(r"_(\d{3,4}|\d+_\d+)$")
+
+    # Templates hidden from the researcher's catalog: each is redundant with a
+    # concrete sibling in the same task, so suppressing it tightens retrieval
+    # without losing any capability. They stay on disk and remain resolvable if
+    # referenced by exact name (e.g. the user explicitly asks for one).
+    _SUPPRESSED_TEMPLATES = frozenset({
+        # Abstract "… blueprint" skeletons — a concrete model template always exists:
+        "image_edit",                 # → image_edit_qwen_2511, image_edit_flux_2_dev, …
+        "image_to_video",             # → image_to_video_wan_2_2, …
+        "image_to_depth_map_lotus",   # → image_depth_estimation_lotus_depth
+        "video_inpaint_wan2_1_vace",  # → video_inpainting_wan2_1_vace
+        # Exact duplicates filed under a different filename:
+        "text_to_image",              # generic Z-Image-Turbo t2i → text_to_image_z_image_turbo
+        "image_z_image_turbo",        # dup of text_to_image_z_image_turbo
+    })
+
+    @classmethod
+    def _capability_key(cls, stem: str) -> tuple[str, tuple]:
+        """Split a template stem into ``(capability_key, version_tuple)`` by stripping
+        a trailing numeric version token (``_2511``, ``_2_3``). Members sharing a
+        capability_key are version-variants of the SAME workflow, and the highest
+        version_tuple is the latest. Word suffixes like ``_base``/``_turbo``/``_4b``
+        are deliberately NOT treated as versions — they denote distinct models or
+        capabilities and must remain separately selectable."""
+        m = cls._VERSION_TOKEN_RE.search(stem)
+        if not m:
+            return stem, ()
+        ver = tuple(int(x) for x in re.findall(r"\d+", m.group(1)))
+        return stem[: m.start()], ver
+
+    def _format_recipe_catalog(self) -> str:
+        """Render the catalog from the recipe DB, grouped ``task → model → template``.
+
+        Collapsing rule (agreed design): within a ``(task, model)`` group, pure
+        version-variants of one workflow collapse to the LATEST; genuinely distinct
+        capabilities (media splits, control types, separate tools) stay as separate
+        leaves. Members not present in the live catalog (stale recipe entries) are
+        dropped. Models that run via API/partner nodes are flagged ``[API]`` and
+        listed first, so a request that names no model defaults to API-first.
+
+        Returns ``""`` when the recipe DB or live catalog is unavailable, letting the
+        caller fall back to the flat catalog."""
+        tasks = self._load_recipe_tasks()
+        if not tasks:
+            return ""
+        # Live catalog: authoritative {name: description}. Drives the stale-member
+        # intersection and supplies each leaf's one-line hint.
+        try:
+            from src.tools import get_workflow_catalog as _gwc  # noqa: PLC0415
+            live = json.loads(getattr(_gwc, "func", _gwc)())
+            if not isinstance(live, dict) or not live:
+                return ""
+        except Exception:  # noqa: BLE001
+            return ""
+
+        def _stem(f: str) -> str:
+            return f[:-5] if f.endswith(".json") else f
+
+        emitted: set[str] = set()   # leaves shown (latest version of each capability)
+        hidden: set[str] = set()    # older versions deliberately collapsed away
+        blocks: list[str] = []
+        for task in tasks:
+            tname = task.get("task") or ""
+            # API/partner models first (API-first default for an unnamed model).
+            models = sorted(
+                task.get("models") or [],
+                key=lambda m: (not m.get("uses_api_nodes"), str(m.get("model") or "")),
+            )
+            model_lines: list[str] = []
+            for m in models:
+                members = [_stem(f) for f in (m.get("member_files") or [])]
+                members = [s for s in members if s in live]  # drop stale
+                if not members:
+                    continue
+                # Collapse version-variants: keep the latest per capability key.
+                best: dict[str, tuple[tuple, str]] = {}
+                for s in members:
+                    key, ver = self._capability_key(s)
+                    if key not in best or ver > best[key][0]:
+                        best[key] = (ver, s)
+                latest = {v[1] for v in best.values()}
+                hidden.update(s for s in members if s not in latest)  # collapsed older versions
+                # Drop suppressed templates (blueprints / exact dups).
+                leaves = sorted(s for s in latest if s not in self._SUPPRESSED_TEMPLATES)
+                if not leaves:
+                    continue
+                emitted.update(leaves)
+                tag = " [API]" if m.get("uses_api_nodes") else ""
+                leaf_txt = "\n".join(
+                    f"    - {s}: {self._catalog_hint(live.get(s, ''))}" for s in leaves
+                )
+                model_lines.append(f"  {m.get('model') or '?'}{tag}:\n{leaf_txt}")
+            if model_lines:
+                blocks.append(f"## {tname}\n" + "\n".join(model_lines))
+        if not blocks:
+            return ""
+        # Lossless safety net: any live template that no recipe references (recipe/
+        # catalog drift) would otherwise be unreachable. List it so it stays
+        # selectable — but never resurrect a version we deliberately collapsed.
+        uncovered = sorted(set(live) - emitted - hidden - self._SUPPRESSED_TEMPLATES)
+        if uncovered:
+            other = "\n".join(
+                f"    - {s}: {self._catalog_hint(live.get(s, ''))}" for s in uncovered
+            )
+            blocks.append("## Other\n  (uncategorised):\n" + other)
+        header = (
+            "AVAILABLE TEMPLATES — set template.name to EXACTLY one of the template "
+            "names below (the leaf after each model), or \"build_new\" if none fit. "
+            "They are grouped by task → model. Match the model the user named; if the "
+            "user names no model (and does not ask for a local/offline workflow), "
+            "prefer the API/partner option — the '[API]' models and the "
+            "'API / Partner Nodes - …' task groups. Only the latest version of each "
+            "workflow is listed; if the user explicitly names an older version, you "
+            "may still use that exact template name.\n"
+        )
+        return header + "\n".join(blocks)
+
+    def _format_flat_catalog(self) -> str:
+        """Fallback catalog: a flat ``- name: <first-sentence hint>`` list from the
+        live catalog. Used only when the recipe DB is unavailable."""
+        block = ""
+        try:
+            from src.tools import get_workflow_catalog as _gwc  # noqa: PLC0415
+            cat = json.loads(getattr(_gwc, "func", _gwc)())
+            if isinstance(cat, dict) and cat:
+                lines = [f"- {name}: {self._catalog_hint(cat[name])}"
+                         for name in sorted(cat)
+                         if name not in self._SUPPRESSED_TEMPLATES]
+                block = ("AVAILABLE TEMPLATES — set template.name to EXACTLY one of "
+                         "these names (or \"build_new\" if none fit); each line is "
+                         "name: what it does:\n" + "\n".join(lines))
+        except Exception:  # noqa: BLE001
+            block = ""
+        return block
 
     def _catalog_names(self) -> list[str]:
         """Sorted template names from get_workflow_catalog (cached per pipeline)."""

@@ -51,14 +51,17 @@ Extract subject, style, task type, batch count, variations.
   job, not yours — do not try to handle them here.
 
 ### 2. Select the template
-- Pick the best match from the **AVAILABLE TEMPLATES** list in your prompt, by
-  priority: exact name > similar name > task-type match > model-family match. Use
-  the name EXACTLY as listed — never invent or reword a name.
+- The list is grouped **task → model**. Navigate to the task that matches the
+  request, then pick the model: exact name > model the user named > task-type
+  match > model-family match. Use the leaf name EXACTLY as listed — never invent
+  or reword a name.
 - **When the request has input image(s), pick an image-consuming template**
   (edit / img2img / inpaint / img2video / controlnet) — never a pure
   text-to-X template.
-- Prefer a **local** template (no `api_` prefix) unless the user asks for a
-  specific cloud service or the only fit is an API template.
+- If the user names no model (and does not ask for a local/offline workflow),
+  prefer the **API/partner** option — the `[API]` models and the
+  `API / Partner Nodes - …` task groups. Pick a local template when the user
+  asks for local/offline, names a local model, or no API option fits.
 - If no template fits, or the user explicitly asks to build from scratch, set
   `template.name` to `"build_new"`.
 - Never invent template names, and never stop to ask — apply a sensible default.
