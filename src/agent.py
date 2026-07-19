@@ -34,12 +34,9 @@ from src.tools import (
     INFO_TOOLS,
     STORY_TOOLS,
     SEARCHWEB_TOOLS,
-    ERROR_CHECKER_TOOLS,
     PLANNER_TOOLS,
-    DETECTUSERINTENT_TOOLS,
     LEARNINGS_TOOLS,
     VISION_AGENT_TOOLS,
-    DOP_TOOLS,
     CODER_TOOLS,
     FIX_WORKFLOW_ASSEMBLY_TOOLS,
     GENERATE_NEW_WORKFLOW_TOOLS,
@@ -254,14 +251,11 @@ _SYSTEM_PROMPT_FILE: dict[str, str] = {
     "query_templates": "system_prompt.query_templates",
     "assemble_workflow": "system_prompt.assemble_workflow",
     "orchestrator": "system_prompt.orchestrator",
-    "detect_user_intent": "system_prompt.detect_user_intent",
     "planner": "system_prompt.planner",
     "info": "system_prompt.info",
     "story": "system_prompt.story",
     "search_web": "system_prompt.search_web",
-    "dop": "system_prompt.dop",
     "learnings": "system_prompt.learnings",
-    "error_checker": "system_prompt.error_checker",
     "qa_checker": "system_prompt.qaChecker",
     "vision_agent": "system_prompt.vision_agent",
     "coder": "system_prompt.coder",
@@ -369,7 +363,6 @@ def _ensure_ollama_model(model_id: str, host: str) -> None:
             "The 'ollama' CLI was not found on PATH. "
             "Install Ollama from https://ollama.com and ensure it is in PATH."
         )
-
 
 
 # Note: cost-estimation removed — only token counts are reported.
@@ -991,9 +984,7 @@ def create_planner_agent(
         llm = "ollama"
 
     # Read combined 'provider,model' from settings (env var PLANNER_LLM still wins).
-    # Falls back to the detect_user_intent setting so no extra config is required.
-    _raw = str(_cfg("PLANNER_LLM", "pipeline", "planner",
-                    default=str(_cfg("DETECTUSERINTENT_LLM", "pipeline", "detect_user_intent", default="ollama"))))
+    _raw = str(_cfg("PLANNER_LLM", "pipeline", "planner", default="ollama"))
     _settings_llm, _settings_model = _parse_llm_setting(_raw)
     resolved_llm = llm or _settings_llm or "ollama"
 
@@ -1266,151 +1257,6 @@ def create_SEARCHWEB_agent(
     return agent
 
 
-def create_dop_agent(
-    llm: str | None = None,
-    ollama_model: str | None = None,
-    anthropic_model: str | None = None,
-    **kwargs,
-) -> Agent:
-    """Create the DoP (Director of Photography) agent — a stateless cinematographer.
-
-    Given a **finished storyboard JSON spec or a single prompt/scene**, it applies
-    concrete cinematography rules (lighting, composition, camera movement, colour)
-    and returns the enriched result — the SAME storyboard JSON schema when handed a
-    storyboard, or an enriched prompt when handed a single prompt. It writes text
-    only and calls no tools.
-
-    Two callers use it:
-      • the Storyboard director — to enrich every start frame + shot before generation;
-      • the Planner — as a ``dop`` step in a normal multi-step plan.
-
-    Reads ``llm.pipeline.dop`` from settings.json (format: ``'provider,model'``);
-    falls back to the Story-agent setting, then ``claude-haiku-4-5``. Env var
-    ``DOP_LLM`` overrides the combined setting; ``DOP_OLLAMA_MODEL`` /
-    ``DOP_ANTHROPIC_MODEL`` override the provider-specific model.
-
-    Args:
-        llm: ``'claude'`` or ``'ollama'``. Falls back to ``DOP_LLM`` env/settings.
-        ollama_model: Ollama model override.
-        anthropic_model: Anthropic model override.
-        **kwargs: Forwarded to the Strands Agent constructor.
-    """
-    if ollama_model and llm is None:
-        llm = "ollama"
-
-    # Fall back to the Story-agent setting so no extra config is required.
-    _story_default = str(_cfg("STORY_LLM", "pipeline", "story", default="claude,claude-haiku-4-5"))
-    _raw = str(_cfg("DOP_LLM", "pipeline", "dop", default=_story_default))
-    _settings_llm, _settings_model = _parse_llm_setting(_raw)
-    resolved_llm = llm or _settings_llm or "claude"
-
-    system_prompt = _load_system_prompt("dop")
-
-    if resolved_llm == "ollama":
-        resolved_ollama = (
-            ollama_model
-            or os.environ.get("DOP_OLLAMA_MODEL")
-            or _settings_model
-            or str(_cfg("LLM_FUNCTIONS_MODEL", "pipeline", "llm_functions", default="qwen3.5:9b"))
-        )
-        agent = _make_agent(
-            role="dop",
-            llm="ollama",
-            system_prompt=system_prompt,
-            tools=DOP_TOOLS,
-            ollama_model=resolved_ollama,
-            **kwargs,
-        )
-    else:
-        resolved_anthropic = (
-            anthropic_model
-            or os.environ.get("DOP_ANTHROPIC_MODEL")
-            or _settings_model
-            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
-        )
-        agent = _make_agent(
-            role="dop",
-            llm=resolved_llm,
-            dashscope_model=_settings_model,
-            system_prompt=system_prompt,
-            tools=DOP_TOOLS,
-            anthropic_model=resolved_anthropic,
-            **kwargs,
-        )
-    # Single-turn, stateless: each storyboard/prompt is enriched independently.
-    agent.conversation_manager = SlidingWindowConversationManager(window_size=4)
-    return agent
-
-
-def create_DETECTUSERINTENT_agent(
-    llm: str | None = None,
-    ollama_model: str | None = None,
-    anthropic_model: str | None = None,
-    **kwargs,
-) -> Agent:
-    """Create the Detect User Intent agent — a stateless, tool-free intent classifier.
-
-    Reads ``llm.pipeline.detect_user_intent`` from settings.json (format: ``'provider,model'``,
-    e.g. ``'ollama,qwen3:0.6b'`` or ``'claude,claude-haiku-4-5'``).
-    Env var ``DETECTUSERINTENT_LLM`` overrides the full setting; ``DETECTUSERINTENT_OLLAMA_MODEL``
-    or ``DETECTUSERINTENT_ANTHROPIC_MODEL`` override just the model.
-
-    The agent has no tools and no meaningful conversation history — it reads
-    the user message (optionally prefixed with session context) and returns a
-    JSON ``{"intent": "...", "confidence": 0.0–1.0}`` object.
-
-    Args:
-        llm: ``'ollama'`` or ``'claude'``. Falls back to ``DETECTUSERINTENT_LLM`` env var.
-        ollama_model: Ollama model override (e.g. ``'qwen3:0.6b'``).
-        anthropic_model: Anthropic model override (e.g. ``'claude-haiku-4-5'``).
-        **kwargs: Forwarded to the Strands Agent constructor.
-    """
-    if ollama_model and llm is None:
-        llm = "ollama"
-
-    # Read combined 'provider,model' from settings (env var DETECTUSERINTENT_LLM still wins).
-    _raw = str(_cfg("DETECTUSERINTENT_LLM", "pipeline", "detect_user_intent", default="ollama"))
-    _settings_llm, _settings_model = _parse_llm_setting(_raw)
-    resolved_llm = llm or _settings_llm or "ollama"
-
-    if resolved_llm == "ollama":
-        resolved_ollama = (
-            ollama_model
-            or os.environ.get("DETECTUSERINTENT_OLLAMA_MODEL")
-            or _settings_model
-            or str(_cfg("LLM_FUNCTIONS_MODEL", "pipeline", "llm_functions", default="qwen3:0.6b"))
-        )
-        resolved_anthropic = (
-            anthropic_model
-            or os.environ.get("DETECTUSERINTENT_ANTHROPIC_MODEL")
-            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
-        )
-    else:  # claude
-        resolved_anthropic = (
-            anthropic_model
-            or os.environ.get("DETECTUSERINTENT_ANTHROPIC_MODEL")
-            or _settings_model
-            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
-        )
-        resolved_ollama = ollama_model or str(_cfg("LLM_FUNCTIONS_MODEL", "pipeline", "llm_functions", default="qwen3:0.6b"))
-
-    system_prompt = _load_system_prompt("detect_user_intent")
-    agent = _make_agent(
-        role="detect_user_intent",
-        llm=resolved_llm,
-        dashscope_model=_settings_model,
-        system_prompt=system_prompt,
-        tools=DETECTUSERINTENT_TOOLS,
-        ollama_model=resolved_ollama,
-        anthropic_model=resolved_anthropic,
-        **kwargs,
-    )
-    # Triage is single-turn and stateless — cap history to avoid stale
-    # classification exchanges polluting future calls.
-    agent.conversation_manager = SlidingWindowConversationManager(window_size=2)
-    return agent
-
-
 def create_ASSEMBLEWORKFLOW_agent(
     llm: str | None = None,
     ollama_model: str | None = None,
@@ -1501,7 +1347,6 @@ def create_ASSEMBLEWORKFLOW_agent(
 # ALLCAPS spelling. Alias so both spellings refer to the same function.
 create_assemble_workflow_agent = create_ASSEMBLEWORKFLOW_agent
 create_search_web_agent = create_SEARCHWEB_agent
-create_detect_user_intent_agent = create_DETECTUSERINTENT_agent
 
 
 def create_learnings_agent(
@@ -1567,83 +1412,6 @@ def create_learnings_agent(
         **kwargs,
     )
     # Learnings agent is single-turn and stateless.
-    agent.conversation_manager = SlidingWindowConversationManager(window_size=2)
-    return agent
-
-
-def create_error_checker_agent(
-    llm: str | None = None,
-    ollama_model: str | None = None,
-    anthropic_model: str | None = None,
-    **kwargs,
-) -> Agent:
-    """Create the Error Checker agent — a single-turn post-execution log analyser.
-
-    Runs after every ComfyUI workflow execution, fetches recent logs, and outputs
-    a JSON verdict: ``ok``, ``error_fixable`` (with a concrete fix plan for the
-    Brain), or ``error_unfixable`` (with a human-readable user message).
-
-    Reads ``llm.pipeline.error_checker`` from settings.json (format:
-    ``'provider,model'``).  Env var ``ERROR_CHECKER_LLM`` overrides the full
-    setting; ``ERROR_CHECKER_OLLAMA_MODEL`` / ``ERROR_CHECKER_ANTHROPIC_MODEL``
-    override just the model.  Defaults to the same model as the Brain.
-
-    Args:
-        llm: ``'claude'`` or ``'ollama'``. Falls back to ``ERROR_CHECKER_LLM`` env var.
-        ollama_model: Ollama model override.
-        anthropic_model: Anthropic model override.
-        **kwargs: Forwarded to the Strands Agent constructor.
-    """
-    if ollama_model and llm is None:
-        llm = "ollama"
-
-    # Fall back to the brain setting so no extra config is needed out of the box.
-    _ASSEMBLEWORKFLOW_default = str(_cfg("ASSEMBLEWORKFLOW_LLM", "pipeline", "assemble_workflow", default="claude,claude-haiku-4-5"))
-    _raw = str(_cfg("ERROR_CHECKER_LLM", "pipeline", "error_checker", default=_ASSEMBLEWORKFLOW_default))
-    _settings_llm, _settings_model = _parse_llm_setting(_raw)
-    resolved_llm = llm or _settings_llm or "claude"
-
-    if resolved_llm == "claude":
-        resolved_anthropic = (
-            anthropic_model
-            or os.environ.get("ERROR_CHECKER_ANTHROPIC_MODEL")
-            or _settings_model
-            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
-        )
-        resolved_ollama = ollama_model or "qwen3.5:9b"
-    else:  # ollama
-        resolved_ollama = (
-            ollama_model
-            or os.environ.get("ERROR_CHECKER_OLLAMA_MODEL")
-            or _settings_model
-            or "qwen3.5:9b"
-        )
-        resolved_anthropic = (
-            anthropic_model
-            or os.environ.get("ERROR_CHECKER_ANTHROPIC_MODEL")
-            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
-        )
-
-    system_prompt = _load_system_prompt("error_checker")
-
-    # Load project skills (available to the error checker if it needs them).
-    ec_plugins: list = []
-    if _SKILLS_DIR.is_dir():
-        skills_plugin = AgentSkills(skills=str(_SKILLS_DIR))
-        ec_plugins.append(skills_plugin)
-
-    agent = _make_agent(
-        role="error_checker",
-        llm=resolved_llm,
-        dashscope_model=_settings_model,
-        system_prompt=system_prompt,
-        tools=ERROR_CHECKER_TOOLS,
-        ollama_model=resolved_ollama,
-        anthropic_model=resolved_anthropic,
-        plugins=ec_plugins or None,
-        **kwargs,
-    )
-    # Single-turn — no persistent conversation history needed.
     agent.conversation_manager = SlidingWindowConversationManager(window_size=2)
     return agent
 

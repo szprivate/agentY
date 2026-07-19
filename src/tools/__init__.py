@@ -177,13 +177,6 @@ SEARCH_WEB_TOOLS: list = [
 ]
 
 # ---------------------------------------------------------------------------
-# DoP-agent tools – pure text transformation; no tools needed. The Director of
-# Photography agent reads a finished storyboard/prompt and rewrites it with
-# concrete lighting/composition/camera/colour decisions. It calls no tools.
-# ---------------------------------------------------------------------------
-DOP_TOOLS: list = []
-
-# ---------------------------------------------------------------------------
 # Query Templates tools – template lookup, model resolution, prompting.
 #
 # The researcher is deliberately scoped to template retrieval + prompt writing.
@@ -206,15 +199,6 @@ QUERY_TEMPLATES_TOOLS: list = [
 ]
 
 # ---------------------------------------------------------------------------
-# Assemble Workflow tools – workflow assembly only (steps 1-5 + handoff).
-# Execution, polling, and Vision QA are handled by the Executor.
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# Triage tools – stateless intent classifier; no tools needed.
-# ---------------------------------------------------------------------------
-TRIAGE_TOOLS: list = []
-
-# ---------------------------------------------------------------------------
 # Planner tools – stateless multi-step decomposer; no tools needed.
 # ---------------------------------------------------------------------------
 PLANNER_TOOLS: list = []
@@ -229,14 +213,6 @@ VISION_AGENT_TOOLS: list = []
 # Learnings tools – stateless pattern-analyser; no tools needed.
 # ---------------------------------------------------------------------------
 LEARNINGS_TOOLS: list = []
-
-# ---------------------------------------------------------------------------
-# Error-checker tools – diagnostics only; no workflow modification.
-# ---------------------------------------------------------------------------
-ERROR_CHECKER_TOOLS: list = [
-    get_logs,
-    get_system_stats,
-]
 
 # ---------------------------------------------------------------------------
 # coder tools – general code-authoring toolset for the `coder` agent (e.g. the
@@ -454,11 +430,9 @@ ORCHESTRATOR_TOOLS: list = [
 # Rename-compat aliases.
 #
 # src/agent.py imports the compact spellings of these tool lists, while the
-# canonical definitions above use the underscored spellings (and TRIAGE_TOOLS
-# predates the triage -> detect_user_intent rename). Alias them so both
+# canonical definitions above use the underscored spellings. Alias them so both
 # spellings resolve to the same list object.
 # ---------------------------------------------------------------------------
 QUERYTEMPLATES_TOOLS = QUERY_TEMPLATES_TOOLS
 ASSEMBLEWORKFLOW_TOOLS = ASSEMBLE_WORKFLOW_TOOLS
 SEARCHWEB_TOOLS = SEARCH_WEB_TOOLS
-DETECTUSERINTENT_TOOLS = TRIAGE_TOOLS

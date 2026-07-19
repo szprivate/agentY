@@ -29,26 +29,16 @@ tokens_usage_log = "./.logs/tokens_usage.log"
 [system_prompts]
 orchestrator = "system_prompt.orchestrator.md"
 query_templates = "system_prompt.query_templates.md"
+# assemble_workflow + story: used by the spawn_subagent "assembly"/"story" presets.
 assemble_workflow = "system_prompt.assemble_workflow.md"
-detect_user_intent = "system_prompt.detect_user_intent.md"
 planner = "system_prompt.planner.md"
-error_checker = "system_prompt.error_checker.md"
 info = "system_prompt.info.md"
 learnings = "system_prompt.learnings.md"
 qa_checker = "system_prompt.qaChecker.md"
 vision_agent = "system_prompt.vision_agent.md"
 story = "system_prompt.story.md"
 search_web = "system_prompt.search_web.md"
-dop = "system_prompt.dop.md"
 coder = "system_prompt.coder.md"
-
-[director]
-# Storyboard director: max Vision-QA attempts per visual step (env: DIRECTOR_AUTO_RETRIES).
-auto_retries = 2
-# Per-step user-approval gate: true = pause after each step (env: DIRECTOR_USER_APPROVAL_STEP).
-user_approval_step = false
-# Director-of-Photography pass before generation (env: DIRECTOR_APPLY_CINEMATOGRAPHY).
-apply_cinematography = true
 
 [llm]
 history_window = 12
@@ -61,14 +51,11 @@ orchestrator = "claude,claude-haiku-4-5"
 query_templates = "claude,claude-haiku-4-5"
 assemble_workflow = "claude,claude-haiku-4-5"
 coder = "claude,claude-haiku-4-5"
-detect_user_intent = "claude,claude-haiku-4-5"
 info = "claude,claude-haiku-4-5"
 story = "claude,claude-haiku-4-5"
 search_web = "claude,claude-haiku-4-5"
-dop = "claude,claude-haiku-4-5"
 planner = "claude,claude-haiku-4-5"
 learnings = "claude,claude-haiku-4-5"
-error_checker = "claude,claude-haiku-4-5"
 build_skill = "claude,claude-haiku-4-5"
 llm_functions = "claude,claude-haiku-4-5"
 executor_vision_model = "claude,claude-haiku-4-5"

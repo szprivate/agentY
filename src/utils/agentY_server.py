@@ -167,7 +167,7 @@ def _comfy_input_dir() -> Path | None:
     _COMFY_INPUT_RESOLVED = True
     # 1. From ComfyUI argv.
     try:
-        from src.utils.comfyui_client import get_client, parse_argv_dir_flag
+        from agenty_core.utils.comfyui_client import get_client, parse_argv_dir_flag
         stats = get_client().get("/system_stats")
         argv = stats.get("system", {}).get("argv", []) if isinstance(stats, dict) else []
         d = parse_argv_dir_flag(argv, "--input-directory")
@@ -204,7 +204,7 @@ def _effective_comfyui_user_dir() -> str | None:
     with, rather than the static fallback in settings.json.
     """
     try:
-        from src.utils.comfyui_client import get_client, parse_argv_dir_flag
+        from agenty_core.utils.comfyui_client import get_client, parse_argv_dir_flag
         stats = get_client().get("/system_stats")
         argv = stats.get("system", {}).get("argv", []) if isinstance(stats, dict) else []
         d = parse_argv_dir_flag(argv, "--user-directory")
@@ -726,7 +726,7 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
     # and the pipeline's own drain never double-emit an event.
     from src.utils.tool_activity import drain as _drain_tool_activity
     from src.utils.canvas_patch import drain as _drain_canvas_activity
-    from src.utils.progress_signal import drain as _drain_progress_lines
+    from agenty_core.utils.progress_signal import drain as _drain_progress_lines
 
     def _flush_activity() -> None:
         # Executor progress emitted from inside a tool call (e.g. run_workflow_now,
@@ -813,7 +813,7 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
 def _interrupt_comfy() -> None:
     """Best-effort: tell ComfyUI to interrupt any running job (POST /interrupt)."""
     try:
-        from src.utils.comfyui_client import get_client
+        from agenty_core.utils.comfyui_client import get_client
         get_client().post("/interrupt", json_data={})
     except Exception as exc:  # noqa: BLE001
         logger.debug("ComfyUI interrupt failed: %s", exc)
@@ -980,8 +980,7 @@ def _remove_workflow(name: str) -> list[dict]:
 
 # Pipeline agents that can be swapped live, and the utility settings keys that
 # are read from settings.json on demand rather than held as a live agent.
-_SWITCHABLE_AGENTS = ("orchestrator", "query_templates", "assemble_workflow", "info",
-                      "story", "planner", "error_checker", "dop", "detect_user_intent")
+_SWITCHABLE_AGENTS = ("orchestrator", "query_templates", "info", "planner")
 _SWITCH_UTILITY_KEYS = ("build_skill", "llm_functions", "executor_vision_model")
 
 
@@ -992,9 +991,7 @@ def _rebuild_agent(agent_name: str, provider: str, model: str, llm_spec: str) ->
         _DASHSCOPE_PROVIDERS, _OPENAI_PROVIDERS, _GEMINI_PROVIDERS,
         _settings as get_settings,
         create_orchestrator_agent,
-        create_query_templates_agent, create_assemble_workflow_agent, create_info_agent,
-        create_story_agent, create_detect_user_intent_agent, create_planner_agent,
-        create_error_checker_agent, create_dop_agent,
+        create_query_templates_agent, create_info_agent, create_planner_agent,
     )
     if _agent_ref is None:
         return "pipeline not initialised"
@@ -1019,24 +1016,18 @@ def _rebuild_agent(agent_name: str, provider: str, model: str, llm_spec: str) ->
             return str(exc)
 
     factory = {
-        "query_templates": create_query_templates_agent, "assemble_workflow": create_assemble_workflow_agent,
-        "info": create_info_agent, "story": create_story_agent,
-        "detect_user_intent": create_detect_user_intent_agent, "planner": create_planner_agent,
-        "error_checker": create_error_checker_agent, "dop": create_dop_agent,
+        "query_templates": create_query_templates_agent,
+        "info": create_info_agent, "planner": create_planner_agent,
     }[agent_name]
     attr = {
-        "query_templates": "_researcher", "assemble_workflow": "_assemble_workflow",
-        "info": "_info_agent", "story": "_story_agent", "detect_user_intent": "_triage_agent",
-        "planner": "_planner_agent", "error_checker": "_error_checker_agent", "dop": "_dop_agent",
+        "query_templates": "_researcher",
+        "info": "_info_agent", "planner": "_planner_agent",
     }[agent_name]
     kwargs = {"llm": provider}
     if provider not in _OPENAI_COMPAT and model:
         kwargs["ollama_model" if provider == "ollama" else "anthropic_model"] = model
     try:
         setattr(_agent_ref, attr, factory(**kwargs))
-        # Keep the legacy _brain alias in sync when the assembler is swapped.
-        if agent_name == "assemble_workflow":
-            _agent_ref._brain = _agent_ref._assemble_workflow
         return None
     except Exception as exc:  # noqa: BLE001
         return str(exc)

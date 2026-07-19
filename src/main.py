@@ -2,18 +2,15 @@
 """
 agentY – main entry point.
 
-Pipeline mode — Query Templates resolves the spec, Assemble Workflow assembles + runs it:
+Free-agent mode — the orchestrator owns each turn, delegating to specialists
+(Query Templates + deterministic assembly, Info, Planner, web search):
     python -m src.main
     python -m src.main --researcher-llm ollama --researcher-ollama-model qwen3-coder:32b
-    python -m src.main --assemble-workflow-llm claude --assemble-workflow-anthropic-model claude-sonnet-4-5
 
 Environment variable equivalents (all optional):
     QUERYTEMPLATES_LLM              ollama | claude            (default: ollama)
     QUERYTEMPLATES_OLLAMA_MODEL     model id                   (default: qwen3-coder:32b)
     QUERYTEMPLATES_ANTHROPIC_MODEL  model id
-    ASSEMBLEWORKFLOW_LLM                   claude | ollama            (default: claude)
-    ASSEMBLEWORKFLOW_ANTHROPIC_MODEL       model id
-    ASSEMBLEWORKFLOW_OLLAMA_MODEL          model id
 """
 
 import argparse
@@ -31,7 +28,7 @@ if _project_root not in sys.path:
 load_dotenv(os.path.join(_project_root, ".env"))
 
 from src.pipeline import create_pipeline  # noqa: E402
-from src.utils.secrets import get_secret  # noqa: E402
+from agenty_core.utils.secrets import get_secret  # noqa: E402
 from src.tools.agent_control import is_restart_command, restart_process, is_unload_command, unload_ollama_models  # noqa: E402
 from src.utils.costs import compute_cost_from_usage  # noqa: E402
 
@@ -66,35 +63,6 @@ def main() -> None:
         help="Anthropic model for the Query Templates when --researcher-llm=claude.",
     )
 
-    # ── Pipeline: Assemble Workflow overrides ──────────────────────────────────────── #
-    brain_group = parser.add_argument_group("Pipeline – Assemble Workflow agent")
-    brain_group.add_argument(
-        "--brain-llm",
-        choices=["claude", "ollama"],
-        default=None,
-        metavar="BACKEND",
-        help="LLM backend for the Assemble Workflow (default: claude / ASSEMBLEWORKFLOW_LLM env).",
-    )
-    brain_group.add_argument(
-        "--brain-anthropic-model",
-        default=None,
-        metavar="MODEL",
-        help="Anthropic model for the Assemble Workflow (e.g. claude-sonnet-4-5).",
-    )
-    brain_group.add_argument(
-        "--brain-ollama-model",
-        default=None,
-        metavar="MODEL",
-        help="Ollama model for the Assemble Workflow when --brain-llm=ollama.",
-    )
-    brain_group.add_argument(
-        "--skip-brain",
-        action="store_true",
-        default=False,
-        help="Pipeline mode only: return Query Templates output directly and skip Assemble Workflow stage.",
-    )
-
-
     args = parser.parse_args()
 
     # ── Environment checks ─────────────────────────────────────────────── #
@@ -114,14 +82,8 @@ def main() -> None:
         researcher_llm=args.researcher_llm,
         researcher_ollama_model=args.researcher_ollama_model,
         researcher_anthropic_model=args.researcher_anthropic_model,
-        brain_llm=args.brain_llm,
-        brain_anthropic_model=args.brain_anthropic_model,
-        brain_ollama_model=args.brain_ollama_model,
-        skip_brain=args.skip_brain,
     )
-    print("[agentY] Mode: pipeline (Query Templates → Assemble Workflow)")
-    if args.skip_brain:
-        print("[agentY] SkipBrain is activated: Assemble Workflow stage will be bypassed and Query Templates output will be returned.")
+    print("[agentY] Mode: free-agent orchestrator")
 
 
     print("\n=== agentY - ComfyUI Agent ===")

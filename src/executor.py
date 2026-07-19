@@ -129,7 +129,7 @@ def _load_comfyui_dirs() -> None:
     if _COMFYUI_DIR_CACHE_LOADED:
         return
     try:
-        from src.utils.comfyui_client import get_client, parse_argv_dir_flag
+        from agenty_core.utils.comfyui_client import get_client, parse_argv_dir_flag
 
         stats = get_client().get("/system_stats")
         argv = stats.get("system", {}).get("argv", []) if isinstance(stats, dict) else []
@@ -268,7 +268,7 @@ def _submit_workflow(workflow_path: str, client_id: str = "") -> str:
 
     Raises ``RuntimeError`` on failure.
     """
-    from src.utils.comfyui_client import get_client
+    from agenty_core.utils.comfyui_client import get_client
 
     p = Path(workflow_path)
     if not p.exists():
@@ -325,7 +325,7 @@ def _clear_comfyui_history() -> None:
     (clearing the queue would cancel other jobs). Best-effort; non-fatal.
     """
     try:
-        from src.utils.comfyui_client import get_client
+        from agenty_core.utils.comfyui_client import get_client
         get_client().post("/history", json_data={"clear": True})
         logger.debug("executor: cleared ComfyUI history before submission")
     except Exception as exc:  # noqa: BLE001
@@ -387,7 +387,7 @@ def _resolve_output_path(
         )
 
     # --- fallback: download via /view to local output_dir ---------------------
-    from src.utils.comfyui_client import get_client
+    from agenty_core.utils.comfyui_client import get_client
 
     if fallback_dir is None:
         fallback_dir = _output_dir()
@@ -669,7 +669,7 @@ async def _process_completed_job(
     # steps (signalled by guidelines / reference images being supplied).
     qa_failures: list[dict] = []
     if run_qa or guidelines or reference_image_paths:
-        from src.utils.video_frames import extract_frames, is_video
+        from agenty_core.utils.video_frames import extract_frames, is_video
 
         yield f"{pfx}🔍 Running Vision QA…"
         for path in saved_paths:
@@ -769,7 +769,7 @@ async def execute_workflow(
     """
     import uuid
 
-    from src.utils.comfyui_progress import stream_comfyui_job
+    from agenty_core.utils.comfyui_progress import stream_comfyui_job
 
     try:
         brainbriefing: dict = json.loads(brainbriefing_json)
@@ -872,7 +872,7 @@ async def execute_workflows_batch(
     """
     import uuid
 
-    from src.utils.comfyui_progress import stream_comfyui_job
+    from agenty_core.utils.comfyui_progress import stream_comfyui_job
 
     try:
         brainbriefing: dict = json.loads(brainbriefing_json)

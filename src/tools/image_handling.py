@@ -20,7 +20,7 @@ import requests
 from PIL import Image
 from strands import Agent, tool
 
-from src.utils.comfyui_client import get_client
+from agenty_core.utils.comfyui_client import get_client
 
 
 # ─────────────────────────────────────────────────────────────────────────────

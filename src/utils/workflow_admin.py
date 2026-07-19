@@ -37,7 +37,7 @@ from typing import Any
 
 from agenty_core.paths import project_root
 
-from src.utils.workflow_parser import (  # re-exported shim -> agenty_core
+from agenty_core.utils.workflow_parser import (
     _custom_index_path,
     parse_workflow,
     workflow_remove,
