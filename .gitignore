@@ -52,3 +52,5 @@ input/
 scripts/recipe_reliability/researcher_finetune_data*/
 scripts/recipe_reliability/downloaded_models*.jsonl
 scripts/recipe_reliability/sweep_final.log
+# Understand-Anything knowledge-graph output
+.ua/

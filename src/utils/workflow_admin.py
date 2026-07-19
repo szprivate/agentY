@@ -11,11 +11,12 @@ the template is immediately usable by the researcher/brain:
 1. write the workflow JSON into ``comfyui_workflow_templates_custom/templates/``
    (the folder the recipe generator walks) — this was the missing step that left
    ``/add_workflow`` registering metadata for a file the corpus never contained;
-2. register the ``name -> {models, io}`` entry in that folder's ``index.json``;
-3. best-effort generate a one-line ``workflow_templates.json`` description;
-4. **regenerate the recipe database** so the new workflow appears as a recipe.
+2. register the ``name -> {models, io, description}`` entry in that folder's
+   ``index.json`` (the sole catalog — the flat ``workflow_templates.json`` is
+   retired), generating a best-effort one-line description;
+3. **regenerate the recipe database** so the new workflow appears as a recipe.
 
-Removing reverses 1–3 (plus the derived skill dir) and regenerates the DB.
+Removing reverses 1–2 (plus the derived skill dir) and regenerates the DB.
 
 The recipe DB is a pure, deterministic function of the corpus (grouping is
 ``(task, model)`` with no similarity threshold), so "keep recipes in sync" is
@@ -34,7 +35,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from agenty_core.paths import corpus_root, project_root
+from agenty_core.paths import project_root
 
 from src.utils.workflow_parser import (  # re-exported shim -> agenty_core
     _custom_index_path,
@@ -51,11 +52,6 @@ logger = logging.getLogger(__name__)
 def _templates_dir() -> Path:
     """Folder holding the custom workflow JSON files (next to their index.json)."""
     return _custom_index_path().parent
-
-
-def _templates_descriptions_path() -> Path:
-    """The flat ``name -> description`` catalog the recipe generator reads."""
-    return corpus_root() / "config" / "workflow_templates.json"
 
 
 def sanitize_name(name: str) -> str:
@@ -144,22 +140,13 @@ def register_workflow(wf_data: dict, name: str, *, source_path: Path | None = No
     if not already_there:
         target.write_text(json.dumps(wf_data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
-    # 2. Register the index.json entry (models + io).
-    parse_workflow(wf_data, name=stem, update_index=True)
-
-    # 3. Best-effort description → workflow_templates.json (added only when absent,
-    #    so a hand-tuned catalog line is never clobbered).
+    # 2. Best-effort one-line description, then register the index.json entry
+    #    (name, models, io, description). index.json is the sole catalog now —
+    #    re-registration preserves an existing description if this one is blank.
     description = _generate_description(wf_data, stem)
-    tpl_path = _templates_descriptions_path()
-    try:
-        tpl = json.loads(tpl_path.read_text(encoding="utf-8")) if tpl_path.exists() else {}
-        if stem not in tpl:
-            tpl[stem] = description
-            tpl_path.write_text(json.dumps(tpl, indent=4, ensure_ascii=False) + "\n", encoding="utf-8")
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("could not update %s: %s", tpl_path.name, exc)
+    parse_workflow(wf_data, name=stem, description=description, update_index=True)
 
-    # 4. Regenerate the recipe DB so the new workflow is a recipe.
+    # 3. Regenerate the recipe DB so the new workflow is a recipe.
     recipes = regenerate_recipes() if regenerate else {}
 
     return {
@@ -177,15 +164,15 @@ def register_workflow(wf_data: dict, name: str, *, source_path: Path | None = No
 def remove_workflow(name: str) -> dict:
     """Remove custom template ``name`` from the corpus and regenerate recipes.
 
-    Reverses :func:`register_workflow`: drops the index entry, the template
-    JSON file, the ``workflow_templates.json`` description, and the derived skill
+    Reverses :func:`register_workflow`: drops the index entry (and with it the
+    catalog description), the template JSON file, and the derived skill
     directory. Returns ``{name, index_path, removed_file, recipes}``.
     """
     stem = sanitize_name(name)
     if not stem:
         raise ValueError(f"invalid template name: {name!r}")
 
-    # 1. Remove from the custom index.json.
+    # 1. Remove from the custom index.json (also drops its catalog description).
     idx = workflow_remove(stem)
 
     # 2. Delete the template JSON file from the corpus templates folder.
@@ -195,24 +182,13 @@ def remove_workflow(name: str) -> dict:
         target.unlink()
         removed_file = True
 
-    # 3. Drop the description entry.
-    tpl_path = _templates_descriptions_path()
-    try:
-        if tpl_path.exists():
-            tpl = json.loads(tpl_path.read_text(encoding="utf-8"))
-            if stem in tpl:
-                del tpl[stem]
-                tpl_path.write_text(json.dumps(tpl, indent=4, ensure_ascii=False) + "\n", encoding="utf-8")
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("could not update %s: %s", tpl_path.name, exc)
-
-    # 4. Remove the derived skill directory (kebab-case of the name).
+    # 3. Remove the derived skill directory (kebab-case of the name).
     kebab = stem.lower().replace("_", "-")
     skill_dir = project_root() / "skills" / kebab
     if skill_dir.exists():
         shutil.rmtree(skill_dir, ignore_errors=True)
 
-    # 5. Regenerate the recipe DB so the removed workflow drops out.
+    # 4. Regenerate the recipe DB so the removed workflow drops out.
     recipes = regenerate_recipes()
 
     return {
