@@ -32,7 +32,6 @@ from src.tools import (
     ASSEMBLEWORKFLOW_TOOLS,
     ORCHESTRATOR_TOOLS,
     INFO_TOOLS,
-    STORY_TOOLS,
     SEARCHWEB_TOOLS,
     PLANNER_TOOLS,
     LEARNINGS_TOOLS,
@@ -253,7 +252,6 @@ _SYSTEM_PROMPT_FILE: dict[str, str] = {
     "orchestrator": "system_prompt.orchestrator",
     "planner": "system_prompt.planner",
     "info": "system_prompt.info",
-    "story": "system_prompt.story",
     "search_web": "system_prompt.search_web",
     "learnings": "system_prompt.learnings",
     "qa_checker": "system_prompt.qaChecker",
@@ -1099,92 +1097,6 @@ def create_info_agent(
     )
 
 
-def create_story_agent(
-    llm: str | None = None,
-    ollama_model: str | None = None,
-    anthropic_model: str | None = None,
-    **kwargs,
-) -> Agent:
-    """Create a Story-writing agent — a creative writer driven by the story skills.
-
-    The agent itself is a thin mode router (short system prompt); the detailed
-    instructions live in the shared ``skills/`` directory as ordinary skills:
-
-    - ``story-synopsis`` — write a very short synopsis / logline.
-    - ``story-scene``    — expand a synopsis into consistent scene descriptions.
-    - ``story-storyboard`` — split a whole story into ≤10s Kling sequences + JSON.
-
-    NOTE: in free-agent mode the orchestrator handles story writing itself (it
-    loads these same skills directly), so this dedicated agent is **not** built on
-    the live path. It remains for the legacy ``free_agent=False`` router and as a
-    ``spawn_subagent(toolset="story")`` option.
-
-    Reads ``llm.pipeline.story`` from settings.json (format: ``'provider,model'``),
-    e.g. ``'claude,claude-haiku-4-5'`` or ``'ollama,qwen3.5:9b'``. Env var
-    ``STORY_LLM`` overrides the combined setting; ``STORY_OLLAMA_MODEL`` or
-    ``STORY_ANTHROPIC_MODEL`` override the provider-specific model.
-
-    Defaults to Claude (``claude-haiku-4-5``) when no setting is present.
-
-    Args:
-        llm: ``'claude'`` or ``'ollama'``. Falls back to ``STORY_LLM`` env/settings.
-        ollama_model: Ollama model override.
-        anthropic_model: Anthropic model override (e.g. ``'claude-haiku-4-5'``).
-        **kwargs: Forwarded to the Strands Agent constructor.
-    """
-    if ollama_model and llm is None:
-        llm = "ollama"
-
-    # Read combined 'provider,model' from settings (env var STORY_LLM still wins).
-    _raw = str(_cfg("STORY_LLM", "pipeline", "story", default="claude,claude-haiku-4-5"))
-    _settings_llm, _settings_model = _parse_llm_setting(_raw)
-    resolved_llm = llm or _settings_llm or "claude"
-
-    system_prompt = _load_system_prompt("story")
-
-    # Load the shared skills directory; the story-* skills now live alongside the
-    # rest of the skills so the orchestrator (and any spawned subagent) can use them.
-    story_plugins: list = []
-    if _SKILLS_DIR.is_dir():
-        skills_plugin = AgentSkills(skills=str(_SKILLS_DIR))
-        story_plugins.append(skills_plugin)
-
-    if resolved_llm == "ollama":
-        resolved_ollama = (
-            ollama_model
-            or os.environ.get("STORY_OLLAMA_MODEL")
-            or _settings_model
-            or str(_cfg("LLM_FUNCTIONS_MODEL", "pipeline", "llm_functions", default="qwen3.5:9b"))
-        )
-        return _make_agent(
-            role="story",
-            llm="ollama",
-            system_prompt=system_prompt,
-            tools=STORY_TOOLS,
-            ollama_model=resolved_ollama,
-            plugins=story_plugins or None,
-            **kwargs,
-        )
-
-    # Otherwise use Anthropic/Claude.
-    resolved_anthropic = (
-        anthropic_model
-        or os.environ.get("STORY_ANTHROPIC_MODEL")
-        or _settings_model
-        or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
-    )
-    return _make_agent(
-        role="story",
-        llm=resolved_llm,
-        dashscope_model=_settings_model,
-        system_prompt=system_prompt,
-        tools=STORY_TOOLS,
-        anthropic_model=resolved_anthropic,
-        plugins=story_plugins or None,
-        **kwargs,
-    )
-
-
 def create_SEARCHWEB_agent(
     llm: str | None = None,
     ollama_model: str | None = None,
@@ -1779,7 +1691,7 @@ def build_subagent(toolset: str = "full", model: str | None = None,
     further subagents.
 
     Args:
-        toolset: research|assembly|info|story|web|vision|full (ignored when
+        toolset: research|assembly|info|web|vision|full (ignored when
             ``tools`` is given).
         model: Optional ``'provider,model'`` override.
         tools: Optional explicit list of tool NAMES — builds a lean, single-purpose
@@ -1845,8 +1757,6 @@ def build_subagent(toolset: str = "full", model: str | None = None,
         return create_assemble_workflow_agent(**_mk())
     if ts == "info":
         return create_info_agent(**_mk())
-    if ts == "story":
-        return create_story_agent(**_mk())
     if ts == "web":
         return create_search_web_agent(**_mk())
     if ts == "vision":

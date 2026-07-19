@@ -157,15 +157,9 @@ INFO_TOOLS: list = [
 ]
 
 # ---------------------------------------------------------------------------
-# Story-agent tools – pure text generation; no tools needed.
-# The story agent writes small storylines and calls no ComfyUI tools.
-# ---------------------------------------------------------------------------
-STORY_TOOLS: list = []
-
-# ---------------------------------------------------------------------------
 # Search Web-agent tools – web reference search + staging. Shares the same web/image
-# tools as the Info agent, but is a focused subagent the Storyboard director uses
-# to find references and return a structured JSON manifest.
+# tools as the Info agent; a focused subagent that finds references and returns a
+# structured JSON manifest.
 # ---------------------------------------------------------------------------
 SEARCH_WEB_TOOLS: list = [
     web_search,

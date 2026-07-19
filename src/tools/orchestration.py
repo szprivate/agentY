@@ -233,7 +233,7 @@ def remove_skill(name: str) -> str:
 # Ad-hoc subagents
 # ---------------------------------------------------------------------------
 
-_SUBAGENT_TOOLSETS = ("research", "assembly", "info", "story", "web", "vision", "full")
+_SUBAGENT_TOOLSETS = ("research", "assembly", "info", "web", "vision", "full")
 
 # spawn_subagent is gated: it may run ONLY when the user's current message
 # explicitly asked for a subagent. The pipeline sets this per turn via
@@ -270,7 +270,6 @@ async def spawn_subagent(task: str, toolset: str = "full", model: Optional[str] 
       - ``research``  — resolve a ComfyUI template/models/prompt into a brainbriefing.
       - ``assembly``  — assemble + validate a workflow (then signal_workflow_ready).
       - ``info``      — answer questions about installed models/workflows/capabilities.
-      - ``story``     — write a synopsis / scene descriptions.
       - ``web``       — search the web + stage reference images.
       - ``vision``    — describe/analyse an image.
       - ``full``      — a general agent with the full non-meta toolset.

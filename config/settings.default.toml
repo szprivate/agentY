@@ -29,14 +29,13 @@ tokens_usage_log = "./.logs/tokens_usage.log"
 [system_prompts]
 orchestrator = "system_prompt.orchestrator.md"
 query_templates = "system_prompt.query_templates.md"
-# assemble_workflow + story: used by the spawn_subagent "assembly"/"story" presets.
+# assemble_workflow: used by the spawn_subagent "assembly" preset.
 assemble_workflow = "system_prompt.assemble_workflow.md"
 planner = "system_prompt.planner.md"
 info = "system_prompt.info.md"
 learnings = "system_prompt.learnings.md"
 qa_checker = "system_prompt.qaChecker.md"
 vision_agent = "system_prompt.vision_agent.md"
-story = "system_prompt.story.md"
 search_web = "system_prompt.search_web.md"
 coder = "system_prompt.coder.md"
 
@@ -52,7 +51,6 @@ query_templates = "claude,claude-haiku-4-5"
 assemble_workflow = "claude,claude-haiku-4-5"
 coder = "claude,claude-haiku-4-5"
 info = "claude,claude-haiku-4-5"
-story = "claude,claude-haiku-4-5"
 search_web = "claude,claude-haiku-4-5"
 planner = "claude,claude-haiku-4-5"
 learnings = "claude,claude-haiku-4-5"
