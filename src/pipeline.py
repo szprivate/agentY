@@ -1423,6 +1423,7 @@ class Pipeline:
                 # so those values render. Skipped when anything else was already
                 # queued (a sweep's build_batch deep-copies the injected base graph,
                 # so the values ride along there).
+                _keeplive_run = False
                 if (not workflow_paths and getattr(self, "_canvas_keeplive_run", False)
                         and isinstance(self._canvas_base_prompt, dict) and self._canvas_base_prompt):
                     try:
@@ -1431,6 +1432,7 @@ class Pipeline:
                         _kp = _kd / "canvas_keeplive.json"
                         _kp.write_text(json.dumps(self._canvas_base_prompt), encoding="utf-8")
                         workflow_paths = [str(_kp)]
+                        _keeplive_run = True
                         if self._verbose:
                             print("pipeline: keep-live canvas run — queued base graph with "
                                   "injected producer value(s).")
@@ -1462,7 +1464,11 @@ class Pipeline:
                         # Heal failed members in place, concurrently, on the fly:
                         # the executor re-queues each healed workflow immediately
                         # while the survivors keep running (≤3 repairs at once).
-                        repair_fn=self._heal_exec_failure,
+                        # EXCEPT the keep-live run — that is the user's ON-CANVAS
+                        # graph; never rebuild it (a real problem, e.g. a missing
+                        # output node, is surfaced for the user to fix instead of
+                        # looping the fixer over their graph).
+                        repair_fn=None if _keeplive_run else self._heal_exec_failure,
                         max_concurrent_repairs=3,
                     ):
                         if isinstance(line, dict) and line.get("qa_fail"):
@@ -1502,6 +1508,20 @@ class Pipeline:
                                         f"healed (e.g. `{_nt}`: {_why}); keeping the "
                                         f"{len(exec_paths) - _outputs_before} that succeeded.")}
                         # fall through to the normal completion path below.
+                    elif _keeplive_run:
+                        # The user's own on-canvas graph errored — don't heal it;
+                        # point them at the likely cause (often no output node).
+                        yield {"data": (f"\n\n⚠️ Your canvas graph couldn't run — ComfyUI reported: "
+                                        f"{_why}. The hook value was placed on the canvas; the graph "
+                                        f"itself needs a fix (commonly a missing output node like "
+                                        f"SaveImage/PreviewImage wired to the generator). I left your "
+                                        f"graph untouched.")}
+                        self._record_chat_summary(user_text, synth, status="failed",
+                                                  raw_json=self._last_brainbriefing_json)
+                        self._record_agent_usage(self._orchestrator_agent, _snap)
+                        self._session.last_agent = "orchestrator"
+                        self._log_orchestrator()
+                        return
                     else:
                         yield {"data": (f"\n\n❌ ComfyUI run failed and could not be auto-healed "
                                         f"(error in `{_nt}`: {_why}). Stopping so you can take a look.")}
