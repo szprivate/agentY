@@ -9,8 +9,10 @@ After the Brain assembles and validates a ComfyUI workflow it calls
    Batch: ALL workflows are submitted before any polling begins, so
    ComfyUI can start working on the queue immediately.
 2. Polls until execution completes (zero LLM tokens burned during the wait).
-   Batch: polls each prompt_id in submission order; earlier jobs are
-   typically already done by the time we reach them.
+   Batch: all jobs are monitored CONCURRENTLY, so a successful member streams
+   and collects its outputs without waiting on slower/failing siblings. When a
+   member fails and a ``repair_fn`` is supplied, it is healed concurrently
+   (bounded) and re-queued on the fly, while the survivors keep running.
 3. Copies every output file from ComfyUI's configured output directory to
    the path specified in the query templates' brainbriefing (``output_nodes[].output_path``).
    Falls back to downloading via ``/view`` when the output directory cannot be
@@ -32,11 +34,12 @@ each status update to the UI in real time.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 from pathlib import Path
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator, Awaitable, Callable
 
 logger = logging.getLogger("agentY.executor")
 
@@ -841,7 +844,7 @@ async def execute_workflow(
 
 
 # ---------------------------------------------------------------------------
-# Public executor — batch (submit-all-then-poll)
+# Public executor — batch (submit-all → monitor concurrently → heal failures)
 # ---------------------------------------------------------------------------
 
 async def execute_workflows_batch(
@@ -854,13 +857,24 @@ async def execute_workflows_batch(
     run_qa: bool = False,
     guidelines: str = "",
     reference_image_paths: list[Path] | None = None,
+    repair_fn: "Callable[[str, dict], Awaitable[dict]] | None" = None,
+    max_heal_attempts: int = 3,
+    max_concurrent_repairs: int = 3,
 ) -> AsyncGenerator[str, None]:
-    """Submit ALL workflows to ComfyUI first, then poll + process each in order.
+    """Submit ALL workflows, monitor them CONCURRENTLY, and heal failures on the fly.
 
-    This avoids the submit→wait→submit→wait pattern: ComfyUI receives the full
-    batch immediately and can start executing jobs while the client is still
-    submitting remaining ones.  Polling then starts *after* the last submission,
-    so earlier jobs are frequently already done by the time we reach them.
+    Optimistic parallel execution: every workflow is queued to ComfyUI up front,
+    then all jobs are monitored at once so a successful member streams and
+    collects its outputs without waiting on slower or failing siblings.  The
+    instant a member fails, if ``repair_fn`` is supplied it is repaired
+    concurrently (bounded by ``max_concurrent_repairs``) *while the survivors keep
+    running*, and the healed workflow is re-queued immediately — up to
+    ``max_heal_attempts`` heals per member.  Members that still can't be healed are
+    recorded as execution errors for the caller to surface; successful outputs are
+    never discarded.
+
+    With ``repair_fn=None`` the behaviour is plain concurrent monitoring: every
+    failure is recorded (no healing).
 
     Args:
         workflow_paths:     Ordered list of absolute workflow JSON file paths.
@@ -869,6 +883,11 @@ async def execute_workflows_batch(
                             to the Vision QA agent as the ground-truth reference.
                             Never added to any agent's conversation history.
         verbose:            Log progress to stdout when True.
+        repair_fn:          Optional ``async (workflow_path, exec_error) -> dict``
+                            returning ``{"status": "ready"|..., "workflow_path": ...}``.
+                            Called to heal a failed member's file in place.
+        max_heal_attempts:  Per-member heal cap (default 3).
+        max_concurrent_repairs: Max repairs running at once (default 3).
     """
     import uuid
 
@@ -880,92 +899,159 @@ async def execute_workflows_batch(
         brainbriefing = {}
 
     total = len(workflow_paths)
+    labels = {wf: f"[{i}/{total}] " for i, wf in enumerate(workflow_paths, 1)}
 
-    # ── Phase 1: submit all ────────────────────────────────────────────────
+    def _label(wf: str) -> str:
+        return labels.get(wf, "")
+
+    # Concurrent monitor/heal tasks funnel their output lines and terminal
+    # control events through this queue; the generator body below drains it.
+    out_q: "asyncio.Queue[tuple[str, Any]]" = asyncio.Queue()
+    repair_sem = asyncio.Semaphore(max(1, max_concurrent_repairs))
+    active: set[asyncio.Task] = set()
+
+    def _spawn(coro) -> None:
+        t = asyncio.create_task(coro)
+        active.add(t)
+        t.add_done_callback(active.discard)
+
+    async def _monitor_member(wf_path: str, prompt_id: str, cid: str, heals: int,
+                              submit_error: dict | None = None) -> None:
+        """Stream one queued job to completion; emit lines + a terminal event."""
+        label = _label(wf_path)
+        try:
+            if submit_error is not None or not prompt_id:
+                await out_q.put(("member", ("fail", wf_path, heals,
+                                            submit_error or {"details": {}, "error": "submission failed"})))
+                return
+            history: dict | None = None
+            error_result: dict | None = None
+            node_titles = _load_node_titles(wf_path)
+            gen = stream_comfyui_job(prompt_id, cid, node_titles=node_titles)
+            try:
+                async for event in gen:
+                    if isinstance(event, dict):
+                        if "history" in event:
+                            history = event["history"]
+                        else:
+                            error_result = event
+                        break
+                    await out_q.put(("line", f"{label}{event}"))
+            finally:
+                await gen.aclose()
+
+            if error_result is not None:
+                await out_q.put(("line", f"{label}❌ ComfyUI execution error: {error_result.get('error')}"))
+                logger.error("executor: batch member failed (%s): %s", wf_path, error_result.get("error"))
+                await out_q.put(("member", ("fail", wf_path, heals, error_result)))
+                return
+            if history is None:
+                await out_q.put(("line", f"{label}❌ ComfyUI stream ended without a result."))
+                await out_q.put(("member", ("fail", wf_path, heals,
+                                            {"details": {}, "error": "stream ended without a result"})))
+                return
+            await out_q.put(("line", f"{label}✅ Complete — collecting outputs…"))
+            async for line in _process_completed_job(
+                history, prompt_id, brainbriefing,
+                workflow_path=wf_path, user_message=user_message, verbose=verbose,
+                collected_paths=collected_paths, label=label, run_qa=run_qa,
+                guidelines=guidelines, reference_image_paths=reference_image_paths,
+            ):
+                await out_q.put(("line", line))
+            await out_q.put(("member", ("ok", wf_path, heals, None)))
+        except Exception as exc:  # noqa: BLE001
+            logger.error("executor: monitor error for %s — %s", wf_path, exc)
+            await out_q.put(("line", f"{label}❌ monitor error: {exc}"))
+            await out_q.put(("member", ("fail", wf_path, heals, {"details": {}, "error": str(exc)})))
+
+    async def _heal_member(wf_path: str, heals: int, error_result: dict) -> None:
+        """Repair a failed member (bounded concurrency), then re-queue it."""
+        label = _label(wf_path)
+        name = os.path.basename(wf_path)
+        async with repair_sem:
+            await out_q.put(("line", f"{label}🔧 Healing `{name}` "
+                                     f"(attempt {heals + 1}/{max_heal_attempts})…"))
+            try:
+                res = await repair_fn(wf_path, error_result)  # type: ignore[misc]
+            except Exception as exc:  # noqa: BLE001
+                res = {"status": "failed", "error": str(exc)}
+        if (res or {}).get("status") == "ready":
+            cid = uuid.uuid4().hex
+            try:
+                prompt_id = await asyncio.to_thread(_submit_workflow, wf_path, cid)
+                await out_q.put(("line", f"{label}♻️ Re-queued healed `{name}` · prompt_id=`{prompt_id}`"))
+                await out_q.put(("heal", ("ready", wf_path, heals + 1, prompt_id, cid, None)))
+            except Exception as exc:  # noqa: BLE001
+                await out_q.put(("line", f"{label}❌ Re-queue failed for `{name}`: {exc}"))
+                await out_q.put(("heal", ("failed", wf_path, heals + 1, "", "",
+                                          {"details": {}, "error": str(exc)})))
+        else:
+            await out_q.put(("line", f"{label}❌ Could not heal `{name}` "
+                                     f"({(res or {}).get('error') or 'still invalid'})."))
+            await out_q.put(("heal", ("failed", wf_path, heals + 1, "", "", error_result)))
+
+    # ── Phase 1: submit every workflow, spawn a concurrent monitor for each ─
     _free_vram_for_comfyui()
     _clear_comfyui_history()  # once per batch — scope history to this run only
-    # One client_id per prompt so each WebSocket subscription only receives
-    # events for its own job.
-    queued: list[tuple[str, str, str]] = []  # [(prompt_id, workflow_path, client_id), ...]
+    outstanding = 0
     for idx, wf_path in enumerate(workflow_paths, 1):
         yield f"🚀 Queuing iteration {idx}/{total}…"
         cid = uuid.uuid4().hex
         try:
             prompt_id = _submit_workflow(wf_path, client_id=cid)
-            queued.append((prompt_id, wf_path, cid))
             yield f"✅ Iteration {idx}/{total} queued · prompt_id=`{prompt_id}`"
             if verbose:
                 print(f"[executor] Batch {idx}/{total} queued prompt_id={prompt_id}")
-        except Exception as exc:
-            error_msg = f"❌ Submission failed for iteration {idx}/{total}: {exc}"
-            logger.error("executor: %s", error_msg)
-            yield error_msg
-            # Record it so the orchestrator auto-fix loop can see and repair this
-            # member — a submission (validation/400) failure was previously only
-            # yielded to the UI and left invisible to the fix loop, so a batch
-            # where some members failed on submission was silently accepted.
-            _record_exec_error(None, wf_path, str(exc))
+            _spawn(_monitor_member(wf_path, prompt_id, cid, 0))
+        except Exception as exc:  # noqa: BLE001
+            yield f"❌ Submission failed for iteration {idx}/{total}: {exc}"
+            logger.error("executor: submission failed for %s — %s", wf_path, exc)
+            # Route it through the same failure path so it, too, can be healed.
+            _spawn(_monitor_member(wf_path, "", cid, 0,
+                                   submit_error={"details": {}, "error": str(exc)}))
+        outstanding += 1
 
-    if not queued:
-        yield "❌ All workflow submissions failed — nothing to poll."
+    if not outstanding:
         return
 
-    yield (
-        f"⏳ All {len(queued)}/{total} workflows queued — "
-        f"streaming progress in submission order…"
-    )
+    yield (f"⏳ All {total} workflow(s) queued — monitoring concurrently"
+           f"{' with self-healing' if repair_fn else ''}…")
 
-    # ── Phase 2: stream progress + process each in submission order ────────
-    for idx, (prompt_id, _wf_path, cid) in enumerate(queued, 1):
-        label = f"[{idx}/{len(queued)}] "
-        yield f"{label}⏳ Streaming progress (prompt_id=`{prompt_id}`)…"
-        if verbose:
-            print(f"[executor] Batch streaming {idx}/{len(queued)} prompt_id={prompt_id}")
-
-        history: dict | None = None
-        error_result: dict | None = None
-        _node_titles = _load_node_titles(_wf_path)
-        _gen = stream_comfyui_job(prompt_id, cid, node_titles=_node_titles)
-        try:
-            async for event in _gen:
-                if isinstance(event, dict):
-                    if "history" in event:
-                        history = event["history"]
-                    else:
-                        error_result = event
-                    break
-                yield f"{label}{event}"
-        finally:
-            await _gen.aclose()
-
-        if error_result is not None:
-            error_msg = f"{label}❌ ComfyUI execution error: {error_result.get('error')}"
-            logger.error("executor: %s", error_msg)
-            yield error_msg
-            # Record the structured failure for the orchestrator auto-fix loop (see
-            # the single-workflow path). Batch iterations usually share one root
-            # cause (same graph, different seed) and fail fast at validation time.
-            _record_exec_error(error_result.get("details"), _wf_path,
-                               error_result.get("error", ""))
-            continue  # move on to the next iteration, don't abort the whole batch
-
-        if history is None:
-            yield f"{label}❌ ComfyUI stream ended without a result."
-            continue
-
-        yield f"{label}✅ Complete — collecting outputs…"
-
-        async for line in _process_completed_job(
-            history,
-            prompt_id,
-            brainbriefing,
-            workflow_path=_wf_path,
-            user_message=user_message,
-            verbose=verbose,
-            collected_paths=collected_paths,
-            label=label,
-            run_qa=run_qa,
-            guidelines=guidelines,
-            reference_image_paths=reference_image_paths,
-        ):
-            yield line
+    # ── Phase 2: drain events; heal failures the moment they occur ─────────
+    # `outstanding` counts live work units. A unit stays alive across a
+    # fail→heal→re-queue cycle (member→heal→member) and is only retired when it
+    # finally succeeds or exhausts its heal budget.
+    try:
+        while outstanding > 0:
+            kind, payload = await out_q.get()
+            if kind == "line":
+                yield payload
+                continue
+            if kind == "member":
+                status, wf_path, heals, error_result = payload
+                if status == "ok":
+                    outstanding -= 1
+                elif repair_fn is not None and heals < max_heal_attempts:
+                    _spawn(_heal_member(wf_path, heals, error_result or {}))  # unit persists
+                else:
+                    _record_exec_error((error_result or {}).get("details"),
+                                       wf_path, (error_result or {}).get("error", ""))
+                    outstanding -= 1
+                continue
+            if kind == "heal":
+                # `heals` here is the number of repairs completed for this member.
+                status, wf_path, heals, prompt_id, cid, error_result = payload
+                if status == "ready":
+                    _spawn(_monitor_member(wf_path, prompt_id, cid, heals))  # re-run; unit persists
+                elif repair_fn is not None and heals < max_heal_attempts:
+                    # Repair couldn't produce a runnable graph — give the fixer
+                    # another shot on the in-place file, up to the budget.
+                    _spawn(_heal_member(wf_path, heals, error_result or {}))  # unit persists
+                else:
+                    _record_exec_error((error_result or {}).get("details"),
+                                       wf_path, (error_result or {}).get("error", ""))
+                    outstanding -= 1
+                continue
+    finally:
+        for t in list(active):
+            t.cancel()

@@ -1385,13 +1385,9 @@ class Pipeline:
         _clear_canvas_patch()
         _clear_exec_errors()
 
-        # Bounded ComfyUI auto-fix: when the Executor reports an execution error,
-        # the orchestrator is re-driven with the structured failure (node/type,
-        # exception, traceback) and its diagnostic tools to fix + re-signal. Capped
-        # so a genuinely broken graph can't loop forever.
-        _exec_fix_attempts = 0
-        _MAX_EXEC_FIX = 3
-
+        # ComfyUI run failures are healed inline by the executor (repair_fn below):
+        # each failed member is repaired concurrently and re-queued on the fly,
+        # bounded per-member, so there is no orchestrator re-drive loop here.
         while True:
             interrupt_result = None
             yield {"_orchestrator_start": True}
@@ -1453,8 +1449,8 @@ class Pipeline:
                         count = len(workflow_paths)
                         tag = f"{count} workflows (batch)" if count > 1 else workflow_paths[0]
                         print(f"pipeline: Orchestrator signaled {tag} ready.")
-                    # Fresh error mailbox for this run; the executor records any
-                    # structured ComfyUI failure into it while it streams.
+                    # Fresh error mailbox for this run; the executor records only
+                    # members it could NOT heal (healed failures never land here).
                     _clear_exec_errors()
                     async for line in _execute_workflows_batch(
                         workflow_paths,
@@ -1463,6 +1459,11 @@ class Pipeline:
                         verbose=self._verbose,
                         collected_paths=exec_paths,
                         run_qa=self._run_qa,
+                        # Heal failed members in place, concurrently, on the fly:
+                        # the executor re-queues each healed workflow immediately
+                        # while the survivors keep running (≤3 repairs at once).
+                        repair_fn=self._heal_exec_failure,
+                        max_concurrent_repairs=3,
                     ):
                         if isinstance(line, dict) and line.get("qa_fail"):
                             _qa_fail_event = line
@@ -1476,15 +1477,12 @@ class Pipeline:
                     for _ta in _drain_tools():
                         yield {"tool_activity": _ta}
 
-                # ── ComfyUI run failure → consolidated fixer repair ──────────── #
-                # Fire whenever the executor recorded a failure — INCLUDING a
-                # partial batch where some members succeeded. Previously the repair
-                # only ran when the batch produced zero outputs, so a batch where
-                # e.g. 3/5 succeeded silently accepted the 2 failures and never
-                # fixed or surfaced them. Each DISTINCT failed workflow is repaired
-                # and re-signalled; outputs that already succeeded are preserved
-                # across the retry, and unfixable failures in a partial batch are
-                # surfaced without discarding the successes.
+                # ── Surface members inline-healing couldn't fix ──────────────── #
+                # The executor already healed failed members on the fly (repair_fn
+                # above) and re-queued each one immediately, concurrently, while the
+                # survivors kept running. Anything still in the error mailbox is a
+                # member that exhausted its heal budget — surface it (keeping every
+                # partial success) instead of re-repairing or re-driving the loop.
                 _exec_errors = _get_exec_errors() if not _qa_fail_event else []
                 if _exec_errors:
                     _partial = len(exec_paths) > _outputs_before
@@ -1493,34 +1491,6 @@ class Pipeline:
                         _wp = _e.get("workflow_path") or (workflow_paths[0] if workflow_paths else "")
                         if _wp:
                             _failed.setdefault(_wp, _e)
-                    _exec_fix_attempts += 1
-                    _repaired: list[str] = []
-                    _unfixable: list[str] = []
-                    if _exec_fix_attempts <= _MAX_EXEC_FIX and _failed:
-                        yield {"data": (f"\n\n_🔧 ComfyUI run failed for {len(_failed)} "
-                                        f"workflow(s){' (partial batch)' if _partial else ''} — "
-                                        f"repairing (attempt {_exec_fix_attempts}/{_MAX_EXEC_FIX})…_")}
-                        for _wp_fail, _err in _failed.items():
-                            _fix = await self._run_fix_workflow_assembly(_wp_fail, exec_error=_err)
-                            for _ta in _drain_tools():
-                                yield {"tool_activity": _ta}
-                            if _fix.get("status") == "ready":
-                                _repaired.append(_wp_fail)
-                            else:
-                                _unfixable.append(f"`{os.path.basename(_wp_fail)}` "
-                                                  f"({_fix.get('error') or 'still invalid'})")
-                        if _repaired:
-                            # Keep members that already succeeded so the retry
-                            # (which resets this turn's outputs) doesn't drop them.
-                            self._chain_output_paths.extend(exec_paths[_outputs_before:])
-                            _resig = "\n".join(f'signal_workflow_ready("{p}")' for p in _repaired)
-                            _note = f" Could not repair: {', '.join(_unfixable)}." if _unfixable else ""
-                            current_input = (
-                                f"{len(_repaired)} workflow(s) were just repaired after a run "
-                                f"failure. Re-run ONLY these by calling each of:\n{_resig}\n"
-                                f"Do not change or re-research anything else.{_note}")
-                            continue
-                    # No repair succeeded (attempts exhausted or nothing fixable).
                     _err0 = next(iter(_failed.values()), {})
                     _det = _err0.get("details") or {}
                     _nt = _det.get("node_type", "?")
@@ -1529,13 +1499,11 @@ class Pipeline:
                         # Some members succeeded — keep and report them; just flag
                         # the ones that couldn't be produced instead of hard-failing.
                         yield {"data": (f"\n\n⚠️ {len(_failed)} of the batch failed and could not be "
-                                        f"repaired (e.g. `{_nt}`: {_why}); keeping the "
+                                        f"healed (e.g. `{_nt}`: {_why}); keeping the "
                                         f"{len(exec_paths) - _outputs_before} that succeeded.")}
                         # fall through to the normal completion path below.
                     else:
-                        _exhausted = _exec_fix_attempts > _MAX_EXEC_FIX
-                        yield {"data": (f"\n\n❌ ComfyUI run failed"
-                                        f"{f' after {_MAX_EXEC_FIX} fix attempt(s)' if _exhausted else ''} "
+                        yield {"data": (f"\n\n❌ ComfyUI run failed and could not be auto-healed "
                                         f"(error in `{_nt}`: {_why}). Stopping so you can take a look.")}
                         self._record_chat_summary(user_text, synth, status="failed",
                                                   raw_json=self._last_brainbriefing_json)
@@ -2628,6 +2596,7 @@ class Pipeline:
     async def _run_fix_workflow_assembly(
         self, workflow_path: str, *, problems: list | None = None,
         server_errors: dict | None = None, exec_error: dict | None = None,
+        agent: "Agent | None" = None,
     ) -> dict:
         """Run the consolidated repair specialist on a broken workflow.
 
@@ -2635,8 +2604,12 @@ class Pipeline:
         execution errors (``exec_error``). Returns
         ``{"status": "ready"|"needs_fix"|"failed", "workflow_path": ...}``.
         The agent patches the workflow file in place; it does not signal or submit.
+
+        Pass ``agent`` to run on a caller-owned instance instead of the shared
+        cached one — required when several repairs run concurrently (inline batch
+        healing), since one agent's message history can't be reused in parallel.
         """
-        agent = self._ensure_fix_agent()
+        agent = agent or self._ensure_fix_agent()
         try:
             agent.messages.clear()
         except Exception:  # noqa: BLE001
@@ -2693,6 +2666,27 @@ class Pipeline:
         return {"status": "needs_fix", "workflow_path": workflow_path,
                 "problems": vres.get("problems", []),
                 "server_errors": vres.get("server_errors", {})}
+
+    async def _heal_exec_failure(self, workflow_path: str, exec_error: dict) -> dict:
+        """Inline heal callback for ``execute_workflows_batch``.
+
+        Called by the executor the instant a batch member fails at ComfyUI run
+        time. Runs the consolidated repair specialist on that member's file in
+        place and returns its ``{"status": "ready"|"needs_fix"|"failed", ...}``
+        dict; the executor re-queues the workflow when status is ``"ready"``.
+        Repairs run concurrently (bounded by the executor's semaphore), so each
+        gets its OWN fix agent (the shared cached one can't carry parallel message
+        histories) and only edits the given file.
+        """
+        agent = create_fix_workflow_assembly_agent()
+        try:
+            return await self._run_fix_workflow_assembly(
+                workflow_path, exec_error=exec_error, agent=agent)
+        finally:
+            try:
+                agent.messages.clear()
+            except Exception:  # noqa: BLE001
+                pass
 
     def _ensure_generate_agent(self) -> "Agent":
         if self._generate_agent is None:
