@@ -814,6 +814,10 @@ async def execute_workflow(
         await _gen.aclose()
 
     if error_result is not None:
+        if error_result.get("interrupted"):
+            # A deliberate stop, not a defect — do NOT record it or repair it.
+            yield "🛑 Execution interrupted — not a workflow error; nothing to repair."
+            return
         error_msg = f"❌ ComfyUI execution error: {error_result.get('error')}"
         logger.error("executor: %s", error_msg)
         yield error_msg
@@ -941,6 +945,13 @@ async def execute_workflows_batch(
                 await gen.aclose()
 
             if error_result is not None:
+                if error_result.get("interrupted"):
+                    # Deliberate stop, not a defect — retire the member without
+                    # recording an error or triggering a heal.
+                    await out_q.put(("line", f"{label}🛑 Execution interrupted — "
+                                             f"skipping (not a workflow error)."))
+                    await out_q.put(("member", ("interrupted", wf_path, heals, None)))
+                    return
                 await out_q.put(("line", f"{label}❌ ComfyUI execution error: {error_result.get('error')}"))
                 logger.error("executor: batch member failed (%s): %s", wf_path, error_result.get("error"))
                 await out_q.put(("member", ("fail", wf_path, heals, error_result)))
@@ -1029,7 +1040,9 @@ async def execute_workflows_batch(
                 continue
             if kind == "member":
                 status, wf_path, heals, error_result = payload
-                if status == "ok":
+                if status in ("ok", "interrupted"):
+                    # "interrupted" retires the unit like a success: no output to
+                    # collect, but no error to record and nothing to heal.
                     outstanding -= 1
                 elif repair_fn is not None and heals < max_heal_attempts:
                     _spawn(_heal_member(wf_path, heals, error_result or {}))  # unit persists
