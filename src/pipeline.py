@@ -1023,7 +1023,7 @@ class Pipeline:
             injected: list[str] = []
             if keep_live and hook is not None and isinstance(self._canvas_base_prompt, dict):
                 injected = _inject(self._canvas_base_prompt, hook, str(text))
-                # A PRODUCER (directive) hook whose output feeds a real node needs the
+                # A PRODUCER (inline_parameter) hook whose output feeds a real node needs the
                 # canvas run once so the injected value renders; a TEXT hook only
                 # delivers a string for a later/other run, so it must not auto-generate.
                 if injected and not _is_text(hook):

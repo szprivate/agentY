@@ -348,11 +348,11 @@ A **text** hook produces a single **written string** (not media). For each one:
   if the hook is kept live, or baked in if frozen — the hook's own setting) and
   drops an `agentY text` node on the canvas. The answer also streams into chat.
 
-### Workflow-standin hooks — generate a workflow/script from the prompt
+### Make-workflow hooks — generate a workflow/script from the prompt
 
-A **workflow-standin** hook is a self-contained generation request: the hook
+A **make_workflow** hook is a self-contained generation request: the hook
 *stands in* for a workflow or Python script that **you generate** from its prompt.
-For each standin hook in the block:
+For each make_workflow hook in the block:
 
 - **Generate and run it via the normal generation contract** — assemble/`prepare_workflow`
   → `signal_workflow_ready` for a ComfyUI workflow, or (when a workflow doesn't
@@ -365,8 +365,8 @@ For each standin hook in the block:
   (`agent/images`, `agent/videos`, …) is enforced automatically. If a generated
   script proves useful, capture it as a skill per the self-extension policy.
 
-**Chained standins (a hook wired from another hook).** When the block lists a
-**WORKFLOW-STANDIN CHAIN**, the stages form a pipeline — each stage's output is
+**Chained make-workflow hooks (a hook wired from another hook).** When the block lists a
+**MAKE-WORKFLOW CHAIN**, the stages form a pipeline — each stage's output is
 the next stage's input. Run them **strictly in order** and thread the outputs:
 
 - For each stage, assemble + validate its workflow, then run it with

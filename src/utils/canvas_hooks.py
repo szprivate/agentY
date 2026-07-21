@@ -177,18 +177,21 @@ def build_batch(base_prompt: dict, resolutions: list, cap: int = 25) -> tuple[li
     return prompts, notes
 
 
-_STANDIN_PURPOSES = {"workflow-standin", "workflow_standin", "standin", "workflow"}
+# ``make_workflow`` is the current purpose name; the older ``workflow-standin``
+# spellings are kept so canvases saved before the rename still resolve correctly.
+_STANDIN_PURPOSES = {"make_workflow", "make-workflow", "workflow-standin",
+                     "workflow_standin", "standin", "workflow"}
 _TEXT_PURPOSES = {"text", "text-output", "text_output", "answer"}
 
 
 def _is_standin(hook: dict) -> bool:
-    """True if *hook* is a workflow-standin (vs. an annotation directive)."""
-    return str(hook.get("purpose", "directive") or "directive").strip().lower() in _STANDIN_PURPOSES
+    """True if *hook* is a make_workflow hook (vs. an inline_parameter annotation)."""
+    return str(hook.get("purpose", "inline_parameter") or "inline_parameter").strip().lower() in _STANDIN_PURPOSES
 
 
 def _is_text(hook: dict) -> bool:
     """True if *hook* asks for a written text answer (no media, no workflow)."""
-    return str(hook.get("purpose", "directive") or "directive").strip().lower() in _TEXT_PURPOSES
+    return str(hook.get("purpose", "inline_parameter") or "inline_parameter").strip().lower() in _TEXT_PURPOSES
 
 
 def _wants_bake(hook: dict) -> bool:
@@ -418,10 +421,10 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
 
     Hooks are **upstream producers**: each consumes its wired anchor inputs as
     context and produces value(s) for its ``out``, which the user wires into a real
-    node input. Three purposes: a *directive/producer* hook fills (or sweeps) the
-    input its output is wired to; a *text* hook writes a single string the agent
-    bakes there as an ``agentY text`` node; a *workflow-standin* hook stands in for
-    a workflow/script the agent generates. Hooks the user toggled to *ignore* are
+    node input. Three purposes: an *inline_parameter* (producer) hook fills (or
+    sweeps) the input its output is wired to; a *text* hook writes a single string
+    the agent bakes there as an ``agentY text`` node; a *make_workflow* hook stands
+    in for a workflow/script the agent generates. Hooks the user toggled to *ignore* are
     filtered out client-side, so every hook below is active. Hooks are described in
     dependency order so a producer is handled before the hook that consumes it.
     """
@@ -475,19 +478,18 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
         for h in directive_hooks:
             hid = h.get("hook_node_id")
             directive = str(h.get("directive", "") or "").strip()
-            mode = h.get("mode", "auto")
             ctx = _input_context(h, base_prompt, hook_id_set)
             tgt = _target_context(h)
             if not tgt:
                 lines.append(
                     f'- PRODUCER hook {hid} (context: {ctx}) — OUTPUT UNWIRED: no target '
                     f'input. Ask the user to wire this hook\'s output into the node input it '
-                    f'should fill. Directive: "{directive}" (mode={mode})'
+                    f'should fill. Directive: "{directive}"'
                 )
             else:
                 lines.append(
                     f'- PRODUCER hook {hid} (context: {ctx}) feeds {tgt} — produce the '
-                    f'value(s) for that input → "{directive}" (mode={mode})'
+                    f'value(s) for that input → "{directive}"'
                 )
 
     if text_hooks:
@@ -545,7 +547,7 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
 
         if singles:
             lines.append(
-                "\nWORKFLOW-STANDIN hooks — each is a self-contained generation request. "
+                "\nMAKE-WORKFLOW hooks — each is a self-contained generation request. "
                 "For each one, GENERATE a ComfyUI workflow that fulfils the prompt (or, "
                 "when a workflow doesn't fit, a Python script written into the scripts "
                 "dir from get_agent_output_dirs()), then run it via the normal "
@@ -554,18 +556,18 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
                 "NOT call apply_canvas_hooks for these. If an anchor is wired, its output "
                 "is the INPUT to what you generate (e.g. upload that image/video, or feed "
                 "a wired string/number, and bind it to the workflow); if nothing is wired, "
-                "treat the prompt as a text-to-media request. A single standin may PRODUCE "
+                "treat the prompt as a text-to-media request. A single make_workflow hook may PRODUCE "
                 "SEVERAL results (e.g. 'make 4 angle images') and even run more than one "
                 "workflow — that's fine; every produced file/value is captured. Media "
                 "routing (agent/images, agent/videos, …) is enforced automatically:"
             )
             for h in singles:
                 prompt = str(h.get("directive", "") or "").strip()
-                lines.append(f'- STANDIN, {_input_desc(h)}{_output_desc(h)} — generate & run → "{prompt}"')
+                lines.append(f'- MAKE-WORKFLOW, {_input_desc(h)}{_output_desc(h)} — generate & run → "{prompt}"')
 
         if multis:
             lines.append(
-                "\nWORKFLOW-STANDIN CHAINS — hooks wired output→input, run STRICTLY IN "
+                "\nMAKE-WORKFLOW CHAINS — hooks wired output→input, run STRICTLY IN "
                 "ORDER. Run each stage with run_workflow_now(workflow_path) (NOT "
                 "signal_workflow_ready) so you capture its output(s) to build the next "
                 "stage.\n"
@@ -605,7 +607,7 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
         bake_hooks = [h for h in standin_hooks if _wants_bake(h)]
         if bake_hooks:
             lines.append(
-                "\nBAKE TO CANVAS — one or more standin hooks above has 'bake_to_canvas' "
+                "\nBAKE TO CANVAS — one or more make_workflow hooks above has 'bake_to_canvas' "
                 "ON. After you have GENERATED and validated each such stage's workflow, do "
                 "NOT stop at running it: call bake_hooks_to_canvas(stages=[…]) to nest each "
                 "generated workflow into a ComfyUI subgraph whose inputs/outputs MATCH that "

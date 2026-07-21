@@ -230,15 +230,16 @@ Each finished image/video appears as a **loader node on your graph**. Type `/` i
 
 Installing `agentY-comfyuiConnect` adds two nodes under the **agentY** category. They let you drive the agent *from the graph itself*:
 
-- **`agentY hook`** — an instruction attached to the canvas. Wire any node's output into its **auto-growing `anchor` input(s)** and type a directive. Two purposes:
-  - *directive* — annotate an existing node ("sweep the seed 6×", "iterate the files in this folder"); the agent expands and runs your on-canvas graph.
-  - *workflow-standin* — the agent generates and runs a workflow (or Python script) from the prompt, using the wired input(s) if any.
+- **`agentY hook`** — an instruction attached to the canvas. Wire any node's output into its **auto-growing `anchor` input(s)** and type a directive. Purposes:
+  - *inline_parameter* — annotate an existing node ("sweep the seed 6×", "iterate the files in this folder"); the agent expands and runs your on-canvas graph.
+  - *make_workflow* — the agent generates and runs a workflow (or Python script) from the prompt, using the wired input(s) if any.
+  - *text* — the agent writes a string answer and drops a wireable `agentY text` node carrying it.
 
   Its `passthrough` **outputs also auto-grow**, and all slots are type-agnostic, so one hook can gather several inputs and export several results — image, video, **or scalars (string/int/float)** — to the next hook. Wire hooks output→input to build a **multi-step chain**. A hook is inert on a normal *Queue Prompt* (it's a pure passthrough the agent removes before running), so it never affects a manual run. Toggle `ignore` to disable a hook without deleting it.
 
 - **`agentY python`** — runs an agent-authored Python snippet as a node. It's used by *baking* (below): a value the agent computed at runtime (e.g. a video's length) is placed here so it becomes a genuine, re-runnable output. ⚠️ **It executes arbitrary Python whenever the graph runs** — meant for your own, self-hosted, agent-built workflows; don't run baked workflows from untrusted sources. Set `AGENTY_PYTHON_NODE_DISABLED=1` to make it a no-op.
 
-**Bake a chain into subgraphs.** Turn on `bake_to_canvas` on your standin hooks. When you ask the agent to run the graph, it nests each stage's generated workflow into a ComfyUI **subgraph** (with inputs/outputs matching the hook's slots), **adds** those subgraphs to your canvas *next to the hook nodes* (nothing is removed), and wires them to mirror the chain. The result is a self-contained native workflow you can re-run **without the agent** — the multi-step task, "baked."
+**Bake a chain into subgraphs.** Turn on `bake_to_canvas` on your make_workflow hooks. When you ask the agent to run the graph, it nests each stage's generated workflow into a ComfyUI **subgraph** (with inputs/outputs matching the hook's slots), **adds** those subgraphs to your canvas *next to the hook nodes* (nothing is removed), and wires them to mirror the chain. The result is a self-contained native workflow you can re-run **without the agent** — the multi-step task, "baked."
 
 ### LLM configuration priority
 

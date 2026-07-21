@@ -20,13 +20,13 @@ input only, leave the output dangling.
 
 ## Node widgets & purposes
 
-The `AgentYHook` node carries four widgets:
+The `AgentYHook` node carries these widgets:
 
 - **`directive`** (multiline) — the natural-language instruction / prompt.
-- **`purpose`** (`directive` | `workflow-standin`) — what the hook *is*:
-  - **`directive`** (default) — annotate the anchor node; the agent expands the
+- **`purpose`** (`inline_parameter` | `make_workflow` | `text`) — what the hook *is*:
+  - **`inline_parameter`** (default) — annotate the anchor node; the agent expands the
     captured graph and runs it via `apply_canvas_hooks`.
-  - **`workflow-standin`** — the hook *stands in* for a workflow or Python script
+  - **`make_workflow`** — the hook *stands in* for a workflow or Python script
     the agent **generates** from `directive` (used here as a prompt). The agent
     generates it, runs it via the normal generation contract
     (`signal_workflow_ready`, or `run_script` for a script), using the wired
@@ -34,19 +34,19 @@ The `AgentYHook` node carries four widgets:
     the result onto the canvas as loader nodes. It does **not** call
     `apply_canvas_hooks`. Chosen execution model: *generate → run → stage as
     nodes* (no inline subgraph splicing).
-- **`mode`** (`auto`/`prompt-variations`/`seed-sweep`/`file-iterate`/`freeform`) —
-  a hint for a `directive` hook's expansion type; ignored for standins.
+  - **`text`** — the agent writes a single string answer and drops an `agentY text`
+    node carrying it, wired where this hook's output went.
 - **`ignore`** (BOOLEAN) — disable the hook without deleting it. Ignored hooks are
   filtered out client-side (`_collectCanvasHooks`) so they never reach the agent.
 
 `describe_hooks` groups the hooks by purpose in the `[CANVAS HOOKS]` block so the
 orchestrator applies the right path to each group.
 
-## Chaining standin hooks (pipelines)
+## Chaining make-workflow hooks (pipelines)
 
 Wire one hook's `passthrough` output into another hook's `anchor` input to build a
 **pipeline**: each stage's output becomes the next stage's input. This is a
-*workflow-standin* concept (directives mutate the captured graph and don't chain).
+*make_workflow* concept (inline-parameter hooks mutate the captured graph and don't chain).
 
 - **Detection** — `_collectCanvasHooks` (JS) checks whether a hook's anchor is
   itself an `AgentYHook`; if so it records `prev_hook_id` (the upstream hook) and
@@ -103,7 +103,7 @@ canvas (AgentYHook nodes)
 
 **Modified**
 - `agentY-comfyuiConnect/ (separate repo) __init__.py` — the `AgentYHook` node
-  (wildcard `anchor` input, `directive`/`purpose`/`mode`/`ignore` widgets, identity
+  (wildcard `anchor` input, `directive`/`purpose`/`ignore` widgets, identity
   passthrough) + `NODE_CLASS_MAPPINGS`.
 - `agentY-comfyuiConnect/ (separate repo) web/agent_chat.js` — hook collection +
   graph capture; `send()` ships `canvas_hooks` + `canvas_prompt`.

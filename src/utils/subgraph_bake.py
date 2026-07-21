@@ -1,6 +1,6 @@
 """Bake a chain of generated stage-workflows into a ComfyUI *subgraph* canvas.
 
-When a workflow-standin hook has ``bake_to_canvas`` on, the orchestrator generates
+When a make_workflow hook has ``bake_to_canvas`` on, the orchestrator generates
 a workflow per stage and then asks to "bake" the chain: each stage's workflow is
 nested into a ComfyUI **subgraph** whose exposed inputs/outputs match the hook's
 slots, the subgraph instances are placed on one canvas and wired to mirror the

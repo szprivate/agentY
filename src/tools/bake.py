@@ -1,7 +1,7 @@
 """``bake_hooks_to_canvas`` — bake a chain of generated stage-workflows into a
 ComfyUI subgraph canvas (the ``bake_to_canvas`` hook switch).
 
-The orchestrator generates one workflow per standin stage as usual; this tool then
+The orchestrator generates one workflow per make_workflow stage as usual; this tool then
 nests each into a ComfyUI subgraph whose exposed inputs/outputs match that stage's
 hook slots, places one subgraph instance per stage on a single canvas, wires them
 to mirror the hook chain, and pushes the result onto the ComfyUI canvas. The baked
@@ -27,7 +27,7 @@ def _to_graph(workflow: dict) -> dict:
 
 @tool
 def bake_hooks_to_canvas(stages: list, links: list | None = None) -> str:
-    """Bake generated standin workflows into a chained ComfyUI subgraph canvas.
+    """Bake generated make_workflow stage workflows into a chained ComfyUI subgraph canvas.
 
     Call this for hooks whose ``bake_to_canvas`` switch is ON, AFTER you have
     generated (and validated) each stage's workflow. Each stage's workflow is
