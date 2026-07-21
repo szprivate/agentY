@@ -61,6 +61,7 @@ from src.tools.image_handling import (  # noqa: F401
     analyze_image,
     download_image,
 )
+from src.tools.video_handling import analyze_video, set_video_agent  # noqa: F401
 from src.tools.comfyui import check_model  # noqa: F401
 from src.tools.huggingface import (  # noqa: F401
     search_huggingface_models,
@@ -202,6 +203,11 @@ PLANNER_TOOLS: list = []
 # Makes direct Ollama API calls; no Strands tools required.
 # ---------------------------------------------------------------------------
 VISION_AGENT_TOOLS: list = []
+
+# ---------------------------------------------------------------------------
+# Video Agent tools – stateless, single-shot video understanding (frames in).
+# ---------------------------------------------------------------------------
+VIDEO_AGENT_TOOLS: list = []
 
 # ---------------------------------------------------------------------------
 # Learnings tools – stateless pattern-analyser; no tools needed.
@@ -390,6 +396,7 @@ ORCHESTRATOR_TOOLS: list = [
     view_image,
     get_image_resolution,
     analyze_image,
+    analyze_video,       # understand a video input (samples frames -> Video Agent)
     download_image,
     # Files / shell / web
     read_text_file,

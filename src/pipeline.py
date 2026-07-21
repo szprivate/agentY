@@ -27,8 +27,9 @@ from pydantic import BaseModel, Field, ValidationError
 from strands import Agent
 from strands.types.exceptions import MaxTokensReachedException
 
-from src.agent import create_fix_workflow_assembly_agent, create_generate_new_workflow_agent, create_info_agent, create_orchestrator_agent, create_planner_agent, create_query_templates_agent, create_search_web_agent, create_vision_agent, _settings
+from src.agent import create_fix_workflow_assembly_agent, create_generate_new_workflow_agent, create_info_agent, create_orchestrator_agent, create_planner_agent, create_query_templates_agent, create_search_web_agent, create_vision_agent, create_video_agent, _settings
 from src.tools.image_handling import set_vision_agent as _set_vision_agent
+from src.tools.video_handling import set_video_agent as _set_video_agent
 from src.utils.chat_summary import summarize_conversation, log_agent_messages, log_agent_exchange, set_log_thread
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
 from agenty_core.utils.comfyui_progress import stream_comfyui_job as _stream_comfyui_job
@@ -487,12 +488,23 @@ class Pipeline:
         except Exception as _va_exc:
             print(f"[agentY] WARNING: could not initialise VisionAgent ({_va_exc}). "
                   "analyze_image will fall back to mode='full'.")
+        # Initialise the Video Agent so analyze_video works (samples frames -> a
+        # vision-language model, default Qwen2.5-VL on DashScope). Same lifecycle as
+        # the Vision agent: shared, stateless, folded into the turn's cost below.
+        self._video_agent: Agent | None = None
+        try:
+            self._video_agent = create_video_agent()
+            _set_video_agent(self._video_agent)
+        except Exception as _vd_exc:
+            print(f"[agentY] WARNING: could not initialise VideoAgent ({_vd_exc}). "
+                  "analyze_video will return an error until it is configured.")
         # Per-turn usage tracking: list of (delta_usage_dict, agent_obj) for every
         # agent that contributed tokens this turn. Reset at the start of each turn.
         self._last_turn_usages: list = []
-        # Turn-start snapshot of the Vision agent's accumulated usage, so its
-        # delta for the turn can be recorded at cost-finalisation time.
+        # Turn-start snapshots of the Vision / Video agents' accumulated usage, so
+        # their per-turn deltas can be recorded at cost-finalisation time.
         self._vision_usage_snap: dict = {}
+        self._video_usage_snap: dict = {}
 
     # Chainlit and main.py both do:  response = agent(user_input)
     def __call__(self, user_input, **kwargs: Any) -> str:
@@ -507,6 +519,7 @@ class Pipeline:
         # Fold in the Vision agent's per-turn delta before reporting, so the
         # combined token picture includes analyze_image usage.
         self._record_vision_usage()
+        self._record_video_usage()
         return _TurnMetrics(self._last_turn_usages)
 
     # ── Per-turn usage tracking helpers ─────────────────────────────── #
@@ -528,6 +541,20 @@ class Pipeline:
             return
         self._record_agent_usage(agent, self._vision_usage_snap)
         self._vision_usage_snap = self._usage_snapshot(agent)
+
+    def _record_video_usage(self) -> None:
+        """Fold the shared Video agent's per-turn token delta into the turn usage.
+
+        Same contract as :meth:`_record_vision_usage`: the Video agent (used by the
+        ``analyze_video`` tool) runs outside the per-agent snapshot brackets, so its
+        delta since the turn-start snapshot is recorded here and priced at the video
+        model's own rate. Idempotent within a turn.
+        """
+        agent = self._video_agent
+        if agent is None:
+            return
+        self._record_agent_usage(agent, self._video_usage_snap)
+        self._video_usage_snap = self._usage_snapshot(agent)
 
     def _usage_snapshot(self, agent) -> dict:
         """Return a copy of *agent*'s current accumulated usage, or {} on error."""
@@ -569,8 +596,9 @@ class Pipeline:
         tokens billed at claude-haiku prices while Brain tokens at a different
         rate, and Ollama agents contribute 0 cost regardless of token count.
         """
-        # Ensure the Vision agent's per-turn usage is included before pricing.
+        # Ensure the Vision + Video agents' per-turn usage is included before pricing.
         self._record_vision_usage()
+        self._record_video_usage()
         total_cost = 0.0
         total_tokens = 0
         for usage, agent in self._last_turn_usages:
@@ -1340,6 +1368,7 @@ class Pipeline:
         """
         self._last_turn_usages = []
         self._vision_usage_snap = self._usage_snapshot(self._vision_agent) if self._vision_agent else {}
+        self._video_usage_snap = self._usage_snapshot(self._video_agent) if self._video_agent else {}
         self._run_qa = False
         user_text = self._extract_text(user_input)
         # Register image paths embedded in a plain-text message so assembly/LoadImage

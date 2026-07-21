@@ -36,6 +36,7 @@ from src.tools import (
     PLANNER_TOOLS,
     LEARNINGS_TOOLS,
     VISION_AGENT_TOOLS,
+    VIDEO_AGENT_TOOLS,
     CODER_TOOLS,
     FIX_WORKFLOW_ASSEMBLY_TOOLS,
     GENERATE_NEW_WORKFLOW_TOOLS,
@@ -256,6 +257,7 @@ _SYSTEM_PROMPT_FILE: dict[str, str] = {
     "learnings": "system_prompt.learnings",
     "qa_checker": "system_prompt.qaChecker",
     "vision_agent": "system_prompt.vision_agent",
+    "video_agent": "system_prompt.video_agent",
     "coder": "system_prompt.coder",
 }
 
@@ -877,6 +879,67 @@ def create_vision_agent(
     # Stateless: keep only the immediate exchange (mirrors Planner behaviour).
     agent.conversation_manager = SlidingWindowConversationManager(window_size=2)
     return agent
+
+
+def create_video_agent(
+    dashscope_model: str | None = None,
+    ollama_model: str | None = None,
+    anthropic_model: str | None = None,
+    **kwargs,
+) -> Agent:
+    """Create the Video Agent — stateless, single-shot video understanding.
+
+    Sampled video frames are handed to a vision-language model (default Qwen2.5-VL
+    on Alibaba Model Studio / DashScope) via the ``analyze_video`` tool, which reads
+    a frame sequence as a video. No tools, minimal history — every call is
+    independent (mirrors the Vision Agent).
+
+    Configuration (in priority order):
+    1. ``VIDEO_AGENT_MODEL`` env var (``'provider,model'`` or bare model)
+    2. ``llm.pipeline.video_agent`` in settings.json (``'provider,model'``)
+    3. Hard default: ``'dashscope,qwen2.5-vl-72b-instruct'``
+
+    Args:
+        dashscope_model: DashScope/OpenAI-compatible model id override.
+        ollama_model:    Ollama model override (if the setting selects ollama).
+        anthropic_model: Anthropic model override (if the setting selects claude).
+        **kwargs:        Forwarded to the Strands Agent constructor.
+    """
+    _env_model = os.environ.get("VIDEO_AGENT_MODEL", "")
+    _raw = _env_model or str(_cfg("", "pipeline", "video_agent",
+                                  default="dashscope,qwen2.5-vl-72b-instruct"))
+    if "," not in _raw:
+        _raw = f"dashscope,{_raw}"
+    _settings_llm, _settings_model = _parse_llm_setting(_raw)
+    resolved_llm = _settings_llm or "dashscope"
+
+    if resolved_llm == "ollama":
+        resolved_ollama = ollama_model or _settings_model or "qwen3-vl:30b"
+    else:
+        resolved_ollama = ollama_model or "qwen3-vl:30b"
+    if resolved_llm == "claude":
+        resolved_anthropic = anthropic_model or _settings_model or str(
+            _cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
+    else:
+        resolved_anthropic = anthropic_model or str(
+            _cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
+
+    system_prompt = _load_system_prompt("video_agent")
+    agent = _make_agent(
+        role="video_agent",
+        llm=resolved_llm,
+        # For dashscope / openai / gemini backends this becomes the model id.
+        dashscope_model=dashscope_model or _settings_model,
+        system_prompt=system_prompt,
+        tools=VIDEO_AGENT_TOOLS,
+        ollama_model=resolved_ollama,
+        anthropic_model=resolved_anthropic,
+        **kwargs,
+    )
+    # Stateless: keep only the immediate exchange.
+    agent.conversation_manager = SlidingWindowConversationManager(window_size=2)
+    return agent
+
 
 def create_query_templates_agent(
     llm: str | None = None,

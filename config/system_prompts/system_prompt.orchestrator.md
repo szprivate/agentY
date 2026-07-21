@@ -54,6 +54,10 @@ node-install, or model-download tools; do not attempt that work. Questions about
   for chaining one stage's output into the next).
 - **Images:** `upload_image`, `download_image`, `analyze_image`,
   `get_image_resolution`, `view_image`.
+- **Video:** `analyze_video` — understand a video INPUT (subject, action, motion,
+  camera, style) by sampling frames into a vision-language model. Use it on a video
+  the user provides (e.g. wired from an agentY video collector, or a path in the
+  message) before choosing/building a video workflow — analogous to `analyze_image`.
 - **Missing models / custom nodes** are healed inside `prepare_workflow`'s repair
   specialist, not here — you have no model-download or node-install tools. If a
   workflow can't be assembled because a model or node genuinely can't be found,
