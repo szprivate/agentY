@@ -1228,7 +1228,23 @@ class Pipeline:
         sel = getattr(self, "_canvas_selection", []) or []
         if not sel:
             return ""
+        # Inline the full widget value so a long prompt in a selected node reaches
+        # the agent intact — the old flat 400-char cap silently truncated exactly
+        # the "read this prompt" case, and there is no read-back tool to recover the
+        # rest. A generous per-widget cap plus a total budget still guards a
+        # pathological many-large-nodes selection. Override via
+        # AGENTY_CANVAS_SEL_WIDGET_CHARS / AGENTY_CANVAS_SEL_TOTAL_CHARS.
+        def _int_env(name: str, default: int) -> int:
+            try:
+                return max(1, int(os.environ.get(name, str(default))))
+            except (TypeError, ValueError):
+                return default
+        per_cap = _int_env("AGENTY_CANVAS_SEL_WIDGET_CHARS", 8000)
+        total_cap = max(per_cap, _int_env("AGENTY_CANVAS_SEL_TOTAL_CHARS", 24000))
+
         lines: list[str] = []
+        used = 0
+        budget_hit = False
         for n in sel:
             widgets = n.get("widgets") or {}
             if not isinstance(widgets, dict) or not widgets:
@@ -1240,9 +1256,19 @@ class Pipeline:
             lines.append(head)
             for wname, wval in widgets.items():
                 sval = str(wval)
-                if len(sval) > 400:
-                    sval = sval[:400] + "…"
+                if len(sval) > per_cap:
+                    sval = sval[:per_cap] + "…[truncated]"
+                remaining = total_cap - used
+                if remaining <= 0:
+                    lines.append("    • …[further selected-node params omitted to bound context]")
+                    budget_hit = True
+                    break
+                if len(sval) > remaining:
+                    sval = sval[:remaining] + "…[truncated]"
+                used += len(sval)
                 lines.append(f"    • {wname} = {sval!r}")
+            if budget_hit:
+                break
         if not lines:
             return ""
         return (
