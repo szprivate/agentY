@@ -1434,9 +1434,27 @@ _RE_TOKENS_TOTAL = re.compile(r"total=(\d+)in/")
 def _parse_token_usage(from_ts: float | None, to_ts: float | None) -> dict:
     """Aggregate the token-usage log by model within [from_ts, to_ts] (epoch secs).
 
+    A thin wrapper over :func:`_aggregate_token_usage` with a simple range check.
+    """
+    def _accept(ts: float) -> bool:
+        if from_ts is not None and ts < from_ts:
+            return False
+        if to_ts is not None and ts > to_ts:
+            return False
+        return True
+    return _aggregate_token_usage(_accept)
+
+
+def _aggregate_token_usage(accept) -> dict:
+    """Aggregate the token-usage log by model, keeping lines *accept(ts)* passes.
+
+    ``accept`` is ``Callable[[float], bool]`` over each line's epoch timestamp, so
+    callers can scope by a simple ``[from, to]`` range (:func:`_parse_token_usage`)
+    or by a set of per-turn windows (:func:`_parse_token_usage_thread`).
+
     Returns ``all_models`` (every model key ever seen — for the filter dropdown,
-    independent of the window), ``rows`` (per-model input/output/cache/cost/calls
-    inside the window), the summed ``total``, and the log's overall time range.
+    independent of the scope), ``rows`` (per-model input/output/cache/cost/calls
+    inside the scope), the summed ``total``, and the log's overall time range.
     """
     from src.agent import _load_settings
     from src.utils.costs import compute_cost_from_usage
@@ -1493,7 +1511,7 @@ def _parse_token_usage(from_ts: float | None, to_ts: float | None) -> dict:
                 if log_max is None or ts > log_max:
                     log_max = ts
 
-                if (from_ts is not None and ts < from_ts) or (to_ts is not None and ts > to_ts):
+                if not accept(ts):
                     continue
 
                 # Clamp negatives: a fresh agent resets its accumulator, so the
@@ -1541,6 +1559,64 @@ def _parse_token_usage(from_ts: float | None, to_ts: float | None) -> dict:
         "total": total,
         "log_range": {"min": log_min, "max": log_max},
     }
+
+
+# The token log is second-resolution and its timestamps are floored to the whole
+# second, while conversation message timestamps are sub-second ``time.time()``
+# floats. Pad each per-turn window by this many seconds so a tool call logged a
+# hair before/after the bracketing message still falls inside the window. A few
+# seconds is negligible in a single-user host where turns never interleave.
+_THREAD_WINDOW_PAD_SECS = 3.0
+
+
+def _thread_windows(thread_id: str) -> list[tuple[float, float]]:
+    """Per-turn ``[start, end]`` epoch windows bracketing *thread_id*'s token use.
+
+    A turn is a user message (saved on receipt) followed by the agent's work and
+    then the assistant reply (saved on completion); every token-log line for the
+    turn falls between the two. So each user message opens a window that closes at
+    the next message's timestamp (its reply), or ``now`` for an in-flight turn.
+
+    Using tight per-turn windows — rather than one ``[created_at, updated_at]``
+    span — keeps a resumed conversation from also claiming the token usage of
+    other conversations that ran in between. Falls back to the thread's own
+    created/updated span if it somehow has no user messages.
+    """
+    try:
+        from src.utils import conversation_store as cs
+        thread = cs.get_thread(thread_id)
+    except Exception:
+        thread = None
+    if not thread:
+        return []
+    msgs = thread.get("messages") or []
+    now = time.time()
+    windows: list[tuple[float, float]] = []
+    for i, m in enumerate(msgs):
+        if (m.get("role") or "") != "user":
+            continue
+        start = float(m.get("created_at") or 0)
+        end = float(msgs[i + 1].get("created_at") or 0) if i + 1 < len(msgs) else now
+        if end < start:
+            end = now
+        windows.append((start - _THREAD_WINDOW_PAD_SECS, end + _THREAD_WINDOW_PAD_SECS))
+    if not windows:
+        c0 = float(thread.get("created_at") or 0)
+        c1 = float(thread.get("updated_at") or c0)
+        if c1 >= c0 > 0:
+            windows.append((c0 - _THREAD_WINDOW_PAD_SECS, c1 + _THREAD_WINDOW_PAD_SECS))
+    return windows
+
+
+def _parse_token_usage_thread(thread_id: str) -> dict:
+    """Aggregate token usage for the conversation *thread_id* (the "Current run"
+    scope in the Token Usage overview), summing over its per-turn windows."""
+    windows = _thread_windows(thread_id)
+
+    def _accept(ts: float) -> bool:
+        return any(f <= ts <= t for (f, t) in windows)
+
+    return _aggregate_token_usage(_accept)
 
 
 # A gap larger than this between consecutive token-log lines starts a new "run"
@@ -1765,8 +1841,12 @@ def _build_app():
                 return None
 
         try:
-            if request.args.get("scope") == "last_run":
+            scope = request.args.get("scope")
+            if scope == "last_run":
                 return jsonify(_parse_token_usage(_last_run_from_ts(), None))
+            if scope == "thread":
+                tid = (request.args.get("thread_id") or request.args.get("thread") or "").strip()
+                return jsonify(_parse_token_usage_thread(tid))
             return jsonify(_parse_token_usage(_num("from"), _num("to")))
         except Exception as exc:  # noqa: BLE001
             logger.error("token_usage failed: %s", exc, exc_info=True)
