@@ -285,6 +285,44 @@ def _resolve_media_ref(value: str, kind: str = "") -> str | None:
     return None
 
 
+# agentY collector nodes (AgentYImageCollector) wired as hook anchors carry
+# on-disk image paths in their ``files`` widget — plain node data, so the agent can
+# see them with NO pre-run (unlike a runtime IMAGE batch, which exists only after a
+# run). At most this many are embedded as vision blocks per turn to bound token
+# cost; describe_hooks still lists every path so the agent can bind them all.
+# Override with AGENTY_MAX_HOOK_IMAGES.
+try:
+    _MAX_HOOK_IMAGES = max(0, int(os.environ.get("AGENTY_MAX_HOOK_IMAGES", "6") or "6"))
+except ValueError:
+    _MAX_HOOK_IMAGES = 6
+
+
+def _collector_hook_images(canvas_hooks: list) -> list[str]:
+    """Resolved absolute paths of images held by ``AgentYImageCollector`` nodes
+    wired as hook anchors (deduped, existing on disk). Read straight from widget
+    data — no graph execution needed."""
+    out: list[str] = []
+    seen: set = set()
+    for h in (canvas_hooks or []):
+        if not isinstance(h, dict):
+            continue
+        for a in (h.get("anchors") or []):
+            if not isinstance(a, dict) or str(a.get("type") or "") != "AgentYImageCollector":
+                continue
+            files = (a.get("widgets") or {}).get("files")
+            if not isinstance(files, str):
+                continue
+            for line in files.splitlines():
+                p = line.strip().strip('"')
+                if not p or p in seen:
+                    continue
+                seen.add(p)
+                resolved = _resolve_media_ref(p, "image")
+                if resolved:
+                    out.append(resolved)
+    return out
+
+
 # ── Content builder (text + attached images/videos -> Strands content blocks) ─
 
 def _build_content(message: str, media_paths: list[str]) -> list | str:
@@ -2216,6 +2254,22 @@ def _build_app():
         # Arbitrary selected nodes (any type) with their widget values, so the
         # agent can read/alter their parameters and write the change back live.
         canvas_selection = [n for n in (body.get("canvas_selection") or []) if isinstance(n, dict)]
+        # agentY image-collector nodes wired as hook anchors carry on-disk image
+        # paths (widget data) — surface them to the agent as vision with NO
+        # pre-run. Cap how many are embedded to bound token cost; describe_hooks
+        # lists every path (image AND video) so the agent can bind them all.
+        if canvas_hooks:
+            _coll_imgs = _collector_hook_images(canvas_hooks)
+            if _coll_imgs:
+                _existing = set(image_paths)
+                _add = [p for p in _coll_imgs[:_MAX_HOOK_IMAGES] if p not in _existing]
+                if _add:
+                    image_paths = _add + image_paths
+                if len(_coll_imgs) > _MAX_HOOK_IMAGES:
+                    logger.info(
+                        "collector hook: embedding %d of %d images as vision "
+                        "(all paths listed in the [CANVAS HOOKS] block)",
+                        _MAX_HOOK_IMAGES, len(_coll_imgs))
         thread_id = body.get("thread_id")
         if not thread_id or cs.get_thread(thread_id) is None:
             thread_id = cs.create_thread(thread_id=thread_id)

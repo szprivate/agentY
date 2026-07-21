@@ -382,13 +382,38 @@ def _order_by_dependency(hooks: list) -> list:
     return ordered
 
 
+# agentY collector nodes gather a set of on-disk files (image / video) into their
+# ``files`` widget. Because that list is plain node data, the paths are known to
+# the agent BEFORE any run — so an anchored collector is rendered as its explicit
+# file list (not an opaque widget dump), telling the agent it can use every path
+# directly without executing the graph first.
+_COLLECTOR_TYPES = {"AgentYImageCollector", "AgentYVideoCollector"}
+
+
+def _render_anchor(aid: str, atype: str, inputs: dict) -> str:
+    """Human-readable description of one real-node anchor input. An agentY
+    collector node is expanded to its listed on-disk file paths (available with no
+    pre-run) so the agent can see/bind each file; other nodes list scalar params."""
+    if atype in _COLLECTOR_TYPES:
+        files = inputs.get("files") if isinstance(inputs, dict) else None
+        paths = [ln.strip().strip('"') for ln in str(files or "").splitlines() if ln.strip()]
+        kind = "image" if atype == "AgentYImageCollector" else "video"
+        if not paths:
+            return f"node {aid} (agentY {kind} collector) — EMPTY (no files added yet)"
+        return (f"node {aid} (agentY {kind} collector) — {len(paths)} {kind} file(s) already "
+                f"on disk (use these paths directly, no run needed): " + "; ".join(paths))
+    params = ", ".join(f"{k}={v!r}" for k, v in (inputs or {}).items()) or "(no scalar inputs)"
+    return f"node {aid} ({atype}) inputs[{params}]"
+
+
 def _input_context(hook: dict, base_prompt: dict | None, hook_ids: set) -> str:
     """Describe what feeds *hook* (its context inputs).
 
     An input wired from another HOOK is rendered as "the value you produce for
     hook N" — never a dump of that hook's own widgets — so a chained producer
     reuses the value it just wrote instead of mistaking the upstream hook's
-    directive for content. Real-node inputs list their scalar params as before.
+    directive for content. Real-node inputs list their scalar params (or, for an
+    agentY collector, its explicit file list).
     """
     anchors = _all_anchor_inputs(hook, base_prompt)
     if not anchors:
@@ -398,8 +423,7 @@ def _input_context(hook: dict, base_prompt: dict | None, hook_ids: set) -> str:
         if aid in hook_ids:
             parts.append(f"the value you produce for hook {aid}")
         else:
-            params = ", ".join(f"{k}={v!r}" for k, v in inputs.items()) or "(no scalar inputs)"
-            parts.append(f"node {aid} ({atype}) inputs[{params}]")
+            parts.append(_render_anchor(aid, atype, inputs))
     return "; ".join(parts)
 
 
@@ -521,10 +545,7 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             anchors = _all_anchor_inputs(h, base_prompt)
             if not anchors:
                 return "no input wired — treat the prompt as text-to-media"
-            parts = []
-            for aid, atype, inputs in anchors:
-                params = ", ".join(f"{k}={v!r}" for k, v in inputs.items()) or "(no scalar inputs)"
-                parts.append(f"node {aid} ({atype}) inputs[{params}]")
+            parts = [_render_anchor(aid, atype, inputs) for aid, atype, inputs in anchors]
             if len(parts) == 1:
                 return f"input from {parts[0]}"
             return "inputs from " + "; ".join(parts)
