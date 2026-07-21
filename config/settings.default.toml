@@ -57,6 +57,10 @@ learnings = "claude,claude-haiku-4-5"
 build_skill = "claude,claude-haiku-4-5"
 llm_functions = "claude,claude-haiku-4-5"
 executor_vision_model = "claude,claude-haiku-4-5"
+# video_agent: model for the analyze_video tool (samples video frames -> a
+# vision-language model that reads them as a video). Must be multimodal; Qwen2.5-VL
+# on DashScope (e.g. dashscope,qwen2.5-vl-72b-instruct) is recommended for video.
+video_agent = "claude,claude-haiku-4-5"
 
 [llm.ollama]
 host = "http://localhost:11434"
