@@ -323,6 +323,34 @@ def _collector_hook_images(canvas_hooks: list) -> list[str]:
     return out
 
 
+def _orchestrator_supports_vision() -> bool:
+    """True when the configured orchestrator LLM can accept image content blocks.
+
+    Collector images are embedded into the orchestrator's message as vision blocks
+    only when it can actually process them — a text-only model (e.g.
+    ``dashscope,qwen3.6-flash``) rejects image content with DashScope's
+    "Unexpected item type in content." We can't probe the endpoint, so decide from
+    the configured provider/model name, erring toward False (skip embedding — the
+    paths are still listed in the [CANVAS HOOKS] block and the vision/video agents
+    can read them on demand) unless the model is confidently multimodal.
+    """
+    try:
+        from src.utils.settings import load_settings
+        raw = str(((load_settings().get("llm") or {}).get("pipeline") or {}).get("orchestrator", ""))
+    except Exception:  # noqa: BLE001
+        return False
+    provider, _, model = raw.lower().partition(",")
+    provider = provider.strip()
+    model = (model or provider).strip()
+    # Providers whose current models are multimodal across the board.
+    if provider in ("claude", "anthropic", "bedrock", "google", "gemini"):
+        return True
+    # Otherwise require an explicit vision marker in the model id.
+    markers = ("-vl", "vl-", "vl:", "vision", "omni", "4o", "gpt-4.1", "o4-",
+               "llava", "minicpm-v", "gemma3", "gemma-3", "pixtral", "internvl", "moondream")
+    return any(m in model for m in markers)
+
+
 # ── Content builder (text + attached images/videos -> Strands content blocks) ─
 
 def _build_content(message: str, media_paths: list[str]) -> list | str:
@@ -2256,9 +2284,12 @@ def _build_app():
         canvas_selection = [n for n in (body.get("canvas_selection") or []) if isinstance(n, dict)]
         # agentY image-collector nodes wired as hook anchors carry on-disk image
         # paths (widget data) — surface them to the agent as vision with NO
-        # pre-run. Cap how many are embedded to bound token cost; describe_hooks
-        # lists every path (image AND video) so the agent can bind them all.
-        if canvas_hooks:
+        # pre-run. ONLY when the orchestrator is a vision model: a text-only
+        # orchestrator (e.g. dashscope,qwen3.6-flash) rejects image content, so we
+        # skip embedding there and rely on the path list in the [CANVAS HOOKS]
+        # block (which every orchestrator receives). Cap how many are embedded to
+        # bound token cost.
+        if canvas_hooks and _orchestrator_supports_vision():
             _coll_imgs = _collector_hook_images(canvas_hooks)
             if _coll_imgs:
                 _existing = set(image_paths)
@@ -2270,6 +2301,10 @@ def _build_app():
                         "collector hook: embedding %d of %d images as vision "
                         "(all paths listed in the [CANVAS HOOKS] block)",
                         _MAX_HOOK_IMAGES, len(_coll_imgs))
+        elif canvas_hooks and _collector_hook_images(canvas_hooks):
+            logger.info(
+                "collector hook: orchestrator is text-only — not embedding images "
+                "as vision; paths are listed in the [CANVAS HOOKS] block.")
         thread_id = body.get("thread_id")
         if not thread_id or cs.get_thread(thread_id) is None:
             thread_id = cs.create_thread(thread_id=thread_id)
