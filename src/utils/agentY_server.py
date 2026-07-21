@@ -1156,7 +1156,10 @@ _GEMINI_FALLBACK = [
 
 # Live-list cache (avoid hitting the endpoints on every panel load).
 _MODEL_CACHE: dict = {}
-_MODEL_CACHE_TTL = 300  # seconds
+_MODEL_CACHE_TTL = 300  # seconds — full cache life once every vendor enumerated cleanly
+_MODEL_CACHE_TTL_RETRY = 20  # seconds — short life when the live-only vendor (Ollama) was
+# missing, so a startup race or a transient /api/tags timeout self-heals fast instead of
+# hiding Ollama for a full TTL (it has no static fallback, unlike the cloud vendors).
 
 # DashScope curation: drop dated snapshots and the translation / OCR variants —
 # they bloat the dropdown without adding a distinct chat/coding/vision model.
@@ -1305,7 +1308,8 @@ def _available_models() -> dict:
     """
     now = time.time()
     cached = _MODEL_CACHE.get("groups")
-    if cached is not None and (now - _MODEL_CACHE.get("ts", 0)) < _MODEL_CACHE_TTL:
+    ttl = _MODEL_CACHE.get("ttl", _MODEL_CACHE_TTL)
+    if cached is not None and (now - _MODEL_CACHE.get("ts", 0)) < ttl:
         return cached
 
     groups: dict[str, list] = {}
@@ -1358,20 +1362,27 @@ def _available_models() -> dict:
             logger.debug("Gemini live model list failed (%s); using fallback", exc)
             groups["Google (Gemini)"] = list(_GEMINI_FALLBACK)
 
+    # Ollama has no static fallback — its models are known only from a live query,
+    # so any miss (daemon not up yet, a slow /api/tags under GPU load) drops the
+    # whole vendor. Track whether it was enumerated so a miss is cached only briefly
+    # and retried, rather than hiding Ollama for the full TTL.
+    ollama_seen = False
     try:
         import requests  # noqa: PLC0415
         from src.agent import _cfg  # noqa: PLC0415
         host = str(_cfg("OLLAMA_HOST", "ollama", "host", default="http://localhost:11434"))
-        resp = requests.get(f"{host}/api/tags", timeout=3)
+        resp = requests.get(f"{host}/api/tags", timeout=5)
         resp.raise_for_status()
         names = sorted({m.get("name", "") for m in resp.json().get("models", []) if m.get("name")})
         if names:
             groups["Ollama"] = [[f"ollama,{n}", n] for n in names]
+            ollama_seen = True
     except Exception as exc:  # noqa: BLE001 — Ollama not running ⇒ hide the vendor
         logger.debug("Ollama model list unavailable: %s", exc)
 
     _MODEL_CACHE["groups"] = groups
     _MODEL_CACHE["ts"] = now
+    _MODEL_CACHE["ttl"] = _MODEL_CACHE_TTL if ollama_seen else _MODEL_CACHE_TTL_RETRY
     return groups
 
 
