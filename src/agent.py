@@ -611,6 +611,46 @@ _SCRATCH_SKILLS_DIR = _SKILLS_DIR / "_scratch"
 # source — hence it's added as a third AgentSkills root below.
 _ORCH_SKILLS_DIR = _SKILLS_DIR / "orchestrator-skills"
 
+# Per-agent skill scoping. AgentSkills(skills=…) accepts individual skill DIRS, not
+# just parent roots, so each agent gets an explicit allowlist instead of the whole
+# skills/ folder. This stops a builder from ever seeing (and mis-activating) an
+# orchestrator/story skill and, more importantly, stops the router from seeing the
+# assembly skills it must delegate — while shared skills (batch-handoff) simply
+# appear in both lists.
+#
+# The workflow builders (query_templates / assemble_workflow / fix_workflow /
+# generate_new). NOTE: 'output-paths' is deliberately NOT here — its media-kind
+# routing rules are now baked into the assembly base prompts so they ALWAYS apply,
+# and 'custom-node-from-github' is omitted because it is only ever baked into the
+# coder subagent (via _load_subagent_skill), never activated from a listing.
+_ASSEMBLY_SKILL_NAMES = [
+    "annotation", "assemble-from-template", "assemble-new-workflow",
+    "assemble-workflow-learnings", "brain-learnings", "feedback-loop",
+    "flux-sampling", "image-batch", "kling-multishot", "prompting", "recipe",
+    "upscale-ultimatesd", "video-gemini-motionpromptgeneration",
+    "workflow-templates", "batch-handoff",
+]
+# Orchestrator-owned skills (router / writing / batch handoff / image prep). The
+# self-extension skill lives under _ORCH_SKILLS_DIR and is added separately.
+_ORCH_SKILL_NAMES = [
+    "story-synopsis", "story-scene", "story-storyboard",
+    "spawn-subagent", "batch-handoff", "image-downsize",
+]
+
+
+def _skill_sources(names: list[str]) -> list[str]:
+    """Turn skill dir names under skills/ into explicit AgentSkills sources, keeping
+    only those that exist on disk."""
+    return [str(_SKILLS_DIR / n) for n in names if (_SKILLS_DIR / n / "SKILL.md").is_file()]
+
+
+def _orchestrator_skill_sources() -> list[str]:
+    """The orchestrator's AgentSkills sources: its owned skills + the grouped
+    orchestrator-skills folder (self-extension) + the runtime _scratch dir. Used at
+    build time AND by orchestration._rescan_skills so a live create_skill re-scan
+    preserves the exact scoping instead of re-widening to the whole skills/ dir."""
+    return _skill_sources(_ORCH_SKILL_NAMES) + [str(_ORCH_SKILLS_DIR), str(_SCRATCH_SKILLS_DIR)]
+
 
 def _make_agent(
     *,
@@ -998,10 +1038,11 @@ def create_query_templates_agent(
 
     system_prompt = _load_system_prompt("query_templates")
 
-    # Load skills from the project-level skills/ directory.
+    # Load only the assembly-family skills (not the orchestrator/story skills).
     QUERYTEMPLATES_skill_plugins: list = []
-    if _SKILLS_DIR.is_dir():
-        skills_plugin = AgentSkills(skills=str(_SKILLS_DIR))
+    _asm_sources = _skill_sources(_ASSEMBLY_SKILL_NAMES)
+    if _asm_sources:
+        skills_plugin = AgentSkills(skills=_asm_sources)
         QUERYTEMPLATES_skill_plugins.append(skills_plugin)
         loaded = [s.name for s in skills_plugin.get_available_skills()]
         if loaded:
@@ -1290,10 +1331,11 @@ def create_ASSEMBLEWORKFLOW_agent(
         )
     system_prompt = _load_system_prompt("assemble_workflow")
 
-    # Load skills from the project-level skills/ directory.
+    # Load only the assembly-family skills (not the orchestrator/story skills).
     skills_plugins: list = []
-    if _SKILLS_DIR.is_dir():
-        skills_plugin = AgentSkills(skills=str(_SKILLS_DIR))
+    _asm_sources = _skill_sources(_ASSEMBLY_SKILL_NAMES)
+    if _asm_sources:
+        skills_plugin = AgentSkills(skills=_asm_sources)
         skills_plugins.append(skills_plugin)
         loaded = [s.name for s in skills_plugin.get_available_skills()]
         if loaded:
@@ -1449,8 +1491,9 @@ def create_fix_workflow_assembly_agent(
     system_prompt = _load_system_prompt("fix_workflow_assembly")
 
     fx_plugins: list = []
-    if _SKILLS_DIR.is_dir():
-        fx_plugins.append(AgentSkills(skills=str(_SKILLS_DIR)))
+    _asm_sources = _skill_sources(_ASSEMBLY_SKILL_NAMES)
+    if _asm_sources:
+        fx_plugins.append(AgentSkills(skills=_asm_sources))
 
     agent = _make_agent(
         role="fix_workflow_assembly",
@@ -1519,8 +1562,9 @@ def create_generate_new_workflow_agent(
     system_prompt = _load_system_prompt("generate_new_workflow")
 
     gn_plugins: list = []
-    if _SKILLS_DIR.is_dir():
-        gn_plugins.append(AgentSkills(skills=str(_SKILLS_DIR)))
+    _asm_sources = _skill_sources(_ASSEMBLY_SKILL_NAMES)
+    if _asm_sources:
+        gn_plugins.append(AgentSkills(skills=_asm_sources))
 
     agent = _make_agent(
         role="generate_new_workflow",
@@ -1686,10 +1730,14 @@ def create_orchestrator_agent(
 
     system_prompt = _load_system_prompt("orchestrator")
 
-    # Load the curated project skills, the grouped orchestrator-only skills, and any
-    # runtime-authored scratch skills. Missing dirs are safely skipped by the loader.
-    # Keep a reference to the plugin so create_skill can call set_available_skills().
-    skills_plugin = AgentSkills(skills=[str(_SKILLS_DIR), str(_ORCH_SKILLS_DIR), str(_SCRATCH_SKILLS_DIR)])
+    # Load ONLY the orchestrator-owned skills (router/writing/self-extension) + the
+    # runtime-authored scratch skills — never the assembly skills, which the router
+    # must delegate. Missing dirs are safely skipped by the loader. Keep a reference
+    # to the plugin (and stash the exact sources) so a live create_skill re-scan
+    # preserves this scoping instead of re-widening to the whole skills/ dir.
+    _orch_sources = _orchestrator_skill_sources()
+    skills_plugin = AgentSkills(skills=_orch_sources)
+    skills_plugin._agenty_sources = _orch_sources  # noqa: SLF001 — read back by _rescan_skills
     loaded = [s.name for s in skills_plugin.get_available_skills()]
     if loaded:
         print(f"[agentY:orchestrator] Loaded skills: {', '.join(loaded)}")

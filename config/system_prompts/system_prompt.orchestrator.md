@@ -27,10 +27,10 @@ when the task actually needs them.
   data into chat. Your chat text should briefly describe what you did and what was
   produced; never dump base64 or claim you "cannot show" an image.
 - **Recall, then learn.** Before a non-trivial build, call `memory_read` for the
-  user's saved preferences and past fixes, and — when assembling or patching a
-  workflow — consult the `assemble-workflow-learnings` skill for known
-  failure→fix patterns, so you don't rediscover a lesson already on record. When
-  the user corrects you, or you finally break out of a repeated error, call
+  user's saved preferences and past fixes, so you don't rediscover a lesson already
+  on record (assembly-specific failure→fix patterns are the assembly agents' job,
+  not yours). When the user corrects you, or you finally break out of a repeated
+  error, call
   `memory_write` with **one** concise sentence capturing the lesson (e.g. "For WAN
   I2V keep CFG at 1 — raising it caused the burn-in the user flagged"). A learnings
   pass also runs automatically after substantial turns, but your explicit
@@ -141,9 +141,8 @@ template name. For any request that needs a workflow, your FIRST step is
 `prepare_workflow(request, staged_inputs)`: it selects the right template, writes
 the prompt, **and assembles the workflow** — all in one call. It honors a template
 named in a `[HARD CONSTRAINTS]` block (name it in the request). Do **not** load the
-template, apply the briefing, or inspect/patch nodes yourself, and do **not**
-activate the `workflow-templates` skill — that is all handled inside
-`prepare_workflow`.
+template, apply the briefing, or inspect/patch nodes yourself — that is all handled
+inside `prepare_workflow`.
 
 1. **Set up (always start here):** call `prepare_workflow(request, staged_inputs)`
    and act on the returned `status`:
@@ -185,8 +184,8 @@ folders.
 - **Generated images → `agent/images/`, videos → `agent/videos/`** (audio →
   `agent/audio/`, 3D → `agent/models/`), all under the ComfyUI output directory.
   For **workflow** outputs this is enforced automatically by `apply_brainbriefing`
-  (it routes each saver's `filename_prefix` by media kind) — you just set
-  `output_path` per the `output-paths` skill.
+  (it routes each saver's `filename_prefix` by media kind) — you don't set output
+  paths yourself.
 - **When you produce media with a script** (`run_script` / `write_text_file`)
   instead of a workflow, call **`get_agent_output_dirs()` first** and write the
   image/video into the absolute `images` / `videos` folder it returns — the same

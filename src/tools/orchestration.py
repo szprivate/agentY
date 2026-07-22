@@ -90,7 +90,13 @@ def _rescan_skills() -> int:
     if plugin is None:
         return -1
     try:
-        plugin.set_available_skills([str(_skills_dir()), str(_orch_skills_dir()), str(_scratch_dir())])
+        # Reuse the exact scoped sources the orchestrator plugin was built with
+        # (stashed by create_orchestrator_agent) so a re-scan keeps the scoping and
+        # doesn't re-widen to the whole skills/ dir. Fall back to the orchestrator
+        # group + its own folder + scratch if the stash is absent.
+        sources = getattr(plugin, "_agenty_sources", None) or \
+            [str(_orch_skills_dir()), str(_scratch_dir())]
+        plugin.set_available_skills(sources)
         return len(plugin.get_available_skills())
     except Exception:  # noqa: BLE001
         return -1
