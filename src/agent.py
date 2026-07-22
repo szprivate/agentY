@@ -605,6 +605,12 @@ _SKILLS_DIR = Path(__file__).parent.parent / "skills"
 # be passed as its own source).
 _SCRATCH_SKILLS_DIR = _SKILLS_DIR / "_scratch"
 
+# Curated orchestrator-only skills, grouped in their own folder (e.g. self-extension
+# moved out of the base system prompt). Like _scratch, it's a nested subdir of
+# skills/, so the loader only sees its child skills when it's passed as its own
+# source — hence it's added as a third AgentSkills root below.
+_ORCH_SKILLS_DIR = _SKILLS_DIR / "orchestrator-skills"
+
 
 def _make_agent(
     *,
@@ -1680,10 +1686,10 @@ def create_orchestrator_agent(
 
     system_prompt = _load_system_prompt("orchestrator")
 
-    # Load BOTH the curated project skills and any runtime-authored scratch skills.
-    # A missing _scratch dir is safely skipped by the loader. Keep a reference to
-    # the plugin so create_skill can call set_available_skills() on it live.
-    skills_plugin = AgentSkills(skills=[str(_SKILLS_DIR), str(_SCRATCH_SKILLS_DIR)])
+    # Load the curated project skills, the grouped orchestrator-only skills, and any
+    # runtime-authored scratch skills. Missing dirs are safely skipped by the loader.
+    # Keep a reference to the plugin so create_skill can call set_available_skills().
+    skills_plugin = AgentSkills(skills=[str(_SKILLS_DIR), str(_ORCH_SKILLS_DIR), str(_SCRATCH_SKILLS_DIR)])
     loaded = [s.name for s in skills_plugin.get_available_skills()]
     if loaded:
         print(f"[agentY:orchestrator] Loaded skills: {', '.join(loaded)}")
@@ -1730,7 +1736,7 @@ def _load_subagent_skill(name: str) -> str:
     """Return a skill's body (frontmatter stripped) to bake into a subagent's
     system prompt as its main procedure. Looks in the curated skills/ dir first,
     then the runtime _scratch dir. Returns '' if not found."""
-    for base in (_SKILLS_DIR, _SCRATCH_SKILLS_DIR):
+    for base in (_SKILLS_DIR, _ORCH_SKILLS_DIR, _SCRATCH_SKILLS_DIR):
         try:
             p = base / name / "SKILL.md"
             if p.is_file():

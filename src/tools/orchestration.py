@@ -56,6 +56,10 @@ def _scratch_dir() -> Path:
     return _skills_dir() / "_scratch"
 
 
+def _orch_skills_dir() -> Path:
+    return _skills_dir() / "orchestrator-skills"
+
+
 # ---------------------------------------------------------------------------
 # Live-orchestrator context (set by the pipeline at wiring time)
 # ---------------------------------------------------------------------------
@@ -78,7 +82,7 @@ def set_orchestrator_context(agent: Any = None, skills_plugin: Any = None) -> No
 
 
 def _rescan_skills() -> int:
-    """Re-scan both skill source dirs on the orchestrator's plugin.
+    """Re-scan all skill source dirs on the orchestrator's plugin.
 
     Returns the number of skills now registered, or -1 when no plugin is wired.
     """
@@ -86,7 +90,7 @@ def _rescan_skills() -> int:
     if plugin is None:
         return -1
     try:
-        plugin.set_available_skills([str(_skills_dir()), str(_scratch_dir())])
+        plugin.set_available_skills([str(_skills_dir()), str(_orch_skills_dir()), str(_scratch_dir())])
         return len(plugin.get_available_skills())
     except Exception:  # noqa: BLE001
         return -1

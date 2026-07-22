@@ -57,6 +57,28 @@ from src.utils.debug_log import trace as _trace
 
 
 # ---------------------------------------------------------------------------
+# Orchestrator prompt partials — guidance for contexts that only occur on SOME
+# turns (canvas hooks, input images, selected nodes) lives in separate .md files
+# under config/system_prompts/orchestrator/ and is appended to the per-turn input
+# ONLY when that context is present, instead of bloating the always-sent system
+# prompt. Loaded from disk (never hardcoded here) and cached after first read.
+# ---------------------------------------------------------------------------
+_ORCH_PARTIALS_DIR = Path(__file__).parent.parent / "config" / "system_prompts" / "orchestrator"
+_orch_partial_cache: dict[str, str] = {}
+
+
+def _orch_partial(name: str) -> str:
+    """Return the orchestrator guidance partial ``<name>.md`` (cached), or '' if it
+    is missing/unreadable — a missing partial degrades to no guidance, never a crash."""
+    if name not in _orch_partial_cache:
+        try:
+            _orch_partial_cache[name] = (_ORCH_PARTIALS_DIR / f"{name}.md").read_text(encoding="utf-8").strip()
+        except Exception:  # noqa: BLE001
+            _orch_partial_cache[name] = ""
+    return _orch_partial_cache[name]
+
+
+# ---------------------------------------------------------------------------
 # Brainbriefing schema (Pydantic) — mirrors config/brainbrief_example.json
 # ---------------------------------------------------------------------------
 
@@ -1332,14 +1354,32 @@ class Pipeline:
             from src.utils.canvas_hooks import describe_hooks
             hooks_block = describe_hooks(self._canvas_hooks, self._canvas_base_prompt)
             if hooks_block:
-                pin = hooks_block + "\n" + pin
+                # Attach the how-to-run-hooks guidance only now that hooks exist
+                # (it's absent from the base system prompt to keep every non-hook
+                # turn lean). Guidance first, then the concrete hook block.
+                guide = _orch_partial("canvas_hooks")
+                block = (guide + "\n\n" if guide else "") + hooks_block
+                pin = block + "\n" + pin
 
         # Canvas selection: the nodes the user has selected on the graph, with
         # their current parameter values. Lets the orchestrator read a node ("read
-        # this prompt") and write it back via set_canvas_node_params.
+        # this prompt") and write it back via set_canvas_node_params. The read/edit
+        # guidance rides along only when a selection is actually present.
         sel_block = self._describe_canvas_selection()
         if sel_block:
-            pin = pin + sel_block + "\n\n"
+            guide = _orch_partial("selected_nodes")
+            pin = pin + (guide + "\n\n" if guide else "") + sel_block + "\n\n"
+
+        # Input-image handling guidance — attached only when the user has input
+        # images to stage or generated images to reference (else it's dead weight).
+        has_input_images = bool(getattr(self._session, "last_user_input_images", None)) \
+            or bool(getattr(self._session, "generated_images", None))
+        if not has_input_images and isinstance(user_input, list):
+            has_input_images = any(isinstance(b, dict) and "image" in b for b in user_input)
+        if has_input_images:
+            guide = _orch_partial("input_images")
+            if guide:
+                pin = pin + guide + "\n\n"
 
         # When canvas auto-graphing is off, the user opted out of having every
         # generated workflow loaded onto their canvas — so tell the orchestrator
