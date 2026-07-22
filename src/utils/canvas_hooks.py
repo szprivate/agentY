@@ -321,6 +321,18 @@ def _is_text(hook: dict) -> bool:
     return str(hook.get("purpose", "inline_parameter") or "inline_parameter").strip().lower() in _TEXT_PURPOSES
 
 
+_ITERATE_PURPOSES = {"iterate", "iterative", "refine", "loop",
+                     "iterative_refine", "iterate_loop", "refine_loop"}
+
+
+def _is_iterate(hook: dict) -> bool:
+    """True if *hook* declares an interactive iterative-refinement loop — one
+    generation per turn, feeding each result back into the wired LoadImage node.
+    Driven by the ``iterate_step`` tool + the ``iterative-refine`` skill, not by
+    the one-shot producer/standin paths."""
+    return str(hook.get("purpose", "") or "").strip().lower() in _ITERATE_PURPOSES
+
+
 def _wants_bake(hook: dict) -> bool:
     """True if *hook* has the ``bake_to_canvas`` switch on (bake to a subgraph)."""
     v = hook.get("bake")
@@ -586,7 +598,9 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
     hook_id_set = _hook_ids(hooks)
     text_hooks = [h for h in hooks if _is_text(h)]
     standin_hooks = [h for h in hooks if _is_standin(h)]
-    directive_hooks = [h for h in hooks if not _is_standin(h) and not _is_text(h)]
+    iterate_hooks = [h for h in hooks if _is_iterate(h)]
+    directive_hooks = [h for h in hooks
+                       if not _is_standin(h) and not _is_text(h) and not _is_iterate(h)]
 
     lines = [
         "[CANVAS HOOKS — the user's ON-CANVAS graph carries hook annotations (below) "
@@ -642,6 +656,35 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
                     f'- PRODUCER hook {hid} (context: {ctx}) feeds {tgt} — produce the '
                     f'value(s) for that input → "{directive}"'
                 )
+
+    if iterate_hooks:
+        lines.append(
+            "\nITERATIVE-REFINE hook(s) — the user wants an INTERACTIVE refinement LOOP on "
+            "this on-canvas graph: ONE generation per turn, feeding each result back in as "
+            "the next input. Activate the `iterative-refine` skill and follow it. Each turn, "
+            "take the user's requested prompt/change and call "
+            'iterate_step(prompt="<their prompt>") — it writes the prompt into the target '
+            "node, feeds the chosen image into the wired LoadImage node, runs THIS graph "
+            "once, stages the result, and returns a numbered generation history. To revisit "
+            'an earlier result, pass from_generation ("original", or a generation number) — '
+            'that is how you honour "go back to the original / to generation N, then apply …". '
+            "After each run, show the result and ASK the user for the next prompt (or a "
+            "go-back); keep looping until they say stop. Do NOT call apply_canvas_hooks, "
+            "signal_workflow_ready, or run_research for these."
+        )
+        for h in iterate_hooks:
+            hid = h.get("hook_node_id")
+            directive = str(h.get("directive", "") or "").strip()
+            tgt = _target_context(h)
+            ctx = _input_context(h, base_prompt, hook_id_set)
+            prompt_where = (f"prompt → {tgt}" if tgt else
+                            "prompt target UNWIRED — ask the user to wire this hook's OUTPUT "
+                            "into the prompt node's text input")
+            fb_where = (f"feedback image ← {ctx}" if ctx and ctx != "no input wired" else
+                        "feedback node UNWIRED — ask the user to wire the LoadImage node's "
+                        "image output into this hook's anchor")
+            tail = f' — "{directive}"' if directive else ""
+            lines.append(f"- ITERATE hook {hid}: {prompt_where}; {fb_where}{tail}")
 
     if text_hooks:
         lines.append(
