@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import copy
 import random
+import re
 from pathlib import Path
 
 _HOOK_CLASS = "AgentYHook"
@@ -129,15 +130,130 @@ def _resolve_values(res: dict) -> list:
     return list(res.get("values") or [])
 
 
+def _extract_key(value, pattern: str) -> str | None:
+    """Derive a join key from one file *value* for name-based zipping. The key is the
+    basename stem (extension dropped); if *pattern* is given, it's a regex searched in
+    the stem — the first capture group if any, else the whole match. Returns None when
+    nothing matches (that value is then unmatched and dropped from the join)."""
+    stem = Path(str(value)).stem
+    if not pattern:
+        return stem or None
+    try:
+        m = re.search(pattern, stem)
+    except re.error:
+        return None
+    if not m:
+        return None
+    return m.group(1) if m.groups() else m.group(0)
+
+
+def _is_join_key_member(res: dict) -> bool:
+    """A ``mode: "join_key"`` member carries no values of its own — in a name-joined
+    group it receives the shared shot key as its value (e.g. a save node's
+    ``filename_prefix``), so each output is named by the key it was paired on."""
+    return str(res.get("mode", "") or "").strip().lower() in ("join_key", "key")
+
+
+def _resolve_group(members: list) -> tuple[list, list[str]]:
+    """Resolve one zip group into a list of *rows*, each a list of
+    ``(node_id, param, value)`` assignments applied together. A single non-join member
+    is an ordinary product axis (one row per value). Two+ members advance TOGETHER —
+    positionally by index (default), or joined on a filename shot-key when any member
+    sets ``match_by: "name"`` (optionally with a ``key_pattern`` regex)."""
+    notes: list[str] = []
+
+    # A lone ordinary axis — the Cartesian-product path, unchanged from before.
+    value_members = [(n, p, r) for (n, p, r) in members if not _is_join_key_member(r)]
+    join_key_members = [(n, p, r) for (n, p, r) in members if _is_join_key_member(r)]
+    if len(members) == 1 and not join_key_members:
+        nid, param, res = members[0]
+        values = _resolve_values(res)
+        if not values:
+            return [], [f"node {nid}.{param}: no values resolved — skipped"]
+        return [[(nid, param, v)] for v in values], notes
+    if not value_members:
+        return [], ["zip group has no value members — skipped"]
+
+    resolved = [(nid, param, res, _resolve_values(res)) for (nid, param, res) in value_members]
+    for nid, param, _res, vals in resolved:
+        if not vals:
+            notes.append(f"node {nid}.{param}: no values resolved — zip group skipped")
+            return [], notes
+
+    name_join = any(
+        str(res.get("match_by", "") or "").strip().lower() in ("name", "key", "filename")
+        or str(res.get("key_pattern", "") or "").strip()
+        for (_n, _p, res, _v) in resolved
+    )
+
+    if not name_join:
+        # Positional zip — advance value lists in lockstep by index.
+        lengths = [len(v) for (_n, _p, _r, v) in resolved]
+        n = min(lengths)
+        if max(lengths) != n:
+            notes.append(f"positional zip: lists differ in length {lengths}; using the first {n}")
+        if join_key_members:
+            notes.append("join_key member needs match_by=name (no key in a positional zip) — skipped")
+        rows = [[(nid, param, vals[i]) for (nid, param, _r, vals) in resolved] for i in range(n)]
+        return rows, notes
+
+    # Name-key join — pair values across members by a shot key from their filenames.
+    keyed: list = []
+    for nid, param, res, vals in resolved:
+        pat = str(res.get("key_pattern", "") or "").strip()
+        km: dict = {}
+        for v in vals:
+            k = _extract_key(v, pat)
+            if k is None:
+                notes.append(f"node {nid}.{param}: no key from {v!r} (pattern {pat!r}) — skipped")
+                continue
+            if k not in km:
+                km[k] = v
+            else:
+                notes.append(f"node {nid}.{param}: duplicate key {k!r} — keeping the first")
+        keyed.append((nid, param, km))
+
+    common: set | None = None
+    all_keys: set = set()
+    for _n, _p, km in keyed:
+        all_keys |= set(km)
+        common = set(km) if common is None else (common & set(km))
+    common_sorted = sorted(common or [])
+    dropped = sorted(all_keys - set(common_sorted))
+    if dropped:
+        shown = ", ".join(dropped[:10]) + (" …" if len(dropped) > 10 else "")
+        notes.append(f"name-join: {len(dropped)} unmatched key(s) skipped: {shown}")
+    if not common_sorted:
+        notes.append("name-join matched 0 keys — check key_pattern / filenames")
+        return [], notes
+
+    rows = []
+    for k in common_sorted:
+        row = [(nid, param, km[k]) for (nid, param, km) in keyed]
+        row += [(nid, param, k) for (nid, param, _res) in join_key_members]
+        rows.append(row)
+    return rows, notes
+
+
 def build_batch(base_prompt: dict, resolutions: list, cap: int = 25) -> tuple[list[dict], list[str]]:
     """Expand *base_prompt* into a mutated batch from *resolutions*.
 
-    Each resolution mutates one node's input across a list of values; the batch is
-    the Cartesian product across all resolutions, capped at *cap*. Returns
-    ``(prompts, notes)`` where *notes* explains any skips/truncation.
+    Each resolution mutates one node's input across a list of values. By default the
+    batch is the **Cartesian product** across resolutions. Resolutions sharing a
+    non-empty ``zip_group`` advance **together** instead of crossing — a *zip*: by
+    list index (default), or joined on a filename shot-key when a member sets
+    ``match_by: "name"`` (optionally with a ``key_pattern`` regex). A ``mode:
+    "join_key"`` member in a name-joined group receives that shared key as its value
+    (e.g. to name each output). Groups (and ungrouped axes) then cross-product with
+    each other. Capped at *cap*. Returns ``(prompts, notes)`` where *notes* explains
+    any skips/truncation.
     """
     notes: list[str] = []
-    axes: list[tuple[str, str, list]] = []
+    # Bucket resolutions into groups, preserving encounter order. Each ungrouped
+    # resolution is its own singleton group (a plain product axis, as before).
+    groups: dict[str, list] = {}
+    order: list[str] = []
+    solo = 0
     for res in (resolutions or []):
         if not isinstance(res, dict):
             continue
@@ -149,18 +265,28 @@ def build_batch(base_prompt: dict, resolutions: list, cap: int = 25) -> tuple[li
         if nid not in base_prompt:
             notes.append(f"node {nid} is not in the canvas graph — skipped")
             continue
-        values = _resolve_values(res)
-        if not values:
-            notes.append(f"node {nid}.{param}: no values resolved — skipped")
-            continue
-        axes.append((nid, param, values))
+        gid = str(res.get("zip_group", "") or "").strip()
+        if not gid:
+            gid = f"\x00solo{solo}"
+            solo += 1
+        if gid not in groups:
+            groups[gid] = []
+            order.append(gid)
+        groups[gid].append((nid, param, res))
 
-    if not axes:
+    group_rows: list[list] = []
+    for gid in order:
+        rows, gnotes = _resolve_group(groups[gid])
+        notes.extend(gnotes)
+        if rows:
+            group_rows.append(rows)
+
+    if not group_rows:
         return [], (notes or ["no valid resolutions were supplied"])
 
     combos: list[list] = [[]]
-    for (_nid, _param, values) in axes:
-        combos = [c + [v] for c in combos for v in values]
+    for rows in group_rows:
+        combos = [c + [r] for c in combos for r in rows]
     total = len(combos)
     if total > cap:
         notes.append(f"batch of {total} exceeded the cap of {cap}; truncated to {cap}")
@@ -169,10 +295,11 @@ def build_batch(base_prompt: dict, resolutions: list, cap: int = 25) -> tuple[li
     prompts: list[dict] = []
     for combo in combos:
         p = copy.deepcopy(base_prompt)
-        for (nid, param, _values), val in zip(axes, combo):
-            node = p.get(nid)
-            if isinstance(node, dict):
-                node.setdefault("inputs", {})[param] = val
+        for row in combo:                       # each row is one group's aligned assignments
+            for (nid, param, val) in row:
+                node = p.get(nid)
+                if isinstance(node, dict):
+                    node.setdefault("inputs", {})[param] = val
         prompts.append(p)
     return prompts, notes
 

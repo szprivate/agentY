@@ -332,6 +332,20 @@ target — the amount depends on the directive:
   - seed variations → `{"target_node_id": "<feeds id>", "param": "<feeds input>", "mode": "sweep_seed", "count": <N>}`.
   - iterate a folder → `{"target_node_id": "<feeds id>", "param": "<feeds input>", "mode": "folder", "folder": "<path>", "extensions": ["png","jpg"]}`.
 
+  **Pair inputs (zip), don't cross them.** By default resolutions cross-product
+  (every image × every video). To run each input **with its match** — e.g. one
+  starting image paired with one control video per run — give the paired resolutions
+  the same `zip_group` so they advance together. Two ways:
+  - **By position** (both lists already in the same order): just share `zip_group`,
+    e.g. `{"target_node_id":"9","param":"image","values":[…],"zip_group":"pair"}` and
+    `{"target_node_id":"7","param":"video","values":[…],"zip_group":"pair"}`.
+  - **By filename shot-key** (order-independent; preferred when names carry
+    sequence/shot codes): add `"match_by":"name"` and a `"key_pattern"` regex to each
+    member (e.g. `"key_pattern":"SEQ\\d+_SH\\d+"`); they're joined on equal keys and
+    unmatched files are dropped. Add a `{"target_node_id":"<save id>","param":"filename_prefix","zip_group":"<same>","mode":"join_key"}`
+    member to **name each output by that shot key**. A `zip_group` still cross-products
+    with any ungrouped resolution (a seed sweep runs for every pair).
+
 When a context input reads *"the value you produce for hook N"*, that input is
 another hook's output: produce hook N first and reuse exactly what you wrote — do
 **not** re-read it from the graph. If a producer's **output is UNWIRED**, there is

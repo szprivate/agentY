@@ -814,9 +814,9 @@ class Pipeline:
             Use this ONLY when a ``[CANVAS HOOKS]`` block is present. It runs the
             graph the user has open (already captured this turn) — do NOT assemble
             a template or call ``run_research``. Each resolution mutates ONE input
-            of one anchor node across a set of values; the batch is the Cartesian
-            product of all resolutions (capped), and each variant is queued for
-            execution automatically.
+            of one anchor node across a set of values; by default the batch is the
+            Cartesian product of all resolutions (capped), and each variant is queued
+            for execution automatically.
 
             Each resolution is an object::
 
@@ -832,6 +832,33 @@ class Pipeline:
             ``count``, optional integer ``start``), ``value_list`` (needs
             ``values``), ``folder`` (needs ``folder``, optional ``extensions`` and
             ``use_full_path``). Call this ONCE with all resolutions.
+
+            ZIP / PAIR (advance inputs together instead of crossing them). Give two+
+            resolutions the same ``zip_group`` and they step in lockstep — run i takes
+            the i-th of each — rather than cross-producting. Two ways to pair:
+
+            * By position (default): the value lists are zipped by index (shortest
+              wins). Use when you know both lists are already in the same order::
+
+                {"target_node_id":"9","param":"image","values":[…imgs…],"zip_group":"pair"}
+                {"target_node_id":"7","param":"video","values":[…vids…],"zip_group":"pair"}
+
+            * By filename key (robust; order-independent): set ``match_by":"name"`` and
+              a ``key_pattern`` regex — each value's basename is matched to a shot key
+              (first capture group, else the whole match) and members are joined on
+              equal keys (unmatched keys are dropped). Add a ``mode":"join_key"`` member
+              to name each output by that shared key (e.g. a save node's
+              ``filename_prefix``)::
+
+                {"target_node_id":"9","param":"image","values":[…imgs…],
+                 "zip_group":"shot","match_by":"name","key_pattern":"SEQ\\\\d+_SH\\\\d+"}
+                {"target_node_id":"7","param":"video","values":[…vids…],
+                 "zip_group":"shot","match_by":"name","key_pattern":"SEQ\\\\d+_SH\\\\d+"}
+                {"target_node_id":"20","param":"filename_prefix",
+                 "zip_group":"shot","mode":"join_key"}
+
+            A ``zip_group`` behaves like one axis, so it still cross-products with any
+            ungrouped resolutions (e.g. a seed sweep runs for every pair).
 
             Args:
                 resolutions: list of per-node mutation specs (see above).
