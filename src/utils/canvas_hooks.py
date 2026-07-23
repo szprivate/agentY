@@ -678,10 +678,13 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             "input(s)/context and THIS graph already captured. Decide the right action "
             "yourself — answer a question, generate or edit media, run a workflow, compute "
             "a value — whatever best fulfils it; you are NOT restricted to "
-            "apply_canvas_hooks/place_canvas_text here. If it yields MEDIA, generate/run "
-            "via the normal generation contract and let the outputs stage onto the canvas "
-            "as loader nodes (use a wired image/video as input — upload_image it and bind "
-            "it). If it produces ONE value for the node input this hook's output feeds "
+            "apply_canvas_hooks/place_canvas_text here. If it yields MEDIA via a ComfyUI "
+            "workflow, generate/run via the normal generation contract and let the outputs "
+            "stage onto the canvas as loader nodes (use a wired image/video as input — "
+            "upload_image it and bind it). If instead you fulfil it with an ASYNC MCP "
+            "generator (e.g. Magnific), there is nothing to stage — just queue it and share "
+            "the returned URL; the finished asset is downloaded and dropped onto the canvas "
+            "automatically when ready. If it produces ONE value for the node input this hook's output feeds "
             '(shown as "feeds …"), deliver it with place_canvas_text(hook_node_id="<id>", '
             'text="<value>"). If it\'s just a question, answer it in chat.'
         )

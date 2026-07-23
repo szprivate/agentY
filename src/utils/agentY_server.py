@@ -481,13 +481,16 @@ def _build_content(message: str, media_paths: list[str]) -> list | str:
 def _memory_agent(pipeline):
     """Return the agent whose message history is this thread's durable memory.
 
-    In free-agent mode that's the orchestrator (it owns the whole turn and keeps
-    the multi-turn conversation); otherwise it's the legacy Brain/assembler.
+    The free-agent orchestrator owns the whole turn and holds the multi-turn
+    conversation, so it IS the per-thread memory that must be cleared/restored on
+    every thread switch. (The old ``_free_agent`` gate + ``_assemble_workflow``
+    fallback are dead — free-agent is the only path, ``_free_agent`` is never set,
+    so this used to return ``None`` and the orchestrator's history was never scoped
+    per conversation → it accumulated across every thread = cross-conversation
+    bleed. Return the orchestrator directly so reset/restore/save actually target
+    the live conversation.)
     """
-    orch = getattr(pipeline, "_orchestrator_agent", None)
-    if orch is not None and getattr(pipeline, "_free_agent", False):
-        return orch
-    return getattr(pipeline, "_assemble_workflow", None)
+    return getattr(pipeline, "_orchestrator_agent", None)
 
 
 def _reset_pipeline_state(pipeline) -> None:

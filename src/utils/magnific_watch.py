@@ -94,7 +94,20 @@ def register(identifier: str, *, tool: str = "", web_url: str = "",
         name=f"magnific-watch-{identifier[:8]}", daemon=True,
     ).start()
     logger.info("magnific_watch: watching creation %s (tool=%s)", identifier, tool or "?")
+    # Live breadcrumb (streams into the sidebar during the queuing turn) so it's
+    # visible that the watcher actually started for this generation.
+    _status(f"🎬 Watching Magnific creation {identifier} — it will drop onto the "
+            "canvas automatically when ready.")
     return True
+
+
+def _status(text: str) -> None:
+    """Best-effort visible status line (sidebar + :5000 console)."""
+    try:
+        from src.utils import status_bus
+        status_bus.notify(text)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def register_from_result(result: object, *, tool: str = "") -> int:
