@@ -312,11 +312,19 @@ def _parse_kv_text(text: str) -> Optional[dict]:
         return None
     out: dict = {}
     for line in text.splitlines():
+        # TOP-LEVEL keys only: the primary creation fields (status, url, kind, …)
+        # are unindented; nested blocks (metadata, mediaCollection — which carry
+        # their OWN `url`, e.g. an audio.mp3 track) are indented and must be
+        # skipped so a nested `url` can't shadow the main asset `url`.
+        if not line or line[0] in (" ", "\t"):
+            continue
         if ":" not in line:
             continue
         key, _, val = line.partition(":")
         key = key.strip()
         if not key or " " in key:  # skip prose lines that merely contain a colon
+            continue
+        if key in out:  # first occurrence wins — never let a later dup overwrite
             continue
         out[key] = val.strip().strip('"').strip()
     return out or None

@@ -364,8 +364,13 @@ def call_mcp_tool(server: str, name: str, arguments: dict | None = None,
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)}
 
+    # call_tool_sync returns a ToolResult **dict** ({"status", "content":[{"text"|
+    # "json"}], "isError"}) in this Strands version; guard for an object too.
+    def _field(obj, key):
+        return obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
+
     texts: list[str] = []
-    for block in (getattr(res, "content", None) or []):
+    for block in (_field(res, "content") or []):
         t = block.get("text") if isinstance(block, dict) else getattr(block, "text", None)
         if t:
             texts.append(str(t))
@@ -379,8 +384,10 @@ def call_mcp_tool(server: str, name: str, arguments: dict | None = None,
             parsed = json.loads(stripped)
         except Exception:  # noqa: BLE001
             parsed = None
-    status = getattr(res, "status", None)
-    return {"ok": status != "error", "status": status, "text": text, "json": parsed}
+    status = _field(res, "status")
+    is_error = bool(_field(res, "isError"))
+    return {"ok": status != "error" and not is_error, "status": status,
+            "text": text, "json": parsed}
 
 
 def mcp_status() -> dict:
