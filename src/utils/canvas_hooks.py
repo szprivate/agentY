@@ -333,6 +333,18 @@ def _is_iterate(hook: dict) -> bool:
     return str(hook.get("purpose", "") or "").strip().lower() in _ITERATE_PURPOSES
 
 
+_GENERAL_PURPOSES = {"general_request", "general-request", "general", "request",
+                     "free", "freeform", "free_form", "free-form"}
+
+
+def _is_general(hook: dict) -> bool:
+    """True if *hook* is a free-form ``general_request``: the agent interprets the
+    directive as an ordinary request (wired anchors = provided inputs/context,
+    graph already captured) and picks the action itself, rather than the specific
+    producer / text / make_workflow / iterate mechanics."""
+    return str(hook.get("purpose", "") or "").strip().lower() in _GENERAL_PURPOSES
+
+
 def _wants_bake(hook: dict) -> bool:
     """True if *hook* has the ``bake_to_canvas`` switch on (bake to a subgraph)."""
     v = hook.get("bake")
@@ -599,8 +611,10 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
     text_hooks = [h for h in hooks if _is_text(h)]
     standin_hooks = [h for h in hooks if _is_standin(h)]
     iterate_hooks = [h for h in hooks if _is_iterate(h)]
+    general_hooks = [h for h in hooks if _is_general(h)]
     directive_hooks = [h for h in hooks
-                       if not _is_standin(h) and not _is_text(h) and not _is_iterate(h)]
+                       if not _is_standin(h) and not _is_text(h)
+                       and not _is_iterate(h) and not _is_general(h)]
 
     lines = [
         "[CANVAS HOOKS — the user's ON-CANVAS graph carries hook annotations (below) "
@@ -656,6 +670,28 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
                     f'- PRODUCER hook {hid} (context: {ctx}) feeds {tgt} — produce the '
                     f'value(s) for that input → "{directive}"'
                 )
+
+    if general_hooks:
+        lines.append(
+            "\nGENERAL-REQUEST hook(s) — a FREE-FORM instruction. Treat the directive as "
+            "an ordinary request from the user, with any wired anchor(s) as the provided "
+            "input(s)/context and THIS graph already captured. Decide the right action "
+            "yourself — answer a question, generate or edit media, run a workflow, compute "
+            "a value — whatever best fulfils it; you are NOT restricted to "
+            "apply_canvas_hooks/place_canvas_text here. If it yields MEDIA, generate/run "
+            "via the normal generation contract and let the outputs stage onto the canvas "
+            "as loader nodes (use a wired image/video as input — upload_image it and bind "
+            "it). If it produces ONE value for the node input this hook's output feeds "
+            '(shown as "feeds …"), deliver it with place_canvas_text(hook_node_id="<id>", '
+            'text="<value>"). If it\'s just a question, answer it in chat.'
+        )
+        for h in general_hooks:
+            hid = h.get("hook_node_id")
+            directive = str(h.get("directive", "") or "").strip()
+            ctx = _input_context(h, base_prompt, hook_id_set)
+            tgt = _target_context(h)
+            where = f" feeds {tgt}" if tgt else " (output unwired)"
+            lines.append(f'- GENERAL hook {hid} (context: {ctx}){where} — "{directive}"')
 
     if iterate_hooks:
         lines.append(

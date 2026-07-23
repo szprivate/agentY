@@ -175,7 +175,7 @@ runs the graph.
 > wired to — it doesn't guess "the connected node" from prose. Wire the output
 > where the produced value belongs.
 
-### The four purposes
+### The five purposes
 
 **1. `inline_parameter`** (default) — annotate an existing node and let the agent
 expand + run your on-canvas graph. Great for sweeps and batches:
@@ -204,7 +204,17 @@ wired anchor is the *subject* of the answer:
 - *"write a caption for this image"*
 - *"summarise the wired prompt into 8 words"*
 
-**4. `iterate`** — turn the graph into an **interactive refinement loop**. See
+**4. `general_request`** — a **free-form** instruction for when the task doesn't
+fit the purposes above. The agent treats the directive as an ordinary request —
+with any wired anchor as the provided input/context and your graph already
+captured — and decides the action itself (answer, generate/edit media, run a
+workflow, compute a value). Media results stage onto the canvas, a single produced
+value goes to the wired target, a plain question is answered in chat:
+
+- *"what would improve this workflow?"*
+- *"take the wired image and give me three different style directions as renders"*
+
+**5. `iterate`** — turn the graph into an **interactive refinement loop**. See
 [Iterative refinement](#iterative-refinement-the-iterate-purpose) below.
 
 ### Chaining hooks into pipelines
