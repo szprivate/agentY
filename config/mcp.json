@@ -1,10 +1,10 @@
 {
   "servers": {
     "magnific": {
+      "auth": "oauth",
       "enabled": true,
       "transport": "http",
-      "url": "https://mcp.magnific.com",
-      "auth": "oauth"
+      "url": "https://mcp.magnific.com"
     }
   }
 }

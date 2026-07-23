@@ -1443,9 +1443,11 @@ class Pipeline:
         """Render the selected canvas nodes + their params as a context block.
 
         The orchestrator reads a node's current values here ("read this prompt")
-        and edits them by calling ``set_canvas_node_params(node_id, params)``.
-        Returns "" when nothing informative is selected (loader-only selections
-        are already handled as inputs, so they're skipped to avoid noise).
+        and edits them by calling ``set_canvas_node_params(node_id, params)``, and
+        is prompted to open every turn with a summary of ALL selected nodes — so
+        every selected node is listed, including ones with no editable widgets
+        (shown as "(no editable parameters)"). Returns "" only when the selection
+        is empty.
         """
         sel = getattr(self, "_canvas_selection", []) or []
         if not sel:
@@ -1468,14 +1470,18 @@ class Pipeline:
         used = 0
         budget_hit = False
         for n in sel:
-            widgets = n.get("widgets") or {}
-            if not isinstance(widgets, dict) or not widgets:
-                continue
+            widgets = n.get("widgets")
+            widgets = widgets if isinstance(widgets, dict) else {}
             nid = n.get("id")
             ntype = n.get("type") or "?"
             title = n.get("title") or ntype
             head = f"- node #{nid} [{ntype}]" + (f' "{title}"' if title and title != ntype else "")
             lines.append(head)
+            # List every selected node, even ones with no readable/editable widgets
+            # (a Reroute, Note, …), so the agent's summary covers ALL of them.
+            if not widgets:
+                lines.append("    • (no editable parameters)")
+                continue
             for wname, wval in widgets.items():
                 sval = str(wval)
                 if len(sval) > per_cap:
