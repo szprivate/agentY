@@ -59,6 +59,7 @@ from pathlib import Path
 
 from src.utils import conversation_store as cs
 from src.utils import status_bus
+from src.utils import notify_bus
 from src.utils.models import AgentSession
 
 logger = logging.getLogger("agentY.server")
@@ -242,6 +243,77 @@ def _stage_into_comfy_input(path: str) -> str | None:
     except Exception as exc:
         logger.warning("could not stage %s into ComfyUI input: %s", path, exc)
         return None
+
+
+# ── Magnific background auto-drop (async creation → canvas) ────────────────────
+
+_CT_EXT = {
+    "image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp",
+    "image/gif": ".gif", "image/avif": ".avif", "image/bmp": ".bmp",
+    "image/tiff": ".tiff", "video/mp4": ".mp4", "video/webm": ".webm",
+    "video/quicktime": ".mov", "video/x-matroska": ".mkv",
+}
+
+
+def _asset_ext(url: str, content_type: str, kind_hint: str = "") -> str:
+    """Pick a file extension from the URL path, then Content-Type, then kind."""
+    from urllib.parse import urlparse
+    suf = Path(urlparse(url).path).suffix.lower()
+    if suf in _IMAGE_SUFFIXES or suf in _VIDEO_SUFFIXES:
+        return suf
+    ct = (content_type or "").split(";", 1)[0].strip().lower()
+    if ct in _CT_EXT:
+        return _CT_EXT[ct]
+    return ".mp4" if kind_hint == "video" else ".png"
+
+
+def _download_url_to(url: str, dest_dir: Path, stem: str, kind_hint: str = "") -> Path | None:
+    """Stream a remote asset to *dest_dir* (extension inferred). Returns the saved
+    path, or None on failure."""
+    import requests  # noqa: PLC0415
+    try:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        with requests.get(url, stream=True, timeout=180) as r:
+            r.raise_for_status()
+            ext = _asset_ext(url, r.headers.get("content-type", ""), kind_hint)
+            safe = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:40] or "magnific"
+            dest = dest_dir / f"{safe}_{uuid.uuid4().hex[:8]}{ext}"
+            with open(dest, "wb") as f:
+                for chunk in r.iter_content(chunk_size=1 << 16):
+                    if chunk:
+                        f.write(chunk)
+        return dest
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("magnific: download failed (%s): %s", url, exc)
+        return None
+
+
+def _handle_magnific_complete(identifier: str, asset_url: str, kind: str,
+                              meta: dict) -> dict | None:
+    """Download a finished Magnific asset, stage it into ComfyUI's input dir, and
+    return the drop payload the sidebar's ``injectNode`` consumes. Runs in the
+    watcher's background thread (see :mod:`src.utils.magnific_watch`)."""
+    dest_dir = _project_root() / "output_images" / "magnific"
+    path = _download_url_to(asset_url, dest_dir, f"magnific_{identifier}", kind)
+    if path is None:
+        return None
+    p = str(path)
+    real_kind = "video" if _is_video_path(p) else "image" if _is_image_path(p) else (kind or "image")
+    staged = _stage_into_comfy_input(p) if real_kind in ("image", "video") else None
+    tid = (meta or {}).get("thread_id") or ""
+    if tid and real_kind in ("image", "video"):
+        try:
+            cs.add_gallery_image(tid, p, "")
+        except Exception:  # noqa: BLE001
+            pass
+    return {
+        "kind": real_kind,
+        "path": p,
+        "filename": staged,
+        "name": path.name,
+        "node_candidates": _NODE_CANDIDATES.get(real_kind, []),
+        "web_url": (meta or {}).get("web_url", ""),
+    }
 
 
 def _resolve_media_ref(value: str, kind: str = "") -> str | None:
@@ -609,6 +681,9 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
     # in the panel too: for the life of this turn, status_bus fans notices out
     # onto out_q as live ``status_line`` events (unregistered in finally).
     status_bus.register_live(out_q)
+    # Same for structured notifications: a Magnific creation that finishes mid-turn
+    # streams its auto-drop live (between-turn ones go via the panel's idle poll).
+    notify_bus.register_live(out_q)
 
     _restore_state(pipeline, thread_id)
     session = getattr(pipeline, "_session", None)
@@ -852,6 +927,7 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
         out_q.put({"type": "error", "message": str(exc)})
     finally:
         status_bus.unregister_live(out_q)
+        notify_bus.unregister_live(out_q)
         with _reply_lock:
             _reply_registry.pop(req_id, None)
             _run_registry.pop(req_id, None)
@@ -1852,6 +1928,15 @@ def _build_app():
     app = Flask("agentY_bridge")
     app.logger.disabled = True
 
+    # Magnific background auto-drop: when an async creation finishes, the watcher
+    # downloads + stages the asset via this handler, then raises a notify_bus
+    # event the panel drains (idle poll / live SSE) to drop it onto the canvas.
+    try:
+        from src.utils import magnific_watch
+        magnific_watch.set_completion_handler(_handle_magnific_complete)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("magnific_watch wiring skipped: %s", exc)
+
     @app.after_request
     def _cors(resp):
         resp.headers["Access-Control-Allow-Origin"] = "*"
@@ -1907,6 +1992,19 @@ def _build_app():
         except (TypeError, ValueError):
             since = 0
         return jsonify(status_bus.snapshot(since))
+
+    # ── Structured background notifications (Magnific auto-drop, …) ─────────
+    # The panel polls this on an idle timer (there's no live SSE between turns)
+    # and also on connect / after each turn; ``since`` is the highest seq it has
+    # already handled so a completion delivered live during a turn isn't
+    # re-dropped. See :mod:`src.utils.notify_bus`.
+    @app.route("/agentY/notifications", methods=["GET"])
+    def notifications_feed():
+        try:
+            since = int(request.args.get("since", "0") or 0)
+        except (TypeError, ValueError):
+            since = 0
+        return jsonify(notify_bus.snapshot(since))
 
     # ── Available models (per vendor) for the quick-switch dropdown ─────────
     @app.route("/agentY/models", methods=["GET"])

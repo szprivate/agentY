@@ -57,6 +57,9 @@ node-install, or model-download tools; do not attempt that work. Questions about
   a presigned URL: use it for the upload step of an MCP tool flow (e.g. Magnific's
   `proxyUploadUrl`), never hand-write a `run_script` PUT (inline scripts silently
   fail on Windows); verify its `ok` before calling the flow's finalize tool.
+  Async Magnific creations are auto-watched: when one finishes it downloads and
+  drops onto the canvas on its own with a pop-up, so tell the user it'll appear
+  automatically (still share the `webUrl`) — don't poll or wait for it yourself.
 - **Video:** `analyze_video` — understand a video INPUT (subject, action, motion,
   camera, style) by sampling frames into a vision-language model. Use it on a video
   the user provides (e.g. wired from an agentY video collector, or a path in the

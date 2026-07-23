@@ -332,6 +332,57 @@ def authorize_server(name: str) -> dict:
                         "orchestrator when it is next built (restart the agent to use them now).")}
 
 
+def is_server_connected(name: str) -> bool:
+    """True when *name* has a live MCP client in this process."""
+    return name in _CLIENTS
+
+
+def call_mcp_tool(server: str, name: str, arguments: dict | None = None,
+                  timeout_s: int = 300) -> dict:
+    """Call a tool on a live MCP server from **non-agent** code (e.g. a background
+    poller), bypassing the LLM. Returns a plain dict — never raises::
+
+        {"ok": bool, "status": <str|None>, "text": <joined text blocks>,
+         "json": <parsed dict/list or None>, "error": <str, on failure>}
+
+    ``ok`` is False when the server isn't connected or the call errored. ``json``
+    is the parsed first JSON payload when the response body is JSON.
+    """
+    import datetime
+    import uuid as _uuid
+
+    client = _CLIENTS.get(server)
+    if client is None:
+        return {"ok": False, "error": f"MCP server {server!r} not connected"}
+    try:
+        res = client.call_tool_sync(
+            tool_use_id=f"bg-{_uuid.uuid4().hex[:8]}",
+            name=name,
+            arguments=arguments or {},
+            read_timeout_seconds=datetime.timedelta(seconds=timeout_s),
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)}
+
+    texts: list[str] = []
+    for block in (getattr(res, "content", None) or []):
+        t = block.get("text") if isinstance(block, dict) else getattr(block, "text", None)
+        if t:
+            texts.append(str(t))
+        elif isinstance(block, dict) and "json" in block:
+            texts.append(json.dumps(block["json"], ensure_ascii=False))
+    text = "\n".join(texts)
+    parsed = None
+    stripped = text.strip()
+    if stripped[:1] in ("{", "["):
+        try:
+            parsed = json.loads(stripped)
+        except Exception:  # noqa: BLE001
+            parsed = None
+    status = getattr(res, "status", None)
+    return {"ok": status != "error", "status": status, "text": text, "json": parsed}
+
+
 def mcp_status() -> dict:
     """Per-server status for the settings UI: enabled, auth mode, and connection
     state (connected/needs_auth/disabled/error)."""

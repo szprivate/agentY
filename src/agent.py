@@ -593,6 +593,38 @@ class ToolActivityHookProvider:
             pass
 
 
+class MagnificWatchHookProvider:
+    """Auto-register async Magnific creations for background auto-drop.
+
+    Magnific generation tools (``magnific__video_generate`` / ``image_generate`` /
+    upscale, …) return immediately with a queued ``creations[].identifier``; the
+    render finishes minutes later. On each ``AfterToolCallEvent`` for a
+    ``magnific__`` tool, this inspects the result for queued creation ids and hands
+    them to :func:`src.utils.magnific_watch.register_from_result`, which watches
+    each to completion and drops the finished asset onto the canvas + pops a note.
+    Deterministic — it never relies on the model to call a watch tool.
+    """
+
+    def register_hooks(self, registry: HookRegistry, **kwargs) -> None:  # noqa: ARG002
+        from strands.hooks.events import AfterToolCallEvent
+        registry.add_callback(AfterToolCallEvent, self._on_after)
+
+    def _on_after(self, event, **kwargs) -> None:  # noqa: ANN001, ARG002
+        try:
+            tu = getattr(event, "tool_use", None) or {}
+            name = tu.get("name", "")
+            if not name.startswith("magnific__"):
+                return
+            if getattr(event, "exception", None) is not None:
+                return
+            from src.utils import magnific_watch
+            n = magnific_watch.register_from_result(getattr(event, "result", None), tool=name)
+            if n:
+                logger.info("magnific_watch: registered %d creation(s) from %s", n, name)
+        except Exception:  # noqa: BLE001
+            pass
+
+
 # ---------------------------------------------------------------------------
 # Skills directory – lives at <project_root>/skills/
 # ---------------------------------------------------------------------------
@@ -1759,7 +1791,7 @@ def create_orchestrator_agent(
 
     extra_hooks = kwargs.pop("hooks", [])
     orch_hooks = [TokenUsageHookProvider(role="orchestrator"), ToolActivityHookProvider(role="orchestrator"),
-                  ComfyUIInterruptHook(), *extra_hooks]
+                  MagnificWatchHookProvider(), ComfyUIInterruptHook(), *extra_hooks]
 
     agent = _make_agent(
         role="orchestrator",
