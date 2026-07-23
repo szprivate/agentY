@@ -9,6 +9,12 @@ An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanony
 > a **`LoadImage` / video-loader node onto the graph** for every result — ready to
 > wire straight into your next workflow.
 
+> 📖 **New to agentY?** The [**Using agentY guide**](docs/using-agentY.md) is a
+> screenshot-driven tour of the whole thing — chat, the canvas **hook system**,
+> settings, MCP, and token usage.
+
+![agentY sidebar chat next to the ComfyUI graph](docs/images/overview.png)
+
 ---
 
 ## Features
@@ -19,7 +25,8 @@ An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanony
 - **Image & video generation** — Flux, WAN2.1/2.2, Qwen, HunyuanVideo, and many other models.
 - **Image editing** — reference-based editing, inpainting, upscaling, and more.
 - **Results as graph nodes** — every generated image/video is added to the open ComfyUI graph as a `LoadImage` / video-loader node (staged into ComfyUI's input dir), instead of being shown inline. The chat carries the agent's *text*.
-- **Canvas hook nodes** — annotate the graph with **`agentY hook`** nodes ("sweep the seed 6×", "upscale then add film grain") and let the agent run them; chain hooks for multi-step tasks and **bake** a chain into reusable native ComfyUI **subgraphs** (see [Canvas nodes](#canvas-nodes)).
+- **Canvas hook nodes** — annotate the graph with **`agentY hook`** nodes ("sweep the seed 6×", "upscale then add film grain") and let the agent run them; chain hooks for multi-step tasks, **bake** a chain into reusable native ComfyUI **subgraphs**, or run an interactive **iterative-refine loop** (one gen per turn, feeding each result back in). See [Canvas nodes](#canvas-nodes) and the [hook system guide](docs/using-agentY.md#the-hook-system).
+- **MCP support** — call tools from external **MCP servers** (config-driven `config/mcp.json`, `http`/`sse`/`stdio`, with `none` / `header` / **OAuth** auth). Ships with **Magnific** wired via OAuth (one-click *Authorize…* in Settings). See [MCP servers](docs/using-agentY.md#mcp-servers).
 - **Persistent chat history** — threads, messages, and the per-thread image gallery are stored in a self-contained local **SQLite** database (`memory/conversations.sqlite`). No Docker, Postgres, or S3.
 - **Slash commands** — `/restart`, `/stop`, `/unload`, `/clear_vram`, `/images`, `/clearhistory`, `/switch_model`, `/add_workflow`, `/remove_workflow`, `/resend` — with an in-panel autocomplete popup.
 - **In-panel Settings & token usage** — edit auth keys (`.env`) and your settings (saved to `config/settings.local.json`), and review per-model token cost, from ComfyUI's own Settings panel (no file editing required).
@@ -234,8 +241,9 @@ Installing `agentY-comfyuiConnect` adds two nodes under the **agentY** category.
   - *inline_parameter* — annotate an existing node ("sweep the seed 6×", "iterate the files in this folder"); the agent expands and runs your on-canvas graph.
   - *make_workflow* — the agent generates and runs a workflow (or Python script) from the prompt, using the wired input(s) if any.
   - *text* — the agent writes a string answer and drops a wireable `agentY text` node carrying it.
+  - *iterate* — an interactive **refinement loop**: the agent runs the graph one generation per turn, feeds each result back into the wired `LoadImage`, and asks for your next prompt (you can jump back to an earlier generation) until you say stop.
 
-  Its `passthrough` **outputs also auto-grow**, and all slots are type-agnostic, so one hook can gather several inputs and export several results — image, video, **or scalars (string/int/float)** — to the next hook. Wire hooks output→input to build a **multi-step chain**. A hook is inert on a normal *Queue Prompt* (it's a pure passthrough the agent removes before running), so it never affects a manual run. Toggle `ignore` to disable a hook without deleting it.
+  Its `out` **output** is type-agnostic, so one hook can gather several inputs and produce a result — image, video, **or scalars (string/int/float)** — for the next hook. Wire hooks output→input to build a **multi-step chain**. `freeze` decides whether the agent keeps the hook live (injects the value at run time) or bakes it into a plain workflow. A hook is inert on a normal *Queue Prompt* (it's a pure passthrough the agent removes before running), so it never affects a manual run. Toggle `ignore` to disable a hook without deleting it.
 
 - **`agentY python`** — runs an agent-authored Python snippet as a node. It's used by *baking* (below): a value the agent computed at runtime (e.g. a video's length) is placed here so it becomes a genuine, re-runnable output. ⚠️ **It executes arbitrary Python whenever the graph runs** — meant for your own, self-hosted, agent-built workflows; don't run baked workflows from untrusted sources. Set `AGENTY_PYTHON_NODE_DISABLED=1` to make it a no-op.
 
@@ -248,8 +256,10 @@ Each value resolves in order — first match wins: **CLI flag → environment va
 ### In-panel settings & token usage
 
 Open ComfyUI's **Settings** panel → **agentY**:
-- **Open agentY Settings…** edits your auth keys (`.env`) and every setting (models per stage, directories, toggles); changed values are saved as overrides in `config/settings.local.json`, leaving the committed defaults untouched — no file editing.
+- **Open agentY Settings…** edits your auth keys (`.env`) and every setting (models per stage, directories, toggles) in **collapsible groups** (collapsed by default); changed values are saved as overrides in `config/settings.local.json`, leaving the committed defaults untouched — no file editing. This is also where you edit **MCP servers** (`config/mcp.json`, with per-server status + an **Authorize…** button for OAuth), model **pricing**, and where the **message-history / long-term-memory viewers** now live.
 - **Open Token Usage…** (also the **📊** button in the chat panel's top bar) breaks down cost per model / per agent role from the persisted token log, with a **🗑 Clear log** button to purge it.
+
+The chat panel's top bar also has a **🖼 autograph toggle** — flip whether finished workflows/results are auto-loaded onto the canvas, live (no restart).
 
 ### Memory
 
@@ -268,6 +278,16 @@ Long-term memory is stored in a local FAISS index (`memory/agenty_memory.faiss`)
 ```
 
 You can also do this from the chat with `/add_workflow <path>` (or `/add_workflow canvas <name>` to register the open graph) and `/remove_workflow <name>`. Custom templates live in `comfyui_workflow_templates_custom/templates/`; the shared template/recipe corpus lives in **agenty_core**.
+
+---
+
+## Documentation
+
+- [**Using agentY**](docs/using-agentY.md) — the full, screenshot-driven usage
+  guide: chat, the canvas **hook system**, settings, MCP, token usage, memory,
+  and model configuration.
+- [Agent hook nodes](docs/agent-hook-nodes.md) — design & implementation notes
+  for the hook system.
 
 ---
 
