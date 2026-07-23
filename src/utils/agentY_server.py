@@ -2007,7 +2007,16 @@ def _build_app():
             since = int(request.args.get("since", "0") or 0)
         except (TypeError, ValueError):
             since = 0
-        return jsonify(notify_bus.snapshot(since))
+        snap = notify_bus.snapshot(since)
+        # `pending` = background generations still being watched. The panel uses
+        # it to stop the idle poll once nothing is in flight (re-arming on the
+        # next turn), so an idle tab isn't polling this endpoint forever.
+        try:
+            from src.utils import magnific_watch
+            snap["pending"] = magnific_watch.active_count()
+        except Exception:  # noqa: BLE001
+            snap["pending"] = 0
+        return jsonify(snap)
 
     # ── Available models (per vendor) for the quick-switch dropdown ─────────
     @app.route("/agentY/models", methods=["GET"])

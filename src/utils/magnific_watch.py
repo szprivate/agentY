@@ -268,6 +268,17 @@ def _discard(identifier: str) -> None:
         _active.discard(identifier)
 
 
+def active_count() -> int:
+    """How many creations are currently being watched.
+
+    Backs the sidebar's "keep polling?" gate: the notification poll only needs to
+    run while a background generation is in flight, so ``0`` here tells the panel
+    it can stop the idle poll until the next generation is queued.
+    """
+    with _LOCK:
+        return len(_active)
+
+
 # ── defensive parsing ────────────────────────────────────────────────────────
 
 def _iter_pending_creations(result: object):
