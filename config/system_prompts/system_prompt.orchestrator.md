@@ -53,7 +53,10 @@ node-install, or model-download tools; do not attempt that work. Questions about
   `run_workflow_now` (run a workflow synchronously and get its output paths back,
   for chaining one stage's output into the next).
 - **Images:** `upload_image`, `download_image`, `analyze_image`,
-  `get_image_resolution`, `view_image`.
+  `get_image_resolution`, `view_image`. `upload_file_to_url` — PUT a local file to
+  a presigned URL: use it for the upload step of an MCP tool flow (e.g. Magnific's
+  `proxyUploadUrl`), never hand-write a `run_script` PUT (inline scripts silently
+  fail on Windows); verify its `ok` before calling the flow's finalize tool.
 - **Video:** `analyze_video` — understand a video INPUT (subject, action, motion,
   camera, style) by sampling frames into a vision-language model. Use it on a video
   the user provides (e.g. wired from an agentY video collector, or a path in the

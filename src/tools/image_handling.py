@@ -483,6 +483,72 @@ def download_image(image_url: str, subfolder: str = "", downsize: bool = True) -
         return json.dumps({"error": str(exc)})
 
 
+# Extension → Content-Type for the PUT header when the caller doesn't pass one.
+_MIME_BY_EXT = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".webp": "image/webp", ".gif": "image/gif", ".bmp": "image/bmp",
+    ".tif": "image/tiff", ".tiff": "image/tiff", ".mp4": "video/mp4",
+    ".webm": "video/webm", ".mov": "video/quicktime", ".pdf": "application/pdf",
+}
+
+
+@tool
+def upload_file_to_url(url: str, file_path: str, content_type: str = "") -> str:
+    """HTTP PUT a local file's raw bytes to a presigned upload URL.
+
+    Use this for the **presigned-PUT step of an MCP upload flow** (e.g. Magnific:
+    ``creations_create_upload`` returns a ``proxyUploadUrl`` + a server-side
+    ``path``; PUT the file here, then call ``creations_finalize_upload`` with that
+    ``path``). It reads ``file_path`` from disk and sends the body as raw binary —
+    do **not** hand-write a ``python -c`` / ``curl`` script for this (multi-line
+    inline scripts silently fail to execute via ``run_script`` on Windows).
+
+    The returned ``status`` and ``ok`` are the **actual HTTP result**, so you can
+    verify the upload really landed before finalizing — an unverified finalize is
+    what produces "Upload not found … Did the PUT succeed?".
+
+    Args:
+        url: The presigned PUT target (e.g. Magnific's ``proxyUploadUrl``).
+        file_path: Local path to the file to upload (absolute preferred; a
+                   relative path is resolved against the project root).
+        content_type: Value for the ``Content-Type`` header. Defaults to the type
+                      inferred from the file extension (falls back to
+                      ``application/octet-stream``).
+
+    Returns:
+        JSON ``{"ok", "status", "file_path", "size_bytes", "content_type",
+        "response"}`` — ``ok`` is true only for a 2xx status. ``response`` is the
+        server body (truncated). On a local failure (missing file, network error)
+        returns ``{"ok": false, "error": "<message>"}``.
+    """
+    try:
+        p = Path(file_path)
+        if not p.is_absolute():
+            # Match how staged inputs are addressed elsewhere in the codebase.
+            p = (Path(__file__).resolve().parent.parent.parent / file_path).resolve()
+        if not p.exists():
+            return json.dumps({"ok": False, "error": f"file not found: {p}"})
+        if not p.is_file():
+            return json.dumps({"ok": False, "error": f"not a file: {p}"})
+
+        ct = content_type.strip() or _MIME_BY_EXT.get(
+            p.suffix.lower(), "application/octet-stream"
+        )
+        data = p.read_bytes()
+        resp = requests.put(url, data=data, headers={"Content-Type": ct}, timeout=120)
+        body = (resp.text or "")[:500]
+        return json.dumps({
+            "ok": 200 <= resp.status_code < 300,
+            "status": resp.status_code,
+            "file_path": str(p),
+            "size_bytes": len(data),
+            "content_type": ct,
+            "response": body,
+        })
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"ok": False, "error": str(exc), "file_path": file_path})
+
+
 @tool
 def view_image(
     filename: str,

@@ -60,6 +60,7 @@ from src.tools.image_handling import (  # noqa: F401
     get_image_resolution,
     analyze_image,
     download_image,
+    upload_file_to_url,
 )
 from src.tools.video_handling import analyze_video, set_video_agent  # noqa: F401
 from src.tools.comfyui import check_model  # noqa: F401
@@ -398,6 +399,7 @@ ORCHESTRATOR_TOOLS: list = [
     analyze_image,
     analyze_video,       # understand a video input (samples frames -> Video Agent)
     download_image,
+    upload_file_to_url,  # PUT a local file to a presigned URL (MCP upload flows)
     # Files / shell / web
     read_text_file,
     write_text_file,
