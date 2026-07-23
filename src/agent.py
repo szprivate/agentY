@@ -664,7 +664,7 @@ _ORCH_SKILLS_DIR = _SKILLS_DIR / "orchestrator-skills"
 # coder subagent (via _load_subagent_skill), never activated from a listing.
 _ASSEMBLY_SKILL_NAMES = [
     "annotation", "assemble-from-template", "assemble-new-workflow",
-    "assemble-workflow-learnings", "feedback-loop",
+    "assemble-workflow-learnings",
     "flux-sampling", "image-batch", "kling-multishot", "prompting", "recipe",
     "upscale-ultimatesd", "video-gemini-motionpromptgeneration",
     "workflow-templates", "batch-handoff",
