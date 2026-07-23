@@ -17,10 +17,13 @@ Wiring:
   at startup (it owns the ComfyUI-input staging + gallery helpers); this module
   stays free of any server/import cycle.
 
-Polling uses ``creations_wait`` — the MCP-sanctioned way to get the final asset
-URL — through :func:`src.tools.mcp_tools.call_mcp_tool` (direct client call, no
-agent). Response shapes vary by tool, so parsing is deliberately defensive and
-the raw body is logged for a first live run.
+Polling uses ``creations_get`` (arg ``creationIdentifier``) through
+:func:`src.tools.mcp_tools.call_mcp_tool` (direct client call, no agent) — its
+completed shape is a proven **key:value text** body (not json) carrying
+``status:`` and, when done, ``url:`` (the asset) alongside a separate ``webUrl:``
+(viewer) and ``thumbnailUrl:``/``previewUrl:``. So the body is parsed as text
+(json still wins when present), the asset is taken from ``url``/asset keys, and
+the viewer/thumbnail links are excluded. The first raw body is logged per watch.
 """
 from __future__ import annotations
 
@@ -34,8 +37,8 @@ logger = logging.getLogger("agentY.magnific_watch")
 
 # ── tunables ─────────────────────────────────────────────────────────────────
 _MAX_WATCH_SECONDS = 30 * 60      # give up after 30 min (avoid a zombie thread)
-_WAIT_TIMEOUT_S = 240             # per creations_wait long-poll read timeout
-_POLL_INTERVAL_S = 6              # gap between polls when the wait returns early
+_GET_TIMEOUT_S = 60               # per creations_get read timeout (immediate call)
+_POLL_INTERVAL_S = 10             # gap between status polls
 
 _DONE = {"done", "completed", "complete", "succeeded", "success", "finished",
          "ready", "generated"}
@@ -45,10 +48,17 @@ _VIDEO_EXT = (".mp4", ".webm", ".mov", ".m4v", ".mkv", ".gif")
 _IMAGE_EXT = (".png", ".jpg", ".jpeg", ".webp", ".avif", ".bmp", ".tif", ".tiff")
 _MEDIA_EXT = _VIDEO_EXT + _IMAGE_EXT
 
-# A URL that points at the *asset* (not the app's creation-viewer page). The
-# webUrl Magnific returns for sharing is www.magnific.com/app/creation/<id> — no
-# media extension — so the extension test excludes it automatically.
 _URL_RE = re.compile(r"https?://[^\s\"'<>)\]]+", re.IGNORECASE)
+
+# On a completed creation, the finished asset lives under one of these keys; the
+# share/viewer link (webUrl) and the low-res thumbnail/preview are separate keys
+# we must NOT mistake for the asset.
+_ASSET_KEYS = ("asseturl", "asset_url", "outputurl", "output_url",
+               "downloadurl", "download_url", "resulturl", "result_url",
+               "videourl", "video_url", "imageurl", "image_url",
+               "fileurl", "file_url", "url", "output", "video", "image",
+               "result", "asset")
+_EXCLUDE_URL_KEYS = ("weburl", "thumbnailurl", "thumburl", "previewurl", "preview_url")
 
 # ── injected completion handler ──────────────────────────────────────────────
 # Signature: (identifier, asset_url, kind, meta) -> Optional[dict]
@@ -115,15 +125,18 @@ def _watch(identifier: str, meta: dict) -> None:
     first_raw_logged = False
     try:
         while time.time() < deadline:
-            res = call_mcp_tool("magnific", "creations_wait",
-                                {"identifier": identifier}, timeout_s=_WAIT_TIMEOUT_S)
+            # creations_get returns the current state (proven shape: a key:value
+            # text body — NOT json — carrying `status:` and, when done, `url:`).
+            # Its argument is `creationIdentifier` (not `identifier`).
+            res = call_mcp_tool("magnific", "creations_get",
+                                {"creationIdentifier": identifier}, timeout_s=_GET_TIMEOUT_S)
             if not res.get("ok") and res.get("error"):
-                logger.info("magnific_watch[%s]: wait error: %s", identifier, res["error"])
+                logger.info("magnific_watch[%s]: get error: %s", identifier, res["error"])
                 time.sleep(_POLL_INTERVAL_S)
                 continue
-            body = res.get("json")
+            body = res.get("json") or _parse_kv_text(res.get("text", ""))
             if not first_raw_logged:
-                logger.info("magnific_watch[%s]: first wait body: %s",
+                logger.info("magnific_watch[%s]: first get body: %s",
                             identifier, (res.get("text") or "")[:600])
                 first_raw_logged = True
 
@@ -133,14 +146,12 @@ def _watch(identifier: str, meta: dict) -> None:
             if status in _FAIL:
                 _emit_fail(identifier, meta, status)
                 return
-            if asset_url and (status in _DONE or status is None):
-                # A media asset URL is the real completion signal; some tools omit
-                # an explicit terminal status but only surface the asset when done.
+            if status in _DONE and asset_url:
                 _emit_done(identifier, meta, asset_url)
                 return
             if status in _DONE and not asset_url:
-                logger.info("magnific_watch[%s]: done but no asset URL found in body",
-                            identifier)
+                logger.info("magnific_watch[%s]: done but no asset URL in body: %s",
+                            identifier, (res.get("text") or "")[:300])
                 _emit_fail(identifier, meta, "done-no-asset")
                 return
             time.sleep(_POLL_INTERVAL_S)
@@ -271,37 +282,61 @@ def _extract_status(body: object) -> Optional[str]:
     return str(s).lower() if s else None
 
 
-def _extract_asset_url(body: object) -> Optional[str]:
-    """Find the first media-asset URL anywhere in *body* (deep walk).
+def _parse_kv_text(text: str) -> Optional[dict]:
+    """Parse Magnific's key:value text body (creations_get) into a flat dict.
 
-    Prefers an explicit asset field, then any http(s) URL whose path ends in a
-    known media extension. The share/viewer webUrl is excluded (no extension).
+    Example body::
+
+        identifier: fFvPeRzCDY
+        status: completed
+        url: "https://pikaso.cdnpk.net/.../3342702803.png?token=..."
+        webUrl: "https://www.magnific.com/app/creation/fFvPeRzCDY?..."
+
+    Splits each line on the first ``:`` and strips surrounding quotes. Returns
+    None when *text* has no ``key: value`` lines (so json parsing still wins).
+    """
+    if not text or not isinstance(text, str):
+        return None
+    out: dict = {}
+    for line in text.splitlines():
+        if ":" not in line:
+            continue
+        key, _, val = line.partition(":")
+        key = key.strip()
+        if not key or " " in key:  # skip prose lines that merely contain a colon
+            continue
+        out[key] = val.strip().strip('"').strip()
+    return out or None
+
+
+def _extract_asset_url(body: object) -> Optional[str]:
+    """Find the finished asset's URL in *body* (deep walk).
+
+    Takes an explicit asset key's http(s) URL directly (a completed creation's
+    ``url`` IS the asset, extension or not — a video mp4 may carry a ``?token=``),
+    while never mistaking the viewer ``webUrl`` or a thumbnail/preview for it.
+    Falls back to any media-extension URL found in the body.
     """
     if body is None:
         return None
-    preferred_keys = ("assetUrl", "asset_url", "outputUrl", "output_url",
-                      "resultUrl", "result_url", "downloadUrl", "download_url",
-                      "videoUrl", "imageUrl", "fileUrl", "url", "video", "image",
-                      "output", "asset", "result")
+
+    def _http(u) -> bool:
+        return isinstance(u, str) and u.lower().startswith("http")
 
     def _is_media(u: str) -> bool:
-        if not isinstance(u, str) or not u.lower().startswith("http"):
-            return False
-        path = u.split("?", 1)[0].lower()
-        return path.endswith(_MEDIA_EXT)
+        return _http(u) and u.split("?", 1)[0].lower().endswith(_MEDIA_EXT)
 
-    # Pass 1: preferred keys carrying a media URL.
+    # Pass 1: an explicit asset key holding an http URL (excluding webUrl/thumb/preview).
     def _walk_pref(node):
         if isinstance(node, dict):
-            for k in preferred_keys:
-                v = node.get(k)
-                if _is_media(v):
+            lower = {str(k).lower(): v for k, v in node.items()}
+            for k in _ASSET_KEYS:
+                v = lower.get(k)
+                if _http(v):
                     return v
-                if isinstance(v, dict):
-                    for cand in _URL_RE.findall(str(v)):
-                        if _is_media(cand):
-                            return cand
-            for v in node.values():
+            for kk, v in node.items():
+                if str(kk).lower() in _EXCLUDE_URL_KEYS:
+                    continue
                 r = _walk_pref(v)
                 if r:
                     return r
@@ -316,14 +351,14 @@ def _extract_asset_url(body: object) -> Optional[str]:
     if hit:
         return hit
 
-    # Pass 2: any media URL found by scanning the serialized body.
+    # Pass 2: any media-extension URL in the serialized body, minus the viewer page.
     import json as _json
     try:
         blob = _json.dumps(body)
     except Exception:  # noqa: BLE001
         blob = str(body)
     for cand in _URL_RE.findall(blob):
-        if _is_media(cand):
+        if _is_media(cand) and "/app/creation/" not in cand and "preview" not in cand.lower():
             return cand
     return None
 
