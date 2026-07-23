@@ -268,8 +268,7 @@ can **jump back**:
 - *"back to generation 3, then add rain"*
 
 Keep going until you say **stop**. (Driven by the `iterate_step` tool and the
-`iterative-refine` skill; see also the design notes in
-[agent-hook-nodes.md](agent-hook-nodes.md).)
+`iterative-refine` skill.)
 
 ---
 
@@ -450,5 +449,4 @@ corpus lives in **agenty_core**.
 
 ---
 
-*See also: [README](../README.md) · [agent-hook-nodes.md](agent-hook-nodes.md)
-(hook design & implementation notes).*
+*See also: [README](../README.md).*

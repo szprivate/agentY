@@ -87,7 +87,11 @@ _run_registry: dict[str, dict] = {}
 
 # ── Slash commands (mirrors the frontend popup list) ──────────────────────────
 
+# The /help command points here (GitHub renders the guide with its images inline).
+DOCS_URL = "https://github.com/szprivate/agentY/blob/main/docs/using-agentY.md"
+
 SLASH_COMMANDS = [
+    {"name": "/help",            "description": "Open the agentY usage guide in a new browser tab"},
     {"name": "/restart",         "description": "Restart the agent pipeline"},
     {"name": "/stop",            "description": "Stop and shut down the agent"},
     {"name": "/unload",          "description": "Unload Ollama models from VRAM"},
@@ -925,6 +929,13 @@ def _handle_command(thread_id: str, text: str, canvas_prompt: dict | None = None
     low = text.strip().lower()
     parts = text.strip().split(None, 2)
     cmd = parts[0].lower()
+
+    # /help is normally intercepted client-side (agent_chat.js opens the guide in a
+    # new tab). This backend branch is the fallback for any client that forwards it —
+    # it surfaces the link (and keeps `/help` from ever reaching the LLM).
+    if cmd in ("/help", "help", "/docs", "docs", "/guide", "guide"):
+        return [_sys(f"📖 agentY usage guide: [{DOCS_URL}]({DOCS_URL})\n\n"
+                     "Type `/help` in the chat panel to open it in a new browser tab.")]
 
     if cmd in ("/restart", "restart"):
         def _do():

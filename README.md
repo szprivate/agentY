@@ -286,8 +286,6 @@ You can also do this from the chat with `/add_workflow <path>` (or `/add_workflo
 - [**Using agentY**](docs/using-agentY.md) — the full, screenshot-driven usage
   guide: chat, the canvas **hook system**, settings, MCP, token usage, memory,
   and model configuration.
-- [Agent hook nodes](docs/agent-hook-nodes.md) — design & implementation notes
-  for the hook system.
 
 ---
 
