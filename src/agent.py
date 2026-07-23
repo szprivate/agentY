@@ -9,6 +9,7 @@ Two-agent pipeline:
 
 import datetime
 import json
+import logging
 import os
 import subprocess
 from pathlib import Path
@@ -619,10 +620,16 @@ class MagnificWatchHookProvider:
                 return
             from src.utils import magnific_watch
             n = magnific_watch.register_from_result(getattr(event, "result", None), tool=name)
-            if n:
-                logger.info("magnific_watch: registered %d creation(s) from %s", n, name)
-        except Exception:  # noqa: BLE001
-            pass
+            # Log unconditionally (even n==0) so a *missed* auto-drop is diagnosable:
+            # n==0 means this magnific__ result carried no queued creation id to watch
+            # (already terminal, unparseable, or a non-generating tool). Goes to the
+            # persistent .logs/magnific_watch.log via the shared watcher logger.
+            logging.getLogger("agentY.magnific_watch").info(
+                "hook: %s → registered %d watcher(s)", name, n)
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger("agentY.magnific_watch").warning(
+                "hook: register_from_result failed for a magnific__ tool: %s",
+                exc, exc_info=True)
 
 
 # ---------------------------------------------------------------------------

@@ -35,6 +35,34 @@ from typing import Callable, Optional
 
 logger = logging.getLogger("agentY.magnific_watch")
 
+
+def _setup_file_log() -> None:
+    """Persist watcher diagnostics to ``.logs/magnific_watch.log``.
+
+    The whole auto-drop pipeline (register → poll ``creations_get`` → download →
+    ``notify_bus.emit``) runs in a background daemon thread whose logging goes
+    only to the ephemeral :5000 terminal. A dedicated file makes a *failed* drop
+    diagnosable after the fact (was the watcher registered? what did the poll
+    return? did it emit?) without staring at a scrolling console.
+    """
+    if any(getattr(h, "_agenty_magnific", False) for h in logger.handlers):
+        return
+    try:
+        from pathlib import Path as _P
+        log_dir = _P(__file__).resolve().parents[2] / ".logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        h = logging.FileHandler(log_dir / "magnific_watch.log", encoding="utf-8")
+        h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        h._agenty_magnific = True  # type: ignore[attr-defined]
+        logger.addHandler(h)
+        logger.setLevel(logging.INFO)
+        logger.propagate = True  # keep the :5000 terminal output too
+    except Exception:  # noqa: BLE001 — logging must never break the watcher
+        pass
+
+
+_setup_file_log()
+
 # ── tunables ─────────────────────────────────────────────────────────────────
 _MAX_WATCH_SECONDS = 30 * 60      # give up after 30 min (avoid a zombie thread)
 _GET_TIMEOUT_S = 60               # per creations_get read timeout (immediate call)
