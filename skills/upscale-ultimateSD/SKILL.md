@@ -19,7 +19,7 @@ Set `task.type` to `image_edit` (UltimateSD re-samples the image, it is not a pu
 
 Input / output contract:
 - `input_nodes`: exactly **1** image (node `8`, `LoadImage`). If the user supplies more than one image, keep only the first and add a WARNING blocker.
-- `output_nodes`: exactly **1** (node `7`, `SaveImage`), `output_path` = `./agentOut/image_edit` (per `output-paths` skill).
+- `output_nodes`: exactly **1** (node `7`, `SaveImage`), `output_path` = `agent/images` (per `output-paths` skill).
 - `prompt.positive`: a short descriptor of the **target look** — what the upscaler should reinforce (materials, textures, lighting), NOT a re-description of the subject. Default template prompt is a photoreal detail prompt — keep it unless the user asks for a specific style (anime / painterly / matte).
 - `prompt.negative`: keep the template default (blur / artifacts / plastic skin / cartoon etc.) unless the user requests otherwise.
 - `resolution_width` / `resolution_height`: **do not set** — UltimateSD derives output size from `upscale_by` × input image size. Leave out of the brainbriefing.
@@ -62,7 +62,7 @@ Do not proceed to handoff until the file is confirmed present.
 
 **2. Patch input node (node 8 LoadImage)**
 
-Standard `input_nodes` patch from the brainbriefing — set `image` to the uploaded input filename. The input image MUST already be uploaded to the ComfyUI input directory (see `brain-learnings` — LoadImage validation fails on local paths).
+Standard `input_nodes` patch from the brainbriefing — set `image` to the uploaded input filename. The input image MUST already be uploaded to the ComfyUI input directory (see `assemble-workflow-learnings` — LoadImage validation fails on local paths).
 
 If `input_image_count` > 1 in the brainbriefing: keep only the first image, drop the rest. This template has no batching node and a second LoadImage would not be wired to anything.
 
@@ -157,7 +157,7 @@ Minimal patch set (2× upscale, default prompts, denoise 0.15):
 - [ ] Template set to `upscale_ultimateSD`
 - [ ] `task.type` set to `image_edit`
 - [ ] Exactly 1 input image in `input_nodes`
-- [ ] Exactly 1 output node (SaveImage, node `7`, path `./agentOut/image_edit`)
+- [ ] Exactly 1 output node (SaveImage, node `7`, path `agent/images`)
 - [ ] `prompt.positive` describes target texture/look, not subject
 - [ ] No `resolution_width` / `resolution_height` set in brainbriefing
 - [ ] Non-default upscale factor / denoise / tile size flagged as WARNING
