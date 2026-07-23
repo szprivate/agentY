@@ -2135,6 +2135,71 @@ def _build_app():
             return jsonify({"ok": False, "error": str(exc)}), 500
         return jsonify(result)
 
+    # ── Auto-graph toggle (autoload_workflows_into_canvas) ──────────────────
+    # Backs the side-panel top-bar toggle. GET reports the current state; POST
+    # flips it. Persisted via _update_settings_file → settings.local.json, whose
+    # save drops the settings cache, so the executor's next run reads the new
+    # value with no restart. The AGENTY_CANVAS_AUTOLOAD env var, when set, wins in
+    # the executor — reported as env_locked so the UI can show the toggle as fixed.
+    @app.route("/agentY/autograph", methods=["GET", "POST", "OPTIONS"])
+    def autograph_route():
+        if request.method == "OPTIONS":
+            return "", 204
+        from src.utils.settings import load_settings
+        env_locked = os.environ.get("AGENTY_CANVAS_AUTOLOAD") is not None
+        if request.method == "GET":
+            try:
+                enabled = bool(load_settings().get("autoload_workflows_into_canvas", False))
+                return jsonify({"ok": True, "enabled": enabled, "env_locked": env_locked})
+            except Exception as exc:  # noqa: BLE001
+                return jsonify({"ok": False, "error": str(exc)}), 500
+        body = request.get_json(silent=True) or {}
+        enabled = bool(body.get("enabled"))
+        try:
+            _update_settings_file({"autoload_workflows_into_canvas": enabled})
+            return jsonify({"ok": True, "enabled": enabled, "env_locked": env_locked})
+        except Exception as exc:  # noqa: BLE001
+            logger.error("autograph toggle failed: %s", exc, exc_info=True)
+            return jsonify({"ok": False, "error": str(exc)}), 500
+
+    # ── MCP servers (config/mcp.json + one-time OAuth authorize) ────────────
+    @app.route("/agentY/mcp", methods=["GET", "POST", "OPTIONS"])
+    def mcp_config_route():
+        if request.method == "OPTIONS":
+            return "", 204
+        from src.tools.mcp_tools import load_mcp_config, save_mcp_config, mcp_status
+        if request.method == "GET":
+            try:
+                return jsonify({"ok": True, "config": load_mcp_config(), "status": mcp_status()})
+            except Exception as exc:  # noqa: BLE001
+                return jsonify({"ok": False, "error": str(exc)}), 500
+        body = request.get_json(silent=True) or {}
+        cfg = body.get("config") if isinstance(body.get("config"), dict) else body
+        try:
+            save_mcp_config(cfg)
+            return jsonify({"ok": True})
+        except Exception as exc:  # noqa: BLE001
+            logger.error("mcp config save failed: %s", exc, exc_info=True)
+            return jsonify({"ok": False, "error": str(exc)}), 500
+
+    @app.route("/agentY/mcp/authorize", methods=["POST", "OPTIONS"])
+    def mcp_authorize_route():
+        # Runs the interactive OAuth flow (opens a browser, waits for the redirect);
+        # a deliberate one-time action, so blocking this request is fine.
+        if request.method == "OPTIONS":
+            return "", 204
+        body = request.get_json(silent=True) or {}
+        name = str(body.get("name") or "").strip()
+        if not name:
+            return jsonify({"ok": False, "error": "missing server name"}), 400
+        from src.tools.mcp_tools import authorize_server
+        try:
+            res = authorize_server(name)
+            return jsonify(res), (200 if res.get("ok") else 400)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("mcp authorize failed: %s", exc, exc_info=True)
+            return jsonify({"ok": False, "error": str(exc)}), 500
+
     # ── Threads ────────────────────────────────────────────────────────────
     @app.route("/agentY/threads", methods=["GET", "POST", "OPTIONS"])
     def threads():

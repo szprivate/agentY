@@ -1744,6 +1744,19 @@ def create_orchestrator_agent(
 
     tools = list(ORCHESTRATOR_TOOLS) + list(extra_tools or [])
 
+    # Tools from configured MCP servers (config/mcp.json). Fully contained: any
+    # failure (unreachable/unauthorized server, missing deps) is swallowed so the
+    # orchestrator always builds. OAuth servers with no stored token are skipped
+    # here (no browser at startup) — authorize once via agentY Settings.
+    try:
+        from src.tools.mcp_tools import load_mcp_tools as _load_mcp_tools
+        _mcp_tools = _load_mcp_tools()
+        if _mcp_tools:
+            tools += _mcp_tools
+            print(f"[agentY:orchestrator] Loaded {len(_mcp_tools)} MCP tool(s).")
+    except Exception as _mcp_exc:  # noqa: BLE001
+        print(f"[agentY:orchestrator] MCP tools skipped: {_mcp_exc}")
+
     extra_hooks = kwargs.pop("hooks", [])
     orch_hooks = [TokenUsageHookProvider(role="orchestrator"), ToolActivityHookProvider(role="orchestrator"),
                   ComfyUIInterruptHook(), *extra_hooks]

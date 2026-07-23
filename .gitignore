@@ -31,6 +31,9 @@ config/models.json
 # Per-machine settings overrides (paths, model pins, private endpoints). Committed
 # defaults live in config/settings.default.toml; this file is deep-merged over them.
 config/settings.local.json
+# OAuth tokens + dynamic client registrations for MCP servers — SECRETS, never commit.
+# The MCP server definitions (config/mcp.json) hold no secrets and are tracked.
+config/.mcp_tokens/
 .vscode
 
 # The workflow-template corpus + recipe DB are now canonical in agenty_core
