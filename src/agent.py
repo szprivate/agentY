@@ -1026,6 +1026,70 @@ def create_video_agent(
     return agent
 
 
+def create_qa_agent(
+    ollama_model: str | None = None,
+    anthropic_model: str | None = None,
+    **kwargs,
+) -> Agent:
+    """Create the QA agent — stateless, single-shot judging of a finished output.
+
+    Reads one produced image (or a video's sampled frames) plus the user's QA
+    briefing and returns a structured per-criterion verdict. Stateless and
+    tool-less by design, exactly like the Vision Agent: every output is judged on
+    its own evidence, so one harsh call can't sour the next, and there is no tool
+    loop to wander off in while the user waits.
+
+    This is the role where a **stronger** model earns its cost, which is why it has
+    its own setting rather than sharing ``executor_vision_model``: it runs once per
+    finished output, and a weak judge is worse than none — it waves through defects
+    or fails clean work and triggers a pointless re-render. Must be multimodal.
+
+    Configuration (in priority order):
+    1. ``QA_AGENT_MODEL`` env var (``'provider,model'`` or a bare model name)
+    2. ``llm.pipeline.qa_checker`` in settings
+    3. ``llm.pipeline.executor_vision_model`` — the shared vision model fallback
+
+    Args:
+        ollama_model:    Ollama model override.
+        anthropic_model: Anthropic model override.
+        **kwargs:        Forwarded to the Strands Agent constructor.
+    """
+    _env_model = os.environ.get("QA_AGENT_MODEL", "")
+    _raw = _env_model or str(_cfg("", "pipeline", "qa_checker", default=""))
+    if not _raw:
+        _raw = str(_cfg("", "pipeline", "executor_vision_model", default="claude,claude-haiku-4-5"))
+    if "," not in _raw:
+        _raw = f"claude,{_raw}"
+    _settings_llm, _settings_model = _parse_llm_setting(_raw)
+    resolved_llm = _settings_llm or "claude"
+
+    if resolved_llm == "ollama":
+        resolved_ollama = ollama_model or _settings_model or "gemma4:26b"
+        resolved_anthropic = anthropic_model or str(
+            _cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
+    else:
+        resolved_ollama = ollama_model or "gemma4:26b"
+        resolved_anthropic = anthropic_model or _settings_model or str(
+            _cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
+
+    # The QA prompt file is sectioned (## system / ## question / …) because the
+    # question templates are data for the caller, not part of the agent's role.
+    from src.utils.qa import load_qa_prompts
+    system_prompt = load_qa_prompts().get("system", "") or _load_system_prompt("qa_checker")
+    agent = _make_agent(
+        role="qa_checker",
+        llm=resolved_llm,
+        dashscope_model=_settings_model,
+        system_prompt=system_prompt,
+        tools=VISION_AGENT_TOOLS,  # none — judging is a single look, not an investigation
+        ollama_model=resolved_ollama,
+        anthropic_model=resolved_anthropic,
+        **kwargs,
+    )
+    agent.conversation_manager = SlidingWindowConversationManager(window_size=2)
+    return agent
+
+
 def create_query_templates_agent(
     llm: str | None = None,
     ollama_model: str | None = None,

@@ -333,6 +333,19 @@ def _is_iterate(hook: dict) -> bool:
     return str(hook.get("purpose", "") or "").strip().lower() in _ITERATE_PURPOSES
 
 
+_QA_PURPOSES = {"qa", "quality", "check", "review", "qa_check", "qa-check"}
+
+
+def _is_qa(hook: dict) -> bool:
+    """True if *hook* carries a QA briefing rather than asking for work.
+
+    A qa hook produces nothing and is never "run": its directive is the checklist
+    and its anchors are reference/mood images. It is read by
+    :mod:`src.utils.qa` after a generation finishes, to judge what came out.
+    """
+    return str(hook.get("purpose", "") or "").strip().lower() in _QA_PURPOSES
+
+
 _GENERAL_PURPOSES = {"general_request", "general-request", "general", "request",
                      "free", "freeform", "free_form", "free-form"}
 
@@ -632,9 +645,11 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
     standin_hooks = [h for h in hooks if _is_standin(h)]
     iterate_hooks = [h for h in hooks if _is_iterate(h)]
     general_hooks = [h for h in hooks if _is_general(h)]
+    qa_hooks = [h for h in hooks if _is_qa(h)]
     directive_hooks = [h for h in hooks
                        if not _is_standin(h) and not _is_text(h)
-                       and not _is_iterate(h) and not _is_general(h)]
+                       and not _is_iterate(h) and not _is_general(h)
+                       and not _is_qa(h)]
 
     lines = [
         "[CANVAS HOOKS — the user's ON-CANVAS graph carries hook annotations (below) "
@@ -744,6 +759,27 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
                         "image output into this hook's anchor")
             tail = f' — "{directive}"' if directive else ""
             lines.append(f"- ITERATE hook {hid}: {prompt_where}; {fb_where}{tail}")
+
+    if qa_hooks:
+        lines.append(
+            "\nQA hook(s) — these are NOT work for you. Each carries the user's QUALITY "
+            "BRIEFING for this graph: its directive is the checklist and its wired "
+            "anchors are reference/mood images. A separate QA agent applies it to every "
+            "image/video the run produces, AFTER generation — you do not have to check "
+            "anything yourself, and you must NOT treat the anchors as inputs to a "
+            "workflow, place_canvas_text them, or apply_canvas_hooks them. Note the "
+            "criteria while you write prompts (satisfying them up front beats being sent "
+            "back), then carry on with the rest of the request as usual. If the QA agent "
+            "later reports a failure you will be given the failed criteria and asked to "
+            "adjust and re-run:"
+        )
+        for h in qa_hooks:
+            hid = h.get("hook_node_id")
+            directive = str(h.get("directive", "") or "").strip()
+            refs = sum(len((a.get("tapped") or [])) or 1
+                       for a in (h.get("anchors") or []) if isinstance(a, dict))
+            ref_txt = f"{refs} reference input(s) wired" if refs else "no reference images wired"
+            lines.append(f'- QA hook {hid} ({ref_txt}) — criteria: "{directive}"')
 
     if text_hooks:
         lines.append(

@@ -498,8 +498,9 @@ class Pipeline:
         # This is the authoritative source for OUTPUT_PATHS / INPUT_PATHS_USER_MESSAGE
         # that bridges chained sessions even when triage says "new_request".
         self._last_prior_summary: str | None = None
-        # Whether the current turn requested an explicit Vision QA pass.
-        self._run_qa: bool = False
+        # The QA briefing in force this turn (src.utils.qa.QaBriefing) — set by the
+        # server from the canvas qa hook / thread /qa briefing. None = no QA.
+        self._qa_briefing = None
         # Bind the memory tools module-level session so memory_read / memory_write
         # always operate on the correct per-session namespace.
         _set_memory_session_id(session_id)
@@ -958,7 +959,7 @@ class Pipeline:
             try:
                 async for _line in _execute_workflow(
                     workflow_path, brief, user_message="", verbose=self._verbose,
-                    collected_paths=base, run_qa=False,
+                    collected_paths=base, qa_briefing=self._qa_briefing,
                 ):
                     # Surface each executor line in the chat panel too — this runs
                     # inside a tool call, so the pipeline's own event loop isn't
@@ -1254,7 +1255,7 @@ class Pipeline:
             try:
                 async for _line in _execute_workflow(
                     str(wf), brief, user_message="", verbose=self._verbose,
-                    collected_paths=out_base, run_qa=False,
+                    collected_paths=out_base, qa_briefing=self._qa_briefing,
                 ):
                     _push_progress(str(_line))
                     if self._verbose:
@@ -1629,7 +1630,7 @@ class Pipeline:
 
     async def _astream_orchestrator(self, user_input, *, qa_reply_queue: asyncio.Queue | None = None,
                                     canvas_prompt: dict | None = None, canvas_hooks: list | None = None,
-                                    canvas_selection: list | None = None):
+                                    canvas_selection: list | None = None, qa_briefing=None):
         """Stream the orchestrator for one turn, then run any signalled workflow.
 
         This replaces the triage → route → handler block: the orchestrator owns
@@ -1641,7 +1642,6 @@ class Pipeline:
         self._last_turn_usages = []
         self._vision_usage_snap = self._usage_snapshot(self._vision_agent) if self._vision_agent else {}
         self._video_usage_snap = self._usage_snapshot(self._video_agent) if self._video_agent else {}
-        self._run_qa = False
         user_text = self._extract_text(user_input)
         # Register image paths embedded in a plain-text message so assembly/LoadImage
         # wiring receives real input paths (Chainlit-style callers set this already).
@@ -1659,6 +1659,9 @@ class Pipeline:
         self._canvas_hooks = [h for h in (canvas_hooks or []) if isinstance(h, dict)]
         self._canvas_keeplive_run = False
         self._chain_output_paths = []
+        # The QA briefing in force this turn, already resolved by the caller
+        # (a canvas qa hook wins over the thread's /qa briefing). None = no QA.
+        self._qa_briefing = qa_briefing
         # Arbitrary selected nodes (id/type/title/widgets) the orchestrator can
         # read and write back via set_canvas_node_params.
         self._canvas_selection = [n for n in (canvas_selection or []) if isinstance(n, dict)]
@@ -1761,7 +1764,12 @@ class Pipeline:
                         user_message=user_text,
                         verbose=self._verbose,
                         collected_paths=exec_paths,
-                        run_qa=self._run_qa,
+                        qa_briefing=self._qa_briefing,
+                        # A member that RAN but missed the user's QA criteria is
+                        # re-generated against exactly the criteria it missed,
+                        # bounded by qa.max_retries. Never for the keep-live run:
+                        # that is the user's own canvas graph, not ours to rewrite.
+                        qa_retry_fn=None if _keeplive_run else self._qa_retry,
                         # Heal failed members in place, concurrently, on the fly:
                         # the executor re-queues each healed workflow immediately
                         # while the survivors keep running (≤3 repairs at once).
@@ -1909,7 +1917,7 @@ class Pipeline:
 
     async def stream_async(self, user_input, *, qa_reply_queue: asyncio.Queue | None = None,
                            canvas_prompt: dict | None = None, canvas_hooks: list | None = None,
-                           canvas_selection: list | None = None):  # noqa: ANN201
+                           canvas_selection: list | None = None, qa_briefing=None):  # noqa: ANN201
         """Async generator for one turn: the orchestrator owns the whole turn
         and streams its events (and those of the specialists it delegates to).
 
@@ -1939,7 +1947,7 @@ class Pipeline:
             async for event in self._astream_orchestrator(
                 user_input, qa_reply_queue=qa_reply_queue,
                 canvas_prompt=canvas_prompt, canvas_hooks=canvas_hooks,
-                canvas_selection=canvas_selection,
+                canvas_selection=canvas_selection, qa_briefing=qa_briefing,
             ):
                 yield event
         finally:
@@ -3008,6 +3016,88 @@ class Pipeline:
                 agent.messages.clear()
             except Exception:  # noqa: BLE001
                 pass
+
+    async def _qa_retry(self, workflow_path: str, qa_fail: dict) -> dict:
+        """Inline QA-retry callback for ``execute_workflows_batch``.
+
+        Called when a member RAN cleanly but its output missed the user's QA
+        briefing. Deliberately small: reroll the seeds and rewrite the positive
+        prompt to address exactly the criteria that failed. It does not re-plan or
+        re-assemble — the graph is proven to run and the user chose it; what was
+        wrong is the picture. Rebuilding the graph would also invalidate the very
+        verdict that asked for the retry.
+
+        Writes a SIBLING file rather than editing in place, so the rejected
+        workflow (and the output it made) remains exactly as it was for comparison.
+        Returns ``{"status": "ready"|"failed", "workflow_path": …}``.
+        """
+        import random as _random
+        from src.utils.qa import load_qa_prompts as _qa_prompts
+
+        failures = [f for d in (qa_fail.get("fail_details") or [])
+                    for f in (d.get("failed") or [])]
+        try:
+            src_path = Path(workflow_path)
+            graph = json.loads(src_path.read_text(encoding="utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "failed", "error": f"could not read the workflow: {exc}"}
+
+        # 1. Reroll every seed. Without this a re-run reproduces the rejected image
+        #    byte-for-byte and the retry is pure waste — this alone fixes a good
+        #    share of sampling defects (hands, duplicated limbs).
+        rerolled = 0
+        for node in graph.values():
+            if not isinstance(node, dict):
+                continue
+            for slot in ("seed", "noise_seed"):
+                if isinstance((node.get("inputs") or {}).get(slot), (int, float)):
+                    node["inputs"][slot] = _random.randint(0, 2**31 - 1)
+                    rerolled += 1
+
+        # 2. Rewrite the positive prompt against the named failures. The briefing's
+        #    deterministic trace says which node and which slot carries it.
+        rewrote = False
+        try:
+            briefing = json.loads(self._last_brainbriefing_json or "{}")
+        except Exception:  # noqa: BLE001
+            briefing = {}
+        node_id = str(briefing.get("positive_prompt_node_id") or "")
+        slot = next((pn.get("slot", "text") for pn in (briefing.get("prompt_nodes") or [])
+                     if str(pn.get("node_id")) == node_id and pn.get("role") == "positive"), "text")
+        current = ((graph.get(node_id) or {}).get("inputs") or {}).get(slot)
+        if failures and isinstance(current, str) and current.strip():
+            prompts = _qa_prompts()
+            user = (prompts.get("retry_user", "")
+                    .replace("{{PROMPT}}", current)
+                    .replace("{{FAILURES}}", "\n".join(f"- {f}" for f in failures)))
+            try:
+                from src.utils.llm_functions import LLMFunctions
+                reply = await LLMFunctions.from_settings().chat([
+                    {"role": "system", "content": prompts.get("retry_system", "")},
+                    {"role": "user", "content": user},
+                ])
+                new_prompt = (reply or "").strip().strip('"')
+                if new_prompt and new_prompt != current:
+                    graph[node_id]["inputs"][slot] = new_prompt
+                    rewrote = True
+            except Exception as exc:  # noqa: BLE001
+                print(f"pipeline: QA retry could not rewrite the prompt ({exc}) — "
+                      "re-running with a fresh seed only.")
+
+        if not rerolled and not rewrote:
+            # Nothing would differ, so a re-run would reproduce the same output.
+            return {"status": "failed",
+                    "error": "no seed or positive prompt to change in this workflow"}
+
+        out_path = src_path.with_name(f"{src_path.stem}.qa{_random.randint(1000, 9999)}.json")
+        try:
+            out_path.write_text(json.dumps(graph, indent=2), encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "failed", "error": f"could not write the retry workflow: {exc}"}
+        if self._verbose:
+            what = "prompt + seed" if rewrote else "seed"
+            print(f"pipeline: QA retry — adjusted {what} → {out_path.name}")
+        return {"status": "ready", "workflow_path": str(out_path)}
 
     def _ensure_generate_agent(self) -> "Agent":
         if self._generate_agent is None:

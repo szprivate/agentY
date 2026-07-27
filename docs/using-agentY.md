@@ -21,6 +21,7 @@ node, ready to wire into your next step.*
 - [Generating & editing](#generating--editing)
 - [Slash commands](#slash-commands)
 - [**The hook system**](#the-hook-system)  ← the most powerful part
+- [Checking outputs (QA)](#checking-outputs-qa)
 - [The agentY python node & collectors](#the-agenty-python-node--collectors)
 - [Settings & secrets](#settings--secrets)
 - [MCP servers](#mcp-servers)
@@ -204,7 +205,7 @@ happens.
   `AGENTY_HOOK_TAP=0`). Tuning: `AGENTY_MAX_HOOK_TAPS` (4 wires per turn),
   `AGENTY_HOOK_TAP_FRAMES` (4), `AGENTY_HOOK_TAP_TIMEOUT` (300s).
 
-### The five purposes
+### The six purposes
 
 **1. `inline_parameter`** (default) — annotate an existing node and let the agent
 expand + run your on-canvas graph. Great for sweeps and batches:
@@ -245,6 +246,10 @@ value goes to the wired target, a plain question is answered in chat:
 
 **5. `iterate`** — turn the graph into an **interactive refinement loop**. See
 [Iterative refinement](#iterative-refinement-the-iterate-purpose) below.
+
+**6. `qa`** — not a job, a **standard**. The directive is your checklist and the
+wired anchors are reference images; every output the graph produces is judged
+against them. See [Checking outputs](#checking-outputs-qa).
 
 ### Chaining hooks into pipelines
 
@@ -308,6 +313,91 @@ can **jump back**:
 
 Keep going until you say **stop**. (Driven by the `iterate_step` tool and the
 `iterative-refine` skill.)
+
+---
+
+## Checking outputs (QA)
+
+agentY can generate a thing. It can also tell you whether the thing is any good —
+but only by *your* standard, never an invented one. **With no briefing, no QA
+runs at all.**
+
+A **briefing** is two things, because "is this right?" usually is:
+
+- **criteria** — prose or bullets, one checkable statement per line;
+- **references** — mood images the output should sit beside without looking out
+  of place. A grade or a character look is not something words are good at.
+
+A separate **QA agent** (Settings ▸ llm ▸ pipeline ▸ `qa_checker`) reads every
+image and video a run produced and reports **per criterion**: pass, fail, or
+`n/a` — with a sentence of evidence for each. This is the one role where a
+stronger model pays for itself: it runs once per finished output, and a weak
+judge either waves defects through or fails clean work and triggers a pointless
+re-render.
+
+### Writing a briefing — three ways
+
+**1. A `qa` hook on the canvas** (the main one). Drop an `agentY hook`, set
+`purpose: qa`, type the checklist in `directive`, and wire your reference images
+into its **anchors**.
+
+Wiring is the point. A turn can carry inputs, outputs and references at the same
+time, and no amount of careful phrasing reliably keeps them apart — but an image
+wired into a QA hook's anchor is unambiguously a *reference*, never another input
+to the workflow. Anything that resolves to a file works as an anchor: a
+`LoadImage`, an [agentY collector](#the-agenty-python-node--collectors) holding a
+whole folder, even a mid-graph node (it gets rendered to a file first, exactly as
+in [What the agent can see](#what-the-agent-can-see-on-an-anchor)).
+
+Several QA hooks on one graph **combine** rather than compete — two notes pinned
+to one canvas both apply. And the briefing is saved with the workflow, so it is
+still there when you reopen it next month.
+
+**2. A named file** — `config/qa/<name>.md`, with mood images in an optional
+sibling `<name>.refs/` folder. Reusable across graphs and threads, and it lives
+in version control. See `config/qa/README.md`.
+
+**3. `/qa` in the chat panel** — for turns with no canvas graph:
+
+```
+/qa                                      show what's active
+/qa house-style                          use a named briefing
+/qa no text anywhere, warm skin tones    use this as the criteria
+/qa off                                  clear it
+```
+
+They compose, and they have a precedence. A `qa` hook **wins** over the thread's
+`/qa` briefing — it's the more specific, more visible statement. Either can cite
+a named file with `@name` and add to it:
+
+> `@house-style plus the logo must stay legible`
+
+### What happens on a failure
+
+Failing outputs are **never withheld** — a verdict is an opinion about your
+criteria, not a reason to hide your file. What happens next is
+Settings ▸ qa ▸ `max_retries`:
+
+- **`1` (default)** — the failing output is re-generated once, against *exactly*
+  the criteria it missed. The seed is rerolled (without that a re-run reproduces
+  the same image and the retry is pure waste) and the positive prompt is rewritten
+  to address the named defects, keeping subject and intent intact. The rejected
+  workflow is left untouched beside it for comparison.
+- **`0`** — report the verdict and stop. Use this if you'd rather approve each fix.
+
+Only the picture is adjusted, never the graph: a workflow that ran cleanly isn't
+broken, and rebuilding it would invalidate the very verdict that asked for the
+retry. Failing a *run* is a different thing, handled by self-healing.
+
+### The rest of Settings ▸ qa
+
+| setting | what it does |
+|---|---|
+| `enabled` | master switch (env `AGENTY_QA=0`) |
+| `max_outputs` | how many of a run's outputs get checked — a 25-variant sweep would otherwise be 25 strong-model calls. The rest are still delivered, just unchecked |
+| `max_references` | reference images sent with each check |
+| `video_frames` | frames sampled from a video, sent as **one** labelled sequence so the clip is judged for continuity and drift rather than as unrelated stills |
+| `briefing_dir` | where named briefings live |
 
 ---
 

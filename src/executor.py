@@ -17,8 +17,10 @@ After the Brain assembles and validates a ComfyUI workflow it calls
    the path specified in the query templates' brainbriefing (``output_nodes[].output_path``).
    Falls back to downloading via ``/view`` when the output directory cannot be
    determined from the ComfyUI API.
-4. Runs a Vision QA pass with an Ollama multimodal model, comparing the
-   output against the original brainbriefing.
+4. When the user has a QA briefing in force, judges every produced file against
+   it with the qa_checker agent — and, in a batch, re-generates a failing member
+   against the criteria it missed (bounded by ``qa.max_retries``), the same
+   on-the-fly way a broken member is healed. See ``src/utils/qa.py``.
 
 Usage
 -----
@@ -205,37 +207,6 @@ def _copy_workflow_to_user_dir(workflow_path: str) -> None:
 # authoritative on-disk path directly from /system_stats without copying.
 
 
-def _load_qa_prompts() -> dict[str, str]:
-    """Parse the qa_checker system prompt file into sections.
-
-    The file is divided by ``## <section_name>`` headings.  Returns a dict
-    mapping section name → stripped content.  Falls back to empty strings so
-    callers always get a valid (possibly empty) value.
-
-    Expected sections: ``system``, ``question_edit``, ``question_generation``.
-    """
-    cfg = _load_config()
-    filename = cfg.get("system_prompts", {}).get("qa_checker", "system_prompt.qaChecker.md")
-    config_dir = _project_root() / "config"
-    candidate = config_dir / "system_prompts" / filename
-    path = candidate if candidate.exists() else config_dir / filename
-    if not path.exists():
-        logger.warning("executor: QA prompt file not found: %s", path)
-        return {}
-
-    import re
-
-    text = path.read_text(encoding="utf-8")
-    sections: dict[str, str] = {}
-    # Split on lines that start with '## '
-    parts = re.split(r"^##\s+(.+)$", text, flags=re.MULTILINE)
-    # parts = ['', 'section_name', 'body', 'section_name', 'body', ...]
-    it = iter(parts[1:])  # skip leading empty string
-    for name, body in zip(it, it):
-        sections[name.strip()] = body.strip()
-    return sections
-
-
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -409,146 +380,6 @@ def _resolve_output_path(
     return dest
 
 
-async def _vision_qa(
-    image_path: Path,
-    brainbriefing: dict,
-    *,
-    user_message: str = "",
-    input_image_paths: list[Path] | None = None,
-    guidelines: str = "",
-    reference_image_paths: list[Path] | None = None,
-) -> str:
-    """Run a QA pass comparing *image_path* against the user's original request.
-
-    Uses *user_message* (the raw text the user sent) as the ground-truth
-    reference.  Three grounding modes, in priority order:
-
-    * **Storyboard** — when *guidelines* or *reference_image_paths* is supplied
-      (short-film production steps). The reference images (character sheet,
-      user style refs) are sent first and the output is judged against both the
-      quality guidelines and reference consistency via ``question_storyboard``.
-    * **Edit** — when *input_image_paths* is supplied (image-editing task) the
-      input images are sent alongside the output to judge edit fidelity.
-    * **Generation** — text-to-image; the output is judged against the request.
-
-    Image ordering sent to the model: all reference/input images first
-    (IMAGE 1 … N), then the generated output as the last image (IMAGE N+1).
-
-    This is a standalone Ollama call that does NOT touch any agent's context
-    window or conversation history.  The model used is defined by
-    ``llm.pipeline.executor_vision_model`` in settings.json.
-
-    Returns a short verdict string (PASS / FAIL + explanation).
-    Never raises — returns an error description on failure.
-    """
-    from src.utils.llm_functions import LLMFunctions
-
-    try:
-        llm = LLMFunctions.for_vision()
-        output_bytes = image_path.read_bytes()
-
-        # Build the reference description – prefer the raw user message; fall
-        # back to the brainbriefing task/prompt fields so the QA still works
-        # even when user_message was not forwarded.
-        reference = user_message.strip()
-        if not reference:
-            task_desc = brainbriefing.get("task", {}).get("description", "")
-            positive_prompt = brainbriefing.get("prompt", {}).get("positive", "")
-            reference = f"Task: {task_desc}\nPrompt: {positive_prompt}".strip()
-
-        def _read_all(paths: list[Path] | None) -> list[bytes]:
-            out: list[bytes] = []
-            for p in paths or []:
-                try:
-                    out.append(Path(p).read_bytes())
-                except Exception as read_exc:  # noqa: BLE001
-                    logger.warning("executor: could not read QA image %s — %s", p, read_exc)
-            return out
-
-        qa_prompts = _load_qa_prompts()
-        system = qa_prompts.get("system", "You are a visual QA analyst for AI-generated images.")
-
-        is_storyboard = bool(guidelines.strip() or reference_image_paths)
-
-        if is_storyboard:
-            # Reference images (character sheet + style refs) first, output last.
-            ref_bytes_list = _read_all(reference_image_paths)
-            n_refs = len(ref_bytes_list)
-            output_img_num = n_refs + 1
-            if n_refs == 0:
-                image_description = "ONE image: IMAGE 1 is the GENERATED output image (no reference images provided)."
-            elif n_refs == 1:
-                image_description = (
-                    "TWO images: IMAGE 1 is a REFERENCE image (character/style), "
-                    "IMAGE 2 is the GENERATED output image."
-                )
-            else:
-                ref_labels = ", ".join(f"IMAGE {i + 1}" for i in range(n_refs))
-                image_description = (
-                    f"{n_refs + 1} images: {ref_labels} are REFERENCE images (character/style, "
-                    f"in order), IMAGE {output_img_num} is the GENERATED output image."
-                )
-            question = (
-                qa_prompts.get("question_storyboard", "")
-                .replace("{{REFERENCE}}", reference)
-                .replace("{{GUIDELINES}}", guidelines.strip() or "(none specified — judge against the request)")
-                .replace("{{IMAGE_DESCRIPTION}}", image_description)
-                .replace("{{OUTPUT_IMAGE_NUM}}", str(output_img_num))
-            )
-            primary_bytes = ref_bytes_list[0] if ref_bytes_list else output_bytes
-            extra_images: list[bytes] = (ref_bytes_list[1:] + [output_bytes]) if ref_bytes_list else []
-        else:
-            input_bytes_list = _read_all(input_image_paths)
-            is_edit = bool(input_bytes_list)
-            if is_edit:
-                n_inputs = len(input_bytes_list)
-                output_img_num = n_inputs + 1
-                if n_inputs == 1:
-                    image_description = (
-                        "TWO images: IMAGE 1 is the ORIGINAL input image, "
-                        "IMAGE 2 is the GENERATED output image."
-                    )
-                else:
-                    input_labels = ", ".join(f"IMAGE {i + 1}" for i in range(n_inputs))
-                    image_description = (
-                        f"{n_inputs + 1} images: {input_labels} are the ORIGINAL input images "
-                        f"(in the order provided), IMAGE {output_img_num} is the GENERATED output image."
-                    )
-                question = (
-                    qa_prompts.get("question_edit", "")
-                    .replace("{{REFERENCE}}", reference)
-                    .replace("{{IMAGE_DESCRIPTION}}", image_description)
-                    .replace("{{OUTPUT_IMAGE_NUM}}", str(output_img_num))
-                )
-                primary_bytes = input_bytes_list[0]
-                extra_images = input_bytes_list[1:] + [output_bytes]
-            else:
-                question = qa_prompts.get("question_generation", "").replace("{{REFERENCE}}", reference)
-                primary_bytes = output_bytes
-                extra_images = []
-
-        if not question:
-            # Minimal inline fallback if the file is missing
-            question = (
-                f'The user\'s original request was:\n"{reference}"\n\n'
-                "Does this generated image satisfy that request?\n"
-                "Reply with: PASS or FAIL, followed by a brief explanation."
-            )
-
-        verdict = await llm.vision_chat(
-            question,
-            primary_bytes,
-            system=system,
-            extra_images=extra_images or None,
-        )
-        logger.info("executor: vision QA for %s → %s", image_path.name, verdict[:120])
-        return verdict.strip()
-
-    except Exception as exc:
-        logger.warning("executor: vision QA failed for %s — %s", image_path.name, exc)
-        return f"Vision QA unavailable: {exc}"
-
-
 # ---------------------------------------------------------------------------
 # Shared post-processing helper
 # ---------------------------------------------------------------------------
@@ -563,41 +394,31 @@ async def _process_completed_job(
     verbose: bool,
     collected_paths: list[str] | None,
     label: str = "",
-    run_qa: bool = False,
-    guidelines: str = "",
-    reference_image_paths: list[Path] | None = None,
+    qa_briefing=None,
 ) -> AsyncGenerator[str, None]:
-    """Download outputs, run Vision QA, and collect outputs for one finished job.
+    """Download outputs, run output QA, and collect outputs for one finished job.
 
     Yields one-line status strings.  ``label`` is an optional prefix like
     ``"[2/5] "`` used in batch runs so the user knows which iteration each
     message belongs to.
 
-    ``user_message`` is the raw text the user originally sent; it is passed
-    straight to ``_vision_qa`` and never enters any agent's context window.
-    The input image path (for edit-task fidelity checks) is derived from the
-    ``input_nodes`` field of the brainbriefing automatically.
+    ``user_message`` is the raw text the user originally sent; it is handed to the
+    QA agent as the request being judged and never enters any other agent's
+    context window.
+
+    *qa_briefing* is a :class:`src.utils.qa.QaBriefing` — the user's own criteria
+    and reference images. QA runs only when one is present: with no briefing there
+    is no standard to judge against, and inventing one is how a checker ends up
+    failing work for not matching its own taste. On a failing verdict this yields a
+    single ``{"qa_fail": …}`` dict for the caller to act on.
     """
     pfx = label  # e.g. "[2/5] " or ""
 
-    # Resolve all input image paths from the brainbriefing (edit fidelity check).
-    input_image_paths: list[Path] = []
-    try:
-        input_nodes = brainbriefing.get("input_nodes", [])
-        if input_nodes and isinstance(input_nodes, list):
-            for node in input_nodes:
-                raw_path = node.get("path", "") if isinstance(node, dict) else ""
-                if raw_path:
-                    candidate = Path(raw_path)
-                    if candidate.exists():
-                        input_image_paths.append(candidate)
-                    else:
-                        logger.debug(
-                            "executor: input_node path does not exist on disk: %s", raw_path
-                        )
-    except Exception as exc:
-        logger.debug("executor: could not resolve input image paths from brainbriefing — %s", exc)
-
+    # NOTE: the workflow's own input images are deliberately NOT fed to QA as
+    # references. The old checker did that to score "edit fidelity", which fails
+    # every legitimate transformation — "turn this photo into a watercolour" is
+    # *supposed* to differ from its input. The briefing decides what the output is
+    # compared against; wire the input into the QA hook if that's what you want.
     output_files = _extract_output_files(history)
     if not output_files:
         yield f"{pfx}⚠️ No output files found in ComfyUI history."
@@ -668,52 +489,39 @@ async def _process_completed_job(
         yield f"{pfx}❌ All output downloads failed."
         return
 
-    # Vision QA — when explicitly requested by the user, or always for storyboard
-    # steps (signalled by guidelines / reference images being supplied).
+    # Output QA — only against the user's own briefing (see src/utils/qa.py).
     qa_failures: list[dict] = []
-    if run_qa or guidelines or reference_image_paths:
-        from agenty_core.utils.video_frames import extract_frames, is_video
+    if qa_briefing:
+        from src.utils.qa import check_output, qa_settings
 
-        yield f"{pfx}🔍 Running Vision QA…"
-        for path in saved_paths:
-            if is_video(path):
-                # Sample frames and QA each; the video FAILs if any frame FAILs.
-                frames = extract_frames(path, count=3)
-                if not frames:
-                    yield (
-                        f"{pfx}🔍 QA `{path.name}` → video decoder unavailable "
-                        f"(install imageio[ffmpeg]) — skipping deep video QA."
-                    )
-                    continue
-                frame_verdicts: list[str] = []
-                video_failed = False
-                for fi, frame in enumerate(frames, 1):
-                    verdict = await _vision_qa(
-                        frame,
-                        brainbriefing,
-                        user_message=user_message,
-                        input_image_paths=input_image_paths or None,
-                        guidelines=guidelines,
-                        reference_image_paths=reference_image_paths,
-                    )
-                    yield f"{pfx}🔍 QA `{path.name}` frame {fi}/{len(frames)} → {verdict}"
-                    frame_verdicts.append(f"frame {fi}: {verdict}")
-                    if "FAIL" in verdict.upper():
-                        video_failed = True
-                if video_failed:
-                    qa_failures.append({"path": str(path), "verdict": " | ".join(frame_verdicts)})
-            else:
-                verdict = await _vision_qa(
-                    path,
-                    brainbriefing,
-                    user_message=user_message,
-                    input_image_paths=input_image_paths or None,
-                    guidelines=guidelines,
-                    reference_image_paths=reference_image_paths,
+        cfg = qa_settings()
+        checked = saved_paths[:cfg["max_outputs"]]
+        skipped = len(saved_paths) - len(checked)
+        yield (f"{pfx}🔍 QA — {qa_briefing.describe()}"
+               + (f" · checking {len(checked)} of {len(saved_paths)} outputs" if skipped else ""))
+        # One agent for the whole job: constructing it costs a model handshake, and
+        # it is wiped between outputs anyway so each is still judged on its own.
+        agent = None
+        try:
+            from src.agent import create_qa_agent
+            agent = create_qa_agent()
+        except Exception as exc:  # noqa: BLE001
+            yield f"{pfx}⚠️ QA agent unavailable ({exc}) — delivering outputs unchecked."
+        if agent is not None:
+            for path in checked:
+                result = await asyncio.to_thread(
+                    check_output, str(path), qa_briefing,
+                    request=user_message, agent=agent,
                 )
-                yield f"{pfx}🔍 QA `{path.name}` → {verdict}"
-                if "FAIL" in verdict.upper():
-                    qa_failures.append({"path": str(path), "verdict": verdict})
+                yield f"{pfx}🔍 {result.render()}"
+                if result.error:
+                    continue  # unreadable judge — never counts against the output
+                if not result.passed:
+                    qa_failures.append({
+                        "path": str(path),
+                        "summary": result.summary,
+                        "failed": result.failed_criteria(),
+                    })
 
     # Copy the finished workflow to the ComfyUI user directory — run in a
     # background thread so a slow UNC/network share doesn't stall the pipeline.
@@ -727,9 +535,13 @@ async def _process_completed_job(
         ).start()
 
     if qa_failures:
-        # Signal the pipeline layer to pause and ask the user.
+        # Hand the failure up. The batch layer re-generates against the failed
+        # criteria (bounded by qa.max_retries); the single-workflow path surfaces
+        # it. The outputs are NOT withheld either way — a failed verdict is an
+        # opinion about the user's own criteria, not a reason to hide their file.
         yield {
             "qa_fail": True,
+            "workflow_path": workflow_path,
             "image_paths": [str(p) for p in saved_paths],
             "fail_details": qa_failures,
         }
@@ -752,23 +564,27 @@ async def execute_workflow(
     user_message: str = "",
     verbose: bool = True,
     collected_paths: list[str] | None = None,
-    run_qa: bool = False,
-    guidelines: str = "",
-    reference_image_paths: list[Path] | None = None,
+    qa_briefing=None,
 ) -> AsyncGenerator[str, None]:
     """Submit the validated workflow, poll ComfyUI, run QA, and collect outputs.
 
     This is an ``AsyncGenerator[str, None]`` — each yielded string is a one-line
     status update that the pipeline can forward to the UI as a streaming event.
 
+    Unlike the batch path this does NOT re-generate on a QA failure: it is used for
+    chained stages (``run_workflow_now``, ``iterate_step``) where the caller is an
+    agent that is still in the loop and can decide for itself what to do about a
+    verdict. The failing dict is yielded through for it to see.
+
     Args:
         workflow_path:      Absolute path to the validated workflow JSON.
-        brainbriefing_json: The Query Templates' brainbriefing as a JSON string,
-                            used to extract input image paths for QA comparison.
-        user_message:       The raw text the user originally sent.  Forwarded
-                            to the Vision QA agent as the ground-truth reference.
-                            Never added to any agent's conversation history.
+        brainbriefing_json: The Query Templates' brainbriefing as a JSON string.
+        user_message:       The raw text the user originally sent. Handed to the
+                            QA agent as the request being judged; never added to
+                            any other agent's conversation history.
         verbose:            Log progress to stdout when True.
+        qa_briefing:        Optional :class:`src.utils.qa.QaBriefing` to judge the
+                            produced files against. None (the default) = no QA.
     """
     import uuid
 
@@ -837,12 +653,12 @@ async def execute_workflow(
     async for line in _process_completed_job(
         history,
         prompt_id,
-        brainbriefing,        workflow_path=workflow_path,        user_message=user_message,
+        brainbriefing,
+        workflow_path=workflow_path,
+        user_message=user_message,
         verbose=verbose,
         collected_paths=collected_paths,
-        run_qa=run_qa,
-        guidelines=guidelines,
-        reference_image_paths=reference_image_paths,
+        qa_briefing=qa_briefing,
     ):
         yield line
 
@@ -858,9 +674,8 @@ async def execute_workflows_batch(
     user_message: str = "",
     verbose: bool = True,
     collected_paths: list[str] | None = None,
-    run_qa: bool = False,
-    guidelines: str = "",
-    reference_image_paths: list[Path] | None = None,
+    qa_briefing=None,
+    qa_retry_fn: "Callable[[str, dict], Awaitable[dict]] | None" = None,
     repair_fn: "Callable[[str, dict], Awaitable[dict]] | None" = None,
     max_heal_attempts: int = 3,
     max_concurrent_repairs: int = 3,
@@ -887,6 +702,16 @@ async def execute_workflows_batch(
                             to the Vision QA agent as the ground-truth reference.
                             Never added to any agent's conversation history.
         verbose:            Log progress to stdout when True.
+        qa_briefing:        Optional :class:`src.utils.qa.QaBriefing`. When set,
+                            every produced file is judged against it.
+        qa_retry_fn:        Optional ``async (workflow_path, qa_fail) -> dict``
+                            returning ``{"status": "ready"|..., "workflow_path": ...}``.
+                            Called with the criteria an output MISSED so the caller
+                            can adjust the workflow in place; the member is then
+                            re-queued, bounded by ``qa.max_retries``. A QA failure
+                            is a different animal from an execution failure — the
+                            graph ran fine, the picture is just wrong — so it gets
+                            its own budget rather than eating the heal budget.
         repair_fn:          Optional ``async (workflow_path, exec_error) -> dict``
                             returning ``{"status": "ready"|..., "workflow_path": ...}``.
                             Called to heal a failed member's file in place.
@@ -913,6 +738,15 @@ async def execute_workflows_batch(
     out_q: "asyncio.Queue[tuple[str, Any]]" = asyncio.Queue()
     repair_sem = asyncio.Semaphore(max(1, max_concurrent_repairs))
     active: set[asyncio.Task] = set()
+    # QA re-generations, counted per workflow file and capped by the qa settings.
+    # A retry writes an adjusted workflow (possibly under a new path), so the count
+    # travels with the file the retry produced.
+    qa_retries: dict[str, int] = {}
+    try:
+        from src.utils.qa import qa_settings
+        qa_max_retries = qa_settings()["max_retries"] if qa_briefing else 0
+    except Exception:  # noqa: BLE001
+        qa_max_retries = 0
 
     def _spawn(coro) -> None:
         t = asyncio.create_task(coro)
@@ -962,13 +796,19 @@ async def execute_workflows_batch(
                                             {"details": {}, "error": "stream ended without a result"})))
                 return
             await out_q.put(("line", f"{label}✅ Complete — collecting outputs…"))
+            qa_fail: dict | None = None
             async for line in _process_completed_job(
                 history, prompt_id, brainbriefing,
                 workflow_path=wf_path, user_message=user_message, verbose=verbose,
-                collected_paths=collected_paths, label=label, run_qa=run_qa,
-                guidelines=guidelines, reference_image_paths=reference_image_paths,
+                collected_paths=collected_paths, label=label, qa_briefing=qa_briefing,
             ):
+                if isinstance(line, dict) and line.get("qa_fail"):
+                    qa_fail = line          # judged wrong, not broken — see below
+                    continue
                 await out_q.put(("line", line))
+            if qa_fail is not None:
+                await out_q.put(("member", ("qa_fail", wf_path, heals, qa_fail)))
+                return
             await out_q.put(("member", ("ok", wf_path, heals, None)))
         except Exception as exc:  # noqa: BLE001
             logger.error("executor: monitor error for %s — %s", wf_path, exc)
@@ -1000,6 +840,45 @@ async def execute_workflows_batch(
             await out_q.put(("line", f"{label}❌ Could not heal `{name}` "
                                      f"({(res or {}).get('error') or 'still invalid'})."))
             await out_q.put(("heal", ("failed", wf_path, heals + 1, "", "", error_result)))
+
+    async def _qa_retry_member(wf_path: str, tries: int, qa_fail: dict) -> None:
+        """Re-generate a member that FAILED QA, against the criteria it missed.
+
+        Deliberately parallel to ``_heal_member`` rather than folded into it: that
+        one fixes a graph that could not run, this one fixes a graph that ran fine
+        and produced the wrong picture. They have different budgets, different
+        callbacks, and a user who wants one is not necessarily asking for the other.
+        """
+        label = _label(wf_path)
+        name = os.path.basename(wf_path)
+        missed = "; ".join(
+            m for d in (qa_fail.get("fail_details") or []) for m in (d.get("failed") or [])
+        ) or "the QA briefing"
+        async with repair_sem:
+            await out_q.put(("line", f"{label}🔁 QA failed — re-generating `{name}` "
+                                     f"(attempt {tries + 1}/{qa_max_retries}) against: {missed}"))
+            try:
+                res = await qa_retry_fn(wf_path, qa_fail)  # type: ignore[misc]
+            except Exception as exc:  # noqa: BLE001
+                res = {"status": "failed", "error": str(exc)}
+        new_path = str((res or {}).get("workflow_path") or wf_path)
+        if (res or {}).get("status") == "ready":
+            cid = uuid.uuid4().hex
+            try:
+                prompt_id = await asyncio.to_thread(_submit_workflow, new_path, cid)
+                await out_q.put(("line", f"{label}♻️ Re-queued `{os.path.basename(new_path)}` "
+                                         f"· prompt_id=`{prompt_id}`"))
+                qa_retries[new_path] = tries + 1
+                labels.setdefault(new_path, label)
+                await out_q.put(("qa", ("ready", new_path, prompt_id, cid)))
+                return
+            except Exception as exc:  # noqa: BLE001
+                await out_q.put(("line", f"{label}❌ QA re-queue failed for `{name}`: {exc}"))
+        else:
+            await out_q.put(("line", f"{label}⚠️ Could not adjust `{name}` for the QA "
+                                     f"failure ({(res or {}).get('error') or 'no change made'}) "
+                                     f"— delivering the output as it is."))
+        await out_q.put(("qa", ("done", wf_path, "", "")))
 
     # ── Phase 1: submit every workflow, spawn a concurrent monitor for each ─
     _free_vram_for_comfyui()
@@ -1040,6 +919,16 @@ async def execute_workflows_batch(
                 continue
             if kind == "member":
                 status, wf_path, heals, error_result = payload
+                if status == "qa_fail":
+                    tries = qa_retries.get(wf_path, 0)
+                    if qa_retry_fn is not None and tries < qa_max_retries:
+                        _spawn(_qa_retry_member(wf_path, tries, error_result or {}))
+                    else:
+                        # Budget spent (or retries off): the output stands, and the
+                        # verdict has already been shown. Not an execution error —
+                        # nothing goes in the error mailbox for the fixer to chase.
+                        outstanding -= 1
+                    continue
                 if status in ("ok", "interrupted"):
                     # "interrupted" retires the unit like a success: no output to
                     # collect, but no error to record and nothing to heal.
@@ -1064,6 +953,13 @@ async def execute_workflows_batch(
                     _record_exec_error((error_result or {}).get("details"),
                                        wf_path, (error_result or {}).get("error", ""))
                     outstanding -= 1
+                continue
+            if kind == "qa":
+                status, wf_path, prompt_id, cid = payload
+                if status == "ready":
+                    _spawn(_monitor_member(wf_path, prompt_id, cid, 0))  # unit persists
+                else:
+                    outstanding -= 1  # couldn't adjust — retire with what we have
                 continue
     finally:
         for t in list(active):

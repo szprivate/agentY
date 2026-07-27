@@ -433,6 +433,25 @@ def _tap_hook_tensors(canvas_prompt: dict, canvas_hooks: list,
     return [p for p in images[:_MAX_HOOK_IMAGES] if p not in existing] + image_paths
 
 
+def _resolve_qa_briefing(canvas_hooks: list | None, thread_id: str):
+    """The QA briefing in force for this turn, or None.
+
+    Announces itself on the status bus when one is found: QA that switches on
+    silently — spending a strong model's tokens and possibly re-rendering — is
+    the kind of thing a user should never have to discover from the bill.
+    """
+    try:
+        from src.utils.qa import resolve_briefing
+        briefing = resolve_briefing(hooks=canvas_hooks or [], thread_id=thread_id,
+                                    resolver=_resolve_media_ref)
+    except Exception as exc:  # noqa: BLE001 — QA must never cost the user a turn
+        logger.warning("qa: could not resolve a briefing (%s) — running without QA", exc)
+        return None
+    if briefing:
+        status_bus.notify(f"🔍 QA briefing active — {briefing.describe()}")
+    return briefing
+
+
 def _orchestrator_supports_vision() -> bool:
     """True when the configured orchestrator LLM can accept image content blocks.
 
@@ -728,6 +747,10 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
     if canvas_prompt and canvas_hooks:
         image_paths = _tap_hook_tensors(canvas_prompt, canvas_hooks, image_paths)
 
+    # The QA briefing for this turn. Resolved AFTER the tap so a mood image wired
+    # into a qa hook from mid-graph is already a file by the time we read it.
+    qa_briefing = _resolve_qa_briefing(canvas_hooks, thread_id)
+
     _restore_state(pipeline, thread_id)
     session = getattr(pipeline, "_session", None)
     if image_paths and session is not None:
@@ -940,7 +963,7 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
             async for event in pipeline.stream_async(
                 content, qa_reply_queue=qa_queue,
                 canvas_prompt=canvas_prompt, canvas_hooks=canvas_hooks,
-                canvas_selection=canvas_selection,
+                canvas_selection=canvas_selection, qa_briefing=qa_briefing,
             ):
                 if isinstance(event, dict):
                     _translate(event)
@@ -1044,6 +1067,66 @@ def _sys(text: str) -> dict:
     return {"type": "system", "data": text}
 
 
+def _handle_qa_command(thread_id: str, parts: list[str]) -> list[dict]:
+    """``/qa`` — show, set, or clear this conversation's QA briefing.
+
+    Forms:
+      ``/qa``                     show what is active (and what is available)
+      ``/qa off``                 clear the thread briefing
+      ``/qa <name>``              use the named briefing from the briefing dir
+      ``/qa <free text>``         use that text as the criteria
+
+    The chat surface exists for turns with no canvas graph; a ``qa`` hook on the
+    canvas takes precedence when there is one, since it is the more specific and
+    more visible statement.
+    """
+    from src.utils.qa import (briefing_dir, list_named_briefings, load_named_briefing,
+                              qa_settings, resolve_briefing)
+
+    arg = (parts[1] if len(parts) > 1 else "").strip()
+    rest = " ".join(parts[1:]).strip()
+    available = list_named_briefings()
+    avail_txt = (" Available named briefings: "
+                 + ", ".join(f"`{n}`" for n in available)) if available else (
+        f" No named briefings yet — add one as `{briefing_dir()}/<name>.md`.")
+
+    if not rest:
+        active = resolve_briefing(hooks=[], thread_id=thread_id)
+        cfg = qa_settings()
+        if not cfg["enabled"]:
+            return [_sys("🔍 QA is switched off in Settings ▸ qa ▸ enabled.")]
+        if not active:
+            return [_sys("🔍 No QA briefing set for this conversation.\n\n"
+                         "`/qa <name>` to use a named one, `/qa <your criteria>` to type "
+                         "one, `/qa off` to clear." + avail_txt)]
+        retry = (f"failed outputs are re-generated up to {cfg['max_retries']}×"
+                 if cfg["max_retries"] else "failures are reported, not re-generated")
+        return [_sys(f"🔍 QA briefing active — {active.describe()}; {retry}.\n\n```\n"
+                     f"{active.criteria.strip()[:1200]}\n```")]
+
+    if rest.lower() in ("off", "none", "clear", "stop", "disable"):
+        cs.set_qa_briefing(thread_id, None)
+        return [_sys("🔍 QA briefing cleared for this conversation. A `qa` hook on the "
+                     "canvas still applies to turns that run that graph.")]
+
+    # A bare word that names a briefing on disk loads it; anything else is criteria.
+    if " " not in rest:
+        named = load_named_briefing(arg)
+        if named is not None:
+            cs.set_qa_briefing(thread_id, {"criteria": named.criteria,
+                                           "reference_paths": list(named.reference_paths),
+                                           "name": arg})
+            return [_sys(f"🔍 QA briefing set from `{arg}` — {named.describe()}.")]
+        if available:
+            return [_sys(f"❌ No briefing named `{arg}`.{avail_txt}\n\nTo use that word as "
+                         "the criteria itself, write it as a full sentence.")]
+
+    cs.set_qa_briefing(thread_id, {"criteria": rest, "reference_paths": []})
+    return [_sys("🔍 QA briefing set for this conversation:\n\n```\n" + rest[:1200] + "\n```\n\n"
+                 "Reference images: wire them into a `qa` hook on the canvas, or put them "
+                 "in a named briefing's `.refs/` folder. `/qa off` to clear.")]
+
+
 def _handle_command(thread_id: str, text: str, canvas_prompt: dict | None = None) -> list[dict]:
     low = text.strip().lower()
     parts = text.strip().split(None, 2)
@@ -1090,6 +1173,9 @@ def _handle_command(thread_id: str, text: str, canvas_prompt: dict | None = None
             return [_sys(f"❌ Clear VRAM failed: {result.get('error')}")]
         except Exception as exc:
             return [_sys(f"❌ Clear VRAM failed: {exc}")]
+
+    if cmd in ("/qa", "qa"):
+        return _handle_qa_command(thread_id, parts)
 
     if cmd in ("/images", "images", "/gallery", "gallery"):
         gal = [g for g in cs.get_gallery(thread_id) if os.path.isfile(g["path"])]

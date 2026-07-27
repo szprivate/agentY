@@ -19,7 +19,8 @@ An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanony
 
 ## Features
 
-- **Natural language → ComfyUI workflow** — describe what you want; a free **Orchestrator agent** builds, submits, and QA-checks the workflow automatically.
+- **Natural language → ComfyUI workflow** — describe what you want; a free **Orchestrator agent** builds and submits the workflow automatically.
+- **Output QA against *your* briefing** — write a checklist (and wire in mood/reference images) as a `qa` canvas hook, a reusable file, or `/qa` in chat; a separate QA agent judges every finished image/video criterion by criterion and re-generates what missed. Nothing runs without a briefing. See [Checking outputs](docs/using-agentY.md#checking-outputs-qa).
 - **Free-agent orchestration** — one Orchestrator owns each turn with the full toolset. It calls tools directly, **delegates** to specialists (research / assembly / info / story / DOP / planner / web), spawns ad-hoc subagents, and can even **author skills live**. No brittle intent classifier or fixed routing.
 - **Custom-node creator** — point the agent at a model's GitHub repo (`create_custom_node`) and it clones the repo, reads its docs + inference code, and writes a self-contained **ComfyUI custom-node pack** (`__init__.py`, `nodes.py`, `requirements.txt`, `README.md`, `pyproject.toml`) into `output/custom_nodes/<name>/` — ready to publish as its own repo.
 - **Image & video generation** — Flux, WAN2.1/2.2, Qwen, HunyuanVideo, and many other models.
@@ -28,7 +29,7 @@ An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanony
 - **Canvas hook nodes** — annotate the graph with **`agentY hook`** nodes ("sweep the seed 6×", "upscale then add film grain") and let the agent run them; chain hooks for multi-step tasks, **bake** a chain into reusable native ComfyUI **subgraphs**, or run an interactive **iterative-refine loop** (one gen per turn, feeding each result back in). See [Canvas nodes](#canvas-nodes) and the [hook system guide](docs/using-agentY.md#the-hook-system).
 - **MCP support** — call tools from external **MCP servers** (config-driven `config/mcp.json`, `http`/`sse`/`stdio`, with `none` / `header` / **OAuth** auth). Ships with **Magnific** wired via OAuth (one-click *Authorize…* in Settings). See [MCP servers](docs/using-agentY.md#mcp-servers).
 - **Persistent chat history** — threads, messages, and the per-thread image gallery are stored in a self-contained local **SQLite** database (`memory/conversations.sqlite`). No Docker, Postgres, or S3.
-- **Slash commands** — `/restart`, `/stop`, `/unload`, `/clear_vram`, `/images`, `/clearhistory`, `/switch_model`, `/add_workflow`, `/remove_workflow`, `/resend` — with an in-panel autocomplete popup.
+- **Slash commands** — `/restart`, `/stop`, `/unload`, `/clear_vram`, `/images`, `/clearhistory`, `/switch_model`, `/add_workflow`, `/remove_workflow`, `/resend`, `/qa` — with an in-panel autocomplete popup.
 - **In-panel Settings & token usage** — edit auth keys (`.env`) and your settings (saved to `config/settings.local.json`), and review per-model token cost, from ComfyUI's own Settings panel (no file editing required).
 - **FAISS memory** — long-term memory via mem0 + local Ollama embeddings (`nomic-embed-text`).
 - **Hugging Face model management** — search, check local availability, and download models on demand.
@@ -62,11 +63,11 @@ ComfyUI  (your browser)
   agentY chat host  ── src/agenty_ui_server.py  →  src/utils/agentY_server.py
         │  Orchestrator agent (+ specialist delegates, Executor stage)
         │  tool layer ── ../agenty_core  (editable install)
-        ├──HTTP/WS──►  ComfyUI  (submit workflows, run Vision-QA, stage outputs into /input)
+        ├──HTTP/WS──►  ComfyUI  (submit workflows, QA the outputs, stage them into /input)
         └──►  memory/conversations.sqlite  (threads, messages, gallery, resume state)
 ```
 
-Each user turn is owned by the **Orchestrator** agent (a normal Claude / Ollama / Qwen / GPT / Gemini model, per `config/settings.default.toml` + `settings.local.json`). It has the full toolset and can call the specialist agents as delegates. When it finishes assembling a workflow it hands off to the **Executor** (ComfyUI submission → completion polling → optional Ollama Vision-QA → staging outputs as loader nodes). The ComfyUI custom node is the **frontend + canvas nodes + a graph-load hook** — it talks to the host over HTTP/SSE.
+Each user turn is owned by the **Orchestrator** agent (a normal Claude / Ollama / Qwen / GPT / Gemini model, per `config/settings.default.toml` + `settings.local.json`). It has the full toolset and can call the specialist agents as delegates. When it finishes assembling a workflow it hands off to the **Executor** (ComfyUI submission → completion polling → [output QA](docs/using-agentY.md#checking-outputs-qa) when you have set a briefing → staging outputs as loader nodes). The ComfyUI custom node is the **frontend + canvas nodes + a graph-load hook** — it talks to the host over HTTP/SSE.
 
 ---
 
@@ -173,7 +174,7 @@ After the restart you get, from the one node pack:
 
 ### 5. Configure defaults (optional)
 
-`config/settings.default.toml` holds the committed defaults; put your machine's values (ComfyUI URL/paths, per-stage LLMs, private endpoints) in `config/settings.local.json` (gitignored, deep-merged over the defaults). The **Orchestrator** is the model that drives each turn; the other keys set the specialist delegates and the Executor's Vision-QA model. Any model value is `"provider,model"`:
+`config/settings.default.toml` holds the committed defaults; put your machine's values (ComfyUI URL/paths, per-stage LLMs, private endpoints) in `config/settings.local.json` (gitignored, deep-merged over the defaults). The **Orchestrator** is the model that drives each turn; the other keys set the specialist delegates, the vision models, and the `qa_checker` that judges finished outputs. Any model value is `"provider,model"`:
 
 ```jsonc
 {
@@ -184,7 +185,8 @@ After the restart you get, from the one node pack:
       "orchestrator":          "dashscope,qwen3.6-flash",  // drives each turn
       "assemble_workflow":     "dashscope,qwen3.6-flash",  // workflow-assembly delegate
       "query_templates":       "dashscope,qwen3.6-flash",  // template/recipe research delegate
-      "executor_vision_model": "dashscope,qwen3.6-flash"   // Vision-QA of results
+      "executor_vision_model": "dashscope,qwen3-vl-flash", // reads input images
+      "qa_checker":            "dashscope,qwen3-vl-plus"   // judges finished outputs (multimodal; worth a stronger model)
       // …info, story, search_web, dop, planner, learnings, error_checker, llm_functions…
     },
     "dashscope": {
@@ -242,6 +244,7 @@ Installing `agentY-comfyuiConnect` adds two nodes under the **agentY** category.
   - *make_workflow* — the agent generates and runs a workflow (or Python script) from the prompt, using the wired input(s) if any.
   - *text* — the agent writes a string answer and drops a wireable `agentY text` node carrying it.
   - *iterate* — an interactive **refinement loop**: the agent runs the graph one generation per turn, feeds each result back into the wired `LoadImage`, and asks for your next prompt (you can jump back to an earlier generation) until you say stop.
+  - *qa* — your **quality briefing** for the graph: the directive is the checklist, the wired anchors are reference/mood images. A separate QA agent judges every produced image/video against it criterion by criterion, and re-generates a failing output against exactly what it missed. See [Checking outputs](docs/using-agentY.md#checking-outputs-qa).
 
   Its `out` **output** is type-agnostic, so one hook can gather several inputs and produce a result — image, video, **or scalars (string/int/float)** — for the next hook. Wire hooks output→input to build a **multi-step chain**. `freeze` decides whether the agent keeps the hook live (injects the value at run time) or bakes it into a plain workflow. A hook is inert on a normal *Queue Prompt* (it's a pure passthrough the agent removes before running), so it never affects a manual run. **Bypass** (`Ctrl+B`) or mute a hook to disable it without deleting it — the agent skips hooks in those modes.
 

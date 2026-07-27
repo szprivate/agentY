@@ -116,6 +116,11 @@ def init_db() -> None:
                 html        TEXT NOT NULL,
                 updated_at  REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS thread_qa (
+                thread_id   TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+                briefing    TEXT NOT NULL,
+                updated_at  REAL NOT NULL
+            );
             """
         )
     _INITIALISED = True
@@ -346,3 +351,44 @@ def get_panel(thread_id: str) -> Optional[str]:
     with _connect() as conn:
         row = conn.execute("SELECT html FROM thread_panel WHERE thread_id=?", (thread_id,)).fetchone()
     return row["html"] if row is not None else None
+
+
+# ---------------------------------------------------------------------------
+# QA briefing (the /qa surface — see src/utils/qa.py)
+# ---------------------------------------------------------------------------
+
+def set_qa_briefing(thread_id: str, briefing: Optional[dict]) -> None:
+    """Store (or, with *briefing* None, clear) this thread's QA briefing.
+
+    Kept in its own table rather than as another ``thread_state`` column: that row
+    is the pipeline's snapshot, rewritten wholesale every turn, while a briefing is
+    something the user set deliberately and expects to outlive any single turn.
+    """
+    init_db()
+    with _connect() as conn:
+        if briefing is None:
+            conn.execute("DELETE FROM thread_qa WHERE thread_id=?", (thread_id,))
+            return
+        conn.execute(
+            """
+            INSERT INTO thread_qa(thread_id, briefing, updated_at) VALUES (?,?,?)
+            ON CONFLICT(thread_id) DO UPDATE SET
+                briefing=excluded.briefing, updated_at=excluded.updated_at
+            """,
+            (thread_id, json.dumps(briefing), time.time()),
+        )
+
+
+def get_qa_briefing(thread_id: str) -> Optional[dict]:
+    """Return this thread's stored QA briefing, or None when none is set."""
+    init_db()
+    with _connect() as conn:
+        row = conn.execute("SELECT briefing FROM thread_qa WHERE thread_id=?",
+                           (thread_id,)).fetchone()
+    if row is None:
+        return None
+    try:
+        data = json.loads(row["briefing"])
+    except Exception:  # noqa: BLE001
+        return None
+    return data if isinstance(data, dict) else None

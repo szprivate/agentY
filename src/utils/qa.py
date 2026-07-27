@@ -1,0 +1,506 @@
+"""Output QA: the briefing the user writes, and the check that judges against it.
+
+agentY can generate a thing; it could not, until now, tell you whether the thing
+is any *good* by your standards. This module owns the user-facing half of that —
+the **QA briefing** — plus the call that judges one finished file against it.
+
+A briefing is deliberately two things at once, because "is this right?" usually
+is: **criteria** (prose or bullets — "skin tones warm not orange", "no visible
+extra fingers") and **references** (mood images the output should sit next to
+without looking out of place). Text alone can't express a grade; a mood board
+alone can't express a rule.
+
+Three ways to write one, all producing the same object:
+
+* **A canvas hook** with ``purpose: "qa"`` — the directive is the checklist and
+  the hook's *anchors* are the references. This is the primary surface, because
+  wiring an image into an anchor is what makes it unambiguously a REFERENCE and
+  not another input to the workflow. That distinction is the whole problem: a
+  turn can carry inputs, outputs and references at once, and prose can't reliably
+  keep them apart.
+* **A named file** — ``<briefing_dir>/<name>.md`` for the criteria plus an
+  optional sibling ``<name>.refs/`` folder of mood images. Reusable across graphs
+  and threads, and it lives in version control.
+* **``/qa`` in the chat panel** — a briefing attached to the conversation, for
+  when there is no canvas graph in play.
+
+They compose: a hook or a ``/qa`` briefing may cite ``@name`` to pull a named
+file in on top of its own text.
+
+Nothing here runs unless a briefing exists. The ``[qa]`` settings decide *how* QA
+runs (retries, caps, which model), never *whether*.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+MEDIA_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tiff",
+              ".mp4", ".mov", ".webm", ".mkv", ".avi"}
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tiff"}
+
+# agentY collector nodes hold their file list in a `files` widget, one path per line.
+_COLLECTOR_TYPES = {"AgentYImageCollector", "AgentYVideoCollector"}
+
+# A briefing cites another by name with @name — resolved against briefing_dir.
+_CITE_RE = re.compile(r"(?:^|\s)@([A-Za-z0-9][A-Za-z0-9._-]*)")
+
+
+# ── settings ────────────────────────────────────────────────────────────────────
+
+def qa_settings() -> dict:
+    """The effective ``[qa]`` settings, with sane values for missing/invalid keys."""
+    try:
+        from src.utils.settings import load_settings
+        raw = load_settings().get("qa") or {}
+    except Exception:  # noqa: BLE001 — never let a bad settings file break a turn
+        raw = {}
+
+    def _int(key: str, default: int, low: int = 0) -> int:
+        try:
+            return max(low, int(raw.get(key, default)))
+        except (TypeError, ValueError):
+            return default
+
+    enabled = bool(raw.get("enabled", True))
+    env = os.environ.get("AGENTY_QA")
+    if env is not None and env.strip() != "":
+        enabled = env.strip().lower() not in ("0", "false", "no", "off")
+    return {
+        "enabled": enabled,
+        "max_retries": _int("max_retries", 1),
+        "max_outputs": _int("max_outputs", 6, low=1),
+        "max_references": _int("max_references", 4),
+        "video_frames": _int("video_frames", 3, low=1),
+        "briefing_dir": str(raw.get("briefing_dir") or "./config/qa/"),
+    }
+
+
+def briefing_dir() -> Path:
+    """Absolute path of the named-briefing folder (may not exist yet)."""
+    raw = qa_settings()["briefing_dir"]
+    p = Path(raw)
+    return p if p.is_absolute() else (_PROJECT_ROOT / raw).resolve()
+
+
+# ── the briefing ────────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class QaBriefing:
+    """What the QA agent judges against: criteria plus reference images.
+
+    ``sources`` records where it came from (hook / file:<name> / thread), purely so
+    the chat panel and logs can say *why* QA is running — a briefing that silently
+    turns on is a briefing the user will curse at.
+    """
+    criteria: str = ""
+    reference_paths: tuple[str, ...] = ()
+    sources: tuple[str, ...] = ()
+
+    def __bool__(self) -> bool:
+        return bool(self.criteria.strip() or self.reference_paths)
+
+    def merged_with(self, other: "QaBriefing | None") -> "QaBriefing":
+        """This briefing with *other* folded in (other's criteria appended)."""
+        if not other:
+            return self
+        criteria = "\n".join(t for t in (self.criteria.strip(), other.criteria.strip()) if t)
+        refs = list(self.reference_paths)
+        refs += [p for p in other.reference_paths if p not in set(refs)]
+        return QaBriefing(criteria=criteria, reference_paths=tuple(refs),
+                          sources=tuple(dict.fromkeys(self.sources + other.sources)))
+
+    def describe(self) -> str:
+        """One line for the chat panel: what is being enforced and from where."""
+        bullets = len([ln for ln in self.criteria.splitlines() if ln.strip()])
+        where = ", ".join(self.sources) or "unknown"
+        refs = len(self.reference_paths)
+        ref_txt = f", {refs} reference image{'' if refs == 1 else 's'}" if refs else ""
+        return f"{bullets} criteri{'on' if bullets == 1 else 'a'}{ref_txt} (from {where})"
+
+
+# ── surface 1: the `qa` canvas hook ─────────────────────────────────────────────
+
+def anchor_media_paths(anchor: dict, resolver=None) -> list[str]:
+    """Every media file a hook anchor points at, as absolute paths.
+
+    Covers the three ways an anchor can carry media, so a QA hook's references can
+    be wired however is convenient: an agentY **collector** (its explicit file
+    list), a **tapped tensor** (a mid-graph wire :mod:`src.utils.canvas_tap`
+    already rendered to disk this turn), or an ordinary **loader** whose widget
+    names a file. *resolver* is the caller's ``value, kind -> abs path | None``.
+    """
+    out: list[str] = []
+
+    def _add(path: str) -> None:
+        p = (path or "").strip().strip('"')
+        if p and p not in out:
+            out.append(p)
+
+    if str(anchor.get("type") or "") in _COLLECTOR_TYPES:
+        files = (anchor.get("widgets") or {}).get("files")
+        for line in str(files or "").splitlines():
+            resolved = resolver(line, "") if resolver else line.strip()
+            if resolved:
+                _add(str(resolved))
+    for path in (anchor.get("tapped") or []):
+        _add(str(path))
+    for value in (anchor.get("widgets") or {}).values():
+        if not isinstance(value, str) or not value.strip():
+            continue
+        if Path(value.strip().strip('"')).suffix.lower() not in MEDIA_EXTS:
+            continue  # a checkpoint / LoRA / sampler name is not a reference image
+        resolved = resolver(value, "") if resolver else None
+        if resolved:
+            _add(str(resolved))
+    return out
+
+
+def briefing_from_hooks(hooks: list, resolver=None) -> QaBriefing | None:
+    """Build a briefing from every ``purpose: "qa"`` hook on the canvas.
+
+    Several QA hooks combine into one briefing (their criteria concatenate, their
+    references union) rather than competing — the natural reading of two QA notes
+    pinned to one graph is "both apply".
+    """
+    from src.utils.canvas_hooks import _is_qa
+
+    criteria: list[str] = []
+    refs: list[str] = []
+    found = False
+    for hook in (hooks or []):
+        if not isinstance(hook, dict) or not _is_qa(hook):
+            continue
+        found = True
+        text = str(hook.get("directive") or "").strip()
+        if text:
+            criteria.append(text)
+        for anchor in (hook.get("anchors") or []):
+            if isinstance(anchor, dict):
+                for path in anchor_media_paths(anchor, resolver):
+                    if path not in refs:
+                        refs.append(path)
+    if not found:
+        return None
+    return QaBriefing(criteria="\n".join(criteria), reference_paths=tuple(refs),
+                      sources=("canvas qa hook",))
+
+
+# ── surface 2: named briefing files ─────────────────────────────────────────────
+
+# The folder documents itself; README.md is not a briefing anyone means to apply.
+_NOT_BRIEFINGS = {"readme"}
+
+
+def list_named_briefings() -> list[str]:
+    """Names of the briefings on disk (``<briefing_dir>/<name>.md``), sorted."""
+    d = briefing_dir()
+    if not d.is_dir():
+        return []
+    return sorted(p.stem for p in d.glob("*.md")
+                  if p.is_file() and p.stem.lower() not in _NOT_BRIEFINGS)
+
+
+def load_named_briefing(name: str) -> QaBriefing | None:
+    """Load ``<briefing_dir>/<name>.md`` plus its optional ``<name>.refs/`` folder.
+
+    The markdown is used verbatim as the criteria — it is the user's own writing,
+    and reformatting someone's checklist is a good way to change what it means.
+    """
+    safe = re.sub(r"[^A-Za-z0-9._-]", "", str(name or "")).strip(".")
+    if not safe:
+        return None
+    path = briefing_dir() / f"{safe}.md"
+    if not path.is_file():
+        return None
+    try:
+        criteria = path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        logger.warning("qa: could not read briefing %s — %s", path, exc)
+        return None
+    refs: list[str] = []
+    refs_dir = briefing_dir() / f"{safe}.refs"
+    if refs_dir.is_dir():
+        for f in sorted(refs_dir.iterdir()):
+            if f.is_file() and f.suffix.lower() in MEDIA_EXTS:
+                refs.append(str(f.resolve()))
+    return QaBriefing(criteria=criteria, reference_paths=tuple(refs),
+                      sources=(f"file:{safe}",))
+
+
+def _expand_citations(briefing: QaBriefing) -> QaBriefing:
+    """Fold in every ``@name`` a briefing cites, and strip the citation tokens.
+
+    Lets a one-line canvas hook say "@house-style, plus keep the logo legible"
+    without retyping a shared checklist.
+    """
+    names = [n for n in _CITE_RE.findall(briefing.criteria or "")]
+    if not names:
+        return briefing
+    out = briefing
+    resolved: list[str] = []
+    for name in dict.fromkeys(names):
+        cited = load_named_briefing(name)
+        if cited is None:
+            continue
+        resolved.append(name)
+        out = out.merged_with(cited)
+    if not resolved:
+        return out
+    text = out.criteria
+    for name in resolved:
+        text = re.sub(rf"(?:^|\s)@{re.escape(name)}\b", " ", text)
+    return QaBriefing(criteria=text.strip(), reference_paths=out.reference_paths,
+                      sources=out.sources)
+
+
+# ── surface 3: the per-thread /qa briefing ──────────────────────────────────────
+
+def briefing_from_thread(thread_id: str) -> QaBriefing | None:
+    """The briefing ``/qa`` stored against this conversation, if any."""
+    if not thread_id:
+        return None
+    try:
+        from src.utils import conversation_store as cs
+        raw = cs.get_qa_briefing(thread_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("qa: could not read the thread briefing: %s", exc)
+        return None
+    if not raw:
+        return None
+    refs = tuple(str(p) for p in (raw.get("reference_paths") or []))
+    return QaBriefing(criteria=str(raw.get("criteria") or ""), reference_paths=refs,
+                      sources=("/qa",))
+
+
+# ── resolution ──────────────────────────────────────────────────────────────────
+
+def resolve_briefing(hooks: list | None = None, thread_id: str = "",
+                     resolver=None) -> QaBriefing | None:
+    """The briefing in force for this turn, or None when QA should not run.
+
+    A **canvas QA hook wins** over the thread's ``/qa`` briefing: it is the more
+    specific, more visible statement — it's pinned to the graph the user is
+    looking at. The thread briefing is the standing default for turns where no
+    canvas says otherwise. Either may cite ``@name`` files, which are folded in.
+    """
+    if not qa_settings()["enabled"]:
+        return None
+    briefing = briefing_from_hooks(hooks or [], resolver)
+    if briefing is None:
+        briefing = briefing_from_thread(thread_id)
+    if briefing is None:
+        return None
+    briefing = _expand_citations(briefing)
+    return briefing if briefing else None
+
+
+# ── the check ───────────────────────────────────────────────────────────────────
+
+_VERDICT_KEYS = ("verdict", "checks", "summary")
+
+
+@dataclass
+class QaResult:
+    """One judged output. ``passed`` is read from a structured field, never from
+    the presence of the word FAIL in prose — the old checker did the latter and
+    duly failed any verdict containing "no failures"."""
+    path: str
+    passed: bool
+    summary: str = ""
+    checks: list = field(default_factory=list)
+    error: str = ""
+
+    def failed_criteria(self) -> list[str]:
+        """The criteria that did not pass — what a retry has to fix."""
+        out: list[str] = []
+        for c in self.checks:
+            if isinstance(c, dict) and str(c.get("result", "")).lower() not in ("pass", "n/a", "na", ""):
+                text = str(c.get("criterion") or "").strip()
+                note = str(c.get("note") or "").strip()
+                out.append(f"{text} — {note}" if note and text else (text or note))
+        return [t for t in out if t]
+
+    def render(self) -> str:
+        """A compact human line for the chat panel."""
+        if self.error:
+            return f"QA unavailable for `{Path(self.path).name}`: {self.error}"
+        mark = "✅ PASS" if self.passed else "❌ FAIL"
+        tail = f" — {self.summary}" if self.summary else ""
+        return f"{mark} `{Path(self.path).name}`{tail}"
+
+
+def parse_verdict(raw: str) -> dict:
+    """Pull the verdict object out of a model reply.
+
+    Tolerant on purpose: models wrap JSON in prose or fences even when told not
+    to. Falls back to the first balanced ``{...}`` block. Returns {} when there is
+    nothing usable, which the caller treats as "QA unavailable" rather than as a
+    failure — an unreadable judge must never fail the user's work.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return {}
+    fence = re.search(r"```(?:json)?\s*(.+?)```", text, re.S)
+    if fence:
+        text = fence.group(1).strip()
+    candidates = [text]
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end > start:
+        candidates.append(text[start:end + 1])
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(data, dict) and any(k in data for k in _VERDICT_KEYS):
+            return data
+    return {}
+
+
+def is_image(path: str) -> bool:
+    return Path(path).suffix.lower() in _IMAGE_EXTS
+
+
+def load_qa_prompts() -> dict[str, str]:
+    """Parse the QA prompt file into its ``## <name>`` sections.
+
+    The file holds both the agent's system prompt and the question templates the
+    caller fills in; keeping them in one markdown file (rather than as strings in
+    code) is what lets the prompts be edited without touching Python.
+    """
+    try:
+        from src.utils.settings import load_settings
+        filename = str((load_settings().get("system_prompts") or {})
+                       .get("qa_checker", "system_prompt.qaChecker.md"))
+    except Exception:  # noqa: BLE001
+        filename = "system_prompt.qaChecker.md"
+    if not filename.endswith(".md"):
+        filename += ".md"
+    config_dir = _PROJECT_ROOT / "config"
+    path = config_dir / "system_prompts" / filename
+    if not path.exists():
+        path = config_dir / filename
+    if not path.exists():
+        logger.warning("qa: prompt file not found: %s", path)
+        return {}
+    text = path.read_text(encoding="utf-8")
+    sections: dict[str, str] = {}
+    parts = re.split(r"^##\s+(.+)$", text, flags=re.MULTILINE)
+    it = iter(parts[1:])  # parts[0] is whatever precedes the first heading
+    for name, body in zip(it, it):
+        sections[name.strip()] = body.strip()
+    return sections
+
+
+def _image_block(path: str) -> dict | None:
+    """One Strands image ContentBlock, downsized to the provider's limits."""
+    from src.tools.image_handling import _detect_format, _downsize, _MAX_IMAGE_BYTES
+
+    try:
+        raw = Path(path).read_bytes()
+        fmt = _detect_format(path) or "png"
+        data, fmt = _downsize(raw, fmt)
+        if len(data) > _MAX_IMAGE_BYTES:
+            logger.warning("qa: %s is still %d bytes after downsizing — skipped",
+                           path, len(data))
+            return None
+        return {"image": {"format": fmt, "source": {"bytes": data}}}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("qa: could not read %s — %s", path, exc)
+        return None
+
+
+def _output_blocks(path: str, frames: int) -> tuple[list[dict], str]:
+    """Image blocks for one produced file, plus how to describe them to the model.
+
+    A video is sampled into evenly-spaced frames sent as ONE labelled sequence, so
+    the model judges the clip — continuity, drift, a defect that appears halfway —
+    rather than answering the same question about N unrelated stills, which is what
+    the previous per-frame loop did.
+    """
+    if is_image(path):
+        block = _image_block(path)
+        return ([block] if block else []), "the GENERATED OUTPUT image"
+    try:
+        from agenty_core.utils.video_frames import extract_frames
+        sampled = extract_frames(Path(path), count=max(1, frames))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("qa: could not sample %s — %s", path, exc)
+        return [], ""
+    blocks = [b for b in (_image_block(str(f)) for f in (sampled or [])) if b]
+    if not blocks:
+        return [], ""
+    return blocks, (f"{len(blocks)} FRAMES of the GENERATED OUTPUT video, in "
+                    f"chronological order — judge them as one clip")
+
+
+def check_output(path: str, briefing: QaBriefing, *, request: str = "",
+                 agent=None) -> QaResult:
+    """Judge one produced file against *briefing*.
+
+    Never raises and never fails on doubt: if the model is unreachable or its reply
+    can't be parsed, the result carries an ``error`` and counts as a PASS. A judge
+    that can't be read must not be able to condemn the user's work — or worse,
+    trigger a re-render loop on its own malfunction.
+    """
+    cfg = qa_settings()
+    try:
+        if agent is None:
+            from src.agent import create_qa_agent
+            agent = create_qa_agent()
+
+        out_blocks, out_desc = _output_blocks(path, cfg["video_frames"])
+        if not out_blocks:
+            return QaResult(path=path, passed=True, error="output could not be read as an image/video")
+
+        ref_paths = [p for p in briefing.reference_paths if is_image(p)][:cfg["max_references"]]
+        ref_blocks = [b for b in (_image_block(p) for p in ref_paths) if b]
+
+        if ref_blocks:
+            n = len(ref_blocks)
+            labels = ", ".join(f"IMAGE {i + 1}" for i in range(n))
+            description = (f"You are given {n + len(out_blocks)} images: {labels} "
+                           f"{'is a REFERENCE image' if n == 1 else 'are REFERENCE images'} "
+                           f"from the user's briefing, then {out_desc}.")
+        else:
+            description = f"You are given {out_desc}."
+
+        prompts = load_qa_prompts()
+        criteria = briefing.criteria.strip() or prompts.get("no_criteria", "")
+        question = (prompts.get("question", "")
+                    .replace("{{IMAGE_DESCRIPTION}}", description)
+                    .replace("{{REQUEST}}", (request or "").strip() or "(not recorded)")
+                    .replace("{{CRITERIA}}", criteria))
+        if not question.strip():
+            return QaResult(path=path, passed=True, error="QA prompt file has no `question` section")
+
+        agent.messages.clear()  # stateless: this output is judged on its own
+        reply = str(agent(ref_blocks + out_blocks + [{"text": question}]))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("qa: check failed for %s — %s", path, exc)
+        return QaResult(path=path, passed=True, error=str(exc))
+
+    data = parse_verdict(reply)
+    if not data:
+        logger.warning("qa: unparseable verdict for %s: %s", path, reply[:200])
+        return QaResult(path=path, passed=True, error="the QA model returned no usable verdict")
+    checks = [c for c in (data.get("checks") or []) if isinstance(c, dict)]
+    verdict = str(data.get("verdict", "")).strip().lower()
+    # Trust `verdict`, but a stated pass alongside a failed check is a contradiction
+    # the user cares about — resolve it the safe way.
+    failed = any(str(c.get("result", "")).strip().lower() == "fail" for c in checks)
+    passed = (verdict == "pass") and not failed
+    if verdict not in ("pass", "fail"):
+        passed = not failed
+    return QaResult(path=path, passed=passed, summary=str(data.get("summary") or "").strip(),
+                    checks=checks)
