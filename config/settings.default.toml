@@ -23,6 +23,14 @@ comfyui_user_dir = ""
 conversation_db = "./memory/conversations.sqlite"
 # Auto-open every workflow the agent runs onto the ComfyUI canvas. Env: AGENTY_CANVAS_AUTOLOAD (1/0).
 autoload_workflows_into_canvas = false
+# Canvas hooks: when an anchor is wired to a mid-graph node (a VAEDecode, an upscaler,
+# a mask op) its value is a tensor with no file anywhere, so the agent has nothing to
+# look at. With this on, that wire is rendered to a temp file before the turn starts —
+# only the anchor's ancestors run, and an already-executed graph is served from
+# ComfyUI's cache, but on a cold graph it does cost one upstream render.
+# Env: AGENTY_HOOK_TAP (1/0). Also AGENTY_MAX_HOOK_TAPS (4), AGENTY_HOOK_TAP_FRAMES (4,
+# frames taken from a batch), AGENTY_HOOK_TAP_TIMEOUT (300s).
+hook_tap_tensors = true
 message_history_log = "./.logs/message_history.log"
 tokens_usage_log = "./.logs/tokens_usage.log"
 

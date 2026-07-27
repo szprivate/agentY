@@ -398,26 +398,29 @@ def _order_standin_chains(standin_hooks: list) -> list:
 
 
 def _all_anchor_inputs(hook: dict, base_prompt: dict | None) -> list:
-    """Return ``[(anchor_id, anchor_type, scalar_inputs_dict), …]`` for every
+    """Return ``[(anchor_id, anchor_type, scalar_inputs_dict, tap), …]`` for every
     real-node input wired to a hook.
 
     The anchor input auto-grows, so a hook may gather several inputs (carried in
     the ``anchors`` list). Falls back to the singular ``anchor_node_id`` field for
-    older frontends that only send one.
+    older frontends that only send one. *tap* is ``(wire_type, paths)`` when
+    :mod:`src.utils.canvas_tap` rendered this anchor's wire to disk — it carried a
+    runtime tensor rather than a named file — and ``None`` for everything else.
     """
     entries: list = []
     plural = hook.get("anchors")
     if isinstance(plural, list) and plural:
         for a in plural:
             if isinstance(a, dict) and a.get("node_id") is not None:
-                entries.append((str(a["node_id"]), a.get("type"), a.get("widgets")))
+                entries.append((str(a["node_id"]), a.get("type"), a.get("widgets"),
+                                a.get("tapped_type"), a.get("tapped")))
     elif hook.get("anchor_node_id") is not None:
         entries.append((str(hook["anchor_node_id"]), hook.get("anchor_type"),
-                        hook.get("anchor_widgets")))
+                        hook.get("anchor_widgets"), None, None))
 
     out: list = []
     seen: set = set()
-    for aid, atype, widgets in entries:
+    for aid, atype, widgets, wire, tapped in entries:
         if aid in seen:
             continue
         seen.add(aid)
@@ -427,7 +430,9 @@ def _all_anchor_inputs(hook: dict, base_prompt: dict | None) -> list:
             inputs = {k: v for k, v in raw.items() if not isinstance(v, list)}
         elif isinstance(widgets, dict):
             inputs = widgets
-        out.append((aid, atype or "?", inputs))
+        paths = [str(p) for p in (tapped or []) if str(p).strip()]
+        out.append((aid, atype or "?", inputs,
+                    (str(wire or "live"), paths) if paths else None))
     return out
 
 
@@ -541,10 +546,18 @@ def _order_by_dependency(hooks: list) -> list:
 _COLLECTOR_TYPES = {"AgentYImageCollector", "AgentYVideoCollector"}
 
 
-def _render_anchor(aid: str, atype: str, inputs: dict) -> str:
-    """Human-readable description of one real-node anchor input. An agentY
-    collector node is expanded to its listed on-disk file paths (available with no
-    pre-run) so the agent can see/bind each file; other nodes list scalar params."""
+def _render_anchor(aid: str, atype: str, inputs: dict, tap: tuple | None = None) -> str:
+    """Human-readable description of one real-node anchor input.
+
+    An agentY collector node is expanded to its listed on-disk file paths (available
+    with no pre-run) so the agent can see/bind each file. An anchor whose *wire*
+    carries a runtime tensor is rendered as the file(s)
+    :mod:`src.utils.canvas_tap` rendered from it — otherwise the agent would see
+    only a class name and have nothing to look at. Note this is a property of the
+    wire, not the node: a ``LoadImage``'s MASK output gets tapped even though its
+    IMAGE output is a file the agent can already read. Everything else lists its
+    scalar params.
+    """
     if atype in _COLLECTOR_TYPES:
         files = inputs.get("files") if isinstance(inputs, dict) else None
         paths = [ln.strip().strip('"') for ln in str(files or "").splitlines() if ln.strip()]
@@ -554,7 +567,14 @@ def _render_anchor(aid: str, atype: str, inputs: dict) -> str:
         return (f"node {aid} (agentY {kind} collector) — {len(paths)} {kind} file(s) already "
                 f"on disk (use these paths directly, no run needed): " + "; ".join(paths))
     params = ", ".join(f"{k}={v!r}" for k, v in (inputs or {}).items()) or "(no scalar inputs)"
-    return f"node {aid} ({atype}) inputs[{params}]"
+    base = f"node {aid} ({atype}) inputs[{params}]"
+    if tap:
+        wire, paths = tap
+        noun = "file" if len(paths) == 1 else "files"
+        return (f"{base} — the {wire} output wired into this hook carries no file of its "
+                f"own, so it was rendered to disk for you ({len(paths)} {noun}; these ARE "
+                f"the content on that wire — use the path(s) directly): " + "; ".join(paths))
+    return base
 
 
 def _input_context(hook: dict, base_prompt: dict | None, hook_ids: set) -> str:
@@ -570,11 +590,11 @@ def _input_context(hook: dict, base_prompt: dict | None, hook_ids: set) -> str:
     if not anchors:
         return "no input wired"
     parts: list = []
-    for aid, atype, inputs in anchors:
+    for aid, atype, inputs, tap in anchors:
         if aid in hook_ids:
             parts.append(f"the value you produce for hook {aid}")
         else:
-            parts.append(_render_anchor(aid, atype, inputs))
+            parts.append(_render_anchor(aid, atype, inputs, tap))
     return "; ".join(parts)
 
 
@@ -754,7 +774,8 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             anchors = _all_anchor_inputs(h, base_prompt)
             if not anchors:
                 return "no input wired — treat the prompt as text-to-media"
-            parts = [_render_anchor(aid, atype, inputs) for aid, atype, inputs in anchors]
+            parts = [_render_anchor(aid, atype, inputs, tap)
+                     for aid, atype, inputs, tap in anchors]
             if len(parts) == 1:
                 return f"input from {parts[0]}"
             return "inputs from " + "; ".join(parts)

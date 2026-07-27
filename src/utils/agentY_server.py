@@ -399,6 +399,40 @@ def _collector_hook_images(canvas_hooks: list) -> list[str]:
     return out
 
 
+def _tap_hook_tensors(canvas_prompt: dict, canvas_hooks: list,
+                      image_paths: list[str]) -> list[str]:
+    """Materialise hook anchors that carry a runtime tensor, before the turn runs.
+
+    A loader wired into a hook names its file in its own widgets, so the agent can
+    already see it. An anchor fed by anything else — a ``VAEDecode``, an upscaler,
+    a mask op — has no file at all: its value exists only inside a run. This
+    renders those wires to disk (see :mod:`src.utils.canvas_tap`), annotating the
+    hook dicts in place so ``describe_hooks`` lists the paths, and returns the
+    turn's image paths with the new images prepended for a vision-capable
+    orchestrator. Videos are left out of the vision blocks — the agent reads them
+    with ``analyze_video`` from the path in the hook block.
+    """
+    try:
+        from src.utils.canvas_hooks import splice_hook_nodes
+        from src.utils.canvas_tap import materialize_hook_tensors
+
+        base, _removed = splice_hook_nodes(canvas_prompt)
+        paths = materialize_hook_tensors(canvas_hooks, base, resolver=_resolve_media_ref,
+                                         on_progress=status_bus.notify)
+    except Exception as exc:  # noqa: BLE001 — a tap must never cost the user a turn
+        logger.warning("hook tap: skipped (%s)", exc)
+        return image_paths
+    if not paths:
+        return image_paths
+    images = [p for p in paths if _is_image_path(p)]
+    if not images or not _orchestrator_supports_vision():
+        logger.info("hook tap: %d file(s) rendered; paths listed in the [CANVAS HOOKS] "
+                    "block (not embedded as vision).", len(paths))
+        return image_paths
+    existing = set(image_paths)
+    return [p for p in images[:_MAX_HOOK_IMAGES] if p not in existing] + image_paths
+
+
 def _orchestrator_supports_vision() -> bool:
     """True when the configured orchestrator LLM can accept image content blocks.
 
@@ -687,6 +721,12 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
     # Same for structured notifications: a Magnific creation that finishes mid-turn
     # streams its auto-drop live (between-turn ones go via the panel's idle poll).
     notify_bus.register_live(out_q)
+
+    # Hook anchors fed by a mid-graph node carry a tensor, not a file — render them
+    # to disk now so the agent has something to look at. Done here rather than in
+    # the /chat route so the "rendering…" line streams while it happens.
+    if canvas_prompt and canvas_hooks:
+        image_paths = _tap_hook_tensors(canvas_prompt, canvas_hooks, image_paths)
 
     _restore_state(pipeline, thread_id)
     session = getattr(pipeline, "_session", None)

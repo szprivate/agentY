@@ -175,6 +175,32 @@ runs the graph.
 > wired to — it doesn't guess "the connected node" from prose. Wire the output
 > where the produced value belongs.
 
+### What the agent can *see* on an anchor
+
+Wire a **Load Image / Load Video** node (or an [agentY
+collector](#the-agenty-python-node--collectors)) into an anchor and the agent
+sees the picture straight away — the node names a file, so there is something to
+look at before anything runs.
+
+Wire **anything else** — a `VAEDecode`, an upscaler, an `ImageBlend`, a mask op —
+and there is no file anywhere: that wire carries a **tensor that only exists
+during a run**. agentY handles this by *tapping* the wire before the turn starts:
+it trims your graph down to just that node's ancestors, renders it, and hands the
+agent the resulting file. You'll see a `🔎 Rendering hook input(s)…` line while it
+happens.
+
+- Only the **upstream** part runs. Your savers and any unrelated branch are not
+  in the tap graph, so nothing lands in your output folder and your pipeline is
+  not kicked off. (A tapped `VIDEO` wire is the one exception — ComfyUI has no
+  preview-video node, so those go to `output/agentY_tap/`.)
+- If the graph has **already run**, ComfyUI serves it from cache and the tap is
+  near-instant. On a cold graph it really does render that branch first.
+- `IMAGE`, `MASK`, `LATENT` (decoded with the graph's own VAE) and `VIDEO` wires
+  are supported. A batch contributes its first few frames.
+- Turn it off with **`hook_tap_tensors`** in Settings → Behaviour (or
+  `AGENTY_HOOK_TAP=0`). Tuning: `AGENTY_MAX_HOOK_TAPS` (4 wires per turn),
+  `AGENTY_HOOK_TAP_FRAMES` (4), `AGENTY_HOOK_TAP_TIMEOUT` (300s).
+
 ### The five purposes
 
 **1. `inline_parameter`** (default) — annotate an existing node and let the agent
