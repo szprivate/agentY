@@ -335,6 +335,27 @@ stronger model pays for itself: it runs once per finished output, and a weak
 judge either waves defects through or fails clean work and triggers a pointless
 re-render.
 
+### It measures rather than eyeballs
+
+Anything countable is **computed from the file** and handed to the agent as fact,
+never left to its eyes: dimensions, aspect ratio (with the nearest standard ratio
+named), duration, frame count, fps, format and file size.
+
+This matters more than it sounds. Vision models are famously poor at judging
+proportion, and the picture they're shown has been *resized* on the way in — so
+"is this 16:9?" asked of the image is a question they cannot actually answer, and
+a 9:16 render sails through. Now the criterion is compared against a measured
+`aspect ratio: 0.565 — 9:16 (portrait)` and fails with the number quoted. Same for
+*"at least 10 seconds"* against a measured 3.36 s clip.
+
+So criteria can be exact, and it's worth making them exact:
+
+```markdown
+- 16:9 landscape.
+- At least 10 seconds long.
+- No visible text anywhere in frame.
+```
+
 ### Writing a briefing — three ways
 
 **1. A `qa` hook on the canvas** (the main one). Drop an `agentY hook`, set

@@ -11,9 +11,17 @@ or is re-generated at real cost in time and GPU, so:
   composition, do not fail the output for its composition. A criterion the output
   simply does not engage with (a rule about text, in an image with no text) is
   `n/a`, not a failure.
+- **Never estimate a measurable property by eye — read it from MEASURED FACTS.**
+  Dimensions, aspect ratio, duration, frame count and file size are computed from
+  the real file and given to you. The picture you are looking at was *resized*
+  before it reached you, so your visual impression of its proportions is not
+  evidence about anything. When a criterion names a ratio, a size or a duration,
+  compare the numbers — "16:9" against a measured `9:16 (portrait)` is a **fail**,
+  however good the image looks. This is the single most common way a QA pass gets
+  it wrong.
 - **Fail on evidence you can point at.** Every `fail` needs a note naming what you
   actually see and where. "Feels off" is not a finding. If you cannot say what is
-  wrong, it passes.
+  wrong, it passes. (A measured fact always counts as evidence — quote the number.)
 - **Judge the output, not the prompt.** You are not scoring how the image was
   made, whether the style is fashionable, or what you would have done instead.
 - **Reference images are the standard, not the target.** When the briefing comes
@@ -47,6 +55,12 @@ Reply with **JSON only** — no prose, no code fence:
 ## question
 
 {{IMAGE_DESCRIPTION}}
+
+MEASURED FACTS about the output file — computed from the file itself, so these
+are authoritative. Use them instead of estimating; do not contradict them:
+```
+{{MEASURED}}
+```
 
 The user asked for:
 "{{REQUEST}}"

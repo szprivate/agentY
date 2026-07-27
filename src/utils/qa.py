@@ -420,6 +420,114 @@ def _image_block(path: str) -> dict | None:
         return None
 
 
+# Ratios worth naming, as (label, width/height). A generated file rarely lands on
+# an exact ratio (832x1472 reduces to 13:23, not 9:16), so the nearest of these
+# within _RATIO_TOLERANCE is reported alongside the exact numbers.
+_COMMON_RATIOS = [
+    ("21:9", 21 / 9), ("2:1", 2.0), ("16:9", 16 / 9), ("3:2", 1.5), ("4:3", 4 / 3),
+    ("5:4", 1.25), ("1:1", 1.0), ("4:5", 0.8), ("3:4", 0.75), ("2:3", 2 / 3),
+    ("9:16", 9 / 16), ("1:2", 0.5), ("9:21", 9 / 21),
+]
+# Relative tolerance for claiming a common ratio. 832x1472 (0.5652 vs 9:16's
+# 0.5625) is 0.5% off and is genuinely 9:16; 1000x437 is 2% off 21:9 and is not,
+# so it stays reported as its own exact ratio rather than being rounded into one.
+_RATIO_TOLERANCE = 0.015
+
+
+def _describe_ratio(width: int, height: int) -> str:
+    """Exact and nearest-common aspect ratio for *width* x *height*."""
+    import math
+
+    if not width or not height:
+        return "unknown"
+    value = width / height
+    g = math.gcd(int(width), int(height))
+    exact = f"{int(width) // g}:{int(height) // g}"
+    nearest = min(_COMMON_RATIOS, key=lambda r: abs(r[1] - value) / r[1])
+    close = abs(nearest[1] - value) / nearest[1] <= _RATIO_TOLERANCE
+    orient = "square" if abs(value - 1) < 0.01 else ("landscape" if value > 1 else "portrait")
+    if close and nearest[0] != exact:
+        return f"{value:.3f} — {nearest[0]} ({orient}); exact pixel ratio {exact}"
+    if close:
+        return f"{value:.3f} — {nearest[0]} ({orient})"
+    return f"{value:.3f} — {exact} ({orient}), not a standard ratio"
+
+
+def measure_output(path: str) -> dict:
+    """Hard, measured facts about a produced file.
+
+    Vision models are reliably bad at exactly the properties that are trivial to
+    compute — dimensions, aspect ratio, duration, frame count. Worse, the image
+    they are shown has been resized on the way in, so their impression of its
+    proportions is not evidence about the real file. A model asked to eyeball
+    "is this 16:9?" will happily wave through a 9:16 render, which is precisely
+    what it did before this existed. So we measure, and tell it not to guess.
+
+    Returns {} when the file can't be read — the check then proceeds without
+    facts rather than failing.
+    """
+    p = Path(path)
+    facts: dict = {}
+    try:
+        facts["file"] = p.name
+        facts["size_bytes"] = p.stat().st_size
+    except OSError:
+        return {}
+
+    if is_image(path):
+        try:
+            from PIL import Image
+            with Image.open(p) as img:
+                facts.update({"width": img.width, "height": img.height,
+                              "format": (img.format or "").upper(), "mode": img.mode})
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("qa: could not measure image %s — %s", path, exc)
+        return facts
+
+    try:
+        import cv2  # type: ignore
+        cap = cv2.VideoCapture(str(p))
+        try:
+            if cap.isOpened():
+                facts["width"] = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                facts["height"] = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                fps = float(cap.get(cv2.CAP_PROP_FPS) or 0)
+                count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+                if fps > 0:
+                    facts["fps"] = round(fps, 3)
+                if count > 0:
+                    facts["frames"] = count
+                if fps > 0 and count > 0:
+                    facts["duration_s"] = round(count / fps, 2)
+        finally:
+            cap.release()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("qa: could not measure video %s — %s", path, exc)
+    return facts
+
+
+def render_measurements(facts: dict) -> str:
+    """The measured facts as the block handed to the QA agent."""
+    if not facts:
+        return ""
+    lines: list[str] = []
+    w, h = facts.get("width"), facts.get("height")
+    if w and h:
+        lines.append(f"- dimensions: {w} x {h} px")
+        lines.append(f"- aspect ratio: {_describe_ratio(w, h)}")
+    if facts.get("duration_s") is not None:
+        lines.append(f"- duration: {facts['duration_s']} s "
+                     f"({facts.get('frames', '?')} frames @ {facts.get('fps', '?')} fps)")
+    fmt = facts.get("format")
+    size = facts.get("size_bytes")
+    detail = ", ".join(str(x) for x in (fmt, facts.get("mode")) if x)
+    if size:
+        detail = (detail + ", " if detail else "") + f"{size / 1024 / 1024:.2f} MB"
+    if detail:
+        lines.append(f"- file: {detail}")
+    return "\n".join(lines)
+
+
 def _output_blocks(path: str, frames: int) -> tuple[list[dict], str]:
     """Image blocks for one produced file, plus how to describe them to the model.
 
@@ -477,9 +585,11 @@ def check_output(path: str, briefing: QaBriefing, *, request: str = "",
 
         prompts = load_qa_prompts()
         criteria = briefing.criteria.strip() or prompts.get("no_criteria", "")
+        measured = render_measurements(measure_output(path))
         question = (prompts.get("question", "")
                     .replace("{{IMAGE_DESCRIPTION}}", description)
                     .replace("{{REQUEST}}", (request or "").strip() or "(not recorded)")
+                    .replace("{{MEASURED}}", measured or "(could not be measured)")
                     .replace("{{CRITERIA}}", criteria))
         if not question.strip():
             return QaResult(path=path, passed=True, error="QA prompt file has no `question` section")
