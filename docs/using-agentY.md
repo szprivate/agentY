@@ -163,11 +163,14 @@ runs the graph.
   node's input (or into the next hook). Also type-agnostic.
 - **`directive`** — the natural-language instruction / prompt.
 - **`purpose`** — what the hook *is* (below).
-- **`ignore`** — disable a hook without deleting it (shows *active* / *ignored*).
 - **`bake_to_canvas`** — *make_workflow only*; bake the result into a reusable
   subgraph (see [Baking](#baking-a-chain-into-subgraphs)).
 - **`freeze`** — *inline_parameter / text only*; keep the hook live vs. bake the
   value in (see [Freeze](#freeze-keep-live-vs-bake-in)).
+
+To **disable a hook without deleting it**, bypass it (`Ctrl+B`) or mute it
+(`Ctrl+M`) like any other node — the agent skips hooks in those modes. There's no
+separate toggle to remember, and a disabled hook is obvious on the canvas.
 
 > **Mental model:** a hook is an **upstream producer**. It reads its wired anchor
 > inputs as context and *produces* the value(s) for its output, which you wire

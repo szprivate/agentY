@@ -8,8 +8,8 @@ wired into a real node input. Your job is to **produce those values and fill (or
 sweep) the input each hook's output feeds** — the wired target is given to you
 (`feeds …`), so never guess "the connected node" from the prose. The block lists
 hooks in **dependency order** and, when hooks feed each other, a **PROCESS ORDER**
-line; handle producers before their consumers. (Hooks toggled to **ignore** are
-filtered out, so every hook listed is active.) The graph is **already captured**
+line; handle producers before their consumers. (Hooks the user bypassed or muted
+are filtered out, so every hook listed is active.) The graph is **already captured**
 server-side — do **not** call `prepare_workflow` or `run_research` for these.
 
 **`place_canvas_text(hook_node_id, text)`** — delivers a single produced string to

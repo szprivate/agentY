@@ -619,9 +619,9 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
     node input. Three purposes: an *inline_parameter* (producer) hook fills (or
     sweeps) the input its output is wired to; a *text* hook writes a single string
     the agent bakes there as an ``agentY text`` node; a *make_workflow* hook stands
-    in for a workflow/script the agent generates. Hooks the user toggled to *ignore* are
-    filtered out client-side, so every hook below is active. Hooks are described in
-    dependency order so a producer is handled before the hook that consumes it.
+    in for a workflow/script the agent generates. Hooks the user bypassed or muted on
+    the canvas are filtered out client-side, so every hook below is active. Hooks are
+    described in dependency order so a producer is handled before the hook that consumes it.
     """
     hooks = [h for h in (hooks or []) if isinstance(h, dict)]
     if not hooks:
