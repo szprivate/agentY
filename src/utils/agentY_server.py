@@ -1260,10 +1260,34 @@ def _remove_workflow(name: str) -> list[dict]:
         return [_sys(f"❌ Failed to remove workflow: {exc}")]
 
 
-# Pipeline agents that can be swapped live, and the utility settings keys that
-# are read from settings.json on demand rather than held as a live agent.
-_SWITCHABLE_AGENTS = ("orchestrator", "query_templates", "info", "planner")
-_SWITCH_UTILITY_KEYS = ("build_skill", "llm_functions", "executor_vision_model")
+# Agents the pipeline holds LIVE, so a switch takes effect this turn instead of at
+# the next start. `orchestrator` is special-cased in _rebuild_agent (it needs its
+# delegation tools re-wired), the rest are a plain factory + attribute swap. Every
+# OTHER role is still switchable — the setting is written and picked up on restart;
+# see _switch_targets, which is the authority on what a target may be.
+_LIVE_AGENTS: dict[str, tuple[str, str]] = {
+    "query_templates": ("create_query_templates_agent", "_researcher"),
+    "info": ("create_info_agent", "_info_agent"),
+    "planner": ("create_planner_agent", "_planner_agent"),
+}
+
+
+def _switch_targets() -> tuple[list[str], list[str]]:
+    """``(tiers, roles)`` a switch may target.
+
+    Tiers are the normal thing to switch — they are what the settings UI presents,
+    and one of them covers every role. Roles remain targetable for the exceptions,
+    minus the two whose tier covers exactly one role (`orchestrator`, `coder`):
+    for those, tier and role would mean the same thing written to two different
+    places, which is a distinction with no difference and a good way to end up
+    with an override quietly shadowing a tier.
+    """
+    from src.agent import _ROLE_TIERS, TIER_LABELS
+
+    tiers = list(TIER_LABELS)
+    one_to_one = {t for t in tiers if sum(1 for v in _ROLE_TIERS.values() if v == t) == 1}
+    roles = [r for r in _ROLE_TIERS if r not in one_to_one]
+    return tiers, roles
 
 
 def _rebuild_agent(agent_name: str, provider: str, model: str, llm_spec: str) -> str | None:
@@ -1279,10 +1303,8 @@ def _rebuild_agent(agent_name: str, provider: str, model: str, llm_spec: str) ->
         return "pipeline not initialised"
 
     # OpenAI-compatible providers (DashScope/OpenAI/Gemini) read their model from
-    # settings; update it so the rebuilt agent picks up the requested model.
+    # settings, which the caller has already written before getting here.
     _OPENAI_COMPAT = _DASHSCOPE_PROVIDERS | _OPENAI_PROVIDERS | _GEMINI_PROVIDERS
-    if provider in _OPENAI_COMPAT:
-        get_settings().setdefault("llm", {}).setdefault("pipeline", {})[agent_name] = llm_spec
 
     # The orchestrator is rebuilt specially: its tool list must include the
     # pipeline's delegation tools, and it must be re-wired (skills plugin + live
@@ -1297,14 +1319,15 @@ def _rebuild_agent(agent_name: str, provider: str, model: str, llm_spec: str) ->
         except Exception as exc:  # noqa: BLE001
             return str(exc)
 
+    entry = _LIVE_AGENTS.get(agent_name)
+    if entry is None:
+        return None  # not held live — the written setting applies at the next start
+    factory_name, attr = entry
     factory = {
-        "query_templates": create_query_templates_agent,
-        "info": create_info_agent, "planner": create_planner_agent,
-    }[agent_name]
-    attr = {
-        "query_templates": "_researcher",
-        "info": "_info_agent", "planner": "_planner_agent",
-    }[agent_name]
+        "create_query_templates_agent": create_query_templates_agent,
+        "create_info_agent": create_info_agent,
+        "create_planner_agent": create_planner_agent,
+    }[factory_name]
     kwargs = {"llm": provider}
     if provider not in _OPENAI_COMPAT and model:
         kwargs["ollama_model" if provider == "ollama" else "anthropic_model"] = model
@@ -1316,52 +1339,94 @@ def _rebuild_agent(agent_name: str, provider: str, model: str, llm_spec: str) ->
 
 
 def _switch_model(args: list[str]) -> list[dict]:
-    AGENTS = set(_SWITCHABLE_AGENTS)
-    SETTINGS_KEYS = set(_SWITCH_UTILITY_KEYS)
-    ALL = AGENTS | SETTINGS_KEYS
+    """``/switch_model <target> <provider,model>`` — set the model for a tier, a
+    single role, or everything.
+
+    Writes to ``settings.local.json`` so the choice survives a restart: this picker
+    lives in the composer bar and is how most model changes actually get made, so
+    silently reverting it at the next start would be the bigger surprise. Agents the
+    pipeline holds live are rebuilt immediately; the rest apply at the next start,
+    and the reply says which is which rather than implying everything took effect.
+    """
+    from src.agent import _ROLE_TIERS
+    from src.utils.settings import set_local
+
+    tiers, roles = _switch_targets()
     if len(args) < 2:
-        return [_sys("⚠️ Usage: `/switch_model <agent|all> <provider,model>`\n\n"
-                     f"Agents: `{', '.join(sorted(AGENTS))}`\n"
-                     f"Utilities: `{', '.join(sorted(SETTINGS_KEYS))}`\n"
-                     "Use `all` to switch every agent at once — e.g. "
-                     "`/switch_model all claude,claude-haiku-4-5`.")]
-    agent_name = args[0].lower()
+        return [_sys(
+            "⚠️ Usage: `/switch_model <target> <provider,model>`\n\n"
+            f"**Tiers** (the usual thing to switch): `{'`, `'.join(tiers)}`\n\n"
+            f"**Single roles** — writes a per-role override that beats its tier: "
+            f"`{'`, `'.join(roles)}`\n\n"
+            "`all` sets every tier at once — e.g. `/switch_model all claude,claude-haiku-4-5`."
+        )]
+    target = args[0].lower().strip()
     llm_spec = args[1].strip()
     provider, _, model = llm_spec.partition(",")
     provider = provider.strip().lower()
     model = model.strip()
+
     from src.agent import _DASHSCOPE_PROVIDERS, _OPENAI_PROVIDERS, _GEMINI_PROVIDERS
     if provider not in ({"claude", "ollama"} | _DASHSCOPE_PROVIDERS | _OPENAI_PROVIDERS | _GEMINI_PROVIDERS):
         return [_sys(f"❌ Unknown provider `{provider}`. Use `claude`, `ollama`, "
                      "`dashscope`, `openai`, or `google`.")]
 
-    # ── all: switch every pipeline agent in one go ──────────────────────────
-    if agent_name == "all":
-        if _agent_ref is None:
-            return [_sys("⚠️ Pipeline not initialised.")]
-        failures = [f"`{a}`: {err}"
-                    for a in sorted(AGENTS)
-                    if (err := _rebuild_agent(a, provider, model, llm_spec))]
-        if failures:
-            return [_sys(f"⚠️ Switched agents to `{llm_spec}`, but some failed:\n" + "\n".join(failures))]
-        return [_sys(f"✅ All {len(AGENTS)} agents now using `{llm_spec}`.\n\n"
-                     "_(The vision/utility keys `llm_functions` and `executor_vision_model` "
-                     "were left unchanged — switch those individually if needed.)_")]
+    # Resolve the target into the setting it writes and the roles it affects.
+    if target == "all":
+        overrides = {"llm": {"tiers": {t: llm_spec for t in tiers}}}
+        affected = set(_ROLE_TIERS)
+        what = f"All {len(tiers)} tiers"
+    elif target in tiers:
+        overrides = {"llm": {"tiers": {target: llm_spec}}}
+        affected = {r for r, t in _ROLE_TIERS.items() if t == target}
+        what = f"Tier `{target}`"
+    elif target in roles:
+        overrides = {"llm": {"pipeline": {target: llm_spec}}}
+        affected = {target}
+        what = f"Role `{target}`"
+    else:
+        return [_sys(f"❌ Unknown target `{target}`.\n\n"
+                     f"Tiers: `{'`, `'.join(tiers)}`\n\n"
+                     f"Roles: `{'`, `'.join(roles)}`\n\nOr `all`.")]
 
-    if agent_name not in ALL:
-        return [_sys(f"❌ Unknown agent/utility `{agent_name}`. Valid: `{', '.join(sorted(ALL))}`, or `all`.")]
-
-    # ── utility settings keys (read from settings.json on demand) ───────────
-    if agent_name in SETTINGS_KEYS:
+    try:
+        set_local(overrides)
+    except Exception as exc:  # noqa: BLE001
+        return [_sys(f"❌ Could not save the setting: {exc}")]
+    # The merged settings are cached in-process; refresh so the rebuilds below (and
+    # the rest of this turn) read what we just wrote.
+    try:
+        from src.utils.settings import load_settings
+        load_settings(refresh=True)
         from src.agent import _settings as get_settings
-        get_settings().setdefault("llm", {}).setdefault("pipeline", {})[agent_name] = llm_spec
-        return [_sys(f"✅ `{agent_name}` now using `{llm_spec}`.")]
+        _llm = get_settings().setdefault("llm", {})
+        _llm.setdefault("tiers", {}).update(overrides["llm"].get("tiers", {}))
+        _llm.setdefault("pipeline", {}).update(overrides["llm"].get("pipeline", {}))
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("switch_model: settings cache refresh skipped: %s", exc)
 
-    # ── single pipeline agent ───────────────────────────────────────────────
-    err = _rebuild_agent(agent_name, provider, model, llm_spec)
-    if err:
-        return [_sys(f"❌ Failed to switch model: {err}")]
-    return [_sys(f"✅ `{agent_name}` now using `{llm_spec}`.")]
+    # Rebuild whatever the pipeline holds live so the change lands this turn. With
+    # no pipeline running there is nothing to swap and the setting simply applies at
+    # start — that is not a failure worth warning about.
+    live = (sorted(affected & ({"orchestrator"} | set(_LIVE_AGENTS)))
+            if _agent_ref is not None else [])
+    failures = [f"`{r}`: {err}" for r in live
+                if (err := _rebuild_agent(r, provider, model, llm_spec))]
+    ok_live = [r for r in live if not any(f.startswith(f"`{r}`") for f in failures)]
+    deferred = sorted(affected - set(ok_live))
+
+    lines = [f"✅ {what} → `{llm_spec}` (saved to `settings.local.json`)."]
+    if ok_live:
+        lines.append("Live now: " + ", ".join(f"`{r}`" for r in ok_live) + ".")
+    if deferred:
+        lines.append("Applies on the next agent start: "
+                     + ", ".join(f"`{r}`" for r in deferred) + ".")
+    if target in roles:
+        lines.append(f"_`{target}` now ignores its `{_ROLE_TIERS.get(target)}` tier "
+                     "until you clear the override in Settings._")
+    if failures:
+        lines.append("⚠️ Some live rebuilds failed:\n" + "\n".join(failures))
+    return [_sys("\n\n".join(lines))]
 
 
 # ── Legacy ComfyUI → agent image-review bridge (kept) ─────────────────────────
@@ -2536,6 +2601,24 @@ def _build_app():
         loop, q = entry
         loop.call_soon_threadsafe(q.put_nowait, text)
         return jsonify({"ok": True})
+
+    # ── What a model switch may target (drives the composer's scope picker) ──
+    @app.route("/agentY/switch_targets", methods=["GET", "OPTIONS"])
+    def switch_targets_route():
+        """Tiers + roles the picker offers, so the panel never drifts from the
+        settings UI — both read the same tier map out of src/agent.py."""
+        if request.method == "OPTIONS":
+            return "", 204
+        try:
+            from src.agent import TIER_LABELS, _ROLE_TIERS
+            tiers, roles = _switch_targets()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("switch_targets failed: %s", exc)
+            return jsonify({"tiers": [], "roles": []})
+        return jsonify({
+            "tiers": [{"value": t, "label": TIER_LABELS.get(t, t)} for t in tiers],
+            "roles": [{"value": r, "label": r, "tier": _ROLE_TIERS.get(r, "")} for r in roles],
+        })
 
     # ── Switch an agent's model (same as the /switch_model command) ─────────
     @app.route("/agentY/switch_model", methods=["POST", "OPTIONS"])

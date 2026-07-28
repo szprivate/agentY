@@ -33,7 +33,7 @@ An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanony
 - **In-panel Settings & token usage** — edit auth keys (`.env`) and your settings (saved to `config/settings.local.json`), and review per-model token cost, from ComfyUI's own Settings panel (no file editing required).
 - **FAISS memory** — long-term memory via mem0 + local Ollama embeddings (`nomic-embed-text`).
 - **Hugging Face model management** — search, check local availability, and download models on demand.
-- **Multiple LLM backends** — Claude, Ollama, Alibaba/DashScope (Qwen), OpenAI (GPT), and Google (Gemini), configurable per pipeline stage. The `/switch_model` dropdown is **discovered live** from each provider's model list (a vendor appears only when its API key is set), so it never goes stale.
+- **Multiple LLM backends** — Claude, Ollama, Alibaba/DashScope (Qwen), OpenAI (GPT), and Google (Gemini), configurable per pipeline stage. Models are picked by **tier** (six of them) with per-role overrides for the exceptions; `/switch_model` and the composer's picker target either, and the model list is **discovered live** from each provider (a vendor appears only when its API key is set), so it never goes stale.
 
 ---
 

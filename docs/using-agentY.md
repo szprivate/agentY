@@ -134,7 +134,7 @@ Type `/` in the composer for an autocomplete menu.
 | `/clear_vram` | Clear ComfyUI GPU VRAM |
 | `/images` | List images generated in this thread |
 | `/clearhistory` | Delete all conversation history |
-| `/switch_model <stage> <provider,model>` | Switch an agent stage's LLM (e.g. `/switch_model orchestrator claude,claude-opus-4-8`) |
+| `/switch_model <target> <provider,model>` | Set a model **tier**, a single role, or `all` (e.g. `/switch_model fast_utility dashscope,qwen3.6-flash`). Saved to `settings.local.json` |
 | `/add_workflow <path>` \| `/add_workflow canvas <name>` | Register a workflow template (a JSON file, or the open graph) |
 | `/remove_workflow <name>` | Remove a registered template |
 | `/resend` | Resend the first user message |
@@ -597,9 +597,19 @@ over that role's tier until you clear it:
 /switch_model orchestrator claude,claude-opus-4-8
 ```
 
-or from the panel's **Switch model…** picker (scope it to *All agents* or one
-role). The picker is discovered live from each configured provider, so only
-vendors whose key is set appear — it never goes stale.
+The scope dropdown next to it offers **All tiers**, each of the six **tiers**,
+and each individual **role** (labelled with the tier it belongs to). It is built
+from the agent's own tier map at startup, so it always matches Settings ▸ Models
+& providers.
+
+Switching a **tier** is the normal move. Switching a single **role** writes a
+per-role override, which then beats that role's tier until you clear it in
+Settings — the reply says so when it happens.
+
+The model list itself is discovered live from each configured provider, so only
+vendors whose key is set appear; it never goes stale. Agents the pipeline holds
+live (orchestrator, query_templates, info, planner) switch immediately — the rest
+apply at the next agent start, and the reply tells you which is which.
 
 ---
 
