@@ -19,6 +19,10 @@ ollama_server_url = "http://localhost:11434"
 # ComfyUI models dir — machine-specific, set it in settings.local.json. When blank,
 # agentY falls back to the directory ComfyUI reports via /system_stats.
 comfyui_models_dir = ""
+# Your ComfyUI install (the folder containing custom_nodes/). Only used by the
+# startup update check, to find the sidebar extension it should also fast-forward.
+# Blank = try the usual spots next to agentY. Env: AGENTY_COMFYUI_DIR.
+comfyui_dir = ""
 comfyui_custom_templates_dir = "./comfyui_workflow_templates_custom/templates/"
 output_dir = "./output_images/"
 output_workflows_dir = "./output_workflows/"
@@ -36,6 +40,12 @@ autoload_workflows_into_canvas = false
 # Env: AGENTY_HOOK_TAP (1/0). Also AGENTY_MAX_HOOK_TAPS (4), AGENTY_HOOK_TAP_FRAMES (4,
 # frames taken from a batch), AGENTY_HOOK_TAP_TIMEOUT (300s).
 hook_tap_tensors = true
+# On start, fast-forward agentY, agenty_core and the ComfyUI sidebar extension to
+# whatever their remotes have. Strictly safe: a repo with uncommitted changes or
+# unpushed commits is left completely alone, it is --ff-only (never a merge, rebase
+# or reset), and being offline is not an error. Set false to never check.
+# Also: run_agent.ps1 -NoUpdate, or AGENTY_NO_UPDATE=1.
+auto_update = true
 message_history_log = "./.logs/message_history.log"
 tokens_usage_log = "./.logs/tokens_usage.log"
 

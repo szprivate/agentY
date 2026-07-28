@@ -170,7 +170,23 @@ git clone https://github.com/szprivate/agentY-comfyuiConnect  <ComfyUI>\custom_n
 After the restart you get, from the one node pack:
 - the **agentY** tab in ComfyUI's left sidebar (the chat panel);
 - the **agentY** node category with **`agentY hook`** and **`agentY python`** (see [Canvas nodes](#canvas-nodes));
-- an **Open agentY Settings…** entry and a **token-usage** view in ComfyUI's Settings panel.
+- an **Open agentY Settings…** entry in ComfyUI's Settings panel — the one door to
+  everything else (auth keys, model tiers, MCP servers, pricing, and the log /
+  memory / token-usage viewers).
+
+Keeping it current is automatic: every `run_agent.ps1` start fast-forwards agentY,
+`agenty_core` **and** this extension (see [Staying current](#staying-current)).
+
+### Staying current
+
+`run_agent.ps1` checks each remote at startup and fast-forwards the three repos
+that make up agentY. It never touches a checkout with uncommitted changes or
+unpushed commits, it is `--ff-only` (no merge, rebase or reset), and being offline
+is not an error — whatever it declines to do, it says so. `requirements.txt`
+changes trigger a reinstall before the app starts.
+
+Opt out with `auto_update = false` in settings, `.un_agent.ps1 -NoUpdate`, or
+`AGENTY_NO_UPDATE=1`. Set `comfyui_dir` if your ComfyUI isn't next to agentY.
 
 ### 5. Configure defaults (optional)
 

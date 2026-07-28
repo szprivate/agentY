@@ -20,6 +20,10 @@ param(
     # Enable verbose hang/stall tracing (sets AGENTY_DEBUG=1 -> .logs/debug.log)
     [switch]$Debug,
 
+    # Skip the startup update check (also: set AGENTY_NO_UPDATE=1, or
+    # auto_update = false in config/settings.local.json)
+    [switch]$NoUpdate,
+
     # Pipeline - QueryTemplates  e.g. -LlmQueryTemplates "ollama,qwen3:9b"  or  "claude,claude-haiku-4-5"
     [string]$LlmQueryTemplates = "",
 
@@ -40,6 +44,7 @@ if ($Help) {
     Write-Host "  -LlmQueryTemplates `"provider,model`"  LLM for the QueryTemplates stage (sets env vars)."
     Write-Host "  -LlmAssembleWorkflow `"provider,model`"  LLM for the AssembleWorkflow stage (sets env vars)."
     Write-Host "  -Debug                           Enable hang/stall tracing to .logs/debug.log."
+    Write-Host "  -NoUpdate                        Skip the startup check for updates on the remote."
     Write-Host "  -Help                            Show this help message and exit."
     Write-Host ""
     Write-Host "The chat UI is the agentY tab in ComfyUI's left sidebar (separate repo). Install once:"
@@ -56,6 +61,139 @@ if ($Debug) {
     Write-Host "[run_agent] AGENTY_DEBUG enabled - tracing hangs/stalls to .logs/debug.log" -ForegroundColor Yellow
 }
 
+# ── Startup update check ────────────────────────────────────────────────────
+# Fast-forwards the repos that make up the RUNNING agent (this one, plus the
+# agenty_core tool layer it installs editable) to whatever the remote has.
+#
+# Deliberately conservative, because this runs unattended on every start and the
+# working copy is the user's:
+#   * a dirty working tree is left completely alone — never stash, never discard;
+#   * local commits that aren't pushed are left alone — never rebase, never reset;
+#   * --ff-only, so a diverged branch reports and stops rather than merging;
+#   * a fetch failure (offline, VPN, remote down) is a shrug, not a failed start.
+# Anything it declines to do it says out loud, so a stale checkout is never silent.
+function Update-Repo {
+    param([string]$Name, [string]$Dir)
+
+    if (-not (Test-Path (Join-Path $Dir ".git"))) { return $null }
+
+    $dirty = & git -C $Dir status --porcelain 2>$null
+    if ($LASTEXITCODE -ne 0) { return $null }
+    if ($dirty) {
+        Write-Host "[update] $Name has uncommitted changes - skipping (nothing was touched)." -ForegroundColor DarkYellow
+        return $null
+    }
+
+    $upstream = & git -C $Dir rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $upstream) {
+        Write-Host "[update] $Name has no upstream branch - skipping." -ForegroundColor DarkYellow
+        return $null
+    }
+
+    & git -C $Dir fetch --quiet 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[update] $Name - could not reach the remote; continuing with the local copy." -ForegroundColor DarkYellow
+        return $null
+    }
+
+    $behind = (& git -C $Dir rev-list --count "HEAD..@{u}" 2>$null)
+    $ahead  = (& git -C $Dir rev-list --count "@{u}..HEAD" 2>$null)
+    if ($LASTEXITCODE -ne 0) { return $null }
+    $behind = [int]$behind; $ahead = [int]$ahead
+
+    if ($behind -eq 0) {
+        Write-Host "[update] $Name is up to date." -ForegroundColor DarkGray
+        return $null
+    }
+    if ($ahead -gt 0) {
+        Write-Host "[update] $Name has diverged ($ahead local, $behind remote) - skipping. Merge it yourself." -ForegroundColor Yellow
+        return $null
+    }
+
+    $before = (& git -C $Dir rev-parse HEAD 2>$null)
+    Write-Host "[update] $Name is $behind commit(s) behind $upstream - fast-forwarding..." -ForegroundColor Cyan
+    & git -C $Dir merge --ff-only "@{u}" | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[update] $Name could not fast-forward - leaving it as it was." -ForegroundColor Yellow
+        return $null
+    }
+    $after = (& git -C $Dir rev-parse HEAD 2>$null)
+    Write-Host "[update] $Name updated -> $($after.Substring(0,7))" -ForegroundColor Green
+
+    # Only reinstall dependencies when the pulled range actually touched them.
+    $touched = & git -C $Dir diff --name-only "$before..$after" -- requirements.txt pyproject.toml 2>$null
+    if ($touched) { return $Dir }
+    return $null
+}
+
+$Script:DepsChanged = @()
+$Script:ComfyUIDir = ""
+$skipUpdate = $NoUpdate -or ($env:AGENTY_NO_UPDATE -and $env:AGENTY_NO_UPDATE -notin @("0", "false", "no", ""))
+if (-not $skipUpdate) {
+    # An explicit auto_update = false in the settings file opts out permanently.
+    $settingsLocal = Join-Path $ProjectRoot "config\settings.local.json"
+    if (Test-Path $settingsLocal) {
+        try {
+            $sj = Get-Content $settingsLocal -Raw | ConvertFrom-Json
+            if ($null -ne $sj.auto_update -and -not $sj.auto_update) { $skipUpdate = $true }
+            if ($sj.PSObject.Properties.Name -contains "comfyui_dir" -and $sj.comfyui_dir) {
+                $Script:ComfyUIDir = [string]$sj.comfyui_dir
+            }
+        } catch { }
+    }
+}
+if ($skipUpdate) {
+    Write-Host "[update] Update check skipped." -ForegroundColor DarkGray
+} else {
+    $parent = Split-Path -Parent $ProjectRoot
+    $targets = @(
+        @{ n = "agentY";      d = $ProjectRoot }
+        @{ n = "agenty_core"; d = (Join-Path $parent "agenty_core") }
+    )
+
+    # The sidebar extension is a THIRD checkout, and often two: the clone ComfyUI
+    # actually loads (<ComfyUI>\custom_nodes\agentY-comfyuiConnect) and, for anyone
+    # who works on it, a dev clone beside agentY. Update every one we can find —
+    # a stale installed clone is the usual reason the panel is missing a feature the
+    # host already has. Candidates are cheap path guesses; nothing is searched.
+    $extCandidates = @(
+        (Join-Path $parent "agentY-comfyuiConnect")
+    )
+    foreach ($root in @($env:AGENTY_COMFYUI_DIR, $Script:ComfyUIDir)) {
+        if ($root) { $extCandidates += (Join-Path $root "custom_nodes\agentY-comfyuiConnect") }
+    }
+    foreach ($name in @("comfyui", "ComfyUI", "ComfyUI_windows_portable\ComfyUI")) {
+        $extCandidates += (Join-Path (Join-Path $parent $name) "custom_nodes\agentY-comfyuiConnect")
+    }
+    $seen = @{}
+    $i = 0
+    foreach ($cand in $extCandidates) {
+        if (-not $cand -or -not (Test-Path (Join-Path $cand ".git"))) { continue }
+        $full = (Resolve-Path $cand).Path
+        if ($seen.ContainsKey($full)) { continue }
+        $seen[$full] = $true
+        $i++
+        $label = if ($i -eq 1) { "agentY-comfyuiConnect" } else { "agentY-comfyuiConnect #$i" }
+        $targets += @{ n = $label; d = $full; ext = $true }
+    }
+
+    $extUpdated = $false
+    foreach ($r in $targets) {
+        if (-not (Test-Path $r.d)) { continue }
+        $before = (& git -C $r.d rev-parse HEAD 2>$null)
+        $changed = Update-Repo -Name $r.n -Dir $r.d
+        if ($changed) { $Script:DepsChanged += $r.n }
+        if ($r.ContainsKey("ext")) {
+            $after = (& git -C $r.d rev-parse HEAD 2>$null)
+            if ($before -and $after -and $before -ne $after) { $extUpdated = $true }
+        }
+    }
+    if ($extUpdated) {
+        Write-Host "[update] The ComfyUI sidebar extension changed - restart ComfyUI (or reload the browser for JS-only changes) to pick it up." -ForegroundColor Yellow
+    }
+    Write-Host ""
+}
+
 try {
     # Activate the virtual environment (create it if missing)
     $venvActivate = Join-Path $ProjectRoot ".venv\Scripts\Activate.ps1"
@@ -67,6 +205,19 @@ try {
         pip install -r requirements.txt
     } else {
         & $venvActivate
+    }
+
+    # A pull that changed requirements.txt / pyproject.toml needs the environment
+    # brought back in line BEFORE the app imports anything.
+    if ($Script:DepsChanged.Count -gt 0) {
+        Write-Host "[update] Dependencies changed in: $($Script:DepsChanged -join ', ') - reinstalling..." -ForegroundColor Cyan
+        $uv = Get-Command uv -ErrorAction SilentlyContinue
+        if ($uv) { uv pip install -r requirements.txt | Out-Host }
+        else { pip install -r requirements.txt | Out-Host }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[update] Dependency install returned $LASTEXITCODE - check the output above." -ForegroundColor Yellow
+        }
+        Write-Host ""
     }
 
     # Map -LlmQueryTemplates "provider,model" -> env vars consumed by create_pipeline()

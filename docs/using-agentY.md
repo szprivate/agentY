@@ -17,6 +17,7 @@ node, ready to wire into your next step.*
 
 - [The big picture](#the-big-picture)
 - [Starting a session](#starting-a-session)
+- [Staying up to date](#staying-up-to-date)
 - [The chat panel](#the-chat-panel)
 - [Generating & editing](#generating--editing)
 - [Slash commands](#slash-commands)
@@ -68,6 +69,9 @@ involved.
    Restarting `run_agent.ps1` is how you pick up agent-side code/config changes.
    If the host isn't running, the chat panel shows a **▶ Start server** button.
 
+   On start it also **checks for updates** and fast-forwards agentY, `agenty_core`
+   and the ComfyUI sidebar extension — see [Staying up to date](#staying-up-to-date).
+
 2. **Open ComfyUI** in your browser (default `http://127.0.0.1:8188`) and click
    the **agentY** tab in the left sidebar.
 
@@ -76,6 +80,40 @@ involved.
 
 > If the backend runs on a non-default URL, set it once in the browser console:
 > `localStorage.agentY_backend = "http://host:port"`.
+
+### Staying up to date
+
+Each start checks the remotes and fast-forwards the three checkouts that make up
+agentY: this repo, `agenty_core`, and the sidebar extension (both the clone
+ComfyUI loads and a dev clone beside agentY, if you have one).
+
+It is deliberately timid, because it runs unattended over your working copy:
+
+- a repo with **uncommitted changes** is left completely alone — never stashed,
+  never discarded;
+- a repo with **unpushed commits** is left alone — never rebased, never reset;
+- it is **`--ff-only`**, so a diverged branch reports and stops rather than merging;
+- being **offline** is a shrug, not a failed start.
+
+Anything it declines to do it says out loud, so a stale checkout is never silent:
+
+```
+[update] agentY is 3 commit(s) behind origin/main - fast-forwarding...
+[update] agentY updated -> 1895057
+[update] agenty_core has uncommitted changes - skipping (nothing was touched).
+[update] agentY-comfyuiConnect is up to date.
+```
+
+If the pull touched `requirements.txt`, dependencies are reinstalled before the
+app starts. If it touched the extension, you're told to restart ComfyUI (or just
+reload the browser, for JS-only changes).
+
+Turn it off with `auto_update = false` (Settings ▸ advanced ▸ Behaviour),
+`.un_agent.ps1 -NoUpdate`, or `AGENTY_NO_UPDATE=1`. If your ComfyUI isn't in an
+obvious spot next to agentY, point `comfyui_dir` at it so the extension is found.
+
+> `run_agent.ps1` updates *itself* too, but the copy already running is the old
+> one — changes to the launcher apply from the next start.
 
 ---
 
