@@ -96,6 +96,77 @@ def _cfg(env_var: str, *settings_path: str, default: str | int = "") -> str | in
     return default
 
 
+# Which TIER each role inherits its model from when it has no explicit override.
+#
+# Thirteen per-role dropdowns were really expressing about five decisions — in a
+# typical install every "cheap" role held the same value, every vision role held
+# the same value, and so on. Tiers make that the default and leave the per-role
+# override as the exception it should be.
+#
+# The groupings are deliberate, not cosmetic:
+#   * research_assembly — reasoning over templates/graphs; the repair and
+#     build-from-scratch specialists belong with the assembler they stand in for
+#     (they already fell back to it, silently and invisibly, before this existed).
+#   * fast_utility — short, cheap, high-frequency calls where a big model buys
+#     nothing.
+#   * vision — reads images the user supplied.
+#   * qa_judge — kept OUT of `vision` on purpose: it judges finished work once per
+#     output, and a weak judge either waves defects through or fails clean work and
+#     triggers a pointless re-render. It is worth more than the input reader.
+#   * coder / orchestrator — one role each; both usually want a specific model
+#     rather than a shared tier.
+_ROLE_TIERS: dict[str, str] = {
+    "orchestrator": "orchestrator",
+    "query_templates": "research_assembly",
+    "assemble_workflow": "research_assembly",
+    "fix_workflow_assembly": "research_assembly",
+    "generate_new_workflow": "research_assembly",
+    "info": "fast_utility",
+    "search_web": "fast_utility",
+    "planner": "fast_utility",
+    "learnings": "fast_utility",
+    "llm_functions": "fast_utility",
+    "build_skill": "fast_utility",
+    "executor_vision_model": "vision",
+    "vision_agent": "vision",
+    "video_agent": "vision",
+    "qa_checker": "qa_judge",
+    "coder": "coder",
+}
+
+# Human labels for the tier selectors (used by the settings UI via /agentY/settings).
+TIER_LABELS: dict[str, str] = {
+    "orchestrator": "Orchestrator — drives every turn",
+    "research_assembly": "Research & assembly — templates, graph building, repair",
+    "fast_utility": "Fast utility — short cheap calls (info, search, planner, …)",
+    "vision": "Vision — reads input images and video",
+    "qa_judge": "QA judge — grades finished outputs (worth a stronger model)",
+    "coder": "Coder — writes scripts and custom nodes",
+}
+
+
+def role_model(role: str, default: str = "", env_var: str = "") -> str:
+    """The ``'provider,model'`` for *role*: env var → override → tier → *default*.
+
+    An empty per-role value means **inherit** rather than "unset", which is what
+    lets the tier do its job; an existing settings.local.json that pins a role
+    keeps winning, so nothing anyone has already configured changes meaning.
+    """
+    if env_var:
+        val = os.environ.get(env_var)
+        if val:
+            return val
+    explicit = str(_cfg("", "pipeline", role, default="") or "").strip()
+    if explicit:
+        return explicit
+    tier = _ROLE_TIERS.get(role)
+    if tier:
+        inherited = str(_cfg("", "tiers", tier, default="") or "").strip()
+        if inherited:
+            return inherited
+    return default
+
+
 def _parse_llm_setting(value: str) -> tuple[str, str]:
     """Split a 'provider,model' string into (provider, model).
 
@@ -922,9 +993,9 @@ def create_vision_agent(
     """
     # Read combined 'provider,model' from settings; VISION_AGENT_MODEL env var wins.
     _env_model = os.environ.get("VISION_AGENT_MODEL", "")
-    _raw = str(_cfg("", "pipeline", "vision_agent", default=""))
+    _raw = str(role_model("vision_agent", default=""))
     if not _raw:
-        _raw = str(_cfg("", "pipeline", "executor_vision_model", default="ollama,gemma4:26b"))
+        _raw = str(role_model("executor_vision_model", default="ollama,gemma4:26b"))
         if "," not in _raw:
             _raw = f"ollama,{_raw}"
     _settings_llm, _settings_model = _parse_llm_setting(_raw)
@@ -935,7 +1006,7 @@ def create_vision_agent(
             ollama_model
             or _env_model
             or _settings_model
-            or str(_cfg("", "pipeline", "executor_vision_model", default="gemma4:26b"))
+            or str(role_model("executor_vision_model", default="gemma4:26b"))
         )
         resolved_anthropic = (
             anthropic_model
@@ -991,8 +1062,7 @@ def create_video_agent(
         **kwargs:        Forwarded to the Strands Agent constructor.
     """
     _env_model = os.environ.get("VIDEO_AGENT_MODEL", "")
-    _raw = _env_model or str(_cfg("", "pipeline", "video_agent",
-                                  default="dashscope,qwen2.5-vl-72b-instruct"))
+    _raw = _env_model or str(role_model("video_agent", default="dashscope,qwen2.5-vl-72b-instruct"))
     if "," not in _raw:
         _raw = f"dashscope,{_raw}"
     _settings_llm, _settings_model = _parse_llm_setting(_raw)
@@ -1055,9 +1125,9 @@ def create_qa_agent(
         **kwargs:        Forwarded to the Strands Agent constructor.
     """
     _env_model = os.environ.get("QA_AGENT_MODEL", "")
-    _raw = _env_model or str(_cfg("", "pipeline", "qa_checker", default=""))
+    _raw = _env_model or str(role_model("qa_checker", default=""))
     if not _raw:
-        _raw = str(_cfg("", "pipeline", "executor_vision_model", default="claude,claude-haiku-4-5"))
+        _raw = str(role_model("executor_vision_model", default="claude,claude-haiku-4-5"))
     if "," not in _raw:
         _raw = f"claude,{_raw}"
     _settings_llm, _settings_model = _parse_llm_setting(_raw)
@@ -1113,7 +1183,7 @@ def create_query_templates_agent(
         llm = "ollama"
 
     # Read combined 'provider,model' from settings (env var QUERYTEMPLATES_LLM still wins).
-    _raw = str(_cfg("QUERYTEMPLATES_LLM", "pipeline", "query_templates", default="ollama"))
+    _raw = str(role_model("query_templates", default="ollama", env_var="QUERYTEMPLATES_LLM"))
     _settings_llm, _settings_model = _parse_llm_setting(_raw)
     resolved_llm = llm or _settings_llm or "ollama"
 
@@ -1195,7 +1265,7 @@ def create_planner_agent(
         llm = "ollama"
 
     # Read combined 'provider,model' from settings (env var PLANNER_LLM still wins).
-    _raw = str(_cfg("PLANNER_LLM", "pipeline", "planner", default="ollama"))
+    _raw = str(role_model("planner", default="ollama", env_var="PLANNER_LLM"))
     _settings_llm, _settings_model = _parse_llm_setting(_raw)
     resolved_llm = llm or _settings_llm or "ollama"
 
@@ -1204,7 +1274,7 @@ def create_planner_agent(
             ollama_model
             or os.environ.get("PLANNER_OLLAMA_MODEL")
             or _settings_model
-            or str(_cfg("LLM_FUNCTIONS_MODEL", "pipeline", "llm_functions", default="qwen3.5:9b"))
+            or str(role_model("llm_functions", default="qwen3.5:9b", env_var="LLM_FUNCTIONS_MODEL"))
         )
         resolved_anthropic = (
             anthropic_model
@@ -1220,7 +1290,7 @@ def create_planner_agent(
         )
         resolved_ollama = (
             ollama_model
-            or str(_cfg("LLM_FUNCTIONS_MODEL", "pipeline", "llm_functions", default="qwen3.5:9b"))
+            or str(role_model("llm_functions", default="qwen3.5:9b", env_var="LLM_FUNCTIONS_MODEL"))
         )
 
     system_prompt = _load_system_prompt("planner")
@@ -1263,13 +1333,10 @@ def create_info_agent(
         llm = "ollama"
 
     # Read combined 'provider,model' from settings (env var INFO_LLM still wins).
-    _raw = str(
-        _cfg(
-            "INFO_LLM",
-            "pipeline",
-            "info",
-            default=str(_cfg("LLM_FUNCTIONS_MODEL", "pipeline", "llm_functions", default="qwen3.5:9b")),
-        )
+    _raw = role_model(
+        "info", env_var="INFO_LLM",
+        default=role_model("llm_functions", default="qwen3.5:9b",
+                           env_var="LLM_FUNCTIONS_MODEL"),
     )
     _settings_llm, _settings_model = _parse_llm_setting(_raw)
     resolved_llm = llm or _settings_llm or "ollama"
@@ -1281,7 +1348,7 @@ def create_info_agent(
             ollama_model
             or os.environ.get("INFO_OLLAMA_MODEL")
             or _settings_model
-            or str(_cfg("LLM_FUNCTIONS_MODEL", "pipeline", "llm_functions", default="qwen3.5:9b"))
+            or str(role_model("llm_functions", default="qwen3.5:9b", env_var="LLM_FUNCTIONS_MODEL"))
         )
         return _make_agent(
             role="info",
@@ -1339,8 +1406,8 @@ def create_SEARCHWEB_agent(
         llm = "ollama"
 
     # Fall back to the Info-agent setting so no extra config is required.
-    _info_default = str(_cfg("INFO_LLM", "pipeline", "info", default="claude,claude-haiku-4-5"))
-    _raw = str(_cfg("SEARCHWEB_LLM", "pipeline", "search_web", default=_info_default))
+    _info_default = str(role_model("info", default="claude,claude-haiku-4-5", env_var="INFO_LLM"))
+    _raw = str(role_model("search_web", default=_info_default, env_var="SEARCHWEB_LLM"))
     _settings_llm, _settings_model = _parse_llm_setting(_raw)
     resolved_llm = llm or _settings_llm or "claude"
 
@@ -1351,7 +1418,7 @@ def create_SEARCHWEB_agent(
             ollama_model
             or os.environ.get("SEARCHWEB_OLLAMA_MODEL")
             or _settings_model
-            or str(_cfg("LLM_FUNCTIONS_MODEL", "pipeline", "llm_functions", default="qwen3.5:9b"))
+            or str(role_model("llm_functions", default="qwen3.5:9b", env_var="LLM_FUNCTIONS_MODEL"))
         )
         agent = _make_agent(
             role="search_web",
@@ -1407,7 +1474,7 @@ def create_ASSEMBLEWORKFLOW_agent(
     reset_patch_workflow_guard()
 
     # Read combined 'provider,model' from settings (env var ASSEMBLEWORKFLOW_LLM still wins).
-    _raw = str(_cfg("ASSEMBLEWORKFLOW_LLM", "pipeline", "assemble_workflow", default="claude"))
+    _raw = str(role_model("assemble_workflow", default="claude", env_var="ASSEMBLEWORKFLOW_LLM"))
     _settings_llm, _settings_model = _parse_llm_setting(_raw)
     resolved_llm = llm or _settings_llm or "claude"
 
@@ -1501,7 +1568,7 @@ def create_learnings_agent(
     if ollama_model and llm is None:
         llm = "ollama"
 
-    _raw = str(_cfg("LEARNINGS_LLM", "pipeline", "learnings", default="ollama,qwen3.5:9b"))
+    _raw = str(role_model("learnings", default="ollama,qwen3.5:9b", env_var="LEARNINGS_LLM"))
     _settings_llm, _settings_model = _parse_llm_setting(_raw)
     resolved_llm = llm or _settings_llm or "ollama"
 
@@ -1565,8 +1632,8 @@ def create_fix_workflow_assembly_agent(
     if ollama_model and llm is None:
         llm = "ollama"
 
-    _ASSEMBLEWORKFLOW_default = str(_cfg("ASSEMBLEWORKFLOW_LLM", "pipeline", "assemble_workflow", default="claude,claude-haiku-4-5"))
-    _raw = str(_cfg("FIXWORKFLOWASSEMBLY_LLM", "pipeline", "fix_workflow_assembly", default=_ASSEMBLEWORKFLOW_default))
+    _ASSEMBLEWORKFLOW_default = str(role_model("assemble_workflow", default="claude,claude-haiku-4-5", env_var="ASSEMBLEWORKFLOW_LLM"))
+    _raw = str(role_model("fix_workflow_assembly", default=_ASSEMBLEWORKFLOW_default, env_var="FIXWORKFLOWASSEMBLY_LLM"))
     _settings_llm, _settings_model = _parse_llm_setting(_raw)
     resolved_llm = llm or _settings_llm or "claude"
 
@@ -1636,8 +1703,8 @@ def create_generate_new_workflow_agent(
     if ollama_model and llm is None:
         llm = "ollama"
 
-    _ASSEMBLEWORKFLOW_default = str(_cfg("ASSEMBLEWORKFLOW_LLM", "pipeline", "assemble_workflow", default="claude,claude-haiku-4-5"))
-    _raw = str(_cfg("GENERATENEWWORKFLOW_LLM", "pipeline", "generate_new_workflow", default=_ASSEMBLEWORKFLOW_default))
+    _ASSEMBLEWORKFLOW_default = str(role_model("assemble_workflow", default="claude,claude-haiku-4-5", env_var="ASSEMBLEWORKFLOW_LLM"))
+    _raw = str(role_model("generate_new_workflow", default=_ASSEMBLEWORKFLOW_default, env_var="GENERATENEWWORKFLOW_LLM"))
     _settings_llm, _settings_model = _parse_llm_setting(_raw)
     resolved_llm = llm or _settings_llm or "claude"
 
@@ -1721,8 +1788,8 @@ def create_coder_agent(
 
     # Resolve the coding model: coder → builder (assemble_workflow) default, which is
     # always configured on a working install. Point pipeline.coder at a strong model.
-    _builder_default = str(_cfg("ASSEMBLEWORKFLOW_LLM", "pipeline", "assemble_workflow", default="claude,claude-haiku-4-5"))
-    _raw = str(_cfg("CODER_LLM", "pipeline", "coder", default=_builder_default))
+    _builder_default = str(role_model("assemble_workflow", default="claude,claude-haiku-4-5", env_var="ASSEMBLEWORKFLOW_LLM"))
+    _raw = str(role_model("coder", default=_builder_default, env_var="CODER_LLM"))
     _settings_llm, _settings_model = _parse_llm_setting(_raw)
     resolved_llm = llm or _settings_llm or "claude"
 
@@ -1806,7 +1873,7 @@ def create_orchestrator_agent(
     # The orchestrator assembles workflows too, so reset the per-session guard.
     reset_patch_workflow_guard()
 
-    _raw = str(_cfg("ORCHESTRATOR_LLM", "pipeline", "orchestrator", default="claude,claude-haiku-4-5"))
+    _raw = str(role_model("orchestrator", default="claude,claude-haiku-4-5", env_var="ORCHESTRATOR_LLM"))
     _settings_llm, _settings_model = _parse_llm_setting(_raw)
     resolved_llm = llm or _settings_llm or "claude"
 
@@ -1959,8 +2026,7 @@ def build_subagent(toolset: str = "full", model: str | None = None,
         chosen = [avail[n] for n in tools if n in avail]
         if not chosen:
             raise ValueError(f"none of the requested subagent tools exist: {tools}")
-        resolved_llm = prov or str(_cfg("ORCHESTRATOR_LLM", "pipeline", "orchestrator",
-                                        default="claude")).partition(",")[0].strip() or "claude"
+        resolved_llm = prov or str(role_model("orchestrator", default="claude", env_var="ORCHESTRATOR_LLM")).partition(",")[0].strip() or "claude"
         sp = (
             "You are a focused subagent handed a single, self-contained task by an "
             "orchestrator. Use ONLY the tools you were given to complete it, then "
@@ -1997,8 +2063,7 @@ def build_subagent(toolset: str = "full", model: str | None = None,
                                    ollama_model=mdl if prov == "ollama" else None)
 
     # "full": a general agent with the whole non-meta toolset.
-    resolved_llm = prov or str(_cfg("ORCHESTRATOR_LLM", "pipeline", "orchestrator",
-                                    default="claude")).partition(",")[0].strip() or "claude"
+    resolved_llm = prov or str(role_model("orchestrator", default="claude", env_var="ORCHESTRATOR_LLM")).partition(",")[0].strip() or "claude"
     system_prompt = (
         "You are a focused subagent working on a single, self-contained task handed "
         "to you by an orchestrator. Use your tools to complete it, then return a "

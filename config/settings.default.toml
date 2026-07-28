@@ -50,31 +50,63 @@ coder = "system_prompt.coder.md"
 [llm]
 history_window = 12
 
-# Per-role model as "provider,model". These are safe cross-provider defaults (Claude
-# Haiku everywhere); override with your actual provider/models in settings.local.json.
-# Stronger models help most for query_templates, assemble_workflow, and coder.
-[llm.pipeline]
+# WHICH MODEL DOES WHICH JOB.
+#
+# Set the six TIERS below and you are done — every role inherits from one of them.
+# [llm.pipeline] underneath is per-role OVERRIDES: leave a role blank to inherit,
+# fill it in only when that one job wants something different.
+#
+# Resolution for any role: environment variable > [llm.pipeline] > [llm.tiers] >
+# a hard-coded fallback. These defaults are safe cross-provider ones (Claude Haiku
+# everywhere); put your real models in settings.local.json.
+[llm.tiers]
+# Drives every turn: routing, tool calls, talking to you. Reasoning quality here
+# is felt in everything.
 orchestrator = "claude,claude-haiku-4-5"
-query_templates = "claude,claude-haiku-4-5"
-assemble_workflow = "claude,claude-haiku-4-5"
-coder = "claude,claude-haiku-4-5"
-info = "claude,claude-haiku-4-5"
-search_web = "claude,claude-haiku-4-5"
-planner = "claude,claude-haiku-4-5"
-learnings = "claude,claude-haiku-4-5"
-build_skill = "claude,claude-haiku-4-5"
-llm_functions = "claude,claude-haiku-4-5"
-executor_vision_model = "claude,claude-haiku-4-5"
-# qa_checker: the agent that re-reads finished images/videos and judges them against
-# your QA briefing (see the [qa] section). It is the one role where a STRONGER model
-# pays for itself — it only runs once per finished output, and a weak judge either
-# waves through bad work or fails good work and triggers pointless re-renders.
+# Template research, workflow assembly, repair, and building a graph from scratch.
+# The heaviest reasoning in the system — a stronger model pays off most here.
+research_assembly = "claude,claude-haiku-4-5"
+# Short, cheap, frequent calls: info lookups, web search, planning, learnings,
+# small structured-output helpers. A big model buys almost nothing.
+fast_utility = "claude,claude-haiku-4-5"
+# Reads the images and video YOU provide, so the agent knows what it was given.
 # Must be multimodal.
-qa_checker = "claude,claude-haiku-4-5"
-# video_agent: model for the analyze_video tool (samples video frames -> a
-# vision-language model that reads them as a video). Must be multimodal; Qwen2.5-VL
-# on DashScope (e.g. dashscope,qwen2.5-vl-72b-instruct) is recommended for video.
-video_agent = "claude,claude-haiku-4-5"
+vision = "claude,claude-haiku-4-5"
+# Grades finished outputs against your QA briefing (see [qa]). Deliberately its
+# own tier: it runs once per finished output, and a weak judge either waves bad
+# work through or fails good work and triggers a pointless re-render. Multimodal.
+qa_judge = "claude,claude-haiku-4-5"
+# Writes Python scripts and ComfyUI custom nodes. Usually wants a code-specialist
+# model rather than whatever the rest of the system uses.
+coder = "claude,claude-haiku-4-5"
+
+# PER-ROLE OVERRIDES — blank means "inherit from the tier above". Only fill one in
+# when that single job needs a different model from the rest of its tier.
+#   orchestrator        -> orchestrator
+#   query_templates, assemble_workflow, fix_workflow_assembly,
+#   generate_new_workflow                        -> research_assembly
+#   info, search_web, planner, learnings,
+#   llm_functions, build_skill                   -> fast_utility
+#   executor_vision_model, vision_agent, video_agent  -> vision
+#   qa_checker          -> qa_judge
+#   coder               -> coder
+[llm.pipeline]
+orchestrator = ""
+query_templates = ""
+assemble_workflow = ""
+fix_workflow_assembly = ""
+generate_new_workflow = ""
+info = ""
+search_web = ""
+planner = ""
+learnings = ""
+llm_functions = ""
+build_skill = ""
+executor_vision_model = ""
+vision_agent = ""
+video_agent = ""
+qa_checker = ""
+coder = ""
 
 [llm.ollama]
 host = "http://localhost:11434"

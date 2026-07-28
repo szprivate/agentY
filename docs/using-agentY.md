@@ -452,17 +452,53 @@ scannable.
   on the agent host. Secrets are masked; tick **Show secret values** to reveal.
   **+ Add auth key** appends a new `.env` variable (e.g. a secret an MCP server
   references) and applies it to the live process.
-- **Application settings (config/settings.json)** — model-per-stage
-  (`llm ▸ pipeline`), directories, and behaviour toggles, in collapsible groups
-  (*Connections*, *ComfyUI paths*, *agentY output & logs*, *Behaviour*, *llm*,
-  *memory*, *system_prompts*). Only changed values are written to the gitignored
-  `config/settings.local.json`; committed defaults are left untouched.
+- **Application settings** — directories, behaviour toggles and model choice, in
+  collapsible groups. Only changed values are written to the gitignored
+  `config/settings.local.json`; committed defaults are left untouched. Tick
+  **Show advanced settings** for the things almost nobody changes — system-prompt
+  filenames, per-provider tuning, the embedder.
 - **Model pricing (config/pricing.json)** — per-model USD prices per million
   tokens, so the [token-usage](#token-usage--cost) cost column matches your
   endpoint (handy for private/MaaS deployments and models the built-in tables
   don't ship).
 
-Changes to model-per-stage settings apply on the **next agent start**.
+### Choosing models: six tiers, not sixteen dropdowns
+
+Under **Models & providers** you set six **tiers**, and every role inherits from
+one of them:
+
+| tier | who uses it |
+|---|---|
+| **Orchestrator** | drives every turn — routing, tool calls, talking to you |
+| **Research & assembly** | template research, workflow assembly, repair, building a graph from scratch |
+| **Fast utility** | info lookups, web search, planner, learnings, small structured-output helpers |
+| **Vision** | reads the images and video *you* provide |
+| **QA judge** | grades finished outputs against your [QA briefing](#checking-outputs-qa) |
+| **Coder** | Python scripts and ComfyUI custom nodes |
+
+**Per-role overrides** sits underneath, one row per role, blank by default —
+*"— inherit from tier —"*. Fill one in only when a single job wants something
+different from the rest of its tier. The group header tells you whether any are
+set, so an override can't quietly beat a tier without you knowing.
+
+Why tiers: the roles only really differ along two axes — how much reasoning they
+need and whether they must see images. Sixteen dropdowns made you answer the same
+question sixteen times.
+
+Two of the groupings are deliberate rather than obvious. **QA judge** is separate
+from **Vision** because it runs once per finished output and a weak judge either
+waves defects through or fails clean work and triggers a pointless re-render — it
+is worth more than the model that merely reads your inputs. **Coder** is its own
+tier because it usually wants a code-specialist model.
+
+Resolution for any role: *environment variable → per-role override → tier →
+built-in default*. Changes apply on the **next agent start**.
+
+> **Upgrading?** If your `settings.local.json` predates tiers it will have a pin
+> per role, and those keep winning (so nothing changes). To lift them into tiers:
+> `python scripts/migrate_model_tiers.py --dry-run`, then run it without the flag.
+> It writes a timestamped `.bak` and leaves every role resolving to exactly the
+> same model.
 
 ---
 
@@ -545,11 +581,17 @@ Any model value is `"provider,model"`. Providers: `claude`, `ollama`,
 `dashscope` (Alibaba Model Studio / Qwen; aliases `qwen` / `modelstudio` /
 `alibaba`), `openai`, `google` (alias `gemini`).
 
-Resolution order (first match wins): **CLI flag → environment variable →
-`config/settings.local.json` → `config/settings.default.toml` → built-in
-default.**
+Which model runs which job is set by **tier**, with per-role overrides for the
+exceptions — see [Choosing models: six tiers](#choosing-models-six-tiers-not-sixteen-dropdowns)
+in Settings.
 
-Change a stage live from chat:
+Resolution order for a role (first match wins): **CLI flag → environment variable
+→ per-role override (`llm.pipeline`) → tier (`llm.tiers`) → built-in default**,
+with `config/settings.local.json` layered over `config/settings.default.toml` at
+each step.
+
+Change a role live from chat — this writes a per-role **override**, so it wins
+over that role's tier until you clear it:
 
 ```
 /switch_model orchestrator claude,claude-opus-4-8

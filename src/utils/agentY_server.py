@@ -2056,6 +2056,15 @@ def _build_app():
 
     app = Flask("agentY_bridge")
     app.logger.disabled = True
+    # Keep dict order as authored. The settings form is GENERATED from the settings
+    # file, so that file's ordering is the only thing deciding what the user reads
+    # first — and Flask alphabetises JSON keys by default, which was quietly
+    # reordering it (putting "per-role overrides" above the tiers they inherit
+    # from, for instance).
+    try:
+        app.json.sort_keys = False
+    except AttributeError:  # Flask < 2.3
+        app.config["JSON_SORT_KEYS"] = False
 
     # Magnific background auto-drop: when an async creation finishes, the watcher
     # downloads + stages the asset via this handler, then raises a notify_bus
@@ -2354,10 +2363,17 @@ def _build_app():
             live_user_dir = _effective_comfyui_user_dir()
             if live_user_dir:
                 settings["comfyui_user_dir"] = live_user_dir
+            # Friendly names for the model tiers, so the mapping lives once in
+            # src/agent.py instead of being duplicated in the settings JS.
+            try:
+                from src.agent import TIER_LABELS as _tier_labels
+            except Exception:  # noqa: BLE001
+                _tier_labels = {}
             return jsonify({
                 "env": env,
                 "env_keys": list(dict.fromkeys(_KNOWN_ENV_KEYS + list(env.keys()))),
                 "settings": settings,
+                "tier_labels": _tier_labels,
                 "model_groups": _available_models(),
                 "pricing": _load_pricing_config(),
             })

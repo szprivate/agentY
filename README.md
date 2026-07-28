@@ -174,20 +174,26 @@ After the restart you get, from the one node pack:
 
 ### 5. Configure defaults (optional)
 
-`config/settings.default.toml` holds the committed defaults; put your machine's values (ComfyUI URL/paths, per-stage LLMs, private endpoints) in `config/settings.local.json` (gitignored, deep-merged over the defaults). The **Orchestrator** is the model that drives each turn; the other keys set the specialist delegates, the vision models, and the `qa_checker` that judges finished outputs. Any model value is `"provider,model"`:
+`config/settings.default.toml` holds the committed defaults; put your machine's values (ComfyUI URL/paths, model choices, private endpoints) in `config/settings.local.json` (gitignored, deep-merged over the defaults).
+
+Models are chosen by **tier**, not one dropdown per role: set the six `llm.tiers` values and every role inherits from one of them. `llm.pipeline` underneath is per-role **overrides** — leave a role blank to inherit, fill one in only when that single job wants something different. Resolution for any role is *env var → override → tier → built-in default*. Any model value is `"provider,model"`:
 
 ```jsonc
 {
   "comfyui_url": "http://127.0.0.1:8188",
   "conversation_db": "./memory/conversations.sqlite",
   "llm": {
+    "tiers": {
+      "orchestrator":      "dashscope,qwen3.7-max",   // drives every turn
+      "research_assembly": "dashscope,qwen3.6-plus",  // templates, graph building, repair
+      "fast_utility":      "dashscope,qwen3.6-flash", // info, search, planner, learnings, …
+      "vision":            "dashscope,qwen3-vl-flash",// reads the images YOU provide
+      "qa_judge":          "dashscope,qwen3-vl-plus", // grades finished outputs
+      "coder":             "dashscope,kimi-k2.7-code" // scripts and custom nodes
+    },
     "pipeline": {
-      "orchestrator":          "dashscope,qwen3.6-flash",  // drives each turn
-      "assemble_workflow":     "dashscope,qwen3.6-flash",  // workflow-assembly delegate
-      "query_templates":       "dashscope,qwen3.6-flash",  // template/recipe research delegate
-      "executor_vision_model": "dashscope,qwen3-vl-flash", // reads input images
-      "qa_checker":            "dashscope,qwen3-vl-plus"   // judges finished outputs (multimodal; worth a stronger model)
-      // …info, story, search_web, dop, planner, learnings, error_checker, llm_functions…
+      // per-role overrides; blank = inherit from the tier. Usually all blank.
+      "video_agent": "dashscope,qwen3-vl-plus"
     },
     "dashscope": {
       // Public International endpoint; for mainland China use
