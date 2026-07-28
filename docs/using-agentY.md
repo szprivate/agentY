@@ -441,13 +441,17 @@ retry. Failing a *run* is a different thing, handled by self-healing.
 ## Settings & secrets
 
 Open ComfyUI's **Settings** (gear, bottom-left) → **agentY** → **Open agentY
-Settings…**. Everything is grouped and collapsed by default so it stays
-scannable.
+Settings…**. That single row is the whole agentY section — everything else lives
+inside the modal, which is grouped and collapsed by default so it stays scannable.
+
+Close it by clicking outside the card or pressing **Escape**; **Save** is the only
+button.
 
 ![agentY application settings](images/settings.png)
 
-- **Viewers** — the message-history log and long-term-memory editors (moved here
-  from the chat panel's top bar).
+- **Viewers** — the message-history log, the long-term-memory editor, and the
+  [token usage](#token-usage--cost) breakdown. This is the one place they open
+  from (they used to be duplicated as separate rows in ComfyUI's Settings).
 - **Authentication (.env)** — your API keys and host settings, stored in `.env`
   on the agent host. Secrets are masked; tick **Show secret values** to reveal.
   **+ Add auth key** appends a new `.env` variable (e.g. a secret an MCP server
@@ -555,8 +559,9 @@ callback lands on `http://localhost:8199/callback` (tweak the port in
 
 ## Token usage & cost
 
-The **📊** button (chat top bar, or **Settings → agentY → Open Token Usage…**)
-breaks down token spend and cost from the persisted token log.
+The **📊** button in the chat top bar — or **Viewers ▸ Token usage…** inside
+the agentY Settings modal — breaks down token spend and cost from the persisted
+token log.
 
 ![Token usage overview](images/token-usage.png)
 

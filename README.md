@@ -264,9 +264,10 @@ Each value resolves in order — first match wins: **CLI flag → environment va
 
 ### In-panel settings & token usage
 
-Open ComfyUI's **Settings** panel → **agentY**:
-- **Open agentY Settings…** edits your auth keys (`.env`) and every setting (models per stage, directories, toggles) in **collapsible groups** (collapsed by default); changed values are saved as overrides in `config/settings.local.json`, leaving the committed defaults untouched — no file editing. This is also where you edit **MCP servers** (`config/mcp.json`, with per-server status + an **Authorize…** button for OAuth), model **pricing**, and where the **message-history / long-term-memory viewers** now live.
-- **Open Token Usage…** (also the **📊** button in the chat panel's top bar) breaks down cost per model / per agent role from the persisted token log, with a **🗑 Clear log** button to purge it.
+Open ComfyUI's **Settings** panel → **agentY** → **Open agentY Settings…**. That one row is the entire agentY section; everything else is inside the modal:
+- Your auth keys (`.env`) and every setting — **model tiers** and per-role overrides, directories, toggles — in **collapsible groups**, with the rarely-touched ones behind **Show advanced settings**. Changed values are saved as overrides in `config/settings.local.json`, leaving the committed defaults untouched — no file editing.
+- **MCP servers** (`config/mcp.json`, with per-server status + an **Authorize…** button for OAuth) and model **pricing**.
+- **Viewers** — the **message-history log**, the **long-term-memory editor**, and the **token usage** breakdown (cost per model / per agent role, with a **🗑 Clear log** button). Token usage is also the **📊** button in the chat panel's top bar.
 
 The chat panel's top bar also has a **🖼 autograph toggle** — flip whether finished workflows/results are auto-loaded onto the canvas, live (no restart).
 
