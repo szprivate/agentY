@@ -126,14 +126,44 @@ def _mem_provider(kind: str) -> str:
     return (val or "ollama").strip().lower()
 
 
-def _openai_compat_cfg(kind: str, extra: dict) -> dict:
+def _inherited_endpoint(provider: str) -> dict | None:
+    """Endpoint + key-env for a provider inherited from the pipeline settings.
+
+    When the memory LLM is *not* configured explicitly it borrows the model from the
+    llm_functions role, and it has to borrow that provider's endpoint too — sending a
+    Qwen model name to api.openai.com with an empty key is not a useful default.
+    Returns None when the provider isn't one we can reach OpenAI-compatibly.
+    """
+    p = (provider or "").strip().lower()
+    settings = _load_settings()
+    if p in ("dashscope", "qwen", "modelstudio", "alibaba"):
+        return {
+            "base_url": str(((settings.get("llm") or {}).get("dashscope") or {}).get("base_url") or "").strip(),
+            "api_key_env": "DASHSCOPE_API_KEY",
+        }
+    if p == "openai":
+        return {"base_url": "", "api_key_env": "OPENAI_API_KEY"}
+    if p in ("google", "gemini"):
+        return {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+                "api_key_env": "GEMINI_API_KEY"}
+    return None
+
+
+def _openai_compat_cfg(kind: str, extra: dict, fallback: dict | None = None) -> dict:
     """mem0 config block for an OpenAI-compatible embedder/llm — real OpenAI when
     base_url is blank, or DashScope/Qwen (etc.) when it points at the compatible-mode
     URL. The key is read from the env var named in settings (default OPENAI_API_KEY),
-    so secrets stay in .env and are never persisted to settings.json."""
+    so secrets stay in .env and are never persisted to settings.json.
+
+    *fallback* supplies the endpoint inherited from another provider's block when the
+    ``memory`` settings leave it blank (see :func:`_inherited_endpoint`)."""
     base_url = _get(_PROVIDER_ENV[kind]["base_url"], "memory", kind, "base_url", default="").strip()
     key_env = (_get(_PROVIDER_ENV[kind]["api_key_env"], "memory", kind, "api_key_env",
-                    default="OPENAI_API_KEY").strip() or "OPENAI_API_KEY")
+                    default="").strip())
+    if fallback:
+        base_url = base_url or str(fallback.get("base_url") or "").strip()
+        key_env = key_env or str(fallback.get("api_key_env") or "").strip()
+    key_env = key_env or "OPENAI_API_KEY"
     cfg = dict(extra)
     cfg["api_key"] = os.environ.get(key_env, "")
     if base_url:
@@ -149,7 +179,8 @@ def _build_config() -> dict:
     "openai"-compatible — via the ``memory`` block in config/settings.json, so a
     machine without Ollama can run memory off a key it already has (e.g. DashScope).
     """
-    ollama_host = _get("OLLAMA_HOST", "llm", "ollama", "host", default="http://localhost:11434")
+    from src.utils.settings import ollama_host as _resolve_ollama_host
+    ollama_host = _resolve_ollama_host()
 
     # ── Embedder (turns text into vectors for FAISS) ─────────────────────────
     embed_provider = _mem_provider("embedder")
@@ -169,22 +200,42 @@ def _build_config() -> dict:
             "embedder", {"model": embed_model, "embedding_dims": embed_dims})}
 
     # ── Fact-extraction LLM (only invoked for infer=True writes) ─────────────
-    llm_provider = _mem_provider("llm")
-    llm_model = _get(
-        "MEMORY_LLM_MODEL", "memory", "llm", "model",
-        default=_get("__unset__", "memory", "llm_model",
-                     default=_get("LLM_FUNCTIONS_MODEL", "llm", "pipeline", "llm_functions",
-                                  default="qwen3.5:9b")),
-    )
-    # The llm_functions default is a "provider,model" spec — keep only the model part.
+    # With no explicit memory.llm.model, inherit the llm_functions role — resolved
+    # through the model tiers, so it follows whatever the rest of the system is
+    # actually using. Reading llm.pipeline.llm_functions directly is not enough:
+    # per-role entries are blank by default now (they mean "inherit"), which used
+    # to drop this to a hard-coded Ollama model nobody had configured.
+    inherited_spec = ""
+    try:
+        from src.agent import role_model
+        inherited_spec = role_model("llm_functions", env_var="LLM_FUNCTIONS_MODEL")
+    except Exception as exc:  # noqa: BLE001
+        notify(f"[memory] could not resolve the llm_functions model ({exc})", level="warning")
+
+    llm_model = _get("MEMORY_LLM_MODEL", "memory", "llm", "model",
+                     default=_get("__unset__", "memory", "llm_model", default=""))
+    explicit_llm = bool(llm_model.strip())
+    if not explicit_llm:
+        llm_model = inherited_spec or "qwen3.5:9b"
+
+    # A "provider,model" spec carries the provider too — honour it when inheriting,
+    # otherwise a DashScope model would be handed to a local Ollama client.
+    inherited_provider = ""
     if "," in llm_model:
-        llm_model = llm_model.rsplit(",", 1)[-1].strip()
+        prov, _, mdl = llm_model.partition(",")
+        inherited_provider = prov.strip().lower()
+        llm_model = mdl.strip()
+    llm_provider = _mem_provider("llm")
+    if not explicit_llm and inherited_provider and inherited_provider != "ollama":
+        # Anything that isn't Ollama reaches mem0 through its OpenAI-compatible path.
+        llm_provider = "openai"
     if llm_provider == "ollama":
         llm = {"provider": "ollama", "config": {
             "model": llm_model, "ollama_base_url": ollama_host, "temperature": 0.1}}
     else:
         llm = {"provider": "openai", "config": _openai_compat_cfg(
-            "llm", {"model": llm_model, "temperature": 0.1})}
+            "llm", {"model": llm_model, "temperature": 0.1},
+            fallback=_inherited_endpoint(inherited_provider) if not explicit_llm else None)}
 
     store_dir = str(
         (_PROJECT_ROOT / _get("MEMORY_STORE_DIR", "memory", "store_dir", default="memory")).resolve()

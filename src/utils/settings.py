@@ -112,3 +112,25 @@ def set_local(overrides: dict) -> dict:
         global _cache
         _cache = None
         return merged
+
+
+def ollama_host() -> str:
+    """The Ollama server URL every caller should use.
+
+    One address, three consumers (the agents, the memory embedder, and the small
+    llm_functions helper), so it belongs next to the other server URLs in
+    Connections rather than buried in the Ollama tuning block. ``ollama_server_url``
+    is that key; ``llm.ollama.host`` is still honoured for configs written before it
+    existed, and ``OLLAMA_HOST`` overrides both.
+    """
+    import os
+
+    env = (os.environ.get("OLLAMA_HOST") or "").strip()
+    if env:
+        return env
+    cfg = load_settings()
+    top = str(cfg.get("ollama_server_url") or "").strip()
+    if top:
+        return top
+    legacy = str(((cfg.get("llm") or {}).get("ollama") or {}).get("host") or "").strip()
+    return legacy or "http://localhost:11434"

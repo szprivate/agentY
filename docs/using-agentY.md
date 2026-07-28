@@ -452,11 +452,17 @@ scannable.
   on the agent host. Secrets are masked; tick **Show secret values** to reveal.
   **+ Add auth key** appends a new `.env` variable (e.g. a secret an MCP server
   references) and applies it to the live process.
-- **Application settings** — directories, behaviour toggles and model choice, in
-  collapsible groups. Only changed values are written to the gitignored
-  `config/settings.local.json`; committed defaults are left untouched. Tick
-  **Show advanced settings** for the things almost nobody changes — system-prompt
-  filenames, per-provider tuning, the embedder.
+- **Application settings** — only two groups are shown by default: **Connections**
+  (ComfyUI, the agentY host, and your Ollama server) and **Models & providers**.
+  Everything else — ComfyUI paths, output & logs, behaviour toggles, memory, output
+  QA, system prompts, per-provider tuning — is behind **Show advanced settings**.
+  Only changed values are written to the gitignored `config/settings.local.json`;
+  committed defaults are left untouched.
+
+  `ollama_server_url` in Connections is the single address for *everything* that
+  talks to Ollama — agents on a local model, the memory embedder, and the small
+  `llm_functions` helper. (The older `llm.ollama.host` still works when it's blank;
+  `OLLAMA_HOST` overrides both.)
 - **Model pricing (config/pricing.json)** — per-model USD prices per million
   tokens, so the [token-usage](#token-usage--cost) cost column matches your
   endpoint (handy for private/MaaS deployments and models the built-in tables
@@ -567,11 +573,29 @@ Costs use the built-in price tables, overridden by
 
 ## Memory
 
-Long-term memory is a local **FAISS** index
-(`memory/agenty_memory.faiss`) via **mem0** with **nomic-embed-text** embeddings
-served by Ollama. Conversation threads are separate — they live in the SQLite
-store (`memory/conversations.sqlite`). Browse/edit both from **Settings →
-agentY → Viewers**.
+Long-term memory is a local **FAISS** index (`memory/agenty_memory.faiss`) via
+**mem0**. Conversation threads are separate — they live in the SQLite store
+(`memory/conversations.sqlite`). Browse/edit both from **Settings → agentY →
+Viewers**.
+
+Two models are involved, and they are **not interchangeable** — this trips people
+up, because the startup line names both:
+
+```
+[memory] FAISS memory layer initialised (embed=ollama:nomic-embed-text, llm=dashscope:qwen3.6-flash)
+```
+
+| | what it does |
+|---|---|
+| **embedder** | turns text into **vectors** so memories can be found by meaning. An embedding model does *only* this — `nomic-embed-text` cannot write a sentence, and a chat model cannot produce embeddings. That's why it is a different model from everything else in agentY, and why it stays on Ollama by default (it's small, local and free). |
+| **llm** | rewrites memories in its own words ("fact extraction"), and **only** for `infer` writes — the normal write path never calls it. |
+
+Leave `memory.llm.model` **blank** and it follows the **Fast utility** tier,
+bringing that provider's endpoint and API key with it. Fill it in only to run
+fact extraction somewhere else. Both live under Settings ▸ *Show advanced
+settings* ▸ Memory.
+
+> Changing the embedder model or `embedding_dims` invalidates the index on disk.
 
 ---
 

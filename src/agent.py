@@ -791,7 +791,8 @@ def _make_agent(
     llm = llm.strip().lower()
     if llm == "ollama":
         model_id = ollama_model or str(_cfg("OLLAMA_MODEL", "ollama", "model", default="qwen3-vl:30b"))
-        host = str(_cfg("OLLAMA_HOST", "ollama", "host", default="http://localhost:11434"))
+        from src.utils.settings import ollama_host as _ollama_host
+        host = _ollama_host()
         # Ollama defaults num_ctx to ~4k, which truncates the large agent prompts
         # (query_templates/assemble_workflow carry the full model table) and yields
         # malformed brainbriefings. Give the local model a big context window.

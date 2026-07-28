@@ -118,7 +118,8 @@ class LLMFunctions:
         settings = _load_settings()
         llm = settings.get("llm", {})
         provider, model = _parse_spec(spec)
-        host = llm.get("ollama", {}).get("host", "http://localhost:11434")
+        from src.utils.settings import ollama_host as _ollama_host
+        host = _ollama_host()
         base_url, api_key = "", ""
         max_tokens = default_max_tokens
 

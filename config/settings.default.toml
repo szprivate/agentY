@@ -10,6 +10,11 @@
 comfyui_url = "http://127.0.0.1:8188"
 # Address the ComfyUI sidebar connects to (the agentY chat host / agent server).
 agent_server_url = "http://127.0.0.1:5000"
+# Ollama server. One address for everything that talks to Ollama — agents on a local
+# model, the memory embedder, and the small llm_functions helper — so it sits here
+# with the other server URLs rather than inside the Ollama tuning block. The older
+# llm.ollama.host is still honoured when this is blank; OLLAMA_HOST overrides both.
+ollama_server_url = "http://localhost:11434"
 
 # ComfyUI models dir — machine-specific, set it in settings.local.json. When blank,
 # agentY falls back to the directory ComfyUI reports via /system_stats.
@@ -130,29 +135,41 @@ max_tokens = 8192
 # Qwen thinking mode. Off by default. Env: DASHSCOPE_ENABLE_THINKING (1/0).
 enable_thinking = false
 
-[memory]
 # Long-term agent memory (mem0). The vector store is ALWAYS local FAISS (./memory);
-# only the embedder (and rarely the fact-extraction LLM) call a provider.
+# nothing here changes that. Two models are involved and they are NOT interchangeable:
+#
+#   embedder  — turns text into VECTORS so memories can be searched by meaning.
+#               An embedding model (nomic-embed-text, text-embedding-v3) does only
+#               this; it cannot write text, and a chat model cannot embed. This is
+#               why it is a different model from everything else in agentY.
+#   llm       — writes memories in its own words ("fact extraction"). Only used for
+#               `infer` writes; the normal write path never calls it. Leave it blank
+#               and it follows the fast_utility tier, endpoint and key included.
+#
+# Changing the embedder or its dimensions invalidates the on-disk index.
+[memory]
 enabled = true
 store_dir = "memory"
 
-# Embedder — turns text into vectors for FAISS. provider = "ollama" (local) or "openai"
-# (any OpenAI-compatible endpoint). Changing embedder/dims invalidates the on-disk index.
-# Env: MEMORY_EMBEDDER_PROVIDER / MEMORY_EMBED_MODEL / MEMORY_EMBED_DIMS / ...
+# provider = "ollama" (local) or "openai" (ANY OpenAI-compatible endpoint, incl.
+# DashScope/Qwen — set base_url to that endpoint). Blank api_key_env falls back to
+# the provider's usual variable. Env: MEMORY_EMBEDDER_PROVIDER / MEMORY_EMBED_MODEL /
+# MEMORY_EMBED_DIMS / MEMORY_EMBEDDER_BASE_URL.
 [memory.embedder]
 provider = "ollama"
 model = "nomic-embed-text"
 embedding_dims = 768
 base_url = ""
-api_key_env = "OPENAI_API_KEY"
+api_key_env = ""
 
-# Fact-extraction LLM — only used for "infer" writes; the default write path never
-# calls it. A blank model falls back to the llm_functions pipeline model.
+# Leave `model` BLANK to inherit the fast_utility tier — provider, endpoint and key
+# come with it, so a DashScope setup does not silently end up pointed at OpenAI.
+# Fill these in only to run fact extraction on something else.
 [memory.llm]
 provider = "ollama"
 model = ""
 base_url = ""
-api_key_env = "OPENAI_API_KEY"
+api_key_env = ""
 
 # Output QA. When a QA BRIEFING is active, the qa_checker agent (see llm.pipeline)
 # re-reads every image/video a run produced and judges it against your criteria and
