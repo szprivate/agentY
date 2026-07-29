@@ -25,7 +25,14 @@ comfyui_models_dir = ""
 comfyui_dir = ""
 comfyui_custom_templates_dir = "./comfyui_workflow_templates_custom/templates/"
 output_dir = "./output_images/"
-output_workflows_dir = "./output_workflows/"
+# Where generated/patched workflow JSON is written. BLANK (the default) means
+# "into ComfyUI": <--user-directory>/default/workflows/agentY/, which is the
+# folder ComfyUI's own workflow browser lists, so agent-built graphs are one
+# click away. Keeping them out of this repo also stops the startup updater from
+# having to work around a permanently dirty checkout.
+# Set an ABSOLUTE path to override. A relative path is used only as the fallback
+# for when ComfyUI is unreachable.
+output_workflows_dir = ""
 # Fallback only — the live value is read from ComfyUI's --user-directory flag
 # (/system_stats). Set a machine path in settings.local.json for when ComfyUI is unreachable.
 comfyui_user_dir = ""

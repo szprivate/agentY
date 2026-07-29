@@ -182,9 +182,25 @@ class ResearcherDecision(BaseModel):
 # Multiprompt variations helper
 # ---------------------------------------------------------------------------
 
-# Canonical path where the image-batch skill writes variation prompts.
+# Canonical path where the image-batch skill writes variation prompts. This one
+# stays repo-relative on purpose: it is scratch coordination between a skill and
+# this module (the skill writes it with `write_text_file` at exactly this path —
+# see skills/image-batch), not a workflow the user ever opens. Generated
+# workflows themselves now live in ComfyUI's user dir; see _output_workflows_dir.
 _MULTIPROMPT_PATH = Path("output_workflows/multiprompt.json")
-_OUTPUT_WORKFLOWS_DIR = Path("output_workflows")
+
+
+def _output_workflows_dir() -> Path:
+    """Directory holding generated workflow JSON (ComfyUI's user dir by default).
+
+    Resolved through agenty_core so it tracks the same setting the assembler
+    writes with, instead of assuming the old in-repo folder.
+    """
+    try:
+        from agenty_core.tools.comfyui import _workflows_dir
+        return _workflows_dir()
+    except Exception:  # noqa: BLE001
+        return Path("output_workflows")
 
 # Image file extensions registered in the per-thread generated-image gallery.
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
@@ -196,10 +212,10 @@ def _is_image_file(path: str) -> bool:
 
 
 def _latest_output_workflow() -> str | None:
-    """Return the path of the most recently modified workflow JSON in output_workflows/."""
+    """Return the path of the most recently modified generated workflow JSON."""
     try:
         jsons = sorted(
-            (f for f in _OUTPUT_WORKFLOWS_DIR.glob("*.json") if f.stem != "multiprompt"),
+            (f for f in _output_workflows_dir().glob("*.json") if f.stem != "multiprompt"),
             key=lambda f: f.stat().st_mtime,
             reverse=True,
         )

@@ -486,7 +486,14 @@ def _archive_workflow(workflow_path: str | None, template_name: str | None) -> s
         logger.warning("_archive_workflow: source not found: %s", workflow_path)
         return None
 
-    archive_dir = (_PROJECT_ROOT / _load_config().get("output_workflows_dir", "./output_workflows/")).resolve()
+    # Same destination the assembler writes to, so archived copies land beside
+    # the workflows themselves in ComfyUI's browser rather than in the repo.
+    try:
+        from agenty_core.tools.comfyui import _workflows_dir
+        archive_dir = _workflows_dir()
+    except Exception:  # noqa: BLE001
+        archive_dir = (_PROJECT_ROOT / _load_config().get(
+            "output_workflows_dir", "./output_workflows/")).resolve()
     archive_dir.mkdir(parents=True, exist_ok=True)
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")

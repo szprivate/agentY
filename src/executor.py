@@ -168,12 +168,18 @@ def _get_comfyui_user_dir() -> Path | None:
 
 
 def _copy_workflow_to_user_dir(workflow_path: str) -> None:
-    """Copy the finished workflow JSON to the ComfyUI user directory.
+    """Ensure the finished workflow JSON is in ComfyUI's workflow browser.
 
-    Destination: ``{user_dir}/workflows/``.
-    The user directory is resolved from the ``--user-directory=`` flag via
-    ``/system_stats``.  Falls back to ``comfyui_user_dir`` in settings.json.
-    Silently skips when the workflow file doesn't exist.
+    Destination: ``{user_dir}/default/workflows/agentY/`` — the ``default``
+    profile segment matters, because that is the only place ComfyUI's workflow
+    browser reads. (This used to copy to ``{user_dir}/workflows/``, a sibling
+    folder the browser never lists, so agent workflows were effectively
+    invisible.)
+
+    Normally a no-op now: ``_workflows_dir()`` writes there in the first place.
+    It still earns its keep when that fell back to the in-repo directory because
+    ComfyUI was unreachable at assembly time. Silently skips when the source is
+    missing or already at the destination.
     """
     import shutil
 
@@ -192,7 +198,12 @@ def _copy_workflow_to_user_dir(workflow_path: str) -> None:
             logger.debug("executor: _copy_workflow_to_user_dir: no user dir configured, skipping")
             return
 
-    dest_dir = user_dir / "workflows"
+    dest_dir = user_dir / "default" / "workflows" / "agentY"
+    try:
+        if src.resolve().parent == dest_dir.resolve():
+            return  # already written straight to the browser's folder
+    except Exception:  # noqa: BLE001 — resolve can fail on odd paths; just copy
+        pass
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / src.name
     try:
