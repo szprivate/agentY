@@ -60,6 +60,7 @@ from pathlib import Path
 from src.utils import conversation_store as cs
 from src.utils import status_bus
 from src.utils import notify_bus
+from src.utils import turn_watchdog as _wd
 from src.utils.models import AgentSession
 
 logger = logging.getLogger("agentY.server")
@@ -723,13 +724,66 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
                          canvas_prompt: dict | None = None,
                          canvas_hooks: list | None = None,
                          canvas_selection: list | None = None) -> None:
+    """Run one turn, guaranteeing the SSE queue is always terminated.
+
+    The queue's ``None`` sentinel is what ends the stream, and ``done`` is what
+    releases the panel from its streaming state. If the turn runner dies without
+    emitting them — an exception anywhere in turn *setup*, which used to run
+    outside any handler — the panel keeps a connection open on keep-alives
+    forever: it never re-enables sending, queues everything typed after, and
+    only a host restart clears it. That failure is indistinguishable from "the
+    agent went quiet after a turn", so termination is enforced here rather than
+    trusted to every path inside.
+    """
+    _wd.begin(req_id, thread_id)
+    finished = {"emitted": False}
+    try:
+        _run_pipeline_turn(thread_id, message, image_paths, out_q, req_id, finished,
+                           canvas_prompt=canvas_prompt, canvas_hooks=canvas_hooks,
+                           canvas_selection=canvas_selection)
+    except BaseException as exc:  # noqa: BLE001 — the stream must close on ANY failure
+        logger.error("turn %s died before completing: %s", req_id, exc, exc_info=True)
+        # Also into the turn log with a full traceback: the terminal scrollback is
+        # usually gone by the time anyone investigates, and this exception is the
+        # one thing that names WHICH call in the turn failed.
+        import traceback as _tb
+        _wd.note(req_id, f"runner raised: {type(exc).__name__}: {exc}\n"
+                         + "".join(_tb.format_exception(type(exc), exc, exc.__traceback__)))
+        if not finished["emitted"]:
+            out_q.put({"type": "error", "message": f"The turn failed to start: {exc}"})
+    finally:
+        # Registrations are keyed by queue and both unregisters are no-ops when
+        # already removed, so repeating them here is safe and stops a dead queue
+        # from lingering on either bus.
+        try:
+            status_bus.unregister_live(out_q)
+            notify_bus.unregister_live(out_q)
+        except Exception:  # noqa: BLE001
+            pass
+        with _reply_lock:
+            _reply_registry.pop(req_id, None)
+            _run_registry.pop(req_id, None)
+        if not finished["emitted"]:
+            finished["emitted"] = True
+            out_q.put({"type": "done"})
+            out_q.put(None)
+        _wd.end(req_id, "runner exited")
+
+
+def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
+                       out_q: "queue.Queue", req_id: str, finished: dict,
+                       canvas_prompt: dict | None = None,
+                       canvas_hooks: list | None = None,
+                       canvas_selection: list | None = None) -> None:
     """Drive the pipeline for one turn on a private event loop, pushing SSE dicts
     to *out_q*. Interactive asks register on ``_reply_registry`` so POST
-    /agentY/reply can feed the answer thread-safely. Terminates *out_q* with None.
+    /agentY/reply can feed the answer thread-safely. Terminates *out_q* with None
+    and sets ``finished["emitted"]`` once it has; the caller enforces both.
     """
     pipeline = _agent_ref
     if pipeline is None:
         out_q.put({"type": "error", "message": "pipeline not initialised"})
+        finished["emitted"] = True
         out_q.put(None)
         return
 
@@ -982,7 +1036,9 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
 
     stopped = False
     try:
+        _wd.phase(req_id, "stream")
         loop.run_until_complete(task)
+        _wd.phase(req_id, "post:check_outputs")
         _check_outputs()
     except asyncio.CancelledError:
         # User pressed Stop → the task was cancelled from /agentY/stop.
@@ -992,31 +1048,48 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
         logger.error("pipeline stream error: %s", exc, exc_info=True)
         out_q.put({"type": "error", "message": str(exc)})
     finally:
+        # Everything from here to `done` is local bookkeeping that should take
+        # milliseconds. It is also the stretch where the panel has the answer on
+        # screen but no `done` yet — so a hang here looks exactly like "the agent
+        # went quiet". Each step is breadcrumbed so a stall names its own phase.
+        _wd.phase(req_id, "post:unregister")
         status_bus.unregister_live(out_q)
         notify_bus.unregister_live(out_q)
         with _reply_lock:
             _reply_registry.pop(req_id, None)
             _run_registry.pop(req_id, None)
+        _wd.phase(req_id, "post:flush_activity")
         _flush_activity()  # emit any tool/canvas activity left after the last event
+        _wd.phase(req_id, "post:persist_message")
         text = "".join(assistant_parts).strip()
         if text:
             try:
                 cs.add_message(thread_id, "assistant", text)
             except Exception:
                 pass
+        _wd.phase(req_id, "post:save_state")
         _save_state(pipeline, thread_id)
+        _wd.phase(req_id, "post:compression")
         try:
             loop.run_until_complete(pipeline._await_pending_compression())  # type: ignore[attr-defined]
         except Exception:
             pass
         # Let the background auto-title finish (first turn only) so the thread
         # list shows the short summary when the panel refreshes on `done`.
+        _wd.phase(req_id, "post:title_join")
         if title_thread is not None:
             title_thread.join(timeout=6.0)
+        _wd.phase(req_id, "post:emit_done")
         if stopped:
             out_q.put({"type": "system", "data": "⏹ Stopped."})
+        # Terminate the stream BEFORE the loop teardown below: shutdown_asyncgens
+        # drives async-generator finalizers (the ComfyUI ws-progress stream among
+        # them) and one that refuses to finish would otherwise hold `done` hostage.
+        # The panel has everything it needs by this point.
+        finished["emitted"] = True
         out_q.put({"type": "done"})
         out_q.put(None)
+        _wd.phase(req_id, "post:close_loop")
         _close_loop(loop)
 
 
@@ -2183,6 +2256,18 @@ def _build_app():
     def commands():
         return jsonify(SLASH_COMMANDS)
 
+    @app.route("/agentY/diag", methods=["GET"])
+    def diag():
+        """In-flight turns and every thread's stack, live.
+
+        For the "panel went quiet after a turn" failure: hit this while it is
+        stuck and the answer is in the response — which phase the turn is parked
+        in, and the exact frame its thread is blocked on. ``?stacks=0`` returns
+        just the phase summary. Read-only.
+        """
+        want = request.args.get("stacks", "1").lower() not in ("0", "false", "no")
+        return jsonify(_wd.snapshot(include_stacks=want))
+
     # ── CLI-side status notices (memory init, model pulls, …) ───────────────
     # The panel drains this on connect (so startup lines that predate it still
     # show) and after each turn; live lines during a turn arrive as SSE
@@ -2791,17 +2876,51 @@ def _build_app():
                          daemon=True).start()
 
         def gen():
+            # Breadcrumbed separately from the runner thread: if the runner logs
+            # `post:emit_done` but the panel still hangs, the loss is on the wire
+            # (or in the browser); if the runner never gets there, the turn is
+            # parked and the keep-alive count below shows how long we waited.
             yield _sse({"type": "thread", "id": thread_id})
             yield _sse({"type": "request", "request_id": rid})
-            while True:
-                try:
-                    item = q.get(timeout=15)
-                except queue.Empty:
-                    yield ": keep-alive\n\n"  # keep the stream warm / defeat idle buffering
-                    continue
-                if item is None:
-                    break
-                yield _sse(item)
+            idle = 0
+            try:
+                while True:
+                    try:
+                        item = q.get(timeout=15)
+                    except queue.Empty:
+                        idle += 1
+                        # Liveness check, not a timeout: a turn may legitimately be
+                        # silent for a long time (a video render). But if the runner
+                        # is no longer tracked, it exited without terminating this
+                        # queue — keep-aliving on would leave the panel streaming
+                        # forever, which is the "agent went quiet" failure. Close it
+                        # so the panel unblocks and can send again.
+                        if not _wd.is_in_flight(rid):
+                            _wd.note(rid, "sse runner gone without done — closing stream")
+                            yield _sse({"type": "error", "message":
+                                        "The turn ended without completing. "
+                                        "You can send another message."})
+                            yield _sse({"type": "done"})
+                            break
+                        # Every ~2min of silence, mark it: a healthy turn is either
+                        # streaming events or finished, not quiet for minutes.
+                        if idle % 8 == 0:
+                            _wd.note(rid, f"sse idle — {idle * 15}s with no event, still keep-alive")
+                        yield ": keep-alive\n\n"  # keep the stream warm / defeat idle buffering
+                        continue
+                    if item is None:
+                        break
+                    if isinstance(item, dict) and item.get("type") == "done":
+                        _wd.note(rid, "sse yielding done")
+                    yield _sse(item)
+            except GeneratorExit:
+                # The client went away (tab closed, Stop, network). Recorded because
+                # a disconnect mid-turn leaves the runner writing into a queue no
+                # one drains — worth seeing in the trace next to the runner's phases.
+                _wd.note(rid, "sse client disconnected before done")
+                raise
+            finally:
+                _wd.note(rid, "sse generator closed")
         return _sse_response(gen())
 
     # ── Legacy bridge endpoints ────────────────────────────────────────────
