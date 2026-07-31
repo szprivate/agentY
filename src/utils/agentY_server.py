@@ -2960,6 +2960,38 @@ def _build_app():
 
 _server_thread: threading.Thread | None = None
 
+# The sidebar polls a few endpoints on a timer — /agentY/health every 5s whenever
+# the panel is open (that heartbeat is what notices a dead host), plus the
+# notification/status drains while a generation is in flight. Werkzeug logs one
+# access line per request, so an idle host scrolls its own console away and any
+# real message drowns in "GET /agentY/health 200". The polling still happens; only
+# its *successful* log lines are dropped. A poll that 404s or 500s still prints —
+# that is exactly the thing worth seeing. Set AGENTY_LOG_POLLS=1 to log them all.
+_QUIET_POLL_PATHS = ("/agentY/health", "/agentY/notifications", "/agentY/status")
+_ACCESS_LINE_RE = re.compile(r'"[A-Z]+ (?P<path>[^" ]+) HTTP/[\d.]+" (?P<code>\d{3})')
+# Werkzeug wraps the request line in ANSI colour for anything that isn't a plain
+# 200, which would otherwise stop the pattern above from matching.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+class _QuietPollFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:  # True = keep the line
+        try:
+            m = _ACCESS_LINE_RE.search(_ANSI_RE.sub("", record.getMessage()))
+        except Exception:  # noqa: BLE001 — a log filter must never break logging
+            return True
+        if not m or not m.group("code").startswith(("2", "3")):
+            return True
+        return not m.group("path").split("?", 1)[0].endswith(_QUIET_POLL_PATHS)
+
+
+def _quiet_poll_logging() -> None:
+    if os.environ.get("AGENTY_LOG_POLLS", "").strip().lower() in ("1", "true", "yes"):
+        return
+    wz = logging.getLogger("werkzeug")
+    if not any(isinstance(f, _QuietPollFilter) for f in wz.filters):
+        wz.addFilter(_QuietPollFilter())
+
 
 def _register_with_comfyui() -> None:
     """Best-effort: tell the ComfyUI sidebar extension where this host lives, so its
@@ -2996,6 +3028,7 @@ def start_agentY_server(agent, host: str = "127.0.0.1", port: int = 5000) -> boo
         return False
 
     app = _build_app()
+    _quiet_poll_logging()
 
     def _run():
         try:
