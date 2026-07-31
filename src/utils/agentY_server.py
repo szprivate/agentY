@@ -72,6 +72,14 @@ _pending_previews: dict[str, dict] = {}
 _node_responses: dict[str, str] = {}       # node_id (str) -> accumulated agent text
 _agent_ref = None                          # the pipeline singleton
 
+# Identifies THIS host process, handed out by /agentY/health. The sidebar remembers
+# the last one it saw, so a host that was restarted is recognised as a *different*
+# process even when the panel never observed the gap — a backgrounded ComfyUI tab
+# throttles its heartbeat to about one tick a minute, which is easily long enough
+# to miss a whole restart.
+_BOOT_ID = uuid.uuid4().hex[:12]
+_BOOT_TIME = time.time()
+
 # Live brain-history cache keyed by thread, so switching threads inside a running
 # app restores the exact Brain messages (which may contain image bytes that don't
 # JSON-serialise). Durable state (agent_session, summaries, gallery) lives in the
@@ -2250,7 +2258,8 @@ def _build_app():
         # lives (browser-mediated self-registration), so the "Start server" button
         # can relaunch it later with no env var or manual config.
         return jsonify({"status": "ok", "pipeline": _agent_ref is not None,
-                        "project_root": str(_project_root())})
+                        "project_root": str(_project_root()),
+                        "boot_id": _BOOT_ID, "uptime": round(time.time() - _BOOT_TIME, 1)})
 
     @app.route("/agentY/commands", methods=["GET"])
     def commands():
