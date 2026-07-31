@@ -129,7 +129,10 @@ function Update-Repo {
     # commits modify. Everything else survives the fast-forward untouched, so a
     # repo full of generated artifacts still updates.
     $incoming = & git -c core.quotepath=false -C $Dir diff --name-only "HEAD..@{u}" 2>$null
-    $dirty = Get-DirtyPaths -Dir $Dir
+    # @(...) around the call, not just inside the function: PowerShell unrolls a
+    # returned array into the pipeline, so one dirty file arrives as a bare string
+    # and none arrives as $null — and under Set-StrictMode neither has a .Count.
+    $dirty = @(Get-DirtyPaths -Dir $Dir)
     $collisions = @()
     if ($dirty.Count -gt 0 -and $incoming) {
         $inc = @{}
