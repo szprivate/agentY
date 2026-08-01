@@ -2277,6 +2277,22 @@ def _build_app():
         want = request.args.get("stacks", "1").lower() not in ("0", "false", "no")
         return jsonify(_wd.snapshot(include_stacks=want))
 
+    # ── In-flight runs ──────────────────────────────────────────────────────
+    # The panel has one DOM and one stream, so it can lose track of a turn: a
+    # reload drops the SSE connection outright, and switching conversations puts
+    # the running one off-screen. Without somewhere to ask, it cannot tell "still
+    # working" from "finished while you were away" — the difference between a
+    # spinner worth waiting on and one that never clears.
+    @app.route("/agentY/runs", methods=["GET"])
+    def active_runs():
+        with _reply_lock:
+            runs = [{"request_id": rid, "thread_id": v.get("thread_id")}
+                    for rid, v in _run_registry.items()]
+            awaiting = set(_reply_registry)
+        for r in runs:
+            r["awaiting_reply"] = r["request_id"] in awaiting
+        return jsonify({"runs": runs})
+
     # ── CLI-side status notices (memory init, model pulls, …) ───────────────
     # The panel drains this on connect (so startup lines that predate it still
     # show) and after each turn; live lines during a turn arrive as SSE
