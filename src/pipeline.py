@@ -1329,14 +1329,53 @@ class Pipeline:
                 add_canvas_workflow, set_canvas_node_params, place_canvas_text,
                 iterate_step]
 
+    @staticmethod
+    def _strip_unreadable_images(messages: list[dict]) -> int:
+        """Drop image blocks the orchestrator cannot read. Returns how many went.
+
+        A text-only model rejects the entire request when the history contains an
+        image block ("Unexpected item type in content." from DashScope), and the
+        block does not go away by itself — so one image attached under a
+        text-only orchestrator breaks every subsequent turn of that conversation,
+        and the only apparent escape is starting a new one. New images are no
+        longer embedded for such a model, but a conversation poisoned before that
+        fix — or before the user switched models mid-thread — still has to heal.
+
+        Only the image block is removed; the accompanying text (which lists the
+        file paths) stays, so the agent keeps the inputs it needs.
+        """
+        try:
+            from src.utils.agentY_server import _orchestrator_supports_vision
+            if _orchestrator_supports_vision():
+                return 0
+        except Exception:  # noqa: BLE001 — never let this check cost a turn
+            return 0
+        dropped = 0
+        for msg in messages:
+            content = msg.get("content")
+            if not isinstance(content, list):
+                continue
+            kept = [b for b in content
+                    if not (isinstance(b, dict) and "image" in b)]
+            if len(kept) != len(content):
+                dropped += len(content) - len(kept)
+                # A message emptied of everything would itself be invalid.
+                msg["content"] = kept or [{"text": "(image omitted)"}]
+        return dropped
+
     def _ensure_orch_clean_history(self) -> None:
-        """Sanitize the orchestrator's message list (drop orphaned tool blocks)."""
+        """Sanitize the orchestrator's message list (drop orphaned tool blocks,
+        and images the configured model cannot accept)."""
         agent = self._orchestrator_agent
         if agent is None:
             return
         msgs = getattr(agent, "messages", None)
         if not msgs:
             return
+        dropped = self._strip_unreadable_images(msgs)
+        if dropped and self._verbose:
+            print(f"pipeline: dropped {dropped} image block(s) the orchestrator "
+                  f"cannot read (text-only model).")
         cleaned = self._sanitize_messages(list(msgs))
         if len(cleaned) != len(msgs):
             if self._verbose:

@@ -469,12 +469,21 @@ def _orchestrator_supports_vision() -> bool:
     ``dashscope,qwen3.6-flash``) rejects image content with DashScope's
     "Unexpected item type in content." We can't probe the endpoint, so decide from
     the configured provider/model name, erring toward False (skip embedding — the
-    paths are still listed in the [CANVAS HOOKS] block and the vision/video agents
-    can read them on demand) unless the model is confidently multimodal.
+    paths are still listed for the agent, and the vision/video agents can read
+    them on demand) unless the model is confidently multimodal.
+
+    Resolved through ``role_model`` rather than by reading
+    ``llm.pipeline.orchestrator`` directly: that key is only the first of three
+    sources (env var, then the per-role pin, then the tier), so a model set the
+    normal way — ``llm.tiers.orchestrator`` — left this reading an empty string
+    and answering about a model nobody was running.
     """
     try:
-        from src.utils.settings import load_settings
-        raw = str(((load_settings().get("llm") or {}).get("pipeline") or {}).get("orchestrator", ""))
+        from src.agent import role_model
+        # Same default as the factory in agent.py, so an unconfigured install is
+        # judged on the model it will actually run, not on an empty string.
+        raw = str(role_model("orchestrator", default="claude,claude-haiku-4-5",
+                             env_var="ORCHESTRATOR_LLM") or "")
     except Exception:  # noqa: BLE001
         return False
     provider, _, model = raw.lower().partition(",")
@@ -491,16 +500,27 @@ def _orchestrator_supports_vision() -> bool:
 
 # ── Content builder (text + attached images/videos -> Strands content blocks) ─
 
-def _build_content(message: str, media_paths: list[str]) -> list | str:
+def _build_content(message: str, media_paths: list[str],
+                   embed_images: bool | None = None) -> list | str:
     """Build a Strands-compatible content list from text + input media paths.
 
     Image paths are embedded as vision blocks (downsized to satisfy Claude's
     5 MB / 1568 px constraints) AND listed as file paths. Video paths are not
     embedded (they can't be sent inline) but ARE listed as file paths so the
     agent can wire them into a loader node — same effect as attaching them.
+
+    Embedding is skipped when the orchestrator cannot read images. A text-only
+    model rejects the whole request — DashScope answers "Unexpected item type in
+    content." — and because the block stays in the message history, every later
+    turn in that conversation is rejected too, which is why the symptom looks
+    intermittent and why only a fresh conversation appeared to fix it. The paths
+    are still listed either way, so the agent can wire them into a loader or hand
+    them to the vision agent; it just cannot look at them itself.
     """
     if not media_paths:
         return message or "(no message)"
+    if embed_images is None:
+        embed_images = _orchestrator_supports_vision()
 
     from src.tools.image_handling import _downsize, _detect_format, _MAX_IMAGE_BYTES
 
@@ -514,6 +534,13 @@ def _build_content(message: str, media_paths: list[str]) -> list | str:
             else:
                 logger.warning("Input video not found: %s", path)
             continue
+        if not embed_images:
+            # Still an input the agent must use — just listed, not looked at.
+            if os.path.exists(path):
+                img_valid.append(path)
+            else:
+                logger.warning("Input image not found: %s", path)
+            continue
         try:
             raw = Path(path).read_bytes()
             img_fmt = _detect_format(path) or "png"
@@ -525,7 +552,10 @@ def _build_content(message: str, media_paths: list[str]) -> list | str:
         except Exception as exc:
             logger.warning("Could not load image %s: %s", path, exc)
 
-    if not blocks and not vid_valid:
+    # img_valid counts even with nothing embedded: when the orchestrator is
+    # text-only the images survive only as the path list below, and returning the
+    # bare message here would silently drop the user's inputs altogether.
+    if not blocks and not vid_valid and not img_valid:
         return message or "(no message)"
 
     path_lines = [f"  - {p}  [image, use this path for ComfyUI input]"
