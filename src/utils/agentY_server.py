@@ -969,6 +969,14 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
         if chunk.startswith("⬇️ ") or "🎨 [" in chunk:
             out_q.put({"type": "progress", "data": chunk.strip()})
             return
+        # A line relayed from ComfyUI's own terminal. Its own channel, and
+        # deliberately NOT appended to assistant_parts: the panel collects it
+        # into a collapsible log, and it is ComfyUI talking, not the assistant —
+        # persisting it as the reply would put a model-loading dump in the
+        # transcript under the agent's name.
+        if chunk.lstrip().startswith("🖥"):
+            out_q.put({"type": "console", "data": chunk.lstrip()[1:].strip()})
+            return
         if "🔍 QA" in chunk or "Vision QA" in chunk:
             out_q.put({"type": "qa", "data": chunk})
             return

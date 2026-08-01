@@ -104,6 +104,20 @@ def _autoload_workflows_into_canvas() -> bool:
     return bool(_load_config().get("autoload_workflows_into_canvas", False))
 
 
+def _console_lines() -> bool | None:
+    """Whether to relay ComfyUI's own terminal output into the run stream.
+
+    Priority, as everywhere else: env ``AGENTY_COMFY_CONSOLE`` (1/0) wins,
+    otherwise ``comfyui_console_lines`` in settings (default on). None hands
+    the decision back to agenty_core, which is what resolves the env var — so
+    "env is set" is expressed by declining to answer.
+    """
+    if os.environ.get("AGENTY_COMFY_CONSOLE", "").strip():
+        return None
+    val = _load_config().get("comfyui_console_lines")
+    return None if val is None else bool(val)
+
+
 def _output_dir() -> Path:
     """Return the fallback directory where ComfyUI output files are saved."""
     cfg = _load_config()
@@ -627,7 +641,8 @@ async def execute_workflow(
     node_titles = _load_node_titles(workflow_path)
     history: dict | None = None
     error_result: dict | None = None
-    _gen = stream_comfyui_job(prompt_id, client_id, node_titles=node_titles)
+    _gen = stream_comfyui_job(prompt_id, client_id, node_titles=node_titles,
+                              console=_console_lines())
     try:
         async for event in _gen:
             if isinstance(event, dict):
@@ -776,7 +791,8 @@ async def execute_workflows_batch(
             history: dict | None = None
             error_result: dict | None = None
             node_titles = _load_node_titles(wf_path)
-            gen = stream_comfyui_job(prompt_id, cid, node_titles=node_titles)
+            gen = stream_comfyui_job(prompt_id, cid, node_titles=node_titles,
+                                     console=_console_lines())
             try:
                 async for event in gen:
                     if isinstance(event, dict):
@@ -785,7 +801,13 @@ async def execute_workflows_batch(
                         else:
                             error_result = event
                         break
-                    await out_q.put(("line", f"{label}{event}"))
+                    # ComfyUI has one console for the whole process, and exactly
+                    # one member relays it — so tagging those lines "[2/5]"
+                    # would attribute a shared log to whichever member happens
+                    # to hold the relay. They also carry their own marker, which
+                    # a member prefix would hide from the panel's classifier.
+                    await out_q.put(("line", event if event.startswith("🖥")
+                                             else f"{label}{event}"))
             finally:
                 await gen.aclose()
 
