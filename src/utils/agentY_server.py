@@ -489,6 +489,22 @@ def _orchestrator_supports_vision() -> bool:
     provider, _, model = raw.lower().partition(",")
     provider = provider.strip()
     model = (model or provider).strip()
+    # Operator overrides first, in both directions. Model families move faster
+    # than any list kept here, and both mistakes are costly now that this gates
+    # what gets sent: a missed multimodal model silently stops images reaching
+    # something that could read them, and a wrongly-assumed one breaks every
+    # turn of a conversation. Whoever runs the model knows; let them say.
+    try:
+        from src.utils.settings import load_settings
+        _llm = load_settings().get("llm") or {}
+        for pattern in (_llm.get("text_only_models") or []):
+            if str(pattern).lower().strip() and str(pattern).lower().strip() in model:
+                return False
+        for pattern in (_llm.get("vision_models") or []):
+            if str(pattern).lower().strip() and str(pattern).lower().strip() in model:
+                return True
+    except Exception:  # noqa: BLE001 — settings must never break the check
+        pass
     # Providers whose current models are multimodal across the board.
     if provider in ("claude", "anthropic", "bedrock", "google", "gemini"):
         return True

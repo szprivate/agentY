@@ -78,6 +78,17 @@ coder = "system_prompt.coder.md"
 [llm]
 history_window = 12
 
+# Which models can accept image content. agentY guesses from the model id (a "-vl"
+# / "omni" / "4o" marker, or a provider that is multimodal throughout), and both
+# kinds of mistake hurt: a model wrongly taken for text-only never gets shown an
+# image, and one wrongly taken for multimodal makes the API reject EVERY turn of
+# the conversation from then on ("Unexpected item type in content."), because the
+# rejected image stays in the history. These lists override the guess — plain
+# substrings matched against the model id, text_only checked first.
+# e.g. vision_models = ["qwen3.7-flash"]   text_only_models = ["qwen3.7-max"]
+vision_models = []
+text_only_models = []
+
 # WHICH MODEL DOES WHICH JOB.
 #
 # Set the six TIERS below and you are done — every role inherits from one of them.

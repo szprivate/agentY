@@ -776,6 +776,26 @@ def analyze_image(
     if question:
         info_parts.append(f"\nUser question: {question}")
 
+    # Handing raw bytes back is only useful if the agent that called this can
+    # look at them. When it cannot, the image does not merely go unread: it
+    # lands in that agent's history as an image block and every later turn of
+    # the conversation is rejected by the API ("Unexpected item type in
+    # content."), which reads as the whole conversation breaking for no reason.
+    # Return the metadata and say where the description comes from instead.
+    _embed = True
+    try:
+        from src.utils.agentY_server import _orchestrator_supports_vision
+        _embed = _orchestrator_supports_vision()
+    except Exception:  # noqa: BLE001 — never let this check break the tool
+        pass
+    if not _embed:
+        info_parts.append(
+            "\n[The image itself is not shown: this agent's model cannot read "
+            "images. Call analyze_image(mode='describe') to have the vision "
+            "agent look at it and describe it back in text.]"
+        )
+        return {"status": "success", "content": [{"text": "\n".join(info_parts)}]}
+
     return {
         "status": "success",
         "content": [
