@@ -2604,7 +2604,9 @@ class Pipeline:
         scope_key, tasks, note = "", None, ""
         if request:
             execution, media, model = self.resolve_catalog_scope(request, staged)
-            scope_key, tasks, note = self._scope_recipes(execution, media, model)
+            named_tasks = self._resolve_tasks(request, media, staged)
+            scope_key, tasks, note = self._scope_recipes(
+                execution, media, model, named_tasks)
         cache = getattr(self, "_catalog_block_cache", None)
         if not isinstance(cache, dict):
             cache = self._catalog_block_cache = {}
@@ -2673,7 +2675,85 @@ class Pipeline:
                       if f" {self._norm_request(m).strip()} " in q), None)
         return execution, media, model
 
-    def _scope_recipes(self, execution, media, model) -> tuple:
+    # Request wording → the task-name token it implies. Only *distinctive* verbs
+    # go here: matching on a task's own generic words is what made a naive
+    # matcher resolve "make a video" to "Video to Video" (both name tokens are
+    # "video") instead of "Text to Video".
+    # Single words are matched as *stems* against word starts, so "upscale"
+    # catches upscaling/upscaled; multi-word entries are matched as phrases.
+    # Deliberately excludes vague verbs (change, modify, make, do): they would
+    # pull half the corpus into a scope the user never asked for, and the media
+    # bucket is a better answer than a confident wrong task.
+    _TASK_KEYWORDS: dict = {
+        "upscale": ("upscal", "upres", "up res", "enlarg", "higher resolution",
+                    "more resolution", "4 k", "8 k"),
+        "inpaint": ("inpaint", "in paint", "remove object", "erase", "patch out",
+                    "clean plate"),
+        "outpaint": ("outpaint", "out paint", "extend the frame", "extend the canvas",
+                     "expand the frame", "widen the shot"),
+        "edit": ("edit", "restyl", "relight", "retouch", "recolour", "recolor"),
+        "character": ("character sheet", "turnaround", "consistent character",
+                      "same character", "character consistency"),
+        "controlnet": ("controlnet", "control net", "canny", "openpose", "scribble"),
+        "preprocessors": ("depth map", "pose map", "segmentation", "estimate depth",
+                          "preprocess"),
+        "tools": ("crop", "stitch", "concat", "contact sheet"),
+        "audio": ("audio", "music", "song", "voice", "speech"),
+    }
+    # Generic words in task names that must never carry a match on their own.
+    _TASK_STOPWORDS: frozenset = frozenset({
+        "api", "partner", "nodes", "to", "and", "with", "from", "the", "of",
+        "image", "video", "text", "audio", "3", "d",
+    })
+
+    @staticmethod
+    def _task_base(task_name: str) -> str:
+        """Task name without the 'API / Partner Nodes - ' prefix, so the API and
+        local variants of one capability match together."""
+        return task_name.split(" - ", 1)[1] if task_name.startswith("API / ") else task_name
+
+    def _resolve_tasks(self, request: str, media, staged: str = "") -> list:
+        """Task names the request plausibly asks for — [] when it pins none.
+
+        Two independent signals, both deterministic:
+
+        * **Direction.** A task named "<in> to <out>" is a match when the media
+          the user *has* and the media they *want* line up. What they have comes
+          from the staged inputs, so "make a video" with nothing staged reads as
+          Text to Video, while the same words with an image on the canvas read as
+          Image to Video. Direction alone was the naive matcher's blind spot.
+        * **Distinctive wording.** ``_TASK_KEYWORDS`` maps verbs users actually
+          type onto a task-name token, so "which image upscaling templates do I
+          have" reaches Upscale without naming it.
+
+        A task must win on one of the two; anything vaguer falls through to the
+        media bucket rather than guessing a task and hiding the rest.
+        """
+        q = self._norm_request(f"{request} {staged}")
+        words = q.split()
+        in_media = "image" if "image" in self._norm_request(staged) else "text"
+
+        def _mentions(term: str) -> bool:
+            if " " in term:                       # phrase: match as written
+                return f" {term} " in q
+            return any(w.startswith(term) for w in words)   # stem
+
+        by_keyword, by_direction = [], []
+        for t in self._load_recipe_tasks():
+            name = t.get("task") or ""
+            base = self._norm_request(self._task_base(name)).strip()
+            tokens = {w for w in base.split() if w not in self._TASK_STOPWORDS}
+            if any(_mentions(term) for tok in tokens
+                   for term in self._TASK_KEYWORDS.get(tok, ())):
+                by_keyword.append(name)
+            elif media and base == f"{in_media} to {media}":
+                by_direction.append(name)
+        # Naming a capability beats inferring one from media direction: "which
+        # image upscaling templates do I have" is about Upscale, and reading it
+        # as Text to Image (nothing staged, image wanted) would hide the answer.
+        return by_keyword or by_direction
+
+    def _scope_recipes(self, execution, media, model, named_tasks=()) -> tuple:
         """Narrowest useful scope for the resolved key: ``(cache_key, tasks, note)``.
 
         ``tasks`` is the recipe tree filtered to that scope, or None when nothing
@@ -2694,6 +2774,17 @@ class Pipeline:
             tasks = _pick(lambda m: str(m.get("model") or "") == model)
             if tasks:
                 return f"model:{model}", tasks, f"model “{model}”"
+        if named_tasks:
+            # Between the model key and the media bucket: the request named a
+            # capability but no model. Both the partner-API and local variants of
+            # the task are kept — which to prefer is the researcher's call, and
+            # the API ones already sort first.
+            wanted = set(named_tasks)
+            tasks = [t for t in self._load_recipe_tasks() if (t.get("task") or "") in wanted]
+            if tasks:
+                labels = sorted({self._task_base(t.get("task") or "") for t in tasks})
+                key = "task:" + "+".join(sorted(wanted))
+                return key, tasks, "the " + " / ".join(labels) + " workflows"
         if media:
             want_api = execution == "api"
             tasks = _pick(lambda m: bool(m.get("uses_api_nodes")) == want_api

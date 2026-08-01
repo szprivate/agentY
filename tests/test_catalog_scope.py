@@ -47,6 +47,82 @@ LIVE = {
 }
 
 
+TASK_TASKS = TASKS + [
+    {"task": "Text to Video", "models": [_model("WAN", False, "video", ["video_wan_t2v"])]},
+    {"task": "API / Partner Nodes - Text to Video", "models": [
+        _model("Veo", True, "video", ["api_veo3"])]},
+    {"task": "Video to Video", "models": [_model("WAN VACE", False, "video", ["video_vace"])]},
+    {"task": "Upscale", "models": [_model("RealESRGAN", False, "image", ["image_upscale"])]},
+    {"task": "API / Partner Nodes - Upscale", "models": [
+        _model("Topaz", True, "image", ["api_topaz_image_enhance"])]},
+    {"task": "Inpaint / Outpaint", "models": [
+        _model("Flux", False, "image", ["image_inpaint_flux"])]},
+]
+
+
+class TaskKeyTest(unittest.TestCase):
+    """The scope level between 'model named' and 'media bucket'."""
+
+    def setUp(self):
+        self.p = object.__new__(Pipeline)
+        self.p._recipe_tasks_cache = TASK_TASKS
+        self._orig = tools_mod.get_workflow_catalog
+        tools_mod.get_workflow_catalog = lambda: json.dumps(LIVE)
+
+    def tearDown(self):
+        tools_mod.get_workflow_catalog = self._orig
+
+    def test_direction_uses_what_the_user_has(self):
+        """The naive matcher's bug: "make a video" is Text to Video, not Video to
+        Video — both task-name tokens are "video", so wording alone cannot tell
+        them apart. What separates them is whether anything is staged."""
+        self.assertEqual(sorted(self.p._resolve_tasks("make a video", "video", "")),
+                         ["API / Partner Nodes - Text to Video", "Text to Video"])
+        self.assertEqual(sorted(self.p._resolve_tasks("make a video", "video", "image")),
+                         ["API / Partner Nodes - Image to Video", "Image to Video"])
+
+    def test_keywords_are_matched_as_stems(self):
+        for q in ("upscale this", "image upscaling templates", "it was upscaled"):
+            self.assertEqual(sorted(self.p._resolve_tasks(q, "image", "")),
+                             ["API / Partner Nodes - Upscale", "Upscale"], q)
+
+    def test_a_named_capability_beats_the_direction_guess(self):
+        # "which image upscaling templates" reads as Text to Image by direction;
+        # Upscale is what was actually asked for.
+        hits = self.p._resolve_tasks(
+            "Which image upscaling workflow templates do I have?", "image", "")
+        self.assertNotIn("Text to Image", hits)
+        self.assertIn("Upscale", hits)
+
+    def test_phrases_are_matched_whole(self):
+        self.assertIn("Inpaint / Outpaint",
+                      self.p._resolve_tasks("remove object from this photo", "image", "image"))
+
+    def test_vague_verbs_match_nothing(self):
+        for q in ("change the prompt in this node", "make something nice", "do the thing"):
+            self.assertEqual(self.p._resolve_tasks(q, None, ""), [], q)
+
+    def test_no_task_match_falls_through_to_the_media_bucket(self):
+        # No loader task exists, so a loader request must NOT be forced into one.
+        tasks = self.p._resolve_tasks("a workflow that loads all of these images",
+                                      "image", "image")
+        key, sel, _ = self.p._scope_recipes("api", "image", None, tasks)
+        self.assertEqual(key, "api:image")
+
+    def test_scope_keeps_both_api_and_local_variants(self):
+        tasks = self.p._resolve_tasks("upscale this", "image", "")
+        key, sel, note = self.p._scope_recipes("api", "image", None, tasks)
+        self.assertTrue(key.startswith("task:"))
+        names = {t["task"] for t in sel}
+        self.assertEqual(names, {"Upscale", "API / Partner Nodes - Upscale"})
+        self.assertIn("Upscale", note)
+
+    def test_a_named_model_still_outranks_the_task(self):
+        tasks = self.p._resolve_tasks("upscale this with topaz", "image", "")
+        key, _, _ = self.p._scope_recipes("api", "image", "Topaz", tasks)
+        self.assertEqual(key, "model:Topaz")
+
+
 class CatalogScopeTest(unittest.TestCase):
     def setUp(self):
         self.p = object.__new__(Pipeline)      # the catalog path is a pure read
