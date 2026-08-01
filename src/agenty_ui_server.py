@@ -119,35 +119,42 @@ def _port_in_use(host: str, port: int) -> bool:
 
 
 def _refresh_workflow_corpus() -> None:
-    """Re-index the templates and rebuild the recipe DB before anything reads it.
+    """Pick up templates added to the custom folder by hand, before anything reads them.
 
-    Adding or removing a workflow through the agent already regenerates both, so
-    that path stays in sync on its own. A template *copied into the custom
-    templates folder by hand* does not: nothing re-indexes it, and the symptom is
-    the researcher insisting a template the user can see on disk does not exist.
+    Adding or removing a workflow through the agent already re-indexes and
+    regenerates, so that path stays in sync on its own. A template *copied into
+    the folder by hand* does not: nothing indexes it, and the symptom is the
+    researcher insisting a template the user can plainly see on disk does not
+    exist.
 
-    Regeneration is deterministic — an unchanged corpus is rewritten byte-for-byte
-    identically, so this neither dirties the corpus repo nor invalidates anything
-    — and it costs about a second. Paying that once per launch is cheaper than the
-    confusion. Never fatal: on failure the existing database stays in place, which
+    Only missing entries are indexed. Re-deriving every entry is lossy for some
+    graphs — an output node the parser cannot trace becomes no outputs at all —
+    so that stays a maintenance command (``scripts/update_all_workflows.ps1``)
+    rather than something that fires unattended on every launch. When nothing is
+    new this does no work and writes no files, so it neither dirties the corpus
+    repo (which would block the auto-updater) nor costs startup time.
+
+    Never fatal: on failure the existing index and database stay in place, which
     is the state the host would have started in regardless.
     """
     try:
-        from src.utils.workflow_admin import reindex_all
+        from src.utils.workflow_admin import index_missing_templates
         started = time.perf_counter()
-        res = reindex_all()
+        res = index_missing_templates()
     except Exception as exc:  # noqa: BLE001 — a bad corpus must not block startup
-        print(f"[agenty-ui] WARNING: could not refresh the workflow corpus ({exc}); "
+        print(f"[agenty-ui] WARNING: could not check the workflow corpus ({exc}); "
               f"continuing with the existing recipe database.", file=sys.stderr)
         return
+    added, failed = res.get("added") or [], res.get("failed") or []
+    if not added and not failed:
+        return                      # nothing new — say nothing
     # Reporting sits outside the guard above, and stays ASCII: a console that
     # cannot encode the summary (cp1252 under a bare `python -m`) must not be
     # reported as a corpus that failed to rebuild.
     counts = res.get("recipes") or {}
-    failed = res.get("failed") or []
-    print(f"[agenty-ui] Workflow corpus: {counts.get('workflow_count', '?')} templates -> "
+    print(f"[agenty-ui] Workflow corpus: indexed {len(added)} new template(s) -> "
           f"{counts.get('recipe_count', '?')} recipes "
-          f"({time.perf_counter() - started:.1f}s)"
+          f"({time.perf_counter() - started:.1f}s): {', '.join(added[:5])}"
           + (f" - {len(failed)} unreadable: {', '.join(failed[:5])}" if failed else ""))
 
 

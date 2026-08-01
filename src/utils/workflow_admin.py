@@ -224,6 +224,51 @@ def reindex_all(regenerate: bool = True) -> dict:
     return {"registered": registered, "failed": failed, "recipes": recipes}
 
 
+def index_missing_templates(regenerate: bool = True) -> dict:
+    """Index template files that have no ``index.json`` entry yet — and nothing else.
+
+    This is the startup counterpart to :func:`reindex_all`, and the difference is
+    deliberate. A template copied into the custom folder by hand is invisible
+    until something indexes it, which is the one way the corpus really does go
+    stale. But re-deriving *every* entry is lossy for some graphs — a workflow
+    whose output node the parser cannot trace comes back with no outputs at all,
+    silently replacing a correct entry with a worse one — so a full re-derive is
+    a maintenance operation you run and inspect, never something that fires
+    unattended on every launch.
+
+    Entries that already exist are therefore left exactly as they are. Returns
+    ``{"added": [...], "failed": [...], "recipes": {...}}``; the recipe rebuild
+    is skipped when nothing was added, since it would be a no-op.
+    """
+    templates_dir = _templates_dir()
+    try:
+        indexed = {
+            t.get("name")
+            for group in json.loads(_custom_index_path().read_text(encoding="utf-8"))
+            for t in (group.get("templates") or [])
+        }
+    except FileNotFoundError:
+        indexed = set()
+    except Exception as exc:  # noqa: BLE001 — an unreadable index is not fatal
+        logger.warning("could not read the custom template index: %s", exc)
+        return {"added": [], "failed": [], "recipes": {}}
+
+    added: list[str] = []
+    failed: list[str] = []
+    for path in sorted(templates_dir.glob("*.json")):
+        if path.name.lower().startswith("index") or path.stem in indexed:
+            continue
+        try:
+            wf = json.loads(path.read_text(encoding="utf-8"))
+            register_workflow(wf, path.stem, source_path=path, regenerate=False)
+            added.append(path.stem)
+        except Exception as exc:  # noqa: BLE001 — one bad file must not stop the batch
+            logger.warning("could not index %s: %s", path.name, exc)
+            failed.append(path.stem)
+    recipes = regenerate_recipes() if (added and regenerate) else {}
+    return {"added": added, "failed": failed, "recipes": recipes}
+
+
 def format_recipe_counts(recipes: dict) -> str:
     """Render the recipe-count summary for a user-facing status line."""
     if not recipes:
