@@ -2396,7 +2396,10 @@ class Pipeline:
         # ones) as the FRONT (stable) prefix so the Researcher picks an EXACT real
         # name without a tool call and cannot hallucinate one. Front placement keeps
         # it a cacheable prefix (the variable memory/request follow it).
-        catalog_block = self._format_template_catalog()
+        # Staged/earlier images are part of the scope key: "now make a video from
+        # it" names no input, but an image on hand still rules the media guess.
+        _staged = "image" if (current_has_images or self._session.last_user_input_images) else ""
+        catalog_block = self._format_template_catalog(user_text, _staged)
         if catalog_block:
             prompt = catalog_block + "\n\n" + prompt
 
@@ -2482,7 +2485,7 @@ class Pipeline:
         # Inject the template catalog so the constrained call can ONLY pick a real
         # template name (history clears can wipe the catalog the researcher fetched,
         # otherwise inviting a hallucinated name that the scaffold then blocks on).
-        _cat_block = self._format_template_catalog()
+        _cat_block = self._format_template_catalog(user_request)
         catalog_hint = ("\n\n" + _cat_block) if _cat_block else ""
         sys_msg = (
             "You finalise the researcher's work into ONE decision JSON conforming "
@@ -2586,20 +2589,142 @@ class Pipeline:
         d = re.sub(r"^\[[^\]]*\]\s*", "", str(desc)).split(". ")[0].strip()
         return d[:60]
 
-    def _format_template_catalog(self) -> str:
+    def _format_template_catalog(self, request: str = "", staged: str = "") -> str:
         """Render the template catalog injected into the Researcher's prompt so it
         selects an EXACT real name with no tool call (and cannot hallucinate one).
 
         Prefers a recipe-derived catalog organised ``task → model → template`` (the
         two axes users actually specify), falling back to a flat ``name: hint`` list
-        if the recipe DB is unavailable. Cached per pipeline; placed as a stable
-        prompt prefix so implicit caching amortises it."""
-        if getattr(self, "_catalog_block_cache", None) is None:
-            block = self._format_recipe_catalog()  # preferred: task → model → template
+        if the recipe DB is unavailable.
+
+        Given a *request*, the tree is narrowed to the scope its
+        (execution, media, model) key resolves to — the whole corpus is ~17k tokens
+        and a keyed scope is a few hundred. Cached per resolved scope, so a repeated
+        scope within a session stays a stable, cacheable prompt prefix."""
+        scope_key, tasks, note = "", None, ""
+        if request:
+            execution, media, model = self.resolve_catalog_scope(request, staged)
+            scope_key, tasks, note = self._scope_recipes(execution, media, model)
+        cache = getattr(self, "_catalog_block_cache", None)
+        if not isinstance(cache, dict):
+            cache = self._catalog_block_cache = {}
+        if scope_key not in cache:
+            if tasks is None and scope_key:
+                block = self._format_catalog_index()   # nothing resolved: compact index
+            else:
+                block = self._format_recipe_catalog(tasks, scope_note=note)
             if not block:
-                block = self._format_flat_catalog()  # fallback: flat name: hint list
-            self._catalog_block_cache = block
-        return self._catalog_block_cache
+                block = self._format_flat_catalog()    # fallback: flat name: hint list
+            cache[scope_key] = block
+        return cache[scope_key]
+
+    # --------------------------------------------------------------------- #
+    # Catalog scoping
+    #
+    # The recipe DB already carries the three axes a request pins down —
+    # execution (partner-API vs local), media, and model — so the scope can be
+    # resolved deterministically, with no extra model call and no drill-down
+    # round trips. Each axis is a widening fallback, never a hard gate: a miss
+    # costs tokens, not reachability, and get_workflow_catalog remains available
+    # for the full inventory.
+    # --------------------------------------------------------------------- #
+    _MEDIA_RE = (
+        ("video", re.compile(r"video|clip|animation|animate|footage|motion|i2v|t2v|v2v|flf")),
+        ("3d", re.compile(r"\b3 d\b|mesh|glb|splat|gaussian")),
+        ("audio", re.compile(r"audio|music|song|sound|voice|speech|tts")),
+        ("image", re.compile(r"image|picture|photo|still|portrait|poster|upscale|thumbnail")),
+    )
+    # Partner-API models are the default (documented in the catalog header); only
+    # an explicit ask for local/offline flips it.
+    _LOCAL_RE = re.compile(r"local|offline|on my machine|without api|no api|self hosted")
+
+    @staticmethod
+    def _norm_request(text: str) -> str:
+        """Space-normalised view for keyword matching, with letter/digit runs split
+        so "wan2.2", "WAN 2.2" and "wan-2-2" all read as "wan 2 2".
+
+        Deliberately NOT a separator-stripped view: stripping fuses word
+        boundaries, so "an image" would match the model "Anima"."""
+        s = str(text).lower()
+        s = re.sub(r"([a-z])(\d)", r"\1 \2", s)
+        s = re.sub(r"(\d)([a-z])", r"\1 \2", s)
+        return " " + " ".join(re.sub(r"[^a-z0-9]+", " ", s).split()) + " "
+
+    def _catalog_models(self) -> list:
+        """Model names the recipe DB knows, longest-first so "WAN 2.2" is matched
+        before "WAN". ``Generic`` is excluded — it is the catch-all the grouper
+        falls back to when a template's text names no family, so it identifies
+        nothing and would swallow any request."""
+        if getattr(self, "_catalog_models_cache", None) is None:
+            names = {str(m.get("model") or "") for t in self._load_recipe_tasks()
+                     for m in (t.get("models") or [])}
+            names.discard("")
+            names.discard("Generic")
+            self._catalog_models_cache = sorted(
+                names, key=lambda n: (-len(self._norm_request(n).split()), -len(n), n))
+        return self._catalog_models_cache
+
+    def resolve_catalog_scope(self, request: str, staged: str = "") -> tuple:
+        """Resolve *request* to ``(execution, media, model)``. Any part may be None."""
+        q = self._norm_request(f"{request} {staged}")
+        execution = "local" if self._LOCAL_RE.search(q) else "api"
+        media = next((m for m, rx in self._MEDIA_RE if rx.search(q)), None)
+        model = next((m for m in self._catalog_models()
+                      if f" {self._norm_request(m).strip()} " in q), None)
+        return execution, media, model
+
+    def _scope_recipes(self, execution, media, model) -> tuple:
+        """Narrowest useful scope for the resolved key: ``(cache_key, tasks, note)``.
+
+        ``tasks`` is the recipe tree filtered to that scope, or None when nothing
+        resolved (the caller then falls back to the compact index)."""
+        def _pick(keep) -> list:
+            out = []
+            for t in self._load_recipe_tasks():
+                models = [m for m in (t.get("models") or []) if keep(m)]
+                if models:
+                    out.append({**t, "models": models})
+            return out
+
+        if model:
+            # A named model outranks the API-first default and the media guess:
+            # "build me a wan 2.2 workflow" must not resolve to the one partner-API
+            # WAN 2.2 recipe while hiding the six local ones, and "relight this shot
+            # with magnific" reads as video though Magnific is image-only.
+            tasks = _pick(lambda m: str(m.get("model") or "") == model)
+            if tasks:
+                return f"model:{model}", tasks, f"model “{model}”"
+        if media:
+            want_api = execution == "api"
+            tasks = _pick(lambda m: bool(m.get("uses_api_nodes")) == want_api
+                          and ((m.get("user_intent") or {}).get("media")) == media)
+            if tasks:
+                label = "partner-API" if want_api else "local"
+                return f"{execution}:{media}", tasks, f"{label} {media} workflows"
+        return "index", None, ""
+
+    def _format_catalog_index(self) -> str:
+        """Compact ``task → model names`` index, no template leaves.
+
+        The floor for a request that pins nothing down: ~900 tokens for the whole
+        corpus, where rendering every leaf would be ~17k."""
+        tasks = self._load_recipe_tasks()
+        if not tasks:
+            return ""
+        lines = []
+        for t in tasks:
+            models = sorted((m for m in (t.get("models") or [])),
+                            key=lambda m: (not m.get("uses_api_nodes"), str(m.get("model") or "")))
+            names = ", ".join(("[API] " if m.get("uses_api_nodes") else "")
+                              + str(m.get("model") or "?") for m in models)
+            if names:
+                lines.append(f"- {t.get('task')}: {names}")
+        if not lines:
+            return ""
+        return ("AVAILABLE WORKFLOWS — grouped task → model. This is an index, not "
+                "the template list: it names no template. Call get_workflow_catalog "
+                "for the full inventory, or ask the user which task and model they "
+                "mean.\n" + "\n".join(lines))
 
     def _load_recipe_tasks(self) -> list:
         """The recipe DB's ``tasks`` list, loaded from the corpus (cached per pipeline)."""
@@ -2648,7 +2773,7 @@ class Pipeline:
         ver = tuple(int(x) for x in re.findall(r"\d+", m.group(1)))
         return stem[: m.start()], ver
 
-    def _format_recipe_catalog(self) -> str:
+    def _format_recipe_catalog(self, tasks: list | None = None, scope_note: str = "") -> str:
         """Render the catalog from the recipe DB, grouped ``task → model → template``.
 
         Collapsing rule (agreed design): within a ``(task, model)`` group, pure
@@ -2658,9 +2783,15 @@ class Pipeline:
         dropped. Models that run via API/partner nodes are flagged ``[API]`` and
         listed first, so a request that names no model defaults to API-first.
 
+        *tasks* defaults to the whole recipe tree; pass a filtered one (with
+        *scope_note* naming the filter) to render only a resolved scope. Scoped
+        renders drop the "Other" catch-all — it exists to keep every template
+        reachable in a full render, and re-listing what the scope just excluded
+        would defeat the scoping entirely.
+
         Returns ``""`` when the recipe DB or live catalog is unavailable, letting the
         caller fall back to the flat catalog."""
-        tasks = self._load_recipe_tasks()
+        tasks = self._load_recipe_tasks() if tasks is None else tasks
         if not tasks:
             return ""
         # Live catalog: authoritative {name: description}. Drives the stale-member
@@ -2717,12 +2848,15 @@ class Pipeline:
         # Lossless safety net: any live template that no recipe references (recipe/
         # catalog drift) would otherwise be unreachable. List it so it stays
         # selectable — but never resurrect a version we deliberately collapsed.
-        uncovered = sorted(set(live) - emitted - hidden - self._SUPPRESSED_TEMPLATES)
-        if uncovered:
-            other = "\n".join(
-                f"    - {s}: {self._catalog_hint(live.get(s, ''))}" for s in uncovered
-            )
-            blocks.append("## Other\n  (uncategorised):\n" + other)
+        # Skipped for a scoped render: there the exclusion is the point, and
+        # get_workflow_catalog is still there when the scope turns out too narrow.
+        if not scope_note:
+            uncovered = sorted(set(live) - emitted - hidden - self._SUPPRESSED_TEMPLATES)
+            if uncovered:
+                other = "\n".join(
+                    f"    - {s}: {self._catalog_hint(live.get(s, ''))}" for s in uncovered
+                )
+                blocks.append("## Other\n  (uncategorised):\n" + other)
         header = (
             "AVAILABLE TEMPLATES — set template.name to EXACTLY one of the template "
             "names below (the leaf after each model), or \"build_new\" if none fit. "
@@ -2733,6 +2867,12 @@ class Pipeline:
             "workflow is listed; if the user explicitly names an older version, you "
             "may still use that exact template name.\n"
         )
+        if scope_note:
+            header += (
+                f"This list is filtered to {scope_note} because the request named it. "
+                "If none of these fit, call get_workflow_catalog for the full "
+                "inventory before falling back to \"build_new\".\n"
+            )
         return header + "\n".join(blocks)
 
     def _format_flat_catalog(self) -> str:
