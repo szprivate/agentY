@@ -2699,6 +2699,12 @@ class Pipeline:
                           "preprocess"),
         "tools": ("crop", "stitch", "concat", "contact sheet"),
         "audio": ("audio", "music", "song", "voice", "speech"),
+        # "First / Last Frame to Video" is not spelled "<in> to <out>", so the
+        # direction matcher below can never reach it — without these it was only
+        # reachable by naming a model, and a plain "video from a start and an end
+        # frame" resolved to Text to Video, hiding every flf2v template there is.
+        "frame": ("first frame", "start frame", "end frame", "first and last",
+                  "start and end", "first last", "flf"),
     }
     # Generic words in task names that must never carry a match on their own.
     _TASK_STOPWORDS: frozenset = frozenset({
@@ -2712,10 +2718,60 @@ class Pipeline:
         local variants of one capability match together."""
         return task_name.split(" - ", 1)[1] if task_name.startswith("API / ") else task_name
 
+    def _tasks_naming_templates(self, request: str) -> list:
+        """Tasks owning any template the request names outright.
+
+        The orchestrator routinely pins a template by name ("use
+        api_seedance2_0_flf2v…"), which is the strongest signal there is — and
+        the one both matchers below miss, because a template name is not a task
+        name. Without this the researcher could be handed a scope that excludes
+        the very template it was just told to use, and would report that
+        template as not existing.
+        """
+        q = (request or "").lower()
+        if not q:
+            return []
+
+        def _names(f: str) -> bool:
+            """Is *f* in the request as a whole name, not inside a longer one?
+
+            Plain substring matching is not enough: ``api_bytedance_seed`` sits
+            inside ``api_bytedance_seedance1_5_flf2v``, so asking for the second
+            would drag in the first one's task as well. A following letter,
+            digit or underscore means we matched a prefix of some other
+            template; trailing punctuation (a full stop, a comma) is a real
+            boundary and must still count.
+            """
+            fl = str(f).lower()
+            # The length floor keeps a short, generic template name from
+            # matching ordinary prose.
+            if len(fl) < 8:
+                return False
+            at = q.find(fl)
+            while at >= 0:
+                before = q[at - 1] if at else " "
+                after = q[at + len(fl)] if at + len(fl) < len(q) else " "
+                if not (before.isalnum() or before == "_") and \
+                   not (after.isalnum() or after == "_"):
+                    return True
+                at = q.find(fl, at + 1)
+            return False
+
+        named = []
+        for t in self._load_recipe_tasks():
+            for m in (t.get("models") or []):
+                if any(_names(f) for f in (m.get("member_files") or [])):
+                    named.append(t.get("task") or "")
+                    break
+        return named
+
     def _resolve_tasks(self, request: str, media, staged: str = "") -> list:
         """Task names the request plausibly asks for — [] when it pins none.
 
-        Two independent signals, both deterministic:
+        Three deterministic signals, strongest first:
+
+        * **A template named outright.** Nothing outranks the request naming a
+          template that exists — see ``_tasks_naming_templates``.
 
         * **Direction.** A task named "<in> to <out>" is a match when the media
           the user *has* and the media they *want* line up. What they have comes
@@ -2726,9 +2782,12 @@ class Pipeline:
           type onto a task-name token, so "which image upscaling templates do I
           have" reaches Upscale without naming it.
 
-        A task must win on one of the two; anything vaguer falls through to the
+        A task must win on one of the three; anything vaguer falls through to the
         media bucket rather than guessing a task and hiding the rest.
         """
+        by_name = self._tasks_naming_templates(request)
+        if by_name:
+            return by_name
         q = self._norm_request(f"{request} {staged}")
         words = q.split()
         in_media = "image" if "image" in self._norm_request(staged) else "text"

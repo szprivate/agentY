@@ -23,6 +23,7 @@ import os
 import signal
 import sys
 import threading
+import time
 from pathlib import Path
 
 # ── Project root on sys.path ──────────────────────────────────────────────────
@@ -117,6 +118,39 @@ def _port_in_use(host: str, port: int) -> bool:
             return False
 
 
+def _refresh_workflow_corpus() -> None:
+    """Re-index the templates and rebuild the recipe DB before anything reads it.
+
+    Adding or removing a workflow through the agent already regenerates both, so
+    that path stays in sync on its own. A template *copied into the custom
+    templates folder by hand* does not: nothing re-indexes it, and the symptom is
+    the researcher insisting a template the user can see on disk does not exist.
+
+    Regeneration is deterministic — an unchanged corpus is rewritten byte-for-byte
+    identically, so this neither dirties the corpus repo nor invalidates anything
+    — and it costs about a second. Paying that once per launch is cheaper than the
+    confusion. Never fatal: on failure the existing database stays in place, which
+    is the state the host would have started in regardless.
+    """
+    try:
+        from src.utils.workflow_admin import reindex_all
+        started = time.perf_counter()
+        res = reindex_all()
+    except Exception as exc:  # noqa: BLE001 — a bad corpus must not block startup
+        print(f"[agenty-ui] WARNING: could not refresh the workflow corpus ({exc}); "
+              f"continuing with the existing recipe database.", file=sys.stderr)
+        return
+    # Reporting sits outside the guard above, and stays ASCII: a console that
+    # cannot encode the summary (cp1252 under a bare `python -m`) must not be
+    # reported as a corpus that failed to rebuild.
+    counts = res.get("recipes") or {}
+    failed = res.get("failed") or []
+    print(f"[agenty-ui] Workflow corpus: {counts.get('workflow_count', '?')} templates -> "
+          f"{counts.get('recipe_count', '?')} recipes "
+          f"({time.perf_counter() - started:.1f}s)"
+          + (f" - {len(failed)} unreadable: {', '.join(failed[:5])}" if failed else ""))
+
+
 def main() -> None:
     # Defaults come from settings.json (agent_server_url); env vars override; a CLI flag wins.
     _def_host, _def_port = _agent_server_url_defaults()
@@ -127,6 +161,11 @@ def main() -> None:
                         help=f"Port (default from settings.json agent_server_url: {_def_port}).")
     parser.add_argument("--no-unload", action="store_true",
                         help="Skip unloading Ollama models before startup.")
+    parser.add_argument("--no-reindex", action="store_true",
+                        default=os.environ.get("AGENTY_NO_REINDEX", "").strip().lower()
+                        in ("1", "true", "yes", "on"),
+                        help="Skip the startup template re-index / recipe rebuild (~1s). "
+                             "Env: AGENTY_NO_REINDEX=1.")
     args = parser.parse_args()
 
     # Fail fast if a host is already serving this port — otherwise a leftover
@@ -141,6 +180,10 @@ def main() -> None:
 
     if not args.no_unload:
         _unload_ollama_models()
+
+    # Before the pipeline caches the recipe tree it reads at scope time.
+    if not args.no_reindex:
+        _refresh_workflow_corpus()
 
     from src.pipeline import create_pipeline
     from src.utils.agentY_server import start_agentY_server

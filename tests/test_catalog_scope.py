@@ -255,5 +255,81 @@ class CatalogScopeTest(unittest.TestCase):
         self.assertIn("## Other", self.p._format_template_catalog())
 
 
+FLF_TASKS = TASK_TASKS + [
+    {"task": "API / Partner Nodes - First / Last Frame to Video", "models": [
+        _model("Generic", True, "video",
+               ["api_seedance2_0_flf2v", "api_bytedance_seedance1_5_flf2v"]),
+        _model("Kling", True, "video", ["api_kling_v3_flf2v"]),
+    ]},
+    {"task": "First / Last Frame to Video", "models": [
+        _model("WAN 2.2", False, "video", ["video_wan2_2_14B_flf2v"])]},
+    # Shares a prefix with api_bytedance_seedance1_5_flf2v above — naming the
+    # long one must not drag this one's task in with it.
+    {"task": "API / Partner Nodes - Image Edit", "models": [
+        _model("Generic", True, "image", ["api_bytedance_seed"])]},
+]
+
+
+class NamedTemplateAndFrameWordingTest(unittest.TestCase):
+    """A first/last-frame request must reach the flf2v templates.
+
+    Both routes into that task were blind: the task name is not "<in> to <out>",
+    so direction could never match it, and no wording mapped onto it — so "a
+    video from a start and an end frame" resolved to Text to Video, and the
+    researcher reported (correctly, for the scope it was handed) that no flf2v
+    template existed. Naming one outright did not help either, because a
+    template name is not a task name.
+    """
+
+    def setUp(self):
+        self.p = object.__new__(Pipeline)
+        self.p._recipe_tasks_cache = FLF_TASKS
+
+    def _tasks(self, request, staged=""):
+        media = self.p.resolve_catalog_scope(request, staged)[1]
+        return self.p._resolve_tasks(request, media, staged)
+
+    def test_naming_a_template_wins_outright(self):
+        self.assertEqual(
+            self._tasks("Use api_seedance2_0_flf2v to make a 5s video"),
+            ["API / Partner Nodes - First / Last Frame to Video"])
+
+    def test_naming_a_template_beats_the_media_direction(self):
+        # A staged image + "video" would otherwise read as Image to Video.
+        self.assertEqual(
+            self._tasks("use api_seedance2_0_flf2v for a video", "master_image"),
+            ["API / Partner Nodes - First / Last Frame to Video"])
+
+    def test_a_name_inside_a_longer_name_does_not_match(self):
+        tasks = self._tasks("use api_bytedance_seedance1_5_flf2v please")
+        self.assertEqual(tasks, ["API / Partner Nodes - First / Last Frame to Video"])
+
+    def test_trailing_punctuation_is_still_a_boundary(self):
+        self.assertEqual(self._tasks("please use api_seedance2_0_flf2v."),
+                         ["API / Partner Nodes - First / Last Frame to Video"])
+
+    def test_short_names_never_match_prose(self):
+        self.p._recipe_tasks_cache = [
+            {"task": "Tiny", "models": [_model("X", True, "image", ["edit"])]}]
+        self.assertEqual(self.p._tasks_naming_templates("please edit this photo"), [])
+
+    def test_frame_wording_reaches_the_task_without_a_name(self):
+        self.assertEqual(
+            sorted(self._tasks("make a video from a start frame and an end frame")),
+            ["API / Partner Nodes - First / Last Frame to Video",
+             "First / Last Frame to Video"])
+
+    def test_first_and_last_frame_phrasing(self):
+        self.assertIn("API / Partner Nodes - First / Last Frame to Video",
+                      self._tasks("video from the first and last frame"))
+
+    def test_plain_video_request_is_unchanged(self):
+        self.assertEqual(sorted(self._tasks("make me a video of a cat")),
+                         ["API / Partner Nodes - Text to Video", "Text to Video"])
+
+    def test_empty_request_names_nothing(self):
+        self.assertEqual(self.p._tasks_naming_templates(""), [])
+
+
 if __name__ == "__main__":
     unittest.main()
