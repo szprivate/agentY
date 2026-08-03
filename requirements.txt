@@ -36,3 +36,40 @@ ddgs>=9.0.0
 # Used by src/utils/video_frames.py; degrades gracefully (OpenCV / ffmpeg-on-PATH
 # fallbacks) if absent, but this is the recommended backend.
 imageio[ffmpeg]>=2.34.0
+
+# ── Image annotation: locating what to mark ─────────────────────────────────
+# SAM 3 turns a text prompt into boxes + masks, so "circle the bolts" resolves
+# in-process — no round-trip through a ComfyUI graph, which is what lets
+# annotation still work while ComfyUI is down.
+#
+# This is Meta's own package, NOT the ComfyUI-SAM3 node's vendored copy: that one
+# imports comfy.ops and comfy.ldm.modules.attention across six modules and cannot
+# be used outside ComfyUI.
+#
+# It reuses the checkpoint ComfyUI already has — models/sam3/sam3.safetensors from
+# the ungated apozz/sam3-safetensors mirror — so there is nothing to download and
+# no need for the gated facebook/sam3 repo. Two things about that file: it is the
+# unified VIDEO model, with the image model under a "detector." key prefix (strip
+# it and all 1134 image-model keys are covered), and upstream's own loader is
+# torch.load, i.e. a .pt pickle, so agentY reads the safetensors itself.
+#
+# Imported lazily: without these agentY still runs, it just loses the SAM3 locate
+# backend and annotation falls back to the vision model.
+sam3>=0.1.4
+# Two imports sam3 does not declare. triton is a distance-transform kernel pulled
+# in transitively by `import sam3` itself, and upstream triton publishes no
+# Windows wheels — the community fork does, under the same `triton` module name.
+psutil>=5.9.0
+triton-windows>=3.7.1 ; sys_platform == "win32"
+triton>=3.0.0 ; sys_platform != "win32"
+# GPU torch is NOT resolvable from PyPI on Windows (the win_amd64 wheel there is
+# CPU-only, ~0.12 GB), and on CPU a single grounding call goes from ~0.2s to the
+# order of a minute. Install it from the CUDA index BEFORE this file, so the
+# sam3 -> timm -> torch chain below finds it already satisfied:
+#   .venv/Scripts/python -m pip install torch torchvision \
+#       --index-url https://download.pytorch.org/whl/cu128
+# Left unpinned here because the right build is machine-specific (CUDA version).
+# Verified on 2.11.0+cu128 / torchvision 0.26.0+cu128, Python 3.12, RTX 5090.
+#
+# NOTE: sam3 constrains numpy<2.4, so installing it downgrades numpy (2.4.4 ->
+# 2.3.5 here). `pip check` stays clean and every agentY module still imports.
