@@ -62,6 +62,32 @@ auto_update = true
 message_history_log = "./.logs/message_history.log"
 tokens_usage_log = "./.logs/tokens_usage.log"
 
+# Image annotation — `annotate_image` circles/boxes/arrows things in a picture by
+# compositing an overlay onto the untouched original (never a re-render). Finding
+# WHAT to circle runs SAM 3 locally on the GPU, in this process.
+#
+# Nothing here needs setting on a machine where ComfyUI's SAM3 node is installed:
+# the checkpoint and tokenizer are found in ComfyUI's own folders. Fill these in
+# only for a non-standard layout, or when ComfyUI lives somewhere unguessable
+# (also see `comfyui_dir` above).
+[annotate]
+# Path to sam3.safetensors. Blank = look in <ComfyUI>/models/sam3/.
+# Env: AGENTY_SAM3_CHECKPOINT.
+sam3_checkpoint = ""
+# Path to the CLIP BPE vocab (bpe_simple_vocab_16e6.txt.gz) SAM3 tokenises text
+# with. Blank = look inside the installed sam3 package, then the ComfyUI-SAM3
+# node. Env: AGENTY_SAM3_BPE.
+sam3_bpe = ""
+# "auto" (CUDA when available), "cuda" or "cpu". CPU works but a single lookup
+# goes from ~0.2s to the order of a minute. Env: AGENTY_SAM3_DEVICE.
+sam3_device = "auto"
+# Drop the model and hand its ~3.5 GB of VRAM back after this many idle seconds.
+# ComfyUI's model_management cannot see memory held by this process, so it cannot
+# evict this to make room for a video model — hence the timer. 0 keeps it
+# resident (faster repeat lookups, permanently reserved VRAM).
+# Env: AGENTY_SAM3_IDLE_UNLOAD.
+sam3_idle_unload_s = 180
+
 [system_prompts]
 orchestrator = "system_prompt.orchestrator.md"
 query_templates = "system_prompt.query_templates.md"

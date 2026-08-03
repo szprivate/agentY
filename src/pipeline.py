@@ -30,6 +30,7 @@ from strands.types.exceptions import MaxTokensReachedException
 from src.agent import create_fix_workflow_assembly_agent, create_generate_new_workflow_agent, create_info_agent, create_orchestrator_agent, create_planner_agent, create_query_templates_agent, create_search_web_agent, create_vision_agent, create_video_agent, _settings
 from src.tools.image_handling import set_vision_agent as _set_vision_agent
 from src.tools.video_handling import set_video_agent as _set_video_agent
+from src.tools.annotate import set_output_sink as _set_output_sink
 from src.utils.chat_summary import summarize_conversation, log_agent_messages, log_agent_exchange, set_log_thread
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
 from agenty_core.utils.comfyui_progress import stream_comfyui_job as _stream_comfyui_job
@@ -545,6 +546,11 @@ class Pipeline:
         except Exception as _vd_exc:
             print(f"[agentY] WARNING: could not initialise VideoAgent ({_vd_exc}). "
                   "analyze_video will return an error until it is configured.")
+        # annotate_image writes a finished PNG mid-turn, outside the executor, so
+        # it has no other way onto the canvas. Registering the session's output
+        # list as its sink is what makes a marked-up image show up in the panel
+        # and get staged into ComfyUI's input dir like any generated output.
+        _set_output_sink(self._register_output_path)
         # Per-turn usage tracking: list of (delta_usage_dict, agent_obj) for every
         # agent that contributed tokens this turn. Reset at the start of each turn.
         self._last_turn_usages: list = []
@@ -570,6 +576,25 @@ class Pipeline:
         return _TurnMetrics(self._last_turn_usages)
 
     # ── Per-turn usage tracking helpers ─────────────────────────────── #
+
+    def _register_output_path(self, path: str) -> None:
+        """Publish a file produced mid-turn by a tool as one of this turn's outputs.
+
+        The server polls ``current_output_paths`` while streaming, so appending
+        here is what pushes the file to the chat panel, adds it to the gallery and
+        stages it into ComfyUI's input dir. It is also recorded as a chain output
+        so it survives the end-of-turn reset and still reaches the canvas.
+        """
+        if not path:
+            return
+        try:
+            paths = self._session.current_output_paths
+            if path not in paths:
+                paths.append(path)
+            if path not in self._chain_output_paths:
+                self._chain_output_paths.append(path)
+        except Exception as exc:  # noqa: BLE001 — delivery must never break a tool
+            print(f"[agentY] could not register output {path}: {exc}")
 
     def _record_vision_usage(self) -> None:
         """Fold the shared Vision agent's per-turn token delta into the turn usage.
