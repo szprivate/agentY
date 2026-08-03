@@ -27,7 +27,7 @@ def main() -> None:
         return
 
     try:
-        from src.utils.comfyui_retrieve_models_customnodes import fetch_available_models
+        from agenty_core.utils.comfyui_retrieve_models_customnodes import fetch_available_models
     except Exception as exc:
         print(f"[refresh_models] Could not import utils: {exc}")
         return
