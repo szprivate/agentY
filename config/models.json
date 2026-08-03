@@ -530,20 +530,6 @@
       "wav2vec2-chinese-base_fp32.safetensors"
     ],
     "xlabs": [],
-    "ultralytics_bbox": [],
-    "ultralytics_segm": [],
-    "mmdets_bbox": [],
-    "mmdets_segm": [],
-    "mmdets": [],
-    "instantid": [],
-    "pulid": [],
-    "layer_model": [],
-    "rembg": [],
-    "dynamicrafter_models": [],
-    "mediapipe": [],
-    "inpaint": [],
-    "prompt_generator": [],
-    "t5": [],
     "unet_gguf": [
       "FLUX1\\flux1-dev-Q8_0.gguf",
       "FLUXDEVGGUF\\flux1-dev-Q8_0.gguf",
@@ -561,6 +547,8 @@
       "FLUXDEVGGUF\\t5-v1_1-xxl-encoder-Q8_0.gguf",
       "t5-v1_1-xxl-encoder-Q8_0.gguf"
     ],
+    "ultralytics_bbox": [],
+    "ultralytics_segm": [],
     "kjnodes_fonts": [],
     "rmbg": [
       "BEN2\\BEN2_Base.pth",
@@ -572,7 +560,6 @@
     "VHS_video_formats": [],
     "wav2vec2": [],
     "nlf": [],
-    "mmaudio": [],
-    "luts": []
+    "mmaudio": []
   }
 }
