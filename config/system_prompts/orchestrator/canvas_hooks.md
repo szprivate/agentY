@@ -126,24 +126,32 @@ the next stage's input. Run them **strictly in order** and thread the outputs:
   by a script can use `run_script` instead — its output feeds the next stage the
   same way.
 
-### Conditional stops — when a hook says "STOP if …"
+### Conditional hooks — "wait for …", "STOP if …", "only continue when …"
 
-A hook's directive may make continuing **conditional**: *"if ANY reference
-generation failed, STOP and ask the user for advice"*, *"only continue when all
-shots exist"*, *"abort if the script names no characters"*. Honour it — call
-**`stop_hook_run(reason, question)`**, which ends the run: nothing queued this
-turn is executed, later hooks are left alone, and the turn ends with your
-explanation. Anything ComfyUI already finished stays staged.
+A hook's directive may make continuing **conditional on how an earlier step turned
+out**: *"if ANY reference generation failed, STOP and ask the user for advice"*,
+*"only continue when all shots exist"*. When the block carries a **RUN PLAN**, it
+has already worked out which hooks that applies to — follow it.
 
-- **Check the condition before you queue the next stage, not after.** A stop is
-  only worth anything while there is still something to stop. `apply_canvas_hooks`
-  queues its variants for the **end of the turn**, so you cannot inspect their
-  results within the same turn — when a hook makes the next step conditional on
-  the previous one having *succeeded*, run that previous step with
-  **`run_workflow_now`** instead and read the outputs it returns.
-- **Then stop calling tools.** Write the user what stopped it, what you did
-  produce, and what you need decided. `apply_canvas_hooks` and `run_workflow_now`
-  refuse after a stop, and anything queued anyway is discarded.
-- A condition that is **met** needs no tool call — just carry on.
-- This is for a *directive's* stop condition, not for errors in general: a
-  workflow that fails on its own is healed and reported by the pipeline.
+**The whole thing turns on one distinction: queued work has no results yet.**
+`apply_canvas_hooks` normally queues its variants and they run *after* your turn
+ends, so their outcome does not exist while you are still working — a condition
+over them can never be evaluated, and stopping at that point cancels the very work
+the condition was about.
+
+- **Run, don't queue, whatever a condition reads.** Call
+  **`apply_canvas_hooks(resolutions=[…], run_now=true)`**: it executes the batch
+  immediately and returns `variants` (per-variant `ok` / `error`), `failed_count`
+  and the staged `outputs`. Failures there are real failures — the pipeline already
+  tried to repair them. For a single workflow, `run_workflow_now` does the same.
+- **Then evaluate the condition** against those results. Condition not met → carry
+  on normally, no tool call needed. Condition met → **`stop_hook_run(reason,
+  question)`**: later hooks are left alone, work queued this turn is discarded, and
+  the turn ends with your explanation. Anything already produced stays staged.
+- If you truly mean *"let what I already queued finish, but go no further"*, pass
+  **`keep_queued=true`** — the default discards it.
+- **After a stop, stop calling tools.** Write the user what stopped it, what you
+  did produce, and what you need decided. `apply_canvas_hooks` and
+  `run_workflow_now` refuse after a stop.
+- This is for a *directive's* condition, not for errors in general: a workflow that
+  fails on its own is healed and reported by the pipeline.

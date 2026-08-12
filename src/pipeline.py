@@ -39,7 +39,10 @@ from src.utils.tool_activity import drain as _drain_tools, clear as _clear_tools
 from src.utils.canvas_patch import drain as _drain_canvas_patch, clear as _clear_canvas_patch
 from src.utils.costs import compute_cost_from_usage
 from src.utils.models import AgentSession, ChatSummary, GeneratedImage, MessageIntent, TriageResult
-from src.utils.workflow_signal import clear_and_get as _get_workflow_signal
+from src.utils.workflow_signal import (
+    clear_and_get as _get_workflow_signal,
+    peek as _peek_workflow_signal,
+)
 from src.executor import (
     execute_workflow as _execute_workflow,
     execute_workflows_batch as _execute_workflows_batch,
@@ -884,7 +887,7 @@ class Pipeline:
             return await _run_specialist(self._planner_agent, "PLANNER", request)
 
         @_tool
-        async def apply_canvas_hooks(resolutions: list) -> str:
+        async def apply_canvas_hooks(resolutions: list, run_now: bool = False) -> str:
             """Run the user's ON-CANVAS graph, expanded per the canvas hooks.
 
             Use this ONLY when a ``[CANVAS HOOKS]`` block is present. It runs the
@@ -936,8 +939,20 @@ class Pipeline:
             A ``zip_group`` behaves like one axis, so it still cross-products with any
             ungrouped resolutions (e.g. a seed sweep runs for every pair).
 
+            RUN NOW vs QUEUE. By default the variants are queued and execute after
+            your turn ends — you never see their results. Pass ``run_now=True`` when
+            you need to KNOW how they turned out before deciding what to do next:
+            it executes them immediately and returns, per variant, whether it
+            succeeded and what it produced. Use it whenever a later hook's directive
+            is conditional ("if ANY reference failed, STOP", "once all shots exist,
+            …") — the RUN PLAN in the ``[CANVAS HOOKS]`` block names the hooks that
+            need it. It costs the turn the generation time, so don't use it for a
+            terminal batch nothing depends on.
+
             Args:
                 resolutions: list of per-node mutation specs (see above).
+                run_now: execute immediately and report per-variant results, instead
+                    of queueing them for the end of the turn.
             """
             import os as _os
             import tempfile as _tempfile
@@ -968,37 +983,47 @@ class Pipeline:
             for i, p in enumerate(prompts):
                 fp = out_dir / f"canvas_{i:03d}.json"
                 fp.write_text(json.dumps(p), encoding="utf-8")
-                _append(str(fp))
+                if not run_now:
+                    _append(str(fp))
                 paths.append(str(fp))
-            if self._verbose:
-                print(f"pipeline: apply_canvas_hooks queued {len(paths)} canvas variant(s).")
-            return json.dumps({
-                "status": "queued",
-                "count": len(paths),
-                "notes": notes,
-                "message": (
-                    f"{len(paths)} canvas graph variant(s) queued for execution — "
-                    "your work here is done; do NOT call signal_workflow_ready."
-                ),
-            })
+            if not run_now:
+                if self._verbose:
+                    print(f"pipeline: apply_canvas_hooks queued {len(paths)} canvas variant(s).")
+                return json.dumps({
+                    "status": "queued",
+                    "count": len(paths),
+                    "notes": notes,
+                    "message": (
+                        f"{len(paths)} canvas graph variant(s) queued for execution — "
+                        "your work here is done; do NOT call signal_workflow_ready."
+                    ),
+                })
+            return await self._run_canvas_batch(paths, notes)
 
         @_tool
-        async def stop_hook_run(reason: str, question: str = "") -> str:
-            """STOP this canvas-hook run and hand back to the user without generating.
+        async def stop_hook_run(reason: str, question: str = "",
+                                keep_queued: bool = False) -> str:
+            """STOP this canvas-hook run and hand back to the user.
 
             Use this when a hook's own directive tells you to stop — e.g. *"if ANY
             reference generation failed, STOP and ask the user for advice"*, "only
             continue if …", "abort if the script is missing X". It is the way to
-            obey a conditional stop: nothing queued this turn is executed, the
-            remaining hooks are left untouched, and the turn ends with your
-            explanation instead of a half-finished batch.
+            obey a conditional stop: the remaining hooks are left untouched and the
+            turn ends with your explanation instead of a half-finished pipeline.
 
-            It discards work already queued this turn (``apply_canvas_hooks``
-            variants, a signalled workflow, a pending keep-live run) — anything
-            ComfyUI already finished is kept and still staged. It cannot cancel a
-            run from an earlier turn.
+            By default it also DISCARDS work queued this turn but not yet run
+            (``apply_canvas_hooks`` variants, a signalled workflow, a pending
+            keep-live run) — stopping means stopping. If you meant "let what I
+            already queued finish, just don't go further", pass
+            ``keep_queued=True``. Anything ComfyUI already finished is kept and
+            staged either way; a run from an earlier turn cannot be cancelled.
 
-            After calling it, STOP calling tools: write the user a short account of
+            Note the ordering trap: queued variants execute AFTER your turn, so you
+            cannot check their results and then stop on them. To decide based on how
+            a generation went, run it with ``apply_canvas_hooks(run_now=True)`` (or
+            ``run_workflow_now``) and read the results it returns.
+
+            After calling this, STOP calling tools: write the user a short account of
             what happened, what you did produce, and what you need from them.
 
             Args:
@@ -1006,27 +1031,39 @@ class Pipeline:
                     which failure. This is shown to the user.
                 question: Optional. The decision you need from them, phrased as a
                     question ("Re-run the two that failed, or change the prompt?").
+                keep_queued: Let already-queued workflows still run at turn end
+                    instead of discarding them. Default False (discard).
             """
             reason = str(reason or "").strip()
             if not reason:
                 return json.dumps({"error": "give a reason — the user is told why the run stopped."})
-            discarded = _get_workflow_signal()          # queued but not yet executed
-            self._canvas_keeplive_run = False
+            if keep_queued:
+                kept = len(_peek_workflow_signal())
+                discarded = 0
+            else:
+                kept = 0
+                discarded = len(_get_workflow_signal())   # queued but not yet executed
+                self._canvas_keeplive_run = False
             self._hook_run_stopped = {"reason": reason,
                                       "question": str(question or "").strip(),
-                                      "discarded": len(discarded)}
+                                      "discarded": discarded, "kept": kept,
+                                      "keep_queued": bool(keep_queued)}
             _push_progress("🛑 Hook run stopped — " + reason)
             if self._verbose:
-                print(f"pipeline: stop_hook_run — {reason} "
-                      f"(discarded {len(discarded)} queued workflow(s)).")
+                print(f"pipeline: stop_hook_run — {reason} (discarded {discarded}, "
+                      f"kept {kept} queued workflow(s)).")
             return json.dumps({
                 "status": "stopped",
                 "reason": reason,
-                "discarded_queued_workflows": len(discarded),
+                "discarded_queued_workflows": discarded,
+                "kept_queued_workflows": kept,
                 "message": (
-                    "Run stopped. Nothing further will be executed this turn"
-                    + (f"; {len(discarded)} queued workflow(s) were discarded" if discarded else "")
-                    + ". Do NOT call apply_canvas_hooks, run_workflow_now, "
+                    "Run stopped."
+                    + (f" {kept} already-queued workflow(s) will still run at turn end."
+                       if kept else
+                       (f" {discarded} queued workflow(s) were discarded." if discarded
+                        else " Nothing was queued."))
+                    + " Do NOT call apply_canvas_hooks, run_workflow_now, "
                       "signal_workflow_ready or any other tool now — reply to the user: "
                       "say what stopped it, what you already produced, and ask "
                     + (f'"{question}"' if str(question or "").strip()
@@ -1422,17 +1459,89 @@ class Pipeline:
                 run_workflow_now, add_canvas_workflow, set_canvas_node_params,
                 place_canvas_text, iterate_step]
 
+    async def _run_canvas_batch(self, paths: list[str], notes: list) -> str:
+        """Execute canvas-hook variants NOW and report per-variant outcomes.
+
+        The deferred path can't answer "did they work?" — it runs after the turn.
+        This runs the same batch inline (same healing and QA retries as the
+        end-of-turn executor, so "failed" means *couldn't be healed either*), then
+        hands back which members survived. That is what makes a hook directive like
+        "if ANY reference failed, STOP" answerable while there is still a decision
+        to make. Outputs are staged as usual and kept past the end-of-turn reset.
+        """
+        collected = self._session.current_output_paths
+        before = len(collected)
+        _clear_exec_errors()
+        try:
+            async for _line in _execute_workflows_batch(
+                paths, self._last_brainbriefing_json or "",
+                user_message="", verbose=self._verbose,
+                collected_paths=collected, qa_briefing=self._qa_briefing,
+                qa_retry_fn=self._qa_retry, repair_fn=self._heal_exec_failure,
+                max_concurrent_repairs=3,
+            ):
+                # Inside a tool call the pipeline's own loop isn't draining, so the
+                # progress buffer is what carries these to the panel.
+                _push_progress(str(_line))
+                if self._verbose:
+                    print(f"[apply_canvas_hooks run_now] {_line}")
+        except Exception as exc:  # noqa: BLE001
+            return json.dumps({"status": "error", "error": f"execution failed: {exc}",
+                               "notes": notes})
+        new = list(collected[before:])
+        self._chain_output_paths.extend(new)
+        # Only members inline healing could NOT fix land here — a healed failure
+        # is a success, and reporting it as a failure would stop a run that worked.
+        errors = _get_exec_errors()
+        by_path = {str(e.get("workflow_path") or ""): str(e.get("error") or "failed")
+                   for e in errors}
+        variants = []
+        for i, p in enumerate(paths):
+            v = {"variant": i + 1, "workflow": p, "ok": p not in by_path}
+            if p in by_path:
+                v["error"] = by_path[p]
+            variants.append(v)
+        failed = [v for v in variants if not v["ok"]]
+        if self._verbose:
+            print(f"pipeline: apply_canvas_hooks(run_now) ran {len(paths)} variant(s), "
+                  f"{len(failed)} failed, {len(new)} output(s).")
+        return json.dumps({
+            "status": "ran",
+            "count": len(paths),
+            "failed_count": len(failed),
+            "variants": variants,
+            "outputs": new,
+            "notes": notes,
+            "message": (
+                f"{len(paths)} variant(s) ran; {len(failed)} failed. "
+                + ("Every variant succeeded — continue with the next hook."
+                   if not failed else
+                   f"{len(failed)} variant(s) could not be produced even after repair. "
+                   "If a hook's directive says to stop when one fails, call "
+                   "stop_hook_run now; otherwise continue with what did succeed.")
+                + f" {len(new)} output file(s) staged onto the canvas."
+            ),
+        })
+
     def _pending_execution_paths(self) -> list[str]:
         """The workflows to execute at turn end — none when a hook stop is in force.
 
         The mailbox is drained either way, so paths abandoned by a stop can't leak
-        into the next turn. Anything queued *after* stop_hook_run is dropped here
-        too: the agent was told not to, and a stop the user can silently lose is
-        worse than no stop at all. Also clears the keep-live flag, so a producer
-        value injected before the stop doesn't run the canvas by the back door.
+        into the next turn. A plain stop drops everything — including anything
+        queued *after* it, which the agent was told not to do, because a stop the
+        user can silently lose is worse than no stop at all — and clears the
+        keep-live flag so a producer value injected before the stop doesn't run the
+        canvas by the back door. ``keep_queued`` is the deliberate exception: "let
+        what I already queued finish, just go no further".
         """
         paths = _get_workflow_signal()
-        if not self._hook_run_stopped:
+        stop = self._hook_run_stopped
+        if not stop:
+            return paths
+        if stop.get("keep_queued"):
+            if self._verbose:
+                print(f"pipeline: hook run stopped, keeping {len(paths)} "
+                      "already-queued workflow(s).")
             return paths
         if paths and self._verbose:
             print(f"pipeline: hook run stopped — dropping {len(paths)} "

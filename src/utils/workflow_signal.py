@@ -30,6 +30,12 @@ def set_workflow_path(path: str) -> None:
         _pending_paths = [path]
 
 
+def peek() -> list[str]:
+    """The pending paths, left in place (for reporting what a stop would discard)."""
+    with _lock:
+        return list(_pending_paths)
+
+
 def clear_and_get() -> list[str]:
     """Atomically read and clear all pending paths.
 

@@ -819,6 +819,131 @@ def _hook_predecessors(hook: dict, hook_ids: set) -> set:
     return ids
 
 
+# A directive that gates the run on how an EARLIER step turned out — "if ANY
+# reference generation failed, STOP", "wait for all the shots", "only continue
+# once …". These need results, and results only exist for work that was RUN, so
+# whatever such a hook depends on must not be left queued for the end of the turn.
+_OUTCOME = (r"fail(?:ed|s|ure|ures)?|error(?:s|ed)?|missing|empty|succe(?:ed|eded|ss|ssful)|"
+            r"complete[d]?|finish(?:ed)?|generated|exists?|worked|came out")
+_CONDITIONAL_PATTERNS = (
+    # Hyphen-aware boundaries: "a non-stop dolly move" is camera work, not a halt.
+    re.compile(r"(?<![\w-])(?:stop|abort|halt)(?![\w-])", re.I),
+    re.compile(r"\bdo\s*n[o']?t\s+(?:continue|proceed|go on)\b", re.I),
+    re.compile(r"\bwait\s+(?:for|until|till)\b", re.I),
+    re.compile(r"\bonly\s+(?:if|when|once|after)\b", re.I),
+    # "only continue once every shot exists" — the verb sits between the two halves.
+    re.compile(r"\bonly\s+(?:continue|proceed|go\s+on|start|run|generate|build|do)\b", re.I),
+    re.compile(rf"\bif\s+(?:any|all|none|one|the|it|they|there)\b[^.!?]{{0,80}}\b(?:{_OUTCOME})\b", re.I),
+)
+
+
+def is_conditional(hook: dict) -> bool:
+    """True when the hook's directive makes continuing depend on an earlier outcome."""
+    text = str((hook or {}).get("directive", "") or "")
+    return any(p.search(text) for p in _CONDITIONAL_PATTERNS)
+
+
+def _producers_of(hooks: list) -> dict:
+    """consumer hook id -> {producer hook ids}, from BOTH ends of the wire.
+
+    A hook→hook link is recorded on whichever side the frontend saw it: as an
+    anchor on the consumer (``prev_hook_ids`` / ``anchors[].node_id``), or as a
+    target on the producer (hook 5 *feeds* hook 30's ``anchors.anchor0``). Real
+    graphs use the target side — a consumer whose anchors are fed only by hooks
+    reports "no input wired" — so reading one end alone finds no dependencies at
+    all and the plan silently degrades to nothing.
+    """
+    ids = _hook_ids(hooks)
+    producers: dict = {i: set() for i in ids}
+    for h in hooks:
+        hid = str(h.get("hook_node_id"))
+        for pid in _hook_predecessors(h, ids):        # recorded on the consumer
+            producers.setdefault(hid, set()).add(pid)
+        for tid, _ty, _ti, _tt, _title in _output_targets(h):   # on the producer
+            if tid in ids and tid != hid:
+                producers.setdefault(tid, set()).add(hid)
+    return producers
+
+
+def gating_hook_ids(hooks: list) -> set:
+    """Ids of hooks whose RESULTS a conditional hook depends on.
+
+    Everything upstream of a conditional hook, transitively: those hooks have to
+    be *run* (``apply_canvas_hooks(run_now=True)`` / ``run_workflow_now``) rather
+    than queued, or there is nothing for the condition to read — the turn ends,
+    the batch runs afterwards, and the check never happens.
+    """
+    producers = _producers_of(hooks)
+    gating: set = set()
+    for h in hooks:
+        if not is_conditional(h):
+            continue
+        hid = str(h.get("hook_node_id"))
+        # Per-hook walk: a cycle (or a hook wired back into its own producer) must
+        # not make the conditional hook gate on itself, but a hook upstream of a
+        # *different* conditional hook still counts.
+        seen: set = set()
+        stack = list(producers.get(hid, ()))
+        while stack:
+            pid = stack.pop()
+            if pid in seen or pid == hid:
+                continue
+            seen.add(pid)
+            stack.extend(producers.get(pid, ()))
+        gating |= seen
+    gating.discard(None)
+    # A text hook produces a written string with place_canvas_text — there is no
+    # execution to run early, so listing it here would only add noise.
+    text_ids = {str(h.get("hook_node_id")) for h in hooks if _is_text(h)}
+    return gating - text_ids
+
+
+def plan_lines(hooks: list) -> list[str]:
+    """The RUN PLAN block: order, what must be run rather than queued, what gates.
+
+    Derived from the wiring and the directives, not from the model — the ordering
+    is already a topological sort, and whether a step's *results* are needed in
+    this turn is decided by whether a downstream directive is conditional. The
+    plan exists because getting this wrong is silent: the agent queues a batch,
+    reaches a conditional hook it cannot evaluate, and stops — cancelling the very
+    work the condition was about.
+    """
+    if not hooks:
+        return []
+    gating = gating_hook_ids(hooks)
+    conditional = [h for h in hooks if is_conditional(h)]
+    if not conditional:
+        return []
+    order = " → ".join(str(h.get("hook_node_id")) for h in hooks)
+    out = [
+        "\nRUN PLAN (derived from the wiring — follow it):\n"
+        f"  1. Work the hooks in this order: {order}."
+    ]
+    if gating:
+        ids = ", ".join(sorted(gating, key=lambda x: (len(x), x)))
+        out.append(
+            f"  2. Hook(s) {ids} must be RUN THIS TURN, not queued — a later hook's "
+            "directive is conditional on how they turn out. When such a hook generates, "
+            "call apply_canvas_hooks(..., run_now=true) (or run_workflow_now for a single "
+            "workflow): both execute immediately and return per-variant success/failure, "
+            "which is what the condition reads. apply_canvas_hooks WITHOUT run_now defers "
+            "to the end of the turn — its results do not exist while you are still working, "
+            "so a condition over them can never be evaluated."
+        )
+    producers = _producers_of(hooks)
+    for h in conditional:
+        hid = h.get("hook_node_id")
+        deps = sorted(producers.get(str(hid), ()), key=lambda x: (len(x), x))
+        dep_txt = f" (reads hook {', '.join(deps)})" if deps else ""
+        out.append(
+            f"  3. Hook {hid} is CONDITIONAL{dep_txt}: evaluate its condition against the "
+            "results you actually have. If the condition to stop is met, call "
+            'stop_hook_run(reason="…", question="…") and reply — do not queue more work. '
+            "If it is not met, carry on normally."
+        )
+    return out
+
+
 def _order_by_dependency(hooks: list) -> list:
     """Order *hooks* so every producer precedes the hook(s) consuming its output.
 
@@ -980,6 +1105,10 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             "N FIRST and reuse exactly what you wrote as this hook's context; do NOT "
             "re-read it from the graph."
         )
+
+    # When a directive gates on an earlier step's outcome, say up front which hooks
+    # have to be run (not queued) for that check to be possible at all.
+    lines.extend(plan_lines(hooks))
 
     if directive_hooks:
         lines.append(

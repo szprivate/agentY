@@ -15,6 +15,7 @@ import asyncio
 import json
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 from src.pipeline import Pipeline
 from src.utils.workflow_signal import append_workflow_path, clear_and_get
@@ -31,9 +32,15 @@ def _stub(**over):
         _session=SimpleNamespace(current_output_paths=[]),
         _last_brainbriefing_json="{}",
         _chain_output_paths=[],
+        _qa_briefing=None,
+        _qa_retry=None,
+        _heal_exec_failure=lambda *a, **k: None,
     )
     base.update(over)
-    return SimpleNamespace(**base)
+    ns = SimpleNamespace(**base)
+    # The batch runner is a real Pipeline method — bind it, don't reimplement it.
+    ns._run_canvas_batch = Pipeline._run_canvas_batch.__get__(ns)
+    return ns
 
 
 def _tools(pipe):
@@ -125,6 +132,88 @@ class StopHookRunTest(unittest.TestCase):
         self.assertFalse(pipe._canvas_keeplive_run, "keep-live must not run either")
         self.assertEqual(clear_and_get(), [],
                          "the mailbox must still be drained, or it leaks into the next turn")
+
+    # ── "stop, but let what I queued finish" ─────────────────────────────────
+    def test_keep_queued_leaves_the_queue_alone(self):
+        append_workflow_path("C:/tmp/ref_000.json")
+        append_workflow_path("C:/tmp/ref_001.json")
+        pipe = _stub()
+        out = _call(_tools(pipe)["stop_hook_run"],
+                    reason="hook 30 needs the references first",
+                    keep_queued=True)
+        self.assertEqual(out["kept_queued_workflows"], 2)
+        self.assertEqual(out["discarded_queued_workflows"], 0)
+        self.assertIn("will still run", out["message"])
+        # Still stopped — just not cancelled.
+        self.assertTrue(pipe._hook_run_stopped["keep_queued"])
+        self.assertEqual(Pipeline._pending_execution_paths(pipe),
+                         ["C:/tmp/ref_000.json", "C:/tmp/ref_001.json"])
+
+    def test_keep_queued_still_blocks_further_work(self):
+        pipe = _stub()
+        tools = _tools(pipe)
+        _call(tools["stop_hook_run"], reason="references first", keep_queued=True)
+        out = _call(tools["run_workflow_now"], workflow_path="C:/tmp/stage2.json")
+        self.assertIn("error", out)
+
+    # ── run_now: the results a condition can actually read ───────────────────
+    def test_run_now_executes_instead_of_queueing(self):
+        ran = {}
+
+        async def fake_batch(paths, *a, **kw):
+            ran["paths"] = list(paths)
+            ran["repair"] = kw.get("repair_fn")
+            kw["collected_paths"].extend(["C:/out/ref_0.png", "C:/out/ref_1.png"])
+            yield "queued 2"
+
+        pipe = _stub()
+        with mock.patch("src.pipeline._execute_workflows_batch", fake_batch), \
+             mock.patch("src.pipeline._clear_exec_errors"), \
+             mock.patch("src.pipeline._get_exec_errors", return_value=[]):
+            out = _call(_tools(pipe)["apply_canvas_hooks"], run_now=True, resolutions=[
+                {"target_node_id": "1", "param": "seed", "mode": "sweep_seed", "count": 2}])
+        self.assertEqual(out["status"], "ran")
+        self.assertEqual(out["failed_count"], 0)
+        self.assertTrue(all(v["ok"] for v in out["variants"]))
+        self.assertEqual(len(ran["paths"]), 2, "both variants were executed")
+        self.assertIsNotNone(ran["repair"], "failures should still be healed first")
+        self.assertEqual(clear_and_get(), [], "run_now must not ALSO queue them")
+        # Outputs survive the end-of-turn reset.
+        self.assertEqual(pipe._chain_output_paths, ["C:/out/ref_0.png", "C:/out/ref_1.png"])
+
+    def test_run_now_reports_which_variant_failed(self):
+        written = {}
+
+        async def fake_batch(paths, *a, **kw):
+            written["paths"] = list(paths)
+            yield "done"
+
+        pipe = _stub()
+        with mock.patch("src.pipeline._execute_workflows_batch", fake_batch), \
+             mock.patch("src.pipeline._clear_exec_errors"), \
+             mock.patch("src.pipeline._get_exec_errors") as errs:
+            errs.side_effect = lambda: [{"workflow_path": written["paths"][1],
+                                         "error": "SeedreamNode: upstream 500"}]
+            out = _call(_tools(pipe)["apply_canvas_hooks"], run_now=True, resolutions=[
+                {"target_node_id": "1", "param": "seed", "mode": "sweep_seed", "count": 3}])
+        self.assertEqual(out["failed_count"], 1)
+        self.assertEqual([v["ok"] for v in out["variants"]], [True, False, True])
+        self.assertIn("upstream 500", out["variants"][1]["error"])
+        # The agent is pointed at the decision it now has to make.
+        self.assertIn("stop_hook_run", out["message"])
+
+    def test_run_now_surfaces_an_executor_crash_rather_than_claiming_success(self):
+        async def boom(paths, *a, **kw):
+            raise RuntimeError("ComfyUI unreachable")
+            yield  # pragma: no cover — generator marker
+
+        pipe = _stub()
+        with mock.patch("src.pipeline._execute_workflows_batch", boom), \
+             mock.patch("src.pipeline._clear_exec_errors"):
+            out = _call(_tools(pipe)["apply_canvas_hooks"], run_now=True, resolutions=[
+                {"target_node_id": "1", "param": "seed", "mode": "sweep_seed", "count": 2}])
+        self.assertEqual(out["status"], "error")
+        self.assertIn("ComfyUI unreachable", out["error"])
 
     def test_the_stop_does_not_survive_into_the_next_turn(self):
         """A stop is per-turn state: the next turn starts able to run again."""
