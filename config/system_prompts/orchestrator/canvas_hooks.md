@@ -125,3 +125,25 @@ the next stage's input. Run them **strictly in order** and thread the outputs:
   `signal_workflow_ready` for a stage you already ran. A stage that's better done
   by a script can use `run_script` instead — its output feeds the next stage the
   same way.
+
+### Conditional stops — when a hook says "STOP if …"
+
+A hook's directive may make continuing **conditional**: *"if ANY reference
+generation failed, STOP and ask the user for advice"*, *"only continue when all
+shots exist"*, *"abort if the script names no characters"*. Honour it — call
+**`stop_hook_run(reason, question)`**, which ends the run: nothing queued this
+turn is executed, later hooks are left alone, and the turn ends with your
+explanation. Anything ComfyUI already finished stays staged.
+
+- **Check the condition before you queue the next stage, not after.** A stop is
+  only worth anything while there is still something to stop. `apply_canvas_hooks`
+  queues its variants for the **end of the turn**, so you cannot inspect their
+  results within the same turn — when a hook makes the next step conditional on
+  the previous one having *succeeded*, run that previous step with
+  **`run_workflow_now`** instead and read the outputs it returns.
+- **Then stop calling tools.** Write the user what stopped it, what you did
+  produce, and what you need decided. `apply_canvas_hooks` and `run_workflow_now`
+  refuse after a stop, and anything queued anyway is discarded.
+- A condition that is **met** needs no tool call — just carry on.
+- This is for a *directive's* stop condition, not for errors in general: a
+  workflow that fails on its own is healed and reported by the pipeline.

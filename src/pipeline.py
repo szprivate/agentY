@@ -485,6 +485,10 @@ class Pipeline:
         # Set when a keep-live producer hook injects a value into the base graph but
         # queues no batch — the base graph is then run once at turn end (below).
         self._canvas_keeplive_run: bool = False
+        # Set by stop_hook_run when a hook's own directive says to abort (e.g. "if
+        # any reference failed, STOP and ask"). Nothing is executed at turn end
+        # while this is set. Per-turn, like the fields above.
+        self._hook_run_stopped: dict | None = None
         # Outputs produced mid-turn by run_workflow_now (chained hook stages).
         # Tracked so they survive the end-of-turn current_output_paths reset and
         # still get staged onto the canvas. Empty on every non-chain turn.
@@ -946,6 +950,12 @@ class Pipeline:
                     "error": "no on-canvas graph is loaded for this turn — "
                              "apply_canvas_hooks is only valid with a [CANVAS HOOKS] block."
                 })
+            if self._hook_run_stopped:
+                return json.dumps({
+                    "error": "this hook run was stopped ("
+                             + str(self._hook_run_stopped.get("reason", "")) + ") — "
+                             "nothing more runs this turn. Reply to the user instead.",
+                })
             try:
                 cap = int(_os.environ.get("AGENTY_MAX_CANVAS_BATCH", "25") or "25")
             except ValueError:
@@ -973,6 +983,58 @@ class Pipeline:
             })
 
         @_tool
+        async def stop_hook_run(reason: str, question: str = "") -> str:
+            """STOP this canvas-hook run and hand back to the user without generating.
+
+            Use this when a hook's own directive tells you to stop — e.g. *"if ANY
+            reference generation failed, STOP and ask the user for advice"*, "only
+            continue if …", "abort if the script is missing X". It is the way to
+            obey a conditional stop: nothing queued this turn is executed, the
+            remaining hooks are left untouched, and the turn ends with your
+            explanation instead of a half-finished batch.
+
+            It discards work already queued this turn (``apply_canvas_hooks``
+            variants, a signalled workflow, a pending keep-live run) — anything
+            ComfyUI already finished is kept and still staged. It cannot cancel a
+            run from an earlier turn.
+
+            After calling it, STOP calling tools: write the user a short account of
+            what happened, what you did produce, and what you need from them.
+
+            Args:
+                reason: What made you stop, concretely — which hook, which step,
+                    which failure. This is shown to the user.
+                question: Optional. The decision you need from them, phrased as a
+                    question ("Re-run the two that failed, or change the prompt?").
+            """
+            reason = str(reason or "").strip()
+            if not reason:
+                return json.dumps({"error": "give a reason — the user is told why the run stopped."})
+            discarded = _get_workflow_signal()          # queued but not yet executed
+            self._canvas_keeplive_run = False
+            self._hook_run_stopped = {"reason": reason,
+                                      "question": str(question or "").strip(),
+                                      "discarded": len(discarded)}
+            _push_progress("🛑 Hook run stopped — " + reason)
+            if self._verbose:
+                print(f"pipeline: stop_hook_run — {reason} "
+                      f"(discarded {len(discarded)} queued workflow(s)).")
+            return json.dumps({
+                "status": "stopped",
+                "reason": reason,
+                "discarded_queued_workflows": len(discarded),
+                "message": (
+                    "Run stopped. Nothing further will be executed this turn"
+                    + (f"; {len(discarded)} queued workflow(s) were discarded" if discarded else "")
+                    + ". Do NOT call apply_canvas_hooks, run_workflow_now, "
+                      "signal_workflow_ready or any other tool now — reply to the user: "
+                      "say what stopped it, what you already produced, and ask "
+                    + (f'"{question}"' if str(question or "").strip()
+                       else "how they want to proceed.")
+                ),
+            })
+
+        @_tool
         async def run_workflow_now(workflow_path: str) -> str:
             """Run a validated workflow NOW (synchronously) and return its output paths.
 
@@ -994,6 +1056,12 @@ class Pipeline:
             """
             from src.executor import execute_workflow as _execute_workflow
 
+            if self._hook_run_stopped:
+                return json.dumps({
+                    "error": "this hook run was stopped ("
+                             + str(self._hook_run_stopped.get("reason", "")) + ") — "
+                             "nothing more runs this turn. Reply to the user instead.",
+                })
             base = self._session.current_output_paths
             before = len(base)
             brief = self._last_brainbriefing_json or "{}"
@@ -1153,7 +1221,7 @@ class Pipeline:
                 # A PRODUCER (inline_parameter) hook whose output feeds a real node needs the
                 # canvas run once so the injected value renders; a TEXT hook only
                 # delivers a string for a later/other run, so it must not auto-generate.
-                if injected and not _is_text(hook):
+                if injected and not _is_text(hook) and not self._hook_run_stopped:
                     self._canvas_keeplive_run = True
 
             _push_patch({
@@ -1350,9 +1418,27 @@ class Pipeline:
         # so it is no longer exposed. The detect_user_intent agent survives only for
         # the legacy free_agent=False router path.
         return [prepare_workflow, run_info,
-                run_web_search, run_planner, apply_canvas_hooks, run_workflow_now,
-                add_canvas_workflow, set_canvas_node_params, place_canvas_text,
-                iterate_step]
+                run_web_search, run_planner, apply_canvas_hooks, stop_hook_run,
+                run_workflow_now, add_canvas_workflow, set_canvas_node_params,
+                place_canvas_text, iterate_step]
+
+    def _pending_execution_paths(self) -> list[str]:
+        """The workflows to execute at turn end — none when a hook stop is in force.
+
+        The mailbox is drained either way, so paths abandoned by a stop can't leak
+        into the next turn. Anything queued *after* stop_hook_run is dropped here
+        too: the agent was told not to, and a stop the user can silently lose is
+        worse than no stop at all. Also clears the keep-live flag, so a producer
+        value injected before the stop doesn't run the canvas by the back door.
+        """
+        paths = _get_workflow_signal()
+        if not self._hook_run_stopped:
+            return paths
+        if paths and self._verbose:
+            print(f"pipeline: hook run stopped — dropping {len(paths)} "
+                  "workflow(s) queued after the stop.")
+        self._canvas_keeplive_run = False
+        return []
 
     @staticmethod
     def _strip_unreadable_images(messages: list[dict]) -> int:
@@ -1738,6 +1824,7 @@ class Pipeline:
         self._canvas_base_prompt = None
         self._canvas_hooks = [h for h in (canvas_hooks or []) if isinstance(h, dict)]
         self._canvas_keeplive_run = False
+        self._hook_run_stopped = None
         self._chain_output_paths = []
         # The QA briefing in force this turn, already resolved by the caller
         # (a canvas qa hook wins over the thread's /qa briefing). None = no QA.
@@ -1820,7 +1907,7 @@ class Pipeline:
 
             if interrupt_result is None:
                 # Executor handoff — drain the workflow-signal mailbox and run.
-                workflow_paths = _get_workflow_signal()
+                workflow_paths = self._pending_execution_paths()
                 # Keep-live producers injected their value(s) into the captured base
                 # graph but queued no batch (no sweep / signal) — run the canvas once
                 # so those values render. Skipped when anything else was already
