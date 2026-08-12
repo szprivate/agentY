@@ -47,6 +47,13 @@ autoload_workflows_into_canvas = false
 # Env: AGENTY_HOOK_TAP (1/0). Also AGENTY_MAX_HOOK_TAPS (4), AGENTY_HOOK_TAP_FRAMES (4,
 # frames taken from a batch), AGENTY_HOOK_TAP_TIMEOUT (300s).
 hook_tap_tensors = true
+# Canvas hooks: run only the part of the canvas the executed hooks actually reach —
+# everything downstream of a hook (and of the node its anchor reads), plus whatever
+# those nodes need as input. Unrelated branches on a big graph are left out instead
+# of being run and written into every workflow generated for the hook. A hook that
+# is bypassed/muted is not executed, so its branch drops out too. Off = run the whole
+# canvas. Env: AGENTY_HOOK_SCOPE (1/0).
+hook_scoped_graph = true
 # Relay ComfyUI's own terminal output — model loads, warnings, whatever a node prints —
 # into the run stream while the queue is running, alongside the node-level progress.
 # It is what tells you that a two-minute pause is a 25 GB checkpoint staging rather

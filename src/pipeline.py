@@ -1747,13 +1747,30 @@ class Pipeline:
         self._canvas_selection = [n for n in (canvas_selection or []) if isinstance(n, dict)]
         if isinstance(canvas_prompt, dict) and canvas_prompt:
             try:
-                from src.utils.canvas_hooks import splice_hook_nodes
-                cleaned, removed = splice_hook_nodes(canvas_prompt)
+                from src.utils.canvas_hooks import (splice_hook_nodes, prune_to_hooks,
+                                                    hook_scoped_graph)
+                # Scope the canvas to what the executed hooks actually reach, so a
+                # hook on one branch of a big graph doesn't drag every unrelated
+                # output chain into the run (and into every workflow written for
+                # it). Only when hooks actually drive this turn: the canvas is sent
+                # on every turn, and a disabled hook left on it must not silently
+                # trim a plain request. Off → the whole canvas runs, as before.
+                scoped, dropped = canvas_prompt, []
+                if self._canvas_hooks and hook_scoped_graph():
+                    scoped, dropped = prune_to_hooks(
+                        canvas_prompt,
+                        [h.get("hook_node_id") for h in self._canvas_hooks])
+                cleaned, removed = splice_hook_nodes(scoped)
                 self._canvas_base_prompt = cleaned
+                if dropped:
+                    _push_progress(
+                        f"🎯 Hook scope: {len(cleaned)} node(s) connected to the hook(s); "
+                        f"left out {len(dropped)} unrelated node(s).")
                 if self._verbose:
                     print(f"pipeline: canvas-hook mode — {len(self._canvas_hooks)} hook(s), "
                           f"spliced {len(removed)} hook node(s); base graph has "
-                          f"{len(cleaned)} node(s).")
+                          f"{len(cleaned)} node(s)"
+                          + (f" (scoped out {len(dropped)})" if dropped else "") + ".")
             except Exception as exc:  # noqa: BLE001
                 print(f"pipeline: canvas-hook splice failed ({exc}); ignoring canvas graph.")
 

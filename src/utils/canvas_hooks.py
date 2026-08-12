@@ -16,6 +16,7 @@ frontend ships the API-format prompt plus the hook directives; these helpers:
 from __future__ import annotations
 
 import copy
+import os
 import random
 import re
 from pathlib import Path
@@ -86,6 +87,114 @@ def splice_hook_nodes(prompt: dict) -> tuple[dict, list[str]]:
                         other["inputs"].pop(k, None)
         clean.pop(hid, None)
     return clean, hook_ids
+
+
+def hook_scoped_graph() -> bool:
+    """Whether a hook run is trimmed to the branch(es) its hooks reach.
+
+    ``AGENTY_HOOK_SCOPE`` wins when set; otherwise ``hook_scoped_graph`` in
+    settings (default on). Off restores the old behaviour — the whole canvas runs,
+    every unrelated output branch included.
+    """
+    env = os.environ.get("AGENTY_HOOK_SCOPE")
+    if env is not None and env.strip() != "":
+        return env.strip().lower() not in ("0", "false", "no", "off")
+    try:
+        from src.utils.settings import load_settings
+        return bool(load_settings().get("hook_scoped_graph", True))
+    except Exception:  # noqa: BLE001 — never let settings break a turn
+        return True
+
+
+def _ancestors(prompt: dict, roots) -> set:
+    """*roots* plus every node they transitively depend on (their input closure)."""
+    seen: set = set()
+    stack = [str(r) for r in roots]
+    while stack:
+        nid = stack.pop()
+        if nid in seen or nid not in prompt:
+            continue
+        seen.add(nid)
+        for value in ((prompt[nid] or {}).get("inputs") or {}).values():
+            if isinstance(value, list) and len(value) == 2:
+                stack.append(str(value[0]))
+    return seen
+
+
+def _descendants(prompt: dict, roots) -> set:
+    """*roots* plus every node that transitively consumes them (output closure)."""
+    children: dict = {}
+    for nid, node in prompt.items():
+        if not isinstance(node, dict):
+            continue
+        for value in ((node.get("inputs") or {}).values()):
+            if isinstance(value, list) and len(value) == 2:
+                children.setdefault(str(value[0]), set()).add(str(nid))
+    seen: set = set()
+    stack = [str(r) for r in roots]
+    while stack:
+        nid = stack.pop()
+        if nid in seen or nid not in prompt:
+            continue
+        seen.add(nid)
+        stack.extend(children.get(nid, ()))
+    return seen
+
+
+def hook_scope_ids(prompt: dict, hook_ids=None) -> set | None:
+    """Ids of the part of *prompt* the executed hooks actually reach.
+
+    ``None`` means "no hooks to scope to" — the caller keeps the whole graph.
+
+    Seeded from each hook AND from the node(s) its anchors read: a hook whose own
+    output is unwired (an ``inline_parameter`` sweeping a widget on its anchor)
+    still governs everything downstream of that anchor, and seeding only from the
+    hook would prune the very branch it mutates.
+
+    From those seeds the scope is ``ancestors(descendants(seeds))``. The
+    descendants are what the hook affects; taking the ancestors of *those* is what
+    keeps the result runnable — a kept KSampler needs its model/latent/conditioning
+    even though none of that sits downstream of the hook. Sibling branches that
+    merely share an upstream loader come along as ancestors only if something kept
+    actually consumes them, so unrelated output chains drop out.
+    """
+    hooks_in_prompt = {str(nid) for nid, node in prompt.items()
+                       if isinstance(node, dict) and node.get("class_type") == _HOOK_CLASS}
+    if not hooks_in_prompt:
+        return None
+    seeds = set(hooks_in_prompt)
+    if hook_ids:
+        # Honour "the hooks being executed": a bypassed/muted hook is not collected
+        # by the frontend, so it must not drag its branch into the run either.
+        chosen = {str(h) for h in hook_ids if h is not None} & hooks_in_prompt
+        if chosen:
+            seeds = chosen
+    for hid in list(seeds):
+        for link in _anchor_links((prompt.get(hid) or {}).get("inputs") or {}):
+            seeds.add(str(link[0]))
+    if not seeds:
+        return None
+    return _ancestors(prompt, _descendants(prompt, seeds))
+
+
+def prune_to_hooks(prompt: dict, hook_ids=None) -> tuple[dict, list]:
+    """Return ``(scoped_prompt, dropped_ids)``.
+
+    Trims an API-format *prompt* to :func:`hook_scope_ids`. Without this a hook on
+    one branch of a large canvas runs — and gets written into every generated
+    workflow — together with every unrelated branch on the graph, because ComfyUI
+    executes each output node it is given. Returns the prompt untouched when there
+    is nothing to scope to or nothing to drop.
+    """
+    if not isinstance(prompt, dict) or not prompt:
+        return prompt, []
+    keep = hook_scope_ids(prompt, hook_ids)
+    if not keep:
+        return prompt, []
+    dropped = [str(nid) for nid in prompt if str(nid) not in keep]
+    if not dropped:
+        return prompt, []
+    return {nid: node for nid, node in prompt.items() if str(nid) in keep}, dropped
 
 
 def _rand_seed() -> int:
