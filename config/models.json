@@ -407,6 +407,7 @@
       "ltx-2-temporal-upscaler-x2-1.0.safetensors",
       "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
     ],
+    "datasets": [],
     "hypernetworks": [],
     "photomaker": [],
     "classifiers": [],
@@ -553,7 +554,9 @@
     "rmbg": [
       "BEN2\\BEN2_Base.pth",
       "INSPYRENET\\inspyrenet.safetensors",
-      "RMBG-2.0\\model.safetensors"
+      "RMBG-2.0\\model.safetensors",
+      "body_segment\\deeplabv3p-resnet50-human.onnx",
+      "segformer_face\\model.safetensors"
     ],
     "LLM": [],
     "sharp": [],
