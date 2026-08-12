@@ -53,17 +53,52 @@ def _anchor_links(inputs: dict) -> list:
     return out
 
 
-def splice_hook_nodes(prompt: dict) -> tuple[dict, list[str]]:
+def _target_input_types(hooks) -> dict:
+    """``(hook_id, input_name) -> declared wire type`` from the frontend's targets."""
+    out: dict = {}
+    for h in (hooks or []):
+        if not isinstance(h, dict) or h.get("hook_node_id") is None:
+            continue
+        hid = str(h["hook_node_id"])
+        for t in (h.get("targets") or []):
+            if isinstance(t, dict) and t.get("to_input"):
+                out[(hid, str(t["to_input"]))] = str(t.get("to_input_type") or "")
+    return out
+
+
+def _anchor_out_types(hooks) -> dict:
+    """``hook_id -> {anchor_node_id: that anchor's output wire type}``."""
+    out: dict = {}
+    for h in (hooks or []):
+        if not isinstance(h, dict) or h.get("hook_node_id") is None:
+            continue
+        types = {str(a["node_id"]): str(a.get("from_output_type") or "")
+                 for a in (h.get("anchors") or [])
+                 if isinstance(a, dict) and a.get("node_id") is not None}
+        out[str(h["hook_node_id"])] = types
+    return out
+
+
+def splice_hook_nodes(prompt: dict, hooks: list | None = None) -> tuple[dict, list[str]]:
     """Return ``(clean_prompt, removed_ids)``.
 
     Removes every ``AgentYHook`` node from an API-format *prompt*. For an inline
     hook (its output feeds a downstream node) each downstream input is rewired to
     the hook's own ``anchor`` source so the graph stays connected. The anchor
     input auto-grows (``anchor``, ``anchor0``, ``anchor1``, …), so a hook may have
-    several wired inputs; the first (lowest-slot) is used for the rewire, matching
-    the node's passthrough. A dangling hook (nothing consumes it) is simply
-    dropped. Works whether or not ComfyUI's ``graphToPrompt`` already pruned the
-    hook.
+    several wired inputs; with *hooks* supplied the anchor whose output type
+    matches the target input is preferred, else the first (lowest-slot) is used,
+    matching the node's passthrough. A dangling hook (nothing consumes it) is
+    simply dropped. Works whether or not ComfyUI's ``graphToPrompt`` already pruned
+    the hook.
+
+    A hook wired into a **widget-backed** input (``STRING``, ``INT``, …) is
+    producing that input's *value*, so there is nothing to pass through: the link
+    is dropped and the input left for the produced value to fill. Passing the
+    anchor through regardless is how a ``LoadImage`` ended up wired into a prompt
+    box — inert on a normal run, and impossible for the agent to overwrite once it
+    looked like a connection. Needs *hooks* for the declared types; without them
+    every consumer is rewired as before.
     """
     if not isinstance(prompt, dict):
         return prompt, []
@@ -72,19 +107,36 @@ def splice_hook_nodes(prompt: dict) -> tuple[dict, list[str]]:
                 if isinstance(node, dict) and node.get("class_type") == _HOOK_CLASS]
     if not hook_ids:
         return clean, []
+    target_types = _target_input_types(hooks)
+    anchor_types = _anchor_out_types(hooks)
     for hid in hook_ids:
         node = clean.get(hid, {}) or {}
-        src = next(iter(_anchor_links(node.get("inputs") or {})), None)
+        links = _anchor_links(node.get("inputs") or {})
+        by_node = anchor_types.get(str(hid), {})
+
+        def _source_for(wire_type: str):
+            """The anchor to pass through for a target of *wire_type*."""
+            if wire_type:
+                for link in links:
+                    if by_node.get(str(link[0]), "") == wire_type:
+                        return link
+            return links[0] if links else None
+
         # Rewire any consumer of this hook's output back to the hook's source.
         for other in clean.values():
             if not isinstance(other, dict):
                 continue
             for k, v in list((other.get("inputs") or {}).items()):
-                if isinstance(v, list) and len(v) == 2 and str(v[0]) == str(hid):
-                    if src is not None:
-                        other["inputs"][k] = list(src)
-                    else:
-                        other["inputs"].pop(k, None)
+                if not (isinstance(v, list) and len(v) == 2 and str(v[0]) == str(hid)):
+                    continue
+                declared = target_types.get((str(hid), str(k)))
+                # Unknown type (no hook metadata) → pass through, as before.
+                passthrough = not declared or is_connection_type(declared)
+                src = _source_for(declared or "") if passthrough else None
+                if src is not None:
+                    other["inputs"][k] = list(src)
+                else:
+                    other["inputs"].pop(k, None)
         clean.pop(hid, None)
     return clean, hook_ids
 

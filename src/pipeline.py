@@ -1760,7 +1760,9 @@ class Pipeline:
                     scoped, dropped = prune_to_hooks(
                         canvas_prompt,
                         [h.get("hook_node_id") for h in self._canvas_hooks])
-                cleaned, removed = splice_hook_nodes(scoped)
+                # Hooks carry the declared type of each input they feed, which is
+                # what keeps a STRING target from being rewired to an IMAGE anchor.
+                cleaned, removed = splice_hook_nodes(scoped, self._canvas_hooks)
                 self._canvas_base_prompt = cleaned
                 if dropped:
                     _push_progress(

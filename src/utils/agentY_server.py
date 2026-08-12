@@ -425,7 +425,7 @@ def _tap_hook_tensors(canvas_prompt: dict, canvas_hooks: list,
         from src.utils.canvas_hooks import splice_hook_nodes
         from src.utils.canvas_tap import materialize_hook_tensors
 
-        base, _removed = splice_hook_nodes(canvas_prompt)
+        base, _removed = splice_hook_nodes(canvas_prompt, canvas_hooks)
         paths = materialize_hook_tensors(canvas_hooks, base, resolver=_resolve_media_ref,
                                          on_progress=status_bus.notify)
     except Exception as exc:  # noqa: BLE001 — a tap must never cost the user a turn
