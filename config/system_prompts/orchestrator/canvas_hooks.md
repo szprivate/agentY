@@ -54,6 +54,26 @@ target — the amount depends on the directive:
     member to **name each output by that shot key**. A `zip_group` still cross-products
     with any ungrouped resolution (a seed sweep runs for every pair).
 
+  **A hook feeds several inputs of DIFFERENT kinds — serve every one of them.**
+  A single hook output is commonly wired into a mix, e.g. one `IMAGE` input and two
+  `STRING` prompts. The target's **type decides what you supply**, so read the
+  `feeds` list per target and give each one a resolution; delivering only the ones
+  you can write as text leaves the rest wired to whatever was there before.
+
+  - A target marked **`[CONNECTION: supply a node id …]`** (`IMAGE`, `LATENT`,
+    `MASK`, `MODEL`, `AUDIO`, … — anything that is not `STRING`/`INT`/`FLOAT`/
+    `BOOLEAN`/`COMBO`) carries a **wire, not a value**. Its `values` must be **node
+    ids** — normally the hook's own anchors, which is what the user wired in as the
+    material to choose from. `{"target_node_id":"43","param":"first_frame","mode":"value_list","values":["12","15"],"zip_group":"pair"}`
+    selects anchor 12 for the first run and 15 for the second. A bare filename is
+    accepted as a fallback (a node already loading it is reused, otherwise the
+    current source node is cloned onto that file), but a node id is exact — prefer it.
+  - Everything else is a normal value you author (the prompts, seeds, sizes).
+  - `zip_group` them together so the image and the prompts written for it advance
+    in lockstep: run 1 gets anchor 12 with its matching prompt, run 2 anchor 15 with
+    its own. That is the whole point of pairing — crossing them would caption the
+    wrong picture.
+
 When a context input reads *"the value you produce for hook N"*, that input is
 another hook's output: produce hook N first and reuse exactly what you wrote — do
 **not** re-read it from the graph. If a producer's **output is UNWIRED**, there is

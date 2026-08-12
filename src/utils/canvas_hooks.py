@@ -197,6 +197,129 @@ def prune_to_hooks(prompt: dict, hook_ids=None) -> tuple[dict, list]:
     return {nid: node for nid, node in prompt.items() if str(nid) in keep}, dropped
 
 
+# Wire types a widget can carry as a literal. Everything else (IMAGE, LATENT,
+# MODEL, MASK, AUDIO, …) only ever travels down a CONNECTION, so a produced value
+# for such an input has to become a link to a node that makes one — writing the
+# value in place replaces the wire and silently disconnects the input.
+_PRIMITIVE_WIRE_TYPES = {"STRING", "INT", "FLOAT", "BOOLEAN", "BOOL", "NUMBER", "COMBO"}
+
+# Widget names that name a file on the loader nodes we may reuse or clone.
+_FILE_WIDGETS = ("image", "video", "file", "filename", "audio")
+
+_AUDIO_EXTS = {"mp3", "wav", "flac", "ogg", "m4a"}
+_MEDIA_EXTS = IMG_EXTS | VID_EXTS | _AUDIO_EXTS
+
+
+def _looks_like_media_file(value: str) -> bool:
+    """Whether *value* names a media file, rather than being prose or an id.
+
+    Guards the clone/create paths: without it any produced string would be turned
+    into a loader pointing at a file that does not exist, which fails at run time
+    instead of being reported as unresolvable up front.
+    """
+    parts = _basename(value).rsplit(".", 1)
+    return len(parts) == 2 and parts[1].lower() in _MEDIA_EXTS
+
+
+def is_connection_type(wire_type: str | None) -> bool:
+    """Whether a wire of *wire_type* must be a link rather than a literal value."""
+    return bool(wire_type) and str(wire_type).strip().upper() not in _PRIMITIVE_WIRE_TYPES
+
+
+def _basename(value) -> str:
+    return Path(str(value).replace("\\", "/")).name
+
+
+def _free_id(prompt: dict) -> str:
+    nums = [int(k) for k in prompt if str(k).isdigit()]
+    return str((max(nums) if nums else 0) + 1)
+
+
+def _node_loading(prompt: dict, filename: str) -> str | None:
+    """Id of a node already loading *filename* (matched on basename)."""
+    want = _basename(filename)
+    if not want:
+        return None
+    for nid, node in prompt.items():
+        if not isinstance(node, dict):
+            continue
+        inputs = node.get("inputs") or {}
+        for key in _FILE_WIDGETS:
+            cur = inputs.get(key)
+            if isinstance(cur, str) and cur and _basename(cur) == want:
+                return str(nid)
+    return None
+
+
+def as_connection(prompt: dict, value, current=None) -> list | None:
+    """Resolve a produced *value* to a ``[node_id, slot]`` for a connection input.
+
+    *current* is what the input holds now (the link the hook was spliced onto),
+    which is the best clue to what kind of source the target expects.
+
+    Accepts, in order: an explicit ``[node_id, slot]``; the id of a node already on
+    the canvas (the natural answer when the user wired several images into the hook
+    and one of them is to be selected); or a filename — reusing whatever node
+    already loads that file, else **cloning** the node currently feeding the input
+    and pointing the clone at the new file, else adding a ``LoadImage``. Cloning
+    keeps the user's own loader class (and leaves the original alone for whatever
+    else consumes it).
+
+    ``None`` means "cannot be expressed as a connection" — the caller must skip
+    rather than write a literal, which would disconnect the input.
+    """
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        try:
+            return [str(value[0]), int(value[1] or 0)]
+        except (TypeError, ValueError):
+            return None
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text in prompt:                      # the agent named a node to connect
+        return [text, 0]
+    hit = _node_loading(prompt, text)       # something already loads this file
+    if hit:
+        return [hit, 0]
+    if not _looks_like_media_file(text):
+        return None                         # prose / an unknown id — not wireable
+    src = None
+    if isinstance(current, (list, tuple)) and len(current) == 2:
+        src = prompt.get(str(current[0]))
+    if isinstance(src, dict):               # clone the user's own loader
+        for key in _FILE_WIDGETS:
+            if isinstance((src.get("inputs") or {}).get(key), str):
+                nid = _free_id(prompt)
+                clone = copy.deepcopy(src)
+                clone.setdefault("inputs", {})[key] = text
+                prompt[nid] = clone
+                return [nid, 0]
+    if _basename(text).rsplit(".", 1)[-1].lower() in IMG_EXTS:
+        nid = _free_id(prompt)
+        prompt[nid] = {"class_type": "LoadImage",
+                       "inputs": {"image": text, "upload": "image"}}
+        return [nid, 0]
+    return None
+
+
+def _write_input(prompt: dict, node: dict, param: str, value) -> bool:
+    """Set *param* on *node*, as a link when the input is a connection.
+
+    Returns False when a connection input could not be resolved — the input is
+    then left wired as it was rather than being overwritten with a literal.
+    """
+    inputs = node.setdefault("inputs", {})
+    current = inputs.get(param)
+    if isinstance(current, list) and len(current) == 2:
+        link = as_connection(prompt, value, current)
+        if link is None:
+            return False
+        inputs[param] = link
+        return True
+    inputs[param] = value
+    return True
+
+
 def _rand_seed() -> int:
     return random.randint(0, 2**31 - 1)
 
@@ -402,14 +525,27 @@ def build_batch(base_prompt: dict, resolutions: list, cap: int = 25) -> tuple[li
         combos = combos[:cap]
 
     prompts: list[dict] = []
+    unresolved: dict = {}
     for combo in combos:
         p = copy.deepcopy(base_prompt)
         for row in combo:                       # each row is one group's aligned assignments
             for (nid, param, val) in row:
                 node = p.get(nid)
-                if isinstance(node, dict):
-                    node.setdefault("inputs", {})[param] = val
+                if not isinstance(node, dict):
+                    continue
+                if not _write_input(p, node, param, val):
+                    # A connection input (IMAGE, LATENT, …) we could not turn into
+                    # a link. Leave the wire intact and say so once, rather than
+                    # writing a literal that would disconnect it.
+                    unresolved.setdefault(f"{nid}.{param}", set()).add(str(val)[:60])
         prompts.append(p)
+    for slot, vals in unresolved.items():
+        notes.append(
+            f"{slot} is a connection input — could not wire "
+            + ", ".join(sorted(vals))
+            + " to a node that produces it; left the existing wire in place. Give a "
+              "node id to connect (e.g. one of the hook's anchors), or a file the "
+              "canvas can load.")
     return prompts, notes
 
 
@@ -600,8 +736,10 @@ def inject_produced_value(base_prompt: dict, hook: dict, value) -> list[str]:
         node = base_prompt.get(tid)
         if not isinstance(node, dict) or not tin:
             continue
-        node.setdefault("inputs", {})[tin] = value
-        written.append(tid)
+        # A connection input is delivered as a link, never as a literal — writing
+        # the value straight in would replace the wire and disconnect the input.
+        if _write_input(base_prompt, node, tin, value):
+            written.append(tid)
     return written
 
 
@@ -725,11 +863,21 @@ def _target_context(hook: dict) -> str:
     targets = _output_targets(hook)
     if not targets:
         return ""
+    # Anchors are the obvious things to connect a CONNECTION target to: the user
+    # wired them into this hook as the material to choose from.
+    anchors = [str(a.get("node_id")) for a in (hook.get("anchors") or [])
+               if isinstance(a, dict) and a.get("node_id") is not None]
     parts: list = []
     for tid, ttype, tin, tintype, _ttitle in targets:
         tt = f", {tintype}" if tintype else ""
         slot = f"`{tin}`" if tin else "an input"
-        parts.append(f"node {tid} ({ttype})'s {slot} input{tt}")
+        line = f"node {tid} ({ttype})'s {slot} input{tt}"
+        if is_connection_type(tintype):
+            # This one carries a wire, not a value the agent can write. Say so at
+            # the point of use, and name the nodes it can be connected to.
+            pick = f" — connect one of {', '.join(anchors)}" if anchors else ""
+            line += f" [CONNECTION: supply a node id{pick}, not a value]"
+        parts.append(line)
     return "; ".join(parts)
 
 
