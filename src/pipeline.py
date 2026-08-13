@@ -1007,6 +1007,12 @@ class Pipeline:
             prompts, notes = _build_batch(base, list(resolutions or []), cap=cap)
             if not prompts:
                 return json.dumps({"error": "no batch was produced", "notes": notes})
+            # Every variant is a complete graph, so measure them rather than the
+            # resolutions: this catches a swept prompt over the model's cap AND too
+            # many images arriving at a limited input, before anything is queued.
+            over = self._batch_limit_refusal(prompts)
+            if over:
+                return json.dumps(over)
             out_dir = Path(_tempfile.mkdtemp(prefix="agenty_canvas_"))
             paths: list[str] = []
             for i, p in enumerate(prompts):
@@ -1280,6 +1286,14 @@ class Pipeline:
             if hook is not None and "freeze" in hook:
                 freeze = bool(hook.get("freeze"))
             keep_live = not freeze
+
+            # Refuse a value the model will refuse, before it is placed. This is the
+            # one moment the agent can still fix it: it wrote the text, it is still
+            # holding the turn, and the alternative is a queued run that dies inside
+            # the node and reaches the user as an apology.
+            over = self._canvas_limit_refusal(hook, str(text))
+            if over:
+                return json.dumps(over)
 
             injected: list[str] = []
             if keep_live and hook is not None and isinstance(self._canvas_base_prompt, dict):
@@ -1974,6 +1988,11 @@ class Pipeline:
         self._canvas_hooks = [h for h in (canvas_hooks or []) if isinstance(h, dict)]
         self._canvas_keeplive_run = False
         self._hook_run_stopped = None
+        # How many times each (node, input) has been handed back this turn for
+        # breaking a hard model limit. Told once, an agent shortens; told the same
+        # thing three times it is stuck, and needs different advice, not the same
+        # sentence again.
+        self._limit_handbacks = {}
         self._chain_output_paths = []
         # The QA briefing in force this turn, already resolved by the caller
         # (a canvas qa hook wins over the thread's /qa briefing). None = no QA.
@@ -3566,6 +3585,65 @@ class Pipeline:
                   f"server_errors={res.get('server_errors')}")
         return await self._run_fix_workflow_assembly(
             wf, problems=problems, server_errors=res.get("server_errors", {}))
+
+    def _count_handback(self, violation) -> int:
+        """Which attempt this is at the same input, this turn (1 for the first)."""
+        counts = getattr(self, "_limit_handbacks", None)
+        if counts is None:
+            counts = self._limit_handbacks = {}
+        key = (violation.node_id, violation.field)
+        counts[key] = counts.get(key, 0) + 1
+        return counts[key]
+
+    def _canvas_limit_refusal(self, hook: dict | None, text: str) -> dict | None:
+        """Refuse a hook value the target node's model would reject, or None.
+
+        Checked against the inputs the hook's output actually feeds, so the cap
+        applied is the one belonging to the node that will receive it — Kling's
+        2,500 for a prompt, 512 for a storyboard slot.
+        """
+        if hook is None or not isinstance(self._canvas_base_prompt, dict):
+            return None
+        try:
+            from src.utils.canvas_hooks import _output_targets
+            from src.utils.model_limits import canvas_refusal, check_value
+            found = []
+            for tid, _ttype, to_input, _tin_type, _title in _output_targets(hook):
+                v = check_value(self._canvas_base_prompt, tid, to_input, text)
+                if v is not None:
+                    found.append(v)
+        except Exception as exc:  # noqa: BLE001
+            if self._verbose:
+                print(f"[limits] canvas check failed: {exc}")
+            return None
+        if not found:
+            return None
+        _push_progress("📏 Value exceeds the model's hard limit — sent back to be rewritten.")
+        found.sort(key=lambda v: v.actual - v.limit, reverse=True)
+        return canvas_refusal(found, self._count_handback(found[0]))
+
+    def _batch_limit_refusal(self, prompts: list) -> dict | None:
+        """Refuse a canvas batch whose variants break a hard model limit, or None.
+
+        One report per distinct (node, input) rather than per variant: twenty-five
+        variants of the same over-long prompt is one mistake, and listing it
+        twenty-five times buries what to do about it.
+        """
+        try:
+            from src.utils.model_limits import canvas_refusal, check_workflow
+            seen: dict = {}
+            for p in (prompts or []):
+                for v in check_workflow(p):
+                    seen.setdefault((v.node_id, v.field), v)
+        except Exception as exc:  # noqa: BLE001
+            if self._verbose:
+                print(f"[limits] batch check failed: {exc}")
+            return None
+        if not seen:
+            return None
+        _push_progress("📏 Batch exceeds the model's hard limit — sent back to be rewritten.")
+        found = sorted(seen.values(), key=lambda v: v.actual - v.limit, reverse=True)
+        return canvas_refusal(found, self._count_handback(found[0]))
 
     def _limit_violations(self, workflow_path: str, exec_error: dict | None = None) -> dict | None:
         """``{"status": "limit_exceeded", …}`` if the workflow breaks a hard model

@@ -204,6 +204,28 @@ def check_workflow(prompt: dict) -> list[Violation]:
     return sorted(out, key=lambda v: v.actual - v.limit, reverse=True)
 
 
+def check_value(prompt: dict, node_id: str, field: str, value) -> Violation | None:
+    """One value about to be written into one input — checked before it is written.
+
+    This is the version that matters on the canvas path, where the agent writes a
+    value and a tool accepts it. Told at the moment of writing, the agent that just
+    wrote it can rewrite it inside the same turn; told afterwards, the run is
+    already queued and the only thing left to do is apologise to the user.
+    """
+    if not isinstance(value, str):
+        return None
+    node = (prompt or {}).get(str(node_id))
+    cls = str(node.get("class_type") or "") if isinstance(node, dict) else ""
+    if not cls:
+        return None
+    text_limits, _images, note = limits_for(cls)
+    cap = _limit_for_field(text_limits, str(field))
+    if cap is None or len(value) <= cap:
+        return None
+    return Violation(str(node_id), cls, str(field), "text", cap, len(value),
+                     note, value[:_EXCERPT].replace("\n", " "))
+
+
 def check_workflow_file(path: str) -> list[Violation]:
     try:
         return check_workflow(json.loads(Path(path).read_text(encoding="utf-8")))
@@ -259,6 +281,51 @@ def summary(violations: list, runtime_message: str = "") -> str:
                 + "; ".join(parts) + " — the prompt/inputs need rewriting, not repair.")
     return (f"the model refused this input (hard limit): {runtime_message}"
             if runtime_message else "the model refused this input (hard limit).")
+
+
+def canvas_refusal(violations: list, attempt: int = 1) -> dict:
+    """The tool result for a canvas write that would not survive the run.
+
+    Returned instead of accepting the value, so the agent that wrote it gets the
+    number while it is still holding the turn. It has everything it needs to fix
+    this itself — it wrote the text — so the one thing this must not do is end up
+    in front of the user as an apology.
+    """
+    worst = violations[0]
+    if worst.kind == "text":
+        what = (f"You wrote {worst.actual} characters into `{worst.field}` on node "
+                f"{worst.node_id} ({worst.class_type}); it accepts {worst.limit}. "
+                f"Cut at least {worst.actual - worst.limit} and call this tool again.")
+        how = ("Rewrite rather than truncate — a prompt cut mid-sentence reads as a "
+               "different instruction. Drop restatement and stacked synonyms first, "
+               "then the least load-bearing detail. If the content genuinely will not "
+               "fit, SPLIT it across several runs of the node rather than sending one "
+               "over-long value.")
+    else:
+        what = (f"You wired {worst.actual} images into `{worst.field}` on node "
+                f"{worst.node_id} ({worst.class_type}); it accepts {worst.limit}. "
+                f"Drop {worst.actual - worst.limit} and call this tool again.")
+        how = ("Keep the references the result depends on. Say in your reply which you "
+               "dropped, so the user can disagree.")
+    if attempt >= 3:
+        # Repeating the same sentence a third time is not advice. Something about
+        # the content does not fit, and the way out is structural.
+        how = (f"This is attempt {attempt} on the same input, so stop trimming: the "
+               "content does not fit and will not start to. Either SPLIT it across "
+               "several runs of the node (one value per run, each inside the limit) "
+               "or tell the user what you would have to cut and let them choose. Do "
+               "not send the same shape of value a fourth time.")
+    return {
+        "error": "rejected by the model's hard input limit — nothing was placed or queued",
+        "what_to_fix": what,
+        "how": how,
+        "attempt": attempt,
+        "violations": [{"node_id": v.node_id, "class_type": v.class_type,
+                        "field": v.field, "kind": v.kind, "limit": v.limit,
+                        "actual": v.actual} for v in violations],
+        "do_not": "Do not report this to the user as a failure and do not stop the "
+                  "turn: it is yours to fix, now, by writing a shorter value.",
+    }
 
 
 def guidance(violations: list, runtime_message: str = "") -> str:

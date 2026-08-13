@@ -35,11 +35,16 @@ def _stub(**over):
         _qa_briefing=None,
         _qa_retry=None,
         _heal_exec_failure=lambda *a, **k: None,
+        _limit_handbacks={},
     )
     base.update(over)
     ns = SimpleNamespace(**base)
-    # The batch runner is a real Pipeline method — bind it, don't reimplement it.
+    # Real Pipeline methods — bind them, don't reimplement them, so these tests
+    # keep exercising what the tool actually calls (including the hard-limit check
+    # that stands between build_batch and the queue).
     ns._run_canvas_batch = Pipeline._run_canvas_batch.__get__(ns)
+    ns._batch_limit_refusal = Pipeline._batch_limit_refusal.__get__(ns)
+    ns._count_handback = Pipeline._count_handback.__get__(ns)
     return ns
 
 

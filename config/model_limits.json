@@ -185,7 +185,7 @@
     "one": ["LoadImage", "LoadImageOutput", "LoadImageMask", "ETN_LoadImageBase64"],
     "passthrough": ["AgentYRefNote", "Reroute", "ImageScale", "ImageScaleBy",
                     "ImageInvert", "ImageCrop", "ImagePadForOutpaint"],
-    "sum": ["ImageBatch", "ImageStitch"],
+    "sum": ["ImageBatch", "ImageStitch", "BatchImagesNode", "BatchImagesMasksLatentsNode"],
     "collector": ["AgentYImageCollector"]
   }
 }
