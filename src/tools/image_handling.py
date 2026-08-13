@@ -12,7 +12,10 @@ import io
 import json
 import os
 import re
+import threading
+import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Optional
 
@@ -30,14 +33,122 @@ from agenty_core.utils.comfyui_client import get_client
 _vision_agent: Optional[Agent] = None
 
 
-def set_vision_agent(agent: Agent) -> None:
-    """Register the shared Vision :class:`~strands.Agent` used by :func:`analyze_image`.
+class AgentPool:
+    """A bounded pool of interchangeable, stateless single-shot agents.
+
+    The orchestrator routinely asks about several images in ONE assistant turn.
+    Strands runs those tool calls concurrently (``ConcurrentToolExecutor``) and
+    each sync ``@tool`` lands in its own thread (``asyncio.to_thread``), so they
+    all reach the vision agent at the same moment. A Strands ``Agent`` refuses
+    that: ``stream_async`` takes ``_invocation_lock`` non-blocking and raises
+    ``ConcurrencyException`` for every caller but the first. Sharing one instance
+    therefore meant N images in, exactly one description out — the rest fell
+    through to ``mode='full'`` and came back as "the image itself is not shown",
+    which the model then papered over by inventing the missing descriptions.
+
+    One agent cannot be re-entered, so parallelism needs *more agents*, not a
+    cleverer lock. Callers borrow an instance for the duration of a call and hand
+    it back. Instances are created lazily — a lone `analyze_image` never pays for
+    a second model handshake — and capped at ``size``, which is what keeps a
+    local Ollama on one GPU from being asked to run four generations at once.
+    ``size=1`` reproduces strict serialisation.
+    """
+
+    def __init__(self, primary: Agent, factory=None, size: int = 1):
+        self.primary = primary
+        self._factory = factory
+        # A factory is what allows growth; without one the pool is just `primary`.
+        self.size = max(1, int(size)) if factory else 1
+        self._sem = threading.Semaphore(self.size)
+        self._lock = threading.Lock()
+        self._free: list[Agent] = [primary]
+        # Every instance ever handed out, in-flight or not. The pipeline folds
+        # each one's token delta into the turn cost, so an agent the pool grew
+        # must not be able to spend tokens invisibly.
+        self._all: list[Agent] = [primary]
+
+    def instances(self) -> list[Agent]:
+        """Every agent this pool has created, for usage/cost accounting."""
+        with self._lock:
+            return list(self._all)
+
+    def _take(self) -> Agent:
+        with self._lock:
+            if self._free:
+                return self._free.pop()
+            if len(self._all) < self.size and self._factory:
+                try:
+                    agent = self._factory()
+                    self._all.append(agent)
+                    return agent
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[AgentPool] could not add an instance ({exc}); "
+                          "waiting for a free one instead.")
+        # The semaphore admitted us, so an instance is in flight and will be
+        # returned; block for it rather than failing the call.
+        while True:
+            with self._lock:
+                if self._free:
+                    return self._free.pop()
+            time.sleep(0.01)
+
+    @contextmanager
+    def borrow(self):
+        """Yield an agent nobody else is using; return it on the way out."""
+        self._sem.acquire()
+        agent = None
+        try:
+            agent = self._take()
+            yield agent
+        finally:
+            if agent is not None:
+                with self._lock:
+                    self._free.append(agent)
+            self._sem.release()
+
+
+_vision_pool: Optional[AgentPool] = None
+
+
+def set_vision_agent(agent: Agent, factory=None, max_parallel: int = 1) -> None:
+    """Register the Vision :class:`~strands.Agent` used by :func:`analyze_image`.
 
     Call this once during pipeline initialisation before any ``analyze_image``
     invocations that use ``mode='describe'``.
+
+    Args:
+        agent:        The first (and, without a factory, only) vision agent.
+        factory:      Zero-arg callable building another equivalent agent. Supply
+                      it to allow concurrent describes; the pipeline passes
+                      ``create_vision_agent``.
+        max_parallel: Cap on simultaneous describes. Keep at 1 for a local model
+                      on one GPU; raise it for a hosted one, where the calls are
+                      network-bound and genuinely overlap.
     """
-    global _vision_agent
+    global _vision_agent, _vision_pool
     _vision_agent = agent
+    _vision_pool = AgentPool(agent, factory=factory, size=max_parallel)
+
+
+def _ensure_vision_pool() -> Optional[AgentPool]:
+    """The pool wrapping the registered agent, built on demand.
+
+    ``_vision_agent`` is assigned directly in a few places (tests, older callers
+    that predate the pool). Rather than have those explode on a missing pool,
+    wrap whatever agent is registered in a size-1 pool — the previous behaviour.
+    """
+    global _vision_pool
+    if _vision_agent is None:
+        return None
+    if _vision_pool is None or _vision_pool.primary is not _vision_agent:
+        _vision_pool = AgentPool(_vision_agent)
+    return _vision_pool
+
+
+def vision_agents() -> list[Agent]:
+    """Every live vision agent, so the pipeline can price all of their tokens."""
+    pool = _ensure_vision_pool()
+    return pool.instances() if pool else []
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -715,6 +826,7 @@ def analyze_image(
         )}]}
 
     # ── describe mode: isolated Vision Agent call (token-efficient) ─────────
+    _describe_error = ""
     if mode == "describe":
         print(
             f"[analyze_image] mode=describe  src={source_name}  "
@@ -740,9 +852,13 @@ def analyze_image(
                     },
                     {"text": question or "Describe this image in detail."},
                 ]
-                # Wipe history so every invocation is fully independent.
-                _vision_agent.messages.clear()
-                vision_result = str(_vision_agent(user_message))
+                # Borrow an instance nobody else is mid-call on: one agent is not
+                # re-entrant, so concurrent describes need one agent each (see
+                # AgentPool). Beyond the pool's size, callers queue here.
+                with _ensure_vision_pool().borrow() as _agent:
+                    # Wipe history so every invocation is fully independent.
+                    _agent.messages.clear()
+                    vision_result = str(_agent(user_message))
                 print(f"[analyze_image] describe result length: {len(vision_result):,} chars")
                 label = source_name if source_name else "provided image"
                 return {
@@ -760,6 +876,7 @@ def analyze_image(
                     f"[analyze_image] WARNING: VisionAgent call failed ({exc}); "
                     "falling back to mode='full'."
                 )
+                _describe_error = f"{type(exc).__name__}: {exc}"
                 # Fall through to full mode below.
 
     # ── full mode (or fallback): return bytes in context ─────────────────────
@@ -789,6 +906,18 @@ def analyze_image(
     except Exception:  # noqa: BLE001 — never let this check break the tool
         pass
     if not _embed:
+        if _describe_error:
+            # The caller DID ask for a description and the vision agent failed —
+            # telling it to "call mode='describe'" here is the advice it just
+            # followed, and reporting success invites it to invent a description
+            # for an image nobody looked at. Say what broke, and say it failed.
+            return {"status": "error", "content": [{"text": (
+                f"Could not analyse {source_name}: the vision agent call failed "
+                f"({_describe_error}).\n\nNo description was produced and this "
+                "agent's model cannot read the image itself — do NOT guess or "
+                "infer its content. Retry analyze_image for this file, and if it "
+                "keeps failing, say so and ask the user how to proceed."
+            )}]}
         info_parts.append(
             "\n[The image itself is not shown: this agent's model cannot read "
             "images. Call analyze_image(mode='describe') to have the vision "

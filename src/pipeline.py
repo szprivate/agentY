@@ -27,9 +27,9 @@ from pydantic import BaseModel, Field, ValidationError
 from strands import Agent
 from strands.types.exceptions import MaxTokensReachedException
 
-from src.agent import create_fix_workflow_assembly_agent, create_generate_new_workflow_agent, create_info_agent, create_orchestrator_agent, create_planner_agent, create_query_templates_agent, create_search_web_agent, create_vision_agent, create_video_agent, _settings
-from src.tools.image_handling import set_vision_agent as _set_vision_agent
-from src.tools.video_handling import set_video_agent as _set_video_agent
+from src.agent import create_fix_workflow_assembly_agent, create_generate_new_workflow_agent, create_info_agent, create_orchestrator_agent, create_planner_agent, create_query_templates_agent, create_search_web_agent, create_vision_agent, create_video_agent, video_parallelism, vision_parallelism, _settings
+from src.tools.image_handling import set_vision_agent as _set_vision_agent, vision_agents as _vision_agents
+from src.tools.video_handling import set_video_agent as _set_video_agent, video_agents as _video_agents
 from src.tools.annotate import set_output_sink as _set_output_sink
 from src.utils.chat_summary import summarize_conversation, log_agent_messages, log_agent_exchange, set_log_thread
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
@@ -539,7 +539,16 @@ class Pipeline:
         self._vision_agent: Agent | None = None
         try:
             self._vision_agent = create_vision_agent()
-            _set_vision_agent(self._vision_agent)
+            # A turn commonly asks about a whole folder of references at once, and
+            # one agent can only serve one call at a time. Hand the tool a factory
+            # so it can grow a small pool and actually run those in parallel; the
+            # cap follows the backend (1 for a local Ollama sharing one GPU).
+            _n_vision = vision_parallelism()
+            _set_vision_agent(self._vision_agent,
+                              factory=create_vision_agent if _n_vision > 1 else None,
+                              max_parallel=_n_vision)
+            if _n_vision > 1:
+                print(f"[agentY] Vision agent pool: up to {_n_vision} concurrent describes.")
         except Exception as _va_exc:
             print(f"[agentY] WARNING: could not initialise VisionAgent ({_va_exc}). "
                   "analyze_image will fall back to mode='full'.")
@@ -549,7 +558,10 @@ class Pipeline:
         self._video_agent: Agent | None = None
         try:
             self._video_agent = create_video_agent()
-            _set_video_agent(self._video_agent)
+            _n_video = video_parallelism()
+            _set_video_agent(self._video_agent,
+                             factory=create_video_agent if _n_video > 1 else None,
+                             max_parallel=_n_video)
         except Exception as _vd_exc:
             print(f"[agentY] WARNING: could not initialise VideoAgent ({_vd_exc}). "
                   "analyze_video will return an error until it is configured.")
@@ -614,12 +626,16 @@ class Pipeline:
         call only adds vision tokens accrued since). Priced at the Vision model's
         own rate via ``_cost_meta`` — so an Ollama vision model contributes 0 cost
         (but its tokens still count toward the displayed total).
+
+        Covers **every** agent in the vision pool, not just the first: concurrent
+        describes run on grown instances, whose tokens are just as real.
         """
-        agent = self._vision_agent
-        if agent is None:
+        if self._vision_agent is None:
             return
-        self._record_agent_usage(agent, self._vision_usage_snap)
-        self._vision_usage_snap = self._usage_snapshot(agent)
+        for agent in _vision_agents():
+            key = id(agent)
+            self._record_agent_usage(agent, self._vision_usage_snap.get(key, {}))
+            self._vision_usage_snap[key] = self._usage_snapshot(agent)
 
     def _record_video_usage(self) -> None:
         """Fold the shared Video agent's per-turn token delta into the turn usage.
@@ -627,13 +643,14 @@ class Pipeline:
         Same contract as :meth:`_record_vision_usage`: the Video agent (used by the
         ``analyze_video`` tool) runs outside the per-agent snapshot brackets, so its
         delta since the turn-start snapshot is recorded here and priced at the video
-        model's own rate. Idempotent within a turn.
+        model's own rate. Idempotent within a turn. Covers the whole pool.
         """
-        agent = self._video_agent
-        if agent is None:
+        if self._video_agent is None:
             return
-        self._record_agent_usage(agent, self._video_usage_snap)
-        self._video_usage_snap = self._usage_snapshot(agent)
+        for agent in _video_agents():
+            key = id(agent)
+            self._record_agent_usage(agent, self._video_usage_snap.get(key, {}))
+            self._video_usage_snap[key] = self._usage_snapshot(agent)
 
     def _usage_snapshot(self, agent) -> dict:
         """Return a copy of *agent*'s current accumulated usage, or {} on error."""
@@ -1915,8 +1932,9 @@ class Pipeline:
         unchanged. ComfyUI interrupts are handled identically to the Brain stage.
         """
         self._last_turn_usages = []
-        self._vision_usage_snap = self._usage_snapshot(self._vision_agent) if self._vision_agent else {}
-        self._video_usage_snap = self._usage_snapshot(self._video_agent) if self._video_agent else {}
+        # Keyed by id(agent): the vision/video pools may hold several instances.
+        self._vision_usage_snap = {id(a): self._usage_snapshot(a) for a in _vision_agents()}
+        self._video_usage_snap = {id(a): self._usage_snapshot(a) for a in _video_agents()}
         user_text = self._extract_text(user_input)
         # Register image paths embedded in a plain-text message so assembly/LoadImage
         # wiring receives real input paths (Chainlit-style callers set this already).

@@ -19,15 +19,39 @@ from typing import Optional
 
 from strands import Agent, tool
 
-from src.tools.image_handling import _MAX_IMAGE_BYTES, _downsize
+from src.tools.image_handling import _MAX_IMAGE_BYTES, AgentPool, _downsize
 
 _video_agent: Optional[Agent] = None
+_video_pool: Optional[AgentPool] = None
 
 
-def set_video_agent(agent: Agent) -> None:
-    """Register the shared Video Agent used by :func:`analyze_video`."""
-    global _video_agent
+def set_video_agent(agent: Agent, factory=None, max_parallel: int = 1) -> None:
+    """Register the Video Agent used by :func:`analyze_video`.
+
+    Same shape as ``set_vision_agent``: one Strands agent cannot serve two calls
+    at once, so concurrent ``analyze_video`` calls need one instance each. See
+    :class:`~src.tools.image_handling.AgentPool`. Each call here carries several
+    sampled frames, so the default cap is deliberately lower than vision's.
+    """
+    global _video_agent, _video_pool
     _video_agent = agent
+    _video_pool = AgentPool(agent, factory=factory, size=max_parallel)
+
+
+def _ensure_video_pool() -> Optional[AgentPool]:
+    """The pool wrapping the registered video agent, built on demand."""
+    global _video_pool
+    if _video_agent is None:
+        return None
+    if _video_pool is None or _video_pool.primary is not _video_agent:
+        _video_pool = AgentPool(_video_agent)
+    return _video_pool
+
+
+def video_agents() -> list[Agent]:
+    """Every live video agent, so the pipeline can price all of their tokens."""
+    pool = _ensure_video_pool()
+    return pool.instances() if pool else []
 
 
 def _resolve_local_video(path: str) -> Optional[str]:
@@ -166,8 +190,9 @@ def analyze_video(file_path: str = "", question: str = "", max_frames: int = 8) 
     user_message.append({"text": header})
 
     try:
-        _video_agent.messages.clear()
-        result = str(_video_agent(user_message))
+        with _ensure_video_pool().borrow() as _agent:
+            _agent.messages.clear()
+            result = str(_agent(user_message))
     except Exception as exc:  # noqa: BLE001
         return {"status": "error", "content": [{"text": f"Video analysis failed: {exc}"}]}
 

@@ -1098,6 +1098,54 @@ def create_video_agent(
     return agent
 
 
+def _media_parallelism(provider: str, env_var: str, setting: str, hosted_default: int) -> int:
+    """How many concurrent calls a media agent's pool may run.
+
+    One Strands agent serves one call at a time, so the vision/video tools keep a
+    pool and this is its size. The number that matters is the backend: a hosted
+    model is network-bound and overlaps happily, while a local Ollama shares one
+    GPU and gains nothing from being asked for four at once.
+
+    Explicit configuration (env var, then ``llm.pipeline.<setting>``) always wins;
+    ``0`` or unset means decide from the provider.
+    """
+    explicit = _cfg(env_var, "pipeline", setting, default=0)
+    try:
+        explicit = int(explicit or 0)
+    except (TypeError, ValueError):
+        explicit = 0
+    if explicit > 0:
+        return explicit
+    return 1 if provider == "ollama" else hosted_default
+
+
+def vision_parallelism() -> int:
+    """Pool size for ``analyze_image(mode='describe')``.
+
+    Resolves the provider exactly as :func:`create_vision_agent` does, so the
+    cap always describes the model that will actually run.
+    """
+    raw = os.environ.get("VISION_AGENT_MODEL", "") or str(role_model("vision_agent", default=""))
+    if not raw:
+        raw = str(role_model("executor_vision_model", default="ollama,gemma4:26b"))
+        if "," not in raw:
+            raw = f"ollama,{raw}"
+    provider, _ = _parse_llm_setting(raw)
+    return _media_parallelism(provider or "ollama", "VISION_MAX_PARALLEL",
+                              "vision_max_parallel", hosted_default=4)
+
+
+def video_parallelism() -> int:
+    """Pool size for ``analyze_video``. Lower: each call carries many frames."""
+    raw = (os.environ.get("VIDEO_AGENT_MODEL", "")
+           or str(role_model("video_agent", default="dashscope,qwen2.5-vl-72b-instruct")))
+    if "," not in raw:
+        raw = f"dashscope,{raw}"
+    provider, _ = _parse_llm_setting(raw)
+    return _media_parallelism(provider or "dashscope", "VIDEO_MAX_PARALLEL",
+                              "video_max_parallel", hosted_default=2)
+
+
 def create_qa_agent(
     ollama_model: str | None = None,
     anthropic_model: str | None = None,

@@ -177,6 +177,13 @@ build_skill = ""
 executor_vision_model = ""
 vision_agent = ""
 video_agent = ""
+# How many analyze_image / analyze_video calls may run at once. One agent serves
+# one call at a time, so this is the size of a small pool of identical agents —
+# a turn that describes a folder of references finishes in a fraction of the time.
+# 0 = decide from the provider: 1 for ollama (one local GPU), else 4 (vision) /
+# 2 (video, many frames per call). Env: VISION_MAX_PARALLEL / VIDEO_MAX_PARALLEL.
+vision_max_parallel = 0
+video_max_parallel = 0
 qa_checker = ""
 coder = ""
 
