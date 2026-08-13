@@ -737,6 +737,7 @@ _ASSEMBLY_SKILL_NAMES = [
     "annotation", "assemble-from-template", "assemble-new-workflow",
     "assemble-workflow-learnings",
     "flux-sampling", "image-batch", "kling-multishot", "prompting", "recipe",
+    "seedance-reference",
     "upscale-ultimatesd", "video-gemini-motionpromptgeneration",
     "workflow-templates", "batch-handoff",
 ]
