@@ -1929,8 +1929,12 @@ def create_orchestrator_agent(
         print(f"[agentY:orchestrator] MCP tools skipped: {_mcp_exc}")
 
     extra_hooks = kwargs.pop("hooks", [])
+    # InterjectHookProvider is the orchestrator's only, deliberately: it is the
+    # agent that owns the turn, and a specialist running inside one of its tool
+    # calls has no way to hand a course correction back mid-flight anyway.
+    from src.utils.interject_hook import InterjectHookProvider
     orch_hooks = [TokenUsageHookProvider(role="orchestrator"), ToolActivityHookProvider(role="orchestrator"),
-                  MagnificWatchHookProvider(), ComfyUIInterruptHook(), *extra_hooks]
+                  MagnificWatchHookProvider(), ComfyUIInterruptHook(), InterjectHookProvider(), *extra_hooks]
 
     agent = _make_agent(
         role="orchestrator",

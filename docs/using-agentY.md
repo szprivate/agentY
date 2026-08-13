@@ -19,6 +19,7 @@ node, ready to wire into your next step.*
 - [Starting a session](#starting-a-session)
 - [Staying up to date](#staying-up-to-date)
 - [The chat panel](#the-chat-panel)
+  - [Talking to a turn that is already running](#talking-to-a-turn-that-is-already-running)
 - [Generating & editing](#generating--editing)
 - [Slash commands](#slash-commands)
 - [**The hook system**](#the-hook-system)  ← the most powerful part
@@ -140,6 +141,27 @@ obvious spot next to agentY, point `comfyui_dir` at it so the extension is found
   whose API key is set appear), and an **agent scope** selector (*All agents* or
   a specific role) so a model switch can target one stage. This is the in-panel
   equivalent of [`/switch_model`](#slash-commands).
+
+### Talking to a turn that is already running
+
+Anything you type while the agent is working becomes a **⏳ chip** above the
+composer and is sent when the turn ends. You don't have to wait for it, though:
+
+| On the chip | What happens |
+|---|---|
+| **↳** | Hands the message to the **running** turn. The agent reads it at its next step and carries on from where it is — it doesn't start over. |
+| **Shift + ↳** | Same, but **cancels the step it was about to take** so it reads you first. Nothing already produced is undone. |
+| **✕** | Drop it. |
+
+Two things worth knowing. The agent picks the message up **between tool calls**,
+so if it is in the middle of a long one — a batch of eleven generations, a
+specialist doing research — your words land when that finishes. To stop something
+already running, use **⏹ Stop**, which also interrupts ComfyUI. And if the turn
+happens to end before the message reaches the agent, nothing is lost: it goes
+back on the queue and is sent with the next turn, and the panel says so.
+
+Messages with an attached image stay queue-only — a mid-run message reaches the
+agent as text.
 
 ---
 

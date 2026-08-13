@@ -23,6 +23,7 @@ Chat UI
     POST /agentY/upload                         multipart image attachment -> {path}
     POST /agentY/chat        (SSE)              stream a turn; body {thread_id,message,image_paths}
     POST /agentY/reply                          answer an interactive ask  {request_id,text}
+    POST /agentY/interject                      speak into a RUNNING turn  {request_id,text,urgent}
 
 Viewers (self-contained HTML pages served here so they fetch same-origin)
     GET  /agentY/log_viewer                     message-history log viewer page
@@ -60,6 +61,7 @@ from pathlib import Path
 from src.utils import conversation_store as cs
 from src.utils import status_bus
 from src.utils import notify_bus
+from src.utils import interject_bus
 from src.utils import turn_watchdog as _wd
 from src.utils.models import AgentSession
 
@@ -1095,6 +1097,8 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
     with _reply_lock:
         _reply_registry[req_id] = (loop, qa_queue)
         _run_registry[req_id] = {"loop": loop, "task": task, "thread_id": thread_id}
+    # From here until the turn ends, POST /agentY/interject can speak into it.
+    interject_bus.open_run(req_id, thread_id)
 
     stopped = False
     try:
@@ -1120,6 +1124,13 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
         with _reply_lock:
             _reply_registry.pop(req_id, None)
             _run_registry.pop(req_id, None)
+        # An interjection sent after the agent's last tool call has nowhere left
+        # to land. Hand it back rather than swallow it: the panel re-queues it as
+        # an ordinary message, which is what would have happened without the
+        # "send now" click.
+        _undelivered = interject_bus.close_run(req_id)
+        if _undelivered:
+            out_q.put({"type": "interject_undelivered", "texts": _undelivered})
         _wd.phase(req_id, "post:flush_activity")
         _flush_activity()  # emit any tool/canvas activity left after the last event
         _wd.phase(req_id, "post:persist_message")
@@ -2765,6 +2776,36 @@ def _build_app():
         loop, q = entry
         loop.call_soon_threadsafe(q.put_nowait, text)
         return jsonify({"ok": True})
+
+    # ── Mid-run interjection ───────────────────────────────────────────────
+    @app.route("/agentY/interject", methods=["POST", "OPTIONS"])
+    def interject():
+        """Hand a message to the turn that is *currently running*.
+
+        Distinct from /agentY/reply, which answers a question the agent asked and
+        feeds the QA queue — routing an interjection through that queue would let
+        it be swallowed as the answer to a pending "retry?" prompt. This goes to
+        its own mailbox, and the orchestrator's hook picks it up at the next tool
+        boundary. ``urgent`` cancels the pending tool call so the agent reads the
+        message instead of taking that step.
+
+        ok=false means there was nothing to interject into (the turn ended, or the
+        request id is stale) — the caller should queue the text as a normal message.
+        """
+        if request.method == "OPTIONS":
+            return "", 204
+        body = request.get_json(silent=True) or {}
+        req_id = str(body.get("request_id") or "")
+        text = (body.get("text") or "").strip()
+        urgent = bool(body.get("urgent"))
+        if not text:
+            return jsonify({"ok": False, "error": "empty message"}), 400
+        if not interject_bus.post(req_id, text, urgent=urgent):
+            return jsonify({"ok": False, "error": "no running turn to interject into"}), 409
+        # Not persisted here: the delivering hook writes it into the thread at the
+        # moment the model actually reads it, so the stored conversation keeps that
+        # order and a message that misses the turn isn't stored twice.
+        return jsonify({"ok": True, "urgent": urgent, "pending": interject_bus.pending_count()})
 
     # ── What a model switch may target (drives the composer's scope picker) ──
     @app.route("/agentY/switch_targets", methods=["GET", "OPTIONS"])
