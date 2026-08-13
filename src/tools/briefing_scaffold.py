@@ -164,6 +164,18 @@ def _title(wf: dict, nid: str) -> str:
     return _lc((wf.get(nid, {}).get("_meta", {}) or {}).get("title", ""))
 
 
+def _prompt_cap(class_type: str, slot: str) -> int | None:
+    """The hard character cap this model puts on this input, or None.
+
+    Best-effort on purpose: an unknown cap must read as "no cap", never as zero.
+    """
+    try:
+        from src.utils.model_limits import text_cap
+        return text_cap(class_type, slot)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _resolve_prompt_nodes(wf: dict) -> tuple[str | None, str | None, list[dict], list[str]]:
     """Return (positive_id, negative_id, prompt_nodes[], warnings[]).
 
@@ -242,8 +254,15 @@ def _resolve_prompt_nodes(wf: dict) -> tuple[str | None, str | None, list[dict],
         node = wf.get(nid, {})
         ins = node.get("inputs", {}) or {}
         slot = "text" if "text" in ins else ("prompt" if "prompt" in ins else "text")
-        prompt_nodes.append({"node_id": nid, "role": role, "slot": slot,
-                             "node": node.get("class_type", "")})
+        entry = {"node_id": nid, "role": role, "slot": slot,
+                 "node": node.get("class_type", "")}
+        # Tell whoever writes the prompt what it has to fit inside, while there is
+        # still a prompt being written. Learning about Kling's 2,500 characters
+        # after the fact costs a round trip that produces nothing.
+        cap = _prompt_cap(entry["node"], slot)
+        if cap:
+            entry["max_chars"] = cap
+        prompt_nodes.append(entry)
     return pos_id, neg_id, prompt_nodes, warnings
 
 

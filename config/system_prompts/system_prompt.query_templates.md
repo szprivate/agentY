@@ -74,6 +74,11 @@ Extract subject, style, task type, batch count, variations.
   invent, embellish, or re-imagine the subject/style the user specified. Carry
   explicit prompt text through with only the formatting the family requires.
 - Do NOT pad with filler phrases or generic quality tokens.
+- **Respect `max_chars`.** When a `prompt_nodes` entry carries one, that model
+  refuses anything longer — Kling 3.0 Omni stops at 2,500 characters, its
+  storyboard slots at 512, Kling image-to-video at 500. Write to fit: it is a
+  budget you spend on the subject, the action and the look, in that order. Going
+  over does not degrade the result, it cancels the call.
 - Set `prompt.negative` when the family uses one, else `null`. For a variations
   batch write ONE base prompt — the per-variation expansion happens downstream.
 

@@ -1,0 +1,191 @@
+{
+  "_about": [
+    "Hard input limits the API models enforce. Exceeding one is not a workflow",
+    "defect the repair specialist can patch — a 3,000-character prompt has to be",
+    "REWRITTEN and eight reference images have to be CHOSEN between, which is",
+    "authoring, not repair. So a violation is handed back to the orchestrator",
+    "instead (see src/utils/model_limits.py).",
+    "",
+    "Every number here is read off ComfyUI's own node code (comfy_api_nodes/",
+    "nodes_*.py, validate_string / validate_prompts / get_number_of_images",
+    "guards) as of ComfyUI 2026-08. They are the same checks that would raise at",
+    "run time — the point of listing them is to catch it before a paid call.",
+    "",
+    "text:   input name -> maximum characters. fnmatch patterns allowed, so",
+    "        'storyboard_*_prompt' covers all six storyboard slots.",
+    "images: input name -> maximum images that may arrive on that input.",
+    "A node not listed here has no known hard limit; unknown is not zero."
+  ],
+
+  "limits": [
+    {
+      "note": "Kling 3.0 Omni — text to video",
+      "nodes": ["KlingOmniProTextToVideoNode"],
+      "text": {"prompt": 2500, "storyboard_*_prompt": 512}
+    },
+    {
+      "note": "Kling 3.0 Omni — first/last frame",
+      "nodes": ["KlingOmniProFirstLastFrameNode"],
+      "text": {"prompt": 2500, "storyboard_*_prompt": 512},
+      "images": {"reference_images": 6}
+    },
+    {
+      "note": "Kling 3.0 Omni — image to video",
+      "nodes": ["KlingOmniProImageToVideoNode"],
+      "text": {"prompt": 2500, "storyboard_*_prompt": 512},
+      "images": {"reference_images": 7}
+    },
+    {
+      "note": "Kling 3.0 Omni — video to video / edit",
+      "nodes": ["KlingOmniProVideoToVideoNode", "KlingOmniProEditVideoNode"],
+      "text": {"prompt": 2500},
+      "images": {"reference_images": 4}
+    },
+    {
+      "note": "Kling 3.0 Omni — image",
+      "nodes": ["KlingOmniProImageNode"],
+      "text": {"prompt": 2500},
+      "images": {"reference_images": 10}
+    },
+    {
+      "note": "Kling — text to video, extend, with-audio, first/last, motion control",
+      "nodes": ["KlingTextToVideoNode", "KlingVideoExtendNode", "KlingFirstLastFrameNode",
+                "KlingTextToVideoWithAudio", "KlingImageToVideoWithAudio",
+                "KlingMotionControl"],
+      "text": {"prompt": 2500, "negative_prompt": 2500}
+    },
+    {
+      "note": "Kling — image to video / start-end frame (much tighter than text to video)",
+      "nodes": ["KlingImage2VideoNode", "KlingStartEndFrameNode"],
+      "text": {"prompt": 500, "negative_prompt": 500}
+    },
+    {
+      "note": "Kling — image generation",
+      "nodes": ["KlingImageGenerationNode"],
+      "text": {"prompt": 500, "negative_prompt": 200}
+    },
+    {
+      "note": "Kling — multi-shot video",
+      "nodes": ["KlingVideoNode"],
+      "text": {"storyboard_*_prompt": 512}
+    },
+    {
+      "note": "Kling — lip sync from text",
+      "nodes": ["KlingLipSyncTextToVideoNode"],
+      "text": {"text": 120}
+    },
+
+    {
+      "note": "Vidu 2 / 3 — one image per frame input, three subjects per reference",
+      "nodes": ["Vidu2TextToVideoNode", "Vidu2ImageToVideoNode", "Vidu2ReferenceVideoNode",
+                "Vidu2StartEndToVideoNode", "ViduExtendVideoNode", "ViduMultiFrameVideoNode",
+                "Vidu3TextToVideoNode", "Vidu3ImageToVideoNode", "Vidu3StartEndToVideoNode"],
+      "text": {"prompt": 2000, "prompt*": 2000}
+    },
+    {
+      "note": "Vidu — single-image inputs",
+      "nodes": ["ViduImageToVideoNode", "Vidu2ImageToVideoNode"],
+      "images": {"image": 1}
+    },
+    {
+      "note": "Vidu 2 — start/end frame",
+      "nodes": ["Vidu2StartEndToVideoNode"],
+      "images": {"first_frame": 1, "end_frame": 1}
+    },
+    {
+      "note": "Luma Ray 3.2 — video",
+      "nodes": ["LumaRay32TextToVideoNode", "LumaRay32ImageToVideoNode",
+                "LumaRay32KeyframesToVideoNode", "LumaRay32VideoEditNode",
+                "LumaRay32VideoReframeNode", "LumaRay32ExtendVideoNode",
+                "LumaImageNode2", "LumaImageEditNode2"],
+      "text": {"prompt": 6000}
+    },
+    {
+      "note": "LTXV — API",
+      "nodes": ["LtxvApiTextToVideo", "LtxvApiImageToVideo"],
+      "text": {"prompt": 10000}
+    },
+    {
+      "note": "Runway Aleph 2 — video to video",
+      "nodes": ["RunwayAleph2VideoToVideoNode"],
+      "text": {"prompt": 1000},
+      "images": {"prompt_images": 5}
+    },
+    {
+      "note": "ByteDance — video asset",
+      "nodes": ["ByteDanceCreateVideoAsset"],
+      "text": {"text_prompt": 3000}
+    },
+    {
+      "note": "Flux 2 Pro — image",
+      "nodes": ["Flux2ProImageNode"],
+      "images": {"images": 9}
+    },
+    {
+      "note": "Gemini image / Nano Banana 2",
+      "nodes": ["GeminiImage2Node", "GeminiNanoBanana2"],
+      "images": {"images": 14}
+    },
+    {
+      "note": "Grok image edit (the pro model allows only 1 — this is the standard cap)",
+      "nodes": ["GrokImageEditNode"],
+      "images": {"image": 3}
+    },
+    {
+      "note": "Reve — image",
+      "nodes": ["ReveImageCreateNode", "ReveImageEditNode", "ReveImageRemixNode"],
+      "text": {"prompt": 2560, "edit_instruction": 2560}
+    },
+    {
+      "note": "Recraft",
+      "nodes": ["RecraftTextToImageNode", "RecraftImageToImageNode",
+                "RecraftImageInpaintingNode", "RecraftTextToVectorNode"],
+      "text": {"prompt": 1000}
+    },
+    {
+      "note": "Recraft V4",
+      "nodes": ["RecraftV4TextToImageNode", "RecraftV4TextToVectorNode"],
+      "text": {"prompt": 10000}
+    },
+    {
+      "note": "HeyGen",
+      "nodes": ["HeyGenTextToSpeechNode", "HeyGenCreateAvatarNode"],
+      "text": {"text": 5000, "prompt": 1000}
+    },
+    {
+      "note": "Rodin / Hunyuan3D / Meshy — 3D",
+      "nodes": ["Rodin3D_Gen25_Text"],
+      "text": {"prompt": 2500}
+    },
+    {
+      "note": "Hunyuan3D",
+      "nodes": ["TencentTextToModelNode", "Tencent3DTextureEditNode"],
+      "text": {"prompt": 1024}
+    },
+    {
+      "note": "Meshy",
+      "nodes": ["MeshyTextToModelNode", "MeshyRefineNode", "MeshyImageToModelNode",
+                "MeshyMultiImageToModelNode"],
+      "text": {"prompt": 600, "texture_prompt": 600}
+    },
+    {
+      "note": "Sonilo — music",
+      "nodes": ["SoniloTextToMusic"],
+      "text": {"prompt": 1000}
+    }
+  ],
+
+  "image_sources": {
+    "_about": [
+      "How many images a node class puts on its IMAGE output, for counting what",
+      "arrives at a limited input. Only these are counted; anything else makes the",
+      "count unknown, and an unknown count never reports a violation — a wrong",
+      "'too many images' would be worse than the miss it prevents."
+    ],
+    "one": ["LoadImage", "LoadImageOutput", "LoadImageMask", "ETN_LoadImageBase64"],
+    "passthrough": ["AgentYRefNote", "Reroute", "ImageScale", "ImageScaleBy",
+                    "ImageInvert", "ImageCrop", "ImagePadForOutpaint"],
+    "sum": ["ImageBatch", "ImageStitch"],
+    "collector": ["AgentYImageCollector"]
+  }
+}

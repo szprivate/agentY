@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -84,24 +85,52 @@ def slug(name: str) -> str:
     return s.strip("-")
 
 
+# How long a failed lookup is remembered. get_comfyui_dirs caches SUCCESS for the
+# session but retries every failure, and a failure costs a two-second connection
+# timeout — which a single write would pay four times over, on a host that cannot
+# generate anything anyway. Short enough that a server started meanwhile is picked
+# up within the same breath.
+_MISS_TTL = 20.0
+_miss_until = 0.0
+
+
 def user_dir() -> Path | None:
     """ComfyUI's user directory, as the running server reports it.
 
     Returns None when ComfyUI is unreachable or reports nothing usable — every
     caller here treats that as "no project memory this turn", never as an error.
+
+    Success is deliberately not cached here: the path is the project, and the day
+    it changes under a running host is the day this has to notice.
     """
+    global _miss_until
+    now = time.monotonic()
+    if now < _miss_until:
+        return None
     try:
         from src.tools.comfyui import get_comfyui_dirs  # lazy: avoid an import cycle
         info = json.loads(get_comfyui_dirs()) or {}
     except Exception:  # noqa: BLE001
+        _miss_until = now + _MISS_TTL
+        return None
+    if not info or info.get("error"):
+        _miss_until = now + _MISS_TTL
         return None
     raw = str(info.get("user_dir") or "").strip()
     if not raw or raw == "unknown":
+        _miss_until = now + _MISS_TTL
         return None
     try:
         return Path(raw)
     except Exception:  # noqa: BLE001
         return None
+
+
+def forget_miss() -> None:
+    """Drop the "ComfyUI didn't answer" note — for tests, and for a caller that
+    knows the server just came up."""
+    global _miss_until
+    _miss_until = 0.0
 
 
 def store_dir(create: bool = False) -> Path | None:

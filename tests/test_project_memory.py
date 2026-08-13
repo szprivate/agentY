@@ -24,6 +24,8 @@ class StoreTestCase(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="agenty-projmem-"))
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        pm.forget_miss()
+        self.addCleanup(pm.forget_miss)
         self._user_dir = self.root / "projA" / "user"
         patcher = mock.patch("src.tools.comfyui.get_comfyui_dirs",
                              side_effect=lambda: json.dumps({"user_dir": str(self._user_dir)}))
@@ -108,6 +110,28 @@ class ProjectSwitchTests(StoreTestCase):
             self.assertEqual(pm.list_entries(), [])
             self.assertEqual(pm.render_context(), "")
             self.assertIsNone(pm.write_entry("hero", "someone"))
+
+    def test_a_down_server_is_asked_once_not_once_per_call(self):
+        # Each failed lookup is a two-second connection timeout, and one write does
+        # several — on a host that cannot generate anything anyway.
+        calls = []
+
+        def refused():
+            calls.append(1)
+            return json.dumps({"error": "connection refused"})
+
+        with mock.patch("src.tools.comfyui.get_comfyui_dirs", side_effect=refused):
+            for _ in range(5):
+                pm.write_entry("hero", "someone")
+                pm.render_context()
+            self.assertEqual(len(calls), 1, "asked once, then remembered")
+
+    def test_the_note_is_droppable_when_the_server_comes_back(self):
+        with mock.patch("src.tools.comfyui.get_comfyui_dirs",
+                        side_effect=lambda: json.dumps({"error": "refused"})):
+            self.assertIsNone(pm.store_dir())
+        pm.forget_miss()
+        self.assertIsNotNone(pm.store_dir(), "the fake dirs are answering again")
 
     def test_an_unknown_user_dir_is_not_treated_as_a_path(self):
         with mock.patch("src.tools.comfyui.get_comfyui_dirs",

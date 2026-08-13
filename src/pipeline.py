@@ -139,6 +139,7 @@ class PromptNode(BaseModel):
     role: str = Field(description="'positive' or 'negative'")
     slot: str = Field(description="Real input slot for the prompt text (e.g. 'text' for CLIPTextEncode, 'prompt' for API/partner nodes)")
     node: str = Field(default="", description="ComfyUI node class name (informational)")
+    max_chars: int | None = Field(default=None, description="Hard character cap this model enforces on this input (e.g. 2500 for Kling 3.0 Omni). When set, the prompt written for this node MUST fit inside it — the model refuses the call otherwise, and no repair can shorten a prompt without deciding what it was for.")
 
 
 class BrainBriefing(BaseModel):
@@ -847,6 +848,17 @@ class Pipeline:
               * ``blocked``   → ``blockers``: ask the user for the missing detail.
               * ``needs_fix`` → ``workflow_path`` + ``problems``: repair with the
                                 assembly tools, then ``signal_workflow_ready``.
+              * ``limit_exceeded`` → the model refuses an input outright (a prompt
+                                over its character cap, more reference images than
+                                it takes). ``violations`` says which input, by how
+                                much; ``guidance`` says what to do. This one is
+                                YOURS: shorten the prompt or drop images, patch it
+                                in with ``update_workflow``, then
+                                ``signal_workflow_ready``. Do NOT call
+                                ``prepare_workflow`` again — the workflow is
+                                otherwise assembled and valid — and do not hand it
+                                to a repair agent, which cannot rewrite your prompt
+                                for you.
               * ``build_new`` → ``briefing``: no template fit — build from scratch,
                                 then ``signal_workflow_ready``.
               * ``error``     → ``error``: report it.
@@ -3523,10 +3535,18 @@ class Pipeline:
             return {"status": "error", "error": f"apply_brainbriefing failed: {exc}"}
 
         if res.get("status") == "ok":
+            path = res.get("workflow_path", wf)
+            # A hard API limit (Kling's 2,500-character prompt, its seven reference
+            # images) passes every validation ComfyUI can do and then fails inside
+            # the node, at cost. Catch it here, where the orchestrator is still
+            # holding the turn and can rewrite what it wrote.
+            over = self._limit_violations(path)
+            if over:
+                return over
             _push_progress("✅ Workflow assembled and validated.")
             if self._verbose:
                 print(f"pipeline: deterministic assembly OK — {wf}")
-            return {"status": "ready", "workflow_path": res.get("workflow_path", wf)}
+            return {"status": "ready", "workflow_path": path}
 
         # Distinguish a real workflow defect from ComfyUI being unreachable. The
         # patch itself is deterministic and already done; if there are no concrete
@@ -3546,6 +3566,44 @@ class Pipeline:
                   f"server_errors={res.get('server_errors')}")
         return await self._run_fix_workflow_assembly(
             wf, problems=problems, server_errors=res.get("server_errors", {}))
+
+    def _limit_violations(self, workflow_path: str, exec_error: dict | None = None) -> dict | None:
+        """``{"status": "limit_exceeded", …}`` if the workflow breaks a hard model
+        limit, else None.
+
+        Two ways to know: the workflow itself measured against the limits table, and
+        the model's own complaint when it already ran. Either way the answer is the
+        same and it is not a repair — see :mod:`src.utils.model_limits`.
+        """
+        try:
+            from src.utils.model_limits import (check_workflow_file, guidance,
+                                                runtime_limit_error, summary)
+            violations = check_workflow_file(workflow_path)
+            runtime = runtime_limit_error(exec_error)
+        except Exception as exc:  # noqa: BLE001
+            if self._verbose:
+                print(f"[limits] check failed: {exc}")
+            return None
+        if not violations and not runtime:
+            return None
+        _push_progress("📏 Input exceeds the model's hard limit — handing it back.")
+        if self._verbose:
+            print(f"pipeline: model limit exceeded — {[v.describe() for v in violations]}"
+                  f"{' | runtime: ' + runtime if runtime else ''}")
+        return {
+            "status": "limit_exceeded",
+            "workflow_path": workflow_path,
+            # The batch executor heals members mid-run and reports `error` when a
+            # heal fails; there is no orchestrator listening at that point, so the
+            # line it prints has to carry the reason itself.
+            "error": summary(violations, runtime),
+            "violations": [
+                {"node_id": v.node_id, "class_type": v.class_type, "field": v.field,
+                 "kind": v.kind, "limit": v.limit, "actual": v.actual}
+                for v in violations
+            ],
+            "guidance": guidance(violations, runtime),
+        }
 
     def _ensure_fix_agent(self) -> "Agent":
         if self._fix_agent is None:
@@ -3568,6 +3626,14 @@ class Pipeline:
         cached one — required when several repairs run concurrently (inline batch
         healing), since one agent's message history can't be reused in parallel.
         """
+        # Before spending a repair turn: is this a hard model limit rather than a
+        # defect? The specialist has no move here — it cannot shorten a prompt
+        # without deciding what the prompt was for — so it would patch around the
+        # symptom and hand back a workflow that fails the same way.
+        over = self._limit_violations(workflow_path, exec_error)
+        if over:
+            return over
+
         agent = agent or self._ensure_fix_agent()
         try:
             agent.messages.clear()
