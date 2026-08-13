@@ -707,15 +707,65 @@ def _order_standin_chains(standin_hooks: list) -> list:
     return chains
 
 
+_REF_NOTE_CLASS = "AgentYRefNote"
+_REF_NOTE_HOPS = 4  # notes on notes: follow a few, then stop rather than loop
+
+
+def ref_notes(base_prompt: dict | None) -> tuple[dict, dict]:
+    """Read the ``agentY ref note`` nodes off the graph.
+
+    A ref note sits ON the wire that carries a reference — LoadImage → ref note →
+    wherever — and says what the agent should take from it ("the face, not the
+    styling"). Living on the wire is the point: there is no node id to keep in
+    sync, because whatever is plugged into the note is what the note is about.
+
+    Returns ``(role_by_node_id, wrapped_by_note_id)``. The first answers "does this
+    input come with a stated role", keyed by the node the user actually recognises
+    (the loader) *and* by the note itself. The second lets an anchor drawn on the
+    note be reported as the node behind it — "node 51 (AgentYRefNote)" tells the
+    agent nothing about what it is looking at.
+    """
+    roles: dict = {}
+    wrapped: dict = {}
+    if not isinstance(base_prompt, dict):
+        return roles, wrapped
+
+    notes = {nid: node for nid, node in base_prompt.items()
+             if isinstance(node, dict) and node.get("class_type") == _REF_NOTE_CLASS}
+
+    def _source(nid: str) -> str | None:
+        link = ((notes[nid].get("inputs") or {}).get("input"))
+        return str(link[0]) if isinstance(link, list) and link else None
+
+    for nid, node in notes.items():
+        role = str((node.get("inputs") or {}).get("role") or "").strip()
+        # Walk back to the first node that isn't itself a note, so a note stacked
+        # on a note still names the loader rather than the note below it.
+        src, hops = _source(nid), 0
+        while src in notes and hops < _REF_NOTE_HOPS:
+            src, hops = _source(src), hops + 1
+        if src is not None:
+            wrapped[nid] = src
+        if not role:
+            continue
+        roles[nid] = role
+        if src is not None and src not in roles:
+            roles[src] = role
+    return roles, wrapped
+
+
 def _all_anchor_inputs(hook: dict, base_prompt: dict | None) -> list:
-    """Return ``[(anchor_id, anchor_type, scalar_inputs_dict, tap), …]`` for every
-    real-node input wired to a hook.
+    """Return ``[(anchor_id, anchor_type, scalar_inputs_dict, tap, role), …]`` for
+    every real-node input wired to a hook.
 
     The anchor input auto-grows, so a hook may gather several inputs (carried in
     the ``anchors`` list). Falls back to the singular ``anchor_node_id`` field for
     older frontends that only send one. *tap* is ``(wire_type, paths)`` when
     :mod:`src.utils.canvas_tap` rendered this anchor's wire to disk — it carried a
     runtime tensor rather than a named file — and ``None`` for everything else.
+    *role* is what an ``agentY ref note`` on this input says the reference is FOR,
+    or ``""`` — an anchor drawn on the note itself is reported as the node the note
+    wraps, since the note is an annotation on the wire, not the subject.
     """
     entries: list = []
     plural = hook.get("anchors")
@@ -723,14 +773,25 @@ def _all_anchor_inputs(hook: dict, base_prompt: dict | None) -> list:
         for a in plural:
             if isinstance(a, dict) and a.get("node_id") is not None:
                 entries.append((str(a["node_id"]), a.get("type"), a.get("widgets"),
-                                a.get("tapped_type"), a.get("tapped")))
+                                a.get("tapped_type"), a.get("tapped"),
+                                str(a.get("role") or "").strip()))
     elif hook.get("anchor_node_id") is not None:
         entries.append((str(hook["anchor_node_id"]), hook.get("anchor_type"),
-                        hook.get("anchor_widgets"), None, None))
+                        hook.get("anchor_widgets"), None, None, ""))
 
+    roles, wrapped = ref_notes(base_prompt)
     out: list = []
     seen: set = set()
-    for aid, atype, widgets, wire, tapped in entries:
+    for aid, atype, widgets, wire, tapped, sent in entries:
+        # The frontend already resolves a note on the anchor's own wire (so every
+        # consumer sees the real node); reading the graph catches the rest — a note
+        # elsewhere on that loader, or an older frontend that sends neither.
+        role = sent or roles.get(aid, "")
+        if aid in wrapped:
+            # The anchor is the note; the subject is what it wraps.
+            aid = wrapped[aid]
+            atype = None
+            widgets = None
         if aid in seen:
             continue
         seen.add(aid)
@@ -738,11 +799,13 @@ def _all_anchor_inputs(hook: dict, base_prompt: dict | None) -> list:
         if base_prompt and aid in base_prompt:
             raw = (base_prompt[aid].get("inputs") or {})
             inputs = {k: v for k, v in raw.items() if not isinstance(v, list)}
+            atype = atype or str(base_prompt[aid].get("class_type") or "")
         elif isinstance(widgets, dict):
             inputs = widgets
         paths = [str(p) for p in (tapped or []) if str(p).strip()]
         out.append((aid, atype or "?", inputs,
-                    (str(wire or "live"), paths) if paths else None))
+                    (str(wire or "live"), paths) if paths else None,
+                    role or roles.get(aid, "")))
     return out
 
 
@@ -959,6 +1022,92 @@ def plan_lines(hooks: list) -> list[str]:
     return out
 
 
+def _project_memory_names() -> list[str]:
+    """Entry names the current project has on record, or [] if there is no store.
+
+    Lazy and best-effort by design: the sitrep is a courtesy, and a project with no
+    ComfyUI to ask (or no memory yet) must simply produce one fewer line.
+    """
+    try:
+        from src.utils.project_memory import list_entries
+        return [e.name for e in list_entries()]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _mentions(directive: str, name: str) -> bool:
+    """Whether *directive* names a stored entry.
+
+    Entry names are slugs ("hero", "alley-night"), so match the words rather than
+    the raw slug — nobody writes "alley-night" in a sentence, they write "the alley
+    at night". Every word has to be there, and each on a word boundary: substring
+    matching would fire on "grade" inside "upgraded", which is exactly the kind of
+    wrong that makes a warning block get ignored by the third turn.
+    """
+    words = [w for w in name.split("-") if w]
+    if not words:
+        return False
+    text = directive or ""
+    return all(re.search(rf"\b{re.escape(w)}\b", text, re.IGNORECASE) for w in words)
+
+
+def sitrep_lines(hooks: list, base_prompt: dict | None = None,
+                 known: list | None = None) -> list[str]:
+    """What this turn is about to assume, stated before it acts on it.
+
+    The RUN PLAN says what will happen; this says what is *unresolved* about it.
+    Everything here is computed from the wiring, the directives and the project's
+    own memory — never from the model — so it costs nothing at run time and cannot
+    drift from what the graph actually says.
+
+    Deliberately silent unless something is genuinely open: a block that appears
+    every turn stops being read by the third one.
+    """
+    if not hooks:
+        return []
+    ids = _hook_ids(hooks)
+    producers = _producers_of(hooks)
+    names = _project_memory_names() if known is None else list(known)
+    items: list[str] = []
+
+    for h in hooks:
+        hid = str(h.get("hook_node_id"))
+        directive = str(h.get("directive") or "").strip()
+        anchors = _all_anchor_inputs(h, base_prompt)
+        real, chain = _split_targets(h, ids)
+
+        if not _is_text(h) and _is_chain_only(h, ids):
+            who = ", ".join(f"hook {t}" for t in sorted({t[0] for t in chain},
+                                                        key=lambda s: (len(s), s)))
+            items.append(
+                f"hook {hid} feeds only {who} — nothing it produces reaches a node that "
+                "renders. Assuming it is a written value, not a generation."
+            )
+        if not anchors and not real and not chain and not _is_standin(h):
+            items.append(
+                f"hook {hid} has nothing wired in and nothing wired out. Assuming its "
+                "directive stands on its own; wire an anchor if it was meant to act on "
+                "something."
+            )
+        if is_conditional(h) and not producers.get(hid):
+            items.append(
+                f"hook {hid} waits on how something turns out, but nothing upstream of it "
+                "produces a result. Assuming there is nothing to wait for."
+            )
+        for name in names:
+            if _mentions(directive, name):
+                items.append(
+                    f'hook {hid} mentions "{name}", which this project already has on '
+                    f'record — read it with project_memory_read("{name}") and use what is '
+                    "stored instead of writing your own version."
+                )
+
+    if not items:
+        return []
+    return ["\nUNRESOLVED — how this turn will be read unless you say otherwise:"] + \
+           [f"  • {t}" for t in items]
+
+
 def _order_by_dependency(hooks: list) -> list:
     """Order *hooks* so every producer precedes the hook(s) consuming its output.
 
@@ -998,7 +1147,8 @@ def _order_by_dependency(hooks: list) -> list:
 _COLLECTOR_TYPES = {"AgentYImageCollector", "AgentYVideoCollector"}
 
 
-def _render_anchor(aid: str, atype: str, inputs: dict, tap: tuple | None = None) -> str:
+def _render_anchor(aid: str, atype: str, inputs: dict, tap: tuple | None = None,
+                   role: str = "") -> str:
     """Human-readable description of one real-node anchor input.
 
     An agentY collector node is expanded to its listed on-disk file paths (available
@@ -1010,14 +1160,17 @@ def _render_anchor(aid: str, atype: str, inputs: dict, tap: tuple | None = None)
     IMAGE output is a file the agent can already read. Everything else lists its
     scalar params.
     """
+    # The user said what this reference is FOR. It qualifies everything else on the
+    # line, so it goes last, where it reads as the instruction it is.
+    note = f'  ← USE THIS FOR: "{role.strip()}" (take only that from it)' if role.strip() else ""
     if atype in _COLLECTOR_TYPES:
         files = inputs.get("files") if isinstance(inputs, dict) else None
         paths = [ln.strip().strip('"') for ln in str(files or "").splitlines() if ln.strip()]
         kind = "image" if atype == "AgentYImageCollector" else "video"
         if not paths:
-            return f"node {aid} (agentY {kind} collector) — EMPTY (no files added yet)"
+            return f"node {aid} (agentY {kind} collector) — EMPTY (no files added yet){note}"
         return (f"node {aid} (agentY {kind} collector) — {len(paths)} {kind} file(s) already "
-                f"on disk (use these paths directly, no run needed): " + "; ".join(paths))
+                f"on disk (use these paths directly, no run needed): " + "; ".join(paths) + note)
     params = ", ".join(f"{k}={v!r}" for k, v in (inputs or {}).items()) or "(no scalar inputs)"
     base = f"node {aid} ({atype}) inputs[{params}]"
     if tap:
@@ -1025,8 +1178,8 @@ def _render_anchor(aid: str, atype: str, inputs: dict, tap: tuple | None = None)
         noun = "file" if len(paths) == 1 else "files"
         return (f"{base} — the {wire} output wired into this hook carries no file of its "
                 f"own, so it was rendered to disk for you ({len(paths)} {noun}; these ARE "
-                f"the content on that wire — use the path(s) directly): " + "; ".join(paths))
-    return base
+                f"the content on that wire — use the path(s) directly): " + "; ".join(paths) + note)
+    return base + note
 
 
 def _input_context(hook: dict, base_prompt: dict | None, hook_ids: set) -> str:
@@ -1042,11 +1195,11 @@ def _input_context(hook: dict, base_prompt: dict | None, hook_ids: set) -> str:
     if not anchors:
         return "no input wired"
     parts: list = []
-    for aid, atype, inputs, tap in anchors:
+    for aid, atype, inputs, tap, role in anchors:
         if aid in hook_ids:
             parts.append(f"the value you produce for hook {aid}")
         else:
-            parts.append(_render_anchor(aid, atype, inputs, tap))
+            parts.append(_render_anchor(aid, atype, inputs, tap, role))
     return "; ".join(parts)
 
 
@@ -1152,8 +1305,10 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
         )
 
     # When a directive gates on an earlier step's outcome, say up front which hooks
-    # have to be run (not queued) for that check to be possible at all.
+    # have to be run (not queued) for that check to be possible at all — then what
+    # the turn is about to assume, while it can still be corrected.
     lines.extend(plan_lines(hooks))
+    lines.extend(sitrep_lines(hooks, base_prompt))
 
     if directive_hooks:
         lines.append(
@@ -1316,8 +1471,8 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             anchors = _all_anchor_inputs(h, base_prompt)
             if not anchors:
                 return "no input wired — treat the prompt as text-to-media"
-            parts = [_render_anchor(aid, atype, inputs, tap)
-                     for aid, atype, inputs, tap in anchors]
+            parts = [_render_anchor(aid, atype, inputs, tap, role)
+                     for aid, atype, inputs, tap, role in anchors]
             if len(parts) == 1:
                 return f"input from {parts[0]}"
             return "inputs from " + "; ".join(parts)

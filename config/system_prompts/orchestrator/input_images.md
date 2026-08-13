@@ -16,6 +16,15 @@ They are served by a pool of vision agents and run at the same time, so four
 images in one turn cost about what one image costs. One call per turn instead
 serialises them and makes the user wait four times as long for the same answers.
 
+**When an input carries a stated role, pass it as the `question`.** An input
+marked `USE THIS FOR: "…"` in the canvas block has an `agentY ref note` on its
+wire: the user has said what this reference is for. Ask `analyze_image` about
+exactly that (`question="describe the face only — not the hair, not the
+wardrobe"`) and carry the same restriction into the prompt you write. A described
+image with no stated role gets described whole, as before; an image WITH one and
+described whole is how a reference for the *lighting* ends up dictating the
+architecture.
+
 Then call `prepare_workflow` with those descriptions in the `request` **and** the
 staged files as the `staged_inputs` list — `[{"filename": "<staged name>", "role":
 "master_image|reference_image|mask|control_image|depth_map"}]` (use `[]` for a

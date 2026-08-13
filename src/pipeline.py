@@ -1887,6 +1887,16 @@ class Pipeline:
                 + memory_ctx + "\n\n"
             )
 
+        # Per-project memory: what this production has already established
+        # (characters, style, locked references, delivery specs). Read from the
+        # store beside the project — ComfyUI's user directory, which the pipeline
+        # switches when it switches project — so it needs no session state here.
+        # Guidance rides along only when there is something to apply it to.
+        project_ctx = self._get_project_memory_context()
+        if project_ctx:
+            guide = _orch_partial("project_memory")
+            pin = pin + (guide + "\n\n" if guide else "") + project_ctx + "\n\n"
+
         if isinstance(user_input, list):
             gallery = self._format_image_gallery()
             blocks = list(user_input)
@@ -2557,6 +2567,23 @@ class Pipeline:
         except Exception as exc:
             if self._verbose:
                 print(f"[memory] context retrieval error: {exc}")
+            return ""
+
+    def _get_project_memory_context(self) -> str:
+        """Return the per-project memory block, or '' when there is nothing to say.
+
+        Unrelated to *user_text*: this is state, not recall, so it is not searched
+        or ranked — everything the project has established is either in force
+        (technical settings, in full) or listed by name. The store resolves itself
+        from the running ComfyUI's user directory on every call, which is what
+        makes a project switch mid-session land without any bookkeeping here.
+        """
+        try:
+            from src.utils.project_memory import render_context
+            return render_context()
+        except Exception as exc:  # noqa: BLE001
+            if self._verbose:
+                print(f"[project-memory] context error: {exc}")
             return ""
 
     def _auto_save_memory(self, user_text: str, raw_json: str) -> None:

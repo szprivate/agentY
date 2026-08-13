@@ -81,6 +81,8 @@ from src.tools.iterate import iterate  # noqa: F401
 # mis-assembled some templates).
 from src.tools.shell import run_script  # noqa: F401
 from src.tools.memory_tools import memory_read, memory_write  # noqa: F401
+from src.tools.project_memory import (project_memory_forget,  # noqa: F401
+                                      project_memory_read, project_memory_write)
 from src.tools.web_search import web_search, web_search_images  # noqa: F401
 # agentY-only pipeline handoff (not part of the shared agenty_core layer)
 from src.tools.workflow_handoff import signal_workflow_ready  # noqa: F401
@@ -410,9 +412,14 @@ ORCHESTRATOR_TOOLS: list = [
     run_script,
     web_search,
     web_search_images,
-    # Long-term memory
+    # Long-term memory (across projects: how the user works, what we've learned)
     memory_read,
     memory_write,
+    # Per-project memory (this project only: characters, style, locked refs,
+    # delivery specs). Lives in ComfyUI's user dir, so it switches with the project.
+    project_memory_read,
+    project_memory_write,
+    project_memory_forget,
     # Headless batch jobs
     start_batch_job,
     get_batch_status,

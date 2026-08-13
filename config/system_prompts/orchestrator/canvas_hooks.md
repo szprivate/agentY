@@ -24,8 +24,11 @@ and place it. For `[CANVAS HOOKS]` entries listed as **TEXT hooks**, and for
 ### Producer hooks — fill or sweep the wired target input
 
 Each producer line gives the hook's **context** (its anchor inputs) and the target
-its output **feeds** (a node id + input name + type). Produce the value(s) for that
-target — the amount depends on the directive:
+its output **feeds** (a node id + input name + type). An anchor marked
+`USE THIS FOR: "…"` has an `agentY ref note` on its wire — the user has said what
+that reference is for, so take **only** that from it: describe it with that
+question, and let it govern only that aspect of what you write. Produce the
+value(s) for the target — the amount depends on the directive:
 
 - **One value** (e.g. a single composed prompt, one caption) → write it and call
   **`place_canvas_text(hook_node_id, text)`**. It delivers the value to the target
