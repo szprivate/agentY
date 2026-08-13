@@ -865,6 +865,16 @@ def _producers_of(hooks: list) -> dict:
     return producers
 
 
+def _is_chain_only(hook: dict, hook_ids: set) -> bool:
+    """The hook's output is wired, and every input it reaches belongs to a hook.
+
+    Only says yes when targets were actually recorded — a hook with none at all is
+    unknown, not chain-only, and keeps whatever behaviour the caller had.
+    """
+    real, chain = _split_targets(hook, hook_ids)
+    return bool(chain) and not real
+
+
 def gating_hook_ids(hooks: list) -> set:
     """Ids of hooks whose RESULTS a conditional hook depends on.
 
@@ -893,9 +903,14 @@ def gating_hook_ids(hooks: list) -> set:
         gating |= seen
     gating.discard(None)
     # A text hook produces a written string with place_canvas_text — there is no
-    # execution to run early, so listing it here would only add noise.
-    text_ids = {str(h.get("hook_node_id")) for h in hooks if _is_text(h)}
-    return gating - text_ids
+    # execution to run early, so listing it here would only add noise. A producer
+    # whose output only reaches other HOOKS is in the same position: it fills no
+    # graph input, so there is nothing to execute and telling the agent to run it
+    # sends it to apply_canvas_hooks, which can only answer "no batch was produced".
+    ids = _hook_ids(hooks)
+    quiet = {str(h.get("hook_node_id")) for h in hooks
+             if _is_text(h) or _is_chain_only(h, ids)}
+    return gating - quiet
 
 
 def plan_lines(hooks: list) -> list[str]:
@@ -1035,9 +1050,39 @@ def _input_context(hook: dict, base_prompt: dict | None, hook_ids: set) -> str:
     return "; ".join(parts)
 
 
-def _target_context(hook: dict) -> str:
-    """Describe where *hook*'s output goes — the producer's destination input(s)."""
-    targets = _output_targets(hook)
+def _split_targets(hook: dict, hook_ids: set) -> tuple[list, list]:
+    """Output targets split into real node inputs and downstream HOOK anchors.
+
+    A wire into another hook's anchor is a **chain handoff, not an input to fill**.
+    Hook nodes are spliced out of the graph that actually runs, so a sweep aimed at
+    one can never be applied — ``build_batch`` skips it and, when every target is a
+    hook, the whole call comes back "no batch was produced". The consumer does not
+    need anything written into it either: it already reads this hook's value from
+    the block ("the value you produce for hook N"). So chain targets are described,
+    never offered as something to fill.
+    """
+    real, chain = [], []
+    for t in _output_targets(hook):
+        (chain if t[0] in hook_ids else real).append(t)
+    return real, chain
+
+
+def _chain_note(chain: list) -> str:
+    """Phrase the hooks that consume this hook's value, without naming an input."""
+    if not chain:
+        return ""
+    ids = sorted({tid for tid, *_ in chain}, key=lambda s: (len(s), s))
+    which = ", ".join(f"hook {i}" for i in ids)
+    return f"{which} read the value you produce here as context"
+
+
+def _target_context(hook: dict, hook_ids: set | None = None) -> str:
+    """Describe where *hook*'s output goes — the producer's destination input(s).
+
+    Only REAL node inputs; a wire into another hook is a chain handoff (see
+    :func:`_split_targets`) and is reported separately.
+    """
+    targets, _chain = _split_targets(hook, hook_ids or set())
     if not targets:
         return ""
     # Anchors are the obvious things to connect a CONNECTION target to: the user
@@ -1114,8 +1159,12 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
         lines.append(
             "\nPRODUCER hooks — each produces value(s) for the node input its OUTPUT is "
             "wired to (shown as 'feeds …' below); that wired input is the target — do NOT "
-            "guess a node from the prose, and do NOT assemble a template or call "
-            "run_research. Two ways to produce, by how many values the directive asks for:\n"
+            "guess a node from the prose, and do NOT call prepare_workflow, run_research or "
+            "assemble a template. The node that does the generating is ALREADY on the "
+            "canvas at the other end of the wire; a directive asking for many outputs (\"one "
+            "pass per prompt\", \"three consecutive runs\") is a SWEEP of that node, not a "
+            "workflow to build — give apply_canvas_hooks one value per run. "
+            "Two ways to produce, by how many values the directive asks for:\n"
             "  • ONE value (e.g. a single composed prompt) → write it and call "
             'place_canvas_text(hook_node_id="<hook id>", text="<value>") — it delivers the '
             "value to the target input (injected at run time if the hook is kept live, or "
@@ -1131,17 +1180,31 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             hid = h.get("hook_node_id")
             directive = str(h.get("directive", "") or "").strip()
             ctx = _input_context(h, base_prompt, hook_id_set)
-            tgt = _target_context(h)
-            if not tgt:
+            real, chain = _split_targets(h, hook_id_set)
+            tgt = _target_context(h, hook_id_set)
+            if tgt:
+                also = f" ({_chain_note(chain)})" if chain else ""
+                lines.append(
+                    f'- PRODUCER hook {hid} (context: {ctx}) feeds {tgt}{also} — produce the '
+                    f'value(s) for that input → "{directive}"'
+                )
+            elif chain:
+                # Every consumer is another hook, so there is no graph input to fill
+                # or sweep: apply_canvas_hooks would have nothing to apply. Write the
+                # value and hand it on.
+                lines.append(
+                    f'- PRODUCER hook {hid} (context: {ctx}) — CHAIN ONLY: {_chain_note(chain)}, '
+                    f'and its output reaches no real node input. There is nothing to fill or '
+                    f'sweep here: WRITE the value and deliver it with '
+                    f'place_canvas_text(hook_node_id="{hid}", text="<value>"). Do NOT call '
+                    f'apply_canvas_hooks for this hook and do NOT build a workflow for it '
+                    f'→ "{directive}"'
+                )
+            else:
                 lines.append(
                     f'- PRODUCER hook {hid} (context: {ctx}) — OUTPUT UNWIRED: no target '
                     f'input. Ask the user to wire this hook\'s output into the node input it '
                     f'should fill. Directive: "{directive}"'
-                )
-            else:
-                lines.append(
-                    f'- PRODUCER hook {hid} (context: {ctx}) feeds {tgt} — produce the '
-                    f'value(s) for that input → "{directive}"'
                 )
 
     if general_hooks:
@@ -1165,8 +1228,10 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             hid = h.get("hook_node_id")
             directive = str(h.get("directive", "") or "").strip()
             ctx = _input_context(h, base_prompt, hook_id_set)
-            tgt = _target_context(h)
-            where = f" feeds {tgt}" if tgt else " (output unwired)"
+            tgt = _target_context(h, hook_id_set)
+            _real, chain = _split_targets(h, hook_id_set)
+            where = (f" feeds {tgt}" if tgt else
+                     f" ({_chain_note(chain)})" if chain else " (output unwired)")
             lines.append(f'- GENERAL hook {hid} (context: {ctx}){where} — "{directive}"')
 
     if iterate_hooks:
@@ -1187,7 +1252,7 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
         for h in iterate_hooks:
             hid = h.get("hook_node_id")
             directive = str(h.get("directive", "") or "").strip()
-            tgt = _target_context(h)
+            tgt = _target_context(h, hook_id_set)
             ctx = _input_context(h, base_prompt, hook_id_set)
             prompt_where = (f"prompt → {tgt}" if tgt else
                             "prompt target UNWIRED — ask the user to wire this hook's OUTPUT "
@@ -1235,8 +1300,11 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             hid = h.get("hook_node_id")
             directive = str(h.get("directive", "") or "").strip()
             ctx = _input_context(h, base_prompt, hook_id_set)
-            tgt = _target_context(h)
-            where = f" feeds {tgt}" if tgt else " (output unwired — answer streams to chat only)"
+            tgt = _target_context(h, hook_id_set)
+            _real, chain = _split_targets(h, hook_id_set)
+            where = (f" feeds {tgt}" if tgt else
+                     f" ({_chain_note(chain)})" if chain else
+                     " (output unwired — answer streams to chat only)")
             lines.append(f'- TEXT hook {hid} (context: {ctx}){where} — write & place → "{directive}"')
 
     if standin_hooks:

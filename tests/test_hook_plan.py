@@ -103,9 +103,13 @@ class ProducerSideWiringTest(unittest.TestCase):
             h = _hook(hid, directive, anchors=anchors)
             h["targets"] = [{"node_id": str(t), "to_input": "anchors.anchor0"} for t in targets]
             return h
+        # Each producer also feeds a REAL node (21, 22, 23) — its value has to land
+        # somewhere on the graph for there to be anything to run. A hook wired only
+        # into other hooks executes nothing and is deliberately left out of the plan;
+        # that case lives in test_hook_chain_targets.
         return [
-            feeds(44, "analyse the image and describe the STYLE.", targets=[27], anchors=[43]),
-            feeds(27, "Break the story down into single shots.", targets=[30], anchors=[74]),
+            feeds(44, "analyse the image and describe the STYLE.", targets=[21, 27], anchors=[43]),
+            feeds(27, "Break the story down into single shots.", targets=[22, 30], anchors=[74]),
             feeds(5, "Create a reference-frame prompt for every character.",
                   targets=[23, 30], anchors=[6, 7, 8]),
             feeds(30, "Wait for all the references to be generated. If ANY reference "

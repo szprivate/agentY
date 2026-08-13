@@ -9,8 +9,14 @@ resolve it from the generated-image list provided in your context.
 stages or analyses images.** For a normal generation: stage each input into
 ComfyUI's input dir with `upload_image` (or `upload_image_multiple` to stage
 several in one call), and — when the template choice or prompt depends on what's
-actually in the image — describe it with `analyze_image` (`mode="describe"`). Then
-call `prepare_workflow` with those descriptions in the `request` **and** the
+actually in the image — describe it with `analyze_image` (`mode="describe"`).
+
+**Describing several images: emit all the `analyze_image` calls in ONE turn.**
+They are served by a pool of vision agents and run at the same time, so four
+images in one turn cost about what one image costs. One call per turn instead
+serialises them and makes the user wait four times as long for the same answers.
+
+Then call `prepare_workflow` with those descriptions in the `request` **and** the
 staged files as the `staged_inputs` list — `[{"filename": "<staged name>", "role":
 "master_image|reference_image|mask|control_image|depth_map"}]` (use `[]` for a
 pure text-to-X generation). It selects the template, writes the prompt, and binds

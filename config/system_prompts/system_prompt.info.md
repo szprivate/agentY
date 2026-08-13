@@ -28,7 +28,7 @@ Additionally to your capabilities, the system can:
 - Call `get_node_schema` or `search_nodes` for questions about ComfyUI node types
 - Call `read_text_file` if you need to read a local documentation or config file
 - Call `analyze_image` and respond with a description if the user asks you to
-- If the user hands over more than one image: call `analyze_image` once for each image, sequentially, and combine the results in your response.
+- If the user hands over more than one image: issue **all** the `analyze_image` calls in a single turn — one call per image, emitted together, not one turn each. They run at the same time, so a batch costs about what one image costs. Combine the results in your response.
 - Call `web_search` to find up-to-date information, tutorials, style references, or anything not available locally. Present the most relevant results clearly.
 - Call `web_search_images` to retrieve image URLs when the user asks for visual references, inspiration, or example images. List each result with its title, URL, and source.
 
