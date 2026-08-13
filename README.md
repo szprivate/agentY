@@ -102,10 +102,11 @@ The installer sets up the **whole stack** in one pass:
 
 1. checks for `git` + `uv`;
 2. clones the sibling repos it needs — **agenty_core** (required) and **agentY-mcp** (optional) — next to `agentY` if they aren't there already, and fast-forwards them if they are;
-3. creates agentY's `.venv` (via `uv`) and installs `requirements.txt` (which pulls in `agenty_core` editable);
+3. creates agentY's `.venv` (via `uv`), offers the **CUDA build of torch** when it sees an NVIDIA GPU (the wheel on PyPI is CPU-only, which makes SAM3 grounding take about a minute a call), and installs `requirements.txt` (which pulls in `agenty_core` editable);
 4. copies `.env_example` → `.env` and **prompts** you for `HF_TOKEN`, `ANTHROPIC_API_KEY`, and the optional `COMFYUI_API_KEY` / `DASHSCOPE_API_KEY` (Enter keeps an existing value);
 5. **finds your ComfyUI** (auto-detects common paths, otherwise asks) and clones **agentY-comfyuiConnect** into its `custom_nodes/`, optionally pointing `settings.local.json` at your ComfyUI URL;
-6. sets up **agentY-mcp**'s own venv + `.env` and reuses the tokens you just entered.
+6. sets up **agentY-mcp**'s own venv + `.env` and reuses the tokens you just entered;
+7. **checks the result** — every dependency agentY names is import-tested in the venv that will run it, and anything missing is listed with what it costs.
 
 Useful flags:
 
@@ -114,8 +115,22 @@ Useful flags:
 .\install_agent.ps1 -SkipMcp                        # don't set up agentY-mcp
 .\install_agent.ps1 -SkipComfyNode                  # headless host only, no ComfyUI node
 .\install_agent.ps1 -NonInteractive                 # no prompts (CI / re-runs)
+.\install_agent.ps1 -SkipTorch                      # don't offer the CUDA torch build
+.\install_agent.ps1 -TorchIndexUrl "https://download.pytorch.org/whl/cu126"
 .\install_agent.ps1 -Help
 ```
+
+That last step is also a standalone command — worth running whenever a feature is
+mysteriously doing nothing, since most of these packages are somebody else's
+dependency too and a gap only shows up on the machine that resolved differently:
+
+```powershell
+.venv\Scripts\python.exe scripts\check_env.py        # full report
+.venv\Scripts\python.exe scripts\check_env.py --gpu  # + is torch actually on CUDA?
+```
+
+`run_agent.ps1` runs it quietly on every start and speaks up only when something
+required is missing.
 
 <details>
 <summary><b>Manual setup</b> (instead of the installer)</summary>
@@ -124,10 +139,13 @@ Useful flags:
 # agenty_core must sit next to agentY (requirements.txt installs it editable)
 git clone https://github.com/szprivate/agenty_core.git ..\agenty_core
 
-# agentY itself
+# agentY itself. --python names the interpreter on purpose: with a conda env
+# active (miniconda auto-activates `base`), uv installs into that one instead.
 uv venv .venv
-.venv\Scripts\activate          # macOS/Linux: source .venv/bin/activate
-uv pip install -r requirements.txt
+uv pip install --python .venv\Scripts\python.exe torch torchvision `
+    --index-url https://download.pytorch.org/whl/cu128     # NVIDIA GPUs; skip on CPU
+uv pip install --python .venv\Scripts\python.exe -r requirements.txt
+.venv\Scripts\python.exe scripts\check_env.py              # confirm it all imports
 copy .env_example .env
 
 # the ComfyUI sidebar + canvas nodes (restart ComfyUI afterwards)

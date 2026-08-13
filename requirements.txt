@@ -14,6 +14,21 @@ ollama
 # OpenAI SDK — used by the Strands OpenAI provider to reach Alibaba Model Studio
 # (DashScope)'s OpenAI-compatible endpoint for Qwen models.
 openai>=1.0.0
+# HTTP client agentY calls directly: the Ollama/OpenAI-compat probes in
+# src/utils/llm_functions.py import it at module level, so a venv without it
+# cannot even start the host. Every SDK above happens to pull it in, which is
+# why it went unnoticed as a dependency of ours.
+httpx>=0.27.0
+# The tool/decision contracts in src/utils/models.py and src/pipeline.py are
+# built on it. Ships with strands, but agentY declares its own models.
+pydantic>=2.0
+# Config-driven MCP servers: config/mcp.json -> src/tools/mcp_tools.py, which
+# drives the SDK itself (streamable-http / SSE / stdio clients, and the OAuth
+# client flow behind the Magnific "Authorize" button). The floor is the one
+# strands-agents already imposes.
+mcp>=1.23.0
+# Skill frontmatter parsing/validation in scripts/build_skill.py.
+PyYAML>=6.0
 Pillow>=10.0.0
 # Chat host + ComfyUI bridge server (src/utils/agentY_server.py) — replaces the
 # Chainlit GUI. werkzeug ships with flask; conversations persist to local SQLite
@@ -32,10 +47,18 @@ tqdm>=4.66.0
 # Web search (no API key required) — ddgs is the maintained successor of the
 # now-deprecated duckduckgo-search package (better rate-limit handling).
 ddgs>=9.0.0
-# Video frame sampling for Vision QA of generated video (Kling multi-shot, etc.).
-# Used by src/utils/video_frames.py; degrades gracefully (OpenCV / ffmpeg-on-PATH
-# fallbacks) if absent, but this is the recommended backend.
+# Video frame sampling, in two places that need two different backends:
+#   * agenty_core/utils/video_frames.py (Vision QA of generated video — Kling
+#     multi-shot, etc.) prefers imageio and falls back to OpenCV, then ffmpeg;
+#   * src/tools/video_handling.py's analyze_video imports cv2 directly to sample
+#     the frames it hands the video agent — no fallback, no OpenCV no tool.
+# Nothing else in the tree depends on OpenCV: wherever it has turned up it came
+# in as somebody's stray transitive dep, so a clean install had no analyze_video.
+# The headless build is the right one for a host that never opens a window (and
+# on Linux it drops the libGL system deps). Do NOT install opencv-python as well
+# — both ship the same `cv2` package and overwrite each other.
 imageio[ffmpeg]>=2.34.0
+opencv-python-headless>=4.9.0
 
 # ── Image annotation: locating what to mark ─────────────────────────────────
 # SAM 3 turns a text prompt into boxes + masks, so "circle the bolts" resolves
@@ -56,6 +79,12 @@ imageio[ffmpeg]>=2.34.0
 # Imported lazily: without these agentY still runs, it just loses the SAM3 locate
 # backend and annotation falls back to the vision model.
 sam3>=0.1.4
+# Read directly by src/utils/image_locate.py rather than through sam3: the
+# checkpoint is loaded as safetensors (upstream's own loader is a .pt pickle),
+# and the boxes/masks come back as numpy arrays. Both arrive today via sam3 ->
+# timm; named here because agentY imports them itself.
+safetensors>=0.4.0
+numpy>=1.26
 # Two imports sam3 does not declare. triton is a distance-transform kernel pulled
 # in transitively by `import sam3` itself, and upstream triton publishes no
 # Windows wheels — the community fork does, under the same `triton` module name.

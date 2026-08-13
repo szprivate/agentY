@@ -34,6 +34,14 @@
 .PARAMETER NonInteractive
     Never prompt. Use existing values / defaults only (for CI or re-runs).
 
+.PARAMETER SkipTorch
+    Do not offer the CUDA build of torch. requirements.txt then pulls the CPU one
+    in transitively, which costs SAM3 grounding about a minute per call.
+
+.PARAMETER TorchIndexUrl
+    Wheel index the CUDA build of torch comes from. Defaults to cu128; pick the
+    one matching your driver from https://pytorch.org/get-started/locally/.
+
 .EXAMPLE
     .\install_agent.ps1
 .EXAMPLE
@@ -43,11 +51,13 @@
 [CmdletBinding()]
 param(
     [switch]$Help,
-    [string]$ComfyUIPath = "",
-    [string]$ParentDir   = "",
+    [string]$ComfyUIPath   = "",
+    [string]$ParentDir     = "",
     [switch]$SkipMcp,
     [switch]$SkipComfyNode,
-    [switch]$NonInteractive
+    [switch]$NonInteractive,
+    [switch]$SkipTorch,
+    [string]$TorchIndexUrl = "https://download.pytorch.org/whl/cu128"
 )
 
 Set-StrictMode -Version 3.0
@@ -178,12 +188,57 @@ function Ensure-Repo {
     elseif ($Required) { Exit-WithError "Could not clone required repo $Name from $Url." }
 }
 
+function Get-VenvPython {
+    param([string]$Dir)
+    $pyRel = if ($Script:OnWindows) { "Scripts\python.exe" } else { "bin/python" }
+    return (Join-Path (Join-Path $Dir ".venv") $pyRel)
+}
+
+function Install-Torch {
+    # requirements.txt deliberately leaves torch unpinned: the right build depends
+    # on the machine's CUDA version, and PyPI's Windows wheel is CPU-only - on CPU
+    # a single SAM3 grounding call goes from ~0.2s to about a minute. So the GPU
+    # build has to be installed HERE, before the sam3 -> timm -> torch chain in
+    # requirements.txt resolves and pulls the CPU one in instead.
+    # Runs with the cwd already inside $Dir, so uv targets that venv.
+    param([string]$Dir)
+    if ($SkipTorch) { Write-Info "Skipping the CUDA torch install (-SkipTorch)"; return }
+    if (-not (Get-Command nvidia-smi -ErrorAction SilentlyContinue)) {
+        Write-Info "No NVIDIA GPU detected (no nvidia-smi) - leaving torch to requirements.txt"
+        return
+    }
+    $py = Get-VenvPython $Dir
+    if (Test-Path $py) {
+        & $py -c "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('torch') else 1)"
+        if ($LASTEXITCODE -eq 0) {
+            & $py -c "import torch,sys; sys.exit(0 if torch.cuda.is_available() else 1)"
+            if ($LASTEXITCODE -eq 0) { Write-Success "torch already installed with CUDA support"; return }
+            Write-Info "torch is installed but CPU-only - reinstalling from the CUDA index"
+        }
+    }
+    if ($NonInteractive) {
+        Write-Info "NVIDIA GPU detected; non-interactive, so skipping the ~3 GB CUDA download. Run:"
+        Write-Host  "       uv pip install torch torchvision --index-url $TorchIndexUrl" -ForegroundColor White
+        return
+    }
+    Write-Host ""
+    Write-Host "  An NVIDIA GPU was detected." -ForegroundColor White
+    Write-Host "    SAM3 grounding (locating what to circle) wants the CUDA build of torch;" -ForegroundColor DarkGray
+    Write-Host "    the wheel on PyPI is CPU-only and makes a call take about a minute." -ForegroundColor DarkGray
+    Write-Host "    About 3 GB from $TorchIndexUrl." -ForegroundColor DarkGray
+    $ans = Read-Host "    Install the CUDA build now? [Y/n]"
+    if ($ans.Trim() -match '^(n|no)$') {
+        Write-Info "Skipped - requirements.txt will pull the CPU build"
+        return
+    }
+    Invoke-Native "uv pip install (torch)" { uv pip install --python $py torch torchvision --index-url $TorchIndexUrl } -AllowFail | Out-Null
+}
+
 function Setup-Venv {
     # Create (if missing) a uv venv in $Dir and install its requirements.txt.
-    param([string]$Name, [string]$Dir)
+    param([string]$Name, [string]$Dir, [switch]$WithTorch)
     $venv = Join-Path $Dir ".venv"
-    $pyRel = if ($Script:OnWindows) { "Scripts\python.exe" } else { "bin/python" }
-    $py = Join-Path $venv $pyRel
+    $py = Get-VenvPython $Dir
     Push-Location $Dir
     try {
         if (-not ((Test-Path $venv) -and (Test-Path $py))) {
@@ -193,12 +248,38 @@ function Setup-Venv {
         } else {
             Write-Info "$Name .venv already exists"
         }
+        if ($WithTorch) { Install-Torch -Dir $Dir }
         $req = Join-Path $Dir "requirements.txt"
         if (-not (Test-Path $req)) { Exit-WithError "requirements.txt not found in $Dir." }
         Write-Info "Installing $Name dependencies (uv pip install -r requirements.txt)"
-        Invoke-Native "uv pip install ($Name)" { uv pip install -r requirements.txt } | Out-Null
+        # --python: name the target interpreter. With a conda environment active
+        # (miniconda auto-activates `base`), uv installs into THAT rather than the
+        # .venv we just made, and the whole dependency set lands somewhere agentY
+        # never looks - an install that reports success and imports nothing.
+        Invoke-Native "uv pip install ($Name)" { uv pip install --python $py -r requirements.txt } | Out-Null
     } finally { Pop-Location }
     Write-Success "$Name environment ready"
+}
+
+function Test-Environment {
+    # Import-check every dependency agentY names, in the venv that will run it.
+    # Most of them are also somebody else's transitive dep, so a gap in
+    # requirements.txt otherwise stays invisible until the machine that resolved
+    # differently quietly loses a feature.
+    param([string]$Dir)
+    $py     = Get-VenvPython $Dir
+    $script = Join-Path (Join-Path $Dir "scripts") "check_env.py"
+    if (-not ((Test-Path $py) -and (Test-Path $script))) {
+        Write-Info "Dependency check skipped (no venv python or scripts/check_env.py)"
+        return
+    }
+    & $py $script --gpu | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        Write-Fail "Required dependencies are missing - see the list above."
+        Write-Info "Re-run after fixing:  .venv\Scripts\python.exe scripts\check_env.py"
+    } else {
+        Write-Success "Every required dependency imports"
+    }
 }
 
 function Ensure-EnvFile {
@@ -253,7 +334,7 @@ Write-Host "  repo root: $ProjectRoot" -ForegroundColor DarkGray
 Write-Host "  siblings : $ParentDir" -ForegroundColor DarkGray
 
 # -- 1. Preflight -------------------------------------------------------------
-Write-Header "1 / 6  Preflight"
+Write-Header "1 / 7  Preflight"
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     Exit-WithError "'git' is not on PATH. Install Git and re-run."
 }
@@ -264,7 +345,7 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 Write-Success "uv found: $(uv --version)"
 
 # -- 2. Sibling repos (agenty_core, agentY-mcp) -------------------------------
-Write-Header "2 / 6  Sibling repos"
+Write-Header "2 / 7  Sibling repos"
 $CoreDir = Join-Path $ParentDir "agenty_core"
 Ensure-Repo -Name "agenty_core" -Url "https://github.com/szprivate/agenty_core.git" -Dir $CoreDir -Required
 if (-not (Test-Path (Join-Path $CoreDir "pyproject.toml"))) {
@@ -279,11 +360,11 @@ if (-not $SkipMcp) {
 }
 
 # -- 3. agentY environment ----------------------------------------------------
-Write-Header "3 / 6  agentY environment"
-Setup-Venv -Name "agentY" -Dir $ProjectRoot
+Write-Header "3 / 7  agentY environment"
+Setup-Venv -Name "agentY" -Dir $ProjectRoot -WithTorch
 
 # -- 4. Secrets (.env) --------------------------------------------------------
-Write-Header "4 / 6  Secrets (.env)"
+Write-Header "4 / 7  Secrets (.env)"
 $EnvFile = Ensure-EnvFile $ProjectRoot
 if ($NonInteractive) {
     Write-Info "Non-interactive: leaving .env values as-is. Edit $EnvFile to set keys."
@@ -297,7 +378,7 @@ $null     = Read-Secret $EnvFile "DASHSCOPE_API_KEY" "DashScope / Alibaba Model 
 Write-Success "agentY .env ready ($EnvFile)"
 
 # -- 5. ComfyUI: locate + install the sidebar node ----------------------------
-Write-Header "5 / 6  ComfyUI sidebar node"
+Write-Header "5 / 7  ComfyUI sidebar node"
 $ResolvedComfy = $null
 if ($SkipComfyNode) {
     Write-Info "Skipping ComfyUI node install (-SkipComfyNode)"
@@ -364,7 +445,7 @@ if ($SkipComfyNode) {
 }
 
 # -- 6. agentY-mcp environment (optional) -------------------------------------
-Write-Header "6 / 6  agentY-mcp environment"
+Write-Header "6 / 7  agentY-mcp environment"
 if ($SkipMcp -or -not (Test-Path (Join-Path $McpDir "requirements.txt"))) {
     Write-Info "Skipping agentY-mcp environment."
 } else {
@@ -376,6 +457,10 @@ if ($SkipMcp -or -not (Test-Path (Join-Path $McpDir "requirements.txt"))) {
     if (-not (Test-Placeholder $comfyKey)) { Set-EnvValue $mcpEnv "COMFYUI_API_KEY" $comfyKey; Write-Info "Propagated COMFYUI_API_KEY to agentY-mcp .env" }
     Write-Success "agentY-mcp ready ($McpDir)"
 }
+
+# -- 7. Verify ----------------------------------------------------------------
+Write-Header "7 / 7  Dependency check"
+Test-Environment -Dir $ProjectRoot
 
 # -- Done ---------------------------------------------------------------------
 Write-Header "Setup complete"

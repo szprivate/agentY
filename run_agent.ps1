@@ -265,14 +265,20 @@ if ($skipUpdate) {
 }
 
 try {
-    # Activate the virtual environment (create it if missing)
+    # Activate the virtual environment (create it if missing). Every install below
+    # names the venv's interpreter explicitly: with a conda environment active
+    # (miniconda auto-activates `base` in a fresh shell) both uv and a bare `pip`
+    # install into THAT instead, and the packages land somewhere agentY never
+    # looks - the failure mode is a dependency that is "installed" and still
+    # missing at import time.
     $venvActivate = Join-Path $ProjectRoot ".venv\Scripts\Activate.ps1"
+    $venvPy       = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
     if (-not (Test-Path $venvActivate)) {
         Write-Host "[run_agent] .venv not found - creating virtual environment..." -ForegroundColor Yellow
         python -m venv .venv
         & $venvActivate
         Write-Host "[run_agent] Installing dependencies..." -ForegroundColor Yellow
-        pip install -r requirements.txt
+        & $venvPy -m pip install -r requirements.txt
     } else {
         & $venvActivate
     }
@@ -282,12 +288,22 @@ try {
     if ($Script:DepsChanged.Count -gt 0) {
         Write-Host "[update] Dependencies changed in: $($Script:DepsChanged -join ', ') - reinstalling..." -ForegroundColor Cyan
         $uv = Get-Command uv -ErrorAction SilentlyContinue
-        if ($uv) { uv pip install -r requirements.txt | Out-Host }
-        else { pip install -r requirements.txt | Out-Host }
+        if ($uv) { uv pip install --python $venvPy -r requirements.txt | Out-Host }
+        else { & $venvPy -m pip install -r requirements.txt | Out-Host }
         if ($LASTEXITCODE -ne 0) {
             Write-Host "[update] Dependency install returned $LASTEXITCODE - check the output above." -ForegroundColor Yellow
         }
         Write-Host ""
+    }
+
+    # Cheap sanity check on the venv (spec lookups only, ~0.3s). Silent unless
+    # something required is missing - a venv can fall behind requirements.txt
+    # without a pull ever touching it, and the symptom is otherwise a feature
+    # that quietly does nothing.
+    $checkEnv = Join-Path $ProjectRoot "scripts\check_env.py"
+    if (Test-Path $checkEnv) {
+        python $checkEnv --quiet | Out-Host
+        if ($LASTEXITCODE -ne 0) { Write-Host "" }
     }
 
     # Map -LlmQueryTemplates "provider,model" -> env vars consumed by create_pipeline()
