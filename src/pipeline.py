@@ -493,6 +493,12 @@ class Pipeline:
         # any reference failed, STOP and ask"). Nothing is executed at turn end
         # while this is set. Per-turn, like the fields above.
         self._hook_run_stopped: dict | None = None
+        # Who asked to approve this turn's plan before anything runs (None = nobody,
+        # the normal case), and whether they have since answered. Both per-turn; the
+        # answer itself rides across turns on the session's plan_awaiting_reply.
+        self._plan_approval = None
+        self._plan_gate_open: bool = False
+        self._plan_gate_fired: bool = False
         # Outputs produced mid-turn by run_workflow_now (chained hook stages).
         # Tracked so they survive the end-of-turn current_output_paths reset and
         # still get staged onto the canvas. Empty on every non-chain turn.
@@ -913,7 +919,13 @@ class Pipeline:
             Args:
                 request: The multi-part request to break down.
             """
-            return await _run_specialist(self._planner_agent, "PLANNER", request)
+            from src.utils.plan_gate import plan_note
+            steps = await _run_specialist(self._planner_agent, "PLANNER", request)
+            # The instruction rides back with the plan itself: told only in a system
+            # prompt several thousand tokens earlier, "say it before you start" is
+            # the first thing to go when the model gets busy.
+            return steps + "\n\n" + plan_note(getattr(self, "_plan_approval", None),
+                                              bool(getattr(self, "_plan_gate_open", False)))
 
         @_tool
         async def apply_canvas_hooks(resolutions: list, run_now: bool = False) -> str:
@@ -1000,6 +1012,9 @@ class Pipeline:
                              + str(self._hook_run_stopped.get("reason", "")) + ") — "
                              "nothing more runs this turn. Reply to the user instead.",
                 })
+            gate = self._plan_gate_refusal()
+            if gate:
+                return json.dumps(gate)
             try:
                 cap = int(_os.environ.get("AGENTY_MAX_CANVAS_BATCH", "25") or "25")
             except ValueError:
@@ -1134,6 +1149,9 @@ class Pipeline:
                              + str(self._hook_run_stopped.get("reason", "")) + ") — "
                              "nothing more runs this turn. Reply to the user instead.",
                 })
+            gate = self._plan_gate_refusal()
+            if gate:
+                return json.dumps(gate)
             base = self._session.current_output_paths
             before = len(base)
             brief = self._last_brainbriefing_json or "{}"
@@ -1361,6 +1379,9 @@ class Pipeline:
                 return [{"gen": e["gen"], "prompt": e["prompt"], "from": e["from"],
                          "output": e["output_path"]} for e in h]
 
+            gate = self._plan_gate_refusal()
+            if gate:
+                return json.dumps(gate)
             base = getattr(self, "_canvas_base_prompt", None)
             if not isinstance(base, dict) or not base:
                 return json.dumps({"error": "no on-canvas graph is loaded this turn — open "
@@ -1578,6 +1599,15 @@ class Pipeline:
         what I already queued finish, just go no further".
         """
         paths = _get_workflow_signal()
+        # A plan still waiting to be approved runs nothing, including the keep-live
+        # canvas run — that one is queued by a producer's injection rather than by a
+        # tool call, so the refusals never see it and this is where it stops.
+        if self._plan_gate_refusal(announce=False) is not None:
+            if self._canvas_keeplive_run or paths:
+                self._plan_gate_fired = True
+                _push_progress("✋ Holding the run until the plan is approved.")
+            self._canvas_keeplive_run = False
+            return []
         stop = self._hook_run_stopped
         if not stop:
             return paths
@@ -1923,6 +1953,18 @@ class Pipeline:
             guide = _orch_partial("project_memory")
             pin = pin + (guide + "\n\n" if guide else "") + project_ctx + "\n\n"
 
+        # Plan approval — only where someone actually asked to be asked. Resolved
+        # here, once, from the three places such a standing rule can live (the
+        # user's message, a hook node's directive, the project's memory), so the
+        # tools that would run work all consult the same verdict. Last of the
+        # blocks: it decides whether anything above it happens this turn.
+        self._plan_approval = self._detect_plan_approval(user_text, project_ctx)
+        if self._plan_approval is not None:
+            from src.utils.plan_gate import approval_state
+            guide = _orch_partial("plan_approval")
+            pin = pin + (guide + "\n\n" if guide else "") + approval_state(
+                self._plan_approval, bool(getattr(self, "_plan_gate_open", False))) + "\n\n"
+
         if isinstance(user_input, list):
             gallery = self._format_image_gallery()
             blocks = list(user_input)
@@ -1993,6 +2035,14 @@ class Pipeline:
         # thing three times it is stuck, and needs different advice, not the same
         # sentence again.
         self._limit_handbacks = {}
+        # Plan approval. The gate is shut for a turn whose plan someone asked to
+        # approve, and stands open for exactly the one turn that follows the user
+        # answering — which is what their last message was, if the flag survived
+        # from the previous turn. Resolved into _plan_approval by the input build.
+        self._plan_gate_open = bool(getattr(self._session, "plan_awaiting_reply", False))
+        self._session.plan_awaiting_reply = False
+        self._plan_approval = None
+        self._plan_gate_fired = False
         self._chain_output_paths = []
         # The QA briefing in force this turn, already resolved by the caller
         # (a canvas qa hook wins over the thread's /qa briefing). None = no QA.
@@ -2036,6 +2086,13 @@ class Pipeline:
         # completion) analyses only what just happened, not the whole window.
         _orch_msg_start = len(getattr(self._orchestrator_agent, "messages", []) or [])
         orch_input = self._build_orchestrator_input(user_input, user_text)
+        # signal_workflow_ready is a module-level tool (the subagents share it), so
+        # its gate has to travel on the mailbox rather than through `self`.
+        try:
+            from src.utils.workflow_signal import set_execution_hold
+            set_execution_hold(self._plan_gate_refusal(announce=False))
+        except Exception:  # noqa: BLE001
+            pass
         current_input: Any = orch_input
         _snap = self._usage_snapshot(self._orchestrator_agent)
         # Drop any tool-activity / canvas-patch left over from a previous turn.
@@ -2308,6 +2365,9 @@ class Pipeline:
             # Log on ANY exit: normal completion, exception, or cancellation
             # (user /stop or a hang) — so every request lands in the log.
             self._log_orchestrator()
+            # Same reason: a gated turn that died mid-way still handed the ball to
+            # the user, and must not leave the queue held shut for the next one.
+            self._arm_plan_gate()
         _trace("pipeline.stream_async: orchestrator done")
 
     # ── Internal helpers ─────────────────────────────────────────────── #
@@ -2616,6 +2676,70 @@ class Pipeline:
             if self._verbose:
                 print(f"[project-memory] context error: {exc}")
             return ""
+
+    def _detect_plan_approval(self, user_text: str, project_ctx: str = ""):
+        """Who, if anyone, asked to approve the plan before anything runs.
+
+        Three places a standing "show me first" can live, in the order they beat
+        each other: the user's own message this turn, the directives on the hook
+        nodes they wired, and the project's memory. The user's message can also
+        *waive* the rule — "just do it" — because a rule they set is theirs to
+        suspend, and the alternative is a user arguing with their own hook node.
+        """
+        from src.utils.plan_gate import find_approval_request, waived
+        if waived(user_text):
+            return None
+        sources = [("the user's message", user_text)]
+        for h in (self._canvas_hooks or []):
+            if isinstance(h, dict):
+                sources.append((f"hook {h.get('hook_node_id')}'s directive",
+                                str(h.get("directive") or "")))
+        if project_ctx:
+            sources.append(("the project's memory", project_ctx))
+        return find_approval_request(sources)
+
+    def _plan_gate_refusal(self, announce: bool = True) -> dict | None:
+        """The refusal a run tool returns while the plan is still awaiting a yes.
+
+        Open by default: this is only ever closed when :meth:`_detect_plan_approval`
+        found someone asking to be asked, and it re-opens for one turn as soon as
+        the user has spoken again (see :meth:`_arm_plan_gate`). Pass
+        ``announce=False`` to build the payload without saying anything — the hold
+        is seeded at the start of every gated turn, whether or not it ever fires.
+        """
+        req = getattr(self, "_plan_approval", None)
+        if req is None or getattr(self, "_plan_gate_open", False):
+            return None
+        from src.utils.plan_gate import execution_refusal
+        if announce:
+            self._plan_gate_fired = True
+            _push_progress("✋ The plan was asked to be approved first — holding.")
+        return execution_refusal(req)
+
+    def _arm_plan_gate(self) -> None:
+        """At the end of a turn, decide whether the next one may execute.
+
+        Only a gate that actually *stopped* something arms the next turn: work was
+        wanted, the user was handed the plan instead, and their answer — in
+        whatever words — is what releases it. A gated turn that never tried to run
+        anything (a question, a chat about the graph) has put no plan to anyone and
+        leaves the gate shut. Neither does a turn that ran with the gate open: the
+        next request is new work, and the standing "ask me first" covers it too.
+
+        The clean path doesn't need this at all — a reply that is just "yes" or
+        "go ahead" reads as the approval it is (:func:`plan_gate.waived`). This is
+        the backstop for the ones that don't, so an unusual "sounds perfect, ship
+        it" can never leave the user re-approving the same plan forever.
+        """
+        try:
+            from src.utils.workflow_signal import hold_fired, set_execution_hold
+            fired = bool(getattr(self, "_plan_gate_fired", False)) or hold_fired()
+            set_execution_hold(None)
+            if fired and getattr(self, "_plan_approval", None) is not None \
+                    and not getattr(self, "_plan_gate_open", False):
+                self._session.plan_awaiting_reply = True
+        except Exception:  # noqa: BLE001
+            pass
 
     def _auto_save_memory(self, user_text: str, raw_json: str) -> None:
         """Append one trimmed, verbatim request-log line to long-term memory.

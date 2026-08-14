@@ -21,6 +21,7 @@ node, ready to wire into your next step.*
 - [The chat panel](#the-chat-panel)
   - [Talking to a turn that is already running](#talking-to-a-turn-that-is-already-running)
 - [Generating & editing](#generating--editing)
+  - [Seeing the plan first](#seeing-the-plan-first)
 - [Slash commands](#slash-commands)
 - [**The hook system**](#the-hook-system)  ← the most powerful part
 - [Checking outputs (QA)](#checking-outputs-qa)
@@ -179,6 +180,28 @@ graph** (staged into ComfyUI's `input` dir), so the result is immediately
 wireable into your next workflow. The chat carries the agent's *text*; the media
 lands on the canvas. Toggle **🖼 autograph** off if you'd rather the agent not
 place nodes automatically.
+
+### Seeing the plan first
+
+Anything that takes more than one step — a graph with several hooks, a chain of
+stages, a multi-part request — is announced before it happens: the agent writes
+the plan into the chat as a short numbered list and then gets on with it. You are
+not asked to confirm, because you can read it while it works and interrupt with
+**↳** (see [talking to a running turn](#talking-to-a-turn-that-is-already-running))
+if it got you wrong.
+
+If you'd rather it **wait**, say so — anywhere the agent reads:
+
+- in your message: *"Show me the plan and wait for my go before you run anything"*
+- in a hook directive, where it becomes a standing rule for that graph:
+  *"Ask me first before you start generating"*
+- in the project's memory, where it applies to every thread on that project
+
+Then nothing runs until you answer: the tools that would generate, queue or
+execute refuse for that turn, and the panel says **✋ holding**. Your next message
+releases it — a *yes* runs the plan as stated, a change is applied first. One
+round trip, not one per step; the next new request asks again. To override a
+standing rule for a single turn, just say *"go ahead"* or *"just do it"*.
 
 ---
 

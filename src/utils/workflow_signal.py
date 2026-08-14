@@ -14,6 +14,43 @@ import threading
 
 _lock = threading.Lock()
 _pending_paths: list[str] = []
+_hold: dict | None = None
+_hold_fired: bool = False
+
+
+def set_execution_hold(payload: dict | None) -> None:
+    """Refuse every ``signal_workflow_ready`` this turn, answering with *payload*.
+
+    ``signal_workflow_ready`` is a module-level tool shared with the subagents, not
+    a closure over the pipeline, so the one place both can see is this mailbox —
+    the same bus the paths already travel on. Set at the start of a turn whose plan
+    the user asked to approve, cleared at the end of it. ``None`` lifts the hold.
+    """
+    global _hold, _hold_fired
+    with _lock:
+        _hold = dict(payload) if payload else None
+        _hold_fired = False
+
+
+def execution_hold() -> dict | None:
+    """The refusal in force, or None when signalling is allowed."""
+    global _hold_fired
+    with _lock:
+        if not _hold:
+            return None
+        _hold_fired = True
+        return dict(_hold)
+
+
+def hold_fired() -> bool:
+    """Whether the hold actually stopped something since it was set.
+
+    The difference matters at the end of the turn: a held turn that never tried
+    to run anything (a question, a chat) has not put a plan to the user, so it
+    must not open the gate for the next one.
+    """
+    with _lock:
+        return _hold_fired
 
 
 def append_workflow_path(path: str) -> None:

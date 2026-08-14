@@ -12,6 +12,12 @@ line; handle producers before their consumers. (Hooks the user bypassed or muted
 are filtered out, so every hook listed is active.) The graph is **already captured**
 server-side — do **not** call `prepare_workflow` or `run_research` for these.
 
+**Say the plan first.** Before you start working the hooks, write the order you
+will take them in as a short numbered list in the chat — one line per hook: what
+it produces and where that goes. Then carry straight on and do it; you are telling
+the user, not asking them. Wait for a reply only if a `[PLAN APPROVAL]` block says
+someone asked to approve it first.
+
 **`place_canvas_text(hook_node_id, text)`** — delivers a single produced string to
 the input the hook's output feeds and drops an `agentY text` node (a wireable
 STRING) carrying your written value onto the canvas. How it's delivered is the

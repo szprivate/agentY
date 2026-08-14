@@ -58,6 +58,7 @@ class AgentSession(BaseModel):
     last_info_response: str | None = None  # last response from the Info agent (e.g. a crafted prompt), injected into the Query Templates when relevant
     last_story_response: str | None = None  # last text the Story agent produced (synopsis or scenes), injected into the next story turn for Mode A→B handoff and refinements
     generated_images: list[GeneratedImage] = Field(default_factory=list)  # ordered gallery of images generated in this thread, referenceable by index/description
+    plan_awaiting_reply: bool = False  # a plan was put to the user for approval and they haven't answered yet; their next message opens the execution gate for one turn
 
 
 class TriageResult(BaseModel):

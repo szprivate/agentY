@@ -36,15 +36,19 @@ def _stub(**over):
         _qa_retry=None,
         _heal_exec_failure=lambda *a, **k: None,
         _limit_handbacks={},
+        _plan_approval=None,
+        _plan_gate_open=False,
     )
     base.update(over)
     ns = SimpleNamespace(**base)
     # Real Pipeline methods — bind them, don't reimplement them, so these tests
     # keep exercising what the tool actually calls (including the hard-limit check
-    # that stands between build_batch and the queue).
+    # that stands between build_batch and the queue, and the plan gate that stands
+    # in front of both).
     ns._run_canvas_batch = Pipeline._run_canvas_batch.__get__(ns)
     ns._batch_limit_refusal = Pipeline._batch_limit_refusal.__get__(ns)
     ns._count_handback = Pipeline._count_handback.__get__(ns)
+    ns._plan_gate_refusal = Pipeline._plan_gate_refusal.__get__(ns)
     return ns
 
 

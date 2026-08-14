@@ -33,7 +33,19 @@ def signal_workflow_ready(workflow_path: str) -> str:
                        (the same path returned by ``get_workflow_template`` or
                        ``save_workflow`` and used in ``update_workflow``).
     """
-    from src.utils.workflow_signal import append_workflow_path
+    from src.utils.workflow_signal import append_workflow_path, execution_hold
+
+    # A turn whose plan the user asked to approve holds the queue shut until they
+    # have answered. Refusing here — while the agent still has the turn — is what
+    # lets it present the plan instead of announcing a run that never happened.
+    hold = execution_hold()
+    if hold:
+        try:
+            from agenty_core.utils.progress_signal import push as _push
+            _push("✋ The plan was asked to be approved first — holding.")
+        except Exception:  # noqa: BLE001
+            pass
+        return json.dumps(hold)
 
     p = Path(workflow_path)
     if not p.exists():

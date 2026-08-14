@@ -995,12 +995,15 @@ def plan_lines(hooks: list) -> list[str]:
     order = " → ".join(str(h.get("hook_node_id")) for h in hooks)
     out = [
         "\nRUN PLAN (derived from the wiring — follow it):\n"
-        f"  1. Work the hooks in this order: {order}."
+        "  1. Say this plan in the chat before you start on it — one short numbered "
+        "line per hook, in your own words. Then get on with it: it is an announcement, "
+        "not a question (wait for an answer only if a [PLAN APPROVAL] block says to)."
     ]
+    out.append(f"  2. Work the hooks in this order: {order}.")
     if gating:
         ids = ", ".join(sorted(gating, key=lambda x: (len(x), x)))
         out.append(
-            f"  2. Hook(s) {ids} must be RUN THIS TURN, not queued — a later hook's "
+            f"  3. Hook(s) {ids} must be RUN THIS TURN, not queued — a later hook's "
             "directive is conditional on how they turn out. When such a hook generates, "
             "call apply_canvas_hooks(..., run_now=true) (or run_workflow_now for a single "
             "workflow): both execute immediately and return per-variant success/failure, "
@@ -1014,7 +1017,7 @@ def plan_lines(hooks: list) -> list[str]:
         deps = sorted(producers.get(str(hid), ()), key=lambda x: (len(x), x))
         dep_txt = f" (reads hook {', '.join(deps)})" if deps else ""
         out.append(
-            f"  3. Hook {hid} is CONDITIONAL{dep_txt}: evaluate its condition against the "
+            f"  4. Hook {hid} is CONDITIONAL{dep_txt}: evaluate its condition against the "
             "results you actually have. If the condition to stop is met, call "
             'stop_hook_run(reason="…", question="…") and reply — do not queue more work. '
             "If it is not met, carry on normally."
