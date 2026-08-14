@@ -1027,9 +1027,11 @@ class Pipeline:
             except ValueError:
                 cap = 25
             # Whatever this batch produces belongs to the hook that asked for it.
-            self._tag_run_outputs(self._hook_for_targets(
+            hook = self._hook_for_targets(
                 str(r.get("target_node_id", r.get("node_id", "")) or "")
-                for r in (resolutions or []) if isinstance(r, dict)))
+                for r in (resolutions or []) if isinstance(r, dict))
+            self._tag_run_outputs(hook)
+            labels: list = []
             if resolutions is None or (isinstance(resolutions, list) and not resolutions):
                 # Deliberately empty: "run the graph exactly as it stands". The case
                 # is a canvas whose every hook was answered from memory — there is
@@ -1038,7 +1040,8 @@ class Pipeline:
                 prompts, notes = [_copy.deepcopy(base)], [
                     "no resolutions given — running the canvas as it stands"]
             else:
-                prompts, notes = _build_batch(base, list(resolutions), cap=cap)
+                prompts, notes = _build_batch(base, list(resolutions), cap=cap,
+                                              labels=labels)
             if not prompts:
                 return json.dumps({"error": "no batch was produced", "notes": notes})
             # Every variant is a complete graph, so measure them rather than the
@@ -1055,6 +1058,11 @@ class Pipeline:
                 if not run_now:
                     _append(str(fp))
                 paths.append(str(fp))
+            # Name each variant by the value that makes it different, BEFORE any of
+            # it runs — five reference frames are five different things, and one
+            # role for the batch cannot say which is which. Applies to the queued
+            # path too: same files, same names, whenever they get executed.
+            self._name_variants(paths, labels, hook)
             if not run_now:
                 if self._verbose:
                     print(f"pipeline: apply_canvas_hooks queued {len(paths)} canvas variant(s).")
@@ -1062,12 +1070,13 @@ class Pipeline:
                     "status": "queued",
                     "count": len(paths),
                     "notes": notes,
+                    "variants": self._variant_report(paths, labels),
                     "message": (
                         f"{len(paths)} canvas graph variant(s) queued for execution — "
                         "your work here is done; do NOT call signal_workflow_ready."
                     ),
                 })
-            return await self._run_canvas_batch(paths, notes)
+            return await self._run_canvas_batch(paths, notes, labels)
 
         @_tool
         async def stop_hook_run(reason: str, question: str = "",
@@ -1560,7 +1569,8 @@ class Pipeline:
                 run_workflow_now, add_canvas_workflow, set_canvas_node_params,
                 place_canvas_text, iterate_step]
 
-    async def _run_canvas_batch(self, paths: list[str], notes: list) -> str:
+    async def _run_canvas_batch(self, paths: list[str], notes: list,
+                                labels: list | None = None) -> str:
         """Execute canvas-hook variants NOW and report per-variant outcomes.
 
         The deferred path can't answer "did they work?" — it runs after the turn.
@@ -1596,12 +1606,7 @@ class Pipeline:
         errors = _get_exec_errors()
         by_path = {str(e.get("workflow_path") or ""): str(e.get("error") or "failed")
                    for e in errors}
-        variants = []
-        for i, p in enumerate(paths):
-            v = {"variant": i + 1, "workflow": p, "ok": p not in by_path}
-            if p in by_path:
-                v["error"] = by_path[p]
-            variants.append(v)
+        variants = self._variant_report(paths, labels or [], by_path)
         failed = [v for v in variants if not v["ok"]]
         if self._verbose:
             print(f"pipeline: apply_canvas_hooks(run_now) ran {len(paths)} variant(s), "
@@ -1615,6 +1620,10 @@ class Pipeline:
             "notes": notes,
             "message": (
                 f"{len(paths)} variant(s) ran; {len(failed)} failed. "
+                + ("Each variant's own file(s) are under its `outputs` — use THOSE to "
+                   "say which result is which, never the position in the flat list "
+                   "(a healed member is re-queued and finishes last). "
+                   if any(v.get("outputs") for v in variants) else "")
                 + ("Every variant succeeded — continue with the next hook."
                    if not failed else
                    f"{len(failed)} variant(s) could not be produced even after repair. "
@@ -2824,6 +2833,73 @@ class Pipeline:
         set_run_role(final,
                      declared=bool(declared or role),
                      hook=str((hook or {}).get("hook_node_id") or ""))
+
+    @staticmethod
+    def _variant_label(label: dict) -> str:
+        """The one value that makes a variant itself — usually the prompt.
+
+        A seed is what makes two variants of the SAME thing different; a prompt is
+        what makes them different things. Names the variant after the latter, so
+        "reference frame 3" reads as "Ben, grey suit, late 40s" wherever it turns
+        up later — the node's title, its sidecar, the anchor line in the next turn.
+        """
+        best = ""
+        for slot, val in (label or {}).items():
+            param = str(slot).rsplit(".", 1)[-1].lower()
+            if "seed" in param or not isinstance(val, str) or not val.strip():
+                continue
+            text = " ".join(val.split())
+            if any(w in param for w in ("prompt", "text", "description", "caption")):
+                return text[:70]
+            best = best or text[:70]
+        return best
+
+    def _name_variants(self, paths: list, labels: list, hook: dict | None) -> None:
+        """Give every member of a batch its own name, before any of it runs."""
+        if not labels:
+            return
+        try:
+            from src.utils.canvas_hooks import declared_output_role
+            from src.utils.output_tags import set_workflow_role
+        except Exception:  # noqa: BLE001
+            return
+        declared = declared_output_role(hook) if hook else ""
+        for i, path in enumerate(paths):
+            what = self._variant_label(labels[i] if i < len(labels) else {})
+            if not what:
+                continue
+            role = f"{declared}: {what}" if declared else what
+            set_workflow_role(path, role, hook=str((hook or {}).get("hook_node_id") or ""),
+                              variant=i + 1, declared=bool(declared))
+
+    @staticmethod
+    def _variant_report(paths: list, labels: list, errors: dict | None = None) -> list:
+        """Per-variant: what it was made from, and what came out of it.
+
+        The pairing is the point. Without it the agent gets a flat list of files
+        and has to assume they came back in the order they went in — which holds
+        right up until one member fails, is healed, and is re-queued behind the
+        others. A batch of character references that quietly transposes two of
+        them produces a video that looks fine and stars the wrong people.
+        """
+        try:
+            from src.utils.output_tags import outputs_of
+        except Exception:  # noqa: BLE001
+            def outputs_of(_p):  # noqa: ANN001, ANN202
+                return []
+        out = []
+        for i, p in enumerate(paths):
+            v = {"variant": i + 1, "workflow": p, "ok": p not in (errors or {})}
+            if errors and p in errors:
+                v["error"] = errors[p]
+            if i < len(labels) and labels[i]:
+                v["made_from"] = {k: (" ".join(str(val).split())[:90] if isinstance(val, str)
+                                      else val) for k, val in labels[i].items()}
+            produced = outputs_of(p)
+            if produced:
+                v["outputs"] = produced
+            out.append(v)
+        return out
 
     def _hook_for_targets(self, node_ids) -> dict | None:
         """The hook whose output feeds any of *node_ids* — who asked for this run."""

@@ -35,6 +35,9 @@ _lock = threading.Lock()
 _roles: dict[str, tuple] = {}    # resolved path -> (role, meta), frozen on first read
 _run_role: str = ""              # the role for whatever the run in flight produces
 _run_meta: dict = {}             # extra fields the sidecar should carry (hook, prompt)
+_wf_roles: dict[str, tuple] = {}   # workflow path -> (role, meta) for what IT produces
+_sources: dict[str, str] = {}      # output path -> the workflow that produced it
+_wf_outputs: dict[str, list] = {}  # workflow path -> its outputs, in the order collected
 
 
 def _key(path) -> str:
@@ -49,6 +52,9 @@ def clear() -> None:
     global _run_role, _run_meta
     with _lock:
         _roles.clear()
+        _wf_roles.clear()
+        _sources.clear()
+        _wf_outputs.clear()
         _run_role = ""
         _run_meta = {}
     reset_dir_cache()
@@ -66,6 +72,45 @@ def set_run_role(role: str, **meta) -> None:
     with _lock:
         _run_role = " ".join(str(role or "").split())[:_MAX_ROLE]
         _run_meta = {k: v for k, v in meta.items() if v not in (None, "", [], {})}
+
+
+def set_workflow_role(workflow_path, role: str, **meta) -> None:
+    """Declare what one MEMBER of a batch produces, before it is submitted.
+
+    A batch of five variants is five different things — five characters, five
+    shots — and one role for the whole run cannot say which is which. The member
+    is known by the workflow file it runs from, and that is known before anything
+    executes, so by the time a file lands there is already a precise answer
+    waiting for it. Doing this afterwards would be too late: the panel drops the
+    node (and titles it) the moment the file appears.
+    """
+    r = " ".join(str(role or "").split())[:_MAX_ROLE]
+    if not r:
+        return
+    with _lock:
+        _wf_roles[_key(workflow_path)] = (r, {k: v for k, v in meta.items()
+                                              if v not in (None, "", [], {})})
+
+
+def note_source(output_path, workflow_path) -> None:
+    """Record which workflow produced *output_path*, as the executor collects it.
+
+    This is the join between "what was asked for" and "what came out". It is also
+    what lets a batch report per-variant outputs at all: members are monitored
+    concurrently and a healed one is re-queued, so the order files arrive in is
+    not the order they were submitted in, and a flat list is a guess.
+    """
+    if not output_path or not workflow_path:
+        return
+    with _lock:
+        _sources[_key(output_path)] = _key(workflow_path)
+        _wf_outputs.setdefault(_key(workflow_path), []).append(str(output_path))
+
+
+def outputs_of(workflow_path) -> list:
+    """The outputs that workflow produced, in the order they were collected."""
+    with _lock:
+        return list(_wf_outputs.get(_key(workflow_path), ()))
 
 
 def tag(path, role: str, **meta) -> None:
@@ -89,7 +134,10 @@ def _resolve(path) -> tuple[str, dict]:
     with _lock:
         if k in _roles:
             return _roles[k]
-        role, meta = _run_role, dict(_run_meta)
+        # The member that produced it knows better than the run it belonged to.
+        found = _wf_roles.get(_sources.get(k, ""))
+        role, meta = found if found else (_run_role, _run_meta)
+        meta = dict(meta or {})
         if role:
             _roles[k] = (role, meta)
     if role:

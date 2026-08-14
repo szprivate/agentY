@@ -519,7 +519,8 @@ def _resolve_group(members: list) -> tuple[list, list[str]]:
     return rows, notes
 
 
-def build_batch(base_prompt: dict, resolutions: list, cap: int = 25) -> tuple[list[dict], list[str]]:
+def build_batch(base_prompt: dict, resolutions: list, cap: int = 25,
+                labels: list | None = None) -> tuple[list[dict], list[str]]:
     """Expand *base_prompt* into a mutated batch from *resolutions*.
 
     Each resolution mutates one node's input across a list of values. By default the
@@ -531,6 +532,11 @@ def build_batch(base_prompt: dict, resolutions: list, cap: int = 25) -> tuple[li
     (e.g. to name each output). Groups (and ungrouped axes) then cross-product with
     each other. Capped at *cap*. Returns ``(prompts, notes)`` where *notes* explains
     any skips/truncation.
+
+    Pass a list as *labels* and it is filled with one ``{"<node>.<param>": value}``
+    dict per prompt, in the same order — what each variant was actually made from.
+    Without it a batch of five is five anonymous graphs, and pairing "the third
+    one" with "the reference frame for Ben" is left to whoever is counting.
     """
     notes: list[str] = []
     # Bucket resolutions into groups, preserving encounter order. Each ungrouped
@@ -580,8 +586,10 @@ def build_batch(base_prompt: dict, resolutions: list, cap: int = 25) -> tuple[li
     unresolved: dict = {}
     for combo in combos:
         p = copy.deepcopy(base_prompt)
+        label: dict = {}
         for row in combo:                       # each row is one group's aligned assignments
             for (nid, param, val) in row:
+                label[f"{nid}.{param}"] = val
                 node = p.get(nid)
                 if not isinstance(node, dict):
                     continue
@@ -591,6 +599,8 @@ def build_batch(base_prompt: dict, resolutions: list, cap: int = 25) -> tuple[li
                     # writing a literal that would disconnect it.
                     unresolved.setdefault(f"{nid}.{param}", set()).add(str(val)[:60])
         prompts.append(p)
+        if labels is not None:
+            labels.append(label)
     for slot, vals in unresolved.items():
         notes.append(
             f"{slot} is a connection input — could not wire "

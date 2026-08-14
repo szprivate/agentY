@@ -31,6 +31,9 @@ _BOUND = (
     "_hook_output_role",
     "_hook_for_targets",
     "_caption_from_brief",
+    "_name_variants",
+    "_variant_report",
+    "_variant_label",
 )
 
 

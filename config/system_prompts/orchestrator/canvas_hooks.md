@@ -57,6 +57,26 @@ value(s) for the target — the amount depends on the directive:
   - seed variations → `{"target_node_id": "<feeds id>", "param": "<feeds input>", "mode": "sweep_seed", "count": <N>}`.
   - iterate a folder → `{"target_node_id": "<feeds id>", "param": "<feeds input>", "mode": "folder", "folder": "<path>", "extensions": ["png","jpg"]}`.
 
+  **Keep track of which variant made which file.** `apply_canvas_hooks` returns a
+  `variants` list: each entry carries `made_from` (the values that produced it) and,
+  once it has run, its own `outputs`. **That** is the mapping from "the reference for
+  Ben" to a file on disk — use it. Never infer it from the position of a file in the
+  flat `outputs` list: members run concurrently and a failed one is repaired and
+  re-queued, so it finishes last and the order silently shifts. Each file is also
+  tagged with the value that made it, so a later turn reading that node sees
+  `← this is: "…"` without you having to remember.
+
+  **Feeding several references to one video/image model.** A `reference_images`-style
+  input takes ONE wire, so N images must arrive batched — the user's graph needs N
+  loaders into an `ImageBatch`/`BatchImagesNode`, or one agentY image collector. Fill
+  them in a **deliberate order** (a collector: one path per line; a batch node: one
+  resolution per slot, `images.image0` first) and then **address them by that order in
+  the prompt**: for Kling, `@image1`, `@image2`, … refer to the 1st, 2nd, … image on
+  that input — e.g. *"@image1 walks past @image2 and hands her the letter"*. Say which
+  is which explicitly rather than describing them in prose and hoping the model
+  matches them up. If the graph has no batch node and no collector, you cannot wire N
+  references — say so and ask the user to add one; do not silently send just the first.
+
   **Pair inputs (zip), don't cross them.** By default resolutions cross-product
   (every image × every video). To run each input **with its match** — e.g. one
   starting image paired with one control video per run — give the paired resolutions

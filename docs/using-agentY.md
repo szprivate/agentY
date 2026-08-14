@@ -424,6 +424,29 @@ role: shot start frame
 Without a stated role, the first two still happen using the directive itself
 (minus the ref note — agentY won't add nodes to your canvas uninvited).
 
+**In a batch, each variant is named separately.** Sweep three character prompts
+through one hook and the three frames come back as *"character reference: Anna,
+red coat, 30s"*, *"…: Ben, grey suit"*, *"…: Cleo, shaved head"* — named after the
+value that produced each one, before it runs. The agent also gets the pairing back
+as data (`variants[].made_from` / `variants[].outputs`), so it never has to assume
+the files came back in the order they went out. They usually do; they don't when a
+generation fails and is repaired, which re-queues it behind the others.
+
+**Feeding those frames to a video model.** The second hook needs somewhere to put
+them: a `reference_images`-style input is one wire, so N images have to arrive
+through an `ImageBatch` / `BatchImagesNode` or an [agentY image
+collector](#the-agenty-python-node--collectors) — **you wire that part**, the
+agent fills it. Order then matters, because that's how the prompt addresses them:
+for Kling, `@image1`, `@image2`, … refer to the 1st, 2nd, … image on that input.
+
+```
+@image1 walks past @image2 in the alley and hands her the letter
+```
+
+The agent is told to name them that way rather than describing the characters in
+prose and hoping the model matches them up — so which frame is which stays true
+from the hook that made it to the shot that uses it.
+
 ### Iterative refinement (the `iterate` purpose)
 
 The `iterate` purpose runs an **interactive, multi-turn refine loop** — one

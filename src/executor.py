@@ -505,6 +505,16 @@ async def _process_completed_job(
             saved_paths.append(resolved)
             if collected_paths is not None:
                 collected_paths.append(str(resolved))
+            # Which member produced this file. Batch members are monitored
+            # concurrently and a healed one is re-queued, so the order files
+            # arrive in is not the order they were submitted in — this is the
+            # only place the two are known together. See src.utils.output_tags.
+            if workflow_path:
+                try:
+                    from src.utils.output_tags import note_source
+                    note_source(str(resolved), workflow_path)
+                except Exception:  # noqa: BLE001
+                    pass
             yield f"{pfx}💾 Output: `{resolved}`"
         except Exception as exc:
             yield f"{pfx}⚠️ Could not resolve `{filename}`: {exc}"
