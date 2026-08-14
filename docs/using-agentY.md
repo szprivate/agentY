@@ -513,6 +513,10 @@ retry. Failing a *run* is a different thing, handled by self-healing.
   ⚠️ **It executes arbitrary Python whenever the graph runs** — meant for your
   own, self-hosted, agent-built workflows; don't run baked workflows from
   untrusted sources. Set `AGENTY_PYTHON_NODE_DISABLED=1` to make it a no-op.
+  Like **`agentY text`**, it is placed *by the agent* and is therefore hidden
+  from the add-node menu and the double-click search — both stay fully
+  functional wherever they already sit on a graph. Turn on ComfyUI's
+  **Settings ▸ Enable dev mode options** if you want them offered in search.
 - **Collector nodes** (`agentY image collector` / `agentY video collector`) —
   hand the agent a batch of on-disk files. Their paths live in the node (no
   pre-run needed), so an anchored collector is rendered to the agent as its
