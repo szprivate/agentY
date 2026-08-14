@@ -172,5 +172,44 @@ class VerdictReachesTheAgentTest(unittest.TestCase):
         self.assertNotIn("qa_set", out)
 
 
+class SingleOutputTest(unittest.TestCase):
+    """One output cannot be inconsistent with itself — but say so, don't go quiet.
+
+    The per-file judge marks set-criteria `n/a`. If nothing else spoke, "was that
+    criterion checked or skipped?" would have no answer anywhere.
+    """
+
+    def _verdict(self, paths, briefing=QaBriefing(criteria="one grade across the set")):
+        pipe = pipeline_stub(_qa_briefing=briefing)
+        with mock.patch("src.utils.qa.check_set") as cs, \
+             mock.patch("src.pipeline._push_progress") as push:
+            got = asyncio.run(Pipeline._qa_set_verdict(pipe, paths))
+        return got, cs, push
+
+    def test_a_single_output_is_reported_as_not_applicable(self):
+        got, cs, push = self._verdict(["C:/out/only.png"])
+        self.assertIsNone(got)
+        cs.assert_not_called()
+        self.assertTrue(any("not applicable" in str(c) for c in push.call_args_list),
+                        push.call_args_list)
+
+    def test_no_outputs_at_all_says_nothing(self):
+        got, _cs, push = self._verdict([])
+        self.assertIsNone(got)
+        push.assert_not_called()
+
+    def test_without_a_briefing_it_stays_silent(self):
+        got, _cs, push = self._verdict(["C:/out/only.png"], briefing=None)
+        self.assertIsNone(got)
+        push.assert_not_called()
+
+    def test_the_queued_batch_gets_the_set_verdict_too(self):
+        """Not only run_now — the default path is where most sets are made."""
+        import inspect
+        src = inspect.getsource(Pipeline._astream_orchestrator)
+        self.assertIn("self._qa_set_verdict(", src)
+        self.assertIn("as a SET they miss", src)
+
+
 if __name__ == "__main__":
     unittest.main()

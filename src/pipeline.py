@@ -1671,7 +1671,16 @@ class Pipeline:
         it is shown one image and cannot honestly answer otherwise. That promise
         is only worth making because the question is answered here instead.
         """
-        if not self._qa_briefing or len(paths or []) < 2:
+        if not self._qa_briefing:
+            return None
+        if len(paths or []) < 2:
+            # One output cannot be inconsistent with itself, so a set criterion is
+            # satisfied by default here — but the per-file judge marked it `n/a`
+            # and this would otherwise say nothing at all, leaving "was that
+            # checked or skipped?" unanswerable. Say which.
+            if paths:
+                _push_progress("🔍 QA (set) — not applicable: a single output has "
+                               "nothing to be consistent with.")
             return None
         try:
             from src.utils.qa import check_set
@@ -2335,6 +2344,18 @@ class Pipeline:
                     # Flush executor-phase tool activity after the batch finishes.
                     for _ta in _drain_tools():
                         yield {"tool_activity": _ta}
+
+                    # The set verdict: the criteria only a set can answer, on the
+                    # path that produces most sets. Per-file QA is told to mark
+                    # those n/a because they are checked here — a promise that has
+                    # to hold on the queued batch too, not just on run_now.
+                    _set = await self._qa_set_verdict(list(exec_paths[_outputs_before:]))
+                    if _set and not _set.get("passed"):
+                        yield {"data": ("\n\n🔍 QA — the outputs pass individually, but "
+                                        "as a SET they miss: "
+                                        + "; ".join(_set.get("missed") or [])
+                                        + ". They are all delivered; say the word to "
+                                          "re-run the ones that break it.")}
 
                 # ── Surface members inline-healing couldn't fix ──────────────── #
                 # The executor already healed failed members on the fly (repair_fn
