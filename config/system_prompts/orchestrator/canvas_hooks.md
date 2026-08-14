@@ -105,6 +105,11 @@ value(s) for the target — the amount depends on the directive:
     selects anchor 12 for the first run and 15 for the second. A bare filename is
     accepted as a fallback (a node already loading it is reused, otherwise the
     current source node is cloned onto that file), but a node id is exact — prefer it.
+    Give an **empty string** to leave that input **unwired** for that run — that is
+    how you honour "use a reference where there is one, otherwise leave it empty".
+    Only for inputs that are genuinely optional; emptying a required one fails the
+    run. And connect something that can actually produce the type: an anchor
+    carrying a prompt string is not an image, however convenient its id looks.
   - Everything else is a normal value you author (the prompts, seeds, sizes).
   - `zip_group` them together so the image and the prompts written for it advance
     in lockstep: run 1 gets anchor 12 with its matching prompt, run 2 anchor 15 with

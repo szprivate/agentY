@@ -79,6 +79,21 @@ def _anchor_out_types(hooks) -> dict:
     return out
 
 
+# Slot types that carry no promise about what flows through them: a reroute, an
+# agentY ref note, an unwired-yet MatchType. They pass whatever they were given,
+# so they are compatible with any target rather than with none.
+_WILDCARD_TYPES = {"", "*", "COMFY_MATCHTYPE_V3", "COMFY_MULTITYPE_V3", "ANY"}
+
+
+def _type_fits(anchor_type: str, wire_type: str) -> bool:
+    """Whether an anchor's output can feed an input declared *wire_type*."""
+    a = str(anchor_type or "").strip()
+    w = str(wire_type or "").strip()
+    if not w or w in _WILDCARD_TYPES or a in _WILDCARD_TYPES:
+        return True
+    return a == w or w in {t.strip() for t in a.split(",")}
+
+
 def splice_hook_nodes(prompt: dict, hooks: list | None = None) -> tuple[dict, list[str]]:
     """Return ``(clean_prompt, removed_ids)``.
 
@@ -109,18 +124,43 @@ def splice_hook_nodes(prompt: dict, hooks: list | None = None) -> tuple[dict, li
         return clean, []
     target_types = _target_input_types(hooks)
     anchor_types = _anchor_out_types(hooks)
+    # An anchor drawn through an `agentY ref note` arrives at the hook FROM the
+    # note, so the graph's link names the note while the hook payload reports the
+    # node it wraps. Without this the anchor's type is unknown at exactly the
+    # moment it decides which wire replaces the hook.
+    _roles, wrapped = ref_notes(clean)
     for hid in hook_ids:
         node = clean.get(hid, {}) or {}
         links = _anchor_links(node.get("inputs") or {})
         by_node = anchor_types.get(str(hid), {})
 
+        def _anchor_type(nid, _by=by_node) -> str:
+            nid = str(nid)
+            return _by.get(nid) or _by.get(str(wrapped.get(nid, ""))) or ""
+
         def _source_for(wire_type: str):
-            """The anchor to pass through for a target of *wire_type*."""
+            """The anchor to pass through for a target of *wire_type*, or None.
+
+            Exact type first, then anything compatible (a reroute or a ref note
+            declares a wildcard and carries whatever it was handed). If the target
+            has a declared type and we know the anchors' types, and none of them
+            fits, the answer is **None** — leaving the input unwired. Passing the
+            first anchor through regardless is how a prompt string was wired into
+            an image input: the graph then fails validation at submission, which
+            reads as an executor bug rather than as a hook with nothing suitable
+            on it. Only when no anchor type is known at all (an older frontend
+            that sends none) does the original first-link behaviour apply.
+            """
+            if not links:
+                return None
             if wire_type:
                 for link in links:
-                    if by_node.get(str(link[0]), "") == wire_type:
+                    if _anchor_type(link[0]) == wire_type:
                         return link
-            return links[0] if links else None
+                if any(_anchor_type(link[0]) for link in links):
+                    return next((link for link in links
+                                 if _type_fits(_anchor_type(link[0]), wire_type)), None)
+            return links[0]
 
         # Rewire any consumer of this hook's output back to the hook's source.
         for other in clean.values():
@@ -363,6 +403,15 @@ def _write_input(prompt: dict, node: dict, param: str, value) -> bool:
     inputs = node.setdefault("inputs", {})
     current = inputs.get(param)
     if isinstance(current, list) and len(current) == 2:
+        # An empty value for a wired input means "nothing on this one": disconnect
+        # it. "Use a reference where I have one, otherwise leave the image inputs
+        # empty" is an ordinary directive, and without this there is no way to
+        # express it — the value can't be resolved, so the previous wire stays and
+        # every variant silently gets the same reference. Only valid for an
+        # optional input; a required one then fails validation, which is the truth.
+        if value is None or (isinstance(value, str) and not value.strip()):
+            inputs.pop(param, None)
+            return True
         link = as_connection(prompt, value, current)
         if link is None:
             return False
