@@ -164,5 +164,89 @@ class TextHookChainTests(unittest.TestCase):
         self.assertIn("write & place", line)
 
 
+class ConsumerSideTest(unittest.TestCase):
+    """The other end of the same wire: what the CONSUMER is told it received.
+
+    From the canvas of 2026-08-14 23:23. Hook 30 queues the Kling multishot and
+    its directive opens "You have received two multishot prompts in anchor_0, and
+    a collection of reference images in anchor_1" — while the block told it
+
+        PRODUCER hook 30 (context: no input wired)
+
+    Both producers were wired into it; the frontend files hook→hook links under
+    `prev_links` rather than with the real-node anchors, and the context line only
+    read the latter. So the one hook whose whole job was to combine two upstream
+    results was told it had nothing to combine.
+    """
+
+    @staticmethod
+    def _chain():
+        return [
+            {"hook_node_id": "27", "purpose": "text", "directive": "break the story into shots",
+             "anchors": [{"node_id": "75", "type": "PrimitiveStringMultiline",
+                          "widgets": {"value": "a script"}, "to_input": "anchors.anchor0"}],
+             "targets": [{"node_id": "30", "to_input": "anchors.anchor0",
+                          "to_input_type": "*", "type": "AgentYHook"}]},
+            {"hook_node_id": "5", "purpose": "inline_parameter", "directive": "one pass per prompt",
+             "anchors": [{"node_id": "7", "type": "LoadImage", "widgets": {"image": "m.jpg"},
+                          "to_input": "anchors.anchor0"}],
+             "targets": [{"node_id": "348", "to_input": "prompt", "to_input_type": "STRING"},
+                         {"node_id": "30", "to_input": "anchors.anchor1",
+                          "to_input_type": "*", "type": "AgentYHook"}]},
+            {"hook_node_id": "30", "purpose": "inline_parameter",
+             "directive": "prompts in anchor_0, reference images in anchor_1",
+             "anchors": [],
+             "prev_links": [{"from_hook_id": "27", "to_input": "anchors.anchor0"},
+                            {"from_hook_id": "5", "to_input": "anchors.anchor1"}],
+             "prev_hook_ids": ["27", "5"],
+             "targets": [{"node_id": "283", "to_input": "prompt", "to_input_type": "STRING"}]},
+        ]
+
+    def _line(self, hooks=None):
+        block = describe_hooks(hooks or self._chain(), {})
+        # Not "any line mentioning hook 30" — its producers mention it too.
+        return next(l for l in block.splitlines()
+                    if l.lstrip("- ").startswith(("PRODUCER hook 30 ", "TEXT hook 30 ")))
+
+    def test_a_hook_fed_only_by_hooks_is_not_reported_as_unwired(self):
+        line = self._line()
+        self.assertNotIn("no input wired", line)
+        self.assertIn("the value you produce for hook 27", line)
+        self.assertIn("the value you produce for hook 5", line)
+
+    def test_each_input_is_named_by_the_slot_the_directive_refers_to(self):
+        line = self._line()
+        self.assertIn("anchor_0: the value you produce for hook 27", line)
+        self.assertIn("anchor_1: the value you produce for hook 5", line)
+
+    def test_slots_are_listed_in_their_own_order_not_arrival_order(self):
+        hooks = self._chain()
+        hooks[2]["prev_links"] = list(reversed(hooks[2]["prev_links"]))
+        line = self._line(hooks)
+        self.assertLess(line.index("anchor_0:"), line.index("anchor_1:"))
+
+    def test_a_real_anchor_and_a_chained_hook_sort_together(self):
+        hooks = self._chain()
+        hooks[2]["anchors"] = [{"node_id": "9", "type": "LoadImage",
+                                "widgets": {"image": "extra.png"},
+                                "to_input": "anchors.anchor2"}]
+        line = self._line(hooks)
+        self.assertLess(line.index("anchor_1:"), line.index("anchor_2:"))
+        self.assertIn("anchor_2: node 9 (LoadImage)", line)
+
+    def test_a_hook_with_nothing_at_all_still_says_so(self):
+        hooks = self._chain()
+        hooks[2]["prev_links"] = []
+        hooks[2]["prev_hook_ids"] = []
+        self.assertIn("no input wired", self._line(hooks))
+
+    def test_the_sitrep_no_longer_calls_a_chained_hook_unwired(self):
+        from src.utils.canvas_hooks import sitrep_lines
+        hooks = self._chain()
+        hooks[2]["targets"] = []                       # nothing wired out either
+        text = "\n".join(sitrep_lines(hooks, {}, known=[]))
+        self.assertNotIn("hook 30 has nothing wired in", text)
+
+
 if __name__ == "__main__":
     unittest.main()

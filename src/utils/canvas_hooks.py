@@ -834,16 +834,17 @@ def _all_anchor_inputs(hook: dict, base_prompt: dict | None) -> list:
                 entries.append((str(a["node_id"]), a.get("type"), a.get("widgets"),
                                 a.get("tapped_type"), a.get("tapped"),
                                 str(a.get("role") or "").strip(),
-                                str(a.get("title") or "").strip()))
+                                str(a.get("title") or "").strip(),
+                                str(a.get("to_input") or "")))
     elif hook.get("anchor_node_id") is not None:
         entries.append((str(hook["anchor_node_id"]), hook.get("anchor_type"),
                         hook.get("anchor_widgets"), None, None, "",
-                        str(hook.get("anchor_title") or "").strip()))
+                        str(hook.get("anchor_title") or "").strip(), ""))
 
     roles, wrapped = ref_notes(base_prompt)
     out: list = []
     seen: set = set()
-    for aid, atype, widgets, wire, tapped, sent, title in entries:
+    for aid, atype, widgets, wire, tapped, sent, title, slot in entries:
         # The frontend already resolves a note on the anchor's own wire (so every
         # consumer sees the real node); reading the graph catches the rest — a note
         # elsewhere on that loader, or an older frontend that sends neither.
@@ -868,7 +869,52 @@ def _all_anchor_inputs(hook: dict, base_prompt: dict | None) -> list:
         paths = [str(p) for p in (tapped or []) if str(p).strip()]
         out.append((aid, atype or "?", inputs,
                     (str(wire or "live"), paths) if paths else None,
-                    role or roles.get(aid, ""), title))
+                    role or roles.get(aid, ""), title, slot))
+    return out
+
+
+def _slot_label(to_input: str) -> str:
+    """``anchors.anchor1`` → ``anchor_1``: the name the user writes in a directive.
+
+    Directives say "the prompts in anchor_0, the references in anchor_1" all the
+    time. Listing the inputs without saying which slot each arrived on leaves the
+    agent to guess that mapping from order — and with five references and two
+    chained hooks feeding one node, guessing is exactly what goes wrong.
+    """
+    m = re.search(r"anchor[_\-]?(\d*)$", str(to_input or "").strip(), re.I)
+    if not m:
+        return ""
+    return f"anchor_{m.group(1) or '0'}"
+
+
+def _slot_order(to_input: str) -> int:
+    """Sort key for an anchor slot; unknown slots keep their arrival order."""
+    m = re.search(r"anchor[_\-]?(\d+)$", str(to_input or "").strip(), re.I)
+    return int(m.group(1)) if m else 10_000
+
+
+def _chain_inputs(hook: dict, hook_ids: set) -> list:
+    """``[(slot_name, producing_hook_id), …]`` — the hooks wired into this one.
+
+    The frontend files hook→hook links under ``prev_links`` rather than with the
+    real-node anchors, so a hook fed ONLY by other hooks used to render as "no
+    input wired" — while its own directive talked about anchor_0 and anchor_1.
+    """
+    out: list = []
+    seen: set = set()
+    for link in (hook.get("prev_links") or []):
+        if not isinstance(link, dict):
+            continue
+        hid = str(link.get("from_hook_id") or "")
+        if not hid or hid in seen:
+            continue
+        seen.add(hid)
+        out.append((str(link.get("to_input") or ""), hid))
+    for hid in (hook.get("prev_hook_ids") or []):
+        hid = str(hid)
+        if hid and hid not in seen and hid in hook_ids:
+            seen.add(hid)
+            out.append(("", hid))
     return out
 
 
@@ -1184,7 +1230,8 @@ def sitrep_lines(hooks: list, base_prompt: dict | None = None,
                 f"hook {hid} feeds only {who} — nothing it produces reaches a node that "
                 "renders. Assuming it is a written value, not a generation."
             )
-        if not anchors and not real and not chain and not _is_standin(h):
+        if not anchors and not _chain_inputs(h, ids) and not real and not chain \
+                and not _is_standin(h):
             items.append(
                 f"hook {hid} has nothing wired in and nothing wired out. Assuming its "
                 "directive stands on its own; wire an anchor if it was meant to act on "
@@ -1338,23 +1385,31 @@ def _input_context(hook: dict, base_prompt: dict | None, hook_ids: set,
     directive for content. Real-node inputs list their scalar params (or, for an
     agentY collector, its explicit file list).
     """
-    anchors = _all_anchor_inputs(hook, base_prompt)
-    if not anchors:
+    def _from_hook(aid: str) -> str:
+        done = str((cached or {}).get(aid) or "")
+        if done:
+            # The producer was memorized: hand over the value itself rather than a
+            # promise to produce one, or the consumer waits for a turn that is
+            # never going to happen.
+            return f'the remembered value of hook {aid}: "{_trim(done, 300)}"'
+        return f"the value you produce for hook {aid}"
+
+    rows: list = []
+    for aid, atype, inputs, tap, role, title, slot in _all_anchor_inputs(hook, base_prompt):
+        text = _from_hook(aid) if aid in hook_ids else \
+            _render_anchor(aid, atype, inputs, tap, role, title)
+        rows.append((_slot_order(slot), _slot_label(slot), text))
+    seen = {aid for aid, *_ in _all_anchor_inputs(hook, base_prompt)}
+    for slot, hid in _chain_inputs(hook, hook_ids):
+        if hid not in seen:
+            rows.append((_slot_order(slot), _slot_label(slot), _from_hook(hid)))
+    if not rows:
         return "no input wired"
-    parts: list = []
-    for aid, atype, inputs, tap, role, title in anchors:
-        if aid in hook_ids:
-            done = str((cached or {}).get(aid) or "")
-            if done:
-                # The producer was memorized: hand over the value itself rather than
-                # a promise to produce one, or the consumer waits for a turn that
-                # is never going to happen.
-                parts.append(f'the remembered value of hook {aid}: "{_trim(done, 300)}"')
-            else:
-                parts.append(f"the value you produce for hook {aid}")
-        else:
-            parts.append(_render_anchor(aid, atype, inputs, tap, role, title))
-    return "; ".join(parts)
+    rows.sort(key=lambda r: r[0])
+    # Name the slot each input arrived on when we know it — directives refer to
+    # them ("the prompts in anchor_0"), and the mapping is not guessable from the
+    # order alone once a hook gathers several.
+    return "; ".join(f"{label}: {text}" if label else text for _o, label, text in rows)
 
 
 def _split_targets(hook: dict, hook_ids: set) -> tuple[list, list]:
@@ -1659,7 +1714,7 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             if not anchors:
                 return "no input wired — treat the prompt as text-to-media"
             parts = [_render_anchor(aid, atype, inputs, tap, role, title)
-                     for aid, atype, inputs, tap, role, title in anchors]
+                     for aid, atype, inputs, tap, role, title, _slot in anchors]
             if len(parts) == 1:
                 return f"input from {parts[0]}"
             return "inputs from " + "; ".join(parts)
