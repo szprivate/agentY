@@ -394,25 +394,35 @@ def as_connection(prompt: dict, value, current=None) -> list | None:
     return None
 
 
-def _write_input(prompt: dict, node: dict, param: str, value) -> bool:
+def _write_input(prompt: dict, node: dict, param: str, value,
+                 connection: bool = False) -> bool:
     """Set *param* on *node*, as a link when the input is a connection.
 
     Returns False when a connection input could not be resolved — the input is
-    then left wired as it was rather than being overwritten with a literal.
+    then left as it was rather than being overwritten with a literal.
+
+    *connection* says the input takes a wire even though the graph does not
+    currently show one. That happens as a matter of course now: splicing removes
+    the hook that fed it and leaves it unwired when no anchor could replace it, so
+    "is there a link here" stopped being the same question as "does this take a
+    link". Getting it wrong writes a string into an IMAGE input, which ComfyUI
+    accepts and the node reports at run time as
+    ``'str' object has no attribute 'shape'``.
     """
     inputs = node.setdefault("inputs", {})
     current = inputs.get(param)
-    if isinstance(current, list) and len(current) == 2:
-        # An empty value for a wired input means "nothing on this one": disconnect
-        # it. "Use a reference where I have one, otherwise leave the image inputs
-        # empty" is an ordinary directive, and without this there is no way to
-        # express it — the value can't be resolved, so the previous wire stays and
-        # every variant silently gets the same reference. Only valid for an
-        # optional input; a required one then fails validation, which is the truth.
-        if value is None or (isinstance(value, str) and not value.strip()):
+    wired = isinstance(current, list) and len(current) == 2
+    empty = value is None or (isinstance(value, str) and not value.strip())
+    if wired or connection:
+        # An empty value for a connection means "nothing on this one": leave it
+        # unwired. "Use a reference where I have one, otherwise leave the image
+        # inputs empty" is an ordinary directive, and without this there is no way
+        # to express it. Only valid for an optional input; a required one then
+        # fails validation, which is the truth.
+        if empty:
             inputs.pop(param, None)
             return True
-        link = as_connection(prompt, value, current)
+        link = as_connection(prompt, value, current if wired else None)
         if link is None:
             return False
         inputs[param] = link
@@ -569,7 +579,8 @@ def _resolve_group(members: list) -> tuple[list, list[str]]:
 
 
 def build_batch(base_prompt: dict, resolutions: list, cap: int = 25,
-                labels: list | None = None) -> tuple[list[dict], list[str]]:
+                labels: list | None = None,
+                connection_inputs: set | None = None) -> tuple[list[dict], list[str]]:
     """Expand *base_prompt* into a mutated batch from *resolutions*.
 
     Each resolution mutates one node's input across a list of values. By default the
@@ -586,6 +597,11 @@ def build_batch(base_prompt: dict, resolutions: list, cap: int = 25,
     dict per prompt, in the same order — what each variant was actually made from.
     Without it a batch of five is five anonymous graphs, and pairing "the third
     one" with "the reference frame for Ben" is left to whoever is counting.
+
+    *connection_inputs* (``{"<node>.<input>"}``, from
+    :func:`connection_targets`) names the inputs that take a WIRE even when the
+    graph shows none — an input whose hook was spliced out and left unwired still
+    needs a link, and a literal written there reaches the node as a string.
     """
     notes: list[str] = []
     # Bucket resolutions into groups, preserving encounter order. Each ungrouped
@@ -642,7 +658,8 @@ def build_batch(base_prompt: dict, resolutions: list, cap: int = 25,
                 node = p.get(nid)
                 if not isinstance(node, dict):
                     continue
-                if not _write_input(p, node, param, val):
+                if not _write_input(p, node, param, val,
+                                    f"{nid}.{param}" in (connection_inputs or ())):
                     # A connection input (IMAGE, LATENT, …) we could not turn into
                     # a link. Leave the wire intact and say so once, rather than
                     # writing a literal that would disconnect it.
@@ -956,15 +973,59 @@ def inject_produced_value(base_prompt: dict, hook: dict, value) -> list[str]:
     written: list[str] = []
     if not isinstance(base_prompt, dict):
         return written
-    for tid, _ttype, tin, _tintype, _ttitle in _output_targets(hook):
+    for tid, _ttype, tin, tintype, _ttitle in _output_targets(hook):
         node = base_prompt.get(tid)
         if not isinstance(node, dict) or not tin:
             continue
         # A connection input is delivered as a link, never as a literal — writing
         # the value straight in would replace the wire and disconnect the input.
-        if _write_input(base_prompt, node, tin, value):
+        # The hook's own metadata says which is which; the graph no longer does,
+        # since splicing may already have removed the wire this replaces.
+        if _write_input(base_prompt, node, tin, value, is_connection_type(tintype)):
             written.append(tid)
     return written
+
+
+def missing_collector_files(prompt: dict | None) -> list:
+    """Lines in a collector's ``files`` that name nothing on disk.
+
+    The collector keeps the files it can find and **silently skips the rest** —
+    which is the right behaviour for a list a human curated, and a trap for a list
+    an agent wrote. Every dropped line shifts the numbering of everything after
+    it, and the numbering is the whole contract when a prompt says
+    ``@image3 walks past @image4``: the video comes back with the wrong characters
+    in it, and nothing anywhere reported an error.
+    """
+    out: list = []
+    for nid, node in (prompt or {}).items():
+        if not isinstance(node, dict) or node.get("class_type") not in _COLLECTOR_TYPES:
+            continue
+        val = (node.get("inputs") or {}).get("files")
+        if not isinstance(val, str) or not val.strip():
+            continue
+        lines = [ln.strip().strip('"') for ln in val.splitlines() if ln.strip()]
+        missing = [ln for ln in lines if not Path(ln).is_file()]
+        if missing:
+            out.append({"node_id": str(nid), "class_type": str(node.get("class_type")),
+                        "lines": len(lines), "missing": missing[:12]})
+    return out
+
+
+def connection_targets(hooks: list | None) -> set:
+    """``{"<node>.<input>"}`` for every hook target that takes a WIRE, not a value.
+
+    Read from the declared type the frontend recorded for each target, which is
+    the only place that still knows: by the time a batch is built, the hook has
+    been spliced out and an input it fed may hold no link at all.
+    """
+    out: set = set()
+    for h in (hooks or []):
+        if not isinstance(h, dict):
+            continue
+        for tid, _ttype, tin, tintype, _ttitle in _output_targets(h):
+            if tin and is_connection_type(tintype):
+                out.add(f"{tid}.{tin}")
+    return out
 
 
 def _hook_ids(hooks: list) -> set:

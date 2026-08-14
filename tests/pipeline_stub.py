@@ -34,6 +34,8 @@ _BOUND = (
     "_name_variants",
     "_variant_report",
     "_variant_label",
+    "_collector_refusal",
+    "_collector_text_refusal",
     "_policy_rejection",
     "_retry_after_refusal",
     "_reroll_seeds",

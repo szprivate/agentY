@@ -77,6 +77,16 @@ value(s) for the target — the amount depends on the directive:
   matches them up. If the graph has no batch node and no collector, you cannot wire N
   references — say so and ask the user to add one; do not silently send just the first.
 
+  **A collector's `files` takes ABSOLUTE paths, one per line, and nothing else.**
+  It is a plain STRING target, so one `place_canvas_text` fills the whole reference
+  set — but every line must be a file that exists **right now**: paste the paths a
+  generation handed back in its `outputs`, never a filename you had in mind for it.
+  The collector keeps the lines it can find and **silently skips the rest**, so a
+  wrong path does not fail the run, it renumbers it — the references after the
+  missing one all shift up and `@image4` names a different picture than your table
+  says. Write the table from the paths you are about to place, in the same order,
+  and make the count match. (agentY refuses the placement if a line names nothing.)
+
   **Pair inputs (zip), don't cross them.** By default resolutions cross-product
   (every image × every video). To run each input **with its match** — e.g. one
   starting image paired with one control video per run — give the paired resolutions

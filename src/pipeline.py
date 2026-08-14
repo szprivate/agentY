@@ -1042,8 +1042,12 @@ class Pipeline:
                 prompts, notes = [_copy.deepcopy(base)], [
                     "no resolutions given — running the canvas as it stands"]
             else:
-                prompts, notes = _build_batch(base, list(resolutions), cap=cap,
-                                              labels=labels)
+                # Which targets take a wire rather than a value — the hooks know,
+                # the spliced graph no longer does.
+                from src.utils.canvas_hooks import connection_targets as _conn
+                prompts, notes = _build_batch(
+                    base, list(resolutions), cap=cap, labels=labels,
+                    connection_inputs=_conn(self._canvas_hooks))
             if not prompts:
                 return json.dumps({"error": "no batch was produced", "notes": notes})
             # Every variant is a complete graph, so measure them rather than the
@@ -1052,6 +1056,9 @@ class Pipeline:
             over = self._batch_limit_refusal(prompts)
             if over:
                 return json.dumps(over)
+            gone = self._collector_refusal(prompts)
+            if gone:
+                return json.dumps(gone)
             out_dir = Path(_tempfile.mkdtemp(prefix="agenty_canvas_"))
             paths: list[str] = []
             for i, p in enumerate(prompts):
@@ -1346,6 +1353,9 @@ class Pipeline:
             over = self._canvas_limit_refusal(hook, str(text))
             if over:
                 return json.dumps(over)
+            gone = self._collector_text_refusal(hook, str(text))
+            if gone:
+                return json.dumps(gone)
 
             injected: list[str] = []
             if keep_live and hook is not None and isinstance(self._canvas_base_prompt, dict):
@@ -3979,6 +3989,67 @@ class Pipeline:
         key = (violation.node_id, violation.field)
         counts[key] = counts.get(key, 0) + 1
         return counts[key]
+
+    def _collector_refusal(self, prompts: list) -> dict | None:
+        """Refuse a collector list whose paths don't exist — before it runs.
+
+        The collector skips a line it cannot find, so a bad path does not fail: it
+        renumbers. ``@image4`` then names the picture that used to be ``@image5``,
+        the video comes back starring the wrong character, and nothing anywhere
+        reported an error. Cheaper to catch here, while the agent still has the
+        paths the run that produced them handed back.
+        """
+        try:
+            from src.utils.canvas_hooks import missing_collector_files
+        except Exception:  # noqa: BLE001
+            return None
+        for graph in (prompts or []):
+            bad = missing_collector_files(graph)
+            if not bad:
+                continue
+            first = bad[0]
+            _push_progress("📁 Collector paths don't exist — sent back to be fixed.")
+            return {
+                "error": "the collector was given paths that do not exist — nothing "
+                         "was queued",
+                "what_to_fix": (
+                    f"{len(first['missing'])} of the {first['lines']} line(s) you put in "
+                    f"node {first['node_id']} ({first['class_type']})'s `files` name no "
+                    f"file on disk: " + "; ".join(first["missing"]) + ". Use the ABSOLUTE "
+                    "path of each image — the ones a generation handed back in its "
+                    "`outputs`, not the filename you had in mind for it."),
+                "why_it_matters": (
+                    "The collector silently drops a line it cannot find, so this would "
+                    "not fail — it would renumber. Every reference after the missing one "
+                    "shifts up, and a prompt that says @image4 then names a different "
+                    "picture than the table you wrote."),
+                "do_not": "Do not report this to the user as a failure: fix the paths and "
+                          "call this tool again.",
+            }
+        return None
+
+    def _collector_text_refusal(self, hook: dict | None, text: str) -> dict | None:
+        """The same check for a value written straight into a collector's list.
+
+        A hook feeding a collector's ``files`` produces ONE value — every
+        reference path, one per line — so it arrives through place_canvas_text
+        rather than through a batch, and would otherwise skip the check entirely.
+        """
+        base = getattr(self, "_canvas_base_prompt", None)
+        if not isinstance(hook, dict) or not isinstance(base, dict):
+            return None
+        try:
+            from src.utils.canvas_hooks import _COLLECTOR_TYPES, _output_targets
+        except Exception:  # noqa: BLE001
+            return None
+        for tid, _ttype, tin, _tintype, _ttitle in _output_targets(hook):
+            node = base.get(str(tid))
+            if (isinstance(node, dict) and tin == "files"
+                    and node.get("class_type") in _COLLECTOR_TYPES):
+                probe = {str(tid): {"class_type": node["class_type"],
+                                    "inputs": {"files": text}}}
+                return self._collector_refusal([probe])
+        return None
 
     def _canvas_limit_refusal(self, hook: dict | None, text: str) -> dict | None:
         """Refuse a hook value the target node's model would reject, or None.

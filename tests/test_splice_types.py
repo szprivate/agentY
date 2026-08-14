@@ -127,6 +127,82 @@ class SpliceTypeTest(unittest.TestCase):
                          "the second pass asked for no reference")
         self.assertFalse([n for n in notes if "could not wire" in n])
 
+    def test_an_unwired_image_input_never_receives_a_literal(self):
+        """The crash of 2026-08-14 23:43, six of sixteen variants::
+
+            [2/18] ❌ Error in ByteDanceSeedreamNodeV2 (node 348):
+                   'str' object has no attribute 'shape'
+
+        The queued graphs held ``model.images.image_1: ''``. Splicing had left the
+        input unwired (nothing on the hook could feed an IMAGE), so "is there a
+        link here" said no and the value went in as a literal — a string reaching
+        a node that wanted a tensor. ComfyUI validates that happily; only the node
+        finds out.
+        """
+        from src.utils.canvas_hooks import build_batch, connection_targets
+        hooks = [{"hook_node_id": "5",
+                  "targets": [{"node_id": "348", "to_input": "prompt",
+                               "to_input_type": "STRING"},
+                              {"node_id": "348", "to_input": "model.images.image_1",
+                               "to_input_type": "IMAGE"}]}]
+        conn = connection_targets(hooks)
+        self.assertEqual(conn, {"348.model.images.image_1"},
+                         "the STRING target is a value; only the IMAGE is a wire")
+        graph = {"6": {"class_type": "LoadImage", "inputs": {"image": "hero.png"}},
+                 "348": {"class_type": "ByteDanceSeedreamNodeV2",
+                         "inputs": {"prompt": "x"}}}          # image input already gone
+        prompts, _ = build_batch(graph, [
+            {"target_node_id": "348", "param": "model.images.image_1",
+             "mode": "value_list", "values": ["", "6", "hero.png"]}],
+            connection_inputs=conn)
+        self.assertNotIn("model.images.image_1", prompts[0]["348"]["inputs"],
+                         "empty means leave it unwired, not write an empty string")
+        self.assertEqual(prompts[1]["348"]["inputs"]["model.images.image_1"], ["6", 0],
+                         "a node id is a wire even with nothing there to replace")
+        self.assertIsInstance(prompts[2]["348"]["inputs"]["model.images.image_1"], list,
+                              "a filename resolves to the node already loading it")
+
+    def test_a_widget_input_is_unaffected(self):
+        """Only declared connections change behaviour — a prompt is still a value."""
+        from src.utils.canvas_hooks import build_batch
+        graph = {"348": {"class_type": "ByteDanceSeedreamNodeV2", "inputs": {}}}
+        prompts, _ = build_batch(graph, [
+            {"target_node_id": "348", "param": "prompt", "mode": "value_list",
+             "values": ["a hero", ""]}], connection_inputs={"348.model.images.image_1"})
+        self.assertEqual(prompts[0]["348"]["inputs"]["prompt"], "a hero")
+        self.assertEqual(prompts[1]["348"]["inputs"]["prompt"], "",
+                         "clearing a text input is a legitimate value")
+
+    def test_a_collector_list_of_paths_that_do_not_exist_is_refused(self):
+        """From the same run: the Kling references were bare filenames.
+
+        `367.files` held "images (1).jpg\\nimages (2).jpg\\nt-rex.png\\n…" while the
+        prompt's table named eight references. The collector keeps only the lines
+        it can find on disk — none of these — so the run would not have failed, it
+        would have gone to Kling with an empty reference set and a table pointing
+        at nothing.
+        """
+        from pipeline_stub import pipeline_stub
+        from src.pipeline import Pipeline
+        graph = {"367": {"class_type": "AgentYImageCollector",
+                         "inputs": {"files": "images (1).jpg\nt-rex.png"}}}
+        out = Pipeline._collector_refusal(pipeline_stub(), [graph])
+        self.assertIn("do not exist", out["error"])
+        self.assertIn("images (1).jpg", out["what_to_fix"])
+        self.assertIn("ABSOLUTE path", out["what_to_fix"])
+        self.assertIn("renumber", out["why_it_matters"])
+
+    def test_paths_that_do_exist_are_left_alone(self):
+        import tempfile
+        from pathlib import Path
+        from pipeline_stub import pipeline_stub
+        from src.pipeline import Pipeline
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / "a.png").write_bytes(b"x")
+        graph = {"367": {"class_type": "AgentYImageCollector",
+                         "inputs": {"files": str(tmp / "a.png")}}}
+        self.assertIsNone(Pipeline._collector_refusal(pipeline_stub(), [graph]))
+
     def test_the_types_that_promise_nothing_fit_anything(self):
         from src.utils.canvas_hooks import _type_fits
         for wildcard in ("", "*", "COMFY_MATCHTYPE_V3", "COMFY_MULTITYPE_V3"):
