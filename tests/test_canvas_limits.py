@@ -181,19 +181,8 @@ class ThroughTheRealToolTests(unittest.TestCase):
 
     @staticmethod
     def _pipe(hooks):
-        from types import SimpleNamespace
-        ns = SimpleNamespace(
-            _hook_run_stopped=None, _canvas_keeplive_run=False,
-            _canvas_base_prompt=_canvas(), _canvas_hooks=hooks, _verbose=False,
-            _session=SimpleNamespace(current_output_paths=[]),
-            _last_brainbriefing_json="{}", _chain_output_paths=[], _qa_briefing=None,
-            _qa_retry=None, _heal_exec_failure=lambda *a, **k: None,
-            _limit_handbacks={}, _plan_approval=None, _plan_gate_open=False,
-        )
-        ns._canvas_limit_refusal = Pipeline._canvas_limit_refusal.__get__(ns)
-        ns._count_handback = Pipeline._count_handback.__get__(ns)
-        ns._plan_gate_refusal = Pipeline._plan_gate_refusal.__get__(ns)
-        return ns
+        from pipeline_stub import pipeline_stub
+        return pipeline_stub(_canvas_base_prompt=_canvas(), _canvas_hooks=hooks)
 
     def _place(self, text):
         import asyncio

@@ -231,6 +231,39 @@ def _effective_comfyui_user_dir() -> str | None:
     return None
 
 
+def _output_role(path: str) -> tuple[str, bool]:
+    """(what this output is FOR, whether the user named it themselves).
+
+    Resolving it also freezes the role for this path and drops the sidecar beside
+    it — see :mod:`src.utils.output_tags`. The second value gates the ref note the
+    panel attaches: a role the *user* wrote in the hook's prompt is worth putting
+    on their canvas; one derived from a directive is worth putting in a title.
+    """
+    try:
+        from src.utils import output_tags
+        return output_tags.role_for(path), bool(output_tags.meta_for(path).get("declared"))
+    except Exception:  # noqa: BLE001
+        return "", False
+
+
+def _copy_sidecar(src: str, staged_name: str) -> None:
+    """Give the staged copy its own record, so a canvas node can be traced back.
+
+    A loader holds an input-relative filename and nothing else. Without a sidecar
+    next to *that* file, the next turn looking at the node has no way from the
+    name to what the thing is.
+    """
+    try:
+        from src.utils.output_tags import read_sidecar, write_sidecar
+        in_dir = _comfy_input_dir()
+        rec = read_sidecar(src)
+        if in_dir is None or not rec.get("role"):
+            return
+        write_sidecar(in_dir / staged_name, rec.pop("role"), **rec)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("sidecar copy failed for %s: %s", staged_name, exc)
+
+
 def _stage_into_comfy_input(path: str) -> str | None:
     """Copy *path* into ComfyUI's input dir so a loader node can reference it.
 
@@ -895,15 +928,22 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
                 continue
             sent_paths.add(p)
             kind = "image" if _is_image_path(p) else "video" if _is_video_path(p) else "file"
+            # What this file is FOR, recorded by whoever started the run. Resolving
+            # it here also writes the sidecar beside the original, and the copy in
+            # the input dir gets its own — that one is what a canvas node names.
+            role, declared = _output_role(p)
             staged = _stage_into_comfy_input(p) if kind in ("image", "video") else None
+            if staged and role:
+                _copy_sidecar(p, staged)
             if kind in ("image", "video"):
                 try:
-                    cs.add_gallery_image(thread_id, p, "")
+                    cs.add_gallery_image(thread_id, p, role)
                 except Exception:
                     pass
             out_q.put({
                 "type": "output", "kind": kind, "path": p,
                 "filename": staged, "name": os.path.basename(p),
+                "role": role, "role_declared": declared,
                 "node_candidates": _NODE_CANDIDATES.get(kind, []),
             })
 

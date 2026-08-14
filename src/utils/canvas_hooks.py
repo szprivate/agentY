@@ -774,15 +774,17 @@ def _all_anchor_inputs(hook: dict, base_prompt: dict | None) -> list:
             if isinstance(a, dict) and a.get("node_id") is not None:
                 entries.append((str(a["node_id"]), a.get("type"), a.get("widgets"),
                                 a.get("tapped_type"), a.get("tapped"),
-                                str(a.get("role") or "").strip()))
+                                str(a.get("role") or "").strip(),
+                                str(a.get("title") or "").strip()))
     elif hook.get("anchor_node_id") is not None:
         entries.append((str(hook["anchor_node_id"]), hook.get("anchor_type"),
-                        hook.get("anchor_widgets"), None, None, ""))
+                        hook.get("anchor_widgets"), None, None, "",
+                        str(hook.get("anchor_title") or "").strip()))
 
     roles, wrapped = ref_notes(base_prompt)
     out: list = []
     seen: set = set()
-    for aid, atype, widgets, wire, tapped, sent in entries:
+    for aid, atype, widgets, wire, tapped, sent, title in entries:
         # The frontend already resolves a note on the anchor's own wire (so every
         # consumer sees the real node); reading the graph catches the rest — a note
         # elsewhere on that loader, or an older frontend that sends neither.
@@ -792,6 +794,7 @@ def _all_anchor_inputs(hook: dict, base_prompt: dict | None) -> list:
             aid = wrapped[aid]
             atype = None
             widgets = None
+            title = ""
         if aid in seen:
             continue
         seen.add(aid)
@@ -800,12 +803,13 @@ def _all_anchor_inputs(hook: dict, base_prompt: dict | None) -> list:
             raw = (base_prompt[aid].get("inputs") or {})
             inputs = {k: v for k, v in raw.items() if not isinstance(v, list)}
             atype = atype or str(base_prompt[aid].get("class_type") or "")
+            title = title or str((base_prompt[aid].get("_meta") or {}).get("title") or "")
         elif isinstance(widgets, dict):
             inputs = widgets
         paths = [str(p) for p in (tapped or []) if str(p).strip()]
         out.append((aid, atype or "?", inputs,
                     (str(wire or "live"), paths) if paths else None,
-                    role or roles.get(aid, "")))
+                    role or roles.get(aid, ""), title))
     return out
 
 
@@ -904,6 +908,41 @@ def is_conditional(hook: dict) -> bool:
     """True when the hook's directive makes continuing depend on an earlier outcome."""
     text = str((hook or {}).get("directive", "") or "")
     return any(p.search(text) for p in _CONDITIONAL_PATTERNS)
+
+
+# What the user said this hook's OUTPUTS are, stated in the hook's own prompt.
+# Explicit syntax first ("role: hero sheet", "[role: shot start frame]"), then
+# the way people write it in a sentence ("tag the outputs as 'alley night'").
+# Deliberately not inferred from the directive as a whole: a role that fires on
+# every hook is a label nobody trusts, and it is used to DECORATE the user's
+# canvas — an auto ref note per output — which has to be something they asked for.
+_ROLE_PATTERNS = (
+    re.compile(r"\[\s*roles?\s*[:=]\s*([^\]\n]+)\]", re.I),
+    re.compile(r"^[\s\-*>]*roles?\s*[:=]\s*(.+?)\s*$", re.I | re.M),
+    re.compile(r"\b(?:tag|label|name|mark)\s+(?:the\s+)?"
+               r"(?:outputs?|results?|images?|videos?|frames?|them|these|it)\s+"
+               r"(?:as|with)\s+[\"“'‘]?([^\"”'’.\n]+)", re.I),
+)
+_MAX_ROLE = 80
+
+
+def declared_output_role(hook_or_text) -> str:
+    """The role the user stated for this hook's outputs, or ''.
+
+    Accepts a hook dict or a raw directive. The value is what a generated file
+    gets tagged with — its sidecar, the title of the node dropped for it, and
+    (only when it is stated like this) an ``agentY ref note`` attached to that
+    node, so the next run reads the user's own words rather than a filename.
+    """
+    text = hook_or_text if isinstance(hook_or_text, str) else \
+        str((hook_or_text or {}).get("directive", "") or "")
+    for pat in _ROLE_PATTERNS:
+        m = pat.search(text)
+        if m:
+            role = " ".join(m.group(1).split()).strip(" -–—:;,\"'")
+            if role:
+                return role[:_MAX_ROLE]
+    return ""
 
 
 def _producers_of(hooks: list) -> dict:
@@ -1150,8 +1189,31 @@ def _order_by_dependency(hooks: list) -> list:
 _COLLECTOR_TYPES = {"AgentYImageCollector", "AgentYVideoCollector"}
 
 
+def _recorded_role(inputs: dict) -> str:
+    """What a file this node loads was recorded as being FOR, or ''.
+
+    agentY writes a ``.agenty.json`` beside everything it generates, so a frame
+    it made three turns (or three threads) ago still knows it is "shot 2 start
+    frame". Reading it here is what stops the next run describing pixels that
+    already have a name. Best-effort and quiet: no ComfyUI, no record, no line.
+    """
+    if not isinstance(inputs, dict):
+        return ""
+    try:
+        from src.utils.output_tags import role_of_canvas_file
+        for key in ("image", "video", "file", "path", "filename", "audio"):
+            val = inputs.get(key)
+            if isinstance(val, str) and val.strip():
+                role = role_of_canvas_file(val)
+                if role:
+                    return role
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
+
+
 def _render_anchor(aid: str, atype: str, inputs: dict, tap: tuple | None = None,
-                   role: str = "") -> str:
+                   role: str = "", title: str = "") -> str:
     """Human-readable description of one real-node anchor input.
 
     An agentY collector node is expanded to its listed on-disk file paths (available
@@ -1166,6 +1228,22 @@ def _render_anchor(aid: str, atype: str, inputs: dict, tap: tuple | None = None,
     # The user said what this reference is FOR. It qualifies everything else on the
     # line, so it goes last, where it reads as the instruction it is.
     note = f'  ← USE THIS FOR: "{role.strip()}" (take only that from it)' if role.strip() else ""
+    # Failing that: what the file itself says it is (agentY generated it and left a
+    # record), then the node's title. Both are the user's or the agent's own words
+    # about this input, and either beats making the next turn look at it again.
+    if not note:
+        was = _recorded_role(inputs)
+        if not was:
+            # A title the user (or the drop) gave the node. Agent-dropped nodes are
+            # titled "agentY · <role>", so take the part after the mark — and drop
+            # it entirely when it is just the filename again, which says nothing.
+            stem = " ".join(str(title or "").split()).split(" · ", 1)[-1].strip()
+            named = {str(v).strip().replace("\\", "/").rsplit("/", 1)[-1].lower()
+                     for v in (inputs or {}).values() if isinstance(v, str)}
+            if stem and stem.lower() not in named:
+                was = stem
+        if was:
+            note = f'  ← this is: "{was}"'
     if atype in _COLLECTOR_TYPES:
         files = inputs.get("files") if isinstance(inputs, dict) else None
         paths = [ln.strip().strip('"') for ln in str(files or "").splitlines() if ln.strip()]
@@ -1185,7 +1263,14 @@ def _render_anchor(aid: str, atype: str, inputs: dict, tap: tuple | None = None,
     return base + note
 
 
-def _input_context(hook: dict, base_prompt: dict | None, hook_ids: set) -> str:
+def _trim(text: str, limit: int) -> str:
+    """One line, at most *limit* characters, with an ellipsis when it was longer."""
+    one = " ".join(str(text or "").split())
+    return one if len(one) <= limit else one[:limit] + "…"
+
+
+def _input_context(hook: dict, base_prompt: dict | None, hook_ids: set,
+                   cached: dict | None = None) -> str:
     """Describe what feeds *hook* (its context inputs).
 
     An input wired from another HOOK is rendered as "the value you produce for
@@ -1198,11 +1283,18 @@ def _input_context(hook: dict, base_prompt: dict | None, hook_ids: set) -> str:
     if not anchors:
         return "no input wired"
     parts: list = []
-    for aid, atype, inputs, tap, role in anchors:
+    for aid, atype, inputs, tap, role, title in anchors:
         if aid in hook_ids:
-            parts.append(f"the value you produce for hook {aid}")
+            done = str((cached or {}).get(aid) or "")
+            if done:
+                # The producer was memorized: hand over the value itself rather than
+                # a promise to produce one, or the consumer waits for a turn that
+                # is never going to happen.
+                parts.append(f'the remembered value of hook {aid}: "{_trim(done, 300)}"')
+            else:
+                parts.append(f"the value you produce for hook {aid}")
         else:
-            parts.append(_render_anchor(aid, atype, inputs, tap, role))
+            parts.append(_render_anchor(aid, atype, inputs, tap, role, title))
     return "; ".join(parts)
 
 
@@ -1276,6 +1368,16 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
         return ""
     hooks = _order_by_dependency(hooks)
     hook_id_set = _hook_ids(hooks)
+    # A memorizing hook whose inputs haven't changed was answered before, and the
+    # pipeline has already put that answer back into the graph. It is reported, not
+    # assigned: from here on "hooks" means the ones still to be done, so nothing
+    # downstream — the run plan, the sitrep, the work lists — offers it as work.
+    all_hooks = hooks
+    cached_map = {str(h.get("hook_node_id")): str((h.get("_cached") or {}).get("value") or "")
+                  for h in hooks if h.get("_cached")}
+    cached_hooks = [h for h in hooks if h.get("_cached")]
+    hooks = [h for h in hooks if not h.get("_cached")]
+    hook_id_set = _hook_ids(all_hooks)
     text_hooks = [h for h in hooks if _is_text(h)]
     standin_hooks = [h for h in hooks if _is_standin(h)]
     iterate_hooks = [h for h in hooks if _is_iterate(h)]
@@ -1296,6 +1398,29 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
         "workflow, act on the hooks below. If the user's message is unrelated (a "
         "question or a different request), answer that and ignore these hooks.]"
     ]
+
+    if cached_hooks:
+        lines.append(
+            "\nALREADY DONE (remembered — these hooks have 'memorize' on and nothing "
+            "feeding them has changed since they last ran, so their value is already "
+            "back in the graph). Do NOT redo them, do not re-read their inputs, and do "
+            "not describe their anchors again:"
+        )
+        for h in cached_hooks:
+            hid = h.get("hook_node_id")
+            c = h.get("_cached") or {}
+            where = (", filled node(s) " + ", ".join(c.get("targets") or [])
+                     if c.get("targets") else ", not wired into a node input")
+            when = f" [{c['when']}]" if c.get("when") else ""
+            lines.append(f'- hook {hid}{when}{where} → "{_trim(c.get("value"), 400)}"')
+        if not hooks:
+            lines.append(
+                "  That is every hook on this graph. There is no value left to produce: "
+                "if the user asked for a run, call apply_canvas_hooks(resolutions=[]) once "
+                "to run the canvas exactly as it now stands; otherwise just answer them. "
+                "To make a hook produce a fresh value, the user turns its 'memorize' "
+                "toggle off (or changes what feeds it)."
+            )
 
     # When hooks feed each other, spell out the order so producers are done first.
     if any(_hook_predecessors(h, hook_id_set) for h in hooks):
@@ -1337,7 +1462,7 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
         for h in directive_hooks:
             hid = h.get("hook_node_id")
             directive = str(h.get("directive", "") or "").strip()
-            ctx = _input_context(h, base_prompt, hook_id_set)
+            ctx = _input_context(h, base_prompt, hook_id_set, cached_map)
             real, chain = _split_targets(h, hook_id_set)
             tgt = _target_context(h, hook_id_set)
             if tgt:
@@ -1385,7 +1510,7 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
         for h in general_hooks:
             hid = h.get("hook_node_id")
             directive = str(h.get("directive", "") or "").strip()
-            ctx = _input_context(h, base_prompt, hook_id_set)
+            ctx = _input_context(h, base_prompt, hook_id_set, cached_map)
             tgt = _target_context(h, hook_id_set)
             _real, chain = _split_targets(h, hook_id_set)
             where = (f" feeds {tgt}" if tgt else
@@ -1411,7 +1536,7 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             hid = h.get("hook_node_id")
             directive = str(h.get("directive", "") or "").strip()
             tgt = _target_context(h, hook_id_set)
-            ctx = _input_context(h, base_prompt, hook_id_set)
+            ctx = _input_context(h, base_prompt, hook_id_set, cached_map)
             prompt_where = (f"prompt → {tgt}" if tgt else
                             "prompt target UNWIRED — ask the user to wire this hook's OUTPUT "
                             "into the prompt node's text input")
@@ -1457,7 +1582,7 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
         for h in text_hooks:
             hid = h.get("hook_node_id")
             directive = str(h.get("directive", "") or "").strip()
-            ctx = _input_context(h, base_prompt, hook_id_set)
+            ctx = _input_context(h, base_prompt, hook_id_set, cached_map)
             tgt = _target_context(h, hook_id_set)
             _real, chain = _split_targets(h, hook_id_set)
             where = (f" feeds {tgt}" if tgt else
@@ -1474,8 +1599,8 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             anchors = _all_anchor_inputs(h, base_prompt)
             if not anchors:
                 return "no input wired — treat the prompt as text-to-media"
-            parts = [_render_anchor(aid, atype, inputs, tap, role)
-                     for aid, atype, inputs, tap, role in anchors]
+            parts = [_render_anchor(aid, atype, inputs, tap, role, title)
+                     for aid, atype, inputs, tap, role, title in anchors]
             if len(parts) == 1:
                 return f"input from {parts[0]}"
             return "inputs from " + "; ".join(parts)

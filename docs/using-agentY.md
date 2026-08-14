@@ -24,6 +24,8 @@ node, ready to wire into your next step.*
   - [Seeing the plan first](#seeing-the-plan-first)
 - [Slash commands](#slash-commands)
 - [**The hook system**](#the-hook-system)  ← the most powerful part
+  - [Memorize: answer once](#memorize-answer-once-reuse-until-something-changes)
+  - [Naming what a hook produces](#naming-what-a-hook-produces)
 - [Checking outputs (QA)](#checking-outputs-qa)
 - [The agentY python node & collectors](#the-agenty-python-node--collectors)
 - [Settings & secrets](#settings--secrets)
@@ -251,6 +253,8 @@ runs the graph.
   subgraph (see [Baking](#baking-a-chain-into-subgraphs)).
 - **`freeze`** — *inline_parameter / text only*; keep the hook live vs. bake the
   value in (see [Freeze](#freeze-keep-live-vs-bake-in)).
+- **`memorize`** — answer once and reuse it (see
+  [Memorize](#memorize-answer-once-reuse-until-something-changes)).
 
 To **disable a hook without deleting it**, bypass it (`Ctrl+B`) or mute it
 (`Ctrl+M`) like any other node — the agent skips hooks in those modes. There's no
@@ -369,6 +373,56 @@ value the agent produces:
   wired target input and takes over the hook's downstream link — yielding a
   plain, self-contained workflow you can re-run yourself (at the cost of
   bypassing the hook).
+
+### Memorize: answer once, reuse until something changes
+
+A hook that reads an image and writes a description costs a vision call and a
+turn of the agent's attention. Wire it into a graph you iterate on for an
+afternoon and you pay for that same description twenty times, for a picture that
+never moved.
+
+Turn **`memorize`** on and the value is kept: on later runs it goes straight back
+into the graph, and the agent is told the hook is **already done** — no call, no
+re-reading the anchors. The panel says `♻️ reused the remembered value`.
+
+It is released the moment the question changes:
+
+| What you change | Released? |
+|---|---|
+| A different image, or any edit upstream of the hook (however many nodes back) | ✅ |
+| Rewiring an anchor, or where the hook's output goes | ✅ |
+| The hook's own prompt, `purpose`, or `freeze` | ✅ |
+| Switching `memorize` **off** — this is how you force a fresh answer | ✅ |
+| Replacing a file with a different one *of the same name* | ✅ (size + timestamp are part of it) |
+| Anything **downstream** — a save prefix, a sampler after the hook | ❌ (it didn't change what the value is) |
+
+It's stored beside the project, in ComfyUI's user directory — so it follows the
+project you switch to, and is shared by every thread working on that project (the
+same graph with the same inputs has the same answer). It's a cache, not a note:
+it never appears in [memory](#memory).
+
+### Naming what a hook produces
+
+Say what the outputs *are* in the hook's own prompt and the name travels with
+them:
+
+```
+Generate one start frame per shot.
+role: shot start frame
+```
+
+`role: …`, `[role: …]`, or *"tag the outputs as 'hero sheet'"* all work. Then:
+
+- each dropped node is **titled with the role** instead of the filename;
+- an **`agentY ref note` is attached** to it carrying your words, so whatever you
+  wire it into next is told what to take from it;
+- a small `.agenty.json` file is written **beside the image or video**, so months
+  later — in another thread, or via an [agentY
+  collector](#the-agenty-python-node--collectors) pointed at the folder — the
+  agent still knows what it is instead of looking again.
+
+Without a stated role, the first two still happen using the directive itself
+(minus the ref note — agentY won't add nodes to your canvas uninvited).
 
 ### Iterative refinement (the `iterate` purpose)
 

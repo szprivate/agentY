@@ -207,13 +207,20 @@ def _output_workflows_dir() -> Path:
     except Exception:  # noqa: BLE001
         return Path("output_workflows")
 
-# Image file extensions registered in the per-thread generated-image gallery.
+# Media extensions registered in the per-thread gallery, which the user
+# references by number ("image 2", "the second video").
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+_VIDEO_SUFFIXES = {".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v", ".gifv"}
 
 
 def _is_image_file(path: str) -> bool:
     """Return True when *path* points to an image file (by extension)."""
     return Path(path).suffix.lower() in _IMAGE_SUFFIXES
+
+
+def _is_video_file(path: str) -> bool:
+    """Return True when *path* points to a video file (by extension)."""
+    return Path(path).suffix.lower() in _VIDEO_SUFFIXES
 
 
 def _latest_output_workflow() -> str | None:
@@ -1019,7 +1026,19 @@ class Pipeline:
                 cap = int(_os.environ.get("AGENTY_MAX_CANVAS_BATCH", "25") or "25")
             except ValueError:
                 cap = 25
-            prompts, notes = _build_batch(base, list(resolutions or []), cap=cap)
+            # Whatever this batch produces belongs to the hook that asked for it.
+            self._tag_run_outputs(self._hook_for_targets(
+                str(r.get("target_node_id", r.get("node_id", "")) or "")
+                for r in (resolutions or []) if isinstance(r, dict)))
+            if resolutions is None or (isinstance(resolutions, list) and not resolutions):
+                # Deliberately empty: "run the graph exactly as it stands". The case
+                # is a canvas whose every hook was answered from memory — there is
+                # nothing left to sweep, but the run still has to happen.
+                import copy as _copy
+                prompts, notes = [_copy.deepcopy(base)], [
+                    "no resolutions given — running the canvas as it stands"]
+            else:
+                prompts, notes = _build_batch(base, list(resolutions), cap=cap)
             if not prompts:
                 return json.dumps({"error": "no batch was produced", "notes": notes})
             # Every variant is a complete graph, so measure them rather than the
@@ -1152,6 +1171,10 @@ class Pipeline:
             gate = self._plan_gate_refusal()
             if gate:
                 return json.dumps(gate)
+            # One stage of a chain: tag its outputs with whatever this turn is for,
+            # so the file that feeds the next stage carries its own description.
+            hooks = [h for h in (self._canvas_hooks or []) if isinstance(h, dict)]
+            self._tag_run_outputs(hooks[0] if len(hooks) == 1 else None)
             base = self._session.current_output_paths
             before = len(base)
             brief = self._last_brainbriefing_json or "{}"
@@ -1321,6 +1344,20 @@ class Pipeline:
                 # delivers a string for a later/other run, so it must not auto-generate.
                 if injected and not _is_text(hook) and not self._hook_run_stopped:
                     self._canvas_keeplive_run = True
+
+            # Remember it, if the hook asked to be remembered. Keyed on what fed the
+            # hook, so this exact answer comes back for free until something changes.
+            if hook is not None and hook.get("_cache_key"):
+                try:
+                    from src.utils.hook_cache import memorizing, write as _remember
+                    if memorizing(hook):
+                        _remember(hook["_cache_key"], str(text),
+                                  hook=str(hook_node_id),
+                                  role=self._hook_output_role(hook),
+                                  directive=str(hook.get("directive") or "")[:200])
+                except Exception as exc:  # noqa: BLE001
+                    if self._verbose:
+                        print(f"[hook-cache] could not store hook {hook_node_id}: {exc}")
 
             _push_patch({
                 "op": "place_text",
@@ -2081,6 +2118,17 @@ class Pipeline:
             except Exception as exc:  # noqa: BLE001
                 print(f"pipeline: canvas-hook splice failed ({exc}); ignoring canvas graph.")
 
+        # What this turn produces is tagged with what it was for; last turn's tags
+        # are not this turn's. (The sidecars on disk are the record that lasts.)
+        try:
+            from src.utils.output_tags import clear as _clear_tags
+            _clear_tags()
+        except Exception:  # noqa: BLE001
+            pass
+        # Hooks that remember: put last time's answer back before anyone is asked
+        # to produce it again.
+        self._apply_hook_cache()
+
         self._ensure_orch_clean_history()
         # Mark where this turn's messages begin so the learnings pass (fired on
         # completion) analyses only what just happened, not the whole window.
@@ -2162,6 +2210,10 @@ class Pipeline:
                 _outputs_before = len(exec_paths)  # chain outputs already staged
                 _qa_fail_event: dict | None = None
                 if workflow_paths:
+                    # Name what is about to come out: the hook that drove this run if
+                    # there was one, else the briefing the workflow was built from.
+                    _hooks = [h for h in (self._canvas_hooks or []) if isinstance(h, dict)]
+                    self._tag_run_outputs(_hooks[0] if len(_hooks) == 1 else None)
                     if self._verbose:
                         count = len(workflow_paths)
                         tag = f"{count} workflows (batch)" if count > 1 else workflow_paths[0]
@@ -2515,19 +2567,31 @@ class Pipeline:
         return (brief.get("template") or {}).get("name") or ""
 
     def _register_generated_images(self, raw_json: str | None) -> None:
-        """Append newly produced images to the thread gallery (dedup by path).
+        """Append newly produced media to the thread gallery (dedup by path).
 
         Called once per completed turn while ``current_output_paths`` still holds
-        that turn's outputs.  Only image files are registered; each gets a
-        1-based index, a caption derived from the brainbriefing, and the turn
-        number so the user can later reference it ("image 2", "the last image").
+        that turn's outputs. Each entry gets a 1-based index, a caption, and the
+        turn number, so the user can later reference it ("image 2", "the last
+        one"). Videos count: they are produced by the same runs and referred to
+        the same way, and leaving them out meant "the second video" resolved to
+        nothing at all.
+
+        The caption prefers what the run was recorded as being FOR — the role
+        stated in the hook's prompt, or the directive that produced it — over the
+        brainbriefing, because a canvas-hook turn has no briefing and used to
+        register every one of its outputs with an empty caption.
         """
-        new_paths = [p for p in self._session.current_output_paths if _is_image_file(p)]
+        new_paths = [p for p in self._session.current_output_paths
+                     if _is_image_file(p) or _is_video_file(p)]
         if not new_paths:
             return
         caption = self._caption_from_brief(raw_json or self._last_brainbriefing_json)
         existing = {gi.path for gi in self._session.generated_images}
         turn = len(self._session.chat_summaries)  # this turn's summary is already appended
+        try:
+            from src.utils.output_tags import role_for
+        except Exception:  # noqa: BLE001
+            role_for = None  # noqa: N806
         for p in new_paths:
             if p in existing:
                 continue
@@ -2535,7 +2599,7 @@ class Pipeline:
                 GeneratedImage(
                     index=len(self._session.generated_images) + 1,
                     path=p,
-                    caption=caption,
+                    caption=(role_for(p) if role_for else "") or caption,
                     turn=turn,
                 )
             )
@@ -2556,14 +2620,15 @@ class Pipeline:
             for gi in gallery
         ]
         return (
-            "[GENERATED IMAGES IN THIS THREAD] — the user may reference these by "
-            "number (\"image 2\"), recency (\"the last image\"), or description "
-            "(\"the lighthouse one\"). Image numbers are 1-based and ordered oldest→newest:\n"
+            "[GENERATED IN THIS THREAD] — the user may reference these by number "
+            "(\"image 2\"), recency (\"the last one\"), or description (\"the lighthouse "
+            "one\"). Numbers are 1-based and ordered oldest→newest; the text after the "
+            "dash is what each one was made FOR, so prefer it over looking again:\n"
             + "\n".join(lines)
-            + "\n[When the user refers to one of these generated images, use the matching "
-            "path above as the file to act on — to analyse/describe it call "
-            "analyze_image(path); to use it as a workflow input upload it via "
-            "upload_image(path). These are real files; never claim no image is available.]"
+            + "\n[When the user refers to one of these, use the matching path above as "
+            "the file to act on — to analyse/describe it call analyze_image(path) (or "
+            "analyze_video for a video); to use it as a workflow input upload it via "
+            "upload_image(path). These are real files; never claim none is available.]"
         )
 
     def _prepend_gallery(self, text: str) -> str:
@@ -2676,6 +2741,100 @@ class Pipeline:
             if self._verbose:
                 print(f"[project-memory] context error: {exc}")
             return ""
+
+    def _apply_hook_cache(self) -> None:
+        """Put back what the memorizing hooks answered last time, and release the rest.
+
+        Runs once per turn, before the orchestrator sees anything: a hook whose
+        ``memorize`` toggle is on and whose inputs are unchanged has its stored
+        value injected straight into the graph, exactly as if the agent had just
+        produced it — no vision call, no turn spent re-describing a picture that
+        did not move. A hook with the toggle OFF drops whatever was stored under
+        its current key, which is what makes the toggle the forget gesture.
+        """
+        hooks = [h for h in (self._canvas_hooks or []) if isinstance(h, dict)]
+        if not hooks:
+            return
+        try:
+            from src.utils.canvas_hooks import inject_produced_value
+            from src.utils.hook_cache import fingerprint, forget, memorizing, read
+        except Exception as exc:  # noqa: BLE001
+            if self._verbose:
+                print(f"[hook-cache] unavailable ({exc}).")
+            return
+        for h in hooks:
+            try:
+                key = fingerprint(h, self._canvas_base_prompt)
+            except Exception as exc:  # noqa: BLE001
+                if self._verbose:
+                    print(f"[hook-cache] could not key hook {h.get('hook_node_id')}: {exc}")
+                continue
+            h["_cache_key"] = key
+            if not memorizing(h):
+                forget(key)
+                continue
+            value = str((read(key) or {}).get("value") or "")
+            if not value:
+                continue
+            targets = (inject_produced_value(self._canvas_base_prompt, h, value)
+                       if isinstance(self._canvas_base_prompt, dict) else [])
+            h["_cached"] = {"value": value, "targets": targets,
+                            "when": str((read(key) or {}).get("when") or "")}
+            _push_progress(f"♻️ Hook {h.get('hook_node_id')} — reused the remembered value.")
+            if self._verbose:
+                print(f"[hook-cache] hook {h.get('hook_node_id')} hit {key} "
+                      f"→ {len(targets)} target(s).")
+
+    def _hook_output_role(self, hook: dict | None) -> str:
+        """What outputs produced for *hook* should be recorded as.
+
+        The user's own words when they stated a role in the hook's prompt; failing
+        that the directive itself, trimmed — still better than a filename, and it
+        is what the next turn reads off the node.
+        """
+        if not isinstance(hook, dict):
+            return ""
+        try:
+            from src.utils.canvas_hooks import declared_output_role
+            role = declared_output_role(hook)
+        except Exception:  # noqa: BLE001
+            role = ""
+        if role:
+            return role
+        return " ".join(str(hook.get("directive") or "").split())[:80]
+
+    def _tag_run_outputs(self, hook: dict | None = None, role: str = "") -> None:
+        """Declare what the run about to start is for, before its files appear.
+
+        Outputs are emitted the moment they land — by the server's pump, on
+        another thread — so there is no later point at which "this batch was the
+        shot start frames" is still known. ``declared`` records that the user
+        named the role themselves in the hook's prompt, which is what earns an
+        ``agentY ref note`` on the node dropped for it: decorating someone's
+        canvas is a thing you do when asked, not by default.
+        """
+        try:
+            from src.utils.canvas_hooks import declared_output_role
+            from src.utils.output_tags import set_run_role
+        except Exception:  # noqa: BLE001
+            return
+        declared = declared_output_role(hook) if hook else ""
+        final = role or declared or self._hook_output_role(hook) \
+            or self._caption_from_brief(self._last_brainbriefing_json)
+        set_run_role(final,
+                     declared=bool(declared or role),
+                     hook=str((hook or {}).get("hook_node_id") or ""))
+
+    def _hook_for_targets(self, node_ids) -> dict | None:
+        """The hook whose output feeds any of *node_ids* — who asked for this run."""
+        wanted = {str(n) for n in node_ids if n is not None}
+        for h in (self._canvas_hooks or []):
+            if not isinstance(h, dict):
+                continue
+            for t in (h.get("targets") or []):
+                if isinstance(t, dict) and str(t.get("node_id")) in wanted:
+                    return h
+        return None
 
     def _detect_plan_approval(self, user_text: str, project_ctx: str = ""):
         """Who, if anyone, asked to approve the plan before anything runs.

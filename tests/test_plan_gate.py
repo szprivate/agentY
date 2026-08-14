@@ -17,8 +17,8 @@ film-hook graph on the canvas. Those directives are tested here, as non-matches.
 import asyncio
 import json
 import unittest
-from types import SimpleNamespace
 
+from pipeline_stub import pipeline_stub, tools as _tools
 from src.pipeline import Pipeline
 from src.utils.models import AgentSession
 from src.utils.plan_gate import (ApprovalRequest, execution_refusal, find_approval_request,
@@ -232,29 +232,10 @@ class GateStateTest(unittest.TestCase):
 
 
 def _pipe(**over):
-    """The Pipeline stand-in the delegation tools are bound to."""
-    base = dict(
-        _hook_run_stopped=None, _canvas_keeplive_run=False,
-        _canvas_base_prompt={"1": {"class_type": "KSampler", "inputs": {"seed": 1}}},
-        _canvas_hooks=[], _verbose=False,
-        _session=SimpleNamespace(current_output_paths=[]),
-        _last_brainbriefing_json="{}", _chain_output_paths=[], _qa_briefing=None,
-        _qa_retry=None, _heal_exec_failure=lambda *a, **k: None, _limit_handbacks={},
-        _plan_approval=ApprovalRequest(source="the user's message",
-                                       quote="Ask me first before you start."),
-        _plan_gate_open=False,
-    )
-    base.update(over)
-    ns = SimpleNamespace(**base)
-    ns._run_canvas_batch = Pipeline._run_canvas_batch.__get__(ns)
-    ns._batch_limit_refusal = Pipeline._batch_limit_refusal.__get__(ns)
-    ns._count_handback = Pipeline._count_handback.__get__(ns)
-    ns._plan_gate_refusal = Pipeline._plan_gate_refusal.__get__(ns)
-    return ns
-
-
-def _tools(pipe):
-    return {t.tool_name: t for t in Pipeline._build_delegation_tools(pipe)}
+    """The Pipeline stand-in, with a plan waiting to be approved unless told otherwise."""
+    over.setdefault("_plan_approval", ApprovalRequest(
+        source="the user's message", quote="Ask me first before you start."))
+    return pipeline_stub(**over)
 
 
 def _call(tool, **kw):

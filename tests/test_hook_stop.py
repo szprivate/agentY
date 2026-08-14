@@ -14,47 +14,11 @@ Pipeline attributes), so no agent, model or ComfyUI is involved.
 import asyncio
 import json
 import unittest
-from types import SimpleNamespace
 from unittest import mock
 
+from pipeline_stub import pipeline_stub as _stub, tools as _tools
 from src.pipeline import Pipeline
 from src.utils.workflow_signal import append_workflow_path, clear_and_get
-
-
-def _stub(**over):
-    """A minimal stand-in for the Pipeline the tool closures are bound to."""
-    base = dict(
-        _hook_run_stopped=None,
-        _canvas_keeplive_run=False,
-        _canvas_base_prompt={"1": {"class_type": "KSampler", "inputs": {"seed": 1}}},
-        _canvas_hooks=[],
-        _verbose=False,
-        _session=SimpleNamespace(current_output_paths=[]),
-        _last_brainbriefing_json="{}",
-        _chain_output_paths=[],
-        _qa_briefing=None,
-        _qa_retry=None,
-        _heal_exec_failure=lambda *a, **k: None,
-        _limit_handbacks={},
-        _plan_approval=None,
-        _plan_gate_open=False,
-    )
-    base.update(over)
-    ns = SimpleNamespace(**base)
-    # Real Pipeline methods — bind them, don't reimplement them, so these tests
-    # keep exercising what the tool actually calls (including the hard-limit check
-    # that stands between build_batch and the queue, and the plan gate that stands
-    # in front of both).
-    ns._run_canvas_batch = Pipeline._run_canvas_batch.__get__(ns)
-    ns._batch_limit_refusal = Pipeline._batch_limit_refusal.__get__(ns)
-    ns._count_handback = Pipeline._count_handback.__get__(ns)
-    ns._plan_gate_refusal = Pipeline._plan_gate_refusal.__get__(ns)
-    return ns
-
-
-def _tools(pipe):
-    """Name -> callable for the orchestrator's delegation tools."""
-    return {t.tool_name: t for t in Pipeline._build_delegation_tools(pipe)}
 
 
 def _call(tool, **kwargs):

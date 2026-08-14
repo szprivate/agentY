@@ -12,6 +12,14 @@ line; handle producers before their consumers. (Hooks the user bypassed or muted
 are filtered out, so every hook listed is active.) The graph is **already captured**
 server-side — do **not** call `prepare_workflow` or `run_research` for these.
 
+**Read the two blocks that mean "don't".** An **ALREADY DONE** list means those
+hooks have `memorize` on and nothing feeding them has changed: their value is
+already back in the graph, so do not redo them, re-read their anchors, or
+describe their inputs again — treat them as finished work you can quote. An
+anchor line ending in `← this is: "…"` is a file that already knows what it is
+(agentY made it, or the user titled the node); take that as its description
+instead of analysing it again.
+
 **Say the plan first.** Before you start working the hooks, write the order you
 will take them in as a short numbered list in the chat — one line per hook: what
 it produces and where that goes. Then carry straight on and do it; you are telling
