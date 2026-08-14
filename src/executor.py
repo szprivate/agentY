@@ -863,13 +863,23 @@ async def execute_workflows_batch(
         label = _label(wf_path)
         name = os.path.basename(wf_path)
         async with repair_sem:
-            await out_q.put(("line", f"{label}🔧 Healing `{name}` "
+            # "Recovering", not "Healing": the callback decides what this member
+            # needs, and not everything that fails is a broken graph — a provider
+            # refusing the content is re-run rather than repaired.
+            await out_q.put(("line", f"{label}🔧 Recovering `{name}` "
                                      f"(attempt {heals + 1}/{max_heal_attempts})…"))
             try:
                 res = await repair_fn(wf_path, error_result)  # type: ignore[misc]
             except Exception as exc:  # noqa: BLE001
                 res = {"status": "failed", "error": str(exc)}
-        if (res or {}).get("status") == "ready":
+        if (res or {}).get("status") == "rejected":
+            # A verdict, not a failed attempt: the graph is fine and running it
+            # again has already been tried. Retire the member with the callback's
+            # own account of it, which says what the caller can actually do.
+            await out_q.put(("line", f"{label}🚫 {(res or {}).get('error') or 'rejected'}"))
+            await out_q.put(("heal", ("rejected", wf_path, heals + 1, "", "",
+                                      {"details": res, "error": (res or {}).get("error", "")})))
+        elif (res or {}).get("status") == "ready":
             cid = uuid.uuid4().hex
             try:
                 prompt_id = await asyncio.to_thread(_submit_workflow, wf_path, cid)
@@ -988,6 +998,12 @@ async def execute_workflows_batch(
                 status, wf_path, heals, prompt_id, cid, error_result = payload
                 if status == "ready":
                     _spawn(_monitor_member(wf_path, prompt_id, cid, heals))  # re-run; unit persists
+                elif status == "rejected":
+                    # Not retried: the callback already decided this cannot be fixed
+                    # by trying again (a provider's content refusal, say).
+                    _record_exec_error((error_result or {}).get("details"),
+                                       wf_path, (error_result or {}).get("error", ""))
+                    outstanding -= 1
                 elif repair_fn is not None and heals < max_heal_attempts:
                     # Repair couldn't produce a runnable graph — give the fixer
                     # another shot on the in-place file, up to the budget.

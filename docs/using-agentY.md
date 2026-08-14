@@ -832,6 +832,16 @@ corpus lives in **agenty_core**.
 - **Canvas nodes/UI look stale after an update** — the ComfyUI copy of
   `agentY-comfyuiConnect` is separate from your dev clone; `git pull` it in
   `<ComfyUI>/custom_nodes/` and reload ComfyUI.
+- **"🚫 … refused this generation on content grounds"** — the provider's own
+  filter rejected it (copyright, likeness, safety), not a workflow problem. Every
+  API model has one and they all word it differently; agentY recognises them and
+  **re-runs with a fresh seed** rather than sending the repair agent after a graph
+  that was never broken — twice for a rejected *result*, once for a rejected
+  *prompt*, since a prompt the provider read and refused rarely reads differently
+  the second time. Set `AGENTY_POLICY_RETRIES` to change that budget (`0` disables
+  the retries). When they're spent you get the provider's own words and what to
+  change; the seed is only part of it, since several of these APIs ignore the seed
+  and simply aren't deterministic.
 - **"No output files found in ComfyUI history"** (esp. with a custom save node) —
   the agent harvests results from ComfyUI's history, which requires the save node
   to write there. For the `iterate` loop and result staging, make sure your save

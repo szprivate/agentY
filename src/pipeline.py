@@ -506,6 +506,8 @@ class Pipeline:
         self._plan_approval = None
         self._plan_gate_open: bool = False
         self._plan_gate_fired: bool = False
+        # workflow path -> re-runs spent on a provider content refusal (per turn).
+        self._policy_retries: dict = {}
         # Outputs produced mid-turn by run_workflow_now (chained hook stages).
         # Tracked so they survive the end-of-turn current_output_paths reset and
         # still get staged onto the canvas. Empty on every non-chain turn.
@@ -2089,6 +2091,10 @@ class Pipeline:
         self._session.plan_awaiting_reply = False
         self._plan_approval = None
         self._plan_gate_fired = False
+        # How many times each workflow has been re-run after a provider refused it
+        # on content grounds. Per-turn: a refusal that ran out of retries is not
+        # held against the next request.
+        self._policy_retries = {}
         self._chain_output_paths = []
         # The QA briefing in force this turn, already resolved by the caller
         # (a canvas qa hook wins over the thread's /qa briefing). None = no QA.
@@ -2282,12 +2288,32 @@ class Pipeline:
                     _det = _err0.get("details") or {}
                     _nt = _det.get("node_type", "?")
                     _why = _det.get("exception_message") or _err0.get("error") or "unknown error"
+                    # A provider refusing the content is not a broken run, and
+                    # telling the user it "could not be auto-healed" sends them
+                    # looking for a defect that isn't there.
+                    _refused = _det if _det.get("kind") == "content_policy" else None
+                    if _refused and not _partial:
+                        yield {"data": (
+                            f"\n\n🚫 {_refused.get('provider', 'The provider')} refused this "
+                            f"generation on content grounds, and it was still refused after "
+                            f"re-running it. Nothing is wrong with the workflow.\n\n"
+                            f"> {_refused.get('what_it_said', _why)}\n\n"
+                            f"{_refused.get('what_to_do', '')}")}
+                        self._record_chat_summary(user_text, synth, status="refused",
+                                                  raw_json=self._last_brainbriefing_json)
+                        self._record_agent_usage(self._orchestrator_agent, _snap)
+                        self._session.last_agent = "orchestrator"
+                        self._log_orchestrator()
+                        return
                     if _partial:
                         # Some members succeeded — keep and report them; just flag
                         # the ones that couldn't be produced instead of hard-failing.
-                        yield {"data": (f"\n\n⚠️ {len(_failed)} of the batch failed and could not be "
-                                        f"healed (e.g. `{_nt}`: {_why}); keeping the "
-                                        f"{len(exec_paths) - _outputs_before} that succeeded.")}
+                        _lead = (f"were refused by {_refused.get('provider', 'the provider')} "
+                                 f"on content grounds" if _refused else
+                                 f"could not be healed (e.g. `{_nt}`: {_why})")
+                        yield {"data": (f"\n\n⚠️ {len(_failed)} of the batch {_lead}; keeping "
+                                        f"the {len(exec_paths) - _outputs_before} that "
+                                        f"succeeded.")}
                         # fall through to the normal completion path below.
                     elif _keeplive_run:
                         # The user's own on-canvas graph errored — don't heal it;
@@ -4139,7 +4165,14 @@ class Pipeline:
         Repairs run concurrently (bounded by the executor's semaphore), so each
         gets its OWN fix agent (the shared cached one can't carry parallel message
         histories) and only edits the given file.
+
+        A provider's content refusal never reaches that agent: there is nothing in
+        the graph for it to fix, and running it anyway spends a repair budget
+        rewriting a workflow that was already correct. Those re-run instead.
         """
+        rejection = self._policy_rejection(exec_error)
+        if rejection is not None:
+            return self._retry_after_refusal(workflow_path, rejection)
         agent = create_fix_workflow_assembly_agent()
         try:
             return await self._run_fix_workflow_assembly(
@@ -4149,6 +4182,67 @@ class Pipeline:
                 agent.messages.clear()
             except Exception:  # noqa: BLE001
                 pass
+
+    @staticmethod
+    def _reroll_seeds(graph: dict) -> int:
+        """Give every seed in *graph* a fresh value. Returns how many changed.
+
+        Without this a re-run reproduces the previous result exactly, and the
+        retry is pure waste. Not every node has one — several hosted APIs expose a
+        seed that their backend ignores — but those are non-deterministic anyway,
+        so a re-run is a fresh roll either way; this just makes it explicit where
+        the model does honour it.
+        """
+        import random as _random
+        rerolled = 0
+        for node in (graph or {}).values():
+            if not isinstance(node, dict):
+                continue
+            for slot in ("seed", "noise_seed"):
+                if isinstance((node.get("inputs") or {}).get(slot), (int, float)):
+                    node["inputs"][slot] = _random.randint(0, 2**31 - 1)
+                    rerolled += 1
+        return rerolled
+
+    @staticmethod
+    def _policy_rejection(exec_error: dict | None):
+        """Read a run failure as a provider content refusal, or None."""
+        try:
+            from src.utils.content_policy import classify
+            return classify(exec_error or {})
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _retry_after_refusal(self, workflow_path: str, rejection) -> dict:
+        """Run a refused generation again with a fresh seed, a bounded number of times.
+
+        Returns the same shape the repair specialist does, so the executor's own
+        re-queue path carries it: ``ready`` means "try this file again". The graph
+        is edited IN PLACE because that is the file the executor re-submits.
+        """
+        from src.utils.content_policy import exhausted, retry_note
+        key = str(workflow_path)
+        used = self._policy_retries.get(key, 0)
+        allowed = rejection.retries()
+        if used >= allowed:
+            _push_progress(f"🚫 {rejection.who()} refused it on content grounds "
+                           f"after {used} retry(s) — not a workflow defect.")
+            return exhausted(rejection, used)
+        self._policy_retries[key] = used + 1
+        try:
+            path = Path(workflow_path)
+            graph = json.loads(path.read_text(encoding="utf-8"))
+            rerolled = self._reroll_seeds(graph)
+            path.write_text(json.dumps(graph, indent=2), encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "failed",
+                    "error": f"could not re-roll the refused workflow: {exc}"}
+        _push_progress(retry_note(rejection, used + 1, allowed, rerolled))
+        if self._verbose:
+            print(f"pipeline: content refusal ({rejection.stage}) on "
+                  f"{path.name} — retry {used + 1}/{allowed}, {rerolled} seed(s) rerolled.")
+        return {"status": "ready", "workflow_path": str(path),
+                "retried_after": "content_policy"}
 
     async def _qa_retry(self, workflow_path: str, qa_fail: dict) -> dict:
         """Inline QA-retry callback for ``execute_workflows_batch``.
@@ -4178,14 +4272,7 @@ class Pipeline:
         # 1. Reroll every seed. Without this a re-run reproduces the rejected image
         #    byte-for-byte and the retry is pure waste — this alone fixes a good
         #    share of sampling defects (hands, duplicated limbs).
-        rerolled = 0
-        for node in graph.values():
-            if not isinstance(node, dict):
-                continue
-            for slot in ("seed", "noise_seed"):
-                if isinstance((node.get("inputs") or {}).get(slot), (int, float)):
-                    node["inputs"][slot] = _random.randint(0, 2**31 - 1)
-                    rerolled += 1
+        rerolled = self._reroll_seeds(graph)
 
         # 2. Rewrite the positive prompt against the named failures. The briefing's
         #    deterministic trace says which node and which slot carries it.

@@ -34,6 +34,9 @@ _BOUND = (
     "_name_variants",
     "_variant_report",
     "_variant_label",
+    "_policy_rejection",
+    "_retry_after_refusal",
+    "_reroll_seeds",
 )
 
 
@@ -55,6 +58,7 @@ def pipeline_stub(**over):
         _plan_approval=None,
         _plan_gate_open=False,
         _plan_gate_fired=False,
+        _policy_retries={},
     )
     base.update(over)
     ns = SimpleNamespace(**base)
