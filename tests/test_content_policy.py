@@ -70,6 +70,22 @@ class ClassifyTest(unittest.TestCase):
             with self.subTest(provider=provider):
                 self.assertEqual(classify(text).provider, provider)
 
+    def test_the_prose_bytedance_returns_as_a_plain_400(self):
+        """From the 20:54 run — it only matched the generic 'copyright' catch-all."""
+        r = classify("API Error: The request failed because the output image may be "
+                     "related to copyright restrictions. Request id: 0217867339703 "
+                     "(Type: BadRequest)")
+        self.assertEqual((r.provider, r.stage), ("ByteDance", "output"),
+                         "it says which stage refused — read it rather than guessing")
+        r = classify("API Error: The request failed because the input image may "
+                     "contain sensitive content. (Type: BadRequest)")
+        self.assertEqual((r.provider, r.stage), ("ByteDance", "input"))
+
+    def test_an_unnamed_provider_can_still_report_the_stage(self):
+        r = classify("Generation stopped: the output image was blocked by review.")
+        self.assertEqual(r.stage, "output")
+        self.assertEqual(r.provider, "")
+
     def test_a_provider_that_words_it_its_own_way_still_lands(self):
         r = classify("Generation refused: the request violates our content policy.")
         self.assertIsNotNone(r)

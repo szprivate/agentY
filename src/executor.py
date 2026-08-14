@@ -829,8 +829,17 @@ async def execute_workflows_batch(
                                              f"skipping (not a workflow error)."))
                     await out_q.put(("member", ("interrupted", wf_path, heals, None)))
                     return
-                await out_q.put(("line", f"{label}❌ ComfyUI execution error: {error_result.get('error')}"))
-                logger.error("executor: batch member failed (%s): %s", wf_path, error_result.get("error"))
+                # The monitor already printed the node's own message when it had
+                # one ("❌ Error in <node>: <why>"); `error` is a placeholder next
+                # to it ("ComfyUI execution failed"), and printing both buries the
+                # useful line under a generic one. Say something only when there
+                # is something the user hasn't already been told.
+                _why = str((error_result.get("details") or {}).get("exception_message") or "")
+                if not _why:
+                    await out_q.put(("line", f"{label}❌ ComfyUI execution error: "
+                                             f"{error_result.get('error')}"))
+                logger.error("executor: batch member failed (%s): %s", wf_path,
+                             _why or error_result.get("error"))
                 await out_q.put(("member", ("fail", wf_path, heals, error_result)))
                 return
             if history is None:

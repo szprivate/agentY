@@ -40,7 +40,15 @@ from dataclasses import dataclass
 # (pattern, provider, stage). Ordered: the specific provider forms first, the
 # generic phrasings last, so a match names who refused wherever possible.
 _SIGNATURES: tuple = (
-    # ByteDance / Seedream / Seedance — "ByteDance request failed. Code: <code>, …"
+    # ByteDance / Seedream / Seedance. Two shapes: their own error codes, and the
+    # prose their gateway returns as a plain 400, which arrives through the shared
+    # client as "API Error: <message> (Type: BadRequest)". The prose names the
+    # stage itself ("the OUTPUT image may be related to…"), which is worth reading:
+    # it is the difference between rewording the prompt and rolling again.
+    (re.compile(r"request failed because the output \w+ may be related to copyright",
+                re.I), "ByteDance", "output"),
+    (re.compile(r"request failed because the input \w+ may (?:be related to copyright|"
+                r"contain sensitive)", re.I), "ByteDance", "input"),
     (re.compile(r"\bInput\w*SensitiveContentDetected\b", re.I), "ByteDance", "input"),
     (re.compile(r"\bOutput\w*SensitiveContentDetected\b", re.I), "ByteDance", "output"),
     (re.compile(r"\bSensitiveContentDetected\b", re.I), "ByteDance", "unknown"),
@@ -65,7 +73,11 @@ _SIGNATURES: tuple = (
     (re.compile(r"\bcontents?_moderation\b", re.I), "PixVerse", "unknown"),
     (re.compile(r"\b1301\b.{0,40}content security policy|content security policy",
                 re.I), "Kling", "unknown"),
-    # Generic phrasings, for a provider that words it its own way
+    # Generic phrasings, for a provider that words it its own way. Unnamed, but
+    # still worth reading for the STAGE — "the output …" is a different bet from
+    # "your prompt …" whoever said it.
+    (re.compile(r"\boutput (?:image|video|content)\b[^.]{0,60}\b(?:copyright|sensitive|"
+                r"blocked|filtered|rejected)\b", re.I), "", "output"),
     (re.compile(r"content (?:policy|filter|moderation|safety)", re.I), "", "unknown"),
     (re.compile(r"\bsafety (?:system|filter|policy)\b", re.I), "", "unknown"),
     (re.compile(r"\bprohibited content\b|\bmoderation\b|\bNSFW\b", re.I), "", "unknown"),
