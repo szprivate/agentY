@@ -1611,6 +1611,13 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
     # have to be run (not queued) for that check to be possible at all — then what
     # the turn is about to assume, while it can still be corrected.
     lines.extend(plan_lines(hooks))
+    # What cannot work, before anything runs — the graph and the node schemas
+    # together, which is where a contradiction between wiring and directive shows.
+    try:
+        from src.utils.preflight import lines as _preflight
+        lines.extend(_preflight(hooks, base_prompt))
+    except Exception:  # noqa: BLE001 — a check must never cost the turn
+        pass
     lines.extend(sitrep_lines(hooks, base_prompt))
 
     if directive_hooks:

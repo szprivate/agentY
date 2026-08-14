@@ -1595,13 +1595,14 @@ class Pipeline:
         collected = self._session.current_output_paths
         before = len(collected)
         _clear_exec_errors()
+        qa_verdicts: dict = {}
         try:
             async for _line in _execute_workflows_batch(
                 paths, self._last_brainbriefing_json or "",
                 user_message="", verbose=self._verbose,
                 collected_paths=collected, qa_briefing=self._qa_briefing,
                 qa_retry_fn=self._qa_retry, repair_fn=self._heal_exec_failure,
-                max_concurrent_repairs=3,
+                max_concurrent_repairs=3, qa_verdicts=qa_verdicts,
             ):
                 # Inside a tool call the pipeline's own loop isn't draining, so the
                 # progress buffer is what carries these to the panel.
@@ -1619,11 +1620,19 @@ class Pipeline:
         by_path = {str(e.get("workflow_path") or ""): str(e.get("error") or "failed")
                    for e in errors}
         variants = self._variant_report(paths, labels or [], by_path)
+        for v in variants:
+            verdict = qa_verdicts.get(v.get("workflow"))
+            if verdict:
+                v["qa"] = {"passed": False, "missed": verdict.get("missed") or [],
+                           "summary": verdict.get("summary") or "",
+                           "retried": verdict.get("tries", 0)}
         failed = [v for v in variants if not v["ok"]]
+        qa_missed = [v for v in variants if v.get("qa")]
+        set_verdict = await self._qa_set_verdict(new)
         if self._verbose:
             print(f"pipeline: apply_canvas_hooks(run_now) ran {len(paths)} variant(s), "
                   f"{len(failed)} failed, {len(new)} output(s).")
-        return json.dumps({
+        out = {
             "status": "ran",
             "count": len(paths),
             "failed_count": len(failed),
@@ -1643,7 +1652,54 @@ class Pipeline:
                    "stop_hook_run now; otherwise continue with what did succeed.")
                 + f" {len(new)} output file(s) staged onto the canvas."
             ),
-        })
+        }
+        if qa_missed:
+            out["qa_failed_count"] = len(qa_missed)
+            out["message"] += self._qa_instruction(len(qa_missed))
+        if set_verdict:
+            out["qa_set"] = set_verdict
+            if not set_verdict.get("passed"):
+                out["message"] += (
+                    " The set was ALSO judged as a whole and missed: "
+                    + "; ".join(set_verdict.get("missed") or []) + ".")
+        return json.dumps(out)
+
+    async def _qa_set_verdict(self, paths: list) -> dict | None:
+        """Judge the run's outputs AS A SET, for the criteria only a set can answer.
+
+        Per-file QA is told to mark "all of them must be consistent" as `n/a` —
+        it is shown one image and cannot honestly answer otherwise. That promise
+        is only worth making because the question is answered here instead.
+        """
+        if not self._qa_briefing or len(paths or []) < 2:
+            return None
+        try:
+            from src.utils.qa import check_set
+            res = await asyncio.to_thread(check_set, list(paths), self._qa_briefing)
+        except Exception as exc:  # noqa: BLE001
+            if self._verbose:
+                print(f"[qa] set check unavailable: {exc}")
+            return None
+        if res.error:
+            return None
+        _push_progress(f"🔍 QA (set of {len(paths)}) — "
+                       + ("✅ consistent" if res.passed else f"❌ {res.summary}"))
+        return {"passed": res.passed, "summary": res.summary,
+                "missed": res.failed_criteria()}
+
+    def _qa_instruction(self, n: int) -> str:
+        """What to do about outputs that ran fine and missed the briefing."""
+        hook = str(getattr(self._qa_briefing, "retry_hook", "") or "")
+        if hook:
+            return (f" {n} output(s) RAN but missed the QA briefing, and the briefing "
+                    f"says to re-run hook {hook} for those — see `variants[].qa.missed`. "
+                    f"Produce fresh value(s) for hook {hook} addressing exactly what was "
+                    f"missed, for those variants only, and run them again. Do not re-run "
+                    f"the ones that passed.")
+        return (f" {n} output(s) RAN but missed the QA briefing (`variants[].qa.missed`) "
+                f"and their automatic retries are spent. Decide: adjust the value(s) for "
+                f"those variants and run just those again, or keep them and say what "
+                f"missed. Do not re-run the ones that passed.")
 
     def _pending_execution_paths(self) -> list[str]:
         """The workflows to execute at turn end — none when a hook stop is in force.

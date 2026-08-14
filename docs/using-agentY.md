@@ -570,6 +570,29 @@ Only the picture is adjusted, never the graph: a workflow that ran cleanly isn't
 broken, and rebuilding it would invalidate the very verdict that asked for the
 retry. Failing a *run* is a different thing, handled by self-healing.
 
+**Say what a failure should cause, in the briefing itself:**
+
+| you write | what happens |
+|---|---|
+| `retry: 3` | that briefing's own budget, overriding `max_retries` for this run |
+| `retry: hook 5` | the fix lives a stage earlier. The agent is handed the outputs that missed, what they missed, and an instruction to produce fresh values for **hook 5** for those variants only — and to leave the ones that passed alone |
+| `re-run hook 5 x2` | both |
+
+The runtime can re-roll a generation by itself; it cannot re-write the prompt that
+a *previous hook* produced, because that stage is an agent doing creative work.
+So `retry: hook N` hands it back with everything needed to act — which is also
+why a verdict now travels to the agent at all: before, a spent verdict went to the
+log and the one thing that could have fixed the shot never heard about it.
+
+**Two kinds of check, because "does this meet the brief?" is two questions.**
+Each output is judged **on its own** against the criteria and the references —
+and then, when a run made several, the whole set is judged **together** for the
+criteria only a set can answer: one grade across all of them, consistent
+character identity, no accidental near-duplicates. The per-file judge is told to
+mark set-criteria `n/a` rather than fail an image for the absence of images it
+was never shown, which is what used to send an entire batch back for a reason no
+re-generation could fix.
+
 ### The rest of Settings ▸ qa
 
 | setting | what it does |

@@ -104,6 +104,11 @@ class QaBriefing:
     criteria: str = ""
     reference_paths: tuple[str, ...] = ()
     sources: tuple[str, ...] = ()
+    # What a failing verdict should cause, written by the user in their own
+    # briefing: how many times to try again, and — when the fix is not "roll the
+    # same generation again" but "go back a stage" — which hook to re-enter.
+    retry_budget: int | None = None
+    retry_hook: str = ""
 
     def __bool__(self) -> bool:
         return bool(self.criteria.strip() or self.reference_paths)
@@ -116,7 +121,10 @@ class QaBriefing:
         refs = list(self.reference_paths)
         refs += [p for p in other.reference_paths if p not in set(refs)]
         return QaBriefing(criteria=criteria, reference_paths=tuple(refs),
-                          sources=tuple(dict.fromkeys(self.sources + other.sources)))
+                          sources=tuple(dict.fromkeys(self.sources + other.sources)),
+                          retry_budget=(self.retry_budget if self.retry_budget is not None
+                                        else other.retry_budget),
+                          retry_hook=self.retry_hook or other.retry_hook)
 
     def describe(self) -> str:
         """One line for the chat panel: what is being enforced and from where."""
@@ -124,7 +132,42 @@ class QaBriefing:
         where = ", ".join(self.sources) or "unknown"
         refs = len(self.reference_paths)
         ref_txt = f", {refs} reference image{'' if refs == 1 else 's'}" if refs else ""
-        return f"{bullets} criteri{'on' if bullets == 1 else 'a'}{ref_txt} (from {where})"
+        retry = ""
+        if self.retry_hook:
+            retry = f", re-run hook {self.retry_hook} on a fail"
+        elif self.retry_budget is not None:
+            retry = f", {self.retry_budget} retr{'y' if self.retry_budget == 1 else 'ies'}"
+        return (f"{bullets} criteri{'on' if bullets == 1 else 'a'}{ref_txt}{retry} "
+                f"(from {where})")
+
+
+# What the user writes in a qa briefing to say what a failure should cause.
+# Deliberately a small, stated syntax rather than an inference: "retry" appearing
+# in prose ("no retry-looking artefacts") must not silently change the budget.
+_RETRY_PATTERNS = (
+    re.compile(r"\bre-?try\s*[:=]\s*hook\s*#?(?P<hook>\d+)(?:\s*[x×]\s*(?P<n>\d+))?", re.I),
+    re.compile(r"\bre-?run\s*[:=]?\s*hook\s*#?(?P<hook>\d+)(?:\s*[x×]\s*(?P<n>\d+))?", re.I),
+    re.compile(r"\bre-?try\s*[:=]\s*(?P<n>\d+)", re.I),
+)
+
+
+def parse_retry(text: str) -> tuple[int | None, str]:
+    """``(budget, hook_id)`` from a briefing's own words, or ``(None, "")``.
+
+    ``retry: 2`` bounds the automatic re-generation of the same graph. ``retry:
+    hook 5`` says the fix lives a stage earlier — regenerate the reference, not
+    the shot that used it — which the runtime cannot do by itself (that stage is
+    an agent writing prompts), so it is handed to the agent as an instruction
+    with the failed outputs attached.
+    """
+    body = str(text or "")
+    for pat in _RETRY_PATTERNS:
+        m = pat.search(body)
+        if m:
+            n = m.groupdict().get("n")
+            hook = m.groupdict().get("hook") or ""
+            return (int(n) if n else None), str(hook)
+    return None, ""
 
 
 # ── surface 1: the `qa` canvas hook ─────────────────────────────────────────────
@@ -190,8 +233,11 @@ def briefing_from_hooks(hooks: list, resolver=None) -> QaBriefing | None:
                         refs.append(path)
     if not found:
         return None
-    return QaBriefing(criteria="\n".join(criteria), reference_paths=tuple(refs),
-                      sources=("canvas qa hook",))
+    body = "\n".join(criteria)
+    budget, retry_hook = parse_retry(body)
+    return QaBriefing(criteria=body, reference_paths=tuple(refs),
+                      sources=("canvas qa hook",),
+                      retry_budget=budget, retry_hook=retry_hook)
 
 
 # ── surface 2: named briefing files ─────────────────────────────────────────────
@@ -574,14 +620,22 @@ def check_output(path: str, briefing: QaBriefing, *, request: str = "",
         ref_paths = [p for p in briefing.reference_paths if is_image(p)][:cfg["max_references"]]
         ref_blocks = [b for b in (_image_block(p) for p in ref_paths) if b]
 
+        # Say plainly that this is one output on its own. A run commonly makes
+        # several and each is judged separately, so a criterion about the SET has
+        # nothing here to judge — without this the model reports what it honestly
+        # sees ("only one image") as a failure, and the whole batch is re-generated
+        # for a reason no re-generation can address.
+        alone = (" This is ONE output, judged on its own; the run may have produced "
+                 "others you cannot see, so any criterion about how outputs compare "
+                 "to EACH OTHER is n/a here.")
         if ref_blocks:
             n = len(ref_blocks)
             labels = ", ".join(f"IMAGE {i + 1}" for i in range(n))
             description = (f"You are given {n + len(out_blocks)} images: {labels} "
                            f"{'is a REFERENCE image' if n == 1 else 'are REFERENCE images'} "
-                           f"from the user's briefing, then {out_desc}.")
+                           f"from the user's briefing, then {out_desc}." + alone)
         else:
-            description = f"You are given {out_desc}."
+            description = f"You are given {out_desc}." + alone
 
         prompts = load_qa_prompts()
         criteria = briefing.criteria.strip() or prompts.get("no_criteria", "")
@@ -614,3 +668,81 @@ def check_output(path: str, briefing: QaBriefing, *, request: str = "",
         passed = not failed
     return QaResult(path=path, passed=passed, summary=str(data.get("summary") or "").strip(),
                     checks=checks)
+
+
+def check_set(paths: list, briefing: QaBriefing, *, request: str = "",
+              agent=None) -> QaResult:
+    """Judge a whole run's outputs TOGETHER, for the criteria only a set can answer.
+
+    Per-file QA cannot see a set, so "all the references must share one grade",
+    "no two shots may repeat the same framing" and "the characters must stay
+    consistent" are unjudgeable there — the per-file judge is told to mark them
+    ``n/a`` precisely so it stops failing images for the absence of images it was
+    never shown. This is where those criteria are actually answered.
+
+    Same contract as :func:`check_output`: never raises, and an unreadable judge
+    counts as a pass. ``path`` on the result carries the count rather than a file,
+    since the verdict is about the set.
+    """
+    cfg = qa_settings()
+    files = [str(p) for p in (paths or []) if p][:cfg["max_outputs"]]
+    label = f"{len(files)} outputs"
+    if len(files) < 2:
+        return QaResult(path=label, passed=True,
+                        error="a set verdict needs at least two outputs")
+    try:
+        if agent is None:
+            from src.agent import create_qa_agent
+            agent = create_qa_agent()
+
+        out_blocks: list = []
+        for i, p in enumerate(files):
+            blocks, _desc = _output_blocks(p, 1)      # one frame each: this is about the set
+            if blocks:
+                out_blocks.extend(blocks[:1])
+        if len(out_blocks) < 2:
+            return QaResult(path=label, passed=True,
+                            error="fewer than two outputs could be read")
+
+        ref_paths = [p for p in briefing.reference_paths if is_image(p)][:cfg["max_references"]]
+        ref_blocks = [b for b in (_image_block(p) for p in ref_paths) if b]
+        n = len(ref_blocks)
+        names = ", ".join(f"OUTPUT {i + 1} (`{Path(p).name}`)" for i, p in enumerate(files))
+        description = (
+            (f"You are given {n} REFERENCE image(s) from the user's briefing, then "
+             if n else "You are given ")
+            + f"ALL {len(out_blocks)} outputs of one run, in order: {names}. "
+              "Judge them AS A SET: only the criteria that are about how the outputs "
+              "relate to each other (consistency of style, grade, character identity, "
+              "variety, no accidental repeats). A criterion about a single image on "
+              "its own was already judged elsewhere — mark it n/a here.")
+
+        prompts = load_qa_prompts()
+        criteria = briefing.criteria.strip() or prompts.get("no_criteria", "")
+        question = (prompts.get("question", "")
+                    .replace("{{IMAGE_DESCRIPTION}}", description)
+                    .replace("{{REQUEST}}", (request or "").strip() or "(not recorded)")
+                    .replace("{{MEASURED}}", "(not applicable to a set)")
+                    .replace("{{CRITERIA}}", criteria))
+        if not question.strip():
+            return QaResult(path=label, passed=True,
+                            error="QA prompt file has no `question` section")
+
+        agent.messages.clear()
+        reply = str(agent(ref_blocks + out_blocks + [{"text": question}]))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("qa: set check failed (%d outputs) — %s", len(files), exc)
+        return QaResult(path=label, passed=True, error=str(exc))
+
+    data = parse_verdict(reply)
+    if not data:
+        return QaResult(path=label, passed=True,
+                        error="the QA model returned no usable verdict")
+    checks = [c for c in (data.get("checks") or []) if isinstance(c, dict)]
+    failed = any(str(c.get("result", "")).strip().lower() == "fail" for c in checks)
+    verdict = str(data.get("verdict", "")).strip().lower()
+    passed = (verdict == "pass") and not failed
+    if verdict not in ("pass", "fail"):
+        passed = not failed
+    return QaResult(path=label, passed=passed,
+                    summary=str(data.get("summary") or "").strip(), checks=checks)

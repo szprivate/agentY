@@ -715,6 +715,7 @@ async def execute_workflows_batch(
     repair_fn: "Callable[[str, dict], Awaitable[dict]] | None" = None,
     max_heal_attempts: int = 3,
     max_concurrent_repairs: int = 3,
+    qa_verdicts: dict | None = None,
 ) -> AsyncGenerator[str, None]:
     """Submit ALL workflows, monitor them CONCURRENTLY, and heal failures on the fly.
 
@@ -781,6 +782,12 @@ async def execute_workflows_batch(
     try:
         from src.utils.qa import qa_settings
         qa_max_retries = qa_settings()["max_retries"] if qa_briefing else 0
+        # A briefing may set its own budget ("retry: 2"). The user writing the
+        # criteria is better placed than a global setting to say how many times
+        # this particular thing is worth paying for again.
+        own = getattr(qa_briefing, "retry_budget", None) if qa_briefing else None
+        if own is not None:
+            qa_max_retries = max(0, int(own))
     except Exception:  # noqa: BLE001
         qa_max_retries = 0
 
@@ -989,6 +996,19 @@ async def execute_workflows_batch(
                         # Budget spent (or retries off): the output stands, and the
                         # verdict has already been shown. Not an execution error —
                         # nothing goes in the error mailbox for the fixer to chase.
+                        # It IS recorded, though: a verdict the agent never sees is
+                        # a quality gate that only talks to the log.
+                        if qa_verdicts is not None:
+                            qa_verdicts[wf_path] = {
+                                "tries": tries,
+                                "outputs": [d.get("path") for d
+                                            in ((error_result or {}).get("fail_details") or [])],
+                                "missed": [m for d in ((error_result or {}).get("fail_details") or [])
+                                           for m in (d.get("failed") or [])],
+                                "summary": "; ".join(
+                                    str(d.get("summary") or "") for d
+                                    in ((error_result or {}).get("fail_details") or []) if d.get("summary")),
+                            }
                         outstanding -= 1
                     continue
                 if status in ("ok", "interrupted"):

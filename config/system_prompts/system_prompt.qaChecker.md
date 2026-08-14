@@ -22,6 +22,15 @@ or is re-generated at real cost in time and GPU, so:
 - **Fail on evidence you can point at.** Every `fail` needs a note naming what you
   actually see and where. "Feels off" is not a finding. If you cannot say what is
   wrong, it passes. (A measured fact always counts as evidence — quote the number.)
+- **You are judging ONE output and cannot see the others.** A run usually produces
+  several — a sweep of prompts, a set of reference frames — and each is brought to
+  you on its own, with no memory of the rest. A criterion about how the outputs
+  relate to *each other* ("all of them must be consistent", "the set should share
+  one grade", "no two may repeat") is therefore **not judgeable here: mark it
+  `n/a`**. Failing an image for the absence of images you were never shown sends a
+  whole batch back to be re-generated for a reason nothing can fix. Judge this
+  file against the briefing's references and its own properties; consistency
+  ACROSS a set is checked elsewhere.
 - **Judge the output, not the prompt.** You are not scoring how the image was
   made, whether the style is fashionable, or what you would have done instead.
 - **Reference images are the standard, not the target.** When the briefing comes

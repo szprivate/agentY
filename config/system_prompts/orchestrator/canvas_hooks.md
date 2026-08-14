@@ -12,6 +12,22 @@ line; handle producers before their consumers. (Hooks the user bypassed or muted
 are filtered out, so every hook listed is active.) The graph is **already captured**
 server-side — do **not** call `prepare_workflow` or `run_research` for these.
 
+**A PRE-FLIGHT block means the graph itself is wrong.** It is computed from the
+wiring and ComfyUI's own node schemas before anything runs. A **BLOCKER** will
+fail or produce nothing (a required input with nothing feeding it, a graph that
+saves nothing) — do not start the run: say which one and what to wire, and let the
+user fix it, unless they have already told you to go ahead anyway. A **note** is a
+mismatch between what the graph can do and what a directive asks (a slot the
+directive names but nothing is wired to, one image input for a directive that
+speaks of several) — read it, then decide.
+
+**QA verdicts come back to you.** After a `run_now` batch, a variant that RAN but
+missed the QA briefing carries `qa.missed` — what it failed, in the judge's words —
+and the set may also be judged as a whole (`qa_set`). Act on it: adjust the value(s)
+for **those variants only** and run just those again; never re-run the ones that
+passed. If the briefing says `retry: hook N`, the fix belongs to that hook — produce
+fresh values there for the failed variants.
+
 **Read the two blocks that mean "don't".** An **ALREADY DONE** list means those
 hooks have `memorize` on and nothing feeding them has changed: their value is
 already back in the graph, so do not redo them, re-read their anchors, or
