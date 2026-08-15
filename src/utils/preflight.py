@@ -32,11 +32,11 @@ import re
 from dataclasses import dataclass
 
 from src.utils.canvas_hooks import (_COLLECTOR_TYPES, _hook_ids, _output_targets,
-                                    _all_anchor_inputs, is_connection_type,
-                                    missing_collector_files)
+                                    _all_anchor_inputs, _slot_label,
+                                    is_connection_type, missing_collector_files,
+                                    unresolved_anchor_refs)
 
-# Nodes that exist to end a graph. A run with none of them computes and discards.
-_OUTPUT_HINTS = ("save", "preview", "viewer", "sendto", "output", "display", "show")
+from src.utils.canvas_hooks import is_terminal
 
 
 @dataclass(frozen=True)
@@ -98,15 +98,13 @@ def _required_inputs(schema: dict) -> dict:
 def _reaches_output(prompt: dict) -> bool:
     """Whether anything in the graph saves, previews or displays a result.
 
-    The name is tried first and answers for almost every graph without asking
-    ComfyUI anything — a check that costs a round trip per healthy run is a check
-    that gets turned off.
+    One definition of "output node", shared with the pruning in
+    :mod:`canvas_hooks` — the name is tried first and answers for almost every
+    graph without asking ComfyUI anything, and a class it cannot ask about counts
+    as an output, so a ComfyUI that is down never produces "nothing renders".
     """
-    classes = {str(n.get("class_type") or "") for n in (prompt or {}).values()
-               if isinstance(n, dict)}
-    if any(h in c.lower() for c in classes for h in _OUTPUT_HINTS):
-        return True
-    return any((_schema(c) or {}).get("output_node") for c in classes)
+    return any(is_terminal(n.get("class_type")) for n in (prompt or {}).values()
+               if isinstance(n, dict))
 
 
 def _anchor_types(hook: dict, base_prompt: dict | None) -> set:
@@ -120,18 +118,22 @@ def _anchor_types(hook: dict, base_prompt: dict | None) -> set:
     return out
 
 
-def _wired_slots(hook: dict) -> set:
-    """The anchor slot NUMBERS this hook actually has something on."""
-    slots: set = set()
-    for a in (hook.get("anchors") or []):
-        if isinstance(a, dict):
-            m = re.search(r"anchor[_\-]?(\d+)$", str(a.get("to_input") or ""))
-            slots.add(int(m.group(1)) if m else 0)
-    for link in (hook.get("prev_links") or []):
-        if isinstance(link, dict):
-            m = re.search(r"anchor[_\-]?(\d+)$", str(link.get("to_input") or ""))
-            slots.add(int(m.group(1)) if m else 0)
-    return slots
+def _wired_slots(hook: dict) -> list:
+    """The anchor slot NAMES this hook actually has something on, in slot order.
+
+    Names, not numbers: the slots are ``anchor``, ``anchor0``, ``anchor1``, … so
+    the first has no number at all, and folding that to ``0`` made it collide with
+    the real ``anchor0``. A hook with two inputs then reported ONE wired slot, and
+    a directive mentioning its second input was flagged as pointing at nothing.
+    """
+    names: list = []
+    for src in ("anchors", "prev_links"):
+        for item in (hook.get(src) or []):
+            if isinstance(item, dict):
+                label = _slot_label(str(item.get("to_input") or ""))
+                if label and label not in names:
+                    names.append(label)
+    return names
 
 
 def check(hooks: list | None, base_prompt: dict | None) -> list:
@@ -185,14 +187,42 @@ def check(hooks: list | None, base_prompt: dict | None) -> list:
         anchors = _all_anchor_inputs(h, prompt)
         have = _anchor_types(h, prompt)
 
-        # A directive naming a slot nothing is wired to.
+        # A directive naming a slot no reading can reach. "anchor_1" means either
+        # the slot called anchor1 or the first input wired — the node's own naming
+        # (anchor, anchor0, anchor1) makes both reasonable, so a check that picks
+        # one warns about healthy graphs. Only a number beyond every reading is a
+        # finding; see canvas_hooks.anchor_slot_matches.
         wired = _wired_slots(h)
-        named = {int(m.group(1)) for m in re.finditer(r"anchor[_ ]?(\d+)", directive)}
-        for slot in sorted(named - wired):
+        named = {int(m.group(1)) for m in re.finditer(r"anchor[_ \-]?(\d+)", directive)}
+        for slot in unresolved_anchor_refs(named, wired):
             found.append(Finding("note", hid, (
-                f"the directive refers to anchor_{slot}, but nothing is wired to that "
-                f"slot (wired: {', '.join(f'anchor_{s}' for s in sorted(wired)) or 'none'}). "
-                f"Whatever it expects there, it will not find.")))
+                f"the directive refers to anchor_{slot}, but this hook has "
+                f"{len(wired)} input(s) wired ({', '.join(wired) or 'none'}) and no "
+                f"reading of that name reaches one. Whatever it expects there, it "
+                f"will not find.")))
+
+        # One value, two targets that want different things. place_canvas_text
+        # delivers the SAME string to every input a hook's output feeds, so a hook
+        # wired into both a collector's `files` (absolute paths, one per line) and a
+        # prompt box cannot satisfy both: paths delivered to the prompt read as
+        # gibberish to the model, and a prompt delivered to the collector is
+        # rejected line by line. Found the expensive way — after a run.
+        wants_paths, wants_prose = [], []
+        for tid, _ttype, tin, tintype, ttitle in targets:
+            if is_connection_type(tintype) or not tin:
+                continue
+            cls = str((prompt.get(str(tid)) or {}).get("class_type") or _ttype or "")
+            if cls in _COLLECTOR_TYPES or tin in ("files", "paths", "file_list"):
+                wants_paths.append(f"node {tid}'s `{tin}`")
+            elif re.search(r"prompt|text|caption|description", tin, re.I):
+                wants_prose.append(f"node {tid}'s `{tin}`")
+        if wants_paths and wants_prose:
+            found.append(Finding("blocker", hid, (
+                f"its output feeds {', '.join(wants_paths)} — which needs absolute file "
+                f"paths, one per line — AND {', '.join(wants_prose)}, which needs a "
+                f"written prompt. One hook produces ONE value and it is delivered to "
+                f"every wired target, so whichever you write, the other is wrong. Split "
+                f"this into two hooks, one per kind of value.")))
 
         for tid, _ttype, tin, tintype, _ttitle in targets:
             if not tin or not is_connection_type(tintype) or str(tid) in ids:
@@ -213,10 +243,13 @@ def check(hooks: list | None, base_prompt: dict | None) -> list:
                 if not others:
                     found.append(Finding("note", hid, (
                         f"its output feeds ONE image slot (node {tid}'s `{tin}`) while "
-                        f"{len(anchors)} inputs are wired into the hook. A sweep fills "
-                        f"that slot once per RUN — it cannot put several images into one "
-                        f"run. For several references in a single generation the graph "
-                        f"needs an agentY image collector, or one wire per slot.")))
+                        f"{len(anchors)} inputs are wired into the hook, and no sibling "
+                        f"slot (`{sibling}2`, …) is wired on that node. A sweep fills one "
+                        f"slot once per RUN, so as it stands each run sees a single "
+                        f"image. `{tin}` is a numbered slot, so the node most likely "
+                        f"grows more as they are wired — if these references belong in "
+                        f"ONE generation, wire the extra slots (or an agentY image "
+                        f"collector) rather than sweeping them.")))
 
     return found
 

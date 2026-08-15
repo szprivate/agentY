@@ -269,6 +269,113 @@ def hook_scope_ids(prompt: dict, hook_ids=None) -> set | None:
     return _ancestors(prompt, _descendants(prompt, seeds))
 
 
+# Nodes that exist to end a graph. Named rather than asked, because this is on the
+# path of every hook run and /object_info is seconds; the schema is consulted only
+# to CONFIRM a node is not one, and an unreachable ComfyUI means "assume it is" —
+# the safe direction, since the cost of a wrong guess is deleting someone's output.
+_OUTPUT_HINTS = ("save", "preview", "viewer", "sendto", "output", "display", "show")
+
+
+def is_terminal(class_type: str) -> bool:
+    """Whether *class_type* is an output node — the end of a branch.
+
+    Deliberately biased: a class we cannot ask about counts as terminal. Keeping a
+    node that does nothing costs a line of JSON; dropping one that saves the user's
+    render costs the render.
+    """
+    cls = str(class_type or "")
+    if not cls:
+        return True
+    if any(h in cls.lower() for h in _OUTPUT_HINTS):
+        return True
+    try:
+        from src.utils.preflight import _schema
+        schema = _schema(cls)
+    except Exception:  # noqa: BLE001
+        return True
+    if not schema:
+        return True          # ComfyUI down / class unknown → assume it matters
+    return bool(schema.get("output_node"))
+
+
+def _consumers(prompt: dict) -> dict:
+    """``node_id -> {ids that read it}``."""
+    out: dict = {}
+    for nid, node in (prompt or {}).items():
+        if not isinstance(node, dict):
+            continue
+        for value in ((node.get("inputs") or {}).values()):
+            if isinstance(value, list) and len(value) == 2:
+                out.setdefault(str(value[0]), set()).add(str(nid))
+    return out
+
+
+def prune_dead_nodes(prompt: dict) -> tuple[dict, list]:
+    """Drop nodes that feed nothing and produce nothing. ``(pruned, dropped_ids)``.
+
+    Splicing a hook out leaves its anchors behind. An image wired into a hook as
+    *context* — a reference the agent was meant to look at, an ``agentY ref note``
+    describing it — has no consumer once the hook is gone, so it sits in every
+    generated workflow doing nothing: it cannot affect the result, and it makes the
+    baked graph unreadable and the reference chain look like part of the render.
+
+    A node with no consumer that is not itself an output is dead by definition —
+    ComfyUI walks back from output nodes, so it was never going to run. Removing
+    one can orphan the node feeding it, so this runs to a fixed point.
+    """
+    if not isinstance(prompt, dict) or not prompt:
+        return prompt, []
+    live = dict(prompt)
+    dropped: list = []
+    while True:
+        consumers = _consumers(live)
+        dead = [nid for nid, node in live.items()
+                if isinstance(node, dict)
+                and not consumers.get(str(nid))
+                and not is_terminal(node.get("class_type"))]
+        if not dead:
+            break
+        for nid in dead:
+            live.pop(nid, None)
+            dropped.append(str(nid))
+    return (live, dropped) if dropped else (prompt, [])
+
+
+def scope_to_hook(prompt: dict, hook: dict | None) -> tuple[dict, list]:
+    """Trim *prompt* to the branch ONE hook's output actually drives.
+
+    The turn-level scope keeps everything any hook reaches, which is right for the
+    turn: a canvas with a reference stage and a video stage needs both. It is wrong
+    for a single ``apply_canvas_hooks`` call, though — that call resolves ONE hook,
+    and building its variants from the whole scope puts the *other* stage's nodes
+    into every one of them. A five-reference sweep then carries the video node five
+    times, and running it generates five videos nobody asked for.
+
+    Seeded from the hook's own targets (where its output is wired) rather than from
+    the hook node, which splicing has already removed. Stages joined only through
+    the hook chain separate cleanly; stages genuinely wired to each other on the
+    canvas stay together, which is also right — that graph really is one chain.
+
+    Returns the prompt untouched when there is nothing to scope to, or when
+    scoping would leave a graph that renders nothing.
+    """
+    if not isinstance(prompt, dict) or not prompt or not isinstance(hook, dict):
+        return prompt, []
+    seeds = [tid for tid, *_ in _output_targets(hook) if tid in prompt]
+    if not seeds:
+        return prompt, []
+    keep = _ancestors(prompt, _descendants(prompt, seeds))
+    dropped = [str(nid) for nid in prompt if str(nid) not in keep]
+    if not dropped:
+        return prompt, []
+    scoped = {nid: node for nid, node in prompt.items() if str(nid) in keep}
+    # Never hand back a graph with nothing to render — that is not a tighter
+    # scope, it is a run that produces no files.
+    if not any(is_terminal((n or {}).get("class_type")) for n in scoped.values()):
+        return prompt, []
+    return scoped, dropped
+
+
 def prune_to_hooks(prompt: dict, hook_ids=None) -> tuple[dict, list]:
     """Return ``(scoped_prompt, dropped_ids)``.
 
@@ -897,17 +1004,58 @@ def _all_anchor_inputs(hook: dict, base_prompt: dict | None) -> list:
 
 
 def _slot_label(to_input: str) -> str:
-    """``anchors.anchor1`` → ``anchor_1``: the name the user writes in a directive.
+    """``anchors.anchor1`` → ``anchor1``: the slot's name AS IT READS ON THE NODE.
 
     Directives say "the prompts in anchor_0, the references in anchor_1" all the
     time. Listing the inputs without saying which slot each arrived on leaves the
     agent to guess that mapping from order — and with five references and two
     chained hooks feeding one node, guessing is exactly what goes wrong.
+
+    The slot names are ``anchor``, ``anchor0``, ``anchor1``, … — the first has no
+    number. This used to normalise the bare ``anchor`` to ``anchor_0``, which
+    collided with the real ``anchor0``: a hook with two inputs wired reported BOTH
+    of them as ``anchor_0``, and its third as ``anchor_1``. The physical name is
+    what the user sees on the canvas, so it is what gets reported; the position is
+    added separately by the caller, because the two readings of "anchor_1" (the
+    slot called anchor1, or the first input wired) are both common and neither is
+    guessable from a name alone.
     """
-    m = re.search(r"anchor[_\-]?(\d*)$", str(to_input or "").strip(), re.I)
-    if not m:
-        return ""
-    return f"anchor_{m.group(1) or '0'}"
+    m = re.search(r"(anchor[_\-]?\d*)$", str(to_input or "").strip(), re.I)
+    return m.group(1).replace("_", "").replace("-", "") if m else ""
+
+
+def unresolved_anchor_refs(named, slots: list) -> list:
+    """Which of the ``anchor_N`` a directive names cannot mean any wired slot.
+
+    Two readings are current, and the node's own naming is what makes both of them
+    reasonable: the slots are ``anchor``, ``anchor0``, ``anchor1``, so "anchor_1"
+    is either the slot literally called ``anchor1`` (the THIRD input) or the first
+    input wired. Picking one reading and warning about the other cries wolf on a
+    healthy graph, which is worse than not checking at all.
+
+    So the directive's numbers are resolved TOGETHER, not one at a time: whichever
+    scheme it is using, it is using one of them throughout. "anchor_0 and anchor_1"
+    needs two inputs under every reading — satisfying each separately against a
+    single wired anchor (which an each-number check does) says a hook that is
+    missing half its inputs is fine.
+    """
+    named = sorted({int(n) for n in named})
+    if not named:
+        return []
+    have = list(slots or [])
+    # By name, as they read on the node.
+    if all(f"anchor{n}" in have or (n == 0 and "anchor" in have) for n in named):
+        return []
+    # By position, 0-based or 1-based — both are written in the wild.
+    if named[-1] <= len(have) - 1:
+        return []
+    if named[0] >= 1 and named[-1] <= len(have):
+        return []
+    # Something is out of reach. Report only the numbers no reading can supply,
+    # so a directive that is right about three slots and wrong about one says so.
+    reach = max(len(have) - 1, len(have) if named[0] >= 1 else 0)
+    return [n for n in named
+            if f"anchor{n}" not in have and not (n == 0 and "anchor" in have) and n > reach]
 
 
 def _slot_order(to_input: str) -> int:
@@ -1475,8 +1623,15 @@ def _input_context(hook: dict, base_prompt: dict | None, hook_ids: set,
     rows.sort(key=lambda r: r[0])
     # Name the slot each input arrived on when we know it — directives refer to
     # them ("the prompts in anchor_0"), and the mapping is not guessable from the
-    # order alone once a hook gathers several.
-    return "; ".join(f"{label}: {text}" if label else text for _o, label, text in rows)
+    # order alone once a hook gathers several. BOTH readings are given: the
+    # position ("#1") and the slot's own name on the node ("anchor", "anchor0",
+    # "anchor1" — the first has no number). A directive saying "anchor_1" means one
+    # or the other and there is no way to tell from the words, so the agent is
+    # handed the mapping instead of being left to infer it.
+    out: list = []
+    for i, (_o, label, text) in enumerate(rows, 1):
+        out.append(f"#{i} ({label}): {text}" if label else f"#{i}: {text}")
+    return "; ".join(out)
 
 
 def _split_targets(hook: dict, hook_ids: set) -> tuple[list, list]:

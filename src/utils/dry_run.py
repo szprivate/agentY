@@ -99,16 +99,34 @@ def media_kind(prompt: dict | None) -> str:
     return "image"
 
 
-def _file_count(prompt: dict | None) -> int:
-    """Roughly how many files this graph writes: one per save-ish node.
+def _writers(prompt: dict | None) -> list:
+    """The save-ish nodes, each with the kind IT writes.
 
-    An approximation, and named as one. Getting it exactly right needs the run
-    itself (batch sizes, a video node's frame policy); getting it roughly right
-    is enough for the thing this is for — letting the next hook see that there
-    were three references rather than one.
+    Per node rather than one verdict for the whole graph: a branch that saves an
+    image and a video writes one of each, and calling both of them ``.mp4``
+    because a video node is present somewhere is how a set of reference frames
+    came back named like clips.
+
+    An approximation of the COUNT, and named as one — getting that exactly right
+    needs the run itself (batch sizes, a video node's frame policy). Getting it
+    roughly right is enough for what it is for: letting the next hook see that
+    there were three references rather than one.
     """
-    n = sum(1 for c in _classes(prompt) if any(h in c for h in _SAVE_HINTS))
-    return max(1, min(n, 4))
+    out: list = []
+    for cls in _classes(prompt):
+        if not any(h in cls for h in _SAVE_HINTS):
+            continue
+        if any(h in cls for h in _VIDEO_HINTS):
+            out.append("video")
+        elif any(h in cls for h in _AUDIO_HINTS):
+            out.append("audio")
+        else:
+            out.append("image")
+    if not out:
+        # Nothing that looks like a saver — fall back to what the graph is made
+        # of, so a stand-in still gets a plausible extension.
+        return [media_kind(prompt)]
+    return out[:4]
 
 
 def slug(text: str, limit: int = 40) -> str:
@@ -126,13 +144,13 @@ def stand_ins(prompt: dict | None, workflow_path: str, *, label: str = "",
     would throw away the one fact — which is which — that the rest of the chain
     depends on.
     """
-    ext = _EXT.get(media_kind(prompt), "png")
     base = os.path.join(tempfile.gettempdir(), _DIRNAME)
     name = slug(label)
-    count = _file_count(prompt)
+    kinds = _writers(prompt)
     out: list[str] = []
-    for i in range(count):
-        part = f"_{i + 1}" if count > 1 else ""
+    for i, kind in enumerate(kinds):
+        ext = _EXT.get(kind, "png")
+        part = f"_{i + 1}" if len(kinds) > 1 else ""
         fname = f"{MARKER}_{index:03d}{part}" + (f"_{name}" if name else "") + f".{ext}"
         path = os.path.join(base, fname)
         out.append(path)

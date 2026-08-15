@@ -44,6 +44,8 @@ _BOUND = (
     "_dry_run_report",
     "_dry_run_one",
     "_graph_dry_build",
+    "_scope_to_stage",
+    "_prune_variants",
 )
 
 

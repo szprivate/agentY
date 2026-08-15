@@ -103,7 +103,27 @@ class NoteTest(_Base):
         graph = {"20": {"class_type": "CLIPTextEncode", "inputs": {"text": "", "clip": ["6", 0]}},
                  "11": {"class_type": "SaveImage", "inputs": {"images": ["20", 0]}}}
         notes = self._levels(preflight.check(hooks, graph), "note")
-        self.assertTrue(any("anchor_1" in n and "nothing is wired" in n for n in notes), notes)
+        # Named together, not one at a time: "anchor_0 and anchor_1" needs two
+        # inputs under every reading of those names, and this hook has one.
+        self.assertTrue(any("anchor_1" in n and "1 input(s) wired" in n for n in notes), notes)
+
+    def test_the_first_anchor_can_be_called_anchor_1(self):
+        """The slots are `anchor`, `anchor0`, `anchor1` — the first has no number.
+
+        So "use the style guide in anchor_1" with one input wired is a person
+        counting from one, not a directive pointing at nothing. Warning about it
+        taught people to skip the block, which costs more than the check saved.
+        """
+        hooks = [{"hook_node_id": "27",
+                  "directive": "use the style guide connected to anchor_1",
+                  "anchors": [{"node_id": "75", "to_input": "anchors.anchor",
+                               "from_output_type": "STRING"}],
+                  "targets": [{"node_id": "20", "to_input": "text",
+                               "to_input_type": "STRING"}]}]
+        graph = {"20": {"class_type": "CLIPTextEncode", "inputs": {"text": "", "clip": ["6", 0]}},
+                 "11": {"class_type": "SaveImage", "inputs": {"images": ["20", 0]}}}
+        notes = self._levels(preflight.check(hooks, graph), "note")
+        self.assertFalse([n for n in notes if "anchor_1" in n], notes)
 
     def test_a_chained_hook_counts_as_wiring_that_slot(self):
         hooks = [{"hook_node_id": "30",

@@ -52,6 +52,22 @@ class StandInTest(unittest.TestCase):
         self.assertTrue(dry_run.stand_ins(video, "wf.json")[0].endswith(".mp4"))
         self.assertTrue(dry_run.stand_ins(image, "wf.json")[0].endswith(".png"))
 
+    def test_each_writer_gets_the_kind_it_writes(self):
+        """A reference sweep came back named like clips, because one video node
+        anywhere in the graph made the whole thing "video"."""
+        both = {"348": {"class_type": "ByteDanceSeedreamNodeV2"},
+                "349": {"class_type": "SaveImage"},
+                "283": {"class_type": "ByteDanceSeedanceNode"},
+                "284": {"class_type": "SaveVideo"}}
+        got = dry_run.stand_ins(both, "wf.json")
+        self.assertEqual(sorted(p.rsplit(".", 1)[1] for p in got), ["mp4", "png"])
+
+    def test_a_scoped_reference_stage_is_all_images(self):
+        ref = {"348": {"class_type": "ByteDanceSeedreamNodeV2"},
+               "349": {"class_type": "SaveImage"}}
+        [only] = dry_run.stand_ins(ref, "wf.json", label="Ben")
+        self.assertTrue(only.endswith(".png"), only)
+
     def test_a_stand_in_is_named_after_the_variant(self):
         """Five references are five different things; DRY-RUN_003.png says none of it."""
         [path] = dry_run.stand_ins({"1": {"class_type": "SaveImage"}}, "wf.json",

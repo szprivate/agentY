@@ -1038,6 +1038,10 @@ class Pipeline:
                 str(r.get("target_node_id", r.get("node_id", "")) or "")
                 for r in (resolutions or []) if isinstance(r, dict))
             self._tag_run_outputs(hook)
+            # This call resolves ONE hook, so it builds ONE stage. Without this the
+            # variants carry every other stage on the canvas too — a five-reference
+            # sweep would run the video node five times.
+            base, scope_notes = self._scope_to_stage(base, hook, resolutions)
             labels: list = []
             if resolutions is None or (isinstance(resolutions, list) and not resolutions):
                 # Deliberately empty: "run the graph exactly as it stands". The case
@@ -1053,6 +1057,14 @@ class Pipeline:
                 prompts, notes = _build_batch(
                     base, list(resolutions), cap=cap, labels=labels,
                     connection_inputs=_conn(self._canvas_hooks))
+            notes = list(notes) + scope_notes
+            # Anything left over that cannot reach an output — most often the
+            # reference images and ref notes that were wired into the hook as
+            # CONTEXT, whose only consumer was the hook that got spliced out.
+            prompts, gone_ids = self._prune_variants(prompts)
+            if gone_ids:
+                notes.append(f"dropped {gone_ids} node(s) that fed nothing and "
+                             "rendered nothing (hook context inputs, ref notes)")
             if not prompts:
                 return json.dumps({"error": "no batch was produced", "notes": notes})
             # Every variant is a complete graph, so measure them rather than the
@@ -1726,6 +1738,63 @@ class Pipeline:
             self._dry_graphed = []
         self._dry_graphed.append(saved)
         return saved
+
+    def _scope_to_stage(self, base: dict, hook: dict | None,
+                        resolutions: list | None) -> tuple[dict, list]:
+        """Narrow the base graph to the stage the hook being resolved drives.
+
+        Guarded twice, because a scope that is too tight is worse than one that is
+        too loose: every node a resolution actually targets must survive, and the
+        scoped graph must still render something (:func:`scope_to_hook` checks the
+        second). Either failing means the graph is not shaped the way this assumed,
+        so it is left exactly as it was.
+        """
+        if not isinstance(base, dict) or not base or hook is None:
+            return base, []
+        try:
+            from src.utils.canvas_hooks import scope_to_hook
+            scoped, dropped = scope_to_hook(base, hook)
+        except Exception as exc:  # noqa: BLE001 — never cost the run
+            if self._verbose:
+                print(f"[hook-scope] skipped ({exc}).")
+            return base, []
+        if not dropped:
+            return base, []
+        wanted = {str(r.get("target_node_id", r.get("node_id", "")) or "")
+                  for r in (resolutions or []) if isinstance(r, dict)}
+        missing = {w for w in wanted if w and w not in scoped}
+        if missing:
+            if self._verbose:
+                print(f"[hook-scope] not scoping: would drop target(s) {sorted(missing)}.")
+            return base, []
+        note = (f"scoped to hook {hook.get('hook_node_id')}'s own stage — left out "
+                f"{len(dropped)} node(s) belonging to the rest of the canvas")
+        _push_progress(f"🎯 {note}.")
+        if self._verbose:
+            print(f"pipeline: {note} ({len(scoped)} node(s) remain).")
+        return scoped, [note]
+
+    @staticmethod
+    def _prune_variants(prompts: list) -> tuple[list, int]:
+        """Strip dead nodes from every built variant. ``(prompts, dropped_count)``.
+
+        Done per variant rather than on the base, because the batch is what writes
+        the values: a node that looked orphaned on the base graph may be exactly
+        what a resolution just wired up.
+        """
+        try:
+            from src.utils.canvas_hooks import prune_dead_nodes
+        except Exception:  # noqa: BLE001
+            return prompts, 0
+        out, dropped = [], 0
+        for p in prompts:
+            try:
+                pruned, gone = prune_dead_nodes(p)
+            except Exception:  # noqa: BLE001
+                pruned, gone = p, []
+            out.append(pruned)
+            dropped = max(dropped, len(gone))
+        return out, dropped
 
     def _dry_run_one(self, workflow_path: str, hook: dict | None = None) -> str:
         """A single assembled workflow, built and not submitted.

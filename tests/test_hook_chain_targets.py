@@ -215,15 +215,22 @@ class ConsumerSideTest(unittest.TestCase):
         self.assertIn("the value you produce for hook 5", line)
 
     def test_each_input_is_named_by_the_slot_the_directive_refers_to(self):
+        """Both readings, because "anchor_1" means either and neither is guessable.
+
+        The slots are `anchor`, `anchor0`, `anchor1` — the first has no number — so
+        a directive's "anchor_1" is either the slot of that name (the THIRD input)
+        or the first input wired. The position and the slot's own name are both
+        given rather than one being picked.
+        """
         line = self._line()
-        self.assertIn("anchor_0: the value you produce for hook 27", line)
-        self.assertIn("anchor_1: the value you produce for hook 5", line)
+        self.assertIn("#1 (anchor0): the value you produce for hook 27", line)
+        self.assertIn("#2 (anchor1): the value you produce for hook 5", line)
 
     def test_slots_are_listed_in_their_own_order_not_arrival_order(self):
         hooks = self._chain()
         hooks[2]["prev_links"] = list(reversed(hooks[2]["prev_links"]))
         line = self._line(hooks)
-        self.assertLess(line.index("anchor_0:"), line.index("anchor_1:"))
+        self.assertLess(line.index("(anchor0)"), line.index("(anchor1)"))
 
     def test_a_real_anchor_and_a_chained_hook_sort_together(self):
         hooks = self._chain()
@@ -231,8 +238,8 @@ class ConsumerSideTest(unittest.TestCase):
                                 "widgets": {"image": "extra.png"},
                                 "to_input": "anchors.anchor2"}]
         line = self._line(hooks)
-        self.assertLess(line.index("anchor_1:"), line.index("anchor_2:"))
-        self.assertIn("anchor_2: node 9 (LoadImage)", line)
+        self.assertLess(line.index("(anchor1)"), line.index("(anchor2)"))
+        self.assertIn("#3 (anchor2): node 9 (LoadImage)", line)
 
     def test_a_hook_with_nothing_at_all_still_says_so(self):
         hooks = self._chain()
