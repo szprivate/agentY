@@ -1897,8 +1897,15 @@ class Pipeline:
         # runaway sweep still cannot bury the sidebar.
         graphed: list = []
         for i, p in enumerate(paths):
+            # The VARIANT's own label first, the hook's role only as a fallback.
+            # The other way round, the role — which is the directive when the user
+            # named no role, and directives are long — ate the whole 40-character
+            # budget, and six different reference frames were filed as
+            # "dryrun_0N_take-the-character-and-place-prompts-anc". Numbered, so
+            # not literally identical, and useless: the one thing that tells them
+            # apart is the one thing that got truncated away.
             what = self._variant_label(labels[i] if i < len(labels) else {})
-            stem = _dry.slug(f"{role} {what}".strip(), 40) or Path(p).stem
+            stem = _dry.slug(what, 40) or _dry.slug(role, 40) or Path(p).stem
             got = self._graph_dry_build(
                 p, name=f"{i + 1:02d}_{stem}" if len(paths) > 1 else stem)
             if got:

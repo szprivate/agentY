@@ -252,6 +252,36 @@ class GraphsWhatItBuiltTest(unittest.TestCase):
         for name in out["graphed_as"]:
             self.assertTrue(name.startswith("agent/dryrun_"), name)
 
+    def test_the_name_is_what_tells_the_variants_apart(self):
+        """Six references filed as "dryrun_0N_take-the-character-and-place-pro".
+
+        The hook's role went first, and a role is the DIRECTIVE when the user
+        named none — long, and identical across the batch. It ate the whole
+        name budget, so the value that makes each variant itself was truncated
+        away and the sidebar showed six rows of the same words.
+        """
+        pipe = pipeline_stub(
+            _dry_run=True,
+            _canvas_hooks=[{"hook_node_id": "5", "purpose": "inline_parameter",
+                            "directive": "take the character and place prompts in "
+                                         "anchor_1 and write one reference per shot",
+                            "anchors": [],
+                            "targets": [{"node_id": "1", "to_input": "text",
+                                         "to_input_type": "STRING"}]}],
+            _canvas_base_prompt={"1": {"class_type": "CLIPTextEncode", "inputs": {"text": ""}},
+                                 "2": {"class_type": "SaveImage", "inputs": {"images": ["1", 0]}}})
+        with mock.patch("src.executor._autoload_workflows_into_canvas", return_value=False):
+            out = json.loads(asyncio.run(tools(pipe)["apply_canvas_hooks"]([
+                {"target_node_id": "1", "param": "text", "mode": "value_list",
+                 "values": ["ZILDOG reptilian kaiju monster",
+                            "feudal japan battlefield aftermath",
+                            "floodlit baseball stadium at night"]}])))
+        names = out["graphed_as"]
+        self.assertEqual(len(names), 3)
+        for name, want in zip(names, ("zildog", "feudal", "baseball")):
+            self.assertIn(want, name, names)
+        self.assertFalse([n for n in names if "take-the-character" in n], names)
+
     def test_it_does_not_take_away_the_graph_under_test(self):
         self._sweep(False)
         self.assertIs(self.canvas.call_args.kwargs["push_to_canvas"], False)
