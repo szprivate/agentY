@@ -87,7 +87,15 @@ _SIGNATURES: tuple = (
 # How many times to run it again before giving up, per stage. Output-side is the
 # bet worth taking twice; an input the provider read and refused rarely reads
 # differently the second time, so it gets one cheap attempt and then the truth.
-_DEFAULT_RETRIES = {"output": 2, "input": 1, "unknown": 2}
+# Input refusals get ZERO. The others are a genuine bet on a probabilistic filter
+# and a non-deterministic model; an input refusal is not. The provider read what
+# was SENT — a prompt, or the pixels of a reference image — and said no. Re-running
+# sends the identical bytes to the identical classifier: the seed cannot reach them,
+# and neither can a fresh roll. The one retry this used to spend was pure latency
+# in front of an answer that was never going to change, and on a video model it is
+# latency measured in minutes. What has to change is the input, and only the user
+# or the agent can change it.
+_DEFAULT_RETRIES = {"output": 2, "input": 0, "unknown": 2}
 
 
 @dataclass(frozen=True)
@@ -175,10 +183,16 @@ def exhausted(rej: Rejection, attempts: int) -> dict:
         "kind": "content_policy",
         "provider": rej.who(),
         "stage": rej.stage,
-        "error": (f"{rej.who()} refused this generation on content grounds and it did "
-                  f"not pass on {attempts} further attempt(s). This is the provider's "
-                  f"content filter, NOT a workflow defect — there is nothing in the "
-                  f"graph to repair."),
+        "error": (
+            f"{rej.who()} refused what was SENT — the prompt or a reference image — "
+            f"before generating anything. Re-running was not attempted: it would send "
+            f"the identical bytes to the identical filter. This is the provider's "
+            f"content filter, NOT a workflow defect — there is nothing in the graph to "
+            f"repair." if rej.stage == "input" and not attempts else
+            f"{rej.who()} refused this generation on content grounds and it did "
+            f"not pass on {attempts} further attempt(s). This is the provider's "
+            f"content filter, NOT a workflow defect — there is nothing in the "
+            f"graph to repair."),
         "what_it_said": rej.quote,
         "what_to_do": fix,
         "do_not": ("Do not send this to the repair specialist and do not rebuild the "

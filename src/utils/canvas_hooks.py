@@ -1308,6 +1308,98 @@ def expand_image_batches(prompt: dict) -> tuple[dict, list]:
     return (out, notes) if notes else (prompt, [])
 
 
+def reference_inputs(prompt: dict, node_id) -> list:
+    """The reference images feeding *node_id*, in slot order, resolved to files.
+
+    For when a provider refuses "an input image" and names only its own asset id.
+    The graph knows more than that: which slot each reference arrived on, which
+    file it came from, and — via the sidecars — what the user said it was FOR. A
+    shortlist reading "image_3 = ref_00044.png — reference for APE" is the
+    difference between replacing one reference and re-checking seven.
+
+    Resolves the chain the collector path actually builds: slot ← expander output
+    k ← the collector's k-th file. A slot wired straight to a loader is read off
+    its filename widget instead. Slot order is the upload order too, since the
+    provider uploads them one at a time and stops at the first refusal.
+    """
+    out: list = []
+    node = (prompt or {}).get(str(node_id))
+    if not isinstance(node, dict):
+        return out
+
+    def _slot_no(name: str) -> int:
+        m = re.search(r"image[_\-]?(\d+)$", str(name), re.I)
+        return int(m.group(1)) if m else 10_000
+
+    for name, val in sorted((node.get("inputs") or {}).items(), key=lambda kv: _slot_no(kv[0])):
+        if _slot_no(name) == 10_000 or not (isinstance(val, list) and len(val) == 2):
+            continue
+        src = (prompt.get(str(val[0])) or {})
+        path = ""
+        cls = str(src.get("class_type") or "")
+        if cls == _EXPAND_CLASS:
+            feed = (src.get("inputs") or {}).get("images")
+            up = (prompt.get(str(feed[0])) or {}) if isinstance(feed, list) and len(feed) == 2 else {}
+            if str(up.get("class_type")) in _COLLECTOR_TYPES:
+                files = _collector_files(up)
+                idx = int(val[1] or 0)
+                path = files[idx] if 0 <= idx < len(files) else ""
+        else:
+            inputs = src.get("inputs") or {}
+            for key in _FILE_WIDGETS:
+                if isinstance(inputs.get(key), str) and inputs[key].strip():
+                    path = inputs[key]
+                    break
+        role = ""
+        if path:
+            try:
+                from src.utils.output_tags import role_of_canvas_file, role_of_file
+                role = role_of_file(path) or role_of_canvas_file(path)
+            except Exception:  # noqa: BLE001
+                role = ""
+        out.append({"slot": str(name).rpartition(".")[2] or str(name),
+                    "path": path, "role": role})
+    return out
+
+
+def _prompt_bindings(prompt: dict, node_id) -> dict:
+    """``{1: "TANIHO (HERO) — samurai in red armor"}`` from the node's own prompt.
+
+    The multi-reference models are driven by ``@image1``/``@imageN`` markers, so a
+    prompt written for one usually opens with the table that binds them. It is a
+    better name for a reference than anything else available: the sidecar carries
+    what the RUN was for, which is the same words for every member of a batch,
+    while this says which character this particular slot is.
+    """
+    node = (prompt or {}).get(str(node_id)) or {}
+    text = ""
+    for key, val in (node.get("inputs") or {}).items():
+        if isinstance(val, str) and "prompt" in str(key).lower() and len(val) > len(text):
+            text = val
+    out: dict = {}
+    for m in re.finditer(r"@image[_\- ]?(\d+)\s*[=:]\s*([^\n]{0,80})", text, re.I):
+        out.setdefault(int(m.group(1)), " ".join(m.group(2).split()).strip(" -—"))
+    return out
+
+
+def describe_references(prompt: dict, node_id) -> str:
+    """The shortlist as one readable block, or '' when there is nothing to list."""
+    refs = reference_inputs(prompt, node_id)
+    if not refs:
+        return ""
+    bound = _prompt_bindings(prompt, node_id)
+    lines = []
+    for i, r in enumerate(refs, 1):
+        name = os.path.basename(r["path"]) if r["path"] else "(unresolved)"
+        # The prompt's own binding first: it names the subject. The sidecar is the
+        # fallback, and on a batch it tends to repeat the run's role verbatim.
+        label = bound.get(i) or r["role"]
+        lines.append(f"  {i}. {r['slot']} = {name}" + (f" — {label}" if label else ""))
+    return ("The reference image(s) this node was given, in the order they are "
+            "uploaded (the provider stops at the first one it refuses):\n"
+            + "\n".join(lines))
+
+
 def _expander_available() -> bool:
     """Whether ComfyUI has the expander loaded. A graph naming a node it does not
     have fails validation, so this is checked before one is written in."""

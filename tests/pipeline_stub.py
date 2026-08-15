@@ -34,6 +34,7 @@ _BOUND = (
     "_name_variants",
     "_variant_report",
     "_variant_label",
+    "_variant_labels",
     "_qa_set_verdict",
     "_qa_instruction",
     "_collector_refusal",

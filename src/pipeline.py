@@ -1896,6 +1896,7 @@ class Pipeline:
         # all?" is the first thing anyone checks. Bounded by _DRY_GRAPH_CAP so a
         # runaway sweep still cannot bury the sidebar.
         graphed: list = []
+        names = self._variant_labels(labels)
         for i, p in enumerate(paths):
             # The VARIANT's own label first, the hook's role only as a fallback.
             # The other way round, the role — which is the directive when the user
@@ -1904,7 +1905,7 @@ class Pipeline:
             # "dryrun_0N_take-the-character-and-place-prompts-anc". Numbered, so
             # not literally identical, and useless: the one thing that tells them
             # apart is the one thing that got truncated away.
-            what = self._variant_label(labels[i] if i < len(labels) else {})
+            what = names[i] if i < len(names) else ""
             stem = _dry.slug(what, 40) or _dry.slug(role, 40) or Path(p).stem
             got = self._graph_dry_build(
                 p, name=f"{i + 1:02d}_{stem}" if len(paths) > 1 else stem)
@@ -2681,12 +2682,21 @@ class Pipeline:
                     # looking for a defect that isn't there.
                     _refused = _det if _det.get("kind") == "content_policy" else None
                     if _refused and not _partial:
+                        # An input refusal names only the provider's own asset id, so
+                        # "a reference image was refused" leaves every reference on the
+                        # graph a suspect. The graph knows which ones were sent, on
+                        # which slot, from which file, and what each was FOR.
+                        _shortlist = self._refused_references(
+                            next(iter(_failed), ""), _det.get("node_id"))
+                        _rerun = (" and it was still refused after re-running it"
+                                  if _refused.get("stage") != "input" else "")
                         yield {"data": (
                             f"\n\n🚫 {_refused.get('provider', 'The provider')} refused this "
-                            f"generation on content grounds, and it was still refused after "
-                            f"re-running it. Nothing is wrong with the workflow.\n\n"
+                            f"generation on content grounds{_rerun}. Nothing is wrong with "
+                            f"the workflow.\n\n"
                             f"> {_refused.get('what_it_said', _why)}\n\n"
-                            f"{_refused.get('what_to_do', '')}")}
+                            + (_shortlist + "\n\n" if _shortlist else "")
+                            + f"{_refused.get('what_to_do', '')}")}
                         self._record_chat_summary(user_text, synth, status="refused",
                                                   raw_json=self._last_brainbriefing_json)
                         self._record_agent_usage(self._orchestrator_agent, _snap)
@@ -3274,7 +3284,7 @@ class Pipeline:
                      hook=str((hook or {}).get("hook_node_id") or ""))
 
     @staticmethod
-    def _variant_label(label: dict) -> str:
+    def _variant_label(label: dict, limit: int = 70) -> str:
         """The one value that makes a variant itself — usually the prompt.
 
         A seed is what makes two variants of the SAME thing different; a prompt is
@@ -3289,9 +3299,39 @@ class Pipeline:
                 continue
             text = " ".join(val.split())
             if any(w in param for w in ("prompt", "text", "description", "caption")):
-                return text[:70]
-            best = best or text[:70]
+                return text[:limit]
+            best = best or text[:limit]
         return best
+
+    @classmethod
+    def _variant_labels(cls, labels: list, limit: int = 70) -> list:
+        """One distinguishing label per variant, with the shared opening removed.
+
+        Taking the first seventy characters of each prompt assumes the difference
+        is at the front. It usually is — and it was not here: every reference
+        prompt in the batch opened with the same style guide, so all seven were
+        named "STYLE GUIDE: Monochromatic cool-blue palette, deep navy sh…" and
+        the sidecars, the node titles and the filed graphs all agreed with each
+        other about nothing.
+
+        So the labels are read in full, the prefix they share is dropped on a word
+        boundary, and only then are they cut to length. A batch that shares nothing
+        is untouched, and a batch that shares everything (one value swept) keeps
+        the prefix rather than reducing to empty strings.
+        """
+        full = [cls._variant_label(l or {}, limit=10_000) for l in (labels or [])]
+        usable = [t for t in full if t]
+        # Nothing to tell apart: one variant, or every prompt the same. Stripping
+        # what they "share" would eat the whole string and leave a tail fragment.
+        if len(usable) < 2 or len(set(usable)) < 2:
+            return [t[:limit] for t in full]
+        common = os.path.commonprefix(usable)
+        if " " in common:
+            common = common[:common.rindex(" ") + 1]
+        # Worth cutting only if it is a real preamble AND a real name survives it.
+        if len(common) >= 16 and all(len(t) - len(common) >= 8 for t in usable):
+            full = [t[len(common):].lstrip(" ,.;:-—–") if t else t for t in full]
+        return [t[:limit] for t in full]
 
     def _name_variants(self, paths: list, labels: list, hook: dict | None) -> None:
         """Give every member of a batch its own name, before any of it runs."""
@@ -3303,8 +3343,9 @@ class Pipeline:
         except Exception:  # noqa: BLE001
             return
         declared = declared_output_role(hook) if hook else ""
+        names = self._variant_labels(labels)
         for i, path in enumerate(paths):
-            what = self._variant_label(labels[i] if i < len(labels) else {})
+            what = names[i] if i < len(names) else ""
             if not what:
                 continue
             role = f"{declared}: {what}" if declared else what
@@ -4677,6 +4718,28 @@ class Pipeline:
                     node["inputs"][slot] = _random.randint(0, 2**31 - 1)
                     rerolled += 1
         return rerolled
+
+    def _refused_references(self, workflow_path: str, node_id) -> str:
+        """The reference images a refused node was given, named and in slot order.
+
+        The provider's answer identifies the offending image only by its own asset
+        id, which means nothing here — so a refusal reads as "one of your reference
+        images" and every one of them becomes a suspect. Read back off the graph
+        that was submitted, it becomes a list with filenames and the roles the user
+        wrote on them, ordered the way the provider uploads them.
+        """
+        if not workflow_path or node_id in (None, ""):
+            return ""
+        try:
+            from src.utils.canvas_hooks import describe_references
+            graph = json.loads(Path(workflow_path).read_text(encoding="utf-8"))
+            if isinstance(graph, dict) and isinstance(graph.get("prompt"), dict):
+                graph = graph["prompt"]
+            return describe_references(graph, node_id)
+        except Exception as exc:  # noqa: BLE001 — a courtesy, never the run
+            if self._verbose:
+                print(f"[refusal] could not list the references ({exc}).")
+            return ""
 
     @staticmethod
     def _policy_rejection(exec_error: dict | None):

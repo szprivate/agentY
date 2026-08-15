@@ -178,7 +178,10 @@ class RetryTest(unittest.TestCase):
         pipe = pipeline_stub()
         other = self.tmp / "canvas_001.json"
         other.write_text(self.wf.read_text(encoding="utf-8"), encoding="utf-8")
-        rej = Rejection("ByteDance", "input", "InputTextSensitiveContentDetected")
+        # An OUTPUT refusal: the stage is incidental to what this checks, and the
+        # input stage no longer has a budget to spend (re-sending the same bytes
+        # to the same classifier was never going to answer differently).
+        rej = Rejection("ByteDance", "output", "OutputImageSensitiveContentDetected")
         self.assertEqual(Pipeline._retry_after_refusal(pipe, str(self.wf), rej)["status"],
                          "ready")
         self.assertEqual(Pipeline._retry_after_refusal(pipe, str(other), rej)["status"],
