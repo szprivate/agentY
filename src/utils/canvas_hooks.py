@@ -1059,9 +1059,24 @@ def unresolved_anchor_refs(named, slots: list) -> list:
 
 
 def _slot_order(to_input: str) -> int:
-    """Sort key for an anchor slot; unknown slots keep their arrival order."""
-    m = re.search(r"anchor[_\-]?(\d+)$", str(to_input or "").strip(), re.I)
-    return int(m.group(1)) if m else 10_000
+    """Sort key for an anchor slot — the SAME order :func:`_anchor_links` uses.
+
+    The first slot is the bare ``anchor``, with no number, and it has to sort
+    FIRST. Sorting it last (which "no digits, so put it at the end" did) rotated
+    every reference by one: the graph passed the anchors through in wiring order
+    while the agent was shown them starting from the second, so the first image
+    the user wired was described as the last one. Nothing reported a mismatch —
+    the references were simply assigned to the wrong shots.
+
+    Kept deliberately identical to ``_anchor_links._idx``. These two orderings
+    describe the same wires and there is no version of "correct" where they
+    disagree, so if one of them ever changes, the other has to change with it.
+    """
+    tail = str(to_input or "").strip().rsplit(".", 1)[-1]
+    m = re.match(r"(?i)anchor[_\-]?(\d*)$", tail)
+    if not m:
+        return 10_000                    # not an anchor at all — keep it at the end
+    return int(m.group(1)) if m.group(1) else -1
 
 
 def _chain_inputs(hook: dict, hook_ids: set) -> list:
@@ -1173,6 +1188,134 @@ def missing_collector_files(prompt: dict | None) -> list:
             out.append({"node_id": str(nid), "class_type": str(node.get("class_type")),
                         "lines": len(lines), "missing": missing[:12]})
     return out
+
+
+_EXPAND_CLASS = "AgentYImageBatchExpand"
+_EXPAND_MAX_OUT = 8          # image_1 … image_8; slot 8 is `count`
+
+
+def autogrow_slots(class_type: str) -> dict:
+    """``{"model.images": ["image_1", …]}`` — the numbered slots a class declares.
+
+    The names are not at the top of the schema. A node like Seedream keeps them
+    under a dynamic combo: ``model`` → its options → ``images``
+    (``COMFY_AUTOGROW_V3``) → ``template.names``. The API prompt then addresses one
+    as the dotted ``model.images.image_1``, which is why the path is rebuilt here
+    rather than guessed — knowing that ``image_2`` really exists is the whole
+    licence for wiring one.
+
+    ``{}`` when ComfyUI cannot be asked, which is the answer that changes nothing.
+    """
+    try:
+        from src.utils.preflight import _schema
+        schema = _schema(str(class_type or ""))
+    except Exception:  # noqa: BLE001
+        return {}
+    out: dict = {}
+
+    def _walk(block: dict, prefix: str) -> None:
+        for group in ("required", "optional"):
+            for name, spec in ((block or {}).get(group) or {}).items():
+                if not (isinstance(spec, list) and spec):
+                    continue
+                kind, opts = spec[0], (spec[1] if len(spec) > 1 else {})
+                path = f"{prefix}.{name}" if prefix else str(name)
+                if kind == "COMFY_AUTOGROW_V3":
+                    names = ((opts or {}).get("template") or {}).get("names") or []
+                    if names:
+                        out[path] = [str(n) for n in names]
+                elif kind == "COMFY_DYNAMICCOMBO_V3":
+                    # The option KEY is not part of the address — every option
+                    # contributes its slots under the combo's own name.
+                    for opt in ((opts or {}).get("options") or []):
+                        _walk((opt or {}).get("inputs") or {}, path)
+
+    _walk((schema or {}).get("input") or {}, "")
+    return out
+
+
+def _collector_files(node: dict) -> list:
+    return [ln.strip().strip('"')
+            for ln in str((node.get("inputs") or {}).get("files") or "").splitlines()
+            if ln.strip()]
+
+
+def expand_image_batches(prompt: dict) -> tuple[dict, list]:
+    """Fan a collector's batch across the numbered slots it was aimed at.
+
+    A collector emits its files as one IMAGE batch; the API model nodes take
+    references in numbered single-image slots. Wired straight through, the node
+    reads the FIRST image and ignores the rest — five references handed in, a
+    render built from one, and no error anywhere.
+
+    So the wire is re-routed through an ``agentY expand image batch``: slot 1 keeps
+    the original target and slots 2..N are wired to the ones the node actually
+    declares. Done here rather than asked of the agent, because it is a mechanical
+    rewrite with one right answer, and because the failure it prevents is silent.
+
+    Nothing happens unless every part of it is known: the expander must be
+    registered, the target class must declare the extra slots, and the collector
+    must hold more than one file. Any of those missing leaves the graph alone —
+    pre-flight still reports the situation for a human to decide.
+    """
+    if not isinstance(prompt, dict) or not prompt:
+        return prompt, []
+    # Sources first, so nothing is rewired onto a collector that is not one.
+    collectors = {str(nid): _collector_files(n) for nid, n in prompt.items()
+                  if isinstance(n, dict) and n.get("class_type") in _COLLECTOR_TYPES}
+    if not any(len(f) > 1 for f in collectors.values()):
+        return prompt, []
+    if not _expander_available():
+        return prompt, []
+
+    out = copy.deepcopy(prompt)
+    notes: list = []
+    for nid in list(out):
+        node = out.get(nid)
+        if not isinstance(node, dict) or node.get("class_type") in _COLLECTOR_TYPES:
+            continue
+        declared = None
+        for name, val in list((node.get("inputs") or {}).items()):
+            if not (isinstance(val, list) and len(val) == 2):
+                continue
+            files = collectors.get(str(val[0]))
+            if not files or len(files) < 2:
+                continue
+            if declared is None:
+                declared = autogrow_slots(str(node.get("class_type") or ""))
+            group, _, slot = str(name).rpartition(".")
+            names = declared.get(group) or declared.get(str(name)) or []
+            if slot not in names:
+                continue                    # not a slot we can address by number
+            start = names.index(slot)
+            room = min(len(files), _EXPAND_MAX_OUT, len(names) - start)
+            if room < 2:
+                continue
+            eid = _free_id(out)
+            out[eid] = {"class_type": _EXPAND_CLASS,
+                        "inputs": {"images": [str(val[0]), int(val[1])]}}
+            for k in range(room):
+                target = f"{group}.{names[start + k]}" if group else names[start + k]
+                node.setdefault("inputs", {})[target] = [eid, k]
+            notes.append(
+                f"node {val[0]} holds {len(files)} images and fed node {nid}'s "
+                f"`{name}`, which takes one — routed through an "
+                f"`agentY expand image batch` and wired to {room} slot(s), so all "
+                f"of them are used instead of only the first"
+                + (f" ({len(files) - room} more could not be placed)"
+                   if len(files) > room else ""))
+            break                            # one collector per consumer is enough
+    return (out, notes) if notes else (prompt, [])
+
+
+def _expander_available() -> bool:
+    """Whether ComfyUI has the expander loaded. A graph naming a node it does not
+    have fails validation, so this is checked before one is written in."""
+    try:
+        from src.utils.preflight import _schema
+        return bool(_schema(_EXPAND_CLASS))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def connection_targets(hooks: list | None) -> set:

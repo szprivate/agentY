@@ -45,6 +45,7 @@ _BOUND = (
     "_dry_run_one",
     "_graph_dry_build",
     "_trim_variants",
+    "_expand_batches",
 )
 
 

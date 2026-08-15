@@ -1053,6 +1053,11 @@ class Pipeline:
                 prompts, notes = _build_batch(
                     base, list(resolutions), cap=cap, labels=labels,
                     connection_inputs=_conn(self._canvas_hooks))
+            # A collector's batch aimed at a single numbered slot uses only its
+            # first image, silently. Re-routed through the expander here rather
+            # than left for the agent to notice: it is a mechanical rewrite with
+            # one right answer, and the failure it prevents reports nothing.
+            prompts, notes = self._expand_batches(prompts, notes)
             # Trim each BUILT variant — never the base it was built from. What a
             # resolution wires up is only visible after it has been written: the
             # agent selects one of the hook's wired images by NODE ID, so trimming
@@ -1731,6 +1736,32 @@ class Pipeline:
             self._dry_graphed = []
         self._dry_graphed.append(saved)
         return saved
+
+    def _expand_batches(self, prompts: list, notes: list) -> tuple[list, list]:
+        """Route a collector's batch through the expander, per built variant.
+
+        Reported rather than done quietly: the graph the user opens afterwards has
+        a node in it they did not place, and they are entitled to know why.
+        """
+        notes = list(notes or [])
+        try:
+            from src.utils.canvas_hooks import expand_image_batches
+        except Exception:  # noqa: BLE001
+            return prompts, notes
+        out, said = [], set()
+        for p in prompts:
+            try:
+                fixed, why = expand_image_batches(p)
+            except Exception as exc:  # noqa: BLE001 — never cost the run
+                if self._verbose:
+                    print(f"[expand-batch] left a variant alone ({exc}).")
+                fixed, why = p, []
+            out.append(fixed)
+            said.update(why)
+        for line in sorted(said):
+            notes.append(line)
+            _push_progress(f"🖼️ {line}.")
+        return out, notes
 
     def _trim_variants(self, prompts: list, hook: dict | None,
                        resolutions: list | None, notes: list) -> tuple[list, list]:

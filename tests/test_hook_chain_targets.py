@@ -232,6 +232,34 @@ class ConsumerSideTest(unittest.TestCase):
         line = self._line(hooks)
         self.assertLess(line.index("(anchor0)"), line.index("(anchor1)"))
 
+    def test_the_agent_is_shown_the_anchors_in_the_order_they_are_wired(self):
+        """The rotation that reassigned every reference to the wrong shot.
+
+        The first slot is the bare `anchor`, with no number. `_anchor_links` — the
+        order the graph and the splice use — sorts it first; `_slot_order`, the
+        order the agent was SHOWN, had no digits to read and put it last. So the
+        first image the user wired was described as the last one and every
+        reference shifted by one, with nothing anywhere reporting a mismatch.
+
+        These two functions describe the same wires. There is no version of
+        "correct" where they disagree, so this pins them together.
+        """
+        from src.utils.canvas_hooks import _anchor_links, _slot_order
+        slots = ["anchors.anchor", "anchors.anchor0", "anchors.anchor1", "anchors.anchor2"]
+        inputs = {s: [str(i), 0] for i, s in enumerate(slots)}
+        wired = [link[0] for link in _anchor_links(inputs)]
+        shown = [str(slots.index(s)) for s in sorted(slots, key=_slot_order)]
+        self.assertEqual(shown, wired)
+        self.assertEqual(shown, ["0", "1", "2", "3"])
+
+    def test_the_first_wired_anchor_is_reported_first(self):
+        hooks = self._chain()
+        hooks[2]["prev_links"] = [{"from_hook_id": "27", "to_input": "anchors.anchor"},
+                                  {"from_hook_id": "5", "to_input": "anchors.anchor0"}]
+        line = self._line(hooks)
+        self.assertIn("#1 (anchor): the value you produce for hook 27", line)
+        self.assertIn("#2 (anchor0): the value you produce for hook 5", line)
+
     def test_a_real_anchor_and_a_chained_hook_sort_together(self):
         hooks = self._chain()
         hooks[2]["anchors"] = [{"node_id": "9", "type": "LoadImage",
