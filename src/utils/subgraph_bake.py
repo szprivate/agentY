@@ -1,6 +1,6 @@
 """Bake a chain of generated stage-workflows into a ComfyUI *subgraph* canvas.
 
-When a make_workflow hook has ``bake_to_canvas`` on, the orchestrator generates
+When a make_workflow hook has ``bake`` on, the orchestrator generates
 a workflow per stage and then asks to "bake" the chain: each stage's workflow is
 nested into a ComfyUI **subgraph** whose exposed inputs/outputs match the hook's
 slots, the subgraph instances are placed on one canvas and wired to mirror the
@@ -21,6 +21,7 @@ video, and scalars (STRING/INT/FLOAT) alike.
 from __future__ import annotations
 
 import copy
+import re
 import uuid
 from typing import Any
 
@@ -29,9 +30,80 @@ from typing import Any
 _INPUT_NODE_ID = -10
 _OUTPUT_NODE_ID = -20
 
+# A subgraph's name is rendered on the collapsed instance node, in the breadcrumb
+# when you open it, and in the node-library entry. All three are small. A stage
+# named with the whole directive — "generate a cinematic wide shot of a lighthouse
+# at dusk, moody volumetric light, 35mm, …" — makes an unreadable canvas out of
+# what baking was supposed to make readable.
+_MAX_NAME_WORDS = 5
+_MAX_NAME_CHARS = 42
+
+# Openers that carry no information about what the stage DOES. Dropped from the
+# front only, so "Generate the reference frames" keeps its verb while "Please
+# generate …" and "Then, generate …" lose theirs.
+_FILLER = ("please", "now", "then", "next", "first", "also", "just", "kindly",
+           "i want you to", "you should", "your task is to", "the task is to",
+           "this hook", "this stage", "for this stage", "in this step")
+
+# A name may not END on one of these: cutting at five words lands on them often
+# ("Upscale the image 2x and"), and a dangling conjunction reads as truncation
+# rather than as a name.
+_DANGLING = {"and", "or", "but", "with", "of", "to", "into", "for", "from", "at",
+             "in", "on", "by", "as", "the", "a", "an", "then", "so", "that",
+             "plus", "using", "via", "per", "its", "their", "this", "these",
+             "those", "it", "them", "one"}
+
 
 def _uuid() -> str:
     return str(uuid.uuid4())
+
+
+def short_name(text: str, fallback: str = "Baked stage") -> str:
+    """A 2–5 word name for a baked stage, from whatever the caller passed.
+
+    The agent is asked for a short functional name and usually gives one. This is
+    what happens when it doesn't: the name is derived rather than trusted, because
+    a directive pasted in whole is the failure that shows up on the canvas, and it
+    shows up on EVERY stage at once.
+
+    Takes the first clause, drops leading filler, and clamps to five words — a
+    sentence's first clause is nearly always the thing it asks for.
+    """
+    raw = " ".join(str(text or "").split())
+    if not raw:
+        return fallback
+    # Filler first, and before the clause split: "Then, animate the scene" splits
+    # on that comma into "Then", which names nothing at all.
+    changed = True
+    while changed:
+        changed = False
+        low = raw.lower()
+        for f in _FILLER:
+            if low.startswith(f + " ") or low.startswith(f + ","):
+                raw = raw[len(f):].lstrip(" ,").strip()
+                changed = True
+                break
+    # First clause: the ask, before the styling notes and the qualifications.
+    clause = re.split(r"[.;:\n]|\s[—–-]\s|,\s", raw, maxsplit=1)[0].strip() or raw
+    words = clause.split()[:_MAX_NAME_WORDS]
+    # Never end on a dangling word, and never cut mid-word to fit.
+    def _trim(ws: list) -> list:
+        while ws:
+            last = ws[-1].strip(" ,;:-—–").lower()
+            # A bare number at the end is the same artefact: "a 5" is where
+            # "a 5 second clip" was cut, not a name.
+            if last in _DANGLING or last.isdigit():
+                ws = ws[:-1]
+                continue
+            return ws
+        return ws
+    words = _trim(words)
+    while words and len(" ".join(words)) > _MAX_NAME_CHARS and len(words) > 1:
+        words = _trim(words[:-1])
+    name = " ".join(words).strip(" ,;:-—–")[:_MAX_NAME_CHARS].strip(" ,;:-—–")
+    if not name:
+        return fallback
+    return name[0].upper() + name[1:]
 
 
 def _as_object_link(link: Any) -> dict | None:
@@ -206,7 +278,7 @@ def build_subgraph_definition(stage: dict) -> dict:
                   "lastLinkId": max_link, "lastRerouteId": 0},
         "revision": 0,
         "config": {},
-        "name": str(stage.get("name") or "Baked stage"),
+        "name": short_name(stage.get("name")),
         "inputNode": {"id": _INPUT_NODE_ID, "bounding": [-320, 0, 120, 60]},
         "outputNode": {"id": _OUTPUT_NODE_ID, "bounding": [1180, 0, 120, 60]},
         "inputs": exposed_inputs,

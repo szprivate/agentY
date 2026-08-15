@@ -393,7 +393,7 @@ ORCHESTRATOR_TOOLS: list = [
     open_workflow_in_canvas,
     # Handoff to the executor (prepare_workflow → signal, never submit directly)
     signal_workflow_ready,
-    # Bake a chain of standin workflows into canvas subgraphs (bake_to_canvas hook)
+    # Bake a chain of standin workflows into canvas subgraphs (a hook's `bake` switch)
     bake_hooks_to_canvas,
     # Image handling (the orchestrator owns input prep: stage + analyze)
     upload_image,

@@ -1,5 +1,5 @@
 """``bake_hooks_to_canvas`` — bake a chain of generated stage-workflows into a
-ComfyUI subgraph canvas (the ``bake_to_canvas`` hook switch).
+ComfyUI subgraph canvas (the hook's ``bake`` switch, on a make_workflow hook).
 
 The orchestrator generates one workflow per make_workflow stage as usual; this tool then
 nests each into a ComfyUI subgraph whose exposed inputs/outputs match that stage's
@@ -29,7 +29,7 @@ def _to_graph(workflow: dict) -> dict:
 def bake_hooks_to_canvas(stages: list, links: list | None = None) -> str:
     """Bake generated make_workflow stage workflows into a chained ComfyUI subgraph canvas.
 
-    Call this for hooks whose ``bake_to_canvas`` switch is ON, AFTER you have
+    Call this for make_workflow hooks whose ``bake`` switch is ON, AFTER you have
     generated (and validated) each stage's workflow. Each stage's workflow is
     nested into a ComfyUI subgraph whose inputs/outputs match that hook's slots;
     the subgraph instances are placed on one canvas and wired to mirror the hook
@@ -43,7 +43,12 @@ def bake_hooks_to_canvas(stages: list, links: list | None = None) -> str:
         stages: Ordered list (subgraph order) of stage dicts. Each stage:
             - ``workflow_path`` (str): path to that stage's generated workflow
               (API or graph format).
-            - ``name`` (str): subgraph display name (e.g. the hook's directive).
+            - ``name`` (str): a SHORT name for the subgraph — 2 to 5 words saying
+              what the stage DOES, e.g. "Upscale 2x + grain", "Animate the scene",
+              "Extract last frame". Do NOT pass the directive: it is a paragraph,
+              and this name is rendered on a collapsed node, in the breadcrumb and
+              in the node library. Anything longer is shortened for you, so a bad
+              name is a worse name rather than a broken canvas.
             - ``inputs`` (list): inner inputs to expose, in the order matching the
               hook's input slots — ``[{"node_id": <id>, "input": <input name>,
               "type": <optional slot type>}]``. These are the inner-node inputs the
@@ -69,7 +74,7 @@ def bake_hooks_to_canvas(stages: list, links: list | None = None) -> str:
     Returns:
         A JSON status string ``{status, subgraphs, saved_as?, opened_on_canvas?}``.
     """
-    from src.utils.subgraph_bake import build_baked_workflow
+    from src.utils.subgraph_bake import build_baked_workflow, short_name as _short
 
     if not isinstance(stages, list) or not stages:
         return json.dumps({"status": "error", "error": "stages must be a non-empty list"})
@@ -92,7 +97,10 @@ def bake_hooks_to_canvas(stages: list, links: list | None = None) -> str:
             return json.dumps({"status": "error", "error": f"stage {i}: API→graph failed: {e}"})
         built_stages.append({
             "graph": graph,
-            "name": st.get("name") or f"Stage {i + 1}",
+            # Shortened rather than trusted — see subgraph_bake.short_name. A
+            # directive pasted in whole is the failure that shows up on the canvas,
+            # and it shows up on every stage at once.
+            "name": _short(st.get("name"), fallback=f"Stage {i + 1}"),
             "inputs": st.get("inputs") or [],
             "outputs": st.get("outputs") or [],
             "computed_outputs": st.get("computed_outputs") or [],
