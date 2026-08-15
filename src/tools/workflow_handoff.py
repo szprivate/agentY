@@ -53,6 +53,23 @@ def signal_workflow_ready(workflow_path: str) -> str:
 
     resolved = str(p.resolve())
     append_workflow_path(resolved)
+    # A dry run still queues here — the path is what the end-of-turn summary
+    # reports on — but the submission itself never happens. Saying "ready" would
+    # have the agent announce a generation that was deliberately skipped.
+    try:
+        from src.utils import dry_run as _dry
+        if _dry.active():
+            return json.dumps({
+                "status": "dry_run",
+                "workflow_path": resolved,
+                "message": (
+                    "DRY RUN — the workflow is built and can be opened at the path above, "
+                    "and it will NOT be submitted to ComfyUI. Your work here is done; tell "
+                    "the user what it would have produced."
+                ),
+            })
+    except Exception:  # noqa: BLE001
+        pass
     return json.dumps({
         "status": "ready",
         "workflow_path": resolved,

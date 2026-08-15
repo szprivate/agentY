@@ -812,7 +812,8 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
                          out_q: "queue.Queue", req_id: str,
                          canvas_prompt: dict | None = None,
                          canvas_hooks: list | None = None,
-                         canvas_selection: list | None = None) -> None:
+                         canvas_selection: list | None = None,
+                         dry_run: bool = False) -> None:
     """Run one turn, guaranteeing the SSE queue is always terminated.
 
     The queue's ``None`` sentinel is what ends the stream, and ``done`` is what
@@ -829,7 +830,7 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
     try:
         _run_pipeline_turn(thread_id, message, image_paths, out_q, req_id, finished,
                            canvas_prompt=canvas_prompt, canvas_hooks=canvas_hooks,
-                           canvas_selection=canvas_selection)
+                           canvas_selection=canvas_selection, dry_run=dry_run)
     except BaseException as exc:  # noqa: BLE001 — the stream must close on ANY failure
         logger.error("turn %s died before completing: %s", req_id, exc, exc_info=True)
         # Also into the turn log with a full traceback: the terminal scrollback is
@@ -863,7 +864,8 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
                        out_q: "queue.Queue", req_id: str, finished: dict,
                        canvas_prompt: dict | None = None,
                        canvas_hooks: list | None = None,
-                       canvas_selection: list | None = None) -> None:
+                       canvas_selection: list | None = None,
+                       dry_run: bool = False) -> None:
     """Drive the pipeline for one turn on a private event loop, pushing SSE dicts
     to *out_q*. Interactive asks register on ``_reply_registry`` so POST
     /agentY/reply can feed the answer thread-safely. Terminates *out_q* with None
@@ -1122,6 +1124,7 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
                 content, qa_reply_queue=qa_queue,
                 canvas_prompt=canvas_prompt, canvas_hooks=canvas_hooks,
                 canvas_selection=canvas_selection, qa_briefing=qa_briefing,
+                dry_run=dry_run,
             ):
                 if isinstance(event, dict):
                     _translate(event)
@@ -2938,6 +2941,9 @@ def _build_app():
         # Arbitrary selected nodes (any type) with their widget values, so the
         # agent can read/alter their parameters and write the change back live.
         canvas_selection = [n for n in (body.get("canvas_selection") or []) if isinstance(n, dict)]
+        # Dry run: the panel's "Run agentY hooks ▾ → Dry run". Build every graph,
+        # submit none of them (src/utils/dry_run.py).
+        dry_run = bool(body.get("dry_run"))
         # agentY image-collector nodes wired as hook anchors carry on-disk image
         # paths (widget data) — surface them to the agent as vision with NO
         # pre-run. ONLY when the orchestrator is a vision model: a text-only
@@ -3032,7 +3038,7 @@ def _build_app():
         threading.Thread(target=_run_pipeline_stream,
                          args=(thread_id, message, image_paths, q, rid),
                          kwargs={"canvas_prompt": canvas_prompt, "canvas_hooks": canvas_hooks,
-                                 "canvas_selection": canvas_selection},
+                                 "canvas_selection": canvas_selection, "dry_run": dry_run},
                          daemon=True).start()
 
         def gen():

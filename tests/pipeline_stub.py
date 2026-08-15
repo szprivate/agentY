@@ -41,6 +41,9 @@ _BOUND = (
     "_policy_rejection",
     "_retry_after_refusal",
     "_reroll_seeds",
+    "_dry_run_report",
+    "_dry_run_one",
+    "_graph_dry_build",
 )
 
 
@@ -63,6 +66,9 @@ def pipeline_stub(**over):
         _plan_gate_open=False,
         _plan_gate_fired=False,
         _policy_retries={},
+        _dry_run=False,
+        _dry_graphed=[],
+        _DRY_GRAPH_CAP=Pipeline._DRY_GRAPH_CAP,
     )
     base.update(over)
     ns = SimpleNamespace(**base)

@@ -24,6 +24,7 @@ node, ready to wire into your next step.*
   - [Seeing the plan first](#seeing-the-plan-first)
 - [Slash commands](#slash-commands)
 - [**The hook system**](#the-hook-system)  ← the most powerful part
+  - [Dry run: check the logic first](#dry-run-check-the-logic-before-you-pay-for-it)
   - [Memorize: answer once](#memorize-answer-once-reuse-until-something-changes)
   - [Naming what a hook produces](#naming-what-a-hook-produces)
 - [Checking outputs (QA)](#checking-outputs-qa)
@@ -348,6 +349,52 @@ screenshot above is exactly this: *generate a scene* → *animate it*.
 
 A single hook can also fan several inputs in (multiple anchors) or a stage can
 produce several outputs — the agent forwards them all.
+
+### Dry run: check the logic before you pay for it
+
+A chain of hooks is two things at once: a piece of reasoning, and a pile of paid
+API calls. The reasoning is what usually goes wrong; the API calls are what
+costs. **Dry run** separates them.
+
+Next to ComfyUI's Run button, the **agentY hooks** button has an arrow on its
+right. Open it and pick **Dry run** (it is also `Dry run agentY hooks` in the
+command palette and under the **Workflow** menu).
+
+The turn then runs *completely normally* — every hook is read and answered, every
+value is written and placed on the canvas, every workflow variant is built and
+saved to disk — with one thing removed: **no graph is submitted to ComfyUI**.
+Where a generation would have happened, the agent is handed a **stand-in**: a
+file path marked `DRY-RUN`, with no file behind it.
+
+That last part is what makes it useful on a chain. A second hook whose directive
+is *"take the reference frames you just made and queue one video per shot"* still
+receives something where the references were, so it runs too — and you find out
+whether the second half of your pipeline holds together, which is usually the
+half you cannot check any other way. Tools that would open a stand-in
+(`analyze_image`, `analyze_video`, `upload_image`) recognise it and answer in
+kind rather than failing.
+
+The graphs it builds are **filed where you can look at them**: each one lands in
+the Workflows sidebar under `agent/dryrun_…` (one per build — an 18-way sweep is
+the same graph eighteen times, a four-stage chain is four different graphs).
+Open one and you see the wiring and the exact values the agent wrote into it.
+They are *not* swapped onto your open canvas unless you have auto-graphing turned
+on — during a dry run, the graph you have open is the thing being tested.
+
+At the end you get an account of what *would* have run: how many generations, of
+what, the path of every graph that was built, and which ones were filed. Nothing
+is staged onto the canvas, nothing is added to the gallery, and a `memorize` hook
+does **not** store what it answered (a value derived from a stand-in must never be
+served to a real run later).
+
+Two things a dry run deliberately does not do: it skips the `iterate` purpose
+(that loop exists to be looked at, and its result is written back into your own
+`LoadImage` node), and it does not run QA — there are no pixels to judge.
+
+The pre-flight check still runs, so a dry run is also where the "this cannot
+work" findings show up: an input nothing feeds, a directive naming an anchor slot
+that has no wire on it, a hook feeding one image slot while its directive talks
+about all of them.
 
 ### Baking a chain into subgraphs
 

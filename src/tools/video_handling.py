@@ -143,6 +143,13 @@ def analyze_video(file_path: str = "", question: str = "", max_frames: int = 8) 
     Returns:
         ``{"status": "success"|"error", "content": [{"text": ...}]}``.
     """
+    # A dry run's "generations" are paths and nothing else — see analyze_image.
+    try:
+        from src.utils import dry_run as _dry
+        if _dry.active() and _dry.is_stand_in(file_path):
+            return {"status": "ok", "content": [{"text": _dry.stand_in_notice(file_path)}]}
+    except Exception:  # noqa: BLE001
+        pass
     # Test/speed mode: skip the model and return a canned description.
     if os.environ.get("AGENTY_STUB_VISION") or os.environ.get("AGENTY_STUB_VIDEO"):
         label = os.path.basename(file_path) or "input video"

@@ -346,6 +346,17 @@ def _upload_one(
     the ComfyUI ``{name, subfolder, type}`` response, an idempotency skip note,
     or ``{"error": ...}``.
     """
+    # A dry-run stand-in has no bytes to stage. Answer with the name a real upload
+    # would have returned, so the caller can bind it to the next stage's loader and
+    # the chain under test keeps going.
+    try:
+        from src.utils import dry_run as _dry
+        if _dry.active() and _dry.is_stand_in(file_path):
+            return {"name": os.path.basename(str(file_path)), "subfolder": "",
+                    "type": image_type or "input",
+                    "note": _dry.stand_in_notice(file_path)}
+    except Exception:  # noqa: BLE001
+        pass
     # Resolve bare/relative names against ComfyUI's input dir too, so images the
     # user selected on the canvas (LoadImage widgets store just the filename) are
     # found — not only paths relative to the agent's CWD.
@@ -755,6 +766,15 @@ def analyze_image(
     two images for identical content, precise spatial positioning, or explicit
     user request for raw pixel analysis).
     """
+    # A dry run's "generations" are paths and nothing else. Answering "file not
+    # found" would read as a failure and send the agent healing something that was
+    # never broken — so say what it actually is.
+    try:
+        from src.utils import dry_run as _dry
+        if _dry.active() and _dry.is_stand_in(file_path):
+            return {"status": "ok", "content": [{"text": _dry.stand_in_notice(file_path)}]}
+    except Exception:  # noqa: BLE001
+        pass
     # Test/speed mode: skip the vision model entirely and return a canned
     # description. Used by the query_templates-only reliability sweep so image-input
     # recipes exercise briefing generation without loading a vision model.

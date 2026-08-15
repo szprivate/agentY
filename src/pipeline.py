@@ -500,6 +500,11 @@ class Pipeline:
         # any reference failed, STOP and ask"). Nothing is executed at turn end
         # while this is set. Per-turn, like the fields above.
         self._hook_run_stopped: dict | None = None
+        # Set for a turn the user launched as a dry run: build everything, submit
+        # nothing (see src/utils/dry_run.py). Per-turn, like the fields above;
+        # _dry_graphed holds the built graphs already filed for inspection.
+        self._dry_run: bool = False
+        self._dry_graphed: list = []
         # Who asked to approve this turn's plan before anything runs (None = nobody,
         # the normal case), and whether they have since answered. Both per-turn; the
         # answer itself rides across turns on the session's plan_awaiting_reply.
@@ -1064,7 +1069,10 @@ class Pipeline:
             for i, p in enumerate(prompts):
                 fp = out_dir / f"canvas_{i:03d}.json"
                 fp.write_text(json.dumps(p), encoding="utf-8")
-                if not run_now:
+                # A dry run builds the same files and queues none of them: the
+                # graph on disk is the thing being checked, and submitting it is
+                # the one step being skipped.
+                if not run_now and not self._dry_run:
                     _append(str(fp))
                 paths.append(str(fp))
             # Name each variant by the value that makes it different, BEFORE any of
@@ -1072,6 +1080,8 @@ class Pipeline:
             # role for the batch cannot say which is which. Applies to the queued
             # path too: same files, same names, whenever they get executed.
             self._name_variants(paths, labels, hook)
+            if self._dry_run:
+                return self._dry_run_report(paths, prompts, labels, notes, hook)
             if not run_now:
                 if self._verbose:
                     print(f"pipeline: apply_canvas_hooks queued {len(paths)} canvas variant(s).")
@@ -1193,6 +1203,9 @@ class Pipeline:
             # so the file that feeds the next stage carries its own description.
             hooks = [h for h in (self._canvas_hooks or []) if isinstance(h, dict)]
             self._tag_run_outputs(hooks[0] if len(hooks) == 1 else None)
+            if self._dry_run:
+                return self._dry_run_one(workflow_path,
+                                         hooks[0] if len(hooks) == 1 else None)
             base = self._session.current_output_paths
             before = len(base)
             brief = self._last_brainbriefing_json or "{}"
@@ -1368,7 +1381,11 @@ class Pipeline:
 
             # Remember it, if the hook asked to be remembered. Keyed on what fed the
             # hook, so this exact answer comes back for free until something changes.
-            if hook is not None and hook.get("_cache_key"):
+            # Never on a dry run: a hook downstream of a stand-in writes a value
+            # derived from a generation that did not happen, and a memorised one is
+            # served silently to the next REAL run, where nothing says where it came
+            # from. A dry run checks the logic; it does not establish facts.
+            if hook is not None and hook.get("_cache_key") and not self._dry_run:
                 try:
                     from src.utils.hook_cache import memorizing, write as _remember
                     if memorizing(hook):
@@ -1440,6 +1457,17 @@ class Pipeline:
             gate = self._plan_gate_refusal()
             if gate:
                 return json.dumps(gate)
+            if self._dry_run:
+                # The one tool a stand-in cannot serve. Each step exists to be
+                # LOOKED at, and its result is written back into the user's own
+                # LoadImage node and kept as history across turns — feeding that
+                # loop a path with no image behind it corrupts a real thing.
+                return json.dumps({
+                    "error": "this is a DRY RUN, and an iterate step is a refine loop on "
+                             "real pixels — there is nothing to look at and nothing to "
+                             "feed back. Tell the user the iterate hook was skipped, and "
+                             "that it needs a full run.",
+                })
             base = getattr(self, "_canvas_base_prompt", None)
             if not isinstance(base, dict) or not base:
                 return json.dumps({"error": "no on-canvas graph is loaded this turn — open "
@@ -1663,6 +1691,137 @@ class Pipeline:
                     " The set was ALSO judged as a whole and missed: "
                     + "; ".join(set_verdict.get("missed") or []) + ".")
         return json.dumps(out)
+
+    # How many built graphs a dry run files into the Workflows sidebar. One per
+    # BUILD, not per variant: an 18-way sweep is one graph eighteen times with a
+    # different prompt in it, while a four-stage chain is four different graphs —
+    # and it is the second one you open ComfyUI to look at.
+    _DRY_GRAPH_CAP = 8
+
+    def _graph_dry_build(self, workflow_path: str, name: str = "") -> str:
+        """File a built-but-unsubmitted workflow where the user can open it.
+
+        A real run graphs what it submits (inside the executor, on the way to
+        /prompt), which a dry run never reaches — so a dry run would build the
+        thing worth looking at and then show it to nobody.
+
+        It goes into the Workflows sidebar under ``agent/``. It is NOT pushed onto
+        the open canvas unless the user has auto-graphing on, because that swaps
+        out the graph they have open — which, during a dry run, is the hook graph
+        being tested.
+        """
+        if len(getattr(self, "_dry_graphed", []) or []) >= self._DRY_GRAPH_CAP:
+            return ""
+        try:
+            from agenty_core.tools.comfyui import open_workflow_in_canvas as _canvas
+            from src.executor import _autoload_workflows_into_canvas as _autoload
+            stem = name or Path(workflow_path).stem
+            _canvas(workflow_path, name=f"dryrun_{stem}", push_to_canvas=_autoload())
+        except Exception as exc:  # noqa: BLE001 — inspection is a courtesy, not the run
+            if self._verbose:
+                print(f"[dry-run] could not graph {workflow_path}: {exc}")
+            return ""
+        saved = f"agent/dryrun_{name or Path(workflow_path).stem}"
+        if not hasattr(self, "_dry_graphed") or self._dry_graphed is None:
+            self._dry_graphed = []
+        self._dry_graphed.append(saved)
+        return saved
+
+    def _dry_run_one(self, workflow_path: str, hook: dict | None = None) -> str:
+        """A single assembled workflow, built and not submitted.
+
+        The chaining tool (``run_workflow_now``) exists to feed one stage's output
+        into the next, so a dry run has to answer it with paths or the chain it is
+        meant to be testing stops at stage one.
+        """
+        from src.utils import dry_run as _dry
+        prompt = {}
+        try:
+            prompt = json.loads(Path(workflow_path).read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            prompt = {}
+        if isinstance(prompt, dict) and isinstance(prompt.get("prompt"), dict):
+            prompt = prompt["prompt"]          # a full /prompt body, not a bare graph
+        role = self._hook_output_role(hook) or self._caption_from_brief(
+            self._last_brainbriefing_json)
+        outs = _dry.stand_ins(prompt if isinstance(prompt, dict) else {}, workflow_path,
+                              label=role, index=len(_dry.runs()) + 1)
+        _dry.record(workflow_path, outs, label=role, what=role)
+        graphed = self._graph_dry_build(workflow_path,
+                                        name=_dry.slug(role, 30) or Path(workflow_path).stem)
+        _push_progress(f"🧪 Dry run — {Path(workflow_path).name} built, not submitted."
+                       + (f" Graph filed as {graphed}." if graphed else ""))
+        return json.dumps({
+            "status": "dry_run",
+            "workflow": workflow_path,
+            "graphed_as": graphed,
+            "outputs": outs,
+            "message": (
+                "DRY RUN — this workflow was built but NOT submitted. The paths under "
+                "`outputs` are stand-ins; no file exists at them. Chain them onward as "
+                "if the stage had succeeded (upload_image accepts them and answers with "
+                "a stand-in name), and say at the end what would have been produced."
+            ),
+        })
+
+    def _dry_run_report(self, paths: list, prompts: list, labels: list,
+                        notes: list, hook: dict | None = None) -> str:
+        """Answer a batch that was built and deliberately not submitted.
+
+        Shaped like the answer a real run gives — same per-variant report, same
+        ``outputs`` field — because the point of a dry run is to exercise what
+        the agent does NEXT, and an answer it has to read differently is an
+        answer that tests a different chain. What differs is stated instead of
+        implied: the status says dry_run, every output path is marked, and the
+        message says plainly that nothing ran.
+        """
+        from src.utils import dry_run as _dry
+        role = self._hook_output_role(hook)
+        made = 0
+        for i, p in enumerate(paths):
+            label = self._variant_label(labels[i] if i < len(labels) else {})
+            outs = _dry.stand_ins(prompts[i] if i < len(prompts) else {}, p,
+                                  label=label or role, index=i + 1)
+            _dry.record(p, outs, label=label, what=role)
+            made += len(outs)
+            # The same join a real run makes as files land, so _variant_report
+            # pairs each stand-in with the values that would have produced it.
+            try:
+                from src.utils.output_tags import note_source
+                for o in outs:
+                    note_source(o, p)
+            except Exception:  # noqa: BLE001
+                pass
+        # One representative into the Workflows sidebar: the variants of a sweep
+        # differ by one widget value, and filing eighteen of them buries the
+        # sidebar without showing anything the first does not.
+        graphed = self._graph_dry_build(
+            paths[0], name=_dry.slug(role or "hooks", 30) or Path(paths[0]).stem
+        ) if paths else ""
+        _push_progress(f"🧪 Dry run — built {len(paths)} graph(s), submitted none; "
+                       f"{made} stand-in output(s)."
+                       + (f" Graph filed as {graphed}." if graphed else ""))
+        if self._verbose:
+            print(f"pipeline: dry run — built {len(paths)} canvas variant(s), "
+                  f"{made} stand-in output(s), nothing queued.")
+        variants = self._variant_report(paths, labels or [])
+        return json.dumps({
+            "status": "dry_run",
+            "count": len(paths),
+            "graphed_as": graphed,
+            "variants": variants,
+            "outputs": [o for v in variants for o in v.get("outputs", [])],
+            "notes": notes,
+            "message": (
+                f"DRY RUN — {len(paths)} graph(s) were BUILT (the JSON files under "
+                "`workflow` are real and can be opened) and NONE were submitted to "
+                "ComfyUI. The paths under `outputs` are stand-ins: no file exists at "
+                "them. Continue exactly as if every variant had succeeded — hand these "
+                "paths to the next hook, keep going through the chain, and report at "
+                "the end what the run WOULD have produced. Do not try to open, analyse, "
+                "re-run or repair a stand-in, and do not call stop_hook_run over one."
+            ),
+        })
 
     async def _qa_set_verdict(self, paths: list) -> dict | None:
         """Judge the run's outputs AS A SET, for the criteria only a set can answer.
@@ -2088,6 +2247,13 @@ class Pipeline:
             pin = pin + (guide + "\n\n" if guide else "") + approval_state(
                 self._plan_approval, bool(getattr(self, "_plan_gate_open", False))) + "\n\n"
 
+        # Ahead of every other block, including the hooks: it does not add a rule,
+        # it changes what all of them mean this turn.
+        if getattr(self, "_dry_run", False):
+            guide = _orch_partial("dry_run")
+            if guide:
+                pin = guide + "\n\n" + pin
+
         if isinstance(user_input, list):
             gallery = self._format_image_gallery()
             blocks = list(user_input)
@@ -2123,7 +2289,8 @@ class Pipeline:
 
     async def _astream_orchestrator(self, user_input, *, qa_reply_queue: asyncio.Queue | None = None,
                                     canvas_prompt: dict | None = None, canvas_hooks: list | None = None,
-                                    canvas_selection: list | None = None, qa_briefing=None):
+                                    canvas_selection: list | None = None, qa_briefing=None,
+                                    dry_run: bool = False):
         """Stream the orchestrator for one turn, then run any signalled workflow.
 
         This replaces the triage → route → handler block: the orchestrator owns
@@ -2153,6 +2320,18 @@ class Pipeline:
         self._canvas_hooks = [h for h in (canvas_hooks or []) if isinstance(h, dict)]
         self._canvas_keeplive_run = False
         self._hook_run_stopped = None
+        # Dry run: everything up to the submission happens — the hooks are read, the
+        # values written, the variants built to disk — and each graph is answered
+        # with stand-in paths instead of being handed to ComfyUI. Armed on the
+        # module too, because the tools that must recognise a stand-in (analysis,
+        # upload) are module-level and never see `self`.
+        self._dry_run = bool(dry_run)
+        self._dry_graphed = []
+        try:
+            from src.utils import dry_run as _dry_mod
+            _dry_mod.arm(self._dry_run)
+        except Exception:  # noqa: BLE001
+            pass
         # How many times each (node, input) has been handed back this turn for
         # breaking a hard model limit. Told once, an agent shortens; told the same
         # thing three times it is stuck, and needs different advice, not the same
@@ -2292,6 +2471,15 @@ class Pipeline:
                     except Exception as _exc:  # noqa: BLE001
                         print(f"pipeline: keep-live canvas run could not be queued ({_exc}).")
                 workflow_paths = self._expand_variations(workflow_paths, self._last_brainbriefing_json or "")
+                # The last gate before ComfyUI. apply_canvas_hooks queues nothing in a
+                # dry run, but a signalled workflow and the keep-live canvas run both
+                # arrive here without passing a tool that could have stopped them —
+                # so "nothing is submitted" is enforced at the submission itself.
+                if self._dry_run and workflow_paths:
+                    _hh = [h for h in (self._canvas_hooks or []) if isinstance(h, dict)]
+                    for _wp in workflow_paths:
+                        self._dry_run_one(_wp, _hh[0] if len(_hh) == 1 else None)
+                    workflow_paths = []
                 # Reset this turn's outputs before the deferred batch, but KEEP any
                 # produced mid-turn by run_workflow_now (chained stages) so they're
                 # still staged. Non-chain turns have none, so this equals .clear().
@@ -2443,6 +2631,22 @@ class Pipeline:
                     self._log_orchestrator()
                     return
 
+                # A dry run's whole product is the account of what it would have
+                # done, so it is stated by the runtime rather than left to the
+                # agent's summary — which graphs were built, where they are, and
+                # what each would have produced.
+                if self._dry_run:
+                    try:
+                        from src.utils import dry_run as _dry_mod
+                        _summary = _dry_mod.summary()
+                    except Exception:  # noqa: BLE001
+                        _summary = ""
+                    if _summary and self._dry_graphed:
+                        _summary += ("\n   Open in ComfyUI ▸ Workflows: "
+                                     + ", ".join(self._dry_graphed))
+                    yield {"data": "\n\n" + (_summary or (
+                        "🧪 DRY RUN — nothing was submitted to ComfyUI, and nothing was "
+                        "built either: no run was reached this turn."))}
                 self._record_chat_summary(user_text, synth, status="completed",
                                           raw_json=self._last_brainbriefing_json)
                 self._record_agent_usage(self._orchestrator_agent, _snap)
@@ -2502,7 +2706,8 @@ class Pipeline:
 
     async def stream_async(self, user_input, *, qa_reply_queue: asyncio.Queue | None = None,
                            canvas_prompt: dict | None = None, canvas_hooks: list | None = None,
-                           canvas_selection: list | None = None, qa_briefing=None):  # noqa: ANN201
+                           canvas_selection: list | None = None, qa_briefing=None,
+                           dry_run: bool = False):  # noqa: ANN201
         """Async generator for one turn: the orchestrator owns the whole turn
         and streams its events (and those of the specialists it delegates to).
 
@@ -2533,12 +2738,20 @@ class Pipeline:
                 user_input, qa_reply_queue=qa_reply_queue,
                 canvas_prompt=canvas_prompt, canvas_hooks=canvas_hooks,
                 canvas_selection=canvas_selection, qa_briefing=qa_briefing,
+                dry_run=dry_run,
             ):
                 yield event
         finally:
             # Log on ANY exit: normal completion, exception, or cancellation
             # (user /stop or a hang) — so every request lands in the log.
             self._log_orchestrator()
+            # Disarm unconditionally: a dry run that died mid-turn must not leave
+            # the next one refusing to submit anything.
+            try:
+                from src.utils import dry_run as _dry_mod
+                _dry_mod.reset()
+            except Exception:  # noqa: BLE001
+                pass
             # Same reason: a gated turn that died mid-way still handed the ball to
             # the user, and must not leave the queue held shut for the next one.
             self._arm_plan_gate()
