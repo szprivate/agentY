@@ -1859,15 +1859,22 @@ class Pipeline:
                     note_source(o, p)
             except Exception:  # noqa: BLE001
                 pass
-        # One representative into the Workflows sidebar: the variants of a sweep
-        # differ by one widget value, and filing eighteen of them buries the
-        # sidebar without showing anything the first does not.
-        graphed = self._graph_dry_build(
-            paths[0], name=_dry.slug(role or "hooks", 30) or Path(paths[0]).stem
-        ) if paths else ""
+        # EVERY variant into the Workflows sidebar, each under its own name. Filing
+        # one representative was wrong: the variants of a reference sweep are five
+        # different characters, not one graph five times, and "did it make them
+        # all?" is the first thing anyone checks. Bounded by _DRY_GRAPH_CAP so a
+        # runaway sweep still cannot bury the sidebar.
+        graphed: list = []
+        for i, p in enumerate(paths):
+            what = self._variant_label(labels[i] if i < len(labels) else {})
+            stem = _dry.slug(f"{role} {what}".strip(), 40) or Path(p).stem
+            got = self._graph_dry_build(
+                p, name=f"{i + 1:02d}_{stem}" if len(paths) > 1 else stem)
+            if got:
+                graphed.append(got)
         _push_progress(f"🧪 Dry run — built {len(paths)} graph(s), submitted none; "
                        f"{made} stand-in output(s)."
-                       + (f" Graph filed as {graphed}." if graphed else ""))
+                       + (f" {len(graphed)} filed for inspection." if graphed else ""))
         if self._verbose:
             print(f"pipeline: dry run — built {len(paths)} canvas variant(s), "
                   f"{made} stand-in output(s), nothing queued.")
@@ -1880,8 +1887,9 @@ class Pipeline:
             "outputs": [o for v in variants for o in v.get("outputs", [])],
             "notes": notes,
             "message": (
-                f"DRY RUN — {len(paths)} graph(s) were BUILT (the JSON files under "
-                "`workflow` are real and can be opened) and NONE were submitted to "
+                f"DRY RUN — all {len(paths)} graph(s) were BUILT (the JSON files under "
+                f"`workflow` are real and can be opened; {len(graphed)} are filed in "
+                "ComfyUI's Workflows sidebar under `agent/`) and NONE were submitted to "
                 "ComfyUI. The paths under `outputs` are stand-ins: no file exists at "
                 "them. Continue exactly as if every variant had succeeded — hand these "
                 "paths to the next hook, keep going through the chain, and report at "

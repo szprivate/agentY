@@ -149,6 +149,40 @@ class NoteTest(_Base):
         self.assertTrue(any("place_canvas_text" in n and "apply_canvas_hooks" in n
                             for n in notes), notes)
 
+    def test_a_collector_batch_wired_into_a_single_image_slot(self):
+        """Five references in, a video built from one, and no error anywhere."""
+        graph = {"60": {"class_type": "AgentYImageCollector",
+                        "inputs": {"files": "a.png\nb.png\nc.png"}},
+                 "283": {"class_type": "ByteDanceSeedanceNode",
+                         "inputs": {"prompt": "", "image_1": ["60", 0]}},
+                 "284": {"class_type": "SaveVideo", "inputs": {"video": ["283", 0]}}}
+        notes = self._levels(preflight.check([{
+            "hook_node_id": "30", "directive": "queue the shots", "anchors": [],
+            "targets": [{"node_id": "283", "to_input": "prompt",
+                         "to_input_type": "STRING"}]}], graph), "note")
+        self.assertTrue(any("expand image batch" in n and "ignores" in n for n in notes),
+                        notes)
+
+    def test_a_plural_images_input_takes_the_batch_happily(self):
+        graph = {"60": {"class_type": "AgentYImageCollector",
+                        "inputs": {"files": "a.png\nb.png"}},
+                 "9": {"class_type": "PreviewImage", "inputs": {"images": ["60", 0]}}}
+        notes = self._levels(preflight.check([{
+            "hook_node_id": "30", "directive": "x", "anchors": [], "targets": []}],
+            graph), "note")
+        self.assertFalse([n for n in notes if "expand image batch" in n], notes)
+
+    def test_one_file_in_the_collector_drops_nothing(self):
+        graph = {"60": {"class_type": "AgentYImageCollector",
+                        "inputs": {"files": "only.png"}},
+                 "283": {"class_type": "ByteDanceSeedanceNode",
+                         "inputs": {"image_1": ["60", 0]}},
+                 "284": {"class_type": "SaveVideo", "inputs": {"video": ["283", 0]}}}
+        notes = self._levels(preflight.check([{
+            "hook_node_id": "30", "directive": "x", "anchors": [], "targets": []}],
+            graph), "note")
+        self.assertFalse([n for n in notes if "expand image batch" in n], notes)
+
     def test_a_chained_hook_counts_as_wiring_that_slot(self):
         hooks = [{"hook_node_id": "30",
                   "directive": "prompts in anchor_0, reference images in anchor_1",

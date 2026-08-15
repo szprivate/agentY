@@ -691,6 +691,28 @@ re-generation could fix.
   pre-run needed), so an anchored collector is rendered to the agent as its
   explicit file list — it can bind every path directly. Use them as anchor inputs
   to a hook to run one directive across many files.
+- **`agentY expand image batch`** — splits an image batch into one image per
+  output (`image_1` … `image_8`, plus a `count`).
+
+  You need it whenever a collector feeds a **model node that takes references in
+  numbered single-image slots** (`image_1`, `image_2`, …). The collector emits its
+  files as one IMAGE *batch*; wire that straight into `image_1` and the node takes
+  the **first image and silently ignores the rest** — you hand it five references
+  and the render is built from one, with no error anywhere. So:
+
+  ```
+  agentY image collector ──▶ agentY expand image batch ──┬─▶ image_1
+                                                         ├─▶ image_2
+                                                         └─▶ image_3
+  ```
+
+  A slot past the end of the batch emits nothing rather than repeating the last
+  image — repeating would be the same quiet failure in a new costume (the same
+  character twice on a reference sheet). `count` tells you how many actually
+  arrived, so you can see whether the slots you wired are real. Pre-flight also
+  catches the un-expanded case before a run and names this node.
+
+  A plural `images` input is fine as it is — that one takes a batch on purpose.
 
 ---
 

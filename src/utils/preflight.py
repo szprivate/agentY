@@ -172,6 +172,34 @@ def check(hooks: list | None, base_prompt: dict | None) -> list:
                 f"it — the run fails validation before it starts. Usually the hook "
                 f"that fed it was spliced out and no anchor could replace it.")))
 
+    # A batch wired into a slot that takes one image. The collector emits its files
+    # as a single IMAGE batch; the API model nodes take references in numbered
+    # single-image slots. Wire one into the other and the node uses the FIRST image
+    # and ignores the rest — five references in, a video built from one, and no
+    # error anywhere. The quiet kind of wrong, which is the kind worth checking for.
+    for nid, node in (prompt or {}).items():
+        if not isinstance(node, dict):
+            continue
+        for name, val in (node.get("inputs") or {}).items():
+            if not (isinstance(val, list) and len(val) == 2):
+                continue
+            src = (prompt.get(str(val[0])) or {})
+            if str(src.get("class_type")) not in _COLLECTOR_TYPES:
+                continue
+            if not re.search(r"image[_\-]?\d+$", str(name), re.I):
+                continue          # a plural `images` input takes the batch happily
+            listed = [ln for ln in str((src.get("inputs") or {}).get("files") or "")
+                      .splitlines() if ln.strip()]
+            if len(listed) < 2:
+                continue          # one image in the batch — nothing is being dropped
+            found.append(Finding("note", "", (
+                f"node {val[0]} (image collector, {len(listed)} files) feeds node {nid}'s "
+                f"`{name}`, which takes ONE image. A batch arriving at a numbered slot is "
+                f"not spread across the slots — the node uses the first image and ignores "
+                f"the other {len(listed) - 1}, without reporting anything. Put an `agentY "
+                f"expand image batch` node between them and wire its image_1, image_2, … "
+                f"outputs to the slots you want filled.")))
+
     for graph_check in (missing_collector_files(prompt) or []):
         found.append(Finding("note", "", (
             f"node {graph_check['node_id']} ({graph_check['class_type']}) lists "
@@ -250,8 +278,9 @@ def check(hooks: list | None, base_prompt: dict | None) -> list:
                         f"slot once per RUN, so as it stands each run sees a single "
                         f"image. `{tin}` is a numbered slot, so the node most likely "
                         f"grows more as they are wired — if these references belong in "
-                        f"ONE generation, wire the extra slots (or an agentY image "
-                        f"collector) rather than sweeping them.")))
+                        f"ONE generation, wire the extra slots (an `agentY image "
+                        f"collector` into an `agentY expand image batch` gives you one "
+                        f"wire per image) rather than sweeping them.")))
 
     return found
 

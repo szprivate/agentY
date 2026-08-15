@@ -237,11 +237,20 @@ class GraphsWhatItBuiltTest(unittest.TestCase):
                 {"target_node_id": "1", "param": "text", "mode": "value_list",
                  "values": ["a", "b", "c"]}])))
 
-    def test_it_files_one_graph_per_build_not_per_variant(self):
+    def test_it_files_every_variant_under_its_own_name(self):
+        """Filing one representative hid the rest.
+
+        The variants of a reference sweep are three different characters, not one
+        graph three times, and "did it make them all?" is the first thing anyone
+        checks — so all three are filed, each named after what makes it itself.
+        """
         out = self._sweep(False)
-        self.assertEqual(self.canvas.call_count, 1)
         self.assertEqual(out["count"], 3)
-        self.assertTrue(out["graphed_as"].startswith("agent/dryrun_"))
+        self.assertEqual(self.canvas.call_count, 3)
+        self.assertEqual(len(out["graphed_as"]), 3)
+        self.assertEqual(len(set(out["graphed_as"])), 3, "two variants filed as one name")
+        for name in out["graphed_as"]:
+            self.assertTrue(name.startswith("agent/dryrun_"), name)
 
     def test_it_does_not_take_away_the_graph_under_test(self):
         self._sweep(False)
@@ -262,7 +271,8 @@ class GraphsWhatItBuiltTest(unittest.TestCase):
         self.canvas.side_effect = RuntimeError("connection refused")
         out = self._sweep(False)
         self.assertEqual(out["status"], "dry_run")
-        self.assertEqual(out["graphed_as"], "")
+        self.assertEqual(out["graphed_as"], [])
+        self.assertEqual(out["count"], 3, "the graphs are still BUILT when filing fails")
 
 
 class TheChainKeepsGoingTest(unittest.TestCase):
