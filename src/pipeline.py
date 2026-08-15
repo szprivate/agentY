@@ -1038,10 +1038,6 @@ class Pipeline:
                 str(r.get("target_node_id", r.get("node_id", "")) or "")
                 for r in (resolutions or []) if isinstance(r, dict))
             self._tag_run_outputs(hook)
-            # This call resolves ONE hook, so it builds ONE stage. Without this the
-            # variants carry every other stage on the canvas too — a five-reference
-            # sweep would run the video node five times.
-            base, scope_notes = self._scope_to_stage(base, hook, resolutions)
             labels: list = []
             if resolutions is None or (isinstance(resolutions, list) and not resolutions):
                 # Deliberately empty: "run the graph exactly as it stands". The case
@@ -1057,14 +1053,11 @@ class Pipeline:
                 prompts, notes = _build_batch(
                     base, list(resolutions), cap=cap, labels=labels,
                     connection_inputs=_conn(self._canvas_hooks))
-            notes = list(notes) + scope_notes
-            # Anything left over that cannot reach an output — most often the
-            # reference images and ref notes that were wired into the hook as
-            # CONTEXT, whose only consumer was the hook that got spliced out.
-            prompts, gone_ids = self._prune_variants(prompts)
-            if gone_ids:
-                notes.append(f"dropped {gone_ids} node(s) that fed nothing and "
-                             "rendered nothing (hook context inputs, ref notes)")
+            # Trim each BUILT variant — never the base it was built from. What a
+            # resolution wires up is only visible after it has been written: the
+            # agent selects one of the hook's wired images by NODE ID, so trimming
+            # first deletes the very node the next line was about to connect.
+            prompts, notes = self._trim_variants(prompts, hook, resolutions, notes)
             if not prompts:
                 return json.dumps({"error": "no batch was produced", "notes": notes})
             # Every variant is a complete graph, so measure them rather than the
@@ -1739,62 +1732,67 @@ class Pipeline:
         self._dry_graphed.append(saved)
         return saved
 
-    def _scope_to_stage(self, base: dict, hook: dict | None,
-                        resolutions: list | None) -> tuple[dict, list]:
-        """Narrow the base graph to the stage the hook being resolved drives.
+    def _trim_variants(self, prompts: list, hook: dict | None,
+                       resolutions: list | None, notes: list) -> tuple[list, list]:
+        """Cut each BUILT variant down to what it actually runs.
 
-        Guarded twice, because a scope that is too tight is worse than one that is
-        too loose: every node a resolution actually targets must survive, and the
-        scoped graph must still render something (:func:`scope_to_hook` checks the
-        second). Either failing means the graph is not shaped the way this assumed,
-        so it is left exactly as it was.
+        Two cuts, both on the finished variant and never on the base graph it came
+        from. Order is the whole lesson here: a resolution names one of the hook's
+        wired images **by node id**, and ``as_connection`` resolves that id against
+        the graph — so trimming the base first deleted the node the next line was
+        about to connect, and the input was silently left empty. The reference
+        workflows came out with no images in them.
+
+        After the build, everything a variant uses is visibly wired:
+
+        * **scope** — to the branch this hook's output drives, so one call builds
+          one stage. Without it a five-reference sweep carries the video node five
+          times and generates five videos nobody asked for.
+        * **prune** — nodes that feed nothing and are not outputs. Their consumer
+          was the hook, which is spliced out before the run; ComfyUI walks back
+          from output nodes, so they were never going to execute.
+
+        Guarded: every node a resolution targets must survive, and the result must
+        still render something. Either failing leaves that variant exactly as it
+        was — a scope that is too tight is worse than one that is too loose.
         """
-        if not isinstance(base, dict) or not base or hook is None:
-            return base, []
+        notes = list(notes or [])
+        if not prompts:
+            return prompts, notes
         try:
-            from src.utils.canvas_hooks import scope_to_hook
-            scoped, dropped = scope_to_hook(base, hook)
-        except Exception as exc:  # noqa: BLE001 — never cost the run
-            if self._verbose:
-                print(f"[hook-scope] skipped ({exc}).")
-            return base, []
-        if not dropped:
-            return base, []
+            from src.utils.canvas_hooks import prune_dead_nodes, scope_to_hook
+        except Exception:  # noqa: BLE001 — never cost the run
+            return prompts, notes
         wanted = {str(r.get("target_node_id", r.get("node_id", "")) or "")
                   for r in (resolutions or []) if isinstance(r, dict)}
-        missing = {w for w in wanted if w and w not in scoped}
-        if missing:
-            if self._verbose:
-                print(f"[hook-scope] not scoping: would drop target(s) {sorted(missing)}.")
-            return base, []
-        note = (f"scoped to hook {hook.get('hook_node_id')}'s own stage — left out "
-                f"{len(dropped)} node(s) belonging to the rest of the canvas")
-        _push_progress(f"🎯 {note}.")
-        if self._verbose:
-            print(f"pipeline: {note} ({len(scoped)} node(s) remain).")
-        return scoped, [note]
-
-    @staticmethod
-    def _prune_variants(prompts: list) -> tuple[list, int]:
-        """Strip dead nodes from every built variant. ``(prompts, dropped_count)``.
-
-        Done per variant rather than on the base, because the batch is what writes
-        the values: a node that looked orphaned on the base graph may be exactly
-        what a resolution just wired up.
-        """
-        try:
-            from src.utils.canvas_hooks import prune_dead_nodes
-        except Exception:  # noqa: BLE001
-            return prompts, 0
-        out, dropped = [], 0
+        wanted.discard("")
+        out, scoped_n, pruned_n = [], 0, 0
         for p in prompts:
+            kept = p
             try:
-                pruned, gone = prune_dead_nodes(p)
-            except Exception:  # noqa: BLE001
-                pruned, gone = p, []
-            out.append(pruned)
-            dropped = max(dropped, len(gone))
-        return out, dropped
+                if hook is not None:
+                    cand, dropped = scope_to_hook(kept, hook)
+                    if dropped and not (wanted - set(cand)):
+                        kept, scoped_n = cand, max(scoped_n, len(dropped))
+                cand, dropped = prune_dead_nodes(kept)
+                if dropped and not (wanted - set(cand)):
+                    kept, pruned_n = cand, max(pruned_n, len(dropped))
+            except Exception as exc:  # noqa: BLE001
+                if self._verbose:
+                    print(f"[hook-trim] left a variant whole ({exc}).")
+                kept = p
+            out.append(kept)
+        if scoped_n:
+            note = (f"scoped to hook {hook.get('hook_node_id')}'s own stage — left out "
+                    f"{scoped_n} node(s) belonging to the rest of the canvas")
+            notes.append(note)
+            _push_progress(f"🎯 {note}.")
+        if pruned_n:
+            notes.append(f"dropped {pruned_n} node(s) that fed nothing and rendered "
+                         "nothing (hook context inputs, ref notes)")
+        if self._verbose and (scoped_n or pruned_n):
+            print(f"pipeline: trimmed variants — scoped out {scoped_n}, pruned {pruned_n}.")
+        return out, notes
 
     def _dry_run_one(self, workflow_path: str, hook: dict | None = None) -> str:
         """A single assembled workflow, built and not submitted.

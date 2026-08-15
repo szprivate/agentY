@@ -201,12 +201,13 @@ def check(hooks: list | None, base_prompt: dict | None) -> list:
                 f"reading of that name reaches one. Whatever it expects there, it "
                 f"will not find.")))
 
-        # One value, two targets that want different things. place_canvas_text
-        # delivers the SAME string to every input a hook's output feeds, so a hook
-        # wired into both a collector's `files` (absolute paths, one per line) and a
-        # prompt box cannot satisfy both: paths delivered to the prompt read as
-        # gibberish to the model, and a prompt delivered to the collector is
-        # rejected line by line. Found the expensive way — after a run.
+        # Two targets that want different things. This is a NOTE, not a blocker:
+        # it is only unsatisfiable on the place_canvas_text path, which sends one
+        # string to every target. apply_canvas_hooks takes a resolution PER target,
+        # so the same hook can legitimately fill a collector's `files` with paths
+        # and a prompt box with prose. Calling it a blocker stopped a working run
+        # and made the agent report a defect that was not there — a check that
+        # halts a good graph costs more than the check ever saved.
         wants_paths, wants_prose = [], []
         for tid, _ttype, tin, tintype, ttitle in targets:
             if is_connection_type(tintype) or not tin:
@@ -217,12 +218,13 @@ def check(hooks: list | None, base_prompt: dict | None) -> list:
             elif re.search(r"prompt|text|caption|description", tin, re.I):
                 wants_prose.append(f"node {tid}'s `{tin}`")
         if wants_paths and wants_prose:
-            found.append(Finding("blocker", hid, (
+            found.append(Finding("note", hid, (
                 f"its output feeds {', '.join(wants_paths)} — which needs absolute file "
                 f"paths, one per line — AND {', '.join(wants_prose)}, which needs a "
-                f"written prompt. One hook produces ONE value and it is delivered to "
-                f"every wired target, so whichever you write, the other is wrong. Split "
-                f"this into two hooks, one per kind of value.")))
+                f"written prompt. These want different content, so do NOT deliver this "
+                f"hook with place_canvas_text: that sends the same string to every "
+                f"target and one of them would get the other's value. Use "
+                f"apply_canvas_hooks with one resolution per target instead.")))
 
         for tid, _ttype, tin, tintype, _ttitle in targets:
             if not tin or not is_connection_type(tintype) or str(tid) in ids:

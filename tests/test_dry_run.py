@@ -265,6 +265,45 @@ class GraphsWhatItBuiltTest(unittest.TestCase):
         self.assertEqual(out["graphed_as"], "")
 
 
+class TheChainKeepsGoingTest(unittest.TestCase):
+    """A stand-in has to survive every check a real output would pass.
+
+    The video hook's whole job is to take what the reference hook produced and
+    queue one generation per shot. In a dry run what it receives is stand-ins — so
+    any check that treats "no file on disk" as an error refuses the batch and kills
+    the chain at exactly the hook the dry run existed to exercise. Which is what
+    happened: the collector rejected its own lines.
+    """
+
+    def setUp(self):
+        dry_run.arm(True)
+        self.addCleanup(dry_run.reset)
+
+    def _collector(self, paths):
+        return {"60": {"class_type": "AgentYImageCollector",
+                       "inputs": {"files": "\n".join(paths)}}}
+
+    def test_a_collector_full_of_stand_ins_is_not_a_broken_list(self):
+        from src.utils.canvas_hooks import missing_collector_files
+        refs = dry_run.stand_ins({"1": {"class_type": "SaveImage"}}, "wf.json",
+                                 label="Ben") + \
+            dry_run.stand_ins({"1": {"class_type": "SaveImage"}}, "wf2.json",
+                              label="Ana", index=2)
+        self.assertEqual(missing_collector_files(self._collector(refs)), [])
+
+    def test_a_genuinely_wrong_path_is_still_caught(self):
+        """The check earns its keep on real runs; the exemption is only for these."""
+        from src.utils.canvas_hooks import missing_collector_files
+        bad = missing_collector_files(self._collector([r"C:\nope\ben.png"]))
+        self.assertEqual(len(bad), 1)
+        self.assertEqual(bad[0]["missing"], [r"C:\nope\ben.png"])
+
+    def test_the_batch_is_not_refused_over_them(self):
+        pipe = pipeline_stub()
+        self.assertIsNone(pipe._collector_refusal([self._collector(
+            dry_run.stand_ins({"1": {"class_type": "SaveImage"}}, "wf.json"))]))
+
+
 class LeavesNothingBehindTest(unittest.TestCase):
     """A rehearsal that changes the next real run is not a rehearsal."""
 

@@ -1149,7 +1149,16 @@ def missing_collector_files(prompt: dict | None) -> list:
     it, and the numbering is the whole contract when a prompt says
     ``@image3 walks past @image4``: the video comes back with the wrong characters
     in it, and nothing anywhere reported an error.
+
+    A dry-run stand-in is exempt. It names a generation that was deliberately not
+    run, so of course there is no file — counting it as missing refuses the batch
+    and kills the chain at the exact hook the dry run existed to exercise.
     """
+    try:
+        from src.utils.dry_run import is_stand_in
+    except Exception:  # noqa: BLE001
+        def is_stand_in(_p):  # noqa: ANN001, ANN202
+            return False
     out: list = []
     for nid, node in (prompt or {}).items():
         if not isinstance(node, dict) or node.get("class_type") not in _COLLECTOR_TYPES:
@@ -1158,7 +1167,8 @@ def missing_collector_files(prompt: dict | None) -> list:
         if not isinstance(val, str) or not val.strip():
             continue
         lines = [ln.strip().strip('"') for ln in val.splitlines() if ln.strip()]
-        missing = [ln for ln in lines if not Path(ln).is_file()]
+        missing = [ln for ln in lines
+                   if not Path(ln).is_file() and not is_stand_in(ln)]
         if missing:
             out.append({"node_id": str(nid), "class_type": str(node.get("class_type")),
                         "lines": len(lines), "missing": missing[:12]})

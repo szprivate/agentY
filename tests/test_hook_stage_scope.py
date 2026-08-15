@@ -43,11 +43,19 @@ def canvas():
     }
 
 
-def hook(hid, target, param="prompt"):
+def hook(hid, target, param="prompt", param_type="STRING", extra=()):
+    """A hook whose output feeds *param* on *target*.
+
+    ``param_type`` matters: it is what tells the pipeline whether the produced
+    value is a literal or a WIRE. An IMAGE target is delivered as a connection,
+    which is the case the reference sweep exercises.
+    """
+    targets = [{"node_id": target, "to_input": param, "to_input_type": param_type}]
+    targets += [{"node_id": target, "to_input": p, "to_input_type": t}
+                for p, t in extra]
     return {"hook_node_id": hid, "purpose": "inline_parameter", "directive": "go",
             "anchors": [{"node_id": "7", "to_input": "anchors.anchor"}],
-            "targets": [{"node_id": target, "to_input": param,
-                         "to_input_type": "STRING"}]}
+            "targets": targets}
 
 
 class ScopeToOneStageTest(unittest.TestCase):
@@ -176,6 +184,58 @@ class ThroughTheToolTest(unittest.TestCase):
             [hook("5", "348"), hook("30", "283")])
         joined = " ".join(str(n) for n in out["notes"])
         self.assertIn("scoped to hook 5", joined)
+
+    def test_the_image_a_variant_selects_survives_the_trim(self):
+        """The one that got away: trimming BEFORE the build broke the build.
+
+        A hook feeding a connection input is spliced off it, so at base-graph time
+        the reference images are orphans — their only consumer was the hook. The
+        agent then selects one per variant BY NODE ID, and `as_connection` resolves
+        that id against the graph. Trim first and the id names a node that is no
+        longer there: the lookup falls through, the input is skipped, and the
+        reference workflows come out with no images in them.
+        """
+        graph = canvas()
+        del graph["348"]["inputs"]["image_1"]        # what splicing leaves behind
+        for nid, fn in (("9", "ana.png"), ("11", "cy.png")):
+            graph[nid] = {"class_type": "LoadImage", "inputs": {"image": fn}}
+        pipe = pipeline_stub(_canvas_base_prompt=graph, _dry_run=True,
+                             _canvas_hooks=[hook("5", "348",
+                                                 extra=[("image_1", "IMAGE")])])
+        with mock.patch("agenty_core.tools.comfyui.open_workflow_in_canvas"), \
+             mock.patch("src.executor._autoload_workflows_into_canvas", return_value=False):
+            out = json.loads(asyncio.run(tools(pipe)["apply_canvas_hooks"]([
+                {"target_node_id": "348", "param": "prompt", "mode": "value_list",
+                 "values": ["Ben", "Ana", "Cy"], "zip_group": "shot"},
+                {"target_node_id": "348", "param": "image_1", "mode": "value_list",
+                 "values": ["7", "9", "11"], "zip_group": "shot"}])))
+        self.assertEqual(out["count"], 3)
+        picked = []
+        for graph_v in self._graphs(out):
+            wire = graph_v["348"]["inputs"].get("image_1")
+            self.assertIsInstance(wire, list, "the selected image was not wired in")
+            picked.append(wire[0])
+            self.assertIn(wire[0], graph_v, "wired to a node that is not in the graph")
+        self.assertEqual(picked, ["7", "9", "11"])
+
+    def test_each_variant_keeps_only_the_reference_it_uses(self):
+        """The other two are unwired in THIS variant, so they are dead in it."""
+        graph = canvas()
+        del graph["348"]["inputs"]["image_1"]
+        graph["9"] = {"class_type": "LoadImage", "inputs": {"image": "ana.png"}}
+        pipe = pipeline_stub(_canvas_base_prompt=graph, _dry_run=True,
+                             _canvas_hooks=[hook("5", "348", param="image_1",
+                                                 param_type="IMAGE")])
+        with mock.patch("agenty_core.tools.comfyui.open_workflow_in_canvas"), \
+             mock.patch("src.executor._autoload_workflows_into_canvas", return_value=False):
+            out = json.loads(asyncio.run(tools(pipe)["apply_canvas_hooks"]([
+                {"target_node_id": "348", "param": "image_1", "mode": "value_list",
+                 "values": ["7", "9"]}])))
+        first, second = self._graphs(out)
+        self.assertIn("7", first)
+        self.assertNotIn("9", first)
+        self.assertIn("9", second)
+        self.assertNotIn("7", second)
 
     def test_running_the_canvas_as_it_stands_is_left_whole(self):
         """No resolutions means "run what I drew" — there is no one stage to pick."""

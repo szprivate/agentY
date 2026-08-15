@@ -125,6 +125,30 @@ class NoteTest(_Base):
         notes = self._levels(preflight.check(hooks, graph), "note")
         self.assertFalse([n for n in notes if "anchor_1" in n], notes)
 
+    def test_two_targets_wanting_different_content_is_advice_not_a_halt(self):
+        """It only cannot work on the place_canvas_text path.
+
+        A hook feeding a collector's `files` AND a prompt box is fine via
+        apply_canvas_hooks, which takes a resolution per target. Reported as a
+        blocker it stopped a working run and had the agent announce a defect that
+        was not there.
+        """
+        hooks = [{"hook_node_id": "30", "directive": "queue the shots",
+                  "anchors": [{"node_id": "75", "to_input": "anchors.anchor"}],
+                  "targets": [{"node_id": "60", "to_input": "files",
+                               "to_input_type": "STRING", "type": "AgentYImageCollector"},
+                              {"node_id": "283", "to_input": "prompt",
+                               "to_input_type": "STRING"}]}]
+        graph = {"60": {"class_type": "AgentYImageCollector", "inputs": {"files": ""}},
+                 "283": {"class_type": "ByteDanceSeedanceNode", "inputs": {"prompt": ""}},
+                 "284": {"class_type": "SaveVideo", "inputs": {"video": ["283", 0]}}}
+        found = preflight.check(hooks, graph)
+        self.assertFalse([f for f in found if f.level == "blocker"],
+                         [f.text for f in found])
+        notes = self._levels(found, "note")
+        self.assertTrue(any("place_canvas_text" in n and "apply_canvas_hooks" in n
+                            for n in notes), notes)
+
     def test_a_chained_hook_counts_as_wiring_that_slot(self):
         hooks = [{"hook_node_id": "30",
                   "directive": "prompts in anchor_0, reference images in anchor_1",
