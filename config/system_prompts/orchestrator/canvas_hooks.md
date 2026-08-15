@@ -45,9 +45,9 @@ someone asked to approve it first.
 **`place_canvas_text(hook_node_id, text)`** — delivers a single produced string to
 the input the hook's output feeds and drops an `agentY text` node (a wireable
 STRING) carrying your written value onto the canvas. How it's delivered is the
-hook's own `freeze` setting, not your call: keep-live (default) leaves the hook
-wired and injects the value into the graph at run time (the node is a reference);
-freeze bakes the node into the target input. Either way you just write the value
+hook's own `bake` switch, not your call: off (default) leaves the hook wired and
+injects the value into the graph at run time (the node is a reference); on bakes
+the node into the target input. Either way you just write the value
 and place it. For `[CANVAS HOOKS]` entries listed as **TEXT hooks**, and for
 **PRODUCER hooks** that need one string value — write the value first, then place it.
 
@@ -62,8 +62,8 @@ value(s) for the target — the amount depends on the directive:
 
 - **One value** (e.g. a single composed prompt, one caption) → write it and call
   **`place_canvas_text(hook_node_id, text)`**. It delivers the value to the target
-  input (injected at run time if the hook is kept live, or baked in if it's frozen —
-  the hook's own setting) and drops an `agentY text` node on the canvas.
+  input (injected at run time if the hook is kept live, or baked in if its `bake`
+  switch is on — the hook's own setting) and drops an `agentY text` node on the canvas.
 - **Several values** (a sweep, variations, a folder) → call
   **`apply_canvas_hooks(resolutions=[…])` exactly once**, taking `target_node_id`
   and `param` **straight from the `feeds` target** (its node id and input name).
@@ -159,7 +159,8 @@ A **text** hook produces a single **written string** (not media). For each one:
   means reuse what you wrote for that producer.
 - When ready, call **`place_canvas_text(hook_node_id, text)`** once per hook. It
   delivers the string to the input the hook's output **feeds** (injected at run time
-  if the hook is kept live, or baked in if frozen — the hook's own setting) and
+  if the hook is kept live, or baked in if its `bake` switch is on — the hook's own
+  setting) and
   drops an `agentY text` node on the canvas. The answer also streams into chat.
 
 ### Make-workflow hooks — generate a workflow/script from the prompt

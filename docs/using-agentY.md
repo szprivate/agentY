@@ -25,6 +25,7 @@ node, ready to wire into your next step.*
 - [Slash commands](#slash-commands)
 - [**The hook system**](#the-hook-system)  ← the most powerful part
   - [Dry run: check the logic first](#dry-run-check-the-logic-before-you-pay-for-it)
+  - [Bake: live vs. permanent](#bake-keep-the-hook-live-or-make-it-permanent)
   - [Memorize: answer once](#memorize-answer-once-reuse-until-something-changes)
   - [Naming what a hook produces](#naming-what-a-hook-produces)
 - [Checking outputs (QA)](#checking-outputs-qa)
@@ -114,7 +115,8 @@ app starts. If it touched the extension, you're told to restart ComfyUI (or just
 reload the browser, for JS-only changes).
 
 Turn it off with `auto_update = false` (Settings ▸ advanced ▸ Behaviour),
-`.un_agent.ps1 -NoUpdate`, or `AGENTY_NO_UPDATE=1`. If your ComfyUI isn't in an
+`.
+un_agent.ps1 -NoUpdate`, or `AGENTY_NO_UPDATE=1`. If your ComfyUI isn't in an
 obvious spot next to agentY, point `comfyui_dir` at it so the extension is found.
 
 > `run_agent.ps1` updates *itself* too, but the copy already running is the old
@@ -250,10 +252,9 @@ runs the graph.
   node's input (or into the next hook). Also type-agnostic.
 - **`directive`** — the natural-language instruction / prompt.
 - **`purpose`** — what the hook *is* (below).
-- **`bake_to_canvas`** — *make_workflow only*; bake the result into a reusable
-  subgraph (see [Baking](#baking-a-chain-into-subgraphs)).
-- **`freeze`** — *inline_parameter / text only*; keep the hook live vs. bake the
-  value in (see [Freeze](#freeze-keep-live-vs-bake-in)).
+- **`bake`** — keep the hook live, or make what it produced a permanent part of
+  the graph (see [Bake](#bake-keep-the-hook-live-or-make-it-permanent)).
+  What gets baked follows the `purpose`.
 - **`memorize`** — answer once and reuse it (see
   [Memorize](#memorize-answer-once-reuse-until-something-changes)).
 
@@ -398,7 +399,7 @@ about all of them.
 
 ### Baking a chain into subgraphs
 
-Turn on **`bake_to_canvas`** on your `make_workflow` hooks. When you ask the
+Turn on **`bake`** on your `make_workflow` hooks. When you ask the
 agent to run the graph, it doesn't just execute each stage — it **nests each
 generated workflow into a native ComfyUI subgraph** (inputs/outputs matching the
 hook's slots), **adds** those subgraphs to your canvas next to the hooks
@@ -408,18 +409,39 @@ multi-step task, "baked." A value the agent computed at runtime (e.g. a video's
 length) is baked in via an [`agentY python`](#the-agenty-python-node--collectors)
 node so it reproduces on re-run too.
 
-### Freeze: keep live vs. bake in
+### Bake: keep the hook live, or make it permanent
 
-For `inline_parameter` / `text` hooks, **`freeze`** controls what happens to the
-value the agent produces:
+**`bake`** asks one question: *do you want a graph you can re-run without the
+agent?*
 
-- **OFF — keep hook live** (default): the hook stays wired as you drew it; the
-  agent **injects the produced value at run time** and drops the `agentY text`
-  node *unconnected*, as a human-readable reference.
-- **ON — freeze into graph**: the agent **bakes** the `agentY text` node into the
-  wired target input and takes over the hook's downstream link — yielding a
-  plain, self-contained workflow you can re-run yourself (at the cost of
-  bypassing the hook).
+- **OFF — keep hook live** (default): the hook stays wired as you drew it and the
+  agent supplies what it produced at run time.
+- **ON — bake into graph**: that result becomes a permanent part of the graph.
+
+*What* gets baked follows the `purpose`, because the purposes produce different
+things — it is not a second decision you make:
+
+| purpose | ON bakes… |
+|---|---|
+| `make_workflow` | the generated workflow, nested into a ComfyUI **subgraph** placed beside the hook and wired to mirror the chain (see [Baking](#baking-a-chain-into-subgraphs)) |
+| `text`, `inline_parameter`, `general_request` | the `agentY text` node, into the wired target input, taking over the hook's downstream link — a plain self-contained workflow, at the cost of bypassing the hook |
+
+Kept live instead, that `agentY text` node is dropped *unconnected* as a
+human-readable reference and the value is injected at run time.
+
+> **This was two switches**, `bake_to_canvas` and `freeze`. They asked the same
+> question of two different products and were never both applicable — seeing them
+> side by side is what made them read as two separate ideas. Your saved graphs
+> migrate when you open them: a hook with either one on comes back with `bake`
+> on. `memorize` is a genuinely different axis and stays its own switch — it is
+> about paying for an answer twice, not about permanence, and a hook can
+> reasonably be both memorized and baked.
+
+**Switches you can't see.** A hook only shows the switches its `purpose` actually
+reads: `bake` is hidden on `qa` and `iterate` (neither produces anything to
+bake), and `memorize` is hidden on those two as well (they never deliver through
+the path that stores a remembered value). Hiding is presentation only — the
+values are still saved, so flipping `purpose` back brings them back untouched.
 
 ### Memorize: answer once, reuse until something changes
 
@@ -438,7 +460,7 @@ It is released the moment the question changes:
 |---|---|
 | A different image, or any edit upstream of the hook (however many nodes back) | ✅ |
 | Rewiring an anchor, or where the hook's output goes | ✅ |
-| The hook's own prompt, `purpose`, or `freeze` | ✅ |
+| The hook's own prompt, `purpose`, or `bake` | ✅ |
 | Switching `memorize` **off** — this is how you force a fresh answer | ✅ |
 | Replacing a file with a different one *of the same name* | ✅ (size + timestamp are part of it) |
 | Anything **downstream** — a save prefix, a sampler after the hook | ❌ (it didn't change what the value is) |

@@ -732,7 +732,13 @@ def _is_general(hook: dict) -> bool:
 
 
 def _wants_bake(hook: dict) -> bool:
-    """True if *hook* has the ``bake_to_canvas`` switch on (bake to a subgraph)."""
+    """True if *hook* has the ``bake`` switch on (bake to a subgraph).
+
+    On a make_workflow hook ``bake`` means "nest the generated workflow into a
+    subgraph"; on the place_canvas_text purposes the same switch means "bake the
+    value into the target input" and is read as ``freeze`` there. One question on
+    the node, resolved by purpose — see the node's docstring.
+    """
     v = hook.get("bake")
     return v is True or str(v).strip().lower() in ("true", "1", "yes", "on")
 
@@ -1633,7 +1639,8 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             "  • ONE value (e.g. a single composed prompt) → write it and call "
             'place_canvas_text(hook_node_id="<hook id>", text="<value>") — it delivers the '
             "value to the target input (injected at run time if the hook is kept live, or "
-            "baked in if frozen — the hook's own setting) and drops an 'agentY text' node.\n"
+            "baked in if its 'bake' switch is on — the hook's own setting) and drops an "
+            "'agentY text' node.\n"
             "  • SEVERAL values (a sweep/variations/folder) → call "
             "apply_canvas_hooks(resolutions=[…]) ONCE with target_node_id + param taken "
             "straight from the 'feeds' target (node id and input name); each variant runs "
@@ -1758,7 +1765,8 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             'answer is ready, call place_canvas_text(hook_node_id="<id>", text="<answer>") '
             "ONCE per hook — it delivers the string to the input the hook's output feeds "
             "(shown as 'feeds …'; injected at run time if the hook is kept live, or baked in "
-            "if frozen — the hook's own setting) and drops an 'agentY text' node. The answer "
+            "if its 'bake' switch is on — the hook's own setting) and drops an 'agentY text' "
+            "node. The answer "
             "also streams into the chat:"
         )
         for h in text_hooks:
@@ -1865,14 +1873,17 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
         bake_hooks = [h for h in standin_hooks if _wants_bake(h)]
         if bake_hooks:
             lines.append(
-                "\nBAKE TO CANVAS — one or more make_workflow hooks above has 'bake_to_canvas' "
+                "\nBAKE TO CANVAS — one or more make_workflow hooks above has its 'bake' switch "
                 "ON. After you have GENERATED and validated each such stage's workflow, do "
                 "NOT stop at running it: call bake_hooks_to_canvas(stages=[…]) to nest each "
                 "generated workflow into a ComfyUI subgraph whose inputs/outputs MATCH that "
                 "hook's slots, place the subgraphs on the same canvas, and wire them to "
                 "mirror the hook chain — baking the multi-step task into a reusable native "
                 "workflow the user can re-run without you. For each baked stage pass: "
-                "workflow_path (the generated workflow), hook_node_id, exposed inputs "
+                "workflow_path (the generated workflow), a SHORT `name` — 2-5 words for "
+                "what the stage DOES (\"Upscale 2x + grain\", \"Animate the scene\"), never "
+                "the directive, which is a paragraph and would be the label on a collapsed "
+                "node — hook_node_id, exposed inputs "
                 "(a node_id+input_name per anchor, in slot order — where the wired input "
                 "binds inside the workflow), exposed outputs (a node_id+output_slot per "
                 "exported result, any type), and prev_hook_ids (its predecessor stage[s]). "
