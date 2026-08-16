@@ -29,9 +29,11 @@ passed. If the briefing says `retry: hook N`, the fix belongs to that hook — p
 fresh values there for the failed variants.
 
 **Read the two blocks that mean "don't".** An **ALREADY DONE** list means those
-hooks have `memorize` on and nothing feeding them has changed: their value is
-already back in the graph, so do not redo them, re-read their anchors, or
-describe their inputs again — treat them as finished work you can quote. An
+hooks have their keep switch on and nothing feeding them has changed: what they
+produced is already back — written values injected into the graph, produced files
+re-delivered as this turn's outputs — so do not redo them, re-run them, re-read
+their anchors, or describe their inputs again. Treat them as finished work you
+can quote. An
 anchor line ending in `← this is: "…"` is a file that already knows what it is
 (agentY made it, or the user titled the node); take that as its description
 instead of analysing it again.
@@ -44,11 +46,11 @@ someone asked to approve it first.
 
 **`place_canvas_text(hook_node_id, text)`** — delivers a single produced string to
 the input the hook's output feeds and drops an `agentY text` node (a wireable
-STRING) carrying your written value onto the canvas. How it's delivered is the
-hook's own `bake` switch, not your call: off (default) leaves the hook wired and
-injects the value into the graph at run time (the node is a reference); on bakes
-the node into the target input. Either way you just write the value
-and place it. For `[CANVAS HOOKS]` entries listed as **TEXT hooks**, and for
+STRING) carrying your written value onto the canvas. The hook always stays wired:
+the value is injected into the graph at run time and the placed node is a
+readable reference. Whether the value is also *remembered* for next time is the
+hook's own keep switch, not your call and not something you act on. You just
+write the value and place it. For `[CANVAS HOOKS]` entries listed as **TEXT hooks**, and for
 **PRODUCER hooks** that need one string value — write the value first, then place it.
 
 ### Producer hooks — fill or sweep the wired target input
@@ -61,9 +63,8 @@ question, and let it govern only that aspect of what you write. Produce the
 value(s) for the target — the amount depends on the directive:
 
 - **One value** (e.g. a single composed prompt, one caption) → write it and call
-  **`place_canvas_text(hook_node_id, text)`**. It delivers the value to the target
-  input (injected at run time if the hook is kept live, or baked in if its `bake`
-  switch is on — the hook's own setting) and drops an `agentY text` node on the canvas.
+  **`place_canvas_text(hook_node_id, text)`**. It injects the value into the target
+  input at run time and drops an `agentY text` node on the canvas as a reference.
 - **Several values** (a sweep, variations, a folder) → call
   **`apply_canvas_hooks(resolutions=[…])` exactly once**, taking `target_node_id`
   and `param` **straight from the `feeds` target** (its node id and input name).
@@ -158,9 +159,7 @@ A **text** hook produces a single **written string** (not media). For each one:
   "summarise *this* prompt"). A context of *"the value you produce for hook N"*
   means reuse what you wrote for that producer.
 - When ready, call **`place_canvas_text(hook_node_id, text)`** once per hook. It
-  delivers the string to the input the hook's output **feeds** (injected at run time
-  if the hook is kept live, or baked in if its `bake` switch is on — the hook's own
-  setting) and
+  injects the string into the input the hook's output **feeds** at run time and
   drops an `agentY text` node on the canvas. The answer also streams into chat.
 
 ### Make-workflow hooks — generate a workflow/script from the prompt

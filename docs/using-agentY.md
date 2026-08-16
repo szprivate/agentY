@@ -25,8 +25,8 @@ node, ready to wire into your next step.*
 - [Slash commands](#slash-commands)
 - [**The hook system**](#the-hook-system)  ← the most powerful part
   - [Dry run: check the logic first](#dry-run-check-the-logic-before-you-pay-for-it)
-  - [Bake: live vs. permanent](#bake-keep-the-hook-live-or-make-it-permanent)
-  - [Memorize: answer once](#memorize-answer-once-reuse-until-something-changes)
+  - [The keep switch](#the-keep-switch-should-this-outlive-the-run)
+  - [Memorize: produce once](#memorize-produce-once-reuse-until-something-changes)
   - [Naming what a hook produces](#naming-what-a-hook-produces)
 - [Checking outputs (QA)](#checking-outputs-qa)
 - [The agentY python node & collectors](#the-agenty-python-node--collectors)
@@ -252,11 +252,10 @@ runs the graph.
   node's input (or into the next hook). Also type-agnostic.
 - **`directive`** — the natural-language instruction / prompt.
 - **`purpose`** — what the hook *is* (below).
-- **`bake`** — keep the hook live, or make what it produced a permanent part of
-  the graph (see [Bake](#bake-keep-the-hook-live-or-make-it-permanent)).
-  What gets baked follows the `purpose`.
-- **`memorize`** — answer once and reuse it (see
-  [Memorize](#memorize-answer-once-reuse-until-something-changes)).
+- **`remember`** — should what this hook produced outlive the run? (see
+  [the keep switch](#the-keep-switch-should-this-outlive-the-run)). It reads
+  *bake into subgraph* on `make_workflow` and *memorize result* everywhere else,
+  because that is what keeping each of them means.
 
 To **disable a hook without deleting it**, bypass it (`Ctrl+B`) or mute it
 (`Ctrl+M`) like any other node — the agent skips hooks in those modes. There's no
@@ -384,9 +383,9 @@ on — during a dry run, the graph you have open is the thing being tested.
 
 At the end you get an account of what *would* have run: how many generations, of
 what, the path of every graph that was built, and which ones were filed. Nothing
-is staged onto the canvas, nothing is added to the gallery, and a `memorize` hook
-does **not** store what it answered (a value derived from a stand-in must never be
-served to a real run later).
+is staged onto the canvas, nothing is added to the gallery, and nothing is
+written to the hook memory — not even the journal (a result derived from a
+stand-in must never be served to a real run later).
 
 Two things a dry run deliberately does not do: it skips the `iterate` purpose
 (that loop exists to be looked at, and its result is written back into your own
@@ -399,8 +398,8 @@ about all of them.
 
 ### Baking a chain into subgraphs
 
-Turn on **`bake`** on your `make_workflow` hooks. When you ask the
-agent to run the graph, it doesn't just execute each stage — it **nests each
+Turn on the keep switch (**bake into subgraph**) on your `make_workflow` hooks.
+When you ask the agent to run the graph, it doesn't just execute each stage — it **nests each
 generated workflow into a native ComfyUI subgraph** (inputs/outputs matching the
 hook's slots), **adds** those subgraphs to your canvas next to the hooks
 (nothing is removed), and wires them to mirror the chain. The result is a
@@ -409,50 +408,56 @@ multi-step task, "baked." A value the agent computed at runtime (e.g. a video's
 length) is baked in via an [`agentY python`](#the-agenty-python-node--collectors)
 node so it reproduces on re-run too.
 
-### Bake: keep the hook live, or make it permanent
+### The keep switch: should this outlive the run?
 
-**`bake`** asks one question: *do you want a graph you can re-run without the
-agent?*
+One switch, one question: *should what this hook produced outlive the run?*
 
-- **OFF — keep hook live** (default): the hook stays wired as you drew it and the
-  agent supplies what it produced at run time.
-- **ON — bake into graph**: that result becomes a permanent part of the graph.
+- **OFF** (default): the agent works it out again next time.
+- **ON**: it is kept.
 
-*What* gets baked follows the `purpose`, because the purposes produce different
-things — it is not a second decision you make:
+*What* keeping it means follows the `purpose`, because the purposes produce
+different things and there is only one sensible way to keep each. That is why the
+switch is **labelled** differently — it is not a second decision you make:
 
-| purpose | ON bakes… |
-|---|---|
-| `make_workflow` | the generated workflow, nested into a ComfyUI **subgraph** placed beside the hook and wired to mirror the chain (see [Baking](#baking-a-chain-into-subgraphs)) |
-| `text`, `inline_parameter`, `general_request` | the `agentY text` node, into the wired target input, taking over the hook's downstream link — a plain self-contained workflow, at the cost of bypassing the hook |
+| purpose | the switch reads | ON keeps… |
+|---|---|---|
+| `make_workflow` | **bake into subgraph** | the generated workflow, nested into a ComfyUI **subgraph** placed beside the hook and wired to mirror the chain (see [Baking](#baking-a-chain-into-subgraphs)) — plus the files that run produced, so re-opening the graph re-uses them instead of re-rendering |
+| `text`, `inline_parameter`, `general_request` | **memorize result** | everything the hook produced: written values and prompts, scripts, images and videos (by path), written to `agent/memory/` beside the outputs |
 
-Kept live instead, that `agentY text` node is dropped *unconnected* as a
-human-readable reference and the value is injected at run time.
+**The hook is never rewired.** Whichever way the switch is set, it stays wired
+exactly as you drew it and the `agentY text` node is dropped *unconnected* as a
+human-readable reference. `freeze` used to bake a text hook's value into its
+target input and take over the hook's downstream link; it doesn't any more. The
+hook chain is your graph's readable statement of what happens, and a switch about
+keeping a *result* has no business rewriting it.
 
-> **This was two switches**, `bake_to_canvas` and `freeze`. They asked the same
-> question of two different products and were never both applicable — seeing them
-> side by side is what made them read as two separate ideas. Your saved graphs
-> migrate when you open them: a hook with either one on comes back with `bake`
-> on. `memorize` is a genuinely different axis and stays its own switch — it is
-> about paying for an answer twice, not about permanence, and a hook can
-> reasonably be both memorized and baked.
+> **This was three switches** — `bake_to_canvas`, `freeze` and `memorize` — then
+> two. They were always one question asked several ways. Your saved graphs migrate
+> when you open them: a hook comes back with the switch set from whichever of the
+> old ones its `purpose` actually read.
 
-**Switches you can't see.** A hook only shows the switches its `purpose` actually
-reads: `bake` is hidden on `qa` and `iterate` (neither produces anything to
-bake), and `memorize` is hidden on those two as well (they never deliver through
-the path that stores a remembered value). Hiding is presentation only — the
-values are still saved, so flipping `purpose` back brings them back untouched.
+**When you can't see it.** It is hidden on `qa` and `iterate`, which produce
+nothing to keep. Hiding is presentation only — the value is still saved, so
+flipping `purpose` back brings it back untouched.
 
-### Memorize: answer once, reuse until something changes
+### Memorize: produce once, reuse until something changes
 
 A hook that reads an image and writes a description costs a vision call and a
 turn of the agent's attention. Wire it into a graph you iterate on for an
 afternoon and you pay for that same description twenty times, for a picture that
-never moved.
+never moved. A hook that *generates* — a reference frame, a video — costs far
+more than attention.
 
-Turn **`memorize`** on and the value is kept: on later runs it goes straight back
-into the graph, and the agent is told the hook is **already done** — no call, no
-re-reading the anchors. The panel says `♻️ reused the remembered value`.
+Turn the switch on and the result is kept. On later runs the written value goes
+straight back into the graph and the produced files are re-delivered as that
+turn's outputs, and the agent is told the hook is **already done** — no call, no
+re-reading the anchors, no re-rendering. The panel says `♻️ reused …`.
+
+**You can decide in hindsight.** You rarely know a result was worth keeping until
+you have looked at it, so what a hook produced is written down either way. Turn
+the switch on *after* a run you liked and it keeps that run's result — the value
+is already there, under the key that run wrote. Turning it off is still the forget
+gesture: off, send anything, on again.
 
 It is released the moment the question changes:
 
@@ -460,15 +465,18 @@ It is released the moment the question changes:
 |---|---|
 | A different image, or any edit upstream of the hook (however many nodes back) | ✅ |
 | Rewiring an anchor, or where the hook's output goes | ✅ |
-| The hook's own prompt, `purpose`, or `bake` | ✅ |
-| Switching `memorize` **off** — this is how you force a fresh answer | ✅ |
+| The hook's own prompt or `purpose` | ✅ |
+| Switching the keep switch **off** — this is how you force a fresh result | ✅ |
 | Replacing a file with a different one *of the same name* | ✅ (size + timestamp are part of it) |
-| Anything **downstream** — a save prefix, a sampler after the hook | ❌ (it didn't change what the value is) |
+| Deleting a remembered image or video from disk | ✅ (the whole entry — four of five frames replayed is a worse answer than doing it again) |
+| Anything **downstream** — a save prefix, a sampler after the hook | ❌ (it didn't change what the result is) |
 
-It's stored beside the project, in ComfyUI's user directory — so it follows the
-project you switch to, and is shared by every thread working on that project (the
-same graph with the same inputs has the same answer). It's a cache, not a note:
-it never appears in [memory](#memory).
+It's stored in **`agent/memory/`** under ComfyUI's own output directory, next to
+the `agent/images` and `agent/videos` folders it points at — so a remembered path
+and the file it names travel together, and the whole lot switches with the
+project. Paths are recorded relative to that output directory, so moving the
+folder doesn't strand the entries in it. It's a cache, not a note: it never
+appears in [memory](#memory).
 
 ### Naming what a hook produces
 

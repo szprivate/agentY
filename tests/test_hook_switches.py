@@ -1,17 +1,23 @@
-"""One switch for "make it permanent", read differently by purpose.
+"""One switch for "keep what this produced", named by purpose.
 
 The hook node carried three booleans — `bake_to_canvas`, `freeze`, `memorize` —
-and they read as three versions of one idea. Two of them were: `bake_to_canvas`
-and `freeze` ask the same question ("do I want a graph I can re-run without the
-agent?") of two different products, and are never both applicable. They are now
-one `bake` switch, resolved by purpose on this side.
+then two, and they were always one question asked three ways: should what this
+hook produced outlive the run? They are now a single switch.
 
-`memorize` is a different axis and stays its own switch: it is about paying for
-an answer twice, not about permanence, and a hook can reasonably be both.
+What ON *does* follows the purpose, because the purposes produce different things
+and there is only one sensible way to keep each:
 
-The wire keeps two fields because the two consumers are in different places, and
-this pins down that a single switch still reaches both of them — and, more
-importantly, that neither one fires for a purpose that does not read it.
+* `make_workflow` produces a workflow, so keeping it means nesting it into a
+  subgraph. That is the one purpose where the switch is still called **bake**.
+* every other producing purpose produces a result — text, a prompt, a script,
+  images, videos — so keeping it means **memorize**: write it to the store beside
+  the outputs and put it straight back next time.
+
+The switch deliberately no longer rewires anything. `freeze` used to bake a text
+hook's value into its target input and take over the hook's downstream link,
+which destroyed the thing the user drew: the hook chain IS the graph's readable
+statement of what happens, and a switch about keeping a result has no business
+rewriting it.
 
     python -m unittest discover -s tests
 """
@@ -20,96 +26,107 @@ import unittest
 
 from src.utils.canvas_hooks import (_is_general, _is_iterate, _is_qa, _is_standin,
                                     _is_text, _wants_bake)
+from src.utils.hook_cache import remembering
 
 
-def hook(purpose, **kw):
-    """A hook as the panel sends it: one switch, mirrored onto both fields."""
-    bake = kw.pop("bake", False)
+def hook(purpose, remember=False, **kw):
+    """A hook as the current panel sends it: one switch, one field."""
     h = {"hook_node_id": "5", "purpose": purpose, "directive": "do the thing",
-         "anchors": [], "targets": [], "bake": bake, "freeze": bake}
+         "anchors": [], "targets": [], "remember": remember}
     h.update(kw)
     return h
 
 
 class OneSwitchTest(unittest.TestCase):
 
-    def test_bake_on_a_make_workflow_hook_asks_for_a_subgraph(self):
-        self.assertTrue(_wants_bake(hook("make_workflow", bake=True)))
-        self.assertFalse(_wants_bake(hook("make_workflow", bake=False)))
+    def test_on_a_make_workflow_hook_it_asks_for_a_subgraph(self):
+        self.assertTrue(_wants_bake(hook("make_workflow", remember=True)))
+        self.assertFalse(_wants_bake(hook("make_workflow", remember=False)))
 
-    def test_the_same_switch_freezes_a_text_hook_s_value(self):
-        """place_canvas_text reads `freeze`; the panel sets it from the one switch."""
-        self.assertTrue(hook("text", bake=True)["freeze"])
-        self.assertFalse(hook("text", bake=False)["freeze"])
+    def test_the_same_switch_memorizes_everywhere_else(self):
+        for purpose in ("text", "inline_parameter", "general_request"):
+            with self.subTest(purpose=purpose):
+                self.assertTrue(remembering(hook(purpose, remember=True)))
+                self.assertFalse(remembering(hook(purpose, remember=False)))
+
+    def test_baking_is_offered_for_exactly_one_purpose(self):
+        """Every other purpose reads the same bit as "memorize", never as "bake"."""
+        for purpose in ("text", "inline_parameter", "general_request", "qa", "iterate"):
+            with self.subTest(purpose=purpose):
+                self.assertFalse(_wants_bake(hook(purpose, remember=True)),
+                                 "there is no workflow here to nest")
 
     def test_a_string_from_a_widget_still_counts(self):
         """Widget booleans arrive as "true" from some frontends."""
         for truthy in (True, "true", "True", "1", "on", "yes"):
             with self.subTest(v=truthy):
-                self.assertTrue(_wants_bake({"bake": truthy}))
+                self.assertTrue(_wants_bake(hook("make_workflow", remember=truthy)))
         for falsy in (False, "false", "0", "", None):
             with self.subTest(v=falsy):
-                self.assertFalse(_wants_bake({"bake": falsy}))
+                self.assertFalse(_wants_bake(hook("make_workflow", remember=falsy)))
 
-    def test_baking_is_only_ever_offered_for_make_workflow_hooks(self):
-        """`freeze` riding along on a make_workflow hook must reach nothing.
-
-        The panel sets both fields from one switch, which is only safe because
-        each consumer is gated by purpose on this side.
-        """
-        h = hook("make_workflow", bake=True)
-        self.assertTrue(_is_standin(h))          # baked as a subgraph
-        self.assertFalse(_is_general(h))         # never place_canvas_text'd
-        self.assertFalse(_is_qa(h))
-
-    def test_the_purposes_that_read_a_switch_are_the_ones_the_node_shows_it_for(self):
-        """The node hides a switch its purpose does not read — same list, both sides.
-
-        `bake` is shown for make_workflow (subgraph) and the place_canvas_text
-        purposes (freeze the value); `memorize` only for the latter. qa and
-        iterate read neither, which is why both are hidden there.
-        """
+    def test_the_purposes_that_read_the_switch_are_the_ones_the_node_shows_it_for(self):
+        """qa and iterate produce nothing to keep, which is why it is hidden there."""
         for purpose in ("inline_parameter", "text", "general_request"):
             with self.subTest(purpose=purpose):
-                h = hook(purpose, bake=True)
+                h = hook(purpose, remember=True)
                 self.assertFalse(_is_standin(h), "would be baked as a subgraph instead")
                 self.assertFalse(_is_iterate(h))
                 self.assertFalse(_is_qa(h))
-
-        # Neither consumer exists for these two: _wants_bake is only ever asked of
-        # standin hooks, and `freeze` is only read on the place_canvas_text path.
-        for purpose in ("qa", "iterate"):
-            with self.subTest(purpose=purpose):
-                h = hook(purpose, bake=True)
-                self.assertFalse(_is_standin(h))     # never reaches _wants_bake
-                self.assertFalse(_is_text(h))        # never reaches place_canvas_text
-                self.assertFalse(_is_general(h))
         self.assertTrue(_is_qa(hook("qa")))
         self.assertTrue(_is_iterate(hook("iterate")))
+        self.assertTrue(_is_standin(hook("make_workflow")))
+        self.assertTrue(_is_text(hook("text")))
+        self.assertTrue(_is_general(hook("general_request")))
 
-    def test_a_hook_can_be_both_memorized_and_baked(self):
-        """The reason memorize stayed a separate switch."""
-        h = hook("text", bake=True, memorize=True)
-        self.assertTrue(h["freeze"])
-        self.assertTrue(h["memorize"])
+    def test_a_make_workflow_hook_that_bakes_also_remembers_what_it_produced(self):
+        """The subgraph is the recipe; the record is the results it already made.
+
+        Keeping only the recipe would mean the most expensive hook on the canvas
+        is the one that re-renders every time you open the graph.
+        """
+        h = hook("make_workflow", remember=True)
+        self.assertTrue(_wants_bake(h))
+        self.assertTrue(remembering(h), "bake implies keeping the outputs too")
+
+
+class LegacyCanvasTest(unittest.TestCase):
+    """A canvas saved before the merge sent two fields. Read them as they meant."""
+
+    def test_bake_was_the_one_make_workflow_looked_at(self):
+        self.assertTrue(remembering({"purpose": "make_workflow", "bake": True,
+                                     "memorize": False}))
+        self.assertTrue(_wants_bake({"purpose": "make_workflow", "bake": True}))
+
+    def test_memorize_was_the_one_every_other_purpose_looked_at(self):
+        self.assertTrue(remembering({"purpose": "text", "memorize": True,
+                                     "bake": False}))
+        self.assertFalse(remembering({"purpose": "text", "memorize": False,
+                                      "bake": True}),
+                         "`freeze: bake` rode along on every hook — it must reach nothing")
+
+    def test_a_hook_that_says_nothing_at_all_keeps_nothing(self):
+        self.assertFalse(remembering({}))
+        self.assertFalse(_wants_bake({}))
 
 
 class VocabularyTest(unittest.TestCase):
     """What the agent is told must match what the user sees on the node."""
 
     def test_the_prompt_no_longer_says_freeze_or_bake_to_canvas(self):
-        from pathlib import Path
         from src.pipeline import _ORCH_PARTIALS_DIR
         text = (_ORCH_PARTIALS_DIR / "canvas_hooks.md").read_text(encoding="utf-8")
         self.assertNotIn("frozen", text)
         self.assertNotIn("`freeze`", text)
         self.assertNotIn("bake_to_canvas", text)
-        self.assertIn("`bake`", text)
 
-    def test_the_hook_block_says_bake_too(self):
+    def test_the_hook_block_describes_what_a_remembered_hook_already_did(self):
         from src.utils.canvas_hooks import describe_hooks
-        block = describe_hooks([hook("text", bake=False)], {})
-        self.assertIn("'bake' switch", block)
+        h = hook("text")
+        h["_cached"] = {"value": "warm sodium light", "targets": ["20"],
+                        "outputs": [], "when": ""}
+        block = describe_hooks([h], {})
+        self.assertIn("ALREADY DONE", block)
         self.assertNotIn("if frozen", block)
 
 

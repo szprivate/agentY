@@ -1357,17 +1357,15 @@ class Pipeline:
             from src.utils.canvas_patch import push as _push_patch
             from src.utils.canvas_hooks import inject_produced_value as _inject, _is_text
 
-            # Resolve this hook's freeze toggle. keep-live (freeze OFF, the default)
-            # leaves the hook wired and injects the value into the captured base
-            # graph; freeze ON bakes the value into the target (legacy rewire). When
-            # the frontend didn't send a `freeze` field at all (older extension),
-            # preserve the legacy bake so existing graphs behave as before.
+            # The hook always stays wired. Baking the value into the target input
+            # and taking over the hook's downstream link — what `freeze` used to do
+            # here — destroys the thing the user drew: the hook chain is the graph's
+            # readable statement of what happens, and a switch about *keeping a
+            # result* has no business rewriting it. Keeping the result is now what
+            # the switch does, below.
             hook = next((h for h in (self._canvas_hooks or [])
                          if str(h.get("hook_node_id")) == str(hook_node_id)), None)
-            freeze = True
-            if hook is not None and "freeze" in hook:
-                freeze = bool(hook.get("freeze"))
-            keep_live = not freeze
+            keep_live = True
 
             # Refuse a value the model will refuse, before it is placed. This is the
             # one moment the agent can still fix it: it wrote the text, it is still
@@ -1389,20 +1387,23 @@ class Pipeline:
                 if injected and not _is_text(hook) and not self._hook_run_stopped:
                     self._canvas_keeplive_run = True
 
-            # Remember it, if the hook asked to be remembered. Keyed on what fed the
-            # hook, so this exact answer comes back for free until something changes.
+            # Journal it. Keyed on what fed the hook, so this exact answer comes
+            # back for free until something changes. Written whether or not the keep
+            # switch is on — you rarely know an answer was worth keeping before you
+            # have seen what it produced, and `kept` records which of the two this
+            # is, so a switch flipped afterwards finds the value already here.
             # Never on a dry run: a hook downstream of a stand-in writes a value
-            # derived from a generation that did not happen, and a memorised one is
+            # derived from a generation that did not happen, and a remembered one is
             # served silently to the next REAL run, where nothing says where it came
             # from. A dry run checks the logic; it does not establish facts.
             if hook is not None and hook.get("_cache_key") and not self._dry_run:
                 try:
-                    from src.utils.hook_cache import memorizing, write as _remember
-                    if memorizing(hook):
-                        _remember(hook["_cache_key"], str(text),
-                                  hook=str(hook_node_id),
-                                  role=self._hook_output_role(hook),
-                                  directive=str(hook.get("directive") or "")[:200])
+                    from src.utils.hook_cache import remembering, write as _remember
+                    _remember(hook["_cache_key"], str(text),
+                              kept=remembering(hook),
+                              hook=str(hook_node_id),
+                              role=self._hook_output_role(hook),
+                              directive=str(hook.get("directive") or "")[:200])
                 except Exception as exc:  # noqa: BLE001
                     if self._verbose:
                         print(f"[hook-cache] could not store hook {hook_node_id}: {exc}")
@@ -3063,6 +3064,67 @@ class Pipeline:
             )
             existing.add(p)
 
+    def _journal_hook_outputs(self) -> None:
+        """Record the files each hook produced this turn, against its cache key.
+
+        The text a hook writes is journalled where it is placed. Media has no such
+        moment: files land asynchronously, long after the tool call that asked for
+        them, and the only thing that knows which hook they belong to is the role
+        declared before the run (``output_tags``, ``hook=<id>``). So the
+        association is made here, once, while this turn's outputs are still the
+        current ones — after this they are just files in a folder.
+
+        Written whether or not the keep switch is on, for the same reason the text
+        is: a result nobody has looked at yet cannot be a decision anyone made.
+        """
+        if self._dry_run:
+            return                      # a stand-in is not a fact
+        hooks = [h for h in (self._canvas_hooks or [])
+                 if isinstance(h, dict) and h.get("_cache_key")]
+        paths = [p for p in (self._session.current_output_paths or []) if p]
+        if not hooks or not paths:
+            return
+        try:
+            from src.utils.hook_cache import read, remembering, write as _remember
+            from src.utils.output_tags import meta_for
+        except Exception as exc:  # noqa: BLE001
+            if self._verbose:
+                print(f"[hook-cache] cannot journal outputs ({exc}).")
+            return
+
+        by_hook: dict = {}
+        for p in paths:
+            try:
+                hid = str((meta_for(p) or {}).get("hook") or "")
+            except Exception:  # noqa: BLE001
+                continue
+            if hid:
+                by_hook.setdefault(hid, []).append(p)
+        if not by_hook:
+            return
+
+        for h in hooks:
+            hid = str(h.get("hook_node_id") or "")
+            produced = by_hook.get(hid) or []
+            if not produced:
+                continue
+            key = str(h["_cache_key"])
+            # Keep the text half if this hook already journalled one: a
+            # make_workflow hook writes a prompt AND produces files, and the two
+            # are recorded from different points in the turn.
+            existing = read(key) or {}
+            try:
+                _remember(key, str(existing.get("value") or ""), outputs=produced,
+                          kept=remembering(h) or bool(existing.get("kept")),
+                          hook=hid, role=self._hook_output_role(h),
+                          directive=str(h.get("directive") or "")[:200])
+                if self._verbose:
+                    print(f"[hook-cache] journalled {len(produced)} file(s) for "
+                          f"hook {hid} under {key}.")
+            except Exception as exc:  # noqa: BLE001
+                if self._verbose:
+                    print(f"[hook-cache] could not journal hook {hid}: {exc}")
+
     def _format_image_gallery(self) -> str:
         """Render the thread's generated-image gallery as a compact prompt block.
 
@@ -3132,6 +3194,10 @@ class Pipeline:
         # contribute referenceable outputs.
         if status == "completed":
             self._register_generated_images(raw_json)
+            # Same moment, same reason: this turn's outputs are still the current
+            # ones, which is the only point at which a produced file can still be
+            # matched to the hook that asked for it.
+            self._journal_hook_outputs()
         # Auto-persist a memory when a request completed with a known workflow so
         # future sessions can recall template/model preferences.
         if status == "completed" and raw_json:
@@ -3201,21 +3267,27 @@ class Pipeline:
             return ""
 
     def _apply_hook_cache(self) -> None:
-        """Put back what the memorizing hooks answered last time, and release the rest.
+        """Put back what the remembering hooks produced last time, and release the rest.
 
         Runs once per turn, before the orchestrator sees anything: a hook whose
-        ``memorize`` toggle is on and whose inputs are unchanged has its stored
-        value injected straight into the graph, exactly as if the agent had just
-        produced it — no vision call, no turn spent re-describing a picture that
-        did not move. A hook with the toggle OFF drops whatever was stored under
-        its current key, which is what makes the toggle the forget gesture.
+        keep switch is on and whose inputs are unchanged has its stored result put
+        straight back — the written value injected into the graph as if the agent
+        had just produced it, the produced files re-delivered as if the run had
+        just made them — so no vision call, no generation and no turn of attention
+        is spent reproducing something that did not move.
+
+        The result is journalled whether or not the switch was on, which is what
+        makes the switch usable in HINDSIGHT: turn it on after a run you liked and
+        the value that run produced is found under the key it already wrote.
+        Turning it off drops what was kept, which is still the forget gesture.
         """
         hooks = [h for h in (self._canvas_hooks or []) if isinstance(h, dict)]
         if not hooks:
             return
         try:
             from src.utils.canvas_hooks import inject_produced_value
-            from src.utils.hook_cache import fingerprint, forget, memorizing, read
+            from src.utils.hook_cache import (bless, fingerprint, forget, kept, prune,
+                                              read, recall, remembering)
         except Exception as exc:  # noqa: BLE001
             if self._verbose:
                 print(f"[hook-cache] unavailable ({exc}).")
@@ -3228,20 +3300,42 @@ class Pipeline:
                     print(f"[hook-cache] could not key hook {h.get('hook_node_id')}: {exc}")
                 continue
             h["_cache_key"] = key
-            if not memorizing(h):
-                forget(key)
+            if not remembering(h):
+                # Only what was KEPT is released. The journal underneath it is the
+                # material a hindsight decision is made from — delete that here and
+                # the switch could only ever be set before the fact, which is the
+                # thing this is meant to fix.
+                if kept(read(key)):
+                    forget(key)
                 continue
-            value = str((read(key) or {}).get("value") or "")
-            if not value:
-                continue
+            entry = recall(key)
+            if entry is None:
+                continue      # nothing stored, or a remembered file has gone: re-run
+            value = str(entry.get("value") or "")
+            outputs = [str(o.get("path")) for o in (entry.get("outputs") or [])
+                       if isinstance(o, dict) and o.get("path")]
             targets = (inject_produced_value(self._canvas_base_prompt, h, value)
-                       if isinstance(self._canvas_base_prompt, dict) else [])
-            h["_cached"] = {"value": value, "targets": targets,
-                            "when": str((read(key) or {}).get("when") or "")}
-            _push_progress(f"♻️ Hook {h.get('hook_node_id')} — reused the remembered value.")
+                       if value and isinstance(self._canvas_base_prompt, dict) else [])
+            # Deliver remembered files through the SAME call a fresh run delivers
+            # through, so the panel, the gallery, the input dir and the canvas all
+            # see what they would have seen — a replay nothing downstream can tell
+            # apart from the real thing.
+            for path in outputs:
+                self._register_output_path(path)
+            bless(key)        # a switch flipped in hindsight makes it durable now
+            h["_cached"] = {"value": value, "targets": targets, "outputs": outputs,
+                            "when": str(entry.get("when") or "")}
+            made = ", ".join(part for part in (
+                "the remembered value" if value else "",
+                f"{len(outputs)} remembered file(s)" if outputs else "") if part)
+            _push_progress(f"♻️ Hook {h.get('hook_node_id')} — reused {made}.")
             if self._verbose:
                 print(f"[hook-cache] hook {h.get('hook_node_id')} hit {key} "
-                      f"→ {len(targets)} target(s).")
+                      f"→ {len(targets)} target(s), {len(outputs)} file(s).")
+        try:
+            prune()
+        except Exception:  # noqa: BLE001 — housekeeping must never cost a turn
+            pass
 
     def _hook_output_role(self, hook: dict | None) -> str:
         """What outputs produced for *hook* should be recorded as.

@@ -839,15 +839,16 @@ def _is_general(hook: dict) -> bool:
 
 
 def _wants_bake(hook: dict) -> bool:
-    """True if *hook* has the ``bake`` switch on (bake to a subgraph).
+    """True if *hook* asks for its generated workflow to be nested as a subgraph.
 
-    On a make_workflow hook ``bake`` means "nest the generated workflow into a
-    subgraph"; on the place_canvas_text purposes the same switch means "bake the
-    value into the target input" and is read as ``freeze`` there. One question on
-    the node, resolved by purpose — see the node's docstring.
+    One switch on the node answers "should what this produced outlive the run?",
+    and ``make_workflow`` is the single purpose where the answer is a *graph*
+    rather than a stored result — so it is the only purpose where the switch is
+    called "bake", and the only one this returns True for. Everywhere else the
+    same bit means memorize, and is read by :mod:`src.utils.hook_cache`.
     """
-    v = hook.get("bake")
-    return v is True or str(v).strip().lower() in ("true", "1", "yes", "on")
+    from src.utils.hook_cache import remembering
+    return _is_standin(hook) and remembering(hook)
 
 
 def _export_count(hook: dict) -> int:
@@ -1982,10 +1983,12 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
 
     if cached_hooks:
         lines.append(
-            "\nALREADY DONE (remembered — these hooks have 'memorize' on and nothing "
-            "feeding them has changed since they last ran, so their value is already "
-            "back in the graph). Do NOT redo them, do not re-read their inputs, and do "
-            "not describe their anchors again:"
+            "\nALREADY DONE (remembered — these hooks have their keep switch on and "
+            "nothing feeding them has changed since they last ran, so what they "
+            "produced is already back: written values injected into the graph, and "
+            "produced files re-delivered as this turn's outputs). Do NOT redo them, "
+            "do not re-read their inputs, do not re-generate their media, and do not "
+            "describe their anchors again:"
         )
         for h in cached_hooks:
             hid = h.get("hook_node_id")
@@ -1993,14 +1996,20 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             where = (", filled node(s) " + ", ".join(c.get("targets") or [])
                      if c.get("targets") else ", not wired into a node input")
             when = f" [{c['when']}]" if c.get("when") else ""
-            lines.append(f'- hook {hid}{when}{where} → "{_trim(c.get("value"), 400)}"')
+            files = [Path(str(p)).name for p in (c.get("outputs") or []) if p]
+            made = f'"{_trim(c.get("value"), 400)}"' if str(c.get("value") or "").strip() else ""
+            if files:
+                shown = ", ".join(files[:6]) + (" …" if len(files) > 6 else "")
+                made = f"{made} + " if made else ""
+                made += f"{len(files)} file(s): {shown}"
+            lines.append(f"- hook {hid}{when}{where} → {made}")
         if not hooks:
             lines.append(
                 "  That is every hook on this graph. There is no value left to produce: "
                 "if the user asked for a run, call apply_canvas_hooks(resolutions=[]) once "
                 "to run the canvas exactly as it now stands; otherwise just answer them. "
-                "To make a hook produce a fresh value, the user turns its 'memorize' "
-                "toggle off (or changes what feeds it)."
+                "To make a hook produce a fresh result, the user turns its keep switch "
+                "off (or changes what feeds it)."
             )
 
     # When hooks feed each other, spell out the order so producers are done first.

@@ -47,6 +47,8 @@ _BOUND = (
     "_graph_dry_build",
     "_trim_variants",
     "_expand_batches",
+    "_register_output_path",
+    "_journal_hook_outputs",
 )
 
 
