@@ -1411,43 +1411,79 @@ class Pipeline:
                 return json.dumps({"error": str(exc)})
 
         @_tool
-        async def set_canvas_node_params(node_id: str, params: dict) -> str:
-            """Write parameter values back onto a node selected on the ComfyUI canvas.
+        async def get_canvas_node(node_id: str) -> str:
+            """Read one node on the open canvas EXACTLY, with nothing truncated.
 
-            Use when the user asks you to change a value on a node they have
-            selected — e.g. "rewrite this prompt", "set steps to 30", "bump the
-            CFG". The nodes the user selected are listed in the ``[CANVAS
-            SELECTION]`` block with their current widget values; read the value
-            there, then call this to apply your change. The edit lands on the live
-            graph instantly (no browser refresh, no re-queue). It does NOT run the
-            graph — the user queues it themselves when ready.
+            The ``[CANVAS GRAPH]`` block lists every node with its values
+            shortened to fit on a line; anything ending in `…` is cut. Call this
+            before rewriting such a value — editing a prompt you have only seen
+            the opening of is how the rest of it gets thrown away.
+
+            Returns the node's class, title, full widget values, and which of its
+            inputs are wired (those are links, and cannot be set as values).
 
             Args:
-                node_id: The id of a node from the ``[CANVAS SELECTION]`` block.
+                node_id: The id of any node on the canvas, from the
+                    ``[CANVAS GRAPH]`` or ``[CANVAS SELECTION]`` block.
+            """
+            from src.utils.canvas_view import node_detail
+            found = node_detail(getattr(self, "_canvas_graph", None), node_id)
+            if found is None:
+                return json.dumps({
+                    "error": f"there is no node '{node_id}' on the open canvas.",
+                    "what_to_do": "Take the id from the [CANVAS GRAPH] block.",
+                })
+            return json.dumps(found)
+
+        @_tool
+        async def set_canvas_node_params(node_id: str, params: dict) -> str:
+            """Write parameter values onto ANY node on the open ComfyUI canvas.
+
+            Use when the user asks you to change a value — "rewrite this prompt",
+            "set steps to 30", "bump the CFG". The node does **not** have to be
+            selected: every node on their canvas is listed in the ``[CANVAS
+            GRAPH]`` block and any of them can be written here. A selection just
+            tells you which one they mean when they say "this one".
+
+            Read the current value first — from the ``[CANVAS GRAPH]`` line, or
+            with ``get_canvas_node(node_id)`` when that line was truncated (`…`).
+
+            The edit lands on the live graph instantly (no browser refresh, no
+            re-queue). It does NOT run the graph — the user queues it themselves.
+
+            Args:
+                node_id: The id of any node on the canvas.
                 params: Mapping of widget name -> new value, e.g.
                     ``{"text": "a rainy neon street"}`` or ``{"steps": 30, "cfg": 6.5}``.
-                    Only include the widgets you are changing.
+                    Only include the widgets you are changing. Wired inputs are
+                    links, not values, and cannot be set here.
             """
             sel = getattr(self, "_canvas_selection", []) or []
             node = next((n for n in sel if str(n.get("id")) == str(node_id)), None)
             if node is None:
-                # The one node that needs no selection: the collector a live review
-                # halt is waiting on. It is a node this pipeline created, for this
-                # halt, and the natural request during a review — "regenerate the
-                # third one and carry on" — otherwise dead-ends on the user having
-                # to click it first. Scoped to that node and that halt; everything
-                # else still has to be selected, which is what makes an edit to the
-                # user's graph something they pointed at.
+                # ANY node on the open canvas, not just a selected one. Selection
+                # is how the user points at a node, not permission to touch it —
+                # requiring it turned "set the sampler to 30 steps" into "first go
+                # and click the sampler". The graph is sent every turn regardless.
+                from src.utils.canvas_view import node_detail
+                found = node_detail(getattr(self, "_canvas_graph", None), node_id)
+                if found:
+                    node = {"id": str(node_id), "type": found["class_type"],
+                            "title": found["title"], "widgets": found["values"]}
+            if node is None:
+                # A live review's ballot is created in the browser, so it can be
+                # absent from the graph captured at the START of this turn.
                 ballot = self._review_collector() or {}
                 if str(ballot.get("node_id") or "") == str(node_id):
                     node = {"id": str(node_id), "type": "AgentYImageCollector",
                             "title": "review — pick what continues",
                             "widgets": {"files": "\n".join(ballot.get("files") or [])}}
             if node is None:
-                ids = ", ".join(str(n.get("id")) for n in sel) or "(none selected)"
+                known = ", ".join(sorted(str(k) for k in
+                                         (getattr(self, "_canvas_graph", None) or {}))[:40])
                 return json.dumps({
-                    "error": f"node '{node_id}' is not in the current canvas selection. "
-                             f"Selected node ids: {ids}."
+                    "error": f"there is no node '{node_id}' on the open canvas.",
+                    "node_ids_on_canvas": known or "(no canvas graph this turn)",
                 })
             if not isinstance(params, dict) or not params:
                 return json.dumps({"error": "params must be a non-empty mapping of widget -> value."})
@@ -1755,7 +1791,8 @@ class Pipeline:
         return [prepare_workflow, run_info,
                 run_web_search, run_planner, apply_canvas_hooks, stop_hook_run,
                 halt_for_review, run_workflow_now, add_canvas_workflow,
-                set_canvas_node_params, place_canvas_text, iterate_step]
+                get_canvas_node, set_canvas_node_params, place_canvas_text,
+                iterate_step]
 
     async def _run_canvas_batch(self, paths: list[str], notes: list,
                                 labels: list | None = None) -> str:
@@ -2436,9 +2473,24 @@ class Pipeline:
         # this prompt") and write it back via set_canvas_node_params. The read/edit
         # guidance rides along only when a selection is actually present.
         sel_block = self._describe_canvas_selection()
-        if sel_block:
-            guide = _orch_partial("selected_nodes")
-            pin = pin + (guide + "\n\n" if guide else "") + sel_block + "\n\n"
+        # The WHOLE canvas, so a node can be read and changed without first being
+        # selected. The graph is sent on every turn anyway; it was simply never
+        # described, which quietly made selecting a permission rather than a way
+        # of pointing. Below the selection block, which stays the more detailed
+        # view of the nodes the user actually singled out.
+        graph_block = ""
+        if getattr(self, "_canvas_graph", None):
+            from src.utils.canvas_view import describe_canvas
+            graph_block = describe_canvas(
+                self._canvas_graph,
+                [n.get("id") for n in (self._canvas_selection or [])])
+        if sel_block or graph_block:
+            guide = _orch_partial("canvas_nodes")
+            pin = pin + (guide + "\n\n" if guide else "")
+            if sel_block:
+                pin += sel_block + "\n\n"
+            if graph_block:
+                pin += graph_block + "\n\n"
 
         # Input-image handling guidance — attached only when the user has input
         # images to stage or generated images to reference (else it's dead weight).
@@ -2670,6 +2722,12 @@ class Pipeline:
         # Arbitrary selected nodes (id/type/title/widgets) the orchestrator can
         # read and write back via set_canvas_node_params.
         self._canvas_selection = [n for n in (canvas_selection or []) if isinstance(n, dict)]
+        # The canvas EXACTLY as the user has it, kept apart from the spliced and
+        # hook-scoped `_canvas_base_prompt` below. That one is "what would run";
+        # this one is "what is on screen", and it is what read/write on arbitrary
+        # nodes has to go through — scoping to the hooks would otherwise make
+        # every node outside the hook's branch invisible and uneditable.
+        self._canvas_graph = canvas_prompt if isinstance(canvas_prompt, dict) else {}
         if isinstance(canvas_prompt, dict) and canvas_prompt:
             try:
                 from src.utils.canvas_hooks import (splice_hook_nodes, prune_to_hooks,

@@ -466,14 +466,17 @@ class WritingToTheBallotTest(unittest.TestCase):
         ops = [e for e in drain() if str(e.get("node_id")) == "77"]
         self.assertEqual(ops[0]["params"], {"files": "C:/out/new.png"})
 
-    def test_every_other_node_still_has_to_be_selected(self):
+    def test_a_node_that_is_on_no_canvas_at_all_is_still_refused(self):
+        """Any node on the OPEN canvas is writable now — one that isn't, isn't."""
         out = self._call(_halted(), "50", "whatever")
-        self.assertIn("not in the current canvas selection", out["error"])
+        self.assertIn("no node '50' on the open canvas", out["error"])
 
-    def test_the_exemption_does_not_outlive_the_halt(self):
+    def test_the_ballot_exemption_does_not_outlive_the_halt(self):
+        """It matters because the ballot is created in the BROWSER mid-turn, so it
+        can be absent from the graph captured at the start of the turn."""
         pipe = pipeline_stub(_canvas_hooks=_chain(), _review_halt=None)
         out = self._call(pipe, "77", "C:/out/new.png")
-        self.assertIn("not in the current canvas selection", out["error"])
+        self.assertIn("no node '77' on the open canvas", out["error"])
 
     def test_the_agent_is_told_the_node_id_it_may_write_to(self):
         from src.utils.review_gate import halt_state

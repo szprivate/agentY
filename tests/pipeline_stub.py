@@ -81,6 +81,7 @@ def pipeline_stub(**over):
         _review_reply="",
         _review_armed=None,
         _canvas_selection=[],
+        _canvas_graph={},
         _DRY_GRAPH_CAP=Pipeline._DRY_GRAPH_CAP,
     )
     base.update(over)
