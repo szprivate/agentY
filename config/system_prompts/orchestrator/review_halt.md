@@ -49,6 +49,17 @@ says nothing about the selection is the collector's contents the final word.
 ordinary. Answer it. The stop stays up, and the stages behind it stay shut, until
 they actually say continue or stop.
 
+### Replacing a reference mid-halt
+
+*"Regenerate the third one, warmer"* is a **neither** — the halt stays up — and it
+is the request this stop exists to make possible. Re-run that one stage, then put
+the new path into the collector with
+`set_canvas_node_params(<collector id>, {"files": "…"})`, keeping the lines they
+kept and in their order. The `[REVIEW HALT]` block gives you that node's id, and
+this is the one node you may write to **without** the user having selected it —
+it is the node the halt created, for this. Say which line you replaced, and leave
+the stop up: replacing a reference is not continuing.
+
 ### Not the same as `stop_hook_run`
 
 `stop_hook_run` abandons a run because something went wrong or a directive said

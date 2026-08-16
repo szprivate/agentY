@@ -847,6 +847,41 @@ def _is_review(hook: dict) -> bool:
     return str(hook.get("purpose", "") or "").strip().lower() in _REVIEW_PURPOSES
 
 
+# The agentY collector nodes, which hold their file list in a `files` widget.
+# Mirrored from src.utils.qa, which reads the same shape for QA references.
+_COLLECTOR_TYPES = {"AgentYImageCollector", "AgentYVideoCollector"}
+
+
+def review_collector(hook: dict | None) -> dict | None:
+    """The collector wired into a review *hook*'s anchor: its id and its files.
+
+    This is how a halted chain finds the ballot again, and it deliberately goes
+    through the ANCHORS rather than through an id remembered at halt time. The
+    node is created in the browser, so its real id is assigned by litegraph and
+    the server never sees it — but the frontend re-reports every hook's anchors
+    (id, type, widget values) on every turn, which is the same channel a QA hook's
+    reference images already arrive on.
+
+    Reading it here also means the answer follows the WIRE. Unwire the collector
+    and wire a different one in, and that is the one that is read — which is what
+    someone rearranging their graph during a review would expect, and is not
+    something a remembered id could ever notice.
+
+    Returns ``{"node_id", "files"}`` or None when no collector is wired.
+    """
+    for anchor in ((hook or {}).get("anchors") or []):
+        if not isinstance(anchor, dict):
+            continue
+        if str(anchor.get("type") or "") not in _COLLECTOR_TYPES:
+            continue
+        raw = str((anchor.get("widgets") or {}).get("files") or "")
+        return {
+            "node_id": str(anchor.get("node_id") or ""),
+            "files": [ln.strip().strip('"') for ln in raw.splitlines() if ln.strip()],
+        }
+    return None
+
+
 _GENERAL_PURPOSES = {"general_request", "general-request", "general", "request",
                      "free", "freeform", "free_form", "free-form"}
 

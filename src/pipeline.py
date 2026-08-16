@@ -1259,15 +1259,15 @@ class Pipeline:
 
             question = " ".join(str(question or "").split())[:300]
             remaining = sorted(_gated(self._canvas_hooks or []), key=str)
-            collector_id = f"agentY_review_{hid}"
+            collector_key = f"agentY_review_{hid}"
             self._review_armed = ReviewHalt(
-                hook_node_id=hid, collector_node_id=collector_id,
+                hook_node_id=hid, collector_key=collector_key,
                 produced=tuple(files), question=question, remaining=tuple(remaining),
             )
             _push_patch({
                 "op": "review_collector",
                 "hook_node_id": hid,
-                "collector_key": collector_id,
+                "collector_key": collector_key,
                 "files": files,
                 "question": question,
             })
@@ -1425,6 +1425,19 @@ class Pipeline:
             """
             sel = getattr(self, "_canvas_selection", []) or []
             node = next((n for n in sel if str(n.get("id")) == str(node_id)), None)
+            if node is None:
+                # The one node that needs no selection: the collector a live review
+                # halt is waiting on. It is a node this pipeline created, for this
+                # halt, and the natural request during a review — "regenerate the
+                # third one and carry on" — otherwise dead-ends on the user having
+                # to click it first. Scoped to that node and that halt; everything
+                # else still has to be selected, which is what makes an edit to the
+                # user's graph something they pointed at.
+                ballot = self._review_collector() or {}
+                if str(ballot.get("node_id") or "") == str(node_id):
+                    node = {"id": str(node_id), "type": "AgentYImageCollector",
+                            "title": "review — pick what continues",
+                            "widgets": {"files": "\n".join(ballot.get("files") or [])}}
             if node is None:
                 ids = ", ".join(str(n.get("id")) for n in sel) or "(none selected)"
                 return json.dumps({
@@ -2503,7 +2516,16 @@ class Pipeline:
             guide = _orch_partial("review_halt")
             pin += (guide + "\n\n") if guide else ""
             if halt is not None:
-                pin += halt_state(halt)
+                ballot = self._review_collector() or {}
+                pin += halt_state(halt, str(ballot.get("node_id") or ""))
+                if ballot.get("node_id"):
+                    pin += (f"  You may write to that collector directly: "
+                            f"set_canvas_node_params({ballot['node_id']}, "
+                            f'{{"files": "<one absolute path per line>"}}). Use it when '
+                            "they ask for a reference to be REPLACED rather than "
+                            "dropped — regenerate it, then put the new path in, keeping "
+                            "the lines they kept. It needs no canvas selection while "
+                            "this halt is up.\n")
                 if self._review_reply == "continue":
                     now = self._review_collector_files()
                     pin += "  " + resumed_note(len(now),
@@ -3711,7 +3733,7 @@ class Pipeline:
             from src.utils.review_gate import ReviewHalt
             return ReviewHalt(
                 hook_node_id=str(raw.get("hook_node_id") or ""),
-                collector_node_id=str(raw.get("collector_node_id") or ""),
+                collector_key=str(raw.get("collector_key") or ""),
                 produced=tuple(str(p) for p in (raw.get("produced") or [])),
                 question=str(raw.get("question") or ""),
                 remaining=tuple(str(h) for h in (raw.get("remaining") or [])),
@@ -3729,31 +3751,49 @@ class Pipeline:
         except Exception:  # noqa: BLE001
             return ""
 
+    def _review_collector(self) -> dict | None:
+        """The halted chain's ballot: the collector wired into the review hook.
+
+        Resolved through the hook's ANCHORS rather than through an id remembered
+        at halt time, because there is no id to remember — the node is created in
+        the browser and litegraph assigns its id there. The frontend re-reports
+        every hook's anchors each turn, which is the same channel a QA hook's
+        reference images arrive on, so this is data the server already has.
+
+        Returns ``{"node_id", "files"}``, or None when nothing is wired.
+        """
+        halt = getattr(self, "_review_halt", None)
+        if halt is None:
+            return None
+        from src.utils.canvas_hooks import review_collector
+        hook = next((h for h in (self._canvas_hooks or [])
+                     if isinstance(h, dict)
+                     and str(h.get("hook_node_id")) == str(halt.hook_node_id)), None)
+        found = review_collector(hook)
+        if found and found.get("files"):
+            return found
+        # Wired but empty, or the anchors did not come through this turn: fall back
+        # to the captured graph, which still carries the node's widget values.
+        nid = str((found or {}).get("node_id") or "")
+        if nid and isinstance(self._canvas_base_prompt, dict):
+            entry = self._canvas_base_prompt.get(nid) or {}
+            raw = str((entry.get("inputs") or {}).get("files") or "")
+            files = [ln.strip().strip('"') for ln in raw.splitlines() if ln.strip()]
+            if files:
+                return {"node_id": nid, "files": files}
+        return found
+
     def _review_collector_files(self) -> list:
         """What the halted collector holds **right now**, off the live canvas.
 
         This is the answer to "which ones proceed?", and it is deliberately read
         here rather than remembered from the halt: the user edits that node while
         the chain is stopped — that is what the stop is for — so anything captured
-        earlier is a list that has probably already been overtaken.
-
-        Falls back to the captured base prompt when the node is not in the
-        selection, and to nothing at all when the node has been deleted, which the
-        caller reports rather than papering over.
+        earlier is a list that has probably already been overtaken. An empty list
+        means the node is gone or was emptied, which the caller reports rather
+        than papering over with the list from the halt.
         """
-        halt = self._review_halt
-        if halt is None or not halt.collector_node_id:
-            return []
-        nid = str(halt.collector_node_id)
-        raw = ""
-        for node in (self._canvas_selection or []):
-            if str(node.get("id") or node.get("node_id") or "") == nid:
-                raw = str((node.get("widgets") or {}).get("files") or "")
-                break
-        if not raw and isinstance(self._canvas_base_prompt, dict):
-            entry = self._canvas_base_prompt.get(nid) or {}
-            raw = str((entry.get("inputs") or {}).get("files") or "")
-        return [ln.strip().strip('"') for ln in raw.splitlines() if ln.strip()]
+        return list((self._review_collector() or {}).get("files") or [])
 
     def _review_gate_refusal(self, announce: bool = True) -> dict | None:
         """The refusal a run tool returns while a review halt is still unanswered.
@@ -3786,7 +3826,7 @@ class Pipeline:
                 h = self._review_armed
                 self._session.review_halt = {
                     "hook_node_id": h.hook_node_id,
-                    "collector_node_id": h.collector_node_id,
+                    "collector_key": h.collector_key,
                     "produced": list(h.produced),
                     "question": h.question,
                     "remaining": list(h.remaining),
@@ -3796,7 +3836,7 @@ class Pipeline:
                 h = self._review_halt
                 self._session.review_halt = {
                     "hook_node_id": h.hook_node_id,
-                    "collector_node_id": h.collector_node_id,
+                    "collector_key": h.collector_key,
                     "produced": list(h.produced),
                     "question": h.question,
                     "remaining": list(h.remaining),

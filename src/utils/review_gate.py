@@ -47,7 +47,13 @@ class ReviewHalt:
     """A chain stopped at a review hook, waiting for the user to choose."""
 
     hook_node_id: str
-    collector_node_id: str = ""
+    # A stable identity for the collector node, stamped onto it as a property so a
+    # second halt at the same hook REUSES one node instead of leaving a pile of
+    # stale ballots. Deliberately not a node id: the node is created in the
+    # browser and litegraph assigns its real id there, where the server cannot see
+    # it. The real id is resolved at resume, off the hook's anchors — see
+    # :func:`canvas_hooks.review_collector`.
+    collector_key: str = ""
     # What the stage produced, as it stood AT THE HALT. Kept for the message the
     # user reads and for the log — never as the answer. The answer is whatever is
     # in the collector when they reply, which is read off the canvas at resume.
@@ -62,8 +68,7 @@ class ReviewHalt:
     def describe(self) -> str:
         """One line for the panel: what is waiting and where."""
         n = self.count()
-        where = f" in collector {self.collector_node_id}" if self.collector_node_id else ""
-        return (f"hook {self.hook_node_id} — {n} output{'' if n == 1 else 's'}{where}, "
+        return (f"hook {self.hook_node_id} — {n} output{'' if n == 1 else 's'} "
                 f"waiting for continue or stop")
 
 
@@ -114,16 +119,21 @@ def read_reply(text: str) -> str:
     return ""
 
 
-def halt_state(halt: ReviewHalt) -> str:
+def halt_state(halt: ReviewHalt, collector_node_id: str = "") -> str:
     """The ``[REVIEW HALT]`` block for a turn that begins with one live.
+
+    *collector_node_id* is the ballot's real id, resolved this turn off the hook's
+    anchors — the agent needs it to write to the node, and it is not something the
+    halt itself can know (see :class:`ReviewHalt`).
 
     The how-to lives in the ``orchestrator/review_halt`` prompt partial; this is
     only the part that changes from turn to turn.
     """
+    where = (f"collector node {collector_node_id}" if collector_node_id
+             else "a collector that is no longer wired to the hook")
     head = (f"[REVIEW HALT] The chain is STOPPED at review hook {halt.hook_node_id}. "
             f"{halt.count()} output(s) from the stage before it are waiting in "
-            f"collector node {halt.collector_node_id or '(none — it was deleted)'} "
-            f"on the user's canvas.\n")
+            f"{where} on the user's canvas.\n")
     if halt.question:
         head += f"  You asked them: \"{halt.question}\"\n"
     if halt.remaining:

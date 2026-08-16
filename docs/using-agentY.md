@@ -441,6 +441,17 @@ collector stays on the canvas as the record of what that stage ran with.
 drop the second one"* works too — your words win over the node's contents, and the
 agent tells you which files it ended up with.
 
+**Replacing one, not just dropping it.** If you want a *better* image rather than
+a different selection — *"regenerate the third one, warmer"* — say that while it's
+paused. It's neither continue nor stop, so the halt stays up: the agent re-runs
+that stage and writes the new path into the collector itself. You don't need to
+select the node first; the collector a halt is waiting on is the one node the
+agent may edit unasked, because it's the one it created for this. Then continue.
+
+**It follows the wire.** Unwire the collector and wire a different one into the
+review hook's anchor and *that* becomes the ballot — handy if you'd rather build
+the selection in a collector you already had.
+
 **Anything else keeps the stop up.** Ask a question, change a prompt, go make
 coffee: the halt survives until you actually say continue or stop, and the stages
 behind it stay shut. There is no timeout — the canvas is the record, and it will

@@ -51,6 +51,7 @@ _BOUND = (
     "_journal_hook_outputs",
     "_review_gate_refusal",
     "_review_collector_files",
+    "_review_collector",
 )
 
 

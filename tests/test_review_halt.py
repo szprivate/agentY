@@ -146,7 +146,7 @@ class GateTest(unittest.TestCase):
     """The execution tools while a halt is unanswered."""
 
     def setUp(self):
-        self.halt = ReviewHalt(hook_node_id="11", collector_node_id="c",
+        self.halt = ReviewHalt(hook_node_id="11", collector_key="agentY_review_11",
                                produced=("a.png", "b.png"))
 
     def test_a_refusal_is_a_pause_not_a_failure(self):
@@ -261,7 +261,7 @@ class RoundTripTest(unittest.TestCase):
 
     def test_an_armed_halt_is_written_to_the_session(self):
         pipe = self._pipe(_review_armed=ReviewHalt(
-            hook_node_id="11", collector_node_id="c", produced=("a.png",),
+            hook_node_id="11", collector_key="agentY_review_11", produced=("a.png",),
             question="which?", remaining=("12",)))
         Pipeline._arm_review_halt(pipe)
         self.assertEqual(pipe._session.review_halt["hook_node_id"], "11")
@@ -269,7 +269,7 @@ class RoundTripTest(unittest.TestCase):
 
     def test_it_comes_back_on_the_next_turn(self):
         pipe = self._pipe()
-        pipe._session.review_halt = {"hook_node_id": "11", "collector_node_id": "c",
+        pipe._session.review_halt = {"hook_node_id": "11", "collector_key": "k",
                                      "produced": ["a.png", "b.png"], "question": "which?",
                                      "remaining": ["12"]}
         halt = Pipeline._restore_review_halt(pipe)
@@ -285,7 +285,7 @@ class RoundTripTest(unittest.TestCase):
     def test_an_unanswered_halt_survives_an_unrelated_message(self):
         """Asking something else mid-review is ordinary; losing the stop is not."""
         pipe = self._pipe(_review_halt=ReviewHalt(hook_node_id="11",
-                                                  collector_node_id="c"),
+                                                  collector_key="agentY_review_11"),
                           _review_reply="")
         Pipeline._arm_review_halt(pipe)
         self.assertEqual(pipe._session.review_halt["hook_node_id"], "11")
@@ -298,7 +298,7 @@ class RoundTripTest(unittest.TestCase):
 
     def test_the_flag_survives_a_session_round_trip(self):
         s = AgentSession(session_id="t")
-        s.review_halt = {"hook_node_id": "11", "collector_node_id": "c"}
+        s.review_halt = {"hook_node_id": "11", "collector_key": "k"}
         self.assertEqual(AgentSession(**s.model_dump()).review_halt["hook_node_id"], "11")
 
     def test_an_older_stored_session_still_loads(self):
@@ -313,56 +313,177 @@ class RoundTripTest(unittest.TestCase):
                 self.assertIsNone(Pipeline._restore_review_halt(pipe))
 
 
+def _halted(files="C:/out/a.png\nC:/out/c.png", node_id="77", base=None,
+            reply="continue", wired=True):
+    """A pipeline mid-halt, with the ballot wired into the review hook's anchor.
+
+    Wired, because that is how the ballot is actually found: the collector is
+    created in the BROWSER, so litegraph assigns its id there and the server never
+    sees it. What the server does get, every turn, is each hook's anchors — id,
+    type and widget values — which is the same channel a QA hook's references
+    arrive on.
+    """
+    hooks = _chain()
+    if wired:
+        hooks[1]["anchors"] = [{"node_id": node_id, "type": "AgentYImageCollector",
+                                "to_input": "anchors.anchor0",
+                                "widgets": {"files": files}}]
+    return pipeline_stub(
+        _canvas_hooks=hooks,
+        _review_halt=ReviewHalt(hook_node_id="11", collector_key="agentY_review_11",
+                                produced=("a.png", "b.png", "c.png")),
+        _review_reply=reply,
+        _canvas_base_prompt=base if base is not None else {})
+
+
 class TheAnswerIsOnTheCanvasTest(unittest.TestCase):
     """The point of the whole design: resume reads the node, not the memory."""
 
-    @staticmethod
-    def _pipe(selection=None, base=None):
-        return pipeline_stub(
-            _review_halt=ReviewHalt(hook_node_id="11", collector_node_id="77",
-                                    produced=("a.png", "b.png", "c.png")),
-            _review_reply="continue",
-            _canvas_selection=selection or [],
-            _canvas_base_prompt=base if base is not None else {})
-
     def test_it_reads_the_collector_as_the_user_left_it(self):
-        pipe = self._pipe(selection=[
-            {"id": "77", "widgets": {"files": "C:/out/a.png\nC:/out/c.png"}}])
-        self.assertEqual(Pipeline._review_collector_files(pipe),
+        self.assertEqual(Pipeline._review_collector_files(_halted()),
                          ["C:/out/a.png", "C:/out/c.png"])
 
     def test_what_it_held_at_the_halt_is_NOT_the_answer(self):
         """Three were produced; the user kept two. Replaying three ignores them."""
-        pipe = self._pipe(selection=[
-            {"id": "77", "widgets": {"files": "C:/out/a.png\nC:/out/c.png"}}])
+        pipe = _halted()
         self.assertEqual(len(Pipeline._review_collector_files(pipe)), 2)
         self.assertEqual(pipe._review_halt.count(), 3, "the record still says three")
 
     def test_a_file_the_user_added_themselves_comes_through(self):
-        pipe = self._pipe(selection=[
-            {"id": "77", "widgets": {"files": "C:/out/a.png\nD:/mine/hand_painted.png"}}])
+        pipe = _halted("C:/out/a.png\nD:/mine/hand_painted.png")
         self.assertIn("D:/mine/hand_painted.png", Pipeline._review_collector_files(pipe))
 
     def test_their_order_is_kept(self):
-        pipe = self._pipe(selection=[
-            {"id": "77", "widgets": {"files": "C:/out/c.png\nC:/out/a.png"}}])
+        pipe = _halted("C:/out/c.png\nC:/out/a.png")
         self.assertEqual(Pipeline._review_collector_files(pipe),
                          ["C:/out/c.png", "C:/out/a.png"])
 
     def test_it_falls_back_to_the_captured_graph(self):
-        """The node is only in the selection when the user has it selected."""
-        pipe = self._pipe(base={"77": {"class_type": "AgentYImageCollector",
-                                       "inputs": {"files": "C:/out/b.png"}}})
+        """An anchor can arrive without its widget values; the graph still has them."""
+        pipe = _halted(files="", base={"77": {"class_type": "AgentYImageCollector",
+                                              "inputs": {"files": "C:/out/b.png"}}})
         self.assertEqual(Pipeline._review_collector_files(pipe), ["C:/out/b.png"])
 
     def test_a_deleted_collector_reads_as_empty_rather_than_as_the_old_list(self):
-        self.assertEqual(Pipeline._review_collector_files(self._pipe()), [])
+        self.assertEqual(Pipeline._review_collector_files(_halted(wired=False)), [])
+
+    def test_an_emptied_collector_reads_as_empty_too(self):
+        self.assertEqual(Pipeline._review_collector_files(_halted(files="")), [])
 
     def test_blank_lines_and_quotes_are_tidied(self):
-        pipe = self._pipe(selection=[
-            {"id": "77", "widgets": {"files": '\n"C:/out/a.png"\n\n  C:/out/b.png  \n'}}])
+        pipe = _halted('\n"C:/out/a.png"\n\n  C:/out/b.png  \n')
         self.assertEqual(Pipeline._review_collector_files(pipe),
                          ["C:/out/a.png", "C:/out/b.png"])
+
+    def test_the_answer_follows_the_WIRE_not_a_remembered_id(self):
+        """Wire a different collector in and that is the one that is read.
+
+        Which is what someone rearranging their graph mid-review would expect,
+        and is not something a remembered node id could ever notice.
+        """
+        pipe = _halted(node_id="99", files="C:/out/mine.png")
+        self.assertEqual(Pipeline._review_collector_files(pipe), ["C:/out/mine.png"])
+        self.assertEqual((Pipeline._review_collector(pipe) or {})["node_id"], "99")
+
+
+class TheIdSeamTest(unittest.TestCase):
+    """halt_for_review and the resume path have to agree on what the ballot IS.
+
+    They did not. The halt stored a synthetic key (`agentY_review_11`) because the
+    node does not exist yet when it is armed; resume looked a node up BY THAT KEY
+    and of course never found one, so every continue read an empty collector and
+    reported that the user had deleted it. Both halves were tested, separately,
+    and both passed — the bug lived in the seam between them.
+    """
+
+    def test_the_halt_does_not_pretend_to_know_a_node_id(self):
+        import asyncio
+        pipe = pipeline_stub(_canvas_hooks=_chain(),
+                             _chain_output_paths=["C:/out/a.png"])
+        asyncio.run(tools(pipe)["halt_for_review"](hook_node_id="11"))
+        self.assertFalse(hasattr(pipe._review_armed, "collector_node_id"),
+                         "there is no id to know — litegraph assigns it in the browser")
+        self.assertEqual(pipe._review_armed.collector_key, "agentY_review_11")
+
+    def test_the_key_is_what_the_frontend_is_given_to_reuse_the_node_by(self):
+        import asyncio
+        from src.utils.canvas_patch import clear, drain
+        clear()
+        self.addCleanup(clear)
+        pipe = pipeline_stub(_canvas_hooks=_chain(),
+                             _chain_output_paths=["C:/out/a.png"])
+        asyncio.run(tools(pipe)["halt_for_review"](hook_node_id="11"))
+        op = next(e for e in drain() if e.get("op") == "review_collector")
+        self.assertEqual(op["collector_key"], pipe._review_armed.collector_key)
+
+    def test_armed_here_resolves_there(self):
+        """The end-to-end seam: arm a halt, restore it, resolve the ballot."""
+        import asyncio
+        pipe = pipeline_stub(_canvas_hooks=_chain(), _session=AgentSession(session_id="t"),
+                             _chain_output_paths=["C:/out/a.png", "C:/out/b.png"])
+        asyncio.run(tools(pipe)["halt_for_review"](hook_node_id="11"))
+        Pipeline._arm_review_halt(pipe)
+
+        # Next turn: the frontend has created the node and reports it as an anchor.
+        nxt = pipeline_stub(_session=pipe._session, _review_reply="continue")
+        nxt._canvas_hooks = _chain()
+        nxt._canvas_hooks[1]["anchors"] = [
+            {"node_id": "412", "type": "AgentYImageCollector",
+             "widgets": {"files": "C:/out/b.png"}}]
+        nxt._review_halt = Pipeline._restore_review_halt(nxt)
+        self.assertIsNotNone(nxt._review_halt)
+        self.assertEqual(Pipeline._review_collector_files(nxt), ["C:/out/b.png"],
+                         "the user kept one of the two")
+
+
+class WritingToTheBallotTest(unittest.TestCase):
+    """Replacing a reference, not just dropping one.
+
+    "Regenerate the third one and carry on" is the natural request during a
+    review, and it dead-ends if the agent can only write to nodes the user has
+    SELECTED — they would have to go and click the node first. So the collector a
+    live halt is waiting on is writable without a selection. Nothing else is:
+    an edit to someone's graph should be one they pointed at.
+    """
+
+    def _call(self, pipe, node_id, files):
+        import asyncio
+        return json.loads(asyncio.run(
+            tools(pipe)["set_canvas_node_params"](node_id=node_id,
+                                                  params={"files": files})))
+
+    def test_the_halted_ballot_takes_a_write_with_nothing_selected(self):
+        pipe = _halted()
+        out = self._call(pipe, "77", "C:/out/a.png\nC:/out/new.png")
+        self.assertEqual(out["status"], "applied")
+        self.assertEqual(pipe._canvas_selection, [], "nothing was selected")
+
+    def test_the_write_reaches_the_canvas(self):
+        from src.utils.canvas_patch import clear, drain
+        clear()
+        self.addCleanup(clear)
+        self._call(_halted(), "77", "C:/out/new.png")
+        ops = [e for e in drain() if str(e.get("node_id")) == "77"]
+        self.assertEqual(ops[0]["params"], {"files": "C:/out/new.png"})
+
+    def test_every_other_node_still_has_to_be_selected(self):
+        out = self._call(_halted(), "50", "whatever")
+        self.assertIn("not in the current canvas selection", out["error"])
+
+    def test_the_exemption_does_not_outlive_the_halt(self):
+        pipe = pipeline_stub(_canvas_hooks=_chain(), _review_halt=None)
+        out = self._call(pipe, "77", "C:/out/new.png")
+        self.assertIn("not in the current canvas selection", out["error"])
+
+    def test_the_agent_is_told_the_node_id_it_may_write_to(self):
+        from src.utils.review_gate import halt_state
+        block = halt_state(ReviewHalt(hook_node_id="11", produced=("a.png",)), "77")
+        self.assertIn("collector node 77", block)
+
+    def test_a_ballot_that_is_gone_is_named_as_gone(self):
+        from src.utils.review_gate import halt_state
+        block = halt_state(ReviewHalt(hook_node_id="11", produced=("a.png",)), "")
+        self.assertIn("no longer wired", block)
 
 
 class PromptTest(unittest.TestCase):
@@ -376,8 +497,8 @@ class PromptTest(unittest.TestCase):
 
     def test_the_halt_block_tells_it_to_re_read_the_node(self):
         from src.utils.review_gate import halt_state
-        block = halt_state(ReviewHalt(hook_node_id="11", collector_node_id="77",
-                                      produced=("a.png",), remaining=("12",)))
+        block = halt_state(ReviewHalt(hook_node_id="11", collector_key="k",
+                                      produced=("a.png",), remaining=("12",)), "77")
         self.assertIn("read the node as it stands NOW", block)
         self.assertIn("77", block)
         self.assertIn("12", block)
