@@ -2512,7 +2512,8 @@ class Pipeline:
         has_review = any(_is_review(h) for h in (self._canvas_hooks or [])
                          if isinstance(h, dict))
         if halt is not None or has_review:
-            from src.utils.review_gate import halt_state, resumed_note
+            from src.utils.review_gate import (binding_table, halt_state,
+                                               renumber_note, resumed_note)
             guide = _orch_partial("review_halt")
             pin += (guide + "\n\n") if guide else ""
             if halt is not None:
@@ -2531,8 +2532,10 @@ class Pipeline:
                     pin += "  " + resumed_note(len(now),
                                                max(0, halt.count() - len(now))) + "\n"
                     if now:
-                        pin += "  The collector holds, in order:\n" + "".join(
-                            f"    {i}. {p}\n" for i, p in enumerate(now, 1))
+                        pin += ("  The collector holds, in order — these ARE the "
+                                "numbered slots the next stage will receive:\n"
+                                + binding_table(now, self._output_roles(now)) + "\n"
+                                + renumber_note())
                     else:
                         pin += ("  The collector is EMPTY or gone — say so and ask what "
                                 "they want to run, rather than guessing at the files the "
@@ -3782,6 +3785,29 @@ class Pipeline:
             if files:
                 return {"node_id": nid, "files": files}
         return found
+
+    def _output_roles(self, paths) -> dict:
+        """``{path: role}`` for files that recorded what they are.
+
+        Read from the ``.agenty.json`` sidecar each generated file carries, so the
+        halt block can say *"@image2 = ref_00044_.png — APE"* rather than leaving
+        the agent to infer which character moved up a slot from a filename. Best
+        effort: a file with no sidecar (one the user dropped in themselves) simply
+        has no role, which reads as honestly unknown.
+        """
+        try:
+            from src.utils.output_tags import role_of_file
+        except Exception:  # noqa: BLE001
+            return {}
+        out: dict = {}
+        for p in (paths or []):
+            try:
+                role = role_of_file(p)
+            except Exception:  # noqa: BLE001
+                role = ""
+            if role:
+                out[p] = role
+        return out
 
     def _review_collector_files(self) -> list:
         """What the halted collector holds **right now**, off the live canvas.

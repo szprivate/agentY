@@ -171,6 +171,41 @@ def execution_refusal(halt: ReviewHalt) -> dict:
     }
 
 
+def binding_table(files, roles=None) -> str:
+    """The collector's contents rendered as the numbered slots they BECOME.
+
+    Printed this way rather than as a plain list because the renumbering is the
+    thing that goes wrong. The multi-reference models are driven by ``@imageN``
+    markers in the prompt, and the collector is a LIST: drop the second row and
+    everything after it moves up a slot, so a table written before the edit now
+    names the wrong picture — the video comes back with the ape doing the
+    mentor's beat, and nothing anywhere reports an error.
+
+    Showing the bindings as they will actually be, with each file's own role
+    beside it, makes that mismatch visible at the point it has to be fixed
+    instead of at the point it renders.
+    """
+    roles = roles or {}
+    lines = []
+    for i, path in enumerate(files or [], 1):
+        name = str(path).replace("\\", "/").rsplit("/", 1)[-1]
+        role = str(roles.get(path) or "").strip()
+        lines.append(f"    @image{i} / image_{i} = {name}"
+                     + (f" — {role}" if role else ""))
+    return "\n".join(lines)
+
+
+def renumber_note() -> str:
+    """The rule that has to survive an edited collector, stated where it applies."""
+    return (
+        "  These bindings are the ones that will exist, in this order. If your prompt "
+        "carries a reference assignment table (@image1 = …, @image2 = …), REWRITE it "
+        "to match them: @image2 means the second line as it stands NOW, not the second "
+        "thing the earlier stage generated. Dropping one row moves every row after it "
+        "up a slot, and a table written before that edit names the wrong picture — "
+        "which renders as the wrong character and reports no error.\n")
+
+
 def resumed_note(kept: int, dropped: int) -> str:
     """What to tell the agent when a halt has just been released with a continue.
 
@@ -181,7 +216,8 @@ def resumed_note(kept: int, dropped: int) -> str:
     """
     if dropped > 0:
         head = (f"The user continued with {kept} of the {kept + dropped} output(s) — "
-                f"they removed {dropped}, so do not regenerate those.")
+                f"they removed {dropped}, so do not regenerate those, and RENUMBER any "
+                f"@imageN reference table against what is left.")
     else:
         head = f"The user continued with all {kept} output(s)."
     return head + (" This list is the default answer; if their message ALSO says "

@@ -43,6 +43,35 @@ because saying it is quicker than editing the node. Apply that to the list befor
 you run, say which files you ended up with, and carry on. Only when their message
 says nothing about the selection is the collector's contents the final word.
 
+### Renumber the reference table
+
+This is the one that goes wrong silently, so do it deliberately.
+
+The collector is a **list**, and the numbered slots are its positions. Drop a row
+and every row after it moves up: what was `@image3` is now `@image2`. The wiring
+follows automatically — only as many slots are wired as there are files — but a
+**reference assignment table in your prompt does not.** It is your prose, and it
+is still whatever you wrote before the edit.
+
+So when a prompt for the next stage carries `@image1 = …`, `@image2 = …`, rewrite
+it against the bindings listed in the `[REVIEW HALT]` block, which are printed in
+the form they will actually take:
+
+```
+@image1 / image_1 = ref_00042_.png — TANIHO (HERO)
+@image2 / image_2 = ref_00044_.png — APE          ← was @image3 before they cut one
+```
+
+`@image2` means **the second line as it stands now**, not the second thing the
+earlier stage generated. Getting this wrong renders the wrong character doing the
+right beat, and reports no error at all — which is why the run is refused outright
+when a collector path merely goes *missing*. A row the user deleted on purpose is
+legitimate, so it is not refused; renumbering it correctly is your job.
+
+If a character they dropped was named in the prompt's action ("@image2 hands her
+the letter"), rewrite that line too, or say plainly that the beat no longer has
+anyone to play it.
+
 **stop** — run nothing further. Confirm what was produced and where it is.
 
 **Neither** — they asked something else in the middle of a review, which is

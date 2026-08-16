@@ -452,6 +452,22 @@ agent may edit unasked, because it's the one it created for this. Then continue.
 review hook's anchor and *that* becomes the ballot — handy if you'd rather build
 the selection in a collector you already had.
 
+**Reference tags renumber when you delete a row.** The collector is a list and the
+numbered slots are its positions, so removing the second image moves everything
+after it up: what fed `image_3` now feeds `image_2`. The wiring follows by itself
+(only as many slots are wired as there are files), and on resume the agent is
+handed the bindings in the form they'll actually take —
+
+```
+@image1 / image_1 = ref_00042_.png — TANIHO (HERO)
+@image2 / image_2 = ref_00044_.png — APE          ← was @image3 before the cut
+```
+
+— with instructions to rewrite any `@imageN` table in the next stage's prompt to
+match. Worth a glance at what it says it's running with, though: this is the one
+mistake that renders the wrong character doing the right beat and reports no error
+at all.
+
 **Anything else keeps the stop up.** Ask a question, change a prompt, go make
 coffee: the halt survives until you actually say continue or stop, and the stages
 behind it stay shut. There is no timeout — the canvas is the record, and it will

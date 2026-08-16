@@ -486,6 +486,77 @@ class WritingToTheBallotTest(unittest.TestCase):
         self.assertIn("no longer wired", block)
 
 
+class RenumberTest(unittest.TestCase):
+    """Dropping a row moves every row after it up a slot.
+
+    The wiring follows by itself — expand_image_batches wires only as many slots
+    as there are files. The @imageN table in the prompt does NOT: it is prose, and
+    it is still whatever was written before the edit. Get it wrong and the video
+    comes back with the ape doing the mentor's beat, with no error anywhere.
+
+    So the bindings are shown as the slots they WILL be, with each file's own
+    role beside it, at the moment they have to be rewritten.
+    """
+
+    def test_the_list_is_rendered_as_the_slots_it_becomes(self):
+        from src.utils.review_gate import binding_table
+        out = binding_table(["C:/out/ref_42.png", "C:/out/ref_44.png"])
+        self.assertIn("@image1 / image_1 = ref_42.png", out)
+        self.assertIn("@image2 / image_2 = ref_44.png", out)
+
+    def test_the_role_rides_along_so_the_shift_is_visible(self):
+        from src.utils.review_gate import binding_table
+        out = binding_table(["a.png", "c.png"],
+                            {"a.png": "TANIHO (HERO)", "c.png": "APE"})
+        self.assertIn("@image1 / image_1 = a.png — TANIHO (HERO)", out)
+        self.assertIn("@image2 / image_2 = c.png — APE",
+                      out, "APE was @image3 before the cut — that is the whole point")
+
+    def test_a_file_with_no_role_is_left_honestly_bare(self):
+        from src.utils.review_gate import binding_table
+        self.assertEqual(binding_table(["mine.png"]), "    @image1 / image_1 = mine.png")
+
+    def test_windows_separators_are_read_too(self):
+        from src.utils.review_gate import binding_table
+        self.assertIn("= ref_42.png", binding_table([r"C:\out\ref_42.png"]))
+
+    def test_nothing_renders_as_nothing(self):
+        from src.utils.review_gate import binding_table
+        self.assertEqual(binding_table([]), "")
+
+    def test_the_rule_says_what_the_number_now_means(self):
+        from src.utils.review_gate import renumber_note
+        note = renumber_note()
+        self.assertIn("REWRITE", note)
+        self.assertIn("as it stands NOW", note)
+        self.assertIn("reports no error", note)
+
+    def test_a_partial_continue_is_told_to_renumber(self):
+        from src.utils.review_gate import resumed_note
+        self.assertIn("RENUMBER", resumed_note(kept=2, dropped=1))
+
+    def test_an_untouched_list_is_not_nagged_about_it(self):
+        """Nothing moved, so there is nothing to rewrite — say less."""
+        from src.utils.review_gate import resumed_note
+        self.assertNotIn("RENUMBER", resumed_note(kept=3, dropped=0))
+
+    def test_roles_come_from_the_sidecars_the_files_already_carry(self):
+        with mock.patch("src.utils.output_tags.role_of_file",
+                        side_effect=lambda p: "APE" if p.endswith("c.png") else ""):
+            got = Pipeline._output_roles(pipeline_stub(), ["a.png", "c.png"])
+        self.assertEqual(got, {"c.png": "APE"})
+
+    def test_an_unreadable_sidecar_costs_nothing(self):
+        with mock.patch("src.utils.output_tags.role_of_file", side_effect=OSError("nope")):
+            self.assertEqual(Pipeline._output_roles(pipeline_stub(), ["a.png"]), {})
+
+    def test_the_partial_spells_the_renumbering_out(self):
+        from src.pipeline import _ORCH_PARTIALS_DIR
+        text = (_ORCH_PARTIALS_DIR / "review_halt.md").read_text(encoding="utf-8")
+        self.assertIn("Renumber the reference table", text)
+        self.assertIn("@image2` means **the second line as it stands now**", text)
+
+
 class PromptTest(unittest.TestCase):
 
     def test_the_partial_exists_and_says_the_precedence_rule(self):
