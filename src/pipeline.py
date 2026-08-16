@@ -68,6 +68,12 @@ from src.utils.debug_log import trace as _trace
 # prompt. Loaded from disk (never hardcoded here) and cached after first read.
 # ---------------------------------------------------------------------------
 _ORCH_PARTIALS_DIR = Path(__file__).parent.parent / "config" / "system_prompts" / "orchestrator"
+
+# How many nodes one delete_canvas_nodes call may remove. Not a safety boundary —
+# the user can undo — but a misread "clean up the graph" should cost a sentence
+# rather than a workflow, and clearing the whole thing is one gesture they can
+# make themselves.
+_MAX_CANVAS_DELETE = 25
 _orch_partial_cache: dict[str, str] = {}
 
 
@@ -1411,6 +1417,94 @@ class Pipeline:
                 return json.dumps({"error": str(exc)})
 
         @_tool
+        async def delete_canvas_nodes(node_ids: list, reason: str = "") -> str:
+            """Remove node(s) from the user's canvas. The one edit that destroys.
+
+            Use when the user asks for a node to go — "delete the upscaler", "get
+            rid of those two loaders", "remove the node you just added". Give the
+            ids from the `[CANVAS GRAPH]` block.
+
+            Check what you are deleting first. The result tells you what each node
+            actually was and which inputs elsewhere lose their feed; say both back
+            to the user, because a graph that stops running because an input
+            silently emptied is worse than the node still being there. If deleting
+            would orphan something they did not mention, say so BEFORE you do it
+            and let them decide — this is not the tool to be brisk with.
+
+            The user can undo it with Ctrl+Z on the canvas.
+
+            Args:
+                node_ids: Ids to remove, e.g. ``["12", "13"]``. Only nodes on the
+                    canvas; the whole graph if `[CANVAS GRAPH]` is present,
+                    otherwise only nodes the user has selected.
+                reason: One line on why, shown to the user with the result.
+            """
+            from src.utils.canvas_patch import push as _push_patch
+            from src.utils.canvas_view import deletion_impact
+
+            ids = [str(n).strip() for n in (node_ids or []) if str(n).strip()]
+            ids = list(dict.fromkeys(ids))
+            if not ids:
+                return json.dumps({"error": "give at least one node id to delete."})
+            if len(ids) > _MAX_CANVAS_DELETE:
+                return json.dumps({
+                    "error": f"{len(ids)} nodes at once is more than this tool will "
+                             f"delete ({_MAX_CANVAS_DELETE}).",
+                    "what_to_do": ("If they really want the graph cleared, say so and "
+                                   "let them do it — Ctrl+A, Delete is one gesture and "
+                                   "it is theirs to make."),
+                })
+            # Selection-only mode restricts deleting exactly as it restricts editing.
+            if not self._canvas_full_graph():
+                selected = {str(n.get("id")) for n in (self._canvas_selection or [])}
+                outside = [n for n in ids if n not in selected]
+                if outside:
+                    return json.dumps({
+                        "error": f"node(s) {', '.join(outside)} are not in the current "
+                                 f"canvas selection, so they cannot be deleted.",
+                        "what_to_do": "Ask the user to select what they want removed.",
+                    })
+            impact = deletion_impact(getattr(self, "_canvas_graph", None), ids)
+            if impact["missing"] and not impact["found"]:
+                return json.dumps({
+                    "error": f"no node(s) {', '.join(impact['missing'])} on the canvas.",
+                    "what_to_do": "Take the ids from the [CANVAS GRAPH] block.",
+                })
+            # The one node that must not go while it is being used: a live review
+            # halt's ballot IS the user's pending choice, and deleting it throws
+            # that away with nothing to recover it from.
+            ballot = str((self._review_collector() or {}).get("node_id") or "")
+            if ballot and ballot in ids:
+                return json.dumps({
+                    "error": f"node {ballot} is the review collector this run is "
+                             f"stopped on — deleting it discards the choice the user "
+                             f"is in the middle of making.",
+                    "what_to_do": ("If they want the run abandoned, that is `stop`, "
+                                   "not deleting the node."),
+                })
+            _push_patch({"op": "delete_nodes", "node_ids": [n["node_id"] for n in impact["found"]],
+                         "reason": str(reason or "").strip()})
+            names = ", ".join(f"#{n['node_id']} {n['class_type']}"
+                              + (f' "{n["title"]}"' if n["title"] else "")
+                              for n in impact["found"])
+            _push_progress(f"🗑️ Removed {len(impact['found'])} node(s): {names}")
+            out = {
+                "status": "deleted",
+                "deleted": impact["found"],
+                "count": len(impact["found"]),
+                "orphaned_inputs": impact["orphaned"],
+                "message": (f"Removed {names}. The user can undo with Ctrl+Z."),
+            }
+            if impact["missing"]:
+                out["not_found"] = impact["missing"]
+            if impact["orphaned"]:
+                out["message"] += (
+                    f" {len(impact['orphaned'])} input(s) elsewhere lost their feed "
+                    f"and the graph will not run until they are rewired — say which, "
+                    f"by node and input name.")
+            return json.dumps(out)
+
+        @_tool
         async def list_agent_settings() -> str:
             """The agentY settings you can change for the user, and their values now.
 
@@ -1880,7 +1974,8 @@ class Pipeline:
                 run_web_search, run_planner, apply_canvas_hooks, stop_hook_run,
                 halt_for_review, run_workflow_now, add_canvas_workflow,
                 get_canvas_node, set_canvas_node_params, place_canvas_text,
-                iterate_step, list_agent_settings, set_agent_setting]
+                delete_canvas_nodes, iterate_step,
+                list_agent_settings, set_agent_setting]
 
     async def _run_canvas_batch(self, paths: list[str], notes: list,
                                 labels: list | None = None) -> str:

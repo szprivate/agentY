@@ -160,6 +160,39 @@ def describe_canvas(prompt: dict | None, selected_ids=None) -> str:
     return f"{head}\n{body}{tail}"
 
 
+def deletion_impact(prompt: dict | None, node_ids) -> dict:
+    """What deleting *node_ids* removes, and what it breaks downstream.
+
+    Deleting is the one canvas edit that destroys something, so the answer has to
+    be readable BEFORE it happens: which nodes these actually are (an id alone is
+    not a thing anyone can picture), and which inputs elsewhere lose their feed —
+    a graph that no longer runs because an input silently emptied is a worse
+    outcome than the node still being there.
+
+    Returns ``{"found": [...], "missing": [...], "orphaned": [...]}``.
+    """
+    graph = prompt if isinstance(prompt, dict) else {}
+    wanted = [str(n) for n in (node_ids or [])]
+    doomed = {n for n in wanted if n in graph}
+    found = [{"node_id": n, "class_type": str((graph.get(n) or {}).get("class_type") or ""),
+              "title": _title(graph.get(n) or {})} for n in wanted if n in doomed]
+    orphaned = []
+    for nid, node in graph.items():
+        if str(nid) in doomed or not isinstance(node, dict):
+            continue
+        for name, value in (node.get("inputs") or {}).items():
+            if isinstance(value, list) and len(value) == 2 and str(value[0]) in doomed:
+                orphaned.append({
+                    "node_id": str(nid),
+                    "class_type": str(node.get("class_type") or ""),
+                    "input": str(name),
+                    "was_fed_by": str(value[0]),
+                })
+    return {"found": found,
+            "missing": [n for n in wanted if n not in doomed],
+            "orphaned": orphaned}
+
+
 def node_detail(prompt: dict | None, node_id: str) -> dict | None:
     """Everything one node carries: its class, title, values and wired inputs.
 
