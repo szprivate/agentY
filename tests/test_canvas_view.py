@@ -17,7 +17,9 @@ truncating safe to do at all.
 """
 
 import json
+import os
 import unittest
+from unittest import mock
 
 from pipeline_stub import pipeline_stub, tools
 from src.utils.canvas_view import describe_canvas, node_detail, node_line
@@ -147,7 +149,105 @@ class DetailTest(unittest.TestCase):
         self.assertIsNone(node_detail(None, "3"))
 
 
+class SettingTest(unittest.TestCase):
+    """Off by default, because the listing is paid for on every canvas turn."""
+
+    def test_it_is_off_unless_asked_for(self):
+        from src.utils.canvas_view import full_graph_visible
+        with mock.patch("src.utils.settings.load_settings", return_value={}):
+            self.assertFalse(full_graph_visible())
+
+    def test_the_setting_turns_it_on(self):
+        from src.utils.canvas_view import full_graph_visible
+        with mock.patch("src.utils.settings.load_settings",
+                        return_value={"canvas_full_graph": True}):
+            self.assertTrue(full_graph_visible())
+
+    def test_the_env_var_wins_either_way(self):
+        from src.utils.canvas_view import full_graph_visible
+        with mock.patch("src.utils.settings.load_settings",
+                        return_value={"canvas_full_graph": True}):
+            with mock.patch.dict(os.environ, {"AGENTY_CANVAS_FULL_GRAPH": "0"}):
+                self.assertFalse(full_graph_visible())
+        with mock.patch("src.utils.settings.load_settings", return_value={}):
+            with mock.patch.dict(os.environ, {"AGENTY_CANVAS_FULL_GRAPH": "1"}):
+                self.assertTrue(full_graph_visible())
+
+    def test_unreadable_settings_fall_back_to_off(self):
+        from src.utils.canvas_view import full_graph_visible
+        with mock.patch.dict(os.environ, {"AGENTY_CANVAS_FULL_GRAPH": ""}):
+            with mock.patch("src.utils.settings.load_settings",
+                            side_effect=OSError("bad toml")):
+                self.assertFalse(full_graph_visible())
+
+    def test_the_default_toml_ships_it_off(self):
+        from pathlib import Path
+        import src.pipeline as _p
+        text = (Path(_p.__file__).resolve().parent.parent
+                / "config" / "settings.default.toml").read_text(encoding="utf-8")
+        self.assertIn("canvas_full_graph = false", text)
+
+
+class OffIsTheOldBehaviourTest(unittest.TestCase):
+    """With it off, nothing about the previous behaviour changed."""
+
+    def setUp(self):
+        self.enterContext(mock.patch("src.utils.canvas_view.full_graph_visible",
+                                     return_value=False))
+
+    def _pipe(self, **over):
+        over.setdefault("_canvas_graph", _graph())
+        return pipeline_stub(**over)
+
+    def _set(self, pipe, node_id, params):
+        import asyncio
+        return json.loads(asyncio.run(
+            tools(pipe)["set_canvas_node_params"](node_id=node_id, params=params)))
+
+    def test_an_unselected_node_is_refused_the_way_it_used_to_be(self):
+        out = self._set(self._pipe(), "3", {"steps": 40})
+        self.assertIn("not in the current canvas selection", out["error"])
+
+    def test_a_selected_node_still_works(self):
+        pipe = self._pipe(_canvas_selection=[
+            {"id": "3", "type": "KSampler", "widgets": {"steps": 30}}])
+        self.assertEqual(self._set(pipe, "3", {"steps": 40})["status"], "applied")
+
+    def test_reading_is_selection_only_too(self):
+        import asyncio
+        out = json.loads(asyncio.run(tools(self._pipe())["get_canvas_node"](node_id="3")))
+        self.assertIn("Only nodes the user has SELECTED", out["what_to_do"])
+
+    def test_a_selected_node_can_still_be_read(self):
+        import asyncio
+        pipe = self._pipe(_canvas_selection=[
+            {"id": "3", "type": "KSampler", "title": "Main sampler",
+             "widgets": {"steps": 30}}])
+        out = json.loads(asyncio.run(tools(pipe)["get_canvas_node"](node_id="3")))
+        self.assertEqual(out["values"], {"steps": 30})
+
+    def test_the_refusal_does_not_nag_the_user_to_change_the_setting(self):
+        out = self._set(self._pipe(), "3", {"steps": 40})
+        self.assertIn("do not ask them to unless", out["note"])
+
+    def test_the_review_ballot_exemption_survives_it_being_off(self):
+        """It is not about visibility — the node is created in the browser."""
+        from src.utils.review_gate import ReviewHalt
+        hooks = [{"hook_node_id": "11", "purpose": "review", "directive": "which?",
+                  "targets": [], "anchors": [
+                      {"node_id": "77", "type": "AgentYImageCollector",
+                       "widgets": {"files": "C:/out/a.png"}}]}]
+        pipe = self._pipe(_canvas_hooks=hooks,
+                          _review_halt=ReviewHalt(hook_node_id="11"))
+        out = self._set(pipe, "77", {"files": "C:/out/b.png"})
+        self.assertEqual(out["status"], "applied")
+
+
 class ThroughTheToolsTest(unittest.TestCase):
+
+    def setUp(self):
+        self.enterContext(mock.patch("src.utils.canvas_view.full_graph_visible",
+                                     return_value=True))
 
     def _pipe(self, **over):
         over.setdefault("_canvas_graph", _graph())
@@ -193,7 +293,9 @@ class ThroughTheToolsTest(unittest.TestCase):
         self.assertIn("node_ids_on_canvas", out)
 
     def test_reading_a_node_that_is_not_there_says_so(self):
-        self.assertIn("no node '999'", self._get(self._pipe(), "999")["error"])
+        out = self._get(self._pipe(), "999")
+        self.assertIn("cannot read node '999'", out["error"])
+        self.assertIn("[CANVAS GRAPH]", out["what_to_do"])
 
     def test_no_canvas_this_turn_is_not_a_crash(self):
         pipe = self._pipe(_canvas_graph={})

@@ -22,6 +22,30 @@ request, through ``get_canvas_node`` — which is also why truncation here is sa
 
 from __future__ import annotations
 
+import os
+
+
+def full_graph_visible() -> bool:
+    """Whether the agent gets the whole canvas, or only what the user selected.
+
+    Off by default, and the reason is cost rather than doctrine: the listing rides
+    along on EVERY canvas turn, so it is paid for whether or not the turn was
+    about the graph. Selection-only is the older behaviour and is free — the
+    selection is usually a handful of nodes, and usually empty.
+
+    ``AGENTY_CANVAS_FULL_GRAPH`` wins when set; otherwise ``canvas_full_graph``
+    in settings.
+    """
+    env = os.environ.get("AGENTY_CANVAS_FULL_GRAPH")
+    if env is not None and env.strip() != "":
+        return env.strip().lower() not in ("0", "false", "no", "off")
+    try:
+        from src.utils.settings import load_settings
+        return bool(load_settings().get("canvas_full_graph", False))
+    except Exception:  # noqa: BLE001 — never let settings break a turn
+        return False
+
+
 # Inputs that say nothing a human would use to recognise a node. `control_after_
 # generate` is UI bookkeeping, and the seed is both noisy and usually irrelevant
 # to identifying which node this is.

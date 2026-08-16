@@ -24,6 +24,7 @@ node, ready to wire into your next step.*
   - [Seeing the plan first](#seeing-the-plan-first)
 - [Slash commands](#slash-commands)
 - [**The hook system**](#the-hook-system)  ← the most powerful part
+  - [Letting the agent edit the whole graph](#letting-the-agent-read-and-edit-the-whole-graph)
   - [Dry run: check the logic first](#dry-run-check-the-logic-before-you-pay-for-it)
   - [Review: stop and pick what continues](#review-stop-and-pick-what-continues)
   - [The keep switch](#the-keep-switch-should-this-outlive-the-run)
@@ -292,6 +293,28 @@ happens.
 - Turn it off with **`hook_tap_tensors`** in Settings → Behaviour (or
   `AGENTY_HOOK_TAP=0`). Tuning: `AGENTY_MAX_HOOK_TAPS` (4 wires per turn),
   `AGENTY_HOOK_TAP_FRAMES` (4), `AGENTY_HOOK_TAP_TIMEOUT` (300s).
+
+### Letting the agent read and edit the whole graph
+
+By default the agent sees only the nodes you have **selected**, and can only
+change those. Selecting is how you say *"this one"* — but it also means every
+edit starts with "go and click the node first".
+
+Turn on **`canvas_full_graph`** (Settings ▸ Behaviour, or
+`AGENTY_CANVAS_FULL_GRAPH=1`) and it sees the whole workflow you have open — every
+node, with its id, type, your title and its values — and can change any of them
+without you selecting anything. *"Set the sampler to 30 steps"*, *"what does this
+graph actually do?"*, *"find the node that's writing to the wrong folder"* all
+work directly. A selection still narrows it to what you mean.
+
+It is **off by default because it costs tokens on every canvas turn**, whether or
+not the turn was about the graph — roughly 250 for a 20-node workflow, ~1.5k for
+200 nodes, capped past that. Worth turning on if you edit graphs by chatting;
+leave it off if you mostly generate.
+
+Values in the listing are shortened to fit one line per node; the agent is told to
+re-read a truncated value in full before rewriting it, so a long prompt does not
+get half-rewritten. Editing never queues the graph — you run it yourself.
 
 ### The seven purposes
 

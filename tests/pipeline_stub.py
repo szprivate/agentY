@@ -52,6 +52,7 @@ _BOUND = (
     "_review_gate_refusal",
     "_review_collector_files",
     "_review_collector",
+    "_canvas_full_graph",
 )
 
 

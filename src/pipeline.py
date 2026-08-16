@@ -1427,11 +1427,29 @@ class Pipeline:
                     ``[CANVAS GRAPH]`` or ``[CANVAS SELECTION]`` block.
             """
             from src.utils.canvas_view import node_detail
-            found = node_detail(getattr(self, "_canvas_graph", None), node_id)
+            found = None
+            if self._canvas_full_graph():
+                found = node_detail(getattr(self, "_canvas_graph", None), node_id)
+            else:
+                # Selection-only mode: the selection block already carries full
+                # values, so this is a courtesy rather than the way in.
+                sel = getattr(self, "_canvas_selection", []) or []
+                hit = next((n for n in sel if str(n.get("id")) == str(node_id)), None)
+                if hit:
+                    found = {"node_id": str(node_id),
+                             "class_type": str(hit.get("type") or ""),
+                             "title": str(hit.get("title") or ""),
+                             "values": dict(hit.get("widgets") or {}),
+                             "wired_inputs": {}}
             if found is None:
                 return json.dumps({
-                    "error": f"there is no node '{node_id}' on the open canvas.",
-                    "what_to_do": "Take the id from the [CANVAS GRAPH] block.",
+                    "error": f"cannot read node '{node_id}'.",
+                    "what_to_do": (
+                        "Take the id from the [CANVAS GRAPH] block."
+                        if self._canvas_full_graph() else
+                        "Only nodes the user has SELECTED can be read — take the id "
+                        "from the [CANVAS SELECTION] block, or ask them to select the "
+                        "node you mean."),
                 })
             return json.dumps(found)
 
@@ -1460,11 +1478,13 @@ class Pipeline:
             """
             sel = getattr(self, "_canvas_selection", []) or []
             node = next((n for n in sel if str(n.get("id")) == str(node_id)), None)
-            if node is None:
+            if node is None and self._canvas_full_graph():
                 # ANY node on the open canvas, not just a selected one. Selection
                 # is how the user points at a node, not permission to touch it —
                 # requiring it turned "set the sampler to 30 steps" into "first go
-                # and click the sampler". The graph is sent every turn regardless.
+                # and click the sampler". Behind a setting because the listing that
+                # makes it usable is what costs tokens; off, this is selection-only
+                # exactly as before.
                 from src.utils.canvas_view import node_detail
                 found = node_detail(getattr(self, "_canvas_graph", None), node_id)
                 if found:
@@ -1478,6 +1498,17 @@ class Pipeline:
                     node = {"id": str(node_id), "type": "AgentYImageCollector",
                             "title": "review — pick what continues",
                             "widgets": {"files": "\n".join(ballot.get("files") or [])}}
+            if node is None and not self._canvas_full_graph():
+                ids = ", ".join(str(n.get("id")) for n in sel) or "(none selected)"
+                return json.dumps({
+                    "error": f"node '{node_id}' is not in the current canvas selection. "
+                             f"Selected node ids: {ids}.",
+                    "note": ("Only selected nodes can be read and changed. To let the "
+                             "agent reach every node on the canvas, the user turns on "
+                             "Settings ▸ canvas_full_graph — do not ask them to unless "
+                             "they are asking for exactly that; asking them to select "
+                             "the node is the normal answer."),
+                })
             if node is None:
                 known = ", ".join(sorted(str(k) for k in
                                          (getattr(self, "_canvas_graph", None) or {}))[:40])
@@ -2479,7 +2510,7 @@ class Pipeline:
         # of pointing. Below the selection block, which stays the more detailed
         # view of the nodes the user actually singled out.
         graph_block = ""
-        if getattr(self, "_canvas_graph", None):
+        if getattr(self, "_canvas_graph", None) and self._canvas_full_graph():
             from src.utils.canvas_view import describe_canvas
             graph_block = describe_canvas(
                 self._canvas_graph,
@@ -3856,6 +3887,18 @@ class Pipeline:
             if files:
                 return {"node_id": nid, "files": files}
         return found
+
+    def _canvas_full_graph(self) -> bool:
+        """Whether this turn shows and edits the whole canvas, or only the selection.
+
+        Resolved once per call site rather than cached, so flipping the setting
+        takes effect on the next turn without a restart.
+        """
+        try:
+            from src.utils.canvas_view import full_graph_visible
+            return full_graph_visible()
+        except Exception:  # noqa: BLE001 — never let settings break a turn
+            return False
 
     def _output_roles(self, paths) -> dict:
         """``{path: role}`` for files that recorded what they are.

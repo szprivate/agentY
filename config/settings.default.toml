@@ -54,6 +54,18 @@ hook_tap_tensors = true
 # is bypassed/muted is not executed, so its branch drops out too. Off = run the whole
 # canvas. Env: AGENTY_HOOK_SCOPE (1/0).
 hook_scoped_graph = true
+# Let the agent see and edit the WHOLE workflow you have open, not just the nodes
+# you have selected. On, every node is listed for it each turn (id, type, your
+# title, its values, shortened) and it can change any of them without you first
+# clicking one — selection goes back to meaning "this one", not "you may touch
+# this". Off (the default) is the older, cheaper behaviour: it sees and edits only
+# what you selected.
+# The reason it is off: the listing rides along on EVERY canvas turn, so you pay
+# for it whether or not the turn was about the graph — roughly 250 tokens for a
+# 20-node workflow, ~1.5k for 200 nodes, capped past that. Worth turning on when
+# you are editing graphs conversationally; not worth it if you mostly generate.
+# Env: AGENTY_CANVAS_FULL_GRAPH (1/0).
+canvas_full_graph = false
 # Relay ComfyUI's own terminal output — model loads, warnings, whatever a node prints —
 # into the run stream while the queue is running, alongside the node-level progress.
 # It is what tells you that a two-minute pause is a 25 GB checkpoint staging rather
