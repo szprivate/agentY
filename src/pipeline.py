@@ -1411,6 +1411,63 @@ class Pipeline:
                 return json.dumps({"error": str(exc)})
 
         @_tool
+        async def list_agent_settings() -> str:
+            """The agentY settings you can change for the user, and their values now.
+
+            Use this to answer "is QA on?", "why is it putting workflows on my
+            canvas?", or before changing something, so you report what it was.
+
+            This is a SHORT list on purpose. Everything else — model choices,
+            folders, server URLs, API key variables — the user changes themselves
+            in Settings. If they ask for one of those, say which setting it is and
+            leave it to them rather than looking for a way around it.
+            """
+            from src.utils.agent_settings import allowed, current
+            return json.dumps({
+                "settings": [
+                    {"key": s.key, "value": current(s.key), "type": s.kind,
+                     "what": s.what,
+                     **({"range": [s.low, s.high]} if s.kind == "int" else {}),
+                     "takes_effect": s.effect}
+                    for s in allowed()
+                ],
+                "note": ("Saved to config/settings.local.json; the committed "
+                         "defaults are never touched."),
+            })
+
+        @_tool
+        async def set_agent_setting(key: str, value) -> str:
+            """Change one agentY setting, when the user asks you to.
+
+            For plain requests — "turn QA off", "stop auto-loading workflows onto
+            my canvas", "let yourself see the whole graph", "don't retry failed QA
+            outputs". Call ``list_agent_settings`` first if you are unsure of the
+            key or want to report the old value.
+
+            Only the settings in that list can be changed. Anything else is the
+            user's own to set in the Settings dialog — do not go looking for
+            another route to it, and do not push them to change one they did not
+            ask about.
+
+            Say plainly afterwards what changed, from what to what, and when it
+            takes effect. It persists across restarts, so a change the user has
+            forgotten making is a change they will be confused by later.
+
+            Args:
+                key: A dotted key from ``list_agent_settings`` — e.g. "qa.enabled",
+                    "qa.max_retries", "canvas_full_graph".
+                value: The new value. true/false for a switch, a whole number
+                    within the stated range otherwise.
+            """
+            from src.utils.agent_settings import apply
+            out = apply(key, value)
+            if out.get("status") == "changed":
+                _push_progress(f"⚙️ {out['key']}: {out['from']!r} → {out['to']!r}")
+                if self._verbose:
+                    print(f"pipeline: setting {out['key']} {out['from']!r} -> {out['to']!r}")
+            return json.dumps(out)
+
+        @_tool
         async def get_canvas_node(node_id: str) -> str:
             """Read one node on the open canvas EXACTLY, with nothing truncated.
 
@@ -1823,7 +1880,7 @@ class Pipeline:
                 run_web_search, run_planner, apply_canvas_hooks, stop_hook_run,
                 halt_for_review, run_workflow_now, add_canvas_workflow,
                 get_canvas_node, set_canvas_node_params, place_canvas_text,
-                iterate_step]
+                iterate_step, list_agent_settings, set_agent_setting]
 
     async def _run_canvas_batch(self, paths: list[str], notes: list,
                                 labels: list | None = None) -> str:

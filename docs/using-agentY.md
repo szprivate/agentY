@@ -24,6 +24,7 @@ node, ready to wire into your next step.*
   - [Seeing the plan first](#seeing-the-plan-first)
 - [Slash commands](#slash-commands)
 - [**The hook system**](#the-hook-system)  ← the most powerful part
+  - [Asking the agent to change a setting](#asking-the-agent-to-change-a-setting)
   - [Letting the agent edit the whole graph](#letting-the-agent-read-and-edit-the-whole-graph)
   - [Dry run: check the logic first](#dry-run-check-the-logic-before-you-pay-for-it)
   - [Review: stop and pick what continues](#review-stop-and-pick-what-continues)
@@ -293,6 +294,31 @@ happens.
 - Turn it off with **`hook_tap_tensors`** in Settings → Behaviour (or
   `AGENTY_HOOK_TAP=0`). Tuning: `AGENTY_MAX_HOOK_TAPS` (4 wires per turn),
   `AGENTY_HOOK_TAP_FRAMES` (4), `AGENTY_HOOK_TAP_TIMEOUT` (300s).
+
+### Asking the agent to change a setting
+
+You can just say it: *"turn QA off"*, *"stop putting workflows on my canvas"*,
+*"don't retry failed QA outputs"*, *"let yourself see the whole graph"*. The agent
+changes it, tells you what it was before, and says when it takes effect (usually
+your next message; `auto_update` at the next server start).
+
+It can only touch a **short, fixed list** — behavioural switches and a few small
+numbers:
+
+`canvas_full_graph` · `autoload_workflows_into_canvas` · `hook_scoped_graph` ·
+`hook_tap_tensors` · `comfyui_console_lines` · `auto_update` · `memory.enabled` ·
+`qa.enabled` · `qa.max_retries` · `qa.max_outputs` · `qa.max_references` ·
+`qa.video_frames` · `llm.history_window`
+
+Everything else — model choices, folders, server URLs, API key variables — stays
+yours, in the Settings dialog. Not because the agent couldn't write them, but
+because a misread sentence that flips `qa.enabled` costs you a QA pass, while one
+that rewrites `output_dir` or `comfyui_url` costs you your work or points the app
+at the wrong machine. Ask for one of those and it will tell you which setting you
+want rather than finding a way to do it.
+
+Changes go to `config/settings.local.json`, never to the committed defaults — so
+they survive updates, and undoing one by hand means deleting one line.
 
 ### Letting the agent read and edit the whole graph
 
