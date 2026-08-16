@@ -894,6 +894,47 @@ def _is_general(hook: dict) -> bool:
     return str(hook.get("purpose", "") or "").strip().lower() in _GENERAL_PURPOSES
 
 
+# Titles the node gives itself. A hook nobody renamed is called "agentY hook",
+# which is true of every one of them and therefore tells the user nothing.
+_DEFAULT_HOOK_TITLES = {"", "agenty hook", "agentyhook", "agenty_hook"}
+
+
+def hook_title(hook: dict) -> str:
+    """The user's OWN name for this hook, or "" if they never gave it one.
+
+    Deliberately empty for the default, because "agentY hook" is true of every
+    hook on the canvas and so identifies none of them.
+    """
+    title = " ".join(str((hook or {}).get("title") or "").split())
+    return title[:60] if title and title.lower() not in _DEFAULT_HOOK_TITLES else ""
+
+
+def hook_name(hook: dict) -> str:
+    """What to call this hook so the user can FIND it on their canvas.
+
+    Node ids are not visible on a ComfyUI canvas without going looking for them,
+    so "hook 30" names something the user cannot see. What they CAN see is the
+    node's title bar and the directive text in its box — so it is their title when
+    they set one, and otherwise the opening of the directive, which is what the
+    node visibly says.
+
+    For places that already quote the directive, use :func:`hook_title` instead
+    and add nothing when it is empty — repeating the directive as a name is noise.
+    """
+    return hook_title(hook) or _trim(str((hook or {}).get("directive") or ""), 52)
+
+
+def hook_label(hook: dict) -> str:
+    """``hook 30 "one reference per character"`` — addressable AND findable.
+
+    The id stays in front because it is what the tools take; the name follows
+    because it is what the user can point at.
+    """
+    hid = (hook or {}).get("hook_node_id")
+    name = hook_name(hook)
+    return f'hook {hid} "{name}"' if name else f"hook {hid}"
+
+
 def _wants_bake(hook: dict) -> bool:
     """True if *hook* asks for its generated workflow to be nested as a subgraph.
 
@@ -2038,6 +2079,18 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
     hooks = [h for h in (hooks or []) if isinstance(h, dict)]
     if not hooks:
         return ""
+
+    def _t(h: dict) -> str:
+        """The user's own title for a hook, as a suffix — or nothing.
+
+        A node id is not visible on the canvas, so a block that says only "hook
+        30" names something the user cannot point at, and so does an answer
+        written from it. Every line below already quotes the hook's directive, so
+        the title is the one thing that is missing and the only thing added.
+        """
+        name = hook_title(h)
+        return f' "{name}"' if name else ""
+
     hooks = _order_by_dependency(hooks)
     hook_id_set = _hook_ids(hooks)
     # A memorizing hook whose inputs haven't changed was answered before, and the
@@ -2063,14 +2116,29 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
                        and not _is_qa(h) and not _is_review(h)]
 
     lines = [
-        "[CANVAS HOOKS — the user's ON-CANVAS graph carries hook annotations (below) "
-        "and is already captured. Each hook is an UPSTREAM PRODUCER: it reads its "
-        "wired anchor input(s) as context and produces value(s) for its output, which "
-        "is wired into a real node input. Your job is to PRODUCE those values — fill "
+        "[CANVAS HOOKS — REFERENCE, NOT AN INSTRUCTION. The user's on-canvas graph "
+        "carries the hook annotations below and is already captured. This block is "
+        "sent on EVERY turn, because the canvas is always attached — its presence "
+        "says nothing about what the user wants.\n"
+        "  FIRST decide which kind of turn this is, from their message alone:\n"
+        "  • They asked you to RUN / execute / dry-run the graph (or pressed the "
+        "action-bar button, which sends exactly that) → act on the hooks below.\n"
+        "  • ANYTHING ELSE — a question about the graph, a request to change one "
+        "node, a conversation, a follow-up — → answer THAT, and leave the hooks "
+        "alone. Do not open with an inventory of them, do not describe their "
+        "scope, do not 'review the workflow structure' first. Cite a hook only if "
+        "it is part of the answer they asked for. Reading them out unprompted "
+        "reads as a run starting, which is a thing they did not ask for.\n"
+        "  When it IS a run: each hook is an UPSTREAM PRODUCER — it reads its wired "
+        "anchor input(s) as context and produces value(s) for its output, which is "
+        "wired into a real node input. Your job is to PRODUCE those values — fill "
         "or sweep the input each hook's output feeds — not to reach downstream and "
-        "guess which node to edit. IF the user is asking you to run/execute the "
-        "workflow, act on the hooks below. If the user's message is unrelated (a "
-        "question or a different request), answer that and ignore these hooks.]"
+        "guess which node to edit.\n"
+        "  NAMING THEM: a node id is not visible on a ComfyUI canvas, so \"hook 30\" "
+        "names something the user cannot see. Whenever you mention a hook TO THE "
+        "USER, give its name and its id — `\"Reference frames\" (hook 30)` — taking "
+        "the name from the quoted title below, or from what the hook's directive "
+        "asks for when it has no title of its own.]"
     ]
 
     if cached_hooks:
@@ -2094,7 +2162,7 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
                 shown = ", ".join(files[:6]) + (" …" if len(files) > 6 else "")
                 made = f"{made} + " if made else ""
                 made += f"{len(files)} file(s): {shown}"
-            lines.append(f"- hook {hid}{when}{where} → {made}")
+            lines.append(f"- hook {hid}{_t(h)}{when}{where} → {made}")
         if not hooks:
             lines.append(
                 "  That is every hook on this graph. There is no value left to produce: "
@@ -2116,7 +2184,7 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
         for h in review_hooks:
             hid = h.get("hook_node_id")
             ask = _trim(h.get("directive"), 200) or "(no question written — ask which to keep)"
-            lines.append(f'- review hook {hid} → put to the user: "{ask}"')
+            lines.append(f'- review hook {hid}{_t(h)} → put to the user: "{ask}"')
         if gated_ids:
             lines.append(
                 "  NOT this turn — hook(s) "
@@ -2185,7 +2253,7 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             if tgt:
                 also = f" ({_chain_note(chain)})" if chain else ""
                 lines.append(
-                    f'- PRODUCER hook {hid} (context: {ctx}) feeds {tgt}{also} — produce the '
+                    f'- PRODUCER hook {hid}{_t(h)} (context: {ctx}) feeds {tgt}{also} — produce the '
                     f'value(s) for that input → "{directive}"'
                 )
             elif chain:
@@ -2193,7 +2261,7 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
                 # or sweep: apply_canvas_hooks would have nothing to apply. Write the
                 # value and hand it on.
                 lines.append(
-                    f'- PRODUCER hook {hid} (context: {ctx}) — CHAIN ONLY: {_chain_note(chain)}, '
+                    f'- PRODUCER hook {hid}{_t(h)} (context: {ctx}) — CHAIN ONLY: {_chain_note(chain)}, '
                     f'and its output reaches no real node input. There is nothing to fill or '
                     f'sweep here: WRITE the value and deliver it with '
                     f'place_canvas_text(hook_node_id="{hid}", text="<value>"). Do NOT call '
@@ -2202,7 +2270,7 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
                 )
             else:
                 lines.append(
-                    f'- PRODUCER hook {hid} (context: {ctx}) — OUTPUT UNWIRED: no target '
+                    f'- PRODUCER hook {hid}{_t(h)} (context: {ctx}) — OUTPUT UNWIRED: no target '
                     f'input. Ask the user to wire this hook\'s output into the node input it '
                     f'should fill. Directive: "{directive}"'
                 )
@@ -2232,7 +2300,7 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             _real, chain = _split_targets(h, hook_id_set)
             where = (f" feeds {tgt}" if tgt else
                      f" ({_chain_note(chain)})" if chain else " (output unwired)")
-            lines.append(f'- GENERAL hook {hid} (context: {ctx}){where} — "{directive}"')
+            lines.append(f'- GENERAL hook {hid}{_t(h)} (context: {ctx}){where} — "{directive}"')
 
     if iterate_hooks:
         lines.append(
@@ -2261,7 +2329,7 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
                         "feedback node UNWIRED — ask the user to wire the LoadImage node's "
                         "image output into this hook's anchor")
             tail = f' — "{directive}"' if directive else ""
-            lines.append(f"- ITERATE hook {hid}: {prompt_where}; {fb_where}{tail}")
+            lines.append(f"- ITERATE hook {hid}{_t(h)}: {prompt_where}; {fb_where}{tail}")
 
     if qa_hooks:
         lines.append(
@@ -2282,7 +2350,7 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             refs = sum(len((a.get("tapped") or [])) or 1
                        for a in (h.get("anchors") or []) if isinstance(a, dict))
             ref_txt = f"{refs} reference input(s) wired" if refs else "no reference images wired"
-            lines.append(f'- QA hook {hid} ({ref_txt}) — criteria: "{directive}"')
+            lines.append(f'- QA hook {hid}{_t(h)} ({ref_txt}) — criteria: "{directive}"')
 
     if text_hooks:
         lines.append(
@@ -2306,7 +2374,7 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             where = (f" feeds {tgt}" if tgt else
                      f" ({_chain_note(chain)})" if chain else
                      " (output unwired — answer streams to chat only)")
-            lines.append(f'- TEXT hook {hid} (context: {ctx}){where} — write & place → "{directive}"')
+            lines.append(f'- TEXT hook {hid}{_t(h)} (context: {ctx}){where} — write & place → "{directive}"')
 
     if standin_hooks:
         chains = _order_standin_chains(standin_hooks)
@@ -2357,7 +2425,8 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             )
             for h in singles:
                 prompt = str(h.get("directive", "") or "").strip()
-                lines.append(f'- MAKE-WORKFLOW, {_input_desc(h)}{_output_desc(h)} — generate & run → "{prompt}"')
+                lines.append(f'- MAKE-WORKFLOW hook {h.get("hook_node_id")}{_t(h)}, '
+                             f'{_input_desc(h)}{_output_desc(h)} — generate & run → "{prompt}"')
 
         if multis:
             lines.append(

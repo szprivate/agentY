@@ -1037,6 +1037,11 @@ class Pipeline:
             gate = self._plan_gate_refusal() or self._review_gate_refusal()
             if gate:
                 return json.dumps(gate)
+            # NOW the scoping is worth reporting: something is actually about to
+            # run on it. Once per turn.
+            if getattr(self, "_hook_scope_note", ""):
+                _push_progress(self._hook_scope_note)
+                self._hook_scope_note = ""
             try:
                 cap = int(_os.environ.get("AGENTY_MAX_CANVAS_BATCH", "25") or "25")
             except ValueError:
@@ -2618,6 +2623,9 @@ class Pipeline:
         self._canvas_hooks = [h for h in (canvas_hooks or []) if isinstance(h, dict)]
         self._canvas_keeplive_run = False
         self._hook_run_stopped = None
+        # Set when the canvas is scoped to the hooks at turn setup; pushed only if
+        # a run actually starts (see apply_canvas_hooks).
+        self._hook_scope_note = ""
         # Dry run: everything up to the submission happens — the hooks are read, the
         # values written, the variants built to disk — and each graph is answered
         # with stand-in paths instead of being handed to ComfyUI. Armed on the
@@ -2681,10 +2689,15 @@ class Pipeline:
                 # what keeps a STRING target from being rewired to an IMAGE anchor.
                 cleaned, removed = splice_hook_nodes(scoped, self._canvas_hooks)
                 self._canvas_base_prompt = cleaned
-                if dropped:
-                    _push_progress(
-                        f"🎯 Hook scope: {len(cleaned)} node(s) connected to the hook(s); "
-                        f"left out {len(dropped)} unrelated node(s).")
+                # Held, not announced. The canvas is sent on EVERY turn, so this
+                # preparation happens whether or not anything is going to be run —
+                # and saying "🎯 Hook scope: 17 node(s)…" in front of an answer to
+                # "what does this graph do?" tells the user a run has started when
+                # none has. It is pushed by apply_canvas_hooks, at the point it
+                # becomes true.
+                self._hook_scope_note = (
+                    f"🎯 Hook scope: {len(cleaned)} node(s) connected to the hook(s); "
+                    f"left out {len(dropped)} unrelated node(s)." if dropped else "")
                 if self._verbose:
                     print(f"pipeline: canvas-hook mode — {len(self._canvas_hooks)} hook(s), "
                           f"spliced {len(removed)} hook node(s); base graph has "

@@ -59,6 +59,7 @@ def pipeline_stub(**over):
     """A Pipeline stand-in. Keyword arguments override any base attribute."""
     base = dict(
         _hook_run_stopped=None,
+        _hook_scope_note="",
         _canvas_keeplive_run=False,
         _canvas_base_prompt={"1": {"class_type": "KSampler", "inputs": {"seed": 1}}},
         _canvas_hooks=[],
