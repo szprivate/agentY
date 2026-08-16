@@ -511,6 +511,14 @@ class Pipeline:
         self._plan_approval = None
         self._plan_gate_open: bool = False
         self._plan_gate_fired: bool = False
+        # A chain stopped at a `review` hook so the user can pick what goes on to
+        # the next stage (see src/utils/review_gate.py). `_review_halt` is the live
+        # halt restored from the session at turn start; `_review_reply` is how they
+        # answered it this turn ("continue" / "stop" / ""); `_review_armed` is the
+        # halt this turn CREATED, which is what gets written back to the session.
+        self._review_halt = None
+        self._review_reply: str = ""
+        self._review_armed = None
         # workflow path -> re-runs spent on a provider content refusal (per turn).
         self._policy_retries: dict = {}
         # Outputs produced mid-turn by run_workflow_now (chained hook stages).
@@ -1026,7 +1034,7 @@ class Pipeline:
                              + str(self._hook_run_stopped.get("reason", "")) + ") — "
                              "nothing more runs this turn. Reply to the user instead.",
                 })
-            gate = self._plan_gate_refusal()
+            gate = self._plan_gate_refusal() or self._review_gate_refusal()
             if gate:
                 return json.dumps(gate)
             try:
@@ -1179,6 +1187,117 @@ class Pipeline:
             })
 
         @_tool
+        async def halt_for_review(hook_node_id: str, outputs: list | None = None,
+                                  question: str = "") -> str:
+            """STOP at a review hook and let the user choose what goes on.
+
+            Call this when the chain reaches a hook listed as a **REVIEW HOOK**,
+            after the stage before it has RUN (its outputs have to exist — a review
+            of nothing is not a review). It collects those outputs into an `agentY
+            image collector` node on the user's canvas, wires it into the review
+            hook's anchor, and ends the turn with the choice in their hands.
+
+            They then edit that node — remove the ones they don't want, drop in
+            their own files, reorder — and reply "continue" or "stop". On continue
+            you will be handed what the collector holds AT THAT MOMENT, which is
+            not necessarily what you put in it.
+
+            After calling this, STOP calling tools: tell them what the stage made,
+            that it is waiting in the collector on their canvas, that they can edit
+            it, and ask whether to continue. The stages after the review hook must
+            not be run, queued or prepared — that is the entire point of the stop.
+
+            Args:
+                hook_node_id: The review hook's id, from the `[CANVAS HOOKS]` block.
+                outputs: The files the previous stage produced, as absolute paths.
+                    Defaults to everything this turn produced, which is usually right.
+                question: Optional. What you want them to decide, in one line
+                    ("Which of these five should the video use?").
+            """
+            from src.utils.canvas_hooks import _is_review as _rev
+            from src.utils.canvas_hooks import gated_by_review as _gated
+            from src.utils.canvas_patch import push as _push_patch
+            from src.utils.review_gate import ReviewHalt
+
+            hid = str(hook_node_id or "").strip()
+            hook = next((h for h in (self._canvas_hooks or [])
+                         if str(h.get("hook_node_id")) == hid), None)
+            if hook is None:
+                return json.dumps({"error": f"no hook {hid} on this canvas — take the id "
+                                            "from the [CANVAS HOOKS] block."})
+            if not _rev(hook):
+                return json.dumps({
+                    "error": f"hook {hid} is not a review hook (purpose="
+                             f"{hook.get('purpose')!r}). Only a review hook stops the "
+                             "chain; to abandon a run for another reason use "
+                             "stop_hook_run.",
+                })
+            files = [str(p) for p in (outputs or []) if str(p or "").strip()]
+            if not files:
+                files = [p for p in (self._chain_output_paths
+                                     or self._session.current_output_paths or []) if p]
+            files = list(dict.fromkeys(files))
+            if not files:
+                return json.dumps({
+                    "error": "nothing to review — the stage before this hook has not "
+                             "produced anything yet. Run it first (apply_canvas_hooks "
+                             "with run_now=True, or run_workflow_now) so there are real "
+                             "outputs to choose from, THEN halt.",
+                })
+            if self._dry_run:
+                # A dry run is checking the logic, and its "outputs" are stand-ins.
+                # Halting on them would ask the user to choose between files that
+                # do not exist, and would leave a halt armed over a run that never
+                # happened. Report the stop and walk on.
+                return json.dumps({
+                    "status": "skipped",
+                    "message": (f"DRY RUN — review hook {hid} would stop here and hand "
+                                f"you {len(files)} stand-in output(s) to choose from. "
+                                "Not halting: carry on through the rest of the chain so "
+                                "the whole logic gets checked."),
+                })
+
+            question = " ".join(str(question or "").split())[:300]
+            remaining = sorted(_gated(self._canvas_hooks or []), key=str)
+            collector_id = f"agentY_review_{hid}"
+            self._review_armed = ReviewHalt(
+                hook_node_id=hid, collector_node_id=collector_id,
+                produced=tuple(files), question=question, remaining=tuple(remaining),
+            )
+            _push_patch({
+                "op": "review_collector",
+                "hook_node_id": hid,
+                "collector_key": collector_id,
+                "files": files,
+                "question": question,
+            })
+            _push_progress(f"⏸️ Stopped at review hook {hid} — {len(files)} output(s) "
+                           "waiting for you on the canvas.")
+            if self._verbose:
+                print(f"pipeline: halt_for_review at hook {hid} with {len(files)} "
+                      f"output(s); gated hooks {remaining or 'none'}.")
+            return json.dumps({
+                "status": "halted",
+                "hook_node_id": hid,
+                "collected": len(files),
+                "files": files,
+                "not_run": remaining,
+                "message": (
+                    f"Stopped at review hook {hid}. {len(files)} output(s) were "
+                    "collected into an 'agentY image collector' node placed beside the "
+                    "hook on the user's canvas and wired into its anchor. "
+                    + (f"{len(remaining)} later hook(s) were NOT run. " if remaining
+                       else "")
+                    + "Do NOT call apply_canvas_hooks, run_workflow_now, "
+                      "signal_workflow_ready or any other tool now — reply to the user: "
+                      "say what was produced, that it is waiting in that collector and "
+                      "they can remove or replace rows before continuing, and ask "
+                    + (f'"{question}"' if question
+                       else "whether to continue with them or stop.")
+                ),
+            })
+
+        @_tool
         async def run_workflow_now(workflow_path: str) -> str:
             """Run a validated workflow NOW (synchronously) and return its output paths.
 
@@ -1206,7 +1325,7 @@ class Pipeline:
                              + str(self._hook_run_stopped.get("reason", "")) + ") — "
                              "nothing more runs this turn. Reply to the user instead.",
                 })
-            gate = self._plan_gate_refusal()
+            gate = self._plan_gate_refusal() or self._review_gate_refusal()
             if gate:
                 return json.dumps(gate)
             # One stage of a chain: tag its outputs with whatever this turn is for,
@@ -1465,7 +1584,7 @@ class Pipeline:
                 return [{"gen": e["gen"], "prompt": e["prompt"], "from": e["from"],
                          "output": e["output_path"]} for e in h]
 
-            gate = self._plan_gate_refusal()
+            gate = self._plan_gate_refusal() or self._review_gate_refusal()
             if gate:
                 return json.dumps(gate)
             if self._dry_run:
@@ -1617,8 +1736,8 @@ class Pipeline:
         # the legacy free_agent=False router path.
         return [prepare_workflow, run_info,
                 run_web_search, run_planner, apply_canvas_hooks, stop_hook_run,
-                run_workflow_now, add_canvas_workflow, set_canvas_node_params,
-                place_canvas_text, iterate_step]
+                halt_for_review, run_workflow_now, add_canvas_workflow,
+                set_canvas_node_params, place_canvas_text, iterate_step]
 
     async def _run_canvas_batch(self, paths: list[str], notes: list,
                                 labels: list | None = None) -> str:
@@ -2005,6 +2124,14 @@ class Pipeline:
                 _push_progress("✋ Holding the run until the plan is approved.")
             self._canvas_keeplive_run = False
             return []
+        # Same for a chain stopped at a review hook: the keep-live run is queued by
+        # a producer's injection rather than by a tool call, so the tool refusals
+        # never see it and this is the only place it stops.
+        if self._review_gate_refusal(announce=False) is not None:
+            if self._canvas_keeplive_run or paths:
+                _push_progress("✋ Holding the run until you continue or stop.")
+            self._canvas_keeplive_run = False
+            return []
         stop = self._hook_run_stopped
         if not stop:
             return paths
@@ -2362,6 +2489,37 @@ class Pipeline:
             pin = pin + (guide + "\n\n" if guide else "") + approval_state(
                 self._plan_approval, bool(getattr(self, "_plan_gate_open", False))) + "\n\n"
 
+        # A chain stopped at a review hook. Like the plan gate this decides whether
+        # anything below it happens — but it also carries the one instruction that
+        # is easy to get wrong on resume (read the collector NOW, not what it held
+        # when it stopped), so it goes in whenever a halt is live OR the graph has
+        # a review hook the turn is about to walk into.
+        from src.utils.canvas_hooks import _is_review
+        halt = getattr(self, "_review_halt", None)
+        has_review = any(_is_review(h) for h in (self._canvas_hooks or [])
+                         if isinstance(h, dict))
+        if halt is not None or has_review:
+            from src.utils.review_gate import halt_state, resumed_note
+            guide = _orch_partial("review_halt")
+            pin += (guide + "\n\n") if guide else ""
+            if halt is not None:
+                pin += halt_state(halt)
+                if self._review_reply == "continue":
+                    now = self._review_collector_files()
+                    pin += "  " + resumed_note(len(now),
+                                               max(0, halt.count() - len(now))) + "\n"
+                    if now:
+                        pin += "  The collector holds, in order:\n" + "".join(
+                            f"    {i}. {p}\n" for i, p in enumerate(now, 1))
+                    else:
+                        pin += ("  The collector is EMPTY or gone — say so and ask what "
+                                "they want to run, rather than guessing at the files the "
+                                "stage produced.\n")
+                elif self._review_reply == "stop":
+                    pin += ("  They said STOP. Run nothing further, confirm what was "
+                            "produced and where it is, and end the turn.\n")
+                pin += "\n"
+
         # Ahead of every other block, including the hooks: it does not add a rule,
         # it changes what all of them mean this turn.
         if getattr(self, "_dry_run", False):
@@ -2460,6 +2618,14 @@ class Pipeline:
         self._session.plan_awaiting_reply = False
         self._plan_approval = None
         self._plan_gate_fired = False
+        # A review halt left standing by an earlier turn, and how this message
+        # answers it. Cleared from the session either way: a halt that has been
+        # answered is spent, and one that has NOT is re-armed at the end of this
+        # turn — so an unrelated message in between can never silently drop it.
+        self._review_halt = self._restore_review_halt()
+        self._review_reply = self._read_review_reply(user_text)
+        self._review_armed = None
+        self._session.review_halt = None
         # How many times each workflow has been re-run after a provider refused it
         # on content grounds. Per-turn: a refusal that ran out of retries is not
         # held against the next request.
@@ -2522,7 +2688,8 @@ class Pipeline:
         # its gate has to travel on the mailbox rather than through `self`.
         try:
             from src.utils.workflow_signal import set_execution_hold
-            set_execution_hold(self._plan_gate_refusal(announce=False))
+            set_execution_hold(self._plan_gate_refusal(announce=False)
+                               or self._review_gate_refusal(announce=False))
         except Exception:  # noqa: BLE001
             pass
         current_input: Any = orch_input
@@ -2531,6 +2698,13 @@ class Pipeline:
         _clear_tools()
         _clear_canvas_patch()
         _clear_exec_errors()
+        # A halt the user has just answered is over — tell the panel, so the action
+        # bar stops offering Continue / Stop. Pushed here rather than where the
+        # reply is read, because the clear above would wipe it.
+        if self._review_halt is not None and self._review_reply:
+            from src.utils.canvas_patch import push as _push_patch
+            _push_patch({"op": "review_released", "answer": self._review_reply,
+                         "hook_node_id": self._review_halt.hook_node_id})
 
         # ComfyUI run failures are healed inline by the executor (repair_fn below):
         # each failed member is repaired concurrently and re-queued on the fly,
@@ -2879,6 +3053,9 @@ class Pipeline:
             # Same reason: a gated turn that died mid-way still handed the ball to
             # the user, and must not leave the queue held shut for the next one.
             self._arm_plan_gate()
+            # And a turn that died mid-review must not lose the stop — the stage
+            # behind it is the one nobody has approved.
+            self._arm_review_halt()
         _trace("pipeline.stream_async: orchestrator done")
 
     # ── Internal helpers ─────────────────────────────────────────────── #
@@ -3524,6 +3701,108 @@ class Pipeline:
             self._plan_gate_fired = True
             _push_progress("✋ The plan was asked to be approved first — holding.")
         return execution_refusal(req)
+
+    def _restore_review_halt(self):
+        """The review halt an earlier turn left standing, or None."""
+        raw = getattr(self._session, "review_halt", None)
+        if not isinstance(raw, dict) or not raw.get("hook_node_id"):
+            return None
+        try:
+            from src.utils.review_gate import ReviewHalt
+            return ReviewHalt(
+                hook_node_id=str(raw.get("hook_node_id") or ""),
+                collector_node_id=str(raw.get("collector_node_id") or ""),
+                produced=tuple(str(p) for p in (raw.get("produced") or [])),
+                question=str(raw.get("question") or ""),
+                remaining=tuple(str(h) for h in (raw.get("remaining") or [])),
+            )
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _read_review_reply(self, user_text: str) -> str:
+        """How this message answers a live halt: "continue", "stop", or "" (neither)."""
+        if self._review_halt is None:
+            return ""
+        try:
+            from src.utils.review_gate import read_reply
+            return read_reply(user_text)
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _review_collector_files(self) -> list:
+        """What the halted collector holds **right now**, off the live canvas.
+
+        This is the answer to "which ones proceed?", and it is deliberately read
+        here rather than remembered from the halt: the user edits that node while
+        the chain is stopped — that is what the stop is for — so anything captured
+        earlier is a list that has probably already been overtaken.
+
+        Falls back to the captured base prompt when the node is not in the
+        selection, and to nothing at all when the node has been deleted, which the
+        caller reports rather than papering over.
+        """
+        halt = self._review_halt
+        if halt is None or not halt.collector_node_id:
+            return []
+        nid = str(halt.collector_node_id)
+        raw = ""
+        for node in (self._canvas_selection or []):
+            if str(node.get("id") or node.get("node_id") or "") == nid:
+                raw = str((node.get("widgets") or {}).get("files") or "")
+                break
+        if not raw and isinstance(self._canvas_base_prompt, dict):
+            entry = self._canvas_base_prompt.get(nid) or {}
+            raw = str((entry.get("inputs") or {}).get("files") or "")
+        return [ln.strip().strip('"') for ln in raw.splitlines() if ln.strip()]
+
+    def _review_gate_refusal(self, announce: bool = True) -> dict | None:
+        """The refusal a run tool returns while a review halt is still unanswered.
+
+        Open only once the user has actually said continue. A halt they have not
+        answered — or answered with something that is neither a continue nor a
+        stop — holds the next stage shut, because the next stage is the expensive
+        one and its whole reason for existing is that they get to choose first.
+        """
+        halt = getattr(self, "_review_halt", None)
+        if halt is None or self._review_reply == "continue":
+            return None
+        from src.utils.review_gate import execution_refusal
+        if announce:
+            _push_progress(f"✋ Stopped at review hook {halt.hook_node_id} — "
+                           "waiting for continue or stop.")
+        return execution_refusal(halt)
+
+    def _arm_review_halt(self) -> None:
+        """At the end of a turn, decide whether the next one is still halted.
+
+        Three ways to leave here. A halt raised this turn is written to the
+        session. A halt the user answered — either way — is spent and stays gone.
+        A halt they neither continued nor stopped is put back untouched: they
+        asked something else in the middle of a review, which is ordinary, and
+        losing the stop because of it would run the stage they never approved.
+        """
+        try:
+            if self._review_armed is not None:
+                h = self._review_armed
+                self._session.review_halt = {
+                    "hook_node_id": h.hook_node_id,
+                    "collector_node_id": h.collector_node_id,
+                    "produced": list(h.produced),
+                    "question": h.question,
+                    "remaining": list(h.remaining),
+                }
+                return
+            if self._review_halt is not None and not self._review_reply:
+                h = self._review_halt
+                self._session.review_halt = {
+                    "hook_node_id": h.hook_node_id,
+                    "collector_node_id": h.collector_node_id,
+                    "produced": list(h.produced),
+                    "question": h.question,
+                    "remaining": list(h.remaining),
+                }
+        except Exception:  # noqa: BLE001
+            pass
 
     def _arm_plan_gate(self) -> None:
         """At the end of a turn, decide whether the next one may execute.

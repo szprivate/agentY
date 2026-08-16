@@ -59,6 +59,13 @@ class AgentSession(BaseModel):
     last_story_response: str | None = None  # last text the Story agent produced (synopsis or scenes), injected into the next story turn for Mode A→B handoff and refinements
     generated_images: list[GeneratedImage] = Field(default_factory=list)  # ordered gallery of images generated in this thread, referenceable by index/description
     plan_awaiting_reply: bool = False  # a plan was put to the user for approval and they haven't answered yet; their next message opens the execution gate for one turn
+    # A hook chain stopped at a `review` hook so the user can choose what goes on
+    # to the next stage. Only the FLAG lives here — which hook, which collector
+    # node, and what it held at the halt (for the message, and the log). The
+    # answer is whatever that collector holds when they reply, read off the canvas
+    # at resume: they are expected to edit it while this is up, and a cached list
+    # is a list that can be wrong by then.
+    review_halt: dict | None = None
 
 
 class TriageResult(BaseModel):

@@ -49,6 +49,8 @@ _BOUND = (
     "_expand_batches",
     "_register_output_path",
     "_journal_hook_outputs",
+    "_review_gate_refusal",
+    "_review_collector_files",
 )
 
 
@@ -73,6 +75,10 @@ def pipeline_stub(**over):
         _policy_retries={},
         _dry_run=False,
         _dry_graphed=[],
+        _review_halt=None,
+        _review_reply="",
+        _review_armed=None,
+        _canvas_selection=[],
         _DRY_GRAPH_CAP=Pipeline._DRY_GRAPH_CAP,
     )
     base.update(over)

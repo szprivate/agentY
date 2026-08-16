@@ -25,6 +25,7 @@ node, ready to wire into your next step.*
 - [Slash commands](#slash-commands)
 - [**The hook system**](#the-hook-system)  ← the most powerful part
   - [Dry run: check the logic first](#dry-run-check-the-logic-before-you-pay-for-it)
+  - [Review: stop and pick what continues](#review-stop-and-pick-what-continues)
   - [The keep switch](#the-keep-switch-should-this-outlive-the-run)
   - [Memorize: produce once](#memorize-produce-once-reuse-until-something-changes)
   - [Naming what a hook produces](#naming-what-a-hook-produces)
@@ -115,8 +116,7 @@ app starts. If it touched the extension, you're told to restart ComfyUI (or just
 reload the browser, for JS-only changes).
 
 Turn it off with `auto_update = false` (Settings ▸ advanced ▸ Behaviour),
-`.
-un_agent.ps1 -NoUpdate`, or `AGENTY_NO_UPDATE=1`. If your ComfyUI isn't in an
+`.\run_agent.ps1 -NoUpdate`, or `AGENTY_NO_UPDATE=1`. If your ComfyUI isn't in an
 obvious spot next to agentY, point `comfyui_dir` at it so the extension is found.
 
 > `run_agent.ps1` updates *itself* too, but the copy already running is the old
@@ -293,7 +293,7 @@ happens.
   `AGENTY_HOOK_TAP=0`). Tuning: `AGENTY_MAX_HOOK_TAPS` (4 wires per turn),
   `AGENTY_HOOK_TAP_FRAMES` (4), `AGENTY_HOOK_TAP_TIMEOUT` (300s).
 
-### The six purposes
+### The seven purposes
 
 **1. `inline_parameter`** (default) — annotate an existing node and let the agent
 expand + run your on-canvas graph. Great for sweeps and batches:
@@ -338,6 +338,9 @@ value goes to the wired target, a plain question is answered in chat:
 **6. `qa`** — not a job, a **standard**. The directive is your checklist and the
 wired anchors are reference images; every output the graph produces is judged
 against them. See [Checking outputs](#checking-outputs-qa).
+
+**7. `review`** — a deliberate **stop**, so you can choose what goes on to the
+next stage. See [Review](#review-stop-and-pick-what-continues) below.
 
 ### Chaining hooks into pipelines
 
@@ -395,6 +398,61 @@ The pre-flight check still runs, so a dry run is also where the "this cannot
 work" findings show up: an input nothing feeds, a directive naming an anchor slot
 that has no wire on it, a hook feeding one image slot while its directive talks
 about all of them.
+
+A dry run walks straight **past** a [review hook](#review-stop-and-pick-what-continues)
+rather than stopping at one: its outputs are stand-ins, and asking you to choose
+between files that don't exist is no kind of review.
+
+### Review: stop and pick what continues
+
+A chain that makes reference frames and then feeds them into a video runs the
+whole way through, every time. The video is the expensive half — and by the time
+you have seen the references, you have already paid for it.
+
+A hook with **`purpose: review`** is a deliberate break. Put it between the stage
+that produces candidates and the stage that consumes them:
+
+```
+make_workflow  →  review  →  make_workflow
+ "one reference    "which     "animate the
+  per character"    two?"      chosen refs"
+```
+
+The stage before it runs. What it produced is gathered into an **`agentY image
+collector`** node placed beside the hook and wired into its anchor — and the run
+**stops there** and asks you.
+
+**That collector is the ballot.** Whatever is in it when you continue is what the
+next stage gets:
+
+- **delete the rows** you don't want;
+- **add your own files** — a frame you retouched in Photoshop is just as valid as
+  one the agent made;
+- **reorder them** — the order is the order the next stage receives them in.
+
+Then say **`continue`** in the panel, or press the action-bar button, which turns
+amber and reads **Continue with these** while a run is halted (its menu carries
+*Continue* and *Stop*). Saying **`stop`** ends the run instead.
+
+Nothing is deleted either way — the files the stage produced stay on disk, and the
+collector stays on the canvas as the record of what that stage ran with.
+
+**You can just say it.** Editing the node is the precise way, but *"continue, but
+drop the second one"* works too — your words win over the node's contents, and the
+agent tells you which files it ended up with.
+
+**Anything else keeps the stop up.** Ask a question, change a prompt, go make
+coffee: the halt survives until you actually say continue or stop, and the stages
+behind it stay shut. There is no timeout — the canvas is the record, and it will
+still be waiting next week.
+
+Two review hooks in one chain means two stops. A review hook on one chain doesn't
+stop an unrelated chain on the same canvas.
+
+> **`review` vs `qa`.** Same shape, same place in a chain, opposite judge: `qa`
+> asks a model against your written criteria and carries on by itself; `review`
+> stops and asks *you*. Use `qa` for standards you can write down, `review` for
+> the ones you can only recognise on sight.
 
 ### Baking a chain into subgraphs
 

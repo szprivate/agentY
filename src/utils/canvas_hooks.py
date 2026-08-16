@@ -813,7 +813,10 @@ def _is_iterate(hook: dict) -> bool:
     return str(hook.get("purpose", "") or "").strip().lower() in _ITERATE_PURPOSES
 
 
-_QA_PURPOSES = {"qa", "quality", "check", "review", "qa_check", "qa-check"}
+# "review" is deliberately NOT here any more — it is its own purpose now (below).
+# It was only ever a tolerant alias for qa; the node's combo has never offered it,
+# so no saved canvas can be carrying one.
+_QA_PURPOSES = {"qa", "quality", "check", "qa_check", "qa-check"}
 
 
 def _is_qa(hook: dict) -> bool:
@@ -824,6 +827,24 @@ def _is_qa(hook: dict) -> bool:
     :mod:`src.utils.qa` after a generation finishes, to judge what came out.
     """
     return str(hook.get("purpose", "") or "").strip().lower() in _QA_PURPOSES
+
+
+_REVIEW_PURPOSES = {"review", "halt", "pause", "check_in", "check-in", "checkin"}
+
+
+def _is_review(hook: dict) -> bool:
+    """True if *hook* is a break in the chain for the user to choose at.
+
+    Shaped like a qa hook — produces nothing, is never "run" — and sits in the
+    same place in a chain. The difference is who judges: qa asks a model and
+    carries on by itself, a review hook stops and asks the person.
+
+    What it stops FOR is the choice of what proceeds. The stage before it runs,
+    its outputs are collected into an ``agentY image collector`` wired to this
+    hook's anchor, and the turn ends. Whatever is in that collector when the user
+    says continue is what the next stage gets — see :mod:`src.utils.review_gate`.
+    """
+    return str(hook.get("purpose", "") or "").strip().lower() in _REVIEW_PURPOSES
 
 
 _GENERAL_PURPOSES = {"general_request", "general-request", "general", "request",
@@ -1433,6 +1454,40 @@ def _hook_ids(hooks: list) -> set:
     return {str(h.get("hook_node_id")) for h in hooks if h.get("hook_node_id") is not None}
 
 
+def gated_by_review(hooks: list | None) -> set:
+    """Ids of the hooks a ``review`` hook stands in front of, transitively.
+
+    These are the stages that must NOT run in the turn that hits the review hook:
+    the whole point is that the user chooses what reaches them. A hook is gated
+    when a review hook is anywhere upstream of it in the chain, so a review in
+    front of a two-stage tail gates both.
+
+    A review hook does not gate a *sibling* branch that never passes through it —
+    two independent chains on one canvas are two independent things, and stopping
+    one is not a reason to stop the other.
+    """
+    hooks = [h for h in (hooks or []) if isinstance(h, dict)]
+    ids = _hook_ids(hooks)
+    reviews = {str(h.get("hook_node_id")) for h in hooks if _is_review(h)}
+    if not reviews:
+        return set()
+    gated: set = set()
+    # Walk forward until nothing new is gated: a hook is gated if any of its
+    # producers is a review hook or is itself gated.
+    changed = True
+    while changed:
+        changed = False
+        for h in hooks:
+            hid = str(h.get("hook_node_id"))
+            if hid in gated or hid in reviews:
+                continue
+            producers = _hook_predecessors(h, ids)
+            if producers & (reviews | gated):
+                gated.add(hid)
+                changed = True
+    return gated
+
+
 def _hook_predecessors(hook: dict, hook_ids: set) -> set:
     """Ids of hooks whose output feeds one of *hook*'s inputs (its producers).
 
@@ -1965,10 +2020,12 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
     iterate_hooks = [h for h in hooks if _is_iterate(h)]
     general_hooks = [h for h in hooks if _is_general(h)]
     qa_hooks = [h for h in hooks if _is_qa(h)]
+    review_hooks = [h for h in hooks if _is_review(h)]
+    gated_ids = gated_by_review(all_hooks)
     directive_hooks = [h for h in hooks
                        if not _is_standin(h) and not _is_text(h)
                        and not _is_iterate(h) and not _is_general(h)
-                       and not _is_qa(h)]
+                       and not _is_qa(h) and not _is_review(h)]
 
     lines = [
         "[CANVAS HOOKS — the user's ON-CANVAS graph carries hook annotations (below) "
@@ -2011,6 +2068,33 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
                 "To make a hook produce a fresh result, the user turns its keep switch "
                 "off (or changes what feeds it)."
             )
+
+    if review_hooks:
+        lines.append(
+            "\nREVIEW HOOK(S) — a deliberate STOP in the chain. Run the stage(s) "
+            "BEFORE one of these, then call `halt_for_review(hook_node_id)` and END "
+            "the turn. That collects what the stage produced into an `agentY image "
+            "collector` on the user's canvas and hands them the choice of which "
+            "outputs go on to the next stage. A review hook produces nothing itself "
+            "and is never run:"
+        )
+        for h in review_hooks:
+            hid = h.get("hook_node_id")
+            ask = _trim(h.get("directive"), 200) or "(no question written — ask which to keep)"
+            lines.append(f'- review hook {hid} → put to the user: "{ask}"')
+        if gated_ids:
+            lines.append(
+                "  NOT this turn — hook(s) "
+                + ", ".join(sorted(gated_ids, key=str))
+                + " sit AFTER a review hook. Do not run, queue or prepare them until "
+                  "the user has said continue. That is the whole point of the stop: "
+                  "the expensive stage is the one they have not approved yet."
+            )
+        lines.append(
+            "  The user edits that collector while it is stopped — removing rows, "
+            "swapping in their own files, reordering. When they continue, read the "
+            "node as it stands THEN and use exactly that."
+        )
 
     # When hooks feed each other, spell out the order so producers are done first.
     if any(_hook_predecessors(h, hook_id_set) for h in hooks):
