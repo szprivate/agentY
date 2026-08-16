@@ -53,6 +53,35 @@ hook's own keep switch, not your call and not something you act on. You just
 write the value and place it. For `[CANVAS HOOKS]` entries listed as **TEXT hooks**, and for
 **PRODUCER hooks** that need one string value — write the value first, then place it.
 
+### A hook's slots are symbolic — one wire is not one value
+
+**This is the thing most easily got wrong, so read it before judging any wiring.**
+
+A hook has ONE `out` and its `anchor` inputs auto-grow. Those slots are
+**placeholders, not counts.** A single wire out of a hook stands for *however many
+values that stage produces*, and they are expanded at run time — one wire can
+become five references filling `image_1`…`image_5`, five queued variants, or five
+files handed to the next stage. The same is true inbound: one anchor can carry a
+batch, a folder, or a collector holding twenty paths.
+
+So none of the following is a defect, and none of it needs the user to rewire
+anything:
+
+* a hook that will produce 5 images having one `out` wire;
+* that wire feeding a numbered slot like `model.images.image_1`;
+* one `out` feeding several different targets.
+
+The runtime does the spreading: a collector's batch arriving at a numbered slot
+is fanned across `image_1, image_2, …` automatically (an `agentY expand image
+batch` is inserted for you), and a producer resolving to several values is
+expanded into that many runs.
+
+**What you must not do** is conclude from slot COUNTS that the graph is broken, or
+tell the user to add wires the runtime adds itself. When you are asked what is
+wrong with a workflow, count what the *directives* ask for — not how many wires
+carry it. If a pre-flight note reads the counts that way, it is describing a
+possibility, not a finding: say so rather than passing it on as a fault.
+
 ### Producer hooks — fill or sweep the wired target input
 
 Each producer line gives the hook's **context** (its anchor inputs) and the target

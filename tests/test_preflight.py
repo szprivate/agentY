@@ -211,8 +211,36 @@ class NoteTest(_Base):
                   "targets": [{"node_id": "284", "to_input": "images.image0",
                                "to_input_type": "IMAGE"}]}]
         notes = self._levels(preflight.check(hooks, graph), "note")
-        self.assertTrue(any("ONE image slot" in n for n in notes), notes)
-        self.assertTrue(any("image collector" in n for n in notes))
+        # It used to say "each run sees a single image" as a statement of fact.
+        # A hook's `out` is a PLACEHOLDER, not a count — one wire stands for as
+        # many values as the stage produces — so read as a defect this had the
+        # agent telling the user to rewire a graph that was already correct.
+        self.assertTrue(any("NOT a fault" in n for n in notes), notes)
+        self.assertFalse(any("each run sees a single image" in n for n in notes), notes)
+        self.assertTrue(any("stands for as many values" in n for n in notes), notes)
+        # What it still warns about: the one way this DOES go wrong is silent.
+        self.assertTrue(any("nothing reports" in n for n in notes), notes)
+
+    def test_the_numbered_slot_note_says_whether_the_expander_is_there(self):
+        """It is the difference between reassurance and a real warning."""
+        graph = {"284": {"class_type": "KlingOmniProImageToVideoNode",
+                         "inputs": {"images.image0": ["7", 0]}},
+                 "7": {"class_type": "LoadImage", "inputs": {"image": "a.png"}},
+                 "8": {"class_type": "LoadImage", "inputs": {"image": "b.png"}}}
+        hooks = [{"hook_node_id": "30", "directive": "wire ALL the references in",
+                  "anchors": [{"node_id": "7", "to_input": "anchors.anchor0",
+                               "from_output_type": "IMAGE"},
+                              {"node_id": "8", "to_input": "anchors.anchor1",
+                               "from_output_type": "IMAGE"}],
+                  "targets": [{"node_id": "284", "to_input": "images.image0",
+                               "to_input_type": "IMAGE"}]}]
+        with mock.patch("src.utils.preflight._expander_installed", return_value=True):
+            notes = self._levels(preflight.check(hooks, graph), "note")
+        self.assertTrue(any("fanned across the numbered slots for you" in n
+                            for n in notes), notes)
+        with mock.patch("src.utils.preflight._expander_installed", return_value=False):
+            notes = self._levels(preflight.check(hooks, graph), "note")
+        self.assertTrue(any("would NOT be spread" in n for n in notes), notes)
 
     def test_a_target_the_hook_has_nothing_to_feed(self):
         graph = {"283": {"class_type": "KlingOmniProImageToVideoNode",

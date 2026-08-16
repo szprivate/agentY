@@ -136,6 +136,20 @@ def _wired_slots(hook: dict) -> list:
     return names
 
 
+def _expander_installed() -> bool:
+    """Whether this ComfyUI has the node that fans a batch across numbered slots.
+
+    It decides whether a batch reaching `image_1` is spread for the user or
+    silently read as its first image, which is the difference between a note that
+    reassures and one that warns.
+    """
+    try:
+        from src.utils.canvas_hooks import _expander_available
+        return bool(_expander_available())
+    except Exception:  # noqa: BLE001 — a check that cannot run says the cautious thing
+        return False
+
+
 def check(hooks: list | None, base_prompt: dict | None) -> list:
     """Everything wrong with this hook graph that can be known before it runs."""
     hooks = [h for h in (hooks or []) if isinstance(h, dict)]
@@ -266,21 +280,38 @@ def check(hooks: list | None, base_prompt: dict | None) -> list:
                     f"(it has: {', '.join(sorted(have))}). You can still name a node id "
                     f"or a file for it, but there is no anchor to choose from.")))
             # One slot of an autogrow input, several images on the hook.
+            #
+            # This used to say "each run sees a single image" as a statement of
+            # fact, and it is not one. A hook's `out` is a PLACEHOLDER, not a
+            # count: one wire stands for however many values the stage produces,
+            # and the runtime spreads them — a collector's batch reaching a
+            # numbered slot is fanned across image_1, image_2, … by
+            # expand_image_batches, without anyone wiring anything. Read as a
+            # defect, this note had the agent telling the user to rewire a graph
+            # that was already correct.
+            #
+            # There is still something worth saying, because the ONE way it goes
+            # wrong is silent: if the stage delivers a single image where several
+            # were meant, nothing reports it. So it says what to deliver, not what
+            # to go and fix.
             if re.search(r"\d$", tin) and len(anchors) > 1 and tintype == "IMAGE":
                 sibling = re.sub(r"\d+$", "", tin)
                 others = [k for k in ((prompt.get(str(tid)) or {}).get("inputs") or {})
                           if k.startswith(sibling) and k != tin]
                 if not others:
+                    auto = ("An `agentY image collector` delivered here is fanned "
+                            "across the numbered slots for you."
+                            if _expander_installed() else
+                            "The `agentY expand image batch` node is not registered "
+                            "on this ComfyUI, so a batch here would NOT be spread — "
+                            "the node would read the first image only.")
                     found.append(Finding("note", hid, (
-                        f"its output feeds ONE image slot (node {tid}'s `{tin}`) while "
-                        f"{len(anchors)} inputs are wired into the hook, and no sibling "
-                        f"slot (`{sibling}2`, …) is wired on that node. A sweep fills one "
-                        f"slot once per RUN, so as it stands each run sees a single "
-                        f"image. `{tin}` is a numbered slot, so the node most likely "
-                        f"grows more as they are wired — if these references belong in "
-                        f"ONE generation, wire the extra slots (an `agentY image "
-                        f"collector` into an `agentY expand image batch` gives you one "
-                        f"wire per image) rather than sweeping them.")))
+                        f"node {tid}'s `{tin}` is one of a numbered set, and "
+                        f"{len(anchors)} inputs are wired into this hook. NOT a fault: "
+                        f"the hook's single output stands for as many values as the "
+                        f"stage produces. {auto} Just make sure this stage delivers "
+                        f"every reference it is meant to — one image arriving where "
+                        f"several were intended is the failure nothing reports.")))
 
     return found
 

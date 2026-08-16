@@ -446,6 +446,15 @@ class WritingToTheBallotTest(unittest.TestCase):
     an edit to someone's graph should be one they pointed at.
     """
 
+    def setUp(self):
+        # Pin the mode. Without this these read the MACHINE's settings and pass or
+        # fail depending on whether whoever ran them has canvas_full_graph on —
+        # which is exactly the kind of test that goes green on one desk and red on
+        # another. Selection-only is the default, and the mode the ballot
+        # exemption has to work in (see the both-modes test below).
+        self.enterContext(mock.patch("src.utils.canvas_view.full_graph_visible",
+                                     return_value=False))
+
     def _call(self, pipe, node_id, files):
         import asyncio
         return json.loads(asyncio.run(
@@ -478,6 +487,20 @@ class WritingToTheBallotTest(unittest.TestCase):
         pipe = pipeline_stub(_canvas_hooks=_chain(), _review_halt=None)
         out = self._call(pipe, "77", "C:/out/new.png")
         self.assertIn("not in the current canvas selection", out["error"])
+
+    def test_the_ballot_is_writable_in_BOTH_modes(self):
+        """The exemption is not about visibility — it is about the node existing.
+
+        The ballot is created in the browser mid-turn, so it can be missing from
+        the graph captured at the start of the turn whether or not the agent is
+        allowed to see that whole graph.
+        """
+        for full in (False, True):
+            with self.subTest(canvas_full_graph=full):
+                with mock.patch("src.utils.canvas_view.full_graph_visible",
+                                return_value=full):
+                    out = self._call(_halted(), "77", "C:/out/a.png")
+                self.assertEqual(out["status"], "applied")
 
     def test_the_agent_is_told_the_node_id_it_may_write_to(self):
         from src.utils.review_gate import halt_state
