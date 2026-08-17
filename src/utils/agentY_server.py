@@ -7,8 +7,10 @@ Chainlit GUI: the pipeline runs here, conversations persist to a local SQLite
 store (:mod:`src.utils.conversation_store`), and — crucially — generated media is
 **not** streamed back as inline images. Instead the executor's output files are
 staged into ComfyUI's input directory and announced to the frontend, which drops
-a ``LoadImage`` / video-loader node onto the open ComfyUI graph. Only the agent's
-*text* flows into the chat.
+an image / video loader node onto the open ComfyUI graph — a VHS ``(Path)``
+loader pointed at the original file where that node pack is installed, otherwise
+a ``LoadImage`` naming the staged copy. Only the agent's *text* flows into the
+chat.
 
 Endpoints
 ---------
@@ -63,6 +65,7 @@ from src.utils import status_bus
 from src.utils import notify_bus
 from src.utils import interject_bus
 from src.utils import turn_watchdog as _wd
+from src.utils.media_loaders import CANDIDATES as _LOADER_CANDIDATES
 from src.utils.models import AgentSession
 
 logger = logging.getLogger("agentY.server")
@@ -123,11 +126,11 @@ _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 _VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 
 # Node classes the frontend will try (first one registered in ComfyUI wins) when
-# it drops a loader onto the graph for a generated output.
-_NODE_CANDIDATES = {
-    "image": ["LoadImage"],
-    "video": ["VHS_LoadVideo", "LoadVideo", "VHS_LoadVideoPath"],
-}
+# it drops a loader onto the graph for a generated output. Which node, and which
+# of `path`/`filename` belongs in it, are one decision — hence media_loaders. The
+# staging copy still happens either way: it is the fallback when VHS is not
+# installed, and other lookups lean on it.
+_NODE_CANDIDATES = _LOADER_CANDIDATES
 
 
 def _is_image_path(path: str) -> bool:

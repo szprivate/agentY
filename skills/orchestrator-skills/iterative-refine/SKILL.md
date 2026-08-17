@@ -23,8 +23,9 @@ never patch nodes, upload, or run the graph yourself for this loop.
 
 An `iterate` agentY-hook on the canvas declares the loop:
 - its **output** is wired into the **prompt node's text input** → where each prompt goes;
-- a **LoadImage node** is wired into its **anchor** → the node whose image is replaced
-  with the running result each step (the "feedback" node).
+- an **image loader** is wired into its **anchor** → the node whose image is replaced
+  with the running result each step (the "feedback" node). A core `LoadImage` or a VHS
+  `Load Image (Path)`; `iterate_step` writes whichever kind of reference that node takes.
 
 The `[CANVAS HOOKS]` block names both for the current graph. If either is unwired,
 `iterate_step` returns an error telling the user exactly what to wire — relay it and stop.

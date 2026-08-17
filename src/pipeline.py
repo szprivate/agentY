@@ -38,6 +38,7 @@ from agenty_core.utils.progress_signal import drain as _drain_progress, push as 
 from src.utils.tool_activity import drain as _drain_tools, clear as _clear_tools
 from src.utils.canvas_patch import drain as _drain_canvas_patch, clear as _clear_canvas_patch
 from src.utils.costs import compute_cost_from_usage
+from src.utils.media_loaders import takes_absolute_path
 from src.utils.models import AgentSession, ChatSummary, GeneratedImage, MessageIntent, TriageResult
 from src.utils.workflow_signal import (
     clear_and_get as _get_workflow_signal,
@@ -1936,13 +1937,20 @@ class Pipeline:
                 })
 
             result_path = produced[0]
-            # Stage the result into the input dir and point the LoadImage node at it, so
-            # the next step continues from here — and the user sees it update in place.
-            up = _upload(result_path, image_type="input")
-            input_ref = up.get("name") if isinstance(up, dict) else None
-            if not input_ref:
-                return json.dumps({"error": f"could not stage the result for feedback: {up}",
-                                   "output": result_path, "history": _view(hist)})
+            # Point the loader node at the result, so the next step continues from
+            # here — and the user sees it update in place. A VHS "(Path)" loader
+            # reads the file where it is, so it gets the path and nothing is
+            # staged; a name loader can only see ComfyUI's input directory, so the
+            # result is copied in there and the copy's name is what it holds.
+            # Writing the wrong one leaves the loop pointing at nothing.
+            if takes_absolute_path((base.get(feedback_node) or {}).get("class_type")):
+                input_ref = result_path
+            else:
+                up = _upload(result_path, image_type="input")
+                input_ref = up.get("name") if isinstance(up, dict) else None
+                if not input_ref:
+                    return json.dumps({"error": f"could not stage the result for feedback: {up}",
+                                       "output": result_path, "history": _view(hist)})
             from src.utils.canvas_patch import push as _push_patch
             _push_patch({"node_id": feedback_node, "params": {feedback_input: input_ref},
                          "node_title": "LoadImage"})
