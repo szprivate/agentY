@@ -1301,9 +1301,16 @@ class Pipeline:
                 "files": files,
                 "not_run": remaining,
                 "message": (
+                    # Deliberately does NOT claim the node was placed or wired:
+                    # this runs on the server and the node is created in the
+                    # BROWSER, moments later and possibly not at all. Saying so
+                    # here is how the agent came to tell a user their collector
+                    # was on the canvas beside the hook when it was not.
                     f"Stopped at review hook {hid}. {len(files)} output(s) were "
-                    "collected into an 'agentY image collector' node placed beside the "
-                    "hook on the user's canvas and wired into its anchor. "
+                    "sent to the user's canvas to be collected into an 'agentY "
+                    "image collector' node. The panel reports what actually "
+                    "happened to it — do not describe its position or wiring "
+                    "yourself, and do not claim it is wired into the hook. "
                     + (f"{len(remaining)} later hook(s) were NOT run. " if remaining
                        else "")
                     + "Do NOT call apply_canvas_hooks, run_workflow_now, "

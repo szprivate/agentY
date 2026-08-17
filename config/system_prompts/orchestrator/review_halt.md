@@ -20,12 +20,17 @@ to write from what the stage produced.
    files that exist; a review of nothing is not a review. Use
    `apply_canvas_hooks(run_now=True)` or `run_workflow_now` so the outputs are
    back in your hands before you stop.
-2. Call **`halt_for_review(hook_node_id, outputs, question)`** once. It gathers
-   those outputs into an `agentY image collector` node placed beside the hook on
-   the user's canvas and wired into its anchor.
+2. Call **`halt_for_review(hook_node_id, outputs, question)`** once. It asks the
+   user's canvas to gather those outputs into an `agentY image collector` node.
 3. **End the turn.** Say what the stage produced, that it is waiting in that
    collector, that they can remove rows / drop in their own files / reorder before
    continuing, and ask whether to continue or stop.
+
+**Do not describe where that node is or what it is wired to.** It is created in
+the browser, after your tool call returns, and it may land unwired — the panel
+prints exactly what happened to it and the user can read that for themselves.
+Saying "it is beside the hook and wired into its anchor" is a guess, and when it
+is wrong the user goes looking for something that is not there.
 
 Everything after the review hook — listed in the hook block as *NOT this turn* —
 must not be run, queued or prepared. The execution tools will refuse anyway, but
