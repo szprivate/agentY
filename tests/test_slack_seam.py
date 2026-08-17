@@ -187,6 +187,71 @@ class SeamTest(unittest.TestCase):
         out = self.bridge.route("U_ME", "make another one")
         self.assertEqual(out["action"], "turn")
 
+    # ── a picture or a clip sent from a phone ─────────────────────────────────
+    def _file_dm(self, name, text="make this warmer"):
+        """The whole inbound path: a Slack file_share event → an input path."""
+        import tempfile
+        from src.utils.slack_bridge import _route_message, is_actionable
+
+        class Resp:
+            def raise_for_status(self):
+                return None
+
+            def iter_content(self, chunk_size=None):
+                return iter([b"MEDIA"])
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        event = {"type": "message", "subtype": "file_share", "channel_type": "im",
+                 "user": "U_ME", "channel": "D_ME", "text": text,
+                 "files": [{"name": name, "url_private_download": "https://x/f"}]}
+        self.assertTrue(is_actionable(event),
+                        "the event was rejected before anything could download it")
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch("requests.get", return_value=Resp()):
+                _route_message(self.bridge, mock.Mock(token="t"), event, d)
+            return dict(self.ran[0]) if self.ran else {}
+
+    def test_an_image_sent_from_slack_becomes_an_input(self):
+        ran = self._file_dm("ref.png")
+        self.assertEqual(ran.get("message"), "make this warmer")
+        self.assertEqual(len(ran.get("images") or []), 1)
+        self.assertTrue(ran["images"][0].endswith("ref.png"))
+
+    def test_a_video_sent_from_slack_becomes_an_input(self):
+        ran = self._file_dm("clip.mp4", text="cut this to 5 seconds")
+        self.assertTrue(ran["images"][0].endswith("clip.mp4"),
+                        "video rides the same path; the pipeline lists it as an input")
+
+    def test_a_bare_attachment_with_no_words_still_runs(self):
+        """Sending a photo and nothing else is a complete message to a person."""
+        ran = self._file_dm("ref.png", text="")
+        self.assertEqual(len(ran.get("images") or []), 1)
+
+    def test_an_attachment_that_did_not_arrive_is_said_out_loud(self):
+        """From a phone there is no canvas to look at and no terminal to check,
+        so an attachment that quietly did not make it is indistinguishable from
+        an agent that ignored it."""
+        import logging
+        import tempfile
+        from src.utils.slack_bridge import _route_message
+        logging.disable(logging.CRITICAL)
+        self.addCleanup(logging.disable, logging.NOTSET)
+        event = {"type": "message", "subtype": "file_share", "channel_type": "im",
+                 "user": "U_ME", "channel": "D_ME", "text": "this one",
+                 "files": [{"name": "huge.mov", "size": 900 * 1024 * 1024,
+                            "url_private_download": "https://x/f"}]}
+        with tempfile.TemporaryDirectory() as d:
+            _route_message(self.bridge, mock.Mock(token="t"), event, d)
+        self.bridge.flush()
+        said = self.client.text()
+        self.assertIn("Could not take", said)
+        self.assertIn("huge.mov", said)
+
     def test_a_dm_during_a_running_turn_is_interjected(self):
         turn_bus._active["rid_live"] = turn_bus.Turn(request_id="rid_live",
                                                      thread_id="t")

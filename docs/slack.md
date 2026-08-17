@@ -100,8 +100,22 @@ Resolved in this order, because getting it wrong is worse than any of them:
    through one pipeline would corrupt both.
 3. **Otherwise** → it starts a turn, in whatever conversation the panel last used.
 
-Attach an image and it arrives as an input, not as something the agent is told
-about — "make this warmer" with a photo works the way you would expect.
+### Sending it something
+
+Attach a file and it arrives as an **input**, not as something the agent is told
+about — "make this warmer" with a photo works the way you would expect, and so
+does a video with "cut this to five seconds". The agent gets a real path on disk
+that it can wire into a loader node, hand to the vision agent, or read.
+
+An image is also *looked at* directly where the orchestrator model can read
+images; a video is always passed as a path (no model takes one inline). Either
+way the file lands in `output/slack_uploads/`.
+
+A photo with no words is a complete message — it starts a turn on its own.
+
+Up to ten attachments per message, and up to `max_download_mb` (250 MB) each.
+Anything refused is named in the DM rather than passed over in silence: from a
+phone there is no canvas to look at and no terminal to check.
 
 ---
 
@@ -139,6 +153,7 @@ Under **Slack bridge** in the settings dialog (`[slack]` in
 | `show_tools` | tool calls in the thread |
 | `show_thinking` | the agent's reasoning in the thread |
 | `max_upload_mb` | files above this are named rather than uploaded (Slack rejects them anyway) |
+| `max_download_mb` | ceiling on an attachment coming the other way — a phone video sent to the agent. Larger is refused with a note in the DM |
 
 ---
 

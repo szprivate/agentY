@@ -421,9 +421,28 @@ class InboundEventTest(unittest.TestCase):
     def test_a_plain_dm_is_actionable(self):
         self.assertTrue(is_actionable(self._ev()))
 
+    def test_a_dm_with_an_attachment_is_actionable(self):
+        """THE bug this rule had: to Slack, sending a picture is not a different
+        kind of event — it is a message with `subtype: file_share`. Rejecting
+        every subtype drops exactly the message somebody took a photo for, and
+        drops it in silence.
+        """
+        self.assertTrue(is_actionable(self._ev(subtype="file_share", files=[{}])))
+
+    def test_an_attachment_with_no_words_is_still_actionable(self):
+        self.assertTrue(is_actionable(self._ev(subtype="file_share", text="", files=[{}])))
+
     def test_an_edit_is_not(self):
         """Editing an old message must not re-run it."""
         self.assertFalse(is_actionable(self._ev(subtype="message_changed")))
+
+    def test_a_deletion_is_not(self):
+        self.assertFalse(is_actionable(self._ev(subtype="message_deleted")))
+
+    def test_some_other_subtype_is_still_rejected(self):
+        """`file_share` is an exception, not the end of the rule."""
+        for sub in ("channel_join", "thread_broadcast", "bot_message", "me_message"):
+            self.assertFalse(is_actionable(self._ev(subtype=sub)), sub)
 
     def test_a_bot_post_is_not(self):
         self.assertFalse(is_actionable(self._ev(bot_id="B1")))
@@ -438,32 +457,135 @@ class InboundEventTest(unittest.TestCase):
         self.assertFalse(is_actionable(self._ev(user="")))
 
 
+class _Resp:
+    """A streaming requests response, which is what a phone video needs."""
+
+    def __init__(self, chunks=(b"PNGDATA",)):
+        self._chunks = list(chunks)
+
+    def raise_for_status(self):
+        return None
+
+    def iter_content(self, chunk_size=None):
+        return iter(self._chunks)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
 class AttachmentTest(unittest.TestCase):
+    """What someone sends the agent from a phone."""
 
-    def test_an_attached_image_is_saved_and_handed_over_as_an_input(self):
+    def setUp(self):
         import tempfile
-        from pathlib import Path
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
 
-        class Resp:
-            content = b"PNGDATA"
-            def raise_for_status(self):
-                return None
+    def _ev(self, *files):
+        return {"files": [dict({"url_private_download": "https://x/f"}, **f)
+                          for f in files]}
 
-        ev = {"files": [{"name": "ref.png", "url_private_download": "https://x/ref.png"}]}
-        with tempfile.TemporaryDirectory() as d:
-            with mock.patch("requests.get", return_value=Resp()) as get:
-                paths = download_files(mock.Mock(token="xoxb-1"), ev, d)
-            self.assertEqual(len(paths), 1)
-            self.assertEqual(Path(paths[0]).read_bytes(), b"PNGDATA")
-            self.assertIn("Bearer xoxb-1", get.call_args.kwargs["headers"]["Authorization"])
+    def _get(self, resp=None, **kw):
+        return mock.patch("requests.get", return_value=resp or _Resp(), **kw)
 
-    def test_a_download_that_fails_does_not_lose_the_message(self):
+    def _hush(self):
         import logging
         logging.disable(logging.CRITICAL)
         self.addCleanup(logging.disable, logging.NOTSET)
-        ev = {"files": [{"name": "x.png", "url_private_download": "https://x/x.png"}]}
+
+    def test_an_attached_image_is_saved_and_handed_over_as_an_input(self):
+        from pathlib import Path
+        with self._get() as get:
+            paths, skipped = download_files(mock.Mock(token="xoxb-1"),
+                                            self._ev({"name": "ref.png"}), self.dir.name)
+        self.assertEqual(len(paths), 1)
+        self.assertEqual(skipped, [])
+        self.assertEqual(Path(paths[0]).read_bytes(), b"PNGDATA")
+        self.assertIn("Bearer xoxb-1", get.call_args.kwargs["headers"]["Authorization"])
+
+    def test_a_video_arrives_the_same_way(self):
+        """The pipeline lists video paths as inputs; nothing here is image-only."""
+        paths, _ = self._download({"name": "clip.mp4", "size": 5_000_000})
+        self.assertTrue(paths[0].endswith("clip.mp4"))
+
+    def _download(self, *files, resp=None):
+        with self._get(resp):
+            return download_files(mock.Mock(token="t"), self._ev(*files), self.dir.name)
+
+    def test_it_streams_rather_than_holding_the_whole_file(self):
+        """A video filmed on a phone is measured in hundreds of megabytes."""
+        from pathlib import Path
+        paths, _ = self._download({"name": "big.mp4"},
+                                  resp=_Resp([b"a" * 1024, b"b" * 1024]))
+        self.assertEqual(Path(paths[0]).stat().st_size, 2048)
+
+    def test_a_file_over_the_limit_is_refused_by_its_declared_size(self):
+        paths, skipped = self._download({"name": "huge.mov", "size": 999 * 1024 * 1024})
+        self.assertEqual(paths, [])
+        self.assertIn("huge.mov", skipped[0])
+        self.assertIn("MB limit", skipped[0])
+
+    def test_a_file_that_lies_about_its_size_is_stopped_mid_download(self):
+        """`size` is Slack's word for it; the bytes are the fact.
+
+        No declared size at all here, so the pre-check cannot fire and only the
+        running total can stop it.
+        """
+        self._hush()
+        with mock.patch("src.utils.slack_bridge._setting",
+                        side_effect=lambda k, d: 0 if k == "max_download_mb" else d):
+            paths, skipped = self._download({"name": "liar.mp4"},
+                                            resp=_Resp([b"x" * 4096]))
+        self.assertEqual(paths, [])
+        self.assertTrue(skipped)
+
+    def test_half_a_video_is_not_left_on_disk(self):
+        from pathlib import Path
+        self._hush()
+        with mock.patch("src.utils.slack_bridge._setting",
+                        side_effect=lambda k, d: 0 if k == "max_download_mb" else d):
+            self._download({"name": "liar.mp4"}, resp=_Resp([b"x" * 4096]))
+        self.assertEqual(list(Path(self.dir.name).glob("*")), [])
+
+    def test_a_download_that_fails_does_not_lose_the_message(self):
+        self._hush()
         with mock.patch("requests.get", side_effect=RuntimeError("no")):
-            self.assertEqual(download_files(mock.Mock(token="t"), ev, "."), [])
+            paths, skipped = download_files(mock.Mock(token="t"),
+                                            self._ev({"name": "x.png"}), self.dir.name)
+        self.assertEqual(paths, [])
+        self.assertIn("x.png", skipped[0])
+
+    def test_one_bad_attachment_does_not_lose_the_good_one(self):
+        self._hush()
+        calls = [RuntimeError("no"), _Resp()]
+        with mock.patch("requests.get", side_effect=calls):
+            paths, skipped = download_files(
+                mock.Mock(token="t"),
+                self._ev({"name": "bad.png"}, {"name": "good.png"}), self.dir.name)
+        self.assertEqual(len(paths), 1)
+        self.assertEqual(len(skipped), 1)
+
+    def test_a_file_with_no_link_names_the_scope_that_is_missing(self):
+        paths, skipped = download_files(
+            mock.Mock(token="t"),
+            {"files": [{"name": "x.png"}]}, self.dir.name)
+        self.assertEqual(paths, [])
+        self.assertIn("files:read", skipped[0])
+
+    def test_more_attachments_than_a_turn_can_use_are_capped(self):
+        from src.utils.slack_bridge import _MAX_INBOUND_FILES
+        files = [{"name": f"{i}.png"} for i in range(_MAX_INBOUND_FILES + 3)]
+        paths, skipped = self._download(*files)
+        self.assertEqual(len(paths), _MAX_INBOUND_FILES)
+        self.assertIn("only the first", skipped[0])
+
+    def test_the_sender_s_filename_cannot_escape_the_download_folder(self):
+        from pathlib import Path
+        paths, _ = self._download({"name": "../../etc/passwd"})
+        self.assertEqual(Path(paths[0]).parent, Path(self.dir.name))
 
 
 if __name__ == "__main__":

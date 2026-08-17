@@ -57,6 +57,10 @@ _EDIT_INTERVAL = 1.5
 # ("continue") still finds the turn it belongs to.
 _TURN_TTL = 900.0
 _DOWNLOAD_DIRNAME = "slack_uploads"
+# Slack lets one message carry ten files. Every one of them becomes an input the
+# agent is expected to reason about, so the ceiling is what a turn can actually
+# use rather than what Slack can carry.
+_MAX_INBOUND_FILES = 10
 
 
 def _env_list(name: str) -> list:
@@ -468,17 +472,25 @@ class SlackBridge:
 
 # ── inbound Slack events ──────────────────────────────────────────────────────
 
+# Attaching a picture is not a different kind of event to Slack — it is a message
+# with a subtype. Rejecting every subtype (which is otherwise the right rule) drops
+# exactly the message someone took a photo for, and drops it in total silence.
+_ACTIONABLE_SUBTYPES = {"file_share"}
+
+
 def is_actionable(event: dict) -> bool:
     """Whether a Slack event is a DM from a person that we should act on.
 
     Slack sends a great deal that looks like a message and is not: the bot's own
     posts (every mirrored turn would otherwise talk to itself, forever), edits and
-    deletions of old messages, channel joins, and thread broadcasts. Only a plain
-    DM with no subtype and no bot id is a person typing.
+    deletions of old messages, channel joins, and thread broadcasts. A person
+    typing has no subtype — and a person *attaching something* has ``file_share``,
+    which is the one exception.
     """
     if str((event or {}).get("type")) != "message":
         return False
-    if event.get("subtype"):
+    subtype = str(event.get("subtype") or "")
+    if subtype and subtype not in _ACTIONABLE_SUBTYPES:
         return False
     if event.get("bot_id"):
         return False
@@ -487,33 +499,76 @@ def is_actionable(event: dict) -> bool:
     return bool(str(event.get("user") or ""))
 
 
-def download_files(client, event: dict, dest_dir) -> list:
-    """Save any images the user attached, and hand back their paths.
+def download_files(client, event: dict, dest_dir) -> tuple:
+    """Save what the user attached, and hand back ``(paths, skipped)``.
 
     A DM with a picture and "make this warmer" is one message to a person, so the
-    picture has to arrive as an input rather than as something the agent is told
-    about. Private Slack URLs need the bot token, which is why this cannot be a
-    plain download.
+    attachment has to arrive as an INPUT — a path the agent can wire into a
+    LoadImage or hand to the vision agent — rather than as something it is merely
+    told about. Videos land the same way (see ``_build_content`` on the server:
+    images are embedded as vision where the model can read them, videos are always
+    listed as paths).
+
+    Private Slack URLs need the bot token, which is why this cannot be a plain
+    download. It streams to disk rather than through memory, because the thing
+    someone films on a phone and sends is measured in hundreds of megabytes and
+    the alternative is holding all of it at once.
+
+    *skipped* carries a line per file that did not make it, so the caller can say
+    so in Slack. Silence is the wrong answer to "I sent you a video": there is no
+    canvas to look at and no terminal to check.
     """
-    out = []
+    out, skipped = [], []
     dest = Path(dest_dir)
-    for f in (event or {}).get("files") or []:
+    files = list((event or {}).get("files") or [])
+    if len(files) > _MAX_INBOUND_FILES:
+        skipped.append(f"only the first {_MAX_INBOUND_FILES} of {len(files)} "
+                       "attachments were taken")
+        files = files[:_MAX_INBOUND_FILES]
+    limit = int(_setting("max_download_mb", 250)) * 1024 * 1024
+    for f in files:
         url = f.get("url_private_download") or f.get("url_private")
-        if not url:
-            continue
         name = str(f.get("name") or f.get("id") or "upload")
+        if not url:
+            skipped.append(f"{name} (Slack gave no download link — the bot may "
+                           "lack the files:read scope)")
+            continue
+        size = int(f.get("size") or 0)
+        if size and size > limit:
+            skipped.append(f"{name} ({size / 1048576:.0f} MB, over the "
+                           f"{limit // 1048576} MB limit)")
+            continue
         try:
             import requests
             token = getattr(client, "token", "") or os.environ.get("SLACK_BOT_TOKEN", "")
-            r = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=60)
-            r.raise_for_status()
             dest.mkdir(parents=True, exist_ok=True)
-            p = dest / f"{int(time.time())}_{name}"
-            p.write_bytes(r.content)
+            p = dest / f"{int(time.time())}_{_safe_name(name)}"
+            written = 0
+            with requests.get(url, headers={"Authorization": f"Bearer {token}"},
+                              timeout=120, stream=True) as r:
+                r.raise_for_status()
+                with p.open("wb") as fh:
+                    for chunk in r.iter_content(chunk_size=1 << 20):
+                        written += len(chunk)
+                        if written > limit:
+                            raise ValueError(
+                                f"over the {limit // 1048576} MB limit")
+                        fh.write(chunk)
             out.append(str(p))
-        except Exception:  # noqa: BLE001 — a failed download is not a failed message
+        except Exception as exc:  # noqa: BLE001 — a failed download is not a failed message
             logger.exception("slack: could not download %s", name)
-    return out
+            skipped.append(f"{name} ({exc})")
+            try:
+                p.unlink(missing_ok=True)   # no half a video left on disk
+            except Exception:  # noqa: BLE001
+                pass
+    return out, skipped
+
+
+def _safe_name(name: str) -> str:
+    """A Slack filename is whatever the sender's phone called it."""
+    keep = "".join(c if (c.isalnum() or c in "._- ") else "_" for c in str(name))
+    return (keep.strip() or "upload")[:100]
 
 
 def _why(exc) -> str:
@@ -672,7 +727,12 @@ def _route_message(bridge: SlackBridge, web, event: dict, dest) -> None:
     # mirror was pointed somewhere else at startup.
     if channel and not bridge.default_channel:
         bridge.default_channel = channel
-    files = download_files(web, event, dest) if event.get("files") else []
+    files, skipped = ([], [])
+    if event.get("files"):
+        # Downloaded BEFORE the allow-list is consulted only in the sense that
+        # route() is next: an unauthorised sender's files are fetched and then
+        # their message is refused. Cheap to reorder if that ever matters.
+        files, skipped = download_files(web, event, dest)
     result = bridge.route(user, text, files)
     action = result.get("action")
     if action == "denied":
@@ -680,4 +740,10 @@ def _route_message(bridge: SlackBridge, web, event: dict, dest) -> None:
                              "to add your Slack member id to `SLACK_ALLOWED_USERS`._")
     elif action == "interject":
         bridge.post(channel, "_Passed to the turn already running._")
-    logger.info("slack: message from %s → %s (%s)", user, action, result.get("why", ""))
+    if skipped and action not in ("denied", "ignored"):
+        # Said in Slack, not just logged: from a phone there is no canvas to look
+        # at and no terminal to check, so an attachment that quietly did not
+        # arrive looks exactly like an agent that ignored it.
+        bridge.post(channel, "_Could not take: " + "; ".join(skipped) + "._")
+    logger.info("slack: message from %s → %s (%s), %d file(s), %d skipped",
+                user, action, result.get("why", ""), len(files), len(skipped))

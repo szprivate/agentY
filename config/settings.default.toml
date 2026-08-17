@@ -310,3 +310,7 @@ show_tools = true
 show_thinking = true
 # Files above this are named rather than uploaded (Slack rejects them anyway).
 max_upload_mb = 45
+# Ceiling on an attachment coming the OTHER way — a video filmed on a phone and
+# sent to the agent. Anything larger is refused with a note in the DM rather
+# than half-downloaded.
+max_download_mb = 250
