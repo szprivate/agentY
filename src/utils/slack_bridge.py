@@ -75,6 +75,40 @@ def configured() -> bool:
                 and (os.environ.get("SLACK_APP_TOKEN") or "").strip())
 
 
+# Slack issues two kinds of token and they are not interchangeable. The bot token
+# (`xoxb-`) is the one everything about the app points you at; the app-level token
+# (`xapp-`) is created separately, under Basic Information → App-Level Tokens, and
+# is the ONLY one `apps.connections.open` accepts — the call that opens the Socket
+# Mode WebSocket. Put the bot token in both fields, as is easy to do, and Slack
+# answers `not_allowed_token_type`, which names neither the field nor the fix.
+_TOKEN_PREFIX = {"SLACK_BOT_TOKEN": "xoxb-", "SLACK_APP_TOKEN": "xapp-"}
+
+
+def token_complaint() -> str:
+    """What is wrong with the tokens, in words, or "" when they look right.
+
+    Checked before connecting because the alternative is an SDK exception at the
+    bottom of a stack trace, and the answer to it is one sentence.
+    """
+    for name, prefix in _TOKEN_PREFIX.items():
+        value = (os.environ.get(name) or "").strip()
+        if not value:
+            return f"{name} is not set."
+        if value.startswith(prefix):
+            continue
+        other = next((n for n, p in _TOKEN_PREFIX.items()
+                      if n != name and value.startswith(p)), "")
+        if other:
+            return (f"{name} holds a {value.split('-')[0]}- token, which is what "
+                    f"{other} wants. The two are not interchangeable.")
+        return (f"{name} should start with '{prefix}'. "
+                + ("Create it under Basic Information → App-Level Tokens, with the "
+                   "connections:write scope — it is not the bot token."
+                   if name == "SLACK_APP_TOKEN" else
+                   "It is the Bot User OAuth Token under OAuth & Permissions."))
+    return ""
+
+
 def _setting(key: str, default):
     try:
         from src.utils.settings import load_settings
@@ -447,6 +481,53 @@ def download_files(client, event: dict, dest_dir) -> list:
     return out
 
 
+def _why(exc) -> str:
+    """Slack's own error code, which is the searchable part of any failure here.
+
+    A ``SlackApiError`` stringifies to a paragraph with the code buried in a dict
+    at the end; the code alone is what tells you which of two tokens is wrong.
+    """
+    code = ""
+    try:
+        code = str((getattr(exc, "response", None) or {}).get("error") or "")
+    except Exception:  # noqa: BLE001
+        pass
+    return code or f"{type(exc).__name__}: {exc}"
+
+
+# Slack's codes, in the words of what to do about them. Every one of these has
+# cost somebody an evening.
+_CONNECT_HINTS = {
+    "not_allowed_token_type":
+        "SLACK_APP_TOKEN is not an app-level token. It is created separately from "
+        "the bot token — Basic Information → App-Level Tokens → Generate Token and "
+        "Scopes, with connections:write — and starts with 'xapp-'.",
+    "missing_scope":
+        "The app-level token exists but lacks the connections:write scope. Add it "
+        "to the token (not to the bot scopes) and generate it again.",
+    "invalid_auth":
+        "SLACK_APP_TOKEN was not accepted at all — it may have been revoked, or "
+        "belong to a different app than SLACK_BOT_TOKEN.",
+    "account_inactive":
+        "The app has been removed from the workspace. Reinstall it.",
+}
+
+
+def _complain(text: str) -> None:
+    """Say it in the log AND in the panel.
+
+    A setup mistake here has no other symptom: nothing connects, nothing errors
+    where anyone is looking, and "off" and "misconfigured" are indistinguishable
+    from the chair.
+    """
+    logger.warning("slack: %s", text)
+    try:
+        from src.utils import status_bus
+        status_bus.notify("⚠️ " + text)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 _BRIDGE: SlackBridge | None = None
 
 
@@ -464,9 +545,11 @@ def start(*, start_turn, answer, interject, downloads_dir=None) -> bool:
     global _BRIDGE
     if not enabled():
         return False
-    if not configured():
-        logger.warning("slack: enabled, but SLACK_BOT_TOKEN / SLACK_APP_TOKEN are "
-                       "not set — nothing to connect with")
+    complaint = token_complaint()
+    if complaint:
+        # Loud, and on the status bus so it reaches the panel: the bridge being
+        # silently absent looks exactly like the bridge being off.
+        _complain("Slack bridge not started — " + complaint)
         return False
     try:
         from slack_sdk import WebClient
@@ -481,18 +564,19 @@ def start(*, start_turn, answer, interject, downloads_dir=None) -> bool:
 
     allowed = _env_list("SLACK_ALLOWED_USERS") or list(_setting("allowed_users", []) or [])
     if not allowed:
-        logger.warning(
-            "slack: SLACK_ALLOWED_USERS is empty — the bridge will connect but "
-            "refuse every message. Anyone able to DM the bot could otherwise run "
-            "generations and tools on this machine.")
+        _complain("Slack bridge: SLACK_ALLOWED_USERS is empty — it will connect "
+                  "but refuse every message. Anyone able to DM the bot could "
+                  "otherwise run generations and tools on this machine.")
 
     web = WebClient(token=os.environ["SLACK_BOT_TOKEN"])
     bridge = SlackBridge(client=web, start_turn=start_turn, answer=answer,
                          interject=interject, allowed_users=allowed)
     try:
         bridge.bot_user_id = str((web.auth_test() or {}).get("user_id") or "")
-    except Exception:  # noqa: BLE001
-        logger.exception("slack: auth_test failed — check SLACK_BOT_TOKEN")
+    except Exception as exc:  # noqa: BLE001
+        _complain(f"Slack rejected SLACK_BOT_TOKEN ({_why(exc)}). It is the Bot "
+                  "User OAuth Token under OAuth & Permissions, and the app has to "
+                  "be installed to the workspace.")
         return False
 
     # Where the mirror posts: the DM with the first allowed user. A turn started
@@ -532,10 +616,12 @@ def start(*, start_turn, answer, interject, downloads_dir=None) -> bool:
     bridge.start_worker()
     try:
         socket.connect()
-    except Exception:  # noqa: BLE001
-        logger.exception("slack: could not connect (Socket Mode enabled? "
-                         "is SLACK_APP_TOKEN an app-level token with "
-                         "connections:write?)")
+    except Exception as exc:  # noqa: BLE001
+        _complain("Slack refused the Socket Mode connection (" + _why(exc) + "). "
+                  + _CONNECT_HINTS.get(_why(exc),
+                                       "Check that Socket Mode is enabled on the "
+                                       "app and that SLACK_APP_TOKEN has the "
+                                       "connections:write scope."))
         bridge.stop()
         return False
     _BRIDGE = bridge

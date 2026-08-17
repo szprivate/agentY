@@ -16,12 +16,14 @@ workstation, and "whoever found the app" is not an access rule.
     python -m unittest discover -s tests
 """
 
-import queue
+import os
 import unittest
 from unittest import mock
 
 from src.utils import turn_bus
-from src.utils.slack_bridge import SlackBridge, download_files, is_actionable
+from src.utils.slack_bridge import (
+    _CONNECT_HINTS, SlackBridge, _why, download_files, is_actionable,
+    token_complaint)
 
 
 class FakeClient:
@@ -252,6 +254,84 @@ class MirrorTest(unittest.TestCase):
         self.assertEqual(self.client.posted, [], "it talked to Slack inline")
         self.b.flush()
         self.assertTrue(self.client.posted)
+
+
+class TokenTest(unittest.TestCase):
+    """Slack issues two kinds of token and they are not interchangeable.
+
+    From a real setup: both fields held the same `xoxb-` bot token, and the only
+    symptom was `apps.connections.open` answering `not_allowed_token_type` at the
+    bottom of an SDK stack trace — which names neither the field that is wrong
+    nor the fact that the other token has to be created separately.
+    """
+
+    def _env(self, bot, app):
+        keep = {k: os.environ.get(k) for k in ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN")}
+
+        def restore():
+            for k, v in keep.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+        self.addCleanup(restore)
+        for k, v in (("SLACK_BOT_TOKEN", bot), ("SLACK_APP_TOKEN", app)):
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def test_a_matching_pair_has_nothing_to_say(self):
+        self._env("xoxb-real", "xapp-real")
+        self.assertEqual(token_complaint(), "")
+
+    def test_the_bot_token_pasted_into_both_fields_is_named_exactly(self):
+        self._env("xoxb-real", "xoxb-real")
+        got = token_complaint()
+        self.assertIn("SLACK_APP_TOKEN", got)
+        self.assertIn("xoxb-", got)
+
+    def test_swapped_tokens_are_told_apart(self):
+        self._env("xapp-real", "xoxb-real")
+        self.assertIn("SLACK_BOT_TOKEN", token_complaint())
+
+    def test_something_that_is_neither_says_where_to_get_one(self):
+        self._env("xoxb-real", "hunter2")
+        got = token_complaint()
+        self.assertIn("App-Level Tokens", got)
+        self.assertIn("connections:write", got)
+
+    def test_a_missing_token_is_reported_as_missing(self):
+        self._env("xoxb-real", None)
+        self.assertIn("not set", token_complaint())
+
+    def test_slack_s_own_error_code_is_what_gets_reported(self):
+        """It is the searchable half of any failure here."""
+        class Boom(Exception):
+            response = {"error": "not_allowed_token_type"}
+        self.assertEqual(_why(Boom()), "not_allowed_token_type")
+
+    def test_an_error_with_no_code_still_says_something(self):
+        self.assertIn("RuntimeError", _why(RuntimeError("socket closed")))
+
+    def test_the_code_that_started_this_has_an_answer_written_for_it(self):
+        hint = _CONNECT_HINTS["not_allowed_token_type"]
+        self.assertIn("xapp-", hint)
+        self.assertIn("App-Level Tokens", hint)
+
+    def test_start_refuses_BEFORE_it_dials_slack(self):
+        """The diagnostic is worth nothing if start() does not consult it: the
+        SDK would go ahead and fail with the stack trace this exists to replace.
+        """
+        from src.utils import slack_bridge as sb
+        self._env("xoxb-real", "xoxb-real")
+        said = []
+        with mock.patch.object(sb, "enabled", return_value=True), \
+             mock.patch.object(sb, "_complain", said.append):
+            started = sb.start(start_turn=None, answer=None, interject=None)
+        self.assertFalse(started)
+        self.assertTrue(said, "it dialled Slack without complaining first")
+        self.assertIn("SLACK_APP_TOKEN", said[0])
 
 
 class InboundEventTest(unittest.TestCase):

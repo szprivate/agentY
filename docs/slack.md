@@ -135,10 +135,32 @@ Under **Slack bridge** in the settings dialog (`[slack]` in
 
 The host logs to `logs/` and prints to the `run_agent.ps1` terminal.
 
+Startup problems are reported in the panel as well, because a bridge that is
+misconfigured and a bridge that is switched off look identical from the chair.
+
 | what you see | why |
 |---|---|
-| nothing at all | `enabled` is off, or the tokens are missing |
-| `auth_test failed` | `SLACK_BOT_TOKEN` is wrong, or the app was never installed |
-| `could not connect` | Socket Mode is not enabled, or `SLACK_APP_TOKEN` is not an app-level token with `connections:write` |
+| nothing at all | `enabled` is off |
+| `SLACK_APP_TOKEN holds a xoxb- token` | the two tokens are not interchangeable — see below |
+| `Slack rejected SLACK_BOT_TOKEN` | wrong token, or the app was never installed to the workspace |
+| `not_allowed_token_type` | `SLACK_APP_TOKEN` is not an app-level token — see below |
+| `missing_scope` | the app-level token exists but lacks `connections:write` |
 | connects, ignores you | your member id is not in `SLACK_ALLOWED_USERS` |
 | connects, posts nowhere | no DM could be opened — check `im:write` |
+
+### The two tokens
+
+This is the one that catches everybody, because the bot token is what every page
+of the app config puts in front of you and the other one is somewhere else
+entirely:
+
+* **`SLACK_BOT_TOKEN`** — `xoxb-…`, from *OAuth & Permissions*. Used for
+  everything the bot says and uploads.
+* **`SLACK_APP_TOKEN`** — `xapp-…`, from *Basic Information → App-Level Tokens →
+  Generate Token and Scopes*, with the **`connections:write`** scope. It is the
+  only thing `apps.connections.open` accepts, which is the call that opens the
+  Socket Mode connection.
+
+Put the bot token in both fields and Slack answers `not_allowed_token_type`: a
+valid token that simply cannot make that call. agentY checks the prefixes before
+connecting and names the field that is wrong.
