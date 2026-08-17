@@ -1,0 +1,562 @@
+"""Slack as a second line into agentY — not a replacement for the sidebar.
+
+The ComfyUI side panel stays exactly what it was. This adds a second way in and a
+second way to watch, so a run started at the desk can be followed (and answered,
+and steered) from a phone:
+
+* **watching** — every turn is mirrored, including turns started in the panel.
+  That is the point: you queue a video from the canvas, walk away, and see it
+  finish. :mod:`src.utils.turn_bus` is what makes a turn visible to anyone but
+  the browser that asked for it; :mod:`src.utils.slack_render` decides what each
+  event looks like once it gets here.
+* **talking** — a DM starts a turn in *the conversation the panel is already in*,
+  so Slack is another window on one session rather than a second, forked one.
+
+Three things a message can mean, resolved in this order, because getting it wrong
+is worse than any of them:
+
+1. the agent asked a question and is holding the turn open → this is the answer;
+2. a turn is running → **interject** it (the panel does the same). Starting a
+   second turn would run two of them through one pipeline singleton, which
+   corrupts both;
+3. otherwise → start a turn.
+
+Transport is Socket Mode, so nothing has to be reachable from the internet: the
+host opens an outbound WebSocket to Slack. Off unless both tokens are set.
+
+Setup (see ``docs/slack.md``)::
+
+    SLACK_BOT_TOKEN=xoxb-…     bot token; scopes: chat:write, files:write,
+                               im:history, im:read, im:write, users:read
+    SLACK_APP_TOKEN=xapp-…     app-level token with connections:write
+    SLACK_ALLOWED_USERS=U123…  who may drive the agent (comma-separated)
+
+``SLACK_ALLOWED_USERS`` is not optional and has no default. Anyone who can DM the
+bot would otherwise be able to run generations, tools and scripts on this
+machine, and "whoever installed the app" is not an access rule.
+"""
+from __future__ import annotations
+
+import logging
+import os
+import queue
+import threading
+import time
+from pathlib import Path
+
+from src.utils import turn_bus
+from src.utils.slack_render import Post, TurnRender, clip
+
+logger = logging.getLogger("agentY.slack")
+
+# A Slack edit is a round trip and its own rate-limit bucket (chat.update is
+# ~50/minute per workspace). Text streams in far faster than that, so the answer
+# message is rewritten on a timer instead of per token.
+_EDIT_INTERVAL = 1.5
+# How long a mirrored turn's Slack state is kept after it ends, so a late reply
+# ("continue") still finds the turn it belongs to.
+_TURN_TTL = 900.0
+_DOWNLOAD_DIRNAME = "slack_uploads"
+
+
+def _env_list(name: str) -> list:
+    return [p.strip() for p in (os.environ.get(name) or "").split(",") if p.strip()]
+
+
+def enabled() -> bool:
+    """The settings switch. **Off** unless turned on — a second channel that
+    starts talking to a workspace on its own is not a feature."""
+    return bool(_setting("enabled", False))
+
+
+def configured() -> bool:
+    """Both tokens present — i.e. the user has actually set this up."""
+    return bool((os.environ.get("SLACK_BOT_TOKEN") or "").strip()
+                and (os.environ.get("SLACK_APP_TOKEN") or "").strip())
+
+
+def _setting(key: str, default):
+    try:
+        from src.utils.settings import load_settings
+        return (load_settings().get("slack") or {}).get(key, default)
+    except Exception:  # noqa: BLE001 — settings must never break the bridge
+        return default
+
+
+class _Keyed:
+    """The Slack message ids one turn is using."""
+
+    def __init__(self):
+        self.answer_ts = ""
+        self.by_key: dict = {}
+
+
+class SlackTurn:
+    """One turn, as it appears in Slack: a message, its thread, and its files."""
+
+    def __init__(self, bridge, turn, channel: str):
+        self.bridge = bridge
+        self.turn = turn
+        self.channel = channel
+        self.render = TurnRender(
+            origin=turn.origin, started_by=turn.text,
+            show_thinking=bool(_setting("show_thinking", True)),
+            show_tools=bool(_setting("show_tools", True)))
+        self.ids = _Keyed()
+        self.ask_request_id = ""
+        self.ended = 0.0
+        self._last_edit = 0.0
+        self._pending_answer = ""
+
+    # ── outbound ──────────────────────────────────────────────────────────────
+    def feed(self, event: dict) -> None:
+        """Runs on the TURN's thread, so it does no I/O.
+
+        Rendering is pure and cheap; every Slack call it implies is handed to the
+        worker, in order. A hook run makes dozens of them, and doing them here
+        would put a round trip to Slack between the agent and its next step — the
+        panel would go slow because a phone was watching.
+
+        The two flags below are set here rather than queued because an incoming
+        DM is raced against them: a message that arrives while the agent is
+        waiting is an *answer*, and finding that out a queue-drain later is too
+        late.
+        """
+        kind = str(event.get("type") or "")
+        if kind == "ask":
+            self.ask_request_id = str(event.get("request_id") or "")
+        for post in self.render.feed(event):
+            self.bridge._call(self._apply, post)
+        if kind == "done":
+            self.bridge._call(self._flush_answer, True)
+            self.ended = time.time()
+            self.ask_request_id = ""
+
+    def _apply(self, post: Post) -> None:
+        """Runs on the worker thread — every Slack id in here is single-threaded."""
+        if post.where == "answer":
+            self._pending_answer = post.text
+            self._flush_answer()
+            return
+        if post.kind == "file":
+            self.bridge._do_upload(self.channel, post.path, post.text)
+            return
+        if post.where == "channel":
+            self.bridge.post(self.channel, post.text)
+            return
+        # detail → a reply in this turn's thread
+        thread_ts = self._ensure_answer()
+        if not thread_ts:
+            return
+        if post.kind == "clear":
+            ts = self.ids.by_key.pop(post.key, "")
+            if ts:
+                self.bridge._do_delete(self.channel, ts)
+            return
+        if not post.text.strip():
+            return
+        ts = self.ids.by_key.get(post.key) if post.key else None
+        if ts:
+            self.bridge._do_update(self.channel, ts, post.text)
+            return
+        new_ts = self.bridge.post(self.channel, post.text, thread_ts=thread_ts)
+        if post.key and new_ts:
+            self.ids.by_key[post.key] = new_ts
+
+    def _ensure_answer(self) -> str:
+        """The turn's own message, created on first need. Everything hangs off it."""
+        if not self.ids.answer_ts:
+            self.ids.answer_ts = self.bridge.post(self.channel, self.render.opening())
+        return self.ids.answer_ts
+
+    def _flush_answer(self, force: bool = False) -> None:
+        if not self._pending_answer:
+            return
+        now = time.time()
+        if not force and now - self._last_edit < _EDIT_INTERVAL:
+            return
+        self._last_edit = now
+        text, self._pending_answer = self._pending_answer, ""
+        if self.ids.answer_ts:
+            self.bridge._do_update(self.channel, self.ids.answer_ts, text)
+        else:
+            self.ids.answer_ts = self.bridge.post(self.channel, text)
+
+    def tick(self) -> None:
+        """Let a throttled edit land even when no further event arrives.
+
+        Called from the worker loop, which is also the only thread that runs
+        :meth:`_apply` — so the edit and the posts it races with are ordered.
+        """
+        self._flush_answer()
+
+
+class SlackBridge:
+    """Owns the Slack connection, the mirrored turns, and what a message means.
+
+    The Slack client is injected so every decision in here can be tested against
+    a fake one — what gets said, what a message is taken to mean, who is allowed
+    to say it — without a workspace or a network.
+    """
+
+    def __init__(self, client=None, *, start_turn=None, answer=None, interject=None,
+                 allowed_users=None, default_channel: str = ""):
+        self.client = client
+        self._start_turn = start_turn
+        self._answer = answer
+        self._interject = interject
+        self.allowed = list(allowed_users if allowed_users is not None
+                            else _env_list("SLACK_ALLOWED_USERS"))
+        self.default_channel = default_channel
+        self.turns: dict = {}            # request_id -> SlackTurn
+        self._lock = threading.RLock()
+        self._out: "queue.Queue" = queue.Queue()
+        self._stop = threading.Event()
+        self._worker = None
+        self._socket = None
+        self.bot_user_id = ""
+
+    # ── talking to Slack (all of it funnelled through one worker thread) ──────
+    # Slack calls are network calls, and they happen on the turn's own thread
+    # unless something moves them off it. This is that something: the turn hands
+    # over a closure and carries on.
+    def _call(self, fn, *args, **kwargs):
+        self._out.put((fn, args, kwargs))
+
+    def post(self, channel: str, text: str, thread_ts: str = "") -> str:
+        """Post and return the message ts. Synchronous — the ts is needed to edit
+        it later, and losing it means the next edit posts a duplicate instead."""
+        if not self.client or not text.strip():
+            return ""
+        kw = {"channel": channel, "text": clip(text, 39000)}
+        if thread_ts:
+            kw["thread_ts"] = thread_ts
+        try:
+            resp = self.client.chat_postMessage(**kw)
+            return str((resp or {}).get("ts") or "")
+        except Exception:  # noqa: BLE001
+            logger.exception("slack: chat_postMessage failed")
+            return ""
+
+    def _do_update(self, channel: str, ts: str, text: str) -> None:
+        if not self.client or not ts:
+            return
+        self.client.chat_update(channel=channel, ts=ts, text=clip(text, 39000))
+
+    def _do_delete(self, channel: str, ts: str) -> None:
+        if not self.client or not ts:
+            return
+        try:
+            self.client.chat_delete(channel=channel, ts=ts)
+        except Exception:  # noqa: BLE001 — an already-gone message is not an error
+            logger.debug("slack: chat_delete(%s) failed", ts, exc_info=True)
+
+    def _do_upload(self, channel: str, path: str, caption: str = "") -> None:
+        if not self.client or not path:
+            return
+        p = Path(path)
+        if not p.is_file():
+            self.post(channel, f"_{caption or p.name} — the file is not on disk any more._")
+            return
+        limit = int(_setting("max_upload_mb", 45)) * 1024 * 1024
+        if p.stat().st_size > limit:
+            # Slack would reject it; say where it is instead of failing silently.
+            self.post(channel, f"_{caption or p.name} is too large to post here._\n`{p}`")
+            return
+        self.client.files_upload_v2(channel=channel, file=str(p),
+                                    filename=p.name, initial_comment=caption or None)
+
+    def _pump(self) -> None:
+        while not self._stop.is_set():
+            try:
+                item = self._out.get(timeout=0.5)
+            except queue.Empty:
+                self._tick_turns()
+                continue
+            if item is None:
+                break
+            self._run(item)
+
+    def _run(self, item) -> None:
+        fn, args, kwargs = item
+        try:
+            fn(*args, **kwargs)
+        except Exception:  # noqa: BLE001
+            logger.exception("slack: %s failed", getattr(fn, "__name__", fn))
+
+    def flush(self) -> None:
+        """Do everything queued for Slack now, on this thread.
+
+        The worker does this continuously; a shutdown (and a test) needs it to
+        happen without one.
+        """
+        while True:
+            try:
+                item = self._out.get_nowait()
+            except queue.Empty:
+                return
+            if item is None:
+                return
+            self._run(item)
+
+    def _tick_turns(self) -> None:
+        """Land throttled edits and forget turns nobody will reply to."""
+        now = time.time()
+        with self._lock:
+            turns = list(self.turns.items())
+        for rid, st in turns:
+            st.tick()
+            if st.ended and now - st.ended > _TURN_TTL:
+                with self._lock:
+                    self.turns.pop(rid, None)
+
+    # ── watching every turn ───────────────────────────────────────────────────
+    def on_turn_event(self, event: dict, turn) -> None:
+        """Registered on the turn bus. Runs on the turn's thread — stays cheap."""
+        channel = self.default_channel
+        if not channel:
+            return
+        with self._lock:
+            st = self.turns.get(turn.request_id)
+            if st is None:
+                if str(event.get("type")) == "done":
+                    return       # nothing was ever shown; nothing to close
+                st = SlackTurn(self, turn, channel)
+                self.turns[turn.request_id] = st
+        st.feed(event)
+
+    # ── inbound ───────────────────────────────────────────────────────────────
+    def route(self, user: str, text: str, files: list | None = None) -> dict:
+        """What this message means, and what was done about it.
+
+        Returns ``{"action": …}`` — ``answer``/``interject``/``turn``/``denied``/
+        ``ignored`` — which is what the tests assert on and what the log records.
+        """
+        text = (text or "").strip()
+        files = list(files or [])
+        if not text and not files:
+            return {"action": "ignored", "why": "empty"}
+        if user and self.bot_user_id and user == self.bot_user_id:
+            return {"action": "ignored", "why": "own message"}
+        if not self.allowed:
+            logger.warning("slack: a message arrived but SLACK_ALLOWED_USERS is "
+                           "empty — refusing to act on it")
+            return {"action": "denied", "why": "no allow-list configured"}
+        if user not in self.allowed:
+            return {"action": "denied", "why": "not in SLACK_ALLOWED_USERS"}
+
+        pending = self._pending_ask()
+        if pending is not None and text:
+            rid, st = pending
+            if self._answer and self._answer(rid, text):
+                st.ask_request_id = ""
+                return {"action": "answer", "request_id": rid}
+
+        live = self._live_turn()
+        if live is not None and text:
+            rid, _st = live
+            if self._interject and self._interject(rid, text):
+                return {"action": "interject", "request_id": rid}
+
+        if self._start_turn is None:
+            return {"action": "ignored", "why": "no turn starter wired"}
+        rid = self._start_turn(text, files)
+        return {"action": "turn", "request_id": rid}
+
+    def _pending_ask(self):
+        with self._lock:
+            for rid, st in self.turns.items():
+                if st.ask_request_id:
+                    return st.ask_request_id, st
+        return None
+
+    def _live_turn(self):
+        running = {t.request_id for t in turn_bus.active()}
+        with self._lock:
+            for rid, st in self.turns.items():
+                if rid in running and not st.ended:
+                    return rid, st
+        return None
+
+    # ── lifecycle ─────────────────────────────────────────────────────────────
+    def start_worker(self) -> None:
+        if self._worker is None:
+            self._worker = threading.Thread(target=self._pump, name="agentY-slack",
+                                            daemon=True)
+            self._worker.start()
+        turn_bus.observe(self.on_turn_event)
+
+    def stop(self) -> None:
+        self._stop.set()
+        turn_bus.unobserve(self.on_turn_event)
+        self._out.put(None)
+        if self._socket is not None:
+            try:
+                self._socket.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+# ── inbound Slack events ──────────────────────────────────────────────────────
+
+def is_actionable(event: dict) -> bool:
+    """Whether a Slack event is a DM from a person that we should act on.
+
+    Slack sends a great deal that looks like a message and is not: the bot's own
+    posts (every mirrored turn would otherwise talk to itself, forever), edits and
+    deletions of old messages, channel joins, and thread broadcasts. Only a plain
+    DM with no subtype and no bot id is a person typing.
+    """
+    if str((event or {}).get("type")) != "message":
+        return False
+    if event.get("subtype"):
+        return False
+    if event.get("bot_id"):
+        return False
+    if str(event.get("channel_type") or "") != "im":
+        return False
+    return bool(str(event.get("user") or ""))
+
+
+def download_files(client, event: dict, dest_dir) -> list:
+    """Save any images the user attached, and hand back their paths.
+
+    A DM with a picture and "make this warmer" is one message to a person, so the
+    picture has to arrive as an input rather than as something the agent is told
+    about. Private Slack URLs need the bot token, which is why this cannot be a
+    plain download.
+    """
+    out = []
+    dest = Path(dest_dir)
+    for f in (event or {}).get("files") or []:
+        url = f.get("url_private_download") or f.get("url_private")
+        if not url:
+            continue
+        name = str(f.get("name") or f.get("id") or "upload")
+        try:
+            import requests
+            token = getattr(client, "token", "") or os.environ.get("SLACK_BOT_TOKEN", "")
+            r = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=60)
+            r.raise_for_status()
+            dest.mkdir(parents=True, exist_ok=True)
+            p = dest / f"{int(time.time())}_{name}"
+            p.write_bytes(r.content)
+            out.append(str(p))
+        except Exception:  # noqa: BLE001 — a failed download is not a failed message
+            logger.exception("slack: could not download %s", name)
+    return out
+
+
+_BRIDGE: SlackBridge | None = None
+
+
+def current() -> "SlackBridge | None":
+    return _BRIDGE
+
+
+def start(*, start_turn, answer, interject, downloads_dir=None) -> bool:
+    """Connect to Slack and start mirroring. False when it is not set up.
+
+    The three callbacks are how this reaches the pipeline without importing the
+    server that owns it (which imports this): ``start_turn(text, files) -> rid``,
+    ``answer(request_id, text) -> bool``, ``interject(request_id, text) -> bool``.
+    """
+    global _BRIDGE
+    if not enabled():
+        return False
+    if not configured():
+        logger.warning("slack: enabled, but SLACK_BOT_TOKEN / SLACK_APP_TOKEN are "
+                       "not set — nothing to connect with")
+        return False
+    try:
+        from slack_sdk import WebClient
+        # The `builtin` client, deliberately: it is the SDK's dependency-free
+        # synchronous one. The `websockets` and `aiohttp` backends are asyncio,
+        # and this host has no event loop of its own to run one on.
+        from slack_sdk.socket_mode.builtin import SocketModeClient
+        from slack_sdk.socket_mode.response import SocketModeResponse
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("slack: SDK unavailable (%s) — bridge not started", exc)
+        return False
+
+    allowed = _env_list("SLACK_ALLOWED_USERS") or list(_setting("allowed_users", []) or [])
+    if not allowed:
+        logger.warning(
+            "slack: SLACK_ALLOWED_USERS is empty — the bridge will connect but "
+            "refuse every message. Anyone able to DM the bot could otherwise run "
+            "generations and tools on this machine.")
+
+    web = WebClient(token=os.environ["SLACK_BOT_TOKEN"])
+    bridge = SlackBridge(client=web, start_turn=start_turn, answer=answer,
+                         interject=interject, allowed_users=allowed)
+    try:
+        bridge.bot_user_id = str((web.auth_test() or {}).get("user_id") or "")
+    except Exception:  # noqa: BLE001
+        logger.exception("slack: auth_test failed — check SLACK_BOT_TOKEN")
+        return False
+
+    # Where the mirror posts: the DM with the first allowed user. A turn started
+    # in the panel has no Slack conversation of its own, so it needs somewhere to
+    # go, and "the person who is allowed to drive it" is the only right answer.
+    channel = str(_setting("channel", "") or "")
+    if not channel and allowed:
+        try:
+            opened = web.conversations_open(users=allowed[0])
+            channel = str(((opened or {}).get("channel") or {}).get("id") or "")
+        except Exception:  # noqa: BLE001
+            logger.exception("slack: could not open a DM with %s", allowed[0])
+    bridge.default_channel = channel
+    if not channel:
+        logger.warning("slack: no channel to post in — mirroring is disabled")
+
+    dest = Path(downloads_dir) if downloads_dir else Path.cwd() / "output" / _DOWNLOAD_DIRNAME
+    socket = SocketModeClient(app_token=os.environ["SLACK_APP_TOKEN"], web_client=web)
+
+    def _handle(client, req):  # noqa: ANN001
+        try:
+            client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
+        except Exception:  # noqa: BLE001
+            logger.exception("slack: ack failed")
+        if str(getattr(req, "type", "")) != "events_api":
+            return
+        event = ((getattr(req, "payload", None) or {}).get("event") or {})
+        if not is_actionable(event):
+            return
+        # Off the socket thread: routing starts a turn, and a turn is minutes long.
+        threading.Thread(
+            target=_route_message, args=(bridge, web, event, dest),
+            name="agentY-slack-msg", daemon=True).start()
+
+    socket.socket_mode_request_listeners.append(_handle)
+    bridge._socket = socket
+    bridge.start_worker()
+    try:
+        socket.connect()
+    except Exception:  # noqa: BLE001
+        logger.exception("slack: could not connect (Socket Mode enabled? "
+                         "is SLACK_APP_TOKEN an app-level token with "
+                         "connections:write?)")
+        bridge.stop()
+        return False
+    _BRIDGE = bridge
+    logger.info("slack: connected as %s, posting in %s", bridge.bot_user_id, channel or "(nowhere)")
+    return True
+
+
+def _route_message(bridge: SlackBridge, web, event: dict, dest) -> None:
+    user = str(event.get("user") or "")
+    text = str(event.get("text") or "")
+    channel = str(event.get("channel") or "")
+    # The DM the message came from is where the answer belongs, even if the
+    # mirror was pointed somewhere else at startup.
+    if channel and not bridge.default_channel:
+        bridge.default_channel = channel
+    files = download_files(web, event, dest) if event.get("files") else []
+    result = bridge.route(user, text, files)
+    action = result.get("action")
+    if action == "denied":
+        bridge.post(channel, "_Not authorised. Ask the owner of this agentY host "
+                             "to add your Slack member id to `SLACK_ALLOWED_USERS`._")
+    elif action == "interject":
+        bridge.post(channel, "_Passed to the turn already running._")
+    logger.info("slack: message from %s → %s (%s)", user, action, result.get("why", ""))

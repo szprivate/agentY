@@ -64,6 +64,7 @@ from src.utils import conversation_store as cs
 from src.utils import status_bus
 from src.utils import notify_bus
 from src.utils import interject_bus
+from src.utils import turn_bus
 from src.utils import turn_watchdog as _wd
 from src.utils.media_loaders import CANDIDATES as _LOADER_CANDIDATES
 from src.utils.models import AgentSession
@@ -816,7 +817,7 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
                          canvas_prompt: dict | None = None,
                          canvas_hooks: list | None = None,
                          canvas_selection: list | None = None,
-                         dry_run: bool = False) -> None:
+                         dry_run: bool = False, origin: str = "panel") -> None:
     """Run one turn, guaranteeing the SSE queue is always terminated.
 
     The queue's ``None`` sentinel is what ends the stream, and ``done`` is what
@@ -829,6 +830,11 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
     trusted to every path inside.
     """
     _wd.begin(req_id, thread_id)
+    # Everything this turn puts on the queue reaches the panel exactly as before,
+    # and is offered to whoever else is watching (the Slack bridge). One wrapper
+    # at the one place a turn starts, so nothing inside the turn has to know.
+    out_q = turn_bus.tee(out_q, request_id=req_id, thread_id=thread_id,
+                         origin=origin, text=message)
     finished = {"emitted": False}
     try:
         _run_pipeline_turn(thread_id, message, image_paths, out_q, req_id, finished,
@@ -1938,6 +1944,12 @@ _KNOWN_ENV_KEYS = [
     "HF_TOKEN", "ANTHROPIC_API_KEY", "COMFYUI_API_KEY",
     "DASHSCOPE_API_KEY", "DASHSCOPE_BASE_URL",
     "OPENAI_API_KEY", "GEMINI_API_KEY",
+    # Slack bridge. Listed here so the settings UI offers the three fields the
+    # workspace side cannot be set up without, rather than sending someone to a
+    # text editor for the one integration whose whole point is not being at the
+    # machine. SLACK_ALLOWED_USERS is not a secret and is deliberately not named
+    # like one — it renders as a plain, readable field.
+    "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_ALLOWED_USERS",
 ]
 
 
@@ -3212,4 +3224,75 @@ def start_agentY_server(agent, host: str = "127.0.0.1", port: int = 5000) -> boo
     _server_thread.start()
     logger.info("agentY chat host started on http://%s:%d", host, port)
     _register_with_comfyui()  # so the sidebar's "Start server" button knows where we live
+    _start_slack_bridge()
     return True
+
+
+# ── Slack: a second line in, and a second place to watch ──────────────────────
+
+def _slack_start_turn(text: str, image_paths: list) -> str:
+    """Run a turn asked for from Slack, in the conversation the panel is in.
+
+    The thread is the one the last turn used, so Slack continues the session
+    rather than forking a second one nobody is looking at. Its events reach the
+    panel too — the queue here is drained and discarded, but the turn bus does
+    not care who asked, which is the whole point of it.
+    """
+    thread_id = turn_bus.last_thread_id()
+    if not thread_id or cs.get_thread(thread_id) is None:
+        recent = cs.list_threads(limit=1)
+        thread_id = recent[0]["id"] if recent else cs.create_thread(title="Slack")
+    if text:
+        cs.add_message(thread_id, "user", text)
+    q: queue.Queue = queue.Queue()
+    rid = uuid.uuid4().hex
+    threading.Thread(target=_run_pipeline_stream,
+                     args=(thread_id, text, list(image_paths or []), q, rid),
+                     kwargs={"origin": "slack"},
+                     name="agentY-slack-turn", daemon=True).start()
+    # Nothing reads this queue: Slack is fed by the bus, not by the stream. Drain
+    # it anyway, or the turn blocks on a queue that fills and never empties.
+    threading.Thread(target=_drain_queue, args=(q,), daemon=True).start()
+    return rid
+
+
+def _drain_queue(q: "queue.Queue") -> None:
+    while True:
+        try:
+            if q.get(timeout=3600) is None:
+                return
+        except queue.Empty:
+            return
+
+
+def _slack_answer(request_id: str, text: str) -> bool:
+    """Feed a Slack reply to an agent question that is holding a turn open."""
+    with _reply_lock:
+        entry = _reply_registry.get(request_id)
+    if not entry:
+        return False
+    loop, q = entry
+    loop.call_soon_threadsafe(q.put_nowait, text)
+    return True
+
+
+def _slack_interject(request_id: str, text: str) -> bool:
+    """Hand a Slack message to the turn already running (see /agentY/interject)."""
+    return bool(interject_bus.post(request_id, text, urgent=False))
+
+
+def _start_slack_bridge() -> None:
+    try:
+        from src.utils import slack_bridge
+    except Exception:  # noqa: BLE001
+        return
+    if not slack_bridge.enabled():
+        return
+    try:
+        ok = slack_bridge.start(start_turn=_slack_start_turn, answer=_slack_answer,
+                                interject=_slack_interject,
+                                downloads_dir=_project_root() / "output" / "slack_uploads")
+        if ok:
+            status_bus.notify("💬 Slack bridge connected — turns mirror to your DM.")
+    except Exception:  # noqa: BLE001 — Slack must never stop the host from starting
+        logger.exception("slack: bridge failed to start")

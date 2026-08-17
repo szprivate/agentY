@@ -34,6 +34,13 @@ Pillow>=10.0.0
 # Chainlit GUI. werkzeug ships with flask; conversations persist to local SQLite
 # (stdlib) so no Postgres/boto3/asyncpg/sqlalchemy are needed anymore.
 flask>=3.0.0
+# Slack bridge (src/utils/slack_bridge.py) — a second line into the agent, off
+# by default. Only the `builtin` Socket Mode client is used, which is the SDK's
+# dependency-free synchronous one: no websocket-client, no aiohttp event loop for
+# this host to run. Nothing here connects to anything until the tokens are set
+# AND slack.enabled is turned on.
+slack-sdk>=3.27.0
+
 # Local FAISS memory layer (mem0 + nomic-embed-text via Ollama)
 mem0ai>=1.0.0
 faiss-cpu>=1.7.0

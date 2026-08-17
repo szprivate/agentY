@@ -28,6 +28,7 @@ An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanony
 - **Results as graph nodes** — every generated image/video is added to the open ComfyUI graph as a `LoadImage` / video-loader node (staged into ComfyUI's input dir), instead of being shown inline. The chat carries the agent's *text*.
 - **Canvas hook nodes** — annotate the graph with **`agentY hook`** nodes ("sweep the seed 6×", "upscale then add film grain") and let the agent run them; chain hooks for multi-step tasks, **bake** a chain into reusable native ComfyUI **subgraphs**, or run an interactive **iterative-refine loop** (one gen per turn, feeding each result back in). See [Canvas nodes](#canvas-nodes) and the [hook system guide](docs/using-agentY.md#the-hook-system).
 - **MCP support** — call tools from external **MCP servers** (config-driven `config/mcp.json`, `http`/`sse`/`stdio`, with `none` / `header` / **OAuth** auth). Ships with **Magnific** wired via OAuth (one-click *Authorize…* in Settings). See [MCP servers](docs/using-agentY.md#mcp-servers).
+- **Slack bridge (optional, off by default)** — a **second line** into the agent alongside the sidebar, never instead of it. Every turn is mirrored to your Slack DM as it runs, *including the ones you start in the panel*, so you can queue a render at the desk and watch it finish from a phone; a DM back drives the same conversation. Outbound **Socket Mode**, so nothing has to be reachable from the internet. See [Slack](docs/slack.md).
 - **Persistent chat history** — threads, messages, and the per-thread image gallery are stored in a self-contained local **SQLite** database (`memory/conversations.sqlite`). No Docker, Postgres, or S3.
 - **Slash commands** — `/restart`, `/stop`, `/unload`, `/clear_vram`, `/images`, `/clearhistory`, `/switch_model`, `/add_workflow`, `/remove_workflow`, `/resend`, `/qa` — with an in-panel autocomplete popup.
 - **In-panel Settings & token usage** — edit auth keys (`.env`) and your settings (saved to `config/settings.local.json`), and review per-model token cost, from ComfyUI's own Settings panel (no file editing required).
@@ -203,7 +204,8 @@ unpushed commits, it is `--ff-only` (no merge, rebase or reset), and being offli
 is not an error — whatever it declines to do, it says so. `requirements.txt`
 changes trigger a reinstall before the app starts.
 
-Opt out with `auto_update = false` in settings, `.un_agent.ps1 -NoUpdate`, or
+Opt out with `auto_update = false` in settings, `.
+un_agent.ps1 -NoUpdate`, or
 `AGENTY_NO_UPDATE=1`. Set `comfyui_dir` if your ComfyUI isn't next to agentY.
 
 ### 5. Configure defaults (optional)
@@ -330,6 +332,9 @@ You can also do this from the chat with `/add_workflow <path>` (or `/add_workflo
 - [**Using agentY**](docs/using-agentY.md) — the full, screenshot-driven usage
   guide: chat, the canvas **hook system**, settings, MCP, token usage, memory,
   and model configuration.
+- [**Slack**](docs/slack.md) — setting up the optional Slack bridge: creating the
+  app, the scopes it needs, the allow-list, and what a turn looks like once it
+  reaches a DM.
 
 ---
 

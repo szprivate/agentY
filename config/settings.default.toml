@@ -280,3 +280,33 @@ video_frames = 3
 # Named briefings: <briefing_dir>/<name>.md holds the criteria, and an optional
 # sibling <name>.refs/ folder holds its mood images.
 briefing_dir = "./config/qa/"
+
+# Slack — a SECOND line into agentY, never a replacement for the sidebar panel.
+# Turns are mirrored to your Slack DM as they run, including the ones you start in
+# the panel (that is the point: queue a video at the desk, watch it finish from a
+# phone), and a DM back drives the same conversation the panel is in.
+#
+# Off unless BOTH tokens are in .env — this section only decides how it behaves:
+#   SLACK_BOT_TOKEN=xoxb-…      scopes: chat:write, files:write, im:history,
+#                               im:read, im:write, users:read
+#   SLACK_APP_TOKEN=xapp-…      app-level token with connections:write
+#   SLACK_ALLOWED_USERS=U0123…  Slack member ids allowed to drive the agent
+#
+# SLACK_ALLOWED_USERS has no default and is not optional: anyone able to DM the bot
+# could otherwise run generations, tools and scripts on this machine. Empty means
+# the bridge connects and refuses every message. See docs/slack.md.
+[slack]
+# OFF by default. Turning it on takes effect on the next agent start.
+enabled = false
+# Where the mirror posts. Blank = the DM with the first allowed user, which is
+# what you want; set a channel id only if the whole team should see the pipeline.
+channel = ""
+# Fallback for SLACK_ALLOWED_USERS, if you would rather keep the list in settings.
+allowed_users = []
+# What the Slack thread under each turn carries. The answer and any generated
+# media are always posted; these two are the detail the panel keeps in collapsible
+# blocks — turn them off for a quieter channel.
+show_tools = true
+show_thinking = true
+# Files above this are named rather than uploaded (Slack rejects them anyway).
+max_upload_mb = 45
