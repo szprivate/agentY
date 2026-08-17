@@ -105,6 +105,27 @@ about — "make this warmer" with a photo works the way you would expect.
 
 ---
 
+## Asking for a file
+
+Beyond the automatic mirror, the agent can hand you a **file** on purpose —
+"send me the shot list as JSON", "send me the third frame", "send me that log".
+Any type: image, video, audio, text, JSON, a script.
+
+It goes to the same DM and nowhere else — the tool cannot post to a channel, to
+another person, or to a workspace. Files a run *generated* are already mirrored
+as they land, so it does not re-send those; this is for the ones nothing else
+would send. Up to ten per request: a DM is where you read one thing on a phone,
+not a folder to sync into.
+
+Anything too large for Slack, or missing from disk, comes back as a path rather
+than as silence.
+
+The tool only exists while the bridge is on — with `enabled` off it is not
+offered to the agent at all, so it costs nothing on a machine that does not use
+it.
+
+---
+
 ## Settings
 
 Under **Slack bridge** in the settings dialog (`[slack]` in

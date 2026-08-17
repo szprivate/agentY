@@ -334,6 +334,82 @@ class TokenTest(unittest.TestCase):
         self.assertIn("SLACK_APP_TOKEN", said[0])
 
 
+class SendFilesTest(unittest.TestCase):
+    """The agent handing a file over on purpose.
+
+    Distinct from the mirror, which uploads what a run produced. This is for the
+    rest: the JSON it wrote, one frame picked out of sixty, a log worth reading.
+    Every file is checked here rather than in the worker so the agent learns what
+    it actually sent while it is still writing the sentence about it.
+    """
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        self.b = _bridge()
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.p = Path(self.dir.name)
+
+    def _file(self, name, size=8):
+        f = self.p / name
+        f.write_bytes(b"x" * size)
+        return str(f)
+
+    def test_a_file_is_uploaded(self):
+        out = self.b.send_files([self._file("notes.json")])
+        self.b.flush()
+        self.assertEqual(len(out["sent"]), 1)
+        self.assertEqual(self.b.client.uploaded[0]["filename"], "notes.json")
+
+    def test_any_kind_of_file_goes(self):
+        """Not just media — a JSON or a script is often the useful thing."""
+        names = ["a.png", "b.mp4", "c.wav", "d.json", "e.py", "f.log"]
+        self.b.send_files([self._file(n) for n in names])
+        self.b.flush()
+        self.assertEqual([u["filename"] for u in self.b.client.uploaded], names)
+
+    def test_the_message_is_posted_above_them(self):
+        self.b.send_files([self._file("a.png")], message="**here** is the frame")
+        self.b.flush()
+        self.assertIn("*here* is the frame", self.b.client.posted[0]["text"],
+                      "and converted to Slack's markdown")
+
+    def test_no_message_posts_no_message(self):
+        self.b.send_files([self._file("a.png")])
+        self.b.flush()
+        self.assertEqual(self.b.client.posted, [])
+
+    def test_a_path_that_is_not_there_is_reported_not_silently_skipped(self):
+        out = self.b.send_files([self._file("real.png"), "D:/nope/ghost.png"])
+        self.assertEqual(len(out["sent"]), 1)
+        self.assertEqual(out["missing"], ["D:/nope/ghost.png"])
+
+    def test_one_bad_path_does_not_lose_the_good_ones(self):
+        self.b.send_files(["D:/nope/ghost.png", self._file("real.png")])
+        self.b.flush()
+        self.assertEqual(len(self.b.client.uploaded), 1)
+
+    def test_a_file_slack_would_reject_is_named_rather_than_attempted(self):
+        with mock.patch("src.utils.slack_bridge._setting",
+                        side_effect=lambda k, d: 0 if k == "max_upload_mb" else d):
+            out = self.b.send_files([self._file("huge.mp4", size=4096)])
+        self.b.flush()
+        self.assertEqual(out["sent"], [])
+        self.assertEqual(len(out["too_large"]), 1)
+        self.assertEqual(self.b.client.uploaded, [])
+
+    def test_with_nowhere_to_post_it_says_so(self):
+        b = _bridge(default_channel="")
+        self.assertIn("nowhere to post", b.send_files([self._file("a.png")])["error"])
+
+    def test_uploading_happens_off_the_calling_thread(self):
+        self.b.send_files([self._file("a.png")])
+        self.assertEqual(self.b.client.uploaded, [], "it uploaded inline")
+        self.b.flush()
+        self.assertTrue(self.b.client.uploaded)
+
+
 class InboundEventTest(unittest.TestCase):
     """Slack sends a great deal that looks like a message and is not."""
 

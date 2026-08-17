@@ -45,7 +45,7 @@ import time
 from pathlib import Path
 
 from src.utils import turn_bus
-from src.utils.slack_render import Post, TurnRender, clip
+from src.utils.slack_render import Post, TurnRender, clip, to_mrkdwn
 
 logger = logging.getLogger("agentY.slack")
 
@@ -358,6 +358,41 @@ class SlackBridge:
                 st = SlackTurn(self, turn, channel)
                 self.turns[turn.request_id] = st
         st.feed(event)
+
+    # ── the agent handing something over on purpose ───────────────────────────
+    def send_files(self, paths: list, message: str = "") -> dict:
+        """Put files in the DM deliberately, rather than because a run made them.
+
+        The mirror uploads what a run *produced*. This is for everything else the
+        agent decides is worth having in your hand: the JSON it just wrote, one
+        chosen frame out of sixty, a script, a log it wants you to look at.
+
+        Every file is checked here rather than in the worker, so the agent is told
+        what it actually sent while it can still say so in the same breath — a
+        report that arrives after the turn is a report nobody reads.
+        """
+        if not self.client:
+            return {"error": "the Slack bridge is not connected."}
+        if not self.default_channel:
+            return {"error": "the Slack bridge has nowhere to post — no DM was "
+                             "opened (check SLACK_ALLOWED_USERS and the im:write "
+                             "scope)."}
+        limit = int(_setting("max_upload_mb", 45)) * 1024 * 1024
+        sent, missing, too_large = [], [], []
+        for raw in paths or []:
+            p = Path(str(raw))
+            if not p.is_file():
+                missing.append(str(raw))
+            elif p.stat().st_size > limit:
+                too_large.append(str(p))
+            else:
+                sent.append(p)
+        if message.strip():
+            self._call(self.post, self.default_channel, to_mrkdwn(clip(message, 3000)))
+        for p in sent:
+            self._call(self._do_upload, self.default_channel, str(p), "")
+        return {"sent": [str(p) for p in sent], "missing": missing,
+                "too_large": too_large}
 
     # ── inbound ───────────────────────────────────────────────────────────────
     def route(self, user: str, text: str, files: list | None = None) -> dict:

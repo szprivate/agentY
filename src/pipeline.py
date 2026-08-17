@@ -75,6 +75,12 @@ _ORCH_PARTIALS_DIR = Path(__file__).parent.parent / "config" / "system_prompts" 
 # rather than a workflow, and clearing the whole thing is one gesture they can
 # make themselves.
 _MAX_CANVAS_DELETE = 25
+
+# How many files one send_to_slack call may upload. A DM is where someone reads
+# one thing on a phone, not a folder to sync into: past a handful the useful file
+# is the one they have to scroll past ten others to find.
+_MAX_SLACK_FILES = 10
+
 _orch_partial_cache: dict[str, str] = {}
 
 
@@ -1972,18 +1978,86 @@ class Pipeline:
                             "next prompt or a go-back. Do NOT signal_workflow_ready."),
             })
 
+        @_tool
+        async def send_to_slack(paths: list, message: str = "") -> str:
+            """Put file(s) in the user's Slack DM, where they can open them.
+
+            For when the thing worth having is a FILE and the user is not at the
+            machine: the JSON you just wrote, one chosen frame out of sixty, a
+            script, a log, a chart. Any type — image, video, audio, text, JSON.
+
+            You do NOT need this for media a run produced: every generated
+            image/video is already mirrored into that DM automatically as it
+            lands, and sending it again just posts it twice. Use this for the
+            files nothing else would send — ones you wrote, ones you picked out of
+            a larger set, or anything on disk the user asked you to send them.
+
+            It goes to the one DM the bridge is set up for and nowhere else: it
+            cannot post to a channel, another person, or a workspace.
+
+            Say in your reply what you sent, and note that files the user did not
+            ask for are clutter in a DM — send the ones that answer the question.
+
+            Args:
+                paths: Absolute paths of the files to upload.
+                message: Optional line posted above them, saying what they are.
+            """
+            from src.utils import slack_bridge as _slack
+
+            bridge = _slack.current()
+            if bridge is None:
+                return json.dumps({
+                    "error": "the Slack bridge is not running, so there is nowhere "
+                             "to send this. Tell the user the file is on disk and "
+                             "give them the path.",
+                    "paths": [str(p) for p in (paths or [])],
+                })
+            wanted = [str(p) for p in (paths or []) if str(p or "").strip()]
+            wanted = list(dict.fromkeys(wanted))
+            if not wanted:
+                return json.dumps({"error": "no paths given — name the file(s) to send."})
+            if len(wanted) > _MAX_SLACK_FILES:
+                return json.dumps({
+                    "error": f"{len(wanted)} files is more than this tool will send "
+                             f"at once ({_MAX_SLACK_FILES}). A DM is not a folder — "
+                             "send the ones that answer the question, or tell the "
+                             "user where the rest are.",
+                })
+            result = bridge.send_files(wanted, message=message or "")
+            if result.get("error"):
+                return json.dumps(result)
+            note = f"Sent {len(result['sent'])} file(s) to the user's Slack DM."
+            if result.get("missing"):
+                note += (" NOT sent (not on disk): "
+                         + ", ".join(result["missing"]) + ".")
+            if result.get("too_large"):
+                note += (" NOT sent (too large for Slack): "
+                         + ", ".join(result["too_large"])
+                         + " — give the user the path instead.")
+            return json.dumps({"status": "sent", **result, "message": note})
+
         # NOTE: intent classification is the orchestrator's own job in free-agent
         # mode — it routes natively by choosing which specialist tool to call. The
         # former `classify_intent` advisory tool (a separate detect_user_intent LLM
         # round-trip) was never used in practice and only enlarged the tool surface,
         # so it is no longer exposed. The detect_user_intent agent survives only for
         # the legacy free_agent=False router path.
-        return [prepare_workflow, run_info,
-                run_web_search, run_planner, apply_canvas_hooks, stop_hook_run,
-                halt_for_review, run_workflow_now, add_canvas_workflow,
-                get_canvas_node, set_canvas_node_params, place_canvas_text,
-                delete_canvas_nodes, iterate_step,
-                list_agent_settings, set_agent_setting]
+        tools = [prepare_workflow, run_info,
+                 run_web_search, run_planner, apply_canvas_hooks, stop_hook_run,
+                 halt_for_review, run_workflow_now, add_canvas_workflow,
+                 get_canvas_node, set_canvas_node_params, place_canvas_text,
+                 delete_canvas_nodes, iterate_step,
+                 list_agent_settings, set_agent_setting]
+        # Offered only where there is a Slack to send to. Every tool in this list
+        # is described to the model on every call, so one nobody can use is a
+        # standing token cost and a standing invitation to try it.
+        try:
+            from src.utils import slack_bridge as _slack
+            if _slack.enabled():
+                tools.append(send_to_slack)
+        except Exception:  # noqa: BLE001 — never let this cost the whole toolset
+            pass
+        return tools
 
     async def _run_canvas_batch(self, paths: list[str], notes: list,
                                 labels: list | None = None) -> str:
