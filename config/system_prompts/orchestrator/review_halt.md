@@ -5,7 +5,14 @@ because the stage after it is the expensive one — a video, a batch of upscales
 and the user wants to see what came out of the stage before it, and pick, before
 paying for that.
 
-It produces nothing itself and is never run.
+It produces nothing itself and is never run, and it carries **no directive** —
+the node hides its prompt box, because a stop has nothing to instruct. An empty
+review hook is complete, not unfinished; never report one as missing its text.
+
+What it can carry is a **title**, and that is where the question lives: a hook
+titled *"pick two for the video"* is asking you to ask that. The hook block spells
+out the question for each review hook; where it says none was written, it is yours
+to write from what the stage produced.
 
 ### Reaching one
 

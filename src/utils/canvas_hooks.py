@@ -2179,12 +2179,31 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             "the turn. That collects what the stage produced into an `agentY image "
             "collector` on the user's canvas and hands them the choice of which "
             "outputs go on to the next stage. A review hook produces nothing itself "
-            "and is never run:"
+            "and is never run. It carries no directive either — the node hides its "
+            "prompt box, because a stop has nothing to instruct — so an empty one is "
+            "complete, not unfinished:"
         )
         for h in review_hooks:
             hid = h.get("hook_node_id")
-            ask = _trim(h.get("directive"), 200) or "(no question written — ask which to keep)"
-            lines.append(f'- review hook {hid}{_t(h)} → put to the user: "{ask}"')
+            # A review hook has no prompt box on the node — there is nothing for
+            # it to instruct. What it CAN carry is a title, and a user who titles
+            # one "pick two for the video" has written the question there.
+            #
+            # The title wins over any leftover directive, because the title is
+            # the part they can still SEE: text in a hidden box cannot be edited,
+            # so if it outranked the title, retitling the node to fix the question
+            # would do nothing and show no reason why. A leftover long enough to
+            # survive the load-time promotion (agent_hook.js) is read only when
+            # the hook is untitled, which is the one case nothing else says.
+            ask = _trim(h.get("directive"), 200)
+            if hook_title(h):
+                lines.append(f"- review hook {hid}{_t(h)} → its title is the question; "
+                             "put that to the user")
+            elif ask:
+                lines.append(f'- review hook {hid} → put to the user: "{ask}"')
+            else:
+                lines.append(f"- review hook {hid} → untitled, so no question was "
+                             "written: ask which of the outputs should go on")
         if gated_ids:
             lines.append(
                 "  NOT this turn — hook(s) "

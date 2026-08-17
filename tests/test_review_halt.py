@@ -142,6 +142,62 @@ class BlockTest(unittest.TestCase):
         self.assertNotIn("REVIEW HOOK", block)
 
 
+class NoPromptTest(unittest.TestCase):
+    """A review hook has no directive — the node hides its prompt box.
+
+    Nothing ever read it: `halt_for_review` takes an id, and what the stop is
+    for is written in the wiring. The one thing a stop can still say is WHICH
+    question to ask, and the place that survives on a canvas is the title, which
+    is also the part the user can actually see.
+    """
+
+    def _one(self, directive="", title=""):
+        h = _hook(11, "review", prev=10, directive=directive)
+        h["title"] = title
+        return describe_hooks([_hook(10, "make_workflow"), h], {})
+
+    def test_an_empty_review_hook_is_not_reported_as_unfinished(self):
+        block = self._one()
+        self.assertIn("REVIEW HOOK", block)
+        self.assertIn("empty one is complete", block)
+
+    def test_the_title_is_the_question_when_there_is_one(self):
+        block = self._one(title="pick two for the video")
+        self.assertIn('"pick two for the video"', block)
+        self.assertIn("its title is the question", block)
+
+    def test_untitled_and_empty_asks_the_agent_to_write_the_question(self):
+        block = self._one()
+        self.assertIn("no question was written", block)
+        self.assertIn("which of the outputs should go on", block)
+
+    def test_the_default_node_title_is_not_mistaken_for_a_question(self):
+        """Every hook is called "agentY hook", so it asks nothing."""
+        block = self._one(title="agentY hook")
+        self.assertIn("no question was written", block)
+
+    def test_a_directive_typed_before_the_box_was_hidden_still_counts(self):
+        """They wrote it AS the question; an untitled saved graph keeps it."""
+        block = self._one(directive="which two read best as a wide?")
+        self.assertIn('put to the user: "which two read best as a wide?"', block)
+
+    def test_the_title_beats_a_leftover_in_the_hidden_box(self):
+        """Otherwise retitling the node to fix the question would do nothing.
+
+        The box cannot be opened on a review hook any more, so text still in it
+        is text the user cannot edit. If that outranked the title, the only
+        gesture left to them would silently have no effect.
+        """
+        block = self._one(directive="upscale 2x and add film grain",
+                          title="pick two for the video")
+        self.assertIn("its title is the question", block)
+        self.assertNotIn("upscale 2x", block)
+
+    def test_the_question_is_not_printed_twice(self):
+        block = self._one(title="pick two for the video")
+        self.assertEqual(block.count("pick two for the video"), 1)
+
+
 class GateTest(unittest.TestCase):
     """The execution tools while a halt is unanswered."""
 
