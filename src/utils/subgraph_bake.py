@@ -248,7 +248,12 @@ def build_subgraph_definition(stage: dict) -> dict:
             outs[oslot]["links"] = (outs[oslot].get("links") or []) + [lid]
             links.append({"id": lid, "origin_id": prod["id"], "origin_slot": oslot,
                           "target_id": py_id, "target_slot": k, "type": t})
-            py_inputs.append({"name": f"in{k}", "type": t, "link": lid})
+            # `inputs.in0`, not `in0`. The node's autogrow container is called
+            # `inputs` with template prefix `in`, so ComfyUI expands the slots to
+            # `inputs.in<k>` — the same shape as a hook's `anchors.anchor0`. A bare
+            # `in0` matches no declared input, gets handed to execute() as a loose
+            # keyword, and the run dies with "unexpected keyword argument 'in0'".
+            py_inputs.append({"name": f"inputs.in{k}", "type": t, "link": lid})
         nodes.append({
             "id": py_id, "type": "AgentYPython",
             "pos": [1000, 300 + len(exposed_outputs) * 70], "size": [320, 180],
