@@ -652,6 +652,50 @@ def _reset_pipeline_state(pipeline) -> None:
     pipeline._last_prior_summary = None
 
 
+# Words that mean a command even without the slash. Convenient, and for most of
+# them harmless — but two of them are also what a person says to a *paused run*.
+_BARE_COMMANDS = {"restart", "stop", "unload", "clearhistory", "images", "resend"}
+# The answers to a review halt. `stop` there means "end this run at the hook";
+# `stop` as a command means "shut the agent host down". They are not remotely the
+# same request, and one of them was answering for the other: the panel tells the
+# user in those very words to "say continue — or stop to end the run here", and
+# the action-bar button sends exactly that.
+_HALT_ANSWERS = {"stop", "continue"}
+
+
+def _is_command(message: str, thread_id: str) -> bool:
+    """Whether this message is a slash command rather than something to run.
+
+    A typed `/command` always is. A bare word only is when it cannot be mistaken
+    for an answer the user was just asked to give.
+    """
+    text = (message or "").strip()
+    if text.startswith("/"):
+        return True
+    word = text.lower()
+    if word not in _BARE_COMMANDS:
+        return False
+    if word in _HALT_ANSWERS and _halt_pending(thread_id):
+        return False
+    return True
+
+
+def _halt_pending(thread_id: str) -> bool:
+    """Is this thread stopped at a review hook, waiting to be told what to do?
+
+    Read from the store rather than from the live pipeline, because the question
+    is asked in the HTTP route — before the turn starts and before the pipeline
+    has been restored to this thread. Any failure answers "no", which is the
+    reading that leaves every command working as it always did.
+    """
+    try:
+        st = cs.load_state(thread_id) or {}
+        halt = ((st.get("agent_session") or {}).get("review_halt") or {})
+        return bool(halt.get("hook_node_id"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _restore_state(pipeline, thread_id: str) -> None:
     """Restore pipeline state for *thread_id* from the memory cache + SQLite store."""
     _reset_pipeline_state(pipeline)
@@ -3008,9 +3052,7 @@ def _build_app():
             cs.add_message(thread_id, "user", message)
 
         # Slash command? Handle synchronously, stream the result lines.
-        is_slash = message.startswith("/") or message.lower() in {
-            "restart", "stop", "unload", "clearhistory", "images", "resend"
-        }
+        is_slash = _is_command(message, thread_id)
         if is_slash:
             result = _handle_command(thread_id, message, canvas_prompt=canvas_prompt)
             if result is None:  # /resend → replay first user message as a fresh turn
