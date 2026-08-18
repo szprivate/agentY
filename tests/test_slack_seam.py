@@ -83,6 +83,29 @@ class SeamTest(unittest.TestCase):
                                             lambda limit=200: [{"id": "t_recent"}]))
         self.enterContext(mock.patch.object(srv.cs, "create_thread",
                                             lambda **k: "t_new"))
+        # The Slack side of a conversation: which thread is which. Bound in the
+        # store for real; stubbed here so the seam under test is the routing.
+        self.bound = {}
+        self.enterContext(mock.patch.object(
+            srv.cs, "set_slack_thread",
+            lambda tid, ch, ts: self.bound.__setitem__((ch, ts), tid)))
+        self.enterContext(mock.patch.object(
+            srv.cs, "get_slack_thread",
+            lambda tid: next(({"channel": c, "root_ts": s}
+                              for (c, s), v in self.bound.items() if v == tid), None)))
+        self.enterContext(mock.patch(
+            "src.utils.slack_bridge.cs.thread_for_slack",
+            lambda ch, ts: self.bound.get((ch, ts))))
+        self.enterContext(mock.patch(
+            "src.utils.slack_bridge.cs.get_slack_thread",
+            lambda tid: next(({"channel": c, "root_ts": s}
+                              for (c, s), v in self.bound.items() if v == tid), None)))
+        self.enterContext(mock.patch(
+            "src.utils.slack_bridge.cs.set_slack_thread",
+            lambda tid, ch, ts: self.bound.__setitem__((ch, ts), tid)))
+        self.enterContext(mock.patch(
+            "src.utils.slack_bridge.cs.list_threads",
+            lambda limit=200: [{"id": "t_new", "title": "New chat"}]))
 
     def _settle(self):
         # What the bridge's worker thread does continuously.
@@ -96,16 +119,22 @@ class SeamTest(unittest.TestCase):
         self.assertEqual(out["action"], "turn")
         self.assertEqual(self.ran[0]["message"], "render the hero sheet")
 
-    def test_it_lands_in_the_conversation_the_panel_is_in(self):
-        """Slack is a second window on one session, not a second session."""
+    def test_a_top_level_dm_starts_a_NEW_conversation(self):
+        """Conversations are Slack threads now: the top level is where a new one
+        begins, the way a new chat does in the panel."""
         turn_bus._last["thread_id"] = "t_panel"
         self.bridge.route("U_ME", "and now the video")
-        self.assertEqual(self.ran[0]["thread_id"], "t_panel")
+        self.assertEqual(self.ran[0]["thread_id"], "t_new",
+                         "it joined an existing conversation instead of starting one")
 
-    def test_with_nothing_run_yet_it_takes_the_most_recent_conversation(self):
-        turn_bus._last["thread_id"] = ""
-        self.bridge.route("U_ME", "hello")
-        self.assertEqual(self.ran[0]["thread_id"], "t_recent")
+    def test_replying_in_a_thread_goes_back_to_THAT_conversation(self):
+        self.bound[("D_ME", "root_abc")] = "t_earlier"
+        self.bridge.route("U_ME", "warmer", thread_ts="root_abc")
+        self.assertEqual(self.ran[0]["thread_id"], "t_earlier")
+
+    def test_a_reply_in_an_unknown_thread_starts_a_conversation_rather_than_guessing(self):
+        self.bridge.route("U_ME", "hello?", thread_ts="root_nobody_knows")
+        self.assertEqual(self.ran[0]["thread_id"], "t_new")
 
     def test_the_turn_knows_it_came_from_slack(self):
         self.bridge.route("U_ME", "go")
@@ -127,8 +156,12 @@ class SeamTest(unittest.TestCase):
                                  "rid_panel")
         self._settle()
         self.assertIn("Rendered it.", self.client.text())
-        self.assertIn("panel", self.client.posted[0]["text"],
+        self.assertIn("panel", self.client.text(),
                       "it should say the turn came from somewhere else")
+        # And it opened a thread for the conversation it belongs to, rather than
+        # dropping the answer loose in the DM.
+        self.assertTrue(self.client.posted[0]["text"].startswith("🧵"))
+        self.assertTrue(any(m.get("thread_ts") for m in self.client.posted))
 
     def test_generated_media_is_uploaded(self):
         import tempfile
@@ -252,16 +285,27 @@ class SeamTest(unittest.TestCase):
         self.assertIn("Could not take", said)
         self.assertIn("huge.mov", said)
 
-    def test_a_dm_during_a_running_turn_is_interjected(self):
-        turn_bus._active["rid_live"] = turn_bus.Turn(request_id="rid_live",
-                                                     thread_id="t")
-        self.bridge.on_turn_event({"type": "text", "data": "…"},
-                                  turn_bus._active["rid_live"])
+    def test_a_reply_in_the_running_conversation_steers_it(self):
+        turn = turn_bus.Turn(request_id="rid_live", thread_id="t_live")
+        turn_bus._active["rid_live"] = turn
+        self.bridge.on_turn_event({"type": "text", "data": "…"}, turn)
+        self.bound[("D_ME", "root_live")] = "t_live"
         with mock.patch("src.utils.interject_bus.post", return_value=True) as post:
-            out = self.bridge.route("U_ME", "actually, make it warmer")
+            out = self.bridge.route("U_ME", "actually, make it warmer",
+                                    thread_ts="root_live")
         self.assertEqual(out["action"], "interject")
         post.assert_called_once()
         self.assertEqual(self.ran, [], "it must not have started a second turn")
+
+    def test_a_message_elsewhere_during_a_run_waits_instead(self):
+        """One pipeline. Putting it into the running chat would be the wrong
+        conversation; running it alongside would corrupt both."""
+        turn = turn_bus.Turn(request_id="rid_live", thread_id="t_live")
+        turn_bus._active["rid_live"] = turn
+        self.bridge.on_turn_event({"type": "text", "data": "…"}, turn)
+        out = self.bridge.route("U_ME", "something else entirely")
+        self.assertEqual(out["action"], "busy")
+        self.assertEqual(self.ran, [])
 
 
 if __name__ == "__main__":

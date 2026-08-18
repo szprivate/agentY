@@ -3272,18 +3272,20 @@ def start_agentY_server(agent, host: str = "127.0.0.1", port: int = 5000) -> boo
 
 # ── Slack: a second line in, and a second place to watch ──────────────────────
 
-def _slack_start_turn(text: str, image_paths: list) -> str:
-    """Run a turn asked for from Slack, in the conversation the panel is in.
+def _slack_start_turn(text: str, image_paths: list, thread_id: str = "") -> str:
+    """Run a turn asked for from Slack, in the conversation it belongs to.
 
-    The thread is the one the last turn used, so Slack continues the session
-    rather than forking a second one nobody is looking at. Its events reach the
-    panel too — the queue here is drained and discarded, but the turn bus does
-    not care who asked, which is the whole point of it.
+    *thread_id* comes from the Slack thread the message was posted in. Empty
+    means a message at the top level of the DM, which starts a NEW conversation
+    — the same gesture as opening a new chat in the panel, and the reason a
+    thread is worth having: without one, every message would land in whatever
+    chat happened to be current.
+
+    Its events reach the panel too; the turn bus does not care who asked.
     """
-    thread_id = turn_bus.last_thread_id()
+    thread_id = str(thread_id or "")
     if not thread_id or cs.get_thread(thread_id) is None:
-        recent = cs.list_threads(limit=1)
-        thread_id = recent[0]["id"] if recent else cs.create_thread(title="Slack")
+        thread_id = cs.create_thread(title="New chat")
     if text:
         cs.add_message(thread_id, "user", text)
     q: queue.Queue = queue.Queue()

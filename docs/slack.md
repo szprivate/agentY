@@ -15,19 +15,49 @@ answered, and steered — from a phone.
 
 ## What it looks like
 
-One message per turn, rewritten as the answer streams in. Under it, a thread with
-the detail — the same split the panel makes with collapsible blocks:
+**One conversation, one Slack thread** — the panel's chat list, in a DM. A root
+message names the conversation, and every turn in it is a reply underneath:
 
-| in the panel | in Slack |
+```
+DM with the bot
+──────────────────────────────────────────
+🧵  Samurai references          ← a conversation
+ │   working on it… / Rendered 6 refs
+ │   🔧 run_research — 4 templates
+ │   ⏸️ Which should go on?      ← also shown in the DM
+ │
+🧵  Kaiju night shots           ← another one
+ │   Cut to 5s. Here it is.
+
+you: make a title card          ← top level = a NEW conversation
+```
+
+- **Reply inside a thread** → that conversation continues, with its history.
+- **Post at the top level** → a fresh conversation, like opening a new chat.
+
+Per turn that is at most three replies: the answer (rewritten as it streams), the
+working-out (one message that grows — Slack has only one level of threading, and
+the conversation takes it, so a message per tool would bury the answer), and the
+transient status line, which is cleared at the end.
+
+| in the panel | in the conversation's thread |
 |---|---|
-| the message bubble | the turn's message, edited as it streams |
-| media dropped on the canvas | uploaded to the DM |
-| an ask you have to answer | its own message (so it pings) — reply to answer |
-| tool calls, thinking, plans, canvas edits | replies in that message's thread |
-| the transient status line | one thread reply, rewritten and cleared at the end |
+| the message bubble | the turn's answer, edited as it streams |
+| collapsible tool / thinking / plan blocks | one working-out message that grows |
+| the transient status line | one reply, rewritten, then removed |
+| media dropped on the canvas | uploaded into the thread |
+| an ask you have to answer | a reply that is **also** shown in the DM, so it pings |
 
 A canvas edit is the one thing a phone genuinely cannot show, so it is described
 in words instead ("Collected the outputs into a review node on the canvas").
+
+### One turn at a time
+
+There is one pipeline, so one turn runs at a time. While it does, a reply **in
+its own thread** steers it (the same as typing into the panel mid-turn); anything
+else — another thread, or a new top-level message — is answered with "busy" and
+has to be sent again. Putting it into the running conversation would file it
+under a chat it was not written for.
 
 ---
 
@@ -93,12 +123,13 @@ deliberate, and the log says so.
 
 Resolved in this order, because getting it wrong is worse than any of them:
 
-1. **The agent asked you something** and is holding the turn open → your message
-   is the answer.
-2. **A turn is already running** → your message is *interjected* into it, exactly
-   as typing into the panel mid-turn does. It is not a second turn: two turns
-   through one pipeline would corrupt both.
-3. **Otherwise** → it starts a turn, in whatever conversation the panel last used.
+1. **The agent asked you something** in that conversation and is holding the turn
+   open → your message is the answer.
+2. **That conversation's turn is running** → your message is *interjected* into
+   it, exactly as typing into the panel mid-turn does.
+3. **Some other turn is running** → busy; send it again when that one finishes.
+4. **Otherwise** → it runs, in the conversation whose thread you replied in, or
+   in a new one if you posted at the top level.
 
 ### Sending it something
 

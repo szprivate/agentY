@@ -66,11 +66,11 @@ def _bridge(**kw):
 class WhoMayTalkTest(unittest.TestCase):
 
     def test_the_owner_may(self):
-        b = _bridge(start_turn=lambda t, f: "r1")
+        b = _bridge(start_turn=lambda t, f, tid="": "r1")
         self.assertEqual(b.route("U_ME", "render it")["action"], "turn")
 
     def test_a_stranger_may_not(self):
-        b = _bridge(start_turn=lambda t, f: "r1")
+        b = _bridge(start_turn=lambda t, f, tid="": "r1")
         out = b.route("U_SOMEONE", "render it")
         self.assertEqual(out["action"], "denied")
 
@@ -79,7 +79,7 @@ class WhoMayTalkTest(unittest.TestCase):
         import logging
         logging.disable(logging.CRITICAL)   # the refusal warns, on purpose
         self.addCleanup(logging.disable, logging.NOTSET)
-        b = _bridge(allowed_users=[], start_turn=lambda t, f: "r1")
+        b = _bridge(allowed_users=[], start_turn=lambda t, f, tid="": "r1")
         out = b.route("U_ME", "render it")
         self.assertEqual(out["action"], "denied")
         # The reason matters as much as the refusal: "not configured" is the one
@@ -90,17 +90,17 @@ class WhoMayTalkTest(unittest.TestCase):
 
     def test_the_bot_does_not_answer_itself(self):
         """Every mirrored message is posted BY the bot — without this it loops."""
-        b = _bridge(start_turn=lambda t, f: "r1")
+        b = _bridge(start_turn=lambda t, f, tid="": "r1")
         self.assertEqual(b.route("U_BOT", "🔧 tool")["action"], "ignored")
 
     def test_an_empty_message_is_not_a_turn(self):
-        b = _bridge(start_turn=lambda t, f: "r1")
+        b = _bridge(start_turn=lambda t, f, tid="": "r1")
         self.assertEqual(b.route("U_ME", "   ")["action"], "ignored")
 
     def test_a_bare_image_is_a_message(self):
         """A picture with no words still means 'do something with this'."""
         seen = {}
-        b = _bridge(start_turn=lambda t, f: seen.update(text=t, files=f) or "r1")
+        b = _bridge(start_turn=lambda t, f, tid="": seen.update(text=t, files=f, tid=tid) or "r1")
         self.assertEqual(b.route("U_ME", "", ["C:/a.png"])["action"], "turn")
         self.assertEqual(seen["files"], ["C:/a.png"])
 
@@ -110,7 +110,7 @@ class WhatAMessageMeansTest(unittest.TestCase):
     def setUp(self):
         self.started, self.answered, self.interjected = [], [], []
         self.b = _bridge(
-            start_turn=lambda t, f: self.started.append(t) or "r_new",
+            start_turn=lambda t, f, tid="": self.started.append((t, tid)) or "r_new",
             answer=lambda rid, t: self.answered.append((rid, t)) or True,
             interject=lambda rid, t: self.interjected.append((rid, t)) or True)
         self.addCleanup(turn_bus._active.clear)
@@ -141,16 +141,21 @@ class WhatAMessageMeansTest(unittest.TestCase):
         self.b.route("U_ME", "yes")
         self.assertEqual(self.interjected, [])
 
-    def test_a_running_turn_is_interjected_not_restarted(self):
-        """Two turns through one pipeline singleton corrupts both."""
+    def test_a_running_turn_is_never_restarted(self):
+        """Two turns through one pipeline singleton corrupts both.
+
+        Steering the running one now means replying in ITS thread (see
+        test_slack_threads); a message that names no conversation is asking for a
+        new one, and that has to wait.
+        """
         self._turn()
         self._running()
-        self.assertEqual(self.b.route("U_ME", "actually, warmer")["action"], "interject")
+        self.assertEqual(self.b.route("U_ME", "actually, warmer")["action"], "busy")
         self.assertEqual(self.started, [])
 
     def test_with_nothing_running_it_starts_a_turn(self):
         self.assertEqual(self.b.route("U_ME", "render it")["action"], "turn")
-        self.assertEqual(self.started, ["render it"])
+        self.assertEqual(self.started, [("render it", "")])
 
     def test_a_finished_turn_does_not_swallow_the_next_message(self):
         self._turn(ended=True)
@@ -171,6 +176,9 @@ class MirrorTest(unittest.TestCase):
         self.b = _bridge(client=self.client)
         self.turn = turn_bus.Turn(request_id="r1", thread_id="t1",
                                   origin="panel", text="make a hero sheet")
+        # The conversation's thread, already open — its creation has its own tests.
+        self.enterContext(mock.patch.object(self.b, "conversation_root",
+                                            return_value="root1"))
 
     def _feed(self, *events):
         for ev in events:
@@ -192,12 +200,38 @@ class MirrorTest(unittest.TestCase):
         self.assertEqual(len(self.client.posted), 1, "one message per turn")
         self.assertIn("four frames.", self.client.updated[-1]["text"])
 
-    def test_detail_goes_into_that_message_s_thread(self):
+    def test_everything_lands_in_the_conversation_s_thread(self):
+        """The thread belongs to the CONVERSATION now — answer and working-out
+        alike are replies in it, not loose messages in the DM."""
         self._feed({"type": "text", "data": "hi"},
                    {"type": "tool", "phase": "call", "id": "t1", "name": "run_research"})
-        threaded = [p for p in self.client.posted if p.get("thread_ts")]
-        self.assertTrue(threaded, "the tool call was not threaded")
-        self.assertIn("run_research", threaded[0]["text"])
+        self.assertTrue(self.client.posted)
+        for msg in self.client.posted:
+            self.assertEqual(msg.get("thread_ts"), "root1", msg.get("text"))
+
+    def test_the_working_out_is_one_message_however_many_tools_run(self):
+        """A message per tool would bury the answer under its own working-out."""
+        self._feed({"type": "text", "data": "hi"},
+                   {"type": "tool", "phase": "call", "id": "a", "name": "run_research"},
+                   {"type": "tool", "phase": "result", "id": "a", "name": "run_research",
+                    "result": "4 templates"},
+                   {"type": "tool", "phase": "call", "id": "b", "name": "prepare_workflow"})
+        detail = [p for p in self.client.posted if "run_research" in p.get("text", "")]
+        self.assertEqual(len(detail), 1, "the working-out was posted more than once")
+        self.assertIn("prepare_workflow", self.client.updated[-1]["text"])
+
+    def test_a_question_is_broadcast_so_it_is_not_missed_in_a_thread(self):
+        self._feed({"type": "ask", "prompt": "Retry the failed one?"})
+        ask = next(p for p in self.client.posted if "Retry" in p.get("text", ""))
+        self.assertEqual(ask.get("thread_ts"), "root1")
+        self.assertTrue(ask.get("reply_broadcast"), "a thread reply can go unseen")
+
+    def test_an_ordinary_progress_line_is_NOT_broadcast(self):
+        """Broadcasting the working-out would put the whole turn in the DM,
+        which is the noise the thread exists to keep out."""
+        self._feed({"type": "text", "data": "hi"}, {"type": "progress", "data": "step 1"})
+        for msg in self.client.posted:
+            self.assertFalse(msg.get("reply_broadcast"), msg.get("text"))
 
     def test_a_file_is_uploaded_to_the_channel(self):
         import tempfile

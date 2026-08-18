@@ -44,6 +44,7 @@ import threading
 import time
 from pathlib import Path
 
+from src.utils import conversation_store as cs
 from src.utils import turn_bus
 from src.utils.slack_render import Post, TurnRender, clip, to_mrkdwn
 
@@ -130,12 +131,21 @@ class _Keyed:
 
 
 class SlackTurn:
-    """One turn, as it appears in Slack: a message, its thread, and its files."""
+    """One turn, as it appears in Slack: a few replies inside its conversation.
 
-    def __init__(self, bridge, turn, channel: str):
+    The Slack thread belongs to the CONVERSATION, not to the turn — one thread
+    per agentY conversation, the way the side panel has one pane per chat. So a
+    turn is at most three replies in it: the answer, the working-out, and the
+    transient status line. Anything that must be *seen* rather than found is
+    broadcast, which shows it in the DM while leaving it in the thread it
+    belongs to.
+    """
+
+    def __init__(self, bridge, turn, channel: str, root_ts: str = ""):
         self.bridge = bridge
         self.turn = turn
         self.channel = channel
+        self.root_ts = root_ts
         self.render = TurnRender(
             origin=turn.origin, started_by=turn.text,
             show_thinking=bool(_setting("show_thinking", True)),
@@ -171,19 +181,35 @@ class SlackTurn:
             self.ask_request_id = ""
 
     def _apply(self, post: Post) -> None:
-        """Runs on the worker thread — every Slack id in here is single-threaded."""
+        """Runs on the worker thread — every Slack id in here is single-threaded.
+
+        Including the conversation's root message: creating it is a network call,
+        and the one thing this bridge must never do is make one on the turn's own
+        thread.
+        """
+        if not self.root_ts:
+            # Which conversation this belongs to, created on its first word —
+            # including for a turn started at the desk, so work from the panel
+            # shows up under its own heading rather than loose in the DM.
+            self.root_ts = self.bridge.conversation_root(
+                self.turn.thread_id, self.turn.text)
+            if not self.root_ts:
+                return
         if post.where == "answer":
             self._pending_answer = post.text
             self._flush_answer()
             return
         if post.kind == "file":
-            self.bridge._do_upload(self.channel, post.path, post.text)
+            self.bridge._do_upload(self.channel, post.path, post.text,
+                                   thread_ts=self.root_ts)
             return
         if post.where == "channel":
-            self.bridge.post(self.channel, post.text)
+            # Broadcast: in the DM where it will be noticed, and still filed
+            # under the conversation it came from.
+            self.bridge.post(self.channel, post.text, thread_ts=self.root_ts,
+                             broadcast=True)
             return
-        # detail → a reply in this turn's thread
-        thread_ts = self._ensure_answer()
+        thread_ts = self.root_ts
         if not thread_ts:
             return
         if post.kind == "clear":
@@ -201,12 +227,6 @@ class SlackTurn:
         if post.key and new_ts:
             self.ids.by_key[post.key] = new_ts
 
-    def _ensure_answer(self) -> str:
-        """The turn's own message, created on first need. Everything hangs off it."""
-        if not self.ids.answer_ts:
-            self.ids.answer_ts = self.bridge.post(self.channel, self.render.opening())
-        return self.ids.answer_ts
-
     def _flush_answer(self, force: bool = False) -> None:
         if not self._pending_answer:
             return
@@ -218,7 +238,8 @@ class SlackTurn:
         if self.ids.answer_ts:
             self.bridge._do_update(self.channel, self.ids.answer_ts, text)
         else:
-            self.ids.answer_ts = self.bridge.post(self.channel, text)
+            self.ids.answer_ts = self.bridge.post(self.channel, text,
+                                                  thread_ts=self.root_ts)
 
     def tick(self) -> None:
         """Let a throttled edit land even when no further event arrives.
@@ -247,6 +268,7 @@ class SlackBridge:
                             else _env_list("SLACK_ALLOWED_USERS"))
         self.default_channel = default_channel
         self.turns: dict = {}            # request_id -> SlackTurn
+        self._root_text_cache: dict = {}  # thread_id -> its root message text
         self._lock = threading.RLock()
         self._out: "queue.Queue" = queue.Queue()
         self._stop = threading.Event()
@@ -261,14 +283,22 @@ class SlackBridge:
     def _call(self, fn, *args, **kwargs):
         self._out.put((fn, args, kwargs))
 
-    def post(self, channel: str, text: str, thread_ts: str = "") -> str:
+    def post(self, channel: str, text: str, thread_ts: str = "",
+             broadcast: bool = False) -> str:
         """Post and return the message ts. Synchronous — the ts is needed to edit
-        it later, and losing it means the next edit posts a duplicate instead."""
+        it later, and losing it means the next edit posts a duplicate instead.
+
+        ``broadcast`` is Slack's "also send to channel": the message stays in the
+        conversation's thread but shows in the DM, which is what a question or an
+        error needs and what an ordinary progress line must never do.
+        """
         if not self.client or not text.strip():
             return ""
         kw = {"channel": channel, "text": clip(text, 39000)}
         if thread_ts:
             kw["thread_ts"] = thread_ts
+            if broadcast:
+                kw["reply_broadcast"] = True
         try:
             resp = self.client.chat_postMessage(**kw)
             return str((resp or {}).get("ts") or "")
@@ -289,7 +319,8 @@ class SlackBridge:
         except Exception:  # noqa: BLE001 — an already-gone message is not an error
             logger.debug("slack: chat_delete(%s) failed", ts, exc_info=True)
 
-    def _do_upload(self, channel: str, path: str, caption: str = "") -> None:
+    def _do_upload(self, channel: str, path: str, caption: str = "",
+                   thread_ts: str = "") -> None:
         if not self.client or not path:
             return
         p = Path(path)
@@ -301,8 +332,11 @@ class SlackBridge:
             # Slack would reject it; say where it is instead of failing silently.
             self.post(channel, f"_{caption or p.name} is too large to post here._\n`{p}`")
             return
-        self.client.files_upload_v2(channel=channel, file=str(p),
-                                    filename=p.name, initial_comment=caption or None)
+        kw = {"channel": channel, "file": str(p), "filename": p.name,
+              "initial_comment": caption or None}
+        if thread_ts:
+            kw["thread_ts"] = thread_ts
+        self.client.files_upload_v2(**kw)
 
     def _pump(self) -> None:
         while not self._stop.is_set():
@@ -347,6 +381,59 @@ class SlackBridge:
             if st.ended and now - st.ended > _TURN_TTL:
                 with self._lock:
                     self.turns.pop(rid, None)
+
+    # ── one conversation, one thread ──────────────────────────────────────────
+    def conversation_root(self, thread_id: str, seed: str = "") -> str:
+        """The ts of the message that IS this conversation in Slack.
+
+        Created the first time the conversation says anything, and remembered in
+        the store — a restart that forgot it would open a second thread for a
+        conversation that already has one, and nothing afterwards could tell the
+        two apart.
+        """
+        if not self.default_channel:
+            return ""
+        try:
+            bound = cs.get_slack_thread(thread_id)
+        except Exception:  # noqa: BLE001
+            bound = None
+        if bound and bound.get("channel") == self.default_channel and bound.get("root_ts"):
+            self._retitle(thread_id, bound["root_ts"])
+            return str(bound["root_ts"])
+        text = self._root_text(thread_id, seed)
+        ts = self.post(self.default_channel, text)
+        if not ts:
+            return ""
+        self._root_text_cache[thread_id] = text
+        try:
+            cs.set_slack_thread(thread_id, self.default_channel, ts)
+        except Exception:  # noqa: BLE001
+            logger.exception("slack: could not remember the thread for %s", thread_id)
+        return ts
+
+    def _root_text(self, thread_id: str, seed: str = "") -> str:
+        """What the conversation is called, as its thread's opening message."""
+        title = ""
+        try:
+            title = next((str(r.get("title") or "") for r in cs.list_threads(limit=200)
+                          if r.get("id") == thread_id), "")
+        except Exception:  # noqa: BLE001
+            pass
+        if title.strip().lower() in ("", "new chat", "slack"):
+            title = clip(" ".join(str(seed or "").split()), 80) or "New chat"
+        return "🧵 *" + to_mrkdwn(clip(title, 120)) + "*"
+
+    def _retitle(self, thread_id: str, root_ts: str) -> None:
+        """Follow the auto-title, which lands a moment after the first turn.
+
+        Only when it actually changed: this is asked on every turn, and an edit
+        per turn is a round trip and a rate-limit bucket for no new information.
+        """
+        text = self._root_text(thread_id)
+        if self._root_text_cache.get(thread_id) == text:
+            return
+        self._root_text_cache[thread_id] = text
+        self._call(self._do_update, self.default_channel, root_ts, text)
 
     # ── watching every turn ───────────────────────────────────────────────────
     def on_turn_event(self, event: dict, turn) -> None:
@@ -399,11 +486,17 @@ class SlackBridge:
                 "too_large": too_large}
 
     # ── inbound ───────────────────────────────────────────────────────────────
-    def route(self, user: str, text: str, files: list | None = None) -> dict:
+    def route(self, user: str, text: str, files: list | None = None,
+              thread_ts: str = "") -> dict:
         """What this message means, and what was done about it.
 
-        Returns ``{"action": …}`` — ``answer``/``interject``/``turn``/``denied``/
-        ``ignored`` — which is what the tests assert on and what the log records.
+        Returns ``{"action": …}`` — ``answer``/``interject``/``turn``/``busy``/
+        ``denied``/``ignored`` — which is what the tests assert on and what the
+        log records.
+
+        *thread_ts* is the Slack thread the message was posted in, and it is what
+        picks the conversation: inside a thread, this continues the conversation
+        that thread IS; at the top level, it starts a new one.
         """
         text = (text or "").strip()
         files = list(files or [])
@@ -418,37 +511,77 @@ class SlackBridge:
         if user not in self.allowed:
             return {"action": "denied", "why": "not in SLACK_ALLOWED_USERS"}
 
-        pending = self._pending_ask()
+        target = self.conversation_for(thread_ts)
+
+        # A question the agent is holding a turn open for — but only the one in
+        # THIS conversation. Answering with a message meant for another chat is
+        # worse than not answering at all.
+        pending = self._pending_ask(target)
         if pending is not None and text:
             rid, st = pending
             if self._answer and self._answer(rid, text):
                 st.ask_request_id = ""
-                return {"action": "answer", "request_id": rid}
+                return {"action": "answer", "request_id": rid,
+                        "thread_id": target}
 
         live = self._live_turn()
         if live is not None and text:
-            rid, _st = live
+            rid, running_thread = live
+            # Steering the running turn is for a message written INTO it — a
+            # reply in its own thread. Anything else is meant for a different
+            # conversation (a top-level message starts a new one), and there is
+            # one pipeline: interjecting would put the message in a chat it was
+            # not written for, and starting a turn would run two at once.
+            if not (target and running_thread and running_thread == target):
+                return {"action": "busy",
+                        "why": ("a turn is running in another conversation"
+                                if target else
+                                "a turn is running; a new conversation has to wait"),
+                        "running_thread": running_thread}
             if self._interject and self._interject(rid, text):
-                return {"action": "interject", "request_id": rid}
+                return {"action": "interject", "request_id": rid,
+                        "thread_id": running_thread}
 
         if self._start_turn is None:
             return {"action": "ignored", "why": "no turn starter wired"}
-        rid = self._start_turn(text, files)
-        return {"action": "turn", "request_id": rid}
+        rid = self._start_turn(text, files, target)
+        return {"action": "turn", "request_id": rid, "thread_id": target}
 
-    def _pending_ask(self):
+    def conversation_for(self, thread_ts: str) -> str:
+        """Which agentY conversation a message in *thread_ts* belongs to.
+
+        "" means a new one: a message at the top level of the DM starts a fresh
+        conversation, the way a new chat does in the panel. Replying inside a
+        thread is how you go back to one.
+        """
+        ts = str(thread_ts or "").strip()
+        if not ts:
+            return ""
+        try:
+            return cs.thread_for_slack(self.default_channel, ts) or ""
+        except Exception:  # noqa: BLE001
+            logger.exception("slack: could not resolve the thread %s", ts)
+            return ""
+
+    def _pending_ask(self, thread_id: str = ""):
+        """The unanswered question in *thread_id*, or in any conversation when
+        the message came in at the top level and names none."""
         with self._lock:
-            for rid, st in self.turns.items():
-                if st.ask_request_id:
-                    return st.ask_request_id, st
+            for _rid, st in self.turns.items():
+                if not st.ask_request_id:
+                    continue
+                if thread_id and str(st.turn.thread_id) != str(thread_id):
+                    continue
+                return st.ask_request_id, st
         return None
 
     def _live_turn(self):
-        running = {t.request_id for t in turn_bus.active()}
+        """``(request_id, thread_id)`` of the turn in flight, or None."""
+        running = {t.request_id: t.thread_id for t in turn_bus.active()}
         with self._lock:
             for rid, st in self.turns.items():
                 if rid in running and not st.ended:
-                    return rid, st
+                    return rid, str(running[rid] or "")
         return None
 
     # ── lifecycle ─────────────────────────────────────────────────────────────
@@ -727,23 +860,35 @@ def _route_message(bridge: SlackBridge, web, event: dict, dest) -> None:
     # mirror was pointed somewhere else at startup.
     if channel and not bridge.default_channel:
         bridge.default_channel = channel
+    thread_ts = str(event.get("thread_ts") or "")
+    if thread_ts == str(event.get("ts") or ""):
+        thread_ts = ""          # a thread's own root message is not a reply
     files, skipped = ([], [])
     if event.get("files"):
         # Downloaded BEFORE the allow-list is consulted only in the sense that
         # route() is next: an unauthorised sender's files are fetched and then
         # their message is refused. Cheap to reorder if that ever matters.
         files, skipped = download_files(web, event, dest)
-    result = bridge.route(user, text, files)
+    result = bridge.route(user, text, files, thread_ts=thread_ts)
     action = result.get("action")
-    if action == "denied":
+    if action == "busy":
+        bridge.post(channel, "_Busy with another conversation right now — send "
+                             "this again when it finishes, or reply in that "
+                             "thread to steer the run that is going._",
+                    thread_ts=thread_ts or "", broadcast=bool(thread_ts))
+    elif action == "denied":
         bridge.post(channel, "_Not authorised. Ask the owner of this agentY host "
                              "to add your Slack member id to `SLACK_ALLOWED_USERS`._")
     elif action == "interject":
-        bridge.post(channel, "_Passed to the turn already running._")
+        bridge.post(channel, "_Passed to the turn already running._",
+                    thread_ts=thread_ts or "", broadcast=bool(thread_ts))
     if skipped and action not in ("denied", "ignored"):
         # Said in Slack, not just logged: from a phone there is no canvas to look
         # at and no terminal to check, so an attachment that quietly did not
         # arrive looks exactly like an agent that ignored it.
-        bridge.post(channel, "_Could not take: " + "; ".join(skipped) + "._")
-    logger.info("slack: message from %s → %s (%s), %d file(s), %d skipped",
-                user, action, result.get("why", ""), len(files), len(skipped))
+        bridge.post(channel, "_Could not take: " + "; ".join(skipped) + "._",
+                    thread_ts=thread_ts or "", broadcast=bool(thread_ts))
+    logger.info("slack: message from %s → %s (%s) in %s, %d file(s), %d skipped",
+                user, action, result.get("why", ""),
+                result.get("thread_id") or "a new conversation",
+                len(files), len(skipped))

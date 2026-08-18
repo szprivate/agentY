@@ -116,6 +116,14 @@ def init_db() -> None:
                 html        TEXT NOT NULL,
                 updated_at  REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS thread_slack (
+                thread_id   TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+                channel     TEXT NOT NULL,
+                root_ts     TEXT NOT NULL,
+                updated_at  REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_thread_slack_root
+                ON thread_slack(channel, root_ts);
             CREATE TABLE IF NOT EXISTS thread_qa (
                 thread_id   TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
                 briefing    TEXT NOT NULL,
@@ -392,3 +400,52 @@ def get_qa_briefing(thread_id: str) -> Optional[dict]:
     except Exception:  # noqa: BLE001
         return None
     return data if isinstance(data, dict) else None
+
+
+# ---------------------------------------------------------------------------
+# Slack thread binding (which Slack thread IS this conversation)
+# ---------------------------------------------------------------------------
+# The Slack bridge shows one conversation as one Slack thread: a root message
+# naming it, with every turn as a reply underneath. The binding has to outlive
+# the host — a restart that forgets it would start a second thread for a
+# conversation that already has one, and the two would drift apart with no way
+# to tell which is which.
+
+def set_slack_thread(thread_id: str, channel: str, root_ts: str) -> None:
+    """Remember which Slack thread (channel + root message) is this conversation."""
+    init_db()
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO thread_slack(thread_id, channel, root_ts, updated_at)
+            VALUES (?,?,?,?)
+            ON CONFLICT(thread_id) DO UPDATE SET
+                channel=excluded.channel, root_ts=excluded.root_ts,
+                updated_at=excluded.updated_at
+            """,
+            (thread_id, str(channel), str(root_ts), time.time()),
+        )
+
+
+def get_slack_thread(thread_id: str) -> Optional[dict[str, Any]]:
+    """``{"channel", "root_ts"}`` for this conversation, or None if unbound."""
+    init_db()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT channel, root_ts FROM thread_slack WHERE thread_id=?",
+            (thread_id,)).fetchone()
+    return {"channel": row["channel"], "root_ts": row["root_ts"]} if row else None
+
+
+def thread_for_slack(channel: str, root_ts: str) -> Optional[str]:
+    """The conversation a Slack thread belongs to — the reverse lookup.
+
+    This is what makes replying inside a thread continue *that* conversation
+    rather than whichever one happens to be current.
+    """
+    init_db()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT thread_id FROM thread_slack WHERE channel=? AND root_ts=?",
+            (str(channel), str(root_ts))).fetchone()
+    return row["thread_id"] if row else None

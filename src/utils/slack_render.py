@@ -33,9 +33,12 @@ from dataclasses import dataclass
 # Slack renders a message body up to 40k characters, but anything past a few
 # thousand is a scroll nobody reads and an edit that costs a full round trip.
 _ANSWER_MAX = 3500
-_DETAIL_MAX = 1200
+_DETAIL_MAX = 2800
 _THINK_MAX = 1500
-_TOOL_ARG_MAX = 300
+_TOOL_ARG_MAX = 200
+# Lines of working-out kept in the turn's detail message.
+_LOG_LINES = 30
+NEWLINE = chr(10)
 
 
 @dataclass(frozen=True)
@@ -130,7 +133,11 @@ class TurnRender:
         self._think = ""
         self._files = 0
         self._done = False
-        self._tools: set = set()   # tool calls still waiting on a result
+        # The turn's working-out, as lines. One message, rewritten — the Slack
+        # thread belongs to the conversation now, so there is no second level to
+        # put a message-per-event in, and a pile of them would bury the answer.
+        self._lines: list = []
+        self._refs: dict = {}      # tool id -> which line it wrote
 
     # The message that opens the turn, before there is any answer to show.
     def opening(self) -> str:
@@ -239,6 +246,39 @@ class TurnRender:
         self._think += str(ev.get("data") or "")
         return []
 
+    # ── the turn's one detail message ─────────────────────────────────────────
+    def _log(self, line: str, ref: str = "") -> list:
+        """Append a line to the working-out and hand back the whole message."""
+        line = str(line or "").strip()
+        if not line:
+            return []
+        if ref:
+            self._refs[ref] = len(self._lines)
+        self._lines.append(line)
+        return [self._detail_post()]
+
+    def _log_replace(self, ref: str, line: str) -> list:
+        """Rewrite the line *ref* wrote — a tool result over its own call.
+
+        Falls back to appending when the call was never seen, which happens when
+        a turn is picked up mid-flight.
+        """
+        i = self._refs.pop(ref, None)
+        if i is None or i >= len(self._lines):
+            return self._log(line)
+        self._lines[i] = line
+        return [self._detail_post()]
+
+    def _detail_post(self) -> "Post":
+        # Oldest lines go first when it gets long: what the agent is doing NOW is
+        # what someone reads a running turn for.
+        lines = self._lines[-_LOG_LINES:]
+        cut = len(self._lines) - len(lines)
+        body = NEWLINE.join(lines)
+        if cut:
+            body = f"_…{cut} earlier line(s)_" + NEWLINE + body
+        return Post("detail", clip(body, _DETAIL_MAX), key="detail")
+
     def _flush_think(self) -> list:
         if not self._think.strip():
             self._think = ""
@@ -249,37 +289,37 @@ class TurnRender:
 
     def _on_step_start(self, ev) -> list:
         out = self._flush_think()
-        out.append(Post("detail", "▶️ *" + clip(str(ev.get("name") or "step"), 120) + "*"))
+        out.extend(self._log("▶️ *" + clip(str(ev.get("name") or "step"), 120) + "*"))
         return out
 
     def _on_step_end(self, ev) -> list:
         return self._flush_think()
 
     def _on_tool(self, ev) -> list:
-        """A call and its result are one event each, and one message between them.
+        """Tool calls, folded into the turn's one detail message.
 
-        Keyed by the tool-use id so the result *rewrites* the call rather than
-        following it — the same pairing the panel does with a collapsible block,
-        and the difference between a readable thread and two lines per tool.
+        A call and its result are two events, and a call is only interesting
+        once you know how it went — so the result rewrites the line the call
+        wrote rather than following it. All of them live in ONE message that
+        grows, because the Slack thread now belongs to the CONVERSATION: a
+        message per tool would bury the answer under its own working-out.
         """
         if not self.show_tools:
             return []
         name = str(ev.get("name") or "tool")
-        key = "tool:" + str(ev.get("id") or name)
+        ref = str(ev.get("id") or name)
         if str(ev.get("phase") or "") == "result":
             result = str(ev.get("result") or "").strip()
             failed = result.lower().startswith("error")
-            line = ("⚠️ `" if failed else "✅ `") + name + "`"
+            line = ("⚠️ " if failed else "✅ ") + "`" + name + "`"
             if result:
-                line += "\n" + _quote(clip(result, _TOOL_ARG_MAX))
-            self._tools.discard(key)
-            return [Post("detail", line, key=key)]
-        self._tools.add(key)
+                line += " — " + clip(_flat(result), _TOOL_ARG_MAX)
+            return self._log_replace(ref, line)
         line = "🔧 `" + name + "`"
         detail = str(ev.get("input") or "").strip()
         if detail and detail not in ("{}", "None"):
-            line += "\n" + _quote(clip(detail, _TOOL_ARG_MAX))
-        return [Post("detail", line, key=key)]
+            line += " — " + clip(_flat(detail), _TOOL_ARG_MAX)
+        return self._log(line, ref=ref)
 
     def _on_plan(self, ev) -> list:
         steps = [str(s) for s in (ev.get("steps") or [])]
@@ -290,7 +330,7 @@ class TurnRender:
 
     def _on_system(self, ev) -> list:
         text = str(ev.get("data") or "").strip()
-        return [Post("detail", to_mrkdwn(clip(text, _DETAIL_MAX)))] if text else []
+        return self._log(to_mrkdwn(clip(_flat(text), _DETAIL_MAX))) if text else []
 
     _on_status_line = _on_system
 
@@ -304,11 +344,17 @@ class TurnRender:
             "review_released": "▶️ Review released — the chain continues.",
             "delete_nodes": "🗑️ Removed node(s) from the canvas.",
         }.get(op, "✏️ Updated a node on the canvas.")
-        return [Post("detail", said)]
+        return self._log(said)
 
     def _on_interject_undelivered(self, ev) -> list:
-        return [Post("detail", "_The agent had already finished its last step, so "
-                               "that message goes out with the next turn._")]
+        return self._log("_The agent had already finished its last step, so that "
+                         "message goes out with the next turn._")
+
+
+def _flat(text: str) -> str:
+    """One line. The detail message is a list, and a value with newlines in it
+    turns one entry into five and pushes the rest out of view."""
+    return " ".join(str(text or "").split())
 
 
 def _quote(text: str) -> str:
