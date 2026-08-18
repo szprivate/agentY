@@ -19,6 +19,14 @@ of everything wired into it — transitively, so a different image three nodes b
 moves the key, and so does a rewire. Downstream is deliberately not in it:
 changing where the value lands does not change what the value is.
 
+"Wired into it" means **named as well as wired**: a reference a directive points
+at with ``#hero_face`` is an input to the hook exactly like an anchor is, so it
+is hashed like one — from the ``agentY add tag`` node itself, which pulls in both
+the reference above it and the words on the tag. Without that, the one promise
+this module makes ("released the moment anything feeding this hook changes")
+would hold for a reference you wired and quietly fail for the identical
+reference you named — you would swap the image and get the old answer back.
+
 **The switch itself is deliberately NOT part of the key**, which is what makes it
 usable in hindsight. You rarely know a result is worth keeping until you have
 seen it, so what a hook produced is journalled whether or not the switch was on,
@@ -211,12 +219,42 @@ def _hook_identity(hook: dict) -> dict:
     }
 
 
+def _named_reference_ids(hook: dict, base_prompt: dict | None) -> list:
+    """The ``agentY add tag`` nodes this hook's directive names with ``#tag``.
+
+    Seeded from the TAG NODE rather than the reference it points at, because the
+    walk from there goes up and so covers both in one: the note carries the tag
+    and the stated role (change either and the agent is asked a different
+    question), and above it sits the loader whose file is the reference itself.
+    Starting at the loader would miss the note entirely — the note is downstream
+    of it, and downstream is deliberately not in the key.
+    """
+    try:
+        from src.utils.canvas_hooks import canvas_tags, mentioned_tags
+    except Exception:  # noqa: BLE001 — a key must never cost the user a turn
+        return []
+    tags = canvas_tags(base_prompt)
+    if not tags:
+        return []
+    out: list = []
+    for name in mentioned_tags(hook.get("directive")):
+        info = tags.get(name)
+        nid = str((info or {}).get("note_id") or "")
+        if nid and nid not in out:
+            out.append(nid)
+    return out
+
+
 def fingerprint(hook: dict, base_prompt: dict | None) -> str:
     """The cache key for *hook* as it currently stands: its settings + its inputs."""
     anchor_ids = [str(a.get("node_id")) for a in (hook.get("anchors") or [])
                   if isinstance(a, dict) and a.get("node_id") is not None]
     if not anchor_ids and hook.get("anchor_node_id") is not None:
         anchor_ids = [str(hook["anchor_node_id"])]
+    # A named reference is an input too — see the module docstring. Added to the
+    # anchors rather than hashed separately so both kinds of input land in the same
+    # upstream closure, and a reference that is BOTH wired and named is one entry.
+    anchor_ids = anchor_ids + _named_reference_ids(hook, base_prompt)
     up = _upstream(base_prompt or {}, anchor_ids)
     payload = {
         "hook": _hook_identity(hook),

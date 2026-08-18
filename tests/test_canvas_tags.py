@@ -14,6 +14,7 @@ import unittest
 from unittest import mock
 
 from src.utils import preflight
+from src.utils.hook_cache import fingerprint
 from src.utils.canvas_hooks import (canvas_tags, describe_hooks, hook_scope_ids,
                                     mentioned_tags, normalise_tag, prune_to_hooks,
                                     tagged_inputs)
@@ -247,6 +248,54 @@ class ScopeTests(unittest.TestCase):
         keep = hook_scope_ids(graph, ["9"])
         self.assertIn("43", keep)
         self.assertNotIn("31", keep, "the other chain's saver stays out")
+
+
+class MemorizeTests(unittest.TestCase):
+    """A named reference is hashed into the keep switch's key, like a wired one.
+
+    The promise the keep switch makes is that memory is released the moment
+    anything feeding the hook changes. It held for a reference you wired and
+    quietly failed for the identical reference you NAMED — the fingerprint walked
+    up from the anchors, and a named reference is not an anchor. You swapped the
+    image and got the old answer back, which is the one failure a cache must not
+    have.
+    """
+
+    HOOK = {"hook_node_id": "9", "purpose": "text", "anchors": [], "targets": [],
+            "directive": "describe #hero_face", "remember": True}
+
+    @staticmethod
+    def _graph(image="hero_a.png", tag="hero_face", role="the face", src="43"):
+        return {"43": _node("LoadImage", image=image),
+                "60": _node("LoadImage", image="other.png"),
+                "51": _node("AgentYRefNote", input=[src, 0], tag=tag, role=role)}
+
+    def _moved(self, **changed):
+        return fingerprint(self.HOOK, self._graph()) !=             fingerprint(self.HOOK, self._graph(**changed))
+
+    def test_an_unchanged_graph_keeps_its_key(self):
+        self.assertFalse(self._moved(), "or nothing could ever be remembered")
+
+    def test_a_different_image_releases_it(self):
+        self.assertTrue(self._moved(image="hero_b.png"))
+
+    def test_rewiring_the_tag_to_another_image_releases_it(self):
+        self.assertTrue(self._moved(src="60"))
+
+    def test_editing_the_stated_role_releases_it(self):
+        # The note is DOWNSTREAM of the loader, so seeding the walk at the loader
+        # would miss it — and the agent is being asked a different question.
+        self.assertTrue(self._moved(role="the jawline"))
+
+    def test_renaming_the_tag_releases_it(self):
+        # #hero_face now names nothing; the answer was built from something the
+        # directive can no longer point at.
+        self.assertTrue(self._moved(tag="hero_shot"))
+
+    def test_a_hook_naming_nothing_is_unaffected(self):
+        plain = dict(self.HOOK, directive="write a caption")
+        self.assertEqual(fingerprint(plain, self._graph()),
+                         fingerprint(plain, self._graph(image="hero_b.png")))
 
 
 class MentionTests(unittest.TestCase):
