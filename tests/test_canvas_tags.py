@@ -101,7 +101,7 @@ class GlossaryTests(unittest.TestCase):
         self.block = describe_hooks([_hook("51")], _canvas())
 
     def test_every_tag_is_mapped_to_its_node(self):
-        self.assertIn("TAGS ON THIS CANVAS", self.block)
+        self.assertIn("TAGS —", self.block)
         self.assertIn("#hero_face → node 43 (LoadImage)", self.block)
         self.assertIn("#alley_light → node 60 (LoadImage)", self.block)
 
@@ -121,7 +121,7 @@ class GlossaryTests(unittest.TestCase):
         prompt = {"43": _node("LoadImage", image="hero.png"),
                   "51": _node("AgentYRefNote", input=["43", 0], role="the face")}
         block = describe_hooks([_hook("51")], prompt)
-        self.assertNotIn("TAGS ON THIS CANVAS", block)
+        self.assertNotIn("TAGS —", block)
 
 
 class AnchorLineTests(unittest.TestCase):

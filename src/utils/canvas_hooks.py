@@ -1190,6 +1190,32 @@ def tagged_inputs(hook: dict, base_prompt: dict | None) -> list:
     return out
 
 
+def _remembered_named(hooks: list, on_canvas: dict) -> dict:
+    """``{tag: reference}`` for names the directives use that the CANVAS lacks.
+
+    The canvas always wins — a tag on the graph in front of you is the more
+    specific statement — so anything already in *on_canvas* is skipped. Empty
+    whenever project memory is unreachable, which keeps this a convenience rather
+    than a dependency.
+    """
+    try:
+        from src.utils.tag_memory import remembered_reference
+    except Exception:  # noqa: BLE001
+        return {}
+    out: dict = {}
+    for h in hooks or []:
+        for name in mentioned_tags((h or {}).get("directive")):
+            if name in on_canvas or name in out:
+                continue
+            try:
+                ref = remembered_reference(name)
+            except Exception:  # noqa: BLE001
+                ref = None
+            if ref:
+                out[name] = ref
+    return out
+
+
 def _all_anchor_inputs(hook: dict, base_prompt: dict | None) -> list:
     """Return ``[(anchor_id, anchor_type, scalar_inputs_dict, tap, role), …]`` for
     every real-node input wired to a hook.
@@ -2320,9 +2346,13 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
     # has nothing on the graph to attach it to, which is worse than no tag at all:
     # it looks like an instruction and resolves to a guess.
     tags = canvas_tags(base_prompt)
-    if tags:
+    # A name can also come from the PROJECT rather than this graph, so the block
+    # appears for either — a canvas with no tag nodes at all can still carry a
+    # directive naming one that was remembered from another graph.
+    remembered = _remembered_named(all_hooks, tags)
+    if tags or remembered:
         lines.append(
-            "\nTAGS ON THIS CANVAS — each is an `agentY add tag` node NAMING the "
+            "\nTAGS — each `agentY add tag` node on this canvas NAMES the "
             "reference on a wire. A directive that writes `#name` means EXACTLY the "
             "node listed here — resolve it from this list, never from which input "
             "looks closest. A `#name` that is NOT in this list names nothing: say so "
@@ -2347,6 +2377,17 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
                        if not isinstance(v, list)][:4]
             what = f" [{', '.join(scalars)}]" if scalars else ""
             lines.append(f"- #{tag} → node {nid} ({cls}){what}{says}")
+        # Names this canvas does not carry, but the PROJECT does: a tag whose
+        # `remember` switch was on was written into project memory as a named
+        # reference, so it still means something in a graph that has never seen
+        # the node. Only the ones a directive actually names — the store is not
+        # an inventory to read out.
+        for tag, ref in remembered.items():
+            role = str(ref.get("role") or "").strip()
+            says = f' — "{_trim(role, 200)}" (take only that from it)' if role else ""
+            lines.append(f"- #{tag} → REMEMBERED reference (not on this canvas): "
+                         f"{ref.get('path') or '?'}{says}. It is a file, not a node: "
+                         "upload it and wire it in if you need it as an input.")
 
     if cached_hooks:
         lines.append(

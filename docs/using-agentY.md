@@ -224,6 +224,7 @@ Type `/` in the composer for an autocomplete menu.
 | `/unload` | Unload Ollama models from VRAM |
 | `/clear_vram` | Clear ComfyUI GPU VRAM |
 | `/images` | List images generated in this thread |
+| `/project_memory` | Inspect and forget what is remembered for **this project** (characters, style, named references) |
 | `/clearhistory` | Delete all conversation history |
 | `/switch_model <target> <provider,model>` | Set a model **tier**, a single role, or `all` (e.g. `/switch_model fast_utility dashscope,qwen3.6-flash`). Saved to `settings.local.json` |
 | `/add_workflow <path>` \| `/add_workflow canvas <name>` | Register a workflow template (a JSON file, or the open graph) |
@@ -334,6 +335,21 @@ whatever it takes to produce it) in scope instead of trimming it away, and a
 `make_workflow` hook that names one builds an image-to-image job rather than
 treating the prompt as text-to-image. So five references and three hooks no longer
 mean fifteen wires — tag each image once, name the ones each hook needs.
+
+**Making a tag outlive the graph.** Turn on **`remember for the project`** on the
+tag node and the reference is written into [project memory](#memory) as a named
+entry — the file's path and what you said it is for. From then on `#hero_face`
+resolves in a *new* graph too, and a Claude Desktop session on the same ComfyUI
+can read it. What it resolves to there is a **file**, not a node: the agent
+uploads and wires it rather than anchoring it.
+
+Turning the switch back off stops refreshing that entry but does **not** delete
+it — a graph that happens not to contain the tag must never silently forget it.
+Forgetting is deliberate and yours: `/project_memory` (or **agentY settings ▸
+Viewers ▸ 📌 Project memory**) opens an editor that lists everything remembered
+for this project and lets you delete what should no longer be true. It doesn't
+let you write — entries are established by the agent or by this switch, so there
+is only ever one source for each file.
 
 Two things still want the wire:
 

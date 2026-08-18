@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agentY — Project Memory</title>
+<style>
+  /* Same palette as the long-term memory viewer, so the two read as one family. */
+  :root{
+    --bg:#f6f7f9; --panel:#fff; --ink:#1a1d21; --muted:#666; --line:#e2e5ea;
+    --accent:#3b6ef5; --chip:#eef1f6; --code:#f2f3f5;
+    --danger:#d64545; --ok:#2e7d32;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#15171c; --panel:#1e2128; --ink:#e6e8ec; --muted:#9aa0aa; --line:#2c313b;
+      --accent:#6f97ff; --chip:#262b34; --code:#161a20;
+      --danger:#e5736f; --ok:#7bd88f;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#15171c; --panel:#1e2128; --ink:#e6e8ec; --muted:#9aa0aa; --line:#2c313b;
+    --accent:#6f97ff; --chip:#262b34; --code:#161a20;
+    --danger:#e5736f; --ok:#7bd88f;
+  }
+  :root[data-theme="light"]{
+    --bg:#f6f7f9; --panel:#fff; --ink:#1a1d21; --muted:#666; --line:#e2e5ea;
+    --accent:#3b6ef5; --chip:#eef1f6; --code:#f2f3f5;
+    --danger:#d64545; --ok:#2e7d32;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  header{position:sticky;top:0;z-index:10;background:var(--panel);border-bottom:1px solid var(--line);
+    padding:10px 16px;display:flex;flex-direction:column;gap:8px}
+  .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  h1{font-size:15px;margin:0;font-weight:650}
+  .muted{color:var(--muted)}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+  button,input{font:inherit;color:var(--ink);background:var(--panel);
+    border:1px solid var(--line);border-radius:7px;padding:6px 10px}
+  button{cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  button.danger{color:#fff;background:var(--danger);border-color:var(--danger)}
+  button.danger:hover{filter:brightness(1.06)}
+  button:disabled{opacity:.45;cursor:default}
+  button:disabled:hover{border-color:var(--line);filter:none}
+  input[type=search]{min-width:240px;flex:1}
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chip{padding:3px 9px;border-radius:999px;background:var(--chip);border:1px solid transparent;
+    cursor:pointer;font-size:12px;user-select:none;display:inline-flex;gap:6px;align-items:center}
+  .chip.off{opacity:.4}
+  .chip .n{color:var(--muted);font-variant-numeric:tabular-nums}
+  main{max-width:900px;margin:0 auto;padding:14px 16px 90px}
+  .empty{margin:40px auto;max-width:600px;padding:44px 24px;text-align:center;
+    border:2px dashed var(--line);border-radius:14px;background:var(--panel);color:var(--muted)}
+  .card{background:var(--panel);border:1px solid var(--line);border-left-width:4px;
+    border-left-color:var(--accent);border-radius:9px;margin:8px 0;overflow:hidden}
+  .card.sel{border-left-color:var(--ok);box-shadow:0 0 0 1px var(--ok) inset}
+  .card-head{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;cursor:pointer}
+  .card-head input{margin-top:3px;flex:none}
+  .card-title{flex:1;min-width:0}
+  .name{font-weight:620}
+  .summary{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .type{font-size:11px;padding:2px 8px;border-radius:999px;background:var(--chip);flex:none}
+  .body{display:none;border-top:1px solid var(--line);padding:10px 12px;background:var(--code);
+    white-space:pre-wrap;word-break:break-word}
+  .card.open .body{display:block}
+  .path{margin-top:8px;color:var(--muted)}
+  footer{position:fixed;left:0;right:0;bottom:0;background:var(--panel);
+    border-top:1px solid var(--line);padding:10px 16px;display:flex;gap:10px;align-items:center}
+  .grow{flex:1}
+  .note{font-size:12px;color:var(--muted);max-width:620px}
+</style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <h1>Project memory</h1>
+    <span class="muted" id="count">…</span>
+    <span class="grow"></span>
+    <button id="reload">Reload</button>
+  </div>
+  <div class="row">
+    <input type="search" id="q" placeholder="Filter by name, type or content…" autocomplete="off">
+    <div class="chips" id="types"></div>
+  </div>
+  <div class="note" id="store"></div>
+</header>
+
+<main>
+  <div id="list"></div>
+  <div class="empty" id="empty" hidden>
+    <p><strong>Nothing is remembered for this project yet.</strong></p>
+    <p>Facts land here when the agent establishes one, or when you turn on
+       <em>remember for the project</em> on an <code>agentY add tag</code> node.</p>
+  </div>
+</main>
+
+<footer>
+  <span class="muted" id="selinfo">Nothing selected</span>
+  <span class="grow"></span>
+  <span class="note">Forgetting is permanent — the file is deleted. Writing happens
+    in the agent, not here.</span>
+  <button class="danger" id="forget" disabled>Forget selected</button>
+</footer>
+
+<script>
+// Everything is same-origin: this page is served by the agentY host, which is
+// also what holds the store. No configuration, no CORS.
+const $ = (s) => document.querySelector(s);
+let ENTRIES = [];
+let SELECTED = new Set();
+let TYPES_OFF = new Set();
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+async function load() {
+  $("#count").textContent = "loading…";
+  try {
+    const r = await fetch("/agentY/project_memory", { cache: "no-store" });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || "could not read the store");
+    ENTRIES = d.entries || [];
+    $("#store").textContent = d.store
+      ? "Stored in " + d.store + " — one file per fact, editable in any text editor."
+      : "No ComfyUI to ask for the store location; is the server running?";
+  } catch (e) {
+    ENTRIES = [];
+    $("#store").textContent = "Could not read project memory: " + e.message;
+  }
+  // A selection that survived a reload would let you delete something you can no
+  // longer see, so it is dropped with the data it referred to.
+  SELECTED = new Set();
+  render();
+}
+
+function visible() {
+  const q = $("#q").value.trim().toLowerCase();
+  return ENTRIES.filter((e) => {
+    if (TYPES_OFF.has(e.type)) return false;
+    if (!q) return true;
+    return (e.name + " " + e.type + " " + e.body).toLowerCase().includes(q);
+  });
+}
+
+function renderTypes() {
+  const counts = {};
+  for (const e of ENTRIES) counts[e.type] = (counts[e.type] || 0) + 1;
+  const box = $("#types");
+  box.innerHTML = "";
+  for (const t of Object.keys(counts).sort()) {
+    const chip = document.createElement("span");
+    chip.className = "chip" + (TYPES_OFF.has(t) ? " off" : "");
+    chip.innerHTML = esc(t) + ' <span class="n">' + counts[t] + "</span>";
+    chip.addEventListener("click", () => {
+      TYPES_OFF.has(t) ? TYPES_OFF.delete(t) : TYPES_OFF.add(t);
+      render();
+    });
+    box.appendChild(chip);
+  }
+}
+
+function render() {
+  renderTypes();
+  const rows = visible();
+  const list = $("#list");
+  list.innerHTML = "";
+  $("#empty").hidden = ENTRIES.length !== 0;
+  $("#count").textContent = ENTRIES.length
+    ? rows.length + " of " + ENTRIES.length + " shown"
+    : "";
+
+  for (const e of rows) {
+    const card = document.createElement("div");
+    card.className = "card" + (SELECTED.has(e.name) ? " sel" : "");
+
+    const head = document.createElement("div");
+    head.className = "card-head";
+
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = SELECTED.has(e.name);
+    box.addEventListener("click", (ev) => ev.stopPropagation());
+    box.addEventListener("change", () => {
+      box.checked ? SELECTED.add(e.name) : SELECTED.delete(e.name);
+      render();
+    });
+
+    const title = document.createElement("div");
+    title.className = "card-title";
+    title.innerHTML = '<div class="name">' + esc(e.name) + "</div>" +
+                      '<div class="summary">' + esc(e.summary) + "</div>";
+
+    const type = document.createElement("span");
+    type.className = "type";
+    type.textContent = e.type;
+
+    head.append(box, title, type);
+    // The whole header toggles the body: reading the fact in full is the main
+    // thing this page is for, so it should not need aiming at a small control.
+    head.addEventListener("click", () => card.classList.toggle("open"));
+
+    const body = document.createElement("div");
+    body.className = "body";
+    body.textContent = e.body;
+    const path = document.createElement("div");
+    path.className = "path mono";
+    path.textContent = e.path;
+    body.appendChild(path);
+
+    card.append(head, body);
+    list.appendChild(card);
+  }
+
+  const n = SELECTED.size;
+  $("#forget").disabled = n === 0;
+  $("#selinfo").textContent = n
+    ? n + (n === 1 ? " fact selected" : " facts selected")
+    : "Nothing selected";
+}
+
+async function forget() {
+  const names = [...SELECTED];
+  if (!names.length) return;
+  const shown = names.slice(0, 6).join(", ") + (names.length > 6 ? ", …" : "");
+  if (!confirm("Forget " + names.length + " fact(s)?\n\n" + shown +
+               "\n\nThe file is deleted. This cannot be undone.")) return;
+  $("#forget").disabled = true;
+  try {
+    const r = await fetch("/agentY/project_memory/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ names }),
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || "delete failed");
+  } catch (e) {
+    alert("Could not forget: " + e.message);
+  }
+  await load();
+}
+
+$("#reload").addEventListener("click", load);
+$("#q").addEventListener("input", render);
+$("#forget").addEventListener("click", forget);
+load();
+</script>
+</body>
+</html>

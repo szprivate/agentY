@@ -39,6 +39,32 @@ from src.utils.canvas_hooks import (_COLLECTOR_TYPES, _hook_ids, _output_targets
 from src.utils.canvas_hooks import is_terminal
 
 
+def _any_remembered() -> bool:
+    """Whether this project has remembered any tag at all.
+
+    The gate for the unknown-tag check: it fires only where tags are in use, so a
+    project that has never made one never sees a `#` in prose questioned.
+    """
+    try:
+        from agenty_core.utils.project_memory import list_entries
+        return any(str(getattr(e, "type", "")) == "reference" for e in list_entries())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _remembered(tag: str) -> bool:
+    """Whether the project's memory carries this tag as a named reference.
+
+    Best-effort by design: with no project store reachable this returns False and
+    the check behaves exactly as it did before remembered tags existed.
+    """
+    try:
+        from src.utils.tag_memory import remembered_reference
+        return remembered_reference(tag) is not None
+    except Exception:  # noqa: BLE001
+        return False
+
+
 @dataclass(frozen=True)
 class Finding:
     """One thing wrong with the graph, as it stands."""
@@ -223,6 +249,7 @@ def check(hooks: list | None, base_prompt: dict | None) -> list:
 
     # Every name a directive is allowed to use, read once for the whole graph.
     tags = canvas_tags(prompt)
+    uses_tags = bool(tags) or _any_remembered()
 
     # ── per hook ────────────────────────────────────────────────────────────
     for h in hooks:
@@ -253,11 +280,17 @@ def check(hooks: list | None, base_prompt: dict | None) -> list:
         # node to attach it to, which is exactly when it picks the nearest input
         # instead — a wrong reference nobody can see they asked for.
         #
-        # Only on a canvas that HAS tags. A `#` on one that doesn't is somebody
-        # writing prose, and a check that reads "#soon" in a sentence as a broken
-        # reference warns about graphs where nothing is wrong.
-        for tag in (mentioned_tags(directive) if tags else []):
-            if tag in tags:
+        # Only where tags are actually in use — on this canvas, or remembered for
+        # this project. A `#` anywhere else is somebody writing prose, and a check
+        # that reads "#soon" in a sentence as a broken reference warns about graphs
+        # where nothing is wrong. Once the project HAS a vocabulary, a name outside
+        # it is worth saying, whether or not this particular graph carries any.
+        for tag in (mentioned_tags(directive) if uses_tags else []):
+            if tag in tags or _remembered(tag):
+                # Not on this canvas, but the PROJECT remembers it — a tag whose
+                # `remember` switch was on in some other graph. It resolves to a
+                # file rather than a node, which the hook block says; it is not a
+                # name that means nothing.
                 continue
             known = ", ".join("#" + t for t in list(tags)[:6])
             found.append(Finding("note", hid, (

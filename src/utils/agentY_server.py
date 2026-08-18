@@ -31,6 +31,9 @@ Viewers (self-contained HTML pages served here so they fetch same-origin)
     GET  /agentY/log_viewer                     message-history log viewer page
     GET  /agentY/message_history                raw message-history log feed
     POST /agentY/message_history/clear          purge the entire history log
+    GET  /agentY/project_memory_viewer          project-memory editor page
+    GET  /agentY/project_memory                 list project facts -> {entries}
+    POST /agentY/project_memory/delete          forget selected      {names}
     GET  /agentY/memory_viewer                  long-term-memory viewer page
     GET  /agentY/memory                          list stored long-term memories -> {memories}
     POST /agentY/memory/update                   edit one memory      {id,text}
@@ -187,6 +190,7 @@ SLASH_COMMANDS = [
     {"name": "/unload",          "description": "Unload Ollama models from VRAM"},
     {"name": "/clear_vram",      "description": "Clear ComfyUI GPU VRAM"},
     {"name": "/images",          "description": "List images generated in this thread (reference them by number)"},
+    {"name": "/project_memory", "description": "Inspect and forget what is remembered for THIS project"},
     {"name": "/clearhistory",    "description": "Delete all conversation history (keeps the current thread)"},
     {"name": "/switch_model",    "description": "Switch an agent's LLM — /switch_model <agent|all> <provider,model> (use 'all' for every agent)"},
     {"name": "/add_workflow",    "description": "Add a ComfyUI workflow — /add_workflow <path/to/workflow.json> OR /add_workflow canvas <name> for the graph open in the canvas"},
@@ -2708,6 +2712,59 @@ def _build_app():
             return jsonify({"ok": False, "error": str(exc)}), 500
 
     # ── Long-term-memory viewer (self-contained HTML + JSON CRUD feed) ──────
+    # ── project memory (per-project facts, in ComfyUI's user dir) ─────────────
+    # Inspect and delete only. Writing is deliberately not offered: an entry is
+    # established by the agent (project_memory_write) or by the `remember` switch
+    # on an `agentY add tag` node, and a second way to author one by hand would be
+    # a second source of truth for the same file. Removing, though, has to be a
+    # human gesture — turning a tag's switch off never deletes, so this is where
+    # something stops being true of the project.
+    @app.route("/agentY/project_memory_viewer", methods=["GET"])
+    def project_memory_viewer():
+        page = _project_root() / "scripts" / "project_memory_viewer.html"
+        if not page.exists():
+            return "project_memory_viewer.html not found", 404
+        html = page.read_text(encoding="utf-8", errors="replace")
+        return Response(html, mimetype="text/html; charset=utf-8")
+
+    @app.route("/agentY/project_memory", methods=["GET", "OPTIONS"])
+    def project_memory_list():
+        if request.method == "OPTIONS":
+            return "", 204
+        try:
+            from agenty_core.utils.project_memory import list_entries, store_dir
+            entries = [
+                {"name": e.name, "type": e.type, "summary": e.summary,
+                 "body": e.body, "path": str(e.path)}
+                for e in list_entries()
+            ]
+            d = store_dir()
+            return jsonify({"ok": True, "count": len(entries), "entries": entries,
+                            "store": str(d) if d else ""})
+        except Exception as exc:  # noqa: BLE001
+            logger.error("project memory list failed: %s", exc, exc_info=True)
+            return jsonify({"ok": False, "error": str(exc)}), 500
+
+    @app.route("/agentY/project_memory/delete", methods=["POST", "OPTIONS"])
+    def project_memory_delete():
+        if request.method == "OPTIONS":
+            return "", 204
+        body = request.get_json(silent=True) or {}
+        names = body.get("names")
+        if names is None and body.get("name"):
+            names = [body.get("name")]
+        names = [str(n).strip() for n in (names or []) if str(n).strip()]
+        if not names:
+            return jsonify({"ok": False, "error": "names are required"}), 400
+        try:
+            from agenty_core.utils.project_memory import delete_entry
+            gone = [n for n in names if delete_entry(n)]
+            missing = [n for n in names if n not in gone]
+            return jsonify({"ok": True, "deleted": gone, "not_found": missing})
+        except Exception as exc:  # noqa: BLE001
+            logger.error("project memory delete failed: %s", exc, exc_info=True)
+            return jsonify({"ok": False, "error": str(exc)}), 500
+
     # The page (scripts/memory_viewer.html) is served here so it fetches the
     # memory feed same-origin; opened from the ComfyUI panel via
     # web/agent_memory_viewer.js. Listing reads the FAISS docstore directly (no

@@ -3028,6 +3028,21 @@ class Pipeline:
                 # what keeps a STRING target from being rewired to an IMAGE anchor.
                 cleaned, removed = splice_hook_nodes(scoped, self._canvas_hooks)
                 self._canvas_base_prompt = cleaned
+                # Tags whose `remember` switch is on become named references in the
+                # project's memory, so the name still resolves in another graph (or
+                # from a Claude Desktop session on the same ComfyUI). Read from the
+                # FULL canvas, not the scoped copy: a remembered reference is not
+                # required to be wired into a hook, and scoping would have trimmed it
+                # away before it could be written.
+                try:
+                    from src.utils.tag_memory import sync as _sync_tags
+                    kept = _sync_tags(canvas_prompt)
+                    if kept and self._verbose:
+                        print("pipeline: remembered tag(s) -> project memory: "
+                              + ", ".join("#" + t for t in kept))
+                except Exception as exc:  # noqa: BLE001 — never cost the user a turn
+                    if self._verbose:
+                        print(f"pipeline: could not remember tags ({exc}).")
                 # Held, not announced. The canvas is sent on EVERY turn, so this
                 # preparation happens whether or not anything is going to be run —
                 # and saying "🎯 Hook scope: 17 node(s)…" in front of an answer to
