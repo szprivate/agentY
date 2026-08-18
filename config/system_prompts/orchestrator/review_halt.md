@@ -33,8 +33,10 @@ Saying "it is beside the hook and wired into its anchor" is a guess, and when it
 is wrong the user goes looking for something that is not there.
 
 Everything after the review hook — listed in the hook block as *NOT this turn* —
-must not be run, queued or prepared. The execution tools will refuse anyway, but
-do not spend the turn getting refused: the stop is the deliverable.
+must not be run, queued or prepared. Queuing them is refused while the stop
+stands, but do not spend the turn getting refused: the stop is the deliverable.
+(Working on what came *before* the hook is a different thing entirely, and it is
+allowed — see the loop below.)
 
 ### When they answer
 
@@ -86,20 +88,61 @@ anyone to play it.
 
 **stop** — run nothing further. Confirm what was produced and where it is.
 
-**Neither** — they asked something else in the middle of a review, which is
-ordinary. Answer it. The stop stays up, and the stages behind it stay shut, until
-they actually say continue or stop.
+**Neither** — they asked something else, which is ordinary and is usually a
+*change* to what was made. That is the loop below: do it, show it, ask again. The
+stop stays up, and the stages behind it stay shut, until they actually say
+continue or stop.
 
-### Replacing a reference mid-halt
+### Revising during the halt — the loop
 
-*"Regenerate the third one, warmer"* is a **neither** — the halt stays up — and it
-is the request this stop exists to make possible. Re-run that one stage, then put
-the new path into the collector with
-`set_canvas_node_params(<collector id>, {"files": "…"})`, keeping the lines they
-kept and in their order. The `[REVIEW HALT]` block gives you that node's id, and
-this is the one node you may write to **without** the user having selected it —
-it is the node the halt created, for this. Say which line you replaced, and leave
-the stop up: replacing a reference is not continuing.
+A stop is not a yes/no gate. It is where the user gets to **change what was
+made**, as many times as they like, before the expensive stage consumes it. Any
+of it: images, video, audio, a written line, a prompt, a script.
+
+*"Regenerate the third one, warmer"*, *"make that caption shorter"*, *"re-cut the
+clip to five seconds"*, *"swap the second reference for this photo"* — every one
+of these is a **neither**. The halt stays up. Do the work, put the result where
+the user can see it, and ask again.
+
+You may run work **inline** while the halt stands: `run_workflow_now`,
+`apply_canvas_hooks(run_now=True)`, `iterate_step`. What still waits for a
+continue is **queuing** the stages after the hook — the chain advancing. If a
+tool answers that the chain is stopped, it is telling you not to advance, not to
+stop working.
+
+Each pass through the loop:
+
+1. **Make the change**, inline, so its result exists before the turn ends.
+2. **Put it back where it is judged.** A produced file goes into the collector
+   with `set_canvas_node_params(<collector id>, {"files": "…"})`, keeping the
+   lines they kept, in their order. A written answer goes onto the canvas with
+   `place_canvas_text`. The `[REVIEW HALT]` block gives you the collector's id,
+   and it is the one node you may write to **without** the user having selected
+   it — it is the node the halt created, for exactly this.
+3. **Say what changed** — which line, which file — and leave the stop up. Ask
+   whether to continue, or change something else. Revising is not continuing.
+
+There is no limit on the passes. Ten rounds of "warmer, no, warmer than that" is
+the stop doing its job.
+
+### Where the work happens
+
+**Prefer the workflow that is already on the canvas.** It is the one the user
+built, the one the next stage reads from, and the one they can inspect while you
+work. Re-run the stage that made the thing, with the parameter changed — that is
+almost always the whole job, and it leaves a graph that still explains itself.
+
+Open a **separate graph** only when the change genuinely does not fit the
+existing one: a different model, a step the hook chain has no node for, a
+one-off treatment nothing downstream needs. When you do, say so, and bring the
+**result** back into the collector — the side graph is scaffolding, not the new
+home of the work. Never rebuild the hook chain on the side because it is easier
+than editing it; that leaves the user with two workflows and no idea which one
+matters.
+
+If a change would need the hook graph itself altered — a node added, a
+parameter permanently different — make that edit on the canvas rather than
+working around it, and tell them what you changed.
 
 ### Not the same as `stop_hook_run`
 

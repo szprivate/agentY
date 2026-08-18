@@ -145,11 +145,16 @@ def halt_state(halt: ReviewHalt, collector_node_id: str = "") -> str:
 
 
 def execution_refusal(halt: ReviewHalt) -> dict:
-    """The tool result that stands in for running the next stage mid-halt.
+    """The tool result that stands in for ADVANCING the chain mid-halt.
 
-    Returned by every tool that would run or queue work, so the agent learns this
-    while it still holds the turn and can put the question to the user instead of
-    discovering it afterwards, when only they could.
+    Returned by the tools that would queue the stages after the review hook, so
+    the agent learns this while it still holds the turn and can put the question
+    to the user instead of discovering it afterwards, when only they could.
+
+    It is deliberately not a refusal to *work*: revising what is in the collector
+    is the review, and it says so, because an agent told only "no" ends the turn
+    and leaves the user with two moves — accept what they have, or throw the run
+    away — when what they asked for was a third.
     """
     return {
         "error": (f"not yet — the chain is stopped at review hook {halt.hook_node_id} "
@@ -157,10 +162,16 @@ def execution_refusal(halt: ReviewHalt) -> dict:
                   f"the next stage, and they have not answered. Nothing was queued or run."),
         "waiting_on": "the user's continue or stop",
         "what_to_do": (
-            "End the turn: say what the stage produced, that it is waiting in the "
-            "collector node on their canvas, that they can remove or replace rows "
-            "before continuing, and ask whether to continue or stop. Do not call this "
-            "or any other execution tool again this turn."
+            "If they asked for a CHANGE to what is in the collector — a different "
+            "image, a shorter line, a re-cut clip — do it now: run it inline "
+            "(run_workflow_now, apply_canvas_hooks with run_now=True, or "
+            "iterate_step) and put the new result into the collector. That is "
+            "allowed and is what the stop is for. Only QUEUING the stages after "
+            "the hook waits."
+        ),
+        "then": (
+            "End the turn: say what changed, that it is waiting in the collector "
+            "on their canvas, and ask whether to continue or stop."
         ),
         "after": (
             "Their next message re-opens this. 'continue' runs the remaining stages "

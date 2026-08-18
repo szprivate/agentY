@@ -1047,7 +1047,8 @@ class Pipeline:
                              + str(self._hook_run_stopped.get("reason", "")) + ") — "
                              "nothing more runs this turn. Reply to the user instead.",
                 })
-            gate = self._plan_gate_refusal() or self._review_gate_refusal()
+            gate = (self._plan_gate_refusal()
+                    or self._review_gate_refusal(inline=bool(run_now)))
             if gate:
                 return json.dumps(gate)
             # NOW the scoping is worth reporting: something is actually about to
@@ -1350,7 +1351,10 @@ class Pipeline:
                              + str(self._hook_run_stopped.get("reason", "")) + ") — "
                              "nothing more runs this turn. Reply to the user instead.",
                 })
-            gate = self._plan_gate_refusal() or self._review_gate_refusal()
+            # Runs here and now, so a review halt does not shut it: this is the
+            # tool a revision during the stop is made of. Advancing the chain is
+            # what waits for a continue (see _review_gate_refusal).
+            gate = self._plan_gate_refusal() or self._review_gate_refusal(inline=True)
             if gate:
                 return json.dumps(gate)
             # One stage of a chain: tag its outputs with whatever this turn is for,
@@ -1834,7 +1838,10 @@ class Pipeline:
                 return [{"gen": e["gen"], "prompt": e["prompt"], "from": e["from"],
                          "output": e["output_path"]} for e in h]
 
-            gate = self._plan_gate_refusal() or self._review_gate_refusal()
+            # Runs here and now, so a review halt does not shut it: this is the
+            # tool a revision during the stop is made of. Advancing the chain is
+            # what waits for a continue (see _review_gate_refusal).
+            gate = self._plan_gate_refusal() or self._review_gate_refusal(inline=True)
             if gate:
                 return json.dumps(gate)
             if self._dry_run:
@@ -4176,16 +4183,28 @@ class Pipeline:
         """
         return list((self._review_collector() or {}).get("files") or [])
 
-    def _review_gate_refusal(self, announce: bool = True) -> dict | None:
+    def _review_gate_refusal(self, announce: bool = True,
+                             inline: bool = False) -> dict | None:
         """The refusal a run tool returns while a review halt is still unanswered.
 
-        Open only once the user has actually said continue. A halt they have not
-        answered — or answered with something that is neither a continue nor a
-        stop — holds the next stage shut, because the next stage is the expensive
-        one and its whole reason for existing is that they get to choose first.
+        What the halt shuts is the chain ADVANCING: the stages after the review
+        hook are the expensive ones, and the whole reason it exists is that the
+        user chooses first.
+
+        What it must NOT shut is the user changing their mind about what is in
+        the collector. "Regenerate the third one, warmer", "make that line
+        shorter", "re-cut the clip" — that is the review, not an escape from it,
+        and refusing it left the stop as a dead end where the only moves were
+        continue with what you have or throw the run away.
+
+        So the line is *when*, not *what*: `inline` work runs now, in this turn,
+        with its result going back into the collector where the user can see it.
+        Queued work is the chain advancing, and that still waits for a continue.
         """
         halt = getattr(self, "_review_halt", None)
         if halt is None or self._review_reply == "continue":
+            return None
+        if inline:
             return None
         from src.utils.review_gate import execution_refusal
         if announce:

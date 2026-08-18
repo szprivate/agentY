@@ -50,6 +50,7 @@ _BOUND = (
     "_register_output_path",
     "_journal_hook_outputs",
     "_review_gate_refusal",
+    "_arm_review_halt",
     "_review_collector_files",
     "_review_collector",
     "_canvas_full_graph",

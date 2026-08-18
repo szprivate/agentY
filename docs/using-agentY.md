@@ -490,12 +490,26 @@ collector stays on the canvas as the record of what that stage ran with.
 drop the second one"* works too — your words win over the node's contents, and the
 agent tells you which files it ended up with.
 
-**Replacing one, not just dropping it.** If you want a *better* image rather than
-a different selection — *"regenerate the third one, warmer"* — say that while it's
-paused. It's neither continue nor stop, so the halt stays up: the agent re-runs
-that stage and writes the new path into the collector itself. You don't need to
-select the node first; the collector a halt is waiting on is the one node the
-agent may edit unasked, because it's the one it created for this. Then continue.
+**Changing things, not just choosing between them.** A stop isn't a yes/no gate.
+While it's up you can ask for anything to be *different* — *"regenerate the third
+one, warmer"*, *"make that caption shorter"*, *"re-cut the clip to five seconds"*,
+*"swap the second reference for this photo"* — images, video, audio, written text
+alike. It's neither continue nor stop, so the halt stays up: the agent makes the
+change, puts the new result into the collector, tells you what changed, and asks
+again.
+
+**As many rounds as you want.** Ten passes of *"warmer — no, warmer than that"* is
+the stop doing its job. Nothing advances until you say `continue`, and everything
+the agent does meanwhile happens now, in front of you, rather than being queued.
+
+You don't need to select the collector first; the one a halt is waiting on is the
+single node the agent may edit unasked, because it's the one it created for this.
+
+**It works on your workflow.** The agent re-runs the stage that made the thing,
+in the graph you built — so what you get back came from the same pipeline the next
+stage will read from. It'll only open a separate graph when a change genuinely
+doesn't fit yours (a different model, a step your chain has no node for), and then
+it brings the *result* back into the collector and says that's what it did.
 
 **It follows the wire.** Unwire the collector and wire a different one into the
 review hook's anchor and *that* becomes the ballot — handy if you'd rather build
