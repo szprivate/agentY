@@ -34,7 +34,9 @@ from src.tools.annotate import set_output_sink as _set_output_sink
 from src.utils.chat_summary import summarize_conversation, log_agent_messages, log_agent_exchange, set_log_thread
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
 from agenty_core.utils.comfyui_progress import stream_comfyui_job as _stream_comfyui_job
-from agenty_core.utils.progress_signal import drain as _drain_progress, push as _push_progress
+from agenty_core.utils.progress_signal import push as _push_progress
+from src.utils.progress_lines import (as_chunk as _line_chunk,
+                                      drain_chunks as _drain_progress)
 from src.utils.tool_activity import drain as _drain_tools, clear as _clear_tools
 from src.utils.canvas_patch import drain as _drain_canvas_patch, clear as _clear_canvas_patch
 from src.utils.costs import compute_cost_from_usage
@@ -3096,8 +3098,8 @@ class Pipeline:
                             if getattr(intr, "name", None) == INTERRUPT_NAME:
                                 interrupt_result = intr
                                 break
-                for _prog_line in _drain_progress():
-                    yield {"data": _prog_line}
+                for _prog_chunk in _drain_progress():
+                    yield {"data": _prog_chunk}
                 # Surface the agent's tool calls + results inline in the chat.
                 for _ta in _drain_tools():
                     yield {"tool_activity": _ta}
@@ -3188,7 +3190,7 @@ class Pipeline:
                         if isinstance(line, dict) and line.get("qa_fail"):
                             _qa_fail_event = line
                             break
-                        yield {"data": f"\n{line}"}
+                        yield {"data": _line_chunk(line)}
                         # Surface any tool calls the executor's agents make (QA,
                         # error-check) so they aren't stranded in the buffer.
                         for _ta in _drain_tools():
@@ -5782,10 +5784,11 @@ class Pipeline:
                             if chunk:
                                 chunks.append(chunk)
                         yield event
-                        # Drain any progress lines pushed by sync tools (e.g. download_hf_model)
-                        # and surface them as plain data events so Chainlit can display them.
-                        for _prog_line in _drain_progress():
-                            yield {"data": _prog_line}
+                        # Drain any progress lines pushed by sync tools (e.g.
+                        # download_hf_model) and surface them as plain data events,
+                        # each on its own line (see src.utils.progress_lines).
+                        for _prog_chunk in _drain_progress():
+                            yield {"data": _prog_chunk}
             except (TimeoutError, asyncio.TimeoutError):
                 # The attempt looped/stalled past the per-attempt cap. Reset the
                 # (now cancelled) message history and retry with a terser demand.

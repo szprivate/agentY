@@ -1183,7 +1183,11 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
         chunk = event.get("data", "") or ""
         if not chunk:
             return
-        if chunk.startswith("⬇️ ") or "🎨 [" in chunk:
+        # `lstrip` because a drained progress line arrives with the newline that
+        # keeps it off the end of the previous one (src.utils.progress_lines).
+        # Matching on the raw prefix would drop every download bar into the
+        # transcript as text, one line per frame.
+        if chunk.lstrip().startswith("⬇️ ") or "🎨 [" in chunk:
             out_q.put({"type": "progress", "data": chunk.strip()})
             return
         # A line relayed from ComfyUI's own terminal. Its own channel, and
@@ -1206,6 +1210,12 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
         normal, think = _parse_think_chunk(chunk, think_state)
         if think:
             out_q.put({"type": "think", "data": think})
+        # A drained progress line carries a leading newline so it never lands on
+        # the end of the previous one. When it is the FIRST thing said this turn
+        # there is nothing to be kept off, and the newline would open the reply
+        # with a blank line instead.
+        if normal and not assistant_parts:
+            normal = normal.lstrip("\n")
         if normal:
             assistant_parts.append(normal)
             out_q.put({"type": "text", "data": normal})
@@ -1224,7 +1234,7 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
     # and the pipeline's own drain never double-emit an event.
     from src.utils.tool_activity import drain as _drain_tool_activity
     from src.utils.canvas_patch import drain as _drain_canvas_activity
-    from agenty_core.utils.progress_signal import drain as _drain_progress_lines
+    from src.utils.progress_lines import drain_chunks as _drain_progress_chunks
 
     def _flush_activity() -> None:
         # Executor progress emitted from inside a tool call (e.g. run_workflow_now,
@@ -1232,8 +1242,8 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
         # here — the pipeline's own loop is blocked awaiting the tool. Draining the
         # progress buffer on the pump's short timer streams it to the panel live.
         # drain() is atomic, so this never double-emits with the pipeline's drain.
-        for _line in _drain_progress_lines():
-            _translate({"data": _line})
+        for _chunk in _drain_progress_chunks():
+            _translate({"data": _chunk})
         for _ta in _drain_tool_activity():
             _translate({"tool_activity": _ta})
         for _cp in _drain_canvas_activity():
