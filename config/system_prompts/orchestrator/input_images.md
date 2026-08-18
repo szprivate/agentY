@@ -17,7 +17,7 @@ images in one turn cost about what one image costs. One call per turn instead
 serialises them and makes the user wait four times as long for the same answers.
 
 **When an input carries a stated role, pass it as the `question`.** An input
-marked `USE THIS FOR: "…"` in the canvas block has an `agentY ref note` on its
+marked `USE THIS FOR: "…"` in the canvas block has an `agentY add tag` on its
 wire: the user has said what this reference is for. Ask `analyze_image` about
 exactly that (`question="describe the face only — not the hair, not the
 wardrobe"`) and carry the same restriction into the prompt you write. A described

@@ -24,6 +24,7 @@ node, ready to wire into your next step.*
   - [Seeing the plan first](#seeing-the-plan-first)
 - [Slash commands](#slash-commands)
 - [**The hook system**](#the-hook-system)  ← the most powerful part
+  - [Tagging a reference](#tagging-a-reference-the-agenty-add-tag-node)
   - [Asking the agent to change a setting](#asking-the-agent-to-change-a-setting)
   - [Letting the agent edit the whole graph](#letting-the-agent-read-and-edit-the-whole-graph)
   - [Dry run: check the logic first](#dry-run-check-the-logic-before-you-pay-for-it)
@@ -294,6 +295,67 @@ happens.
 - Turn it off with **`hook_tap_tensors`** in Settings → Behaviour (or
   `AGENTY_HOOK_TAP=0`). Tuning: `AGENTY_MAX_HOOK_TAPS` (4 wires per turn),
   `AGENTY_HOOK_TAP_FRAMES` (4), `AGENTY_HOOK_TAP_TIMEOUT` (300s).
+
+### Tagging a reference (the `agentY add tag` node)
+
+Wire five images into one hook and every one of them is "an image". The **`agentY
+add tag`** node fixes that. It sits *on a wire* — `Load Image → add tag →
+anywhere` — and carries two fields:
+
+- **`tag name`** — a short handle for this reference: `hero_face`, `alley_light`.
+- **the prompt box** — what the agent should *take* from it: *"the face only —
+  not the hair, not the wardrobe"*, *"the light, not the architecture"*.
+
+Both are optional and they do different jobs. The prompt narrows what a reference
+is *for*, and it always has: the agent describes that image with your question
+instead of describing it whole, and carries the restriction into the prompt it
+writes. That is how a reference for the *lighting* stops dictating the
+architecture.
+
+The tag **names** it. Once one tag exists anywhere on the canvas, typing `#` in
+any hook's prompt box opens a small menu of every tag in the scene — keep typing
+to filter, `↑`/`↓` to move, `Enter` or `Tab` to insert, `Esc` to dismiss. So a
+directive can say:
+
+```
+Put #hero_face in the alley, lit like #alley_light. Wide shot.
+```
+
+and each `#name` points at exactly one node. The agent is handed the mapping with
+the graph (`#hero_face → node 43 (LoadImage)`), so it resolves the name instead of
+guessing which of the five wired inputs you meant. A `#name` that no tag node
+carries is flagged in the [dry run](#dry-run-check-the-logic-before-you-pay-for-it)
+rather than quietly matched to the nearest input.
+
+**A named reference is an input — you can skip the anchor wire.** Naming a tag in
+a hook's prompt hands that hook the reference, the same as wiring it in. The hook
+block reports it under `NAMED IN THE DIRECTIVE`, the run keeps that node (and
+whatever it takes to produce it) in scope instead of trimming it away, and a
+`make_workflow` hook that names one builds an image-to-image job rather than
+treating the prompt as text-to-image. So five references and three hooks no longer
+mean fifteen wires — tag each image once, name the ones each hook needs.
+
+Two things still want the wire:
+
+- **A reference that has to reach a node in your own graph.** A name cannot make
+  ComfyUI carry a value from one node to the next — only a wire does that. So the
+  image a sampler branch actually consumes, or the `LoadImage` an `iterate` hook
+  swaps each turn, stays wired.
+- **A mid-graph tensor** (a `VAEDecode`, an upscaler, a mask op). Those carry no
+  file of their own, and only a *wired* anchor gets rendered to disk for the agent
+  to look at. Tag a saved image, or wire the tensor into the hook.
+
+Because the node lives *on the wire*, there is no node id to keep in sync:
+whatever is plugged into it is what it is about. Rewire it and the tag follows.
+Anchoring a hook on the tag node itself is fine too — the agent reports the
+`LoadImage` behind it, not the annotation.
+
+> Spaces and a leading `#` are forgiven (`#hero face` and `hero_face` are the same
+> tag), so the name you see in the menu is always the one that resolves.
+
+> This node was called **`agentY ref note`** before it grew the tag field. Saved
+> graphs keep working and their prompt text is preserved — only the name and the
+> extra field changed.
 
 ### Asking the agent to change a setting
 
@@ -639,15 +701,17 @@ role: shot start frame
 `role: …`, `[role: …]`, or *"tag the outputs as 'hero sheet'"* all work. Then:
 
 - each dropped node is **titled with the role** instead of the filename;
-- an **`agentY ref note` is attached** to it carrying your words, so whatever you
-  wire it into next is told what to take from it;
+- an **`agentY add tag` node is attached** to it carrying your words, so whatever
+  you wire it into next is told what to take from it;
 - a small `.agenty.json` file is written **beside the image or video**, so months
   later — in another thread, or via an [agentY
   collector](#the-agenty-python-node--collectors) pointed at the folder — the
   agent still knows what it is instead of looking again.
 
 Without a stated role, the first two still happen using the directive itself
-(minus the ref note — agentY won't add nodes to your canvas uninvited).
+(minus the tag node — agentY won't add nodes to your canvas uninvited). Its `tag
+name` field is left empty either way: a name is what you type from the `#` menu,
+and one invented out of a sentence is a name nobody chose.
 
 **In a batch, each variant is named separately.** Sweep three character prompts
 through one hook and the three frames come back as *"character reference: Anna,

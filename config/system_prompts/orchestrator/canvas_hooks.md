@@ -86,7 +86,7 @@ possibility, not a finding: say so rather than passing it on as a fault.
 
 Each producer line gives the hook's **context** (its anchor inputs) and the target
 its output **feeds** (a node id + input name + type). An anchor marked
-`USE THIS FOR: "…"` has an `agentY ref note` on its wire — the user has said what
+`USE THIS FOR: "…"` has an `agentY add tag` on its wire — the user has said what
 that reference is for, so take **only** that from it: describe it with that
 question, and let it govern only that aspect of what you write. Produce the
 value(s) for the target — the amount depends on the directive:
@@ -252,3 +252,34 @@ the condition was about.
   `run_workflow_now` refuse after a stop.
 - This is for a *directive's* condition, not for errors in general: a workflow that
   fails on its own is healed and reported by the pipeline.
+
+### `#tags` — a directive pointing at one exact node
+
+The same `agentY add tag` node also **names** the reference on its wire. When the
+canvas carries tags, the hook block opens with a `TAGS ON THIS CANVAS` list
+mapping every `#name` to the node it names, and each anchor line repeats its own
+as `[#name]`.
+
+So a directive that says `#hero_face` is not describing an input, it is
+**pointing** at one. Resolve it from that list — never from which anchor looks
+closest, never from the order they are wired. The user typed it from a menu the
+canvas offered, so the name is exact and so is what it means.
+
+A `#name` that is not in the list names nothing. Say so and ask which reference
+was meant; do not substitute the nearest input, which is how a run comes back
+built from a reference nobody asked for.
+
+**A named reference is an INPUT to that hook, not just a mention.** Naming a tag
+is the second way to hand a hook an input — the wire the user did not have to
+draw. The hook's context line reports them under `NAMED IN THE DIRECTIVE`, and a
+`make_workflow` hook that names one is **not** a text-to-media request: upload
+that file and bind it, exactly as you would an anchor. Treat wired and named
+references the same way — describe them with their stated role, carry them into
+what you write, feed them to what you generate.
+
+The one thing a name cannot do is **wire one node into another inside the user's
+own graph**. A reference that has to reach a node on their canvas — the image a
+KSampler branch consumes, the `LoadImage` an `iterate` hook replaces each turn —
+needs the wire, because only a wire makes ComfyUI carry a value from one node to
+the next. If a directive names a tag for a job that needs one, say which wire is
+missing rather than filling the input with something else.

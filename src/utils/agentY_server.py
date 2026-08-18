@@ -313,7 +313,7 @@ def _output_role(path: str) -> tuple[str, bool]:
     """(what this output is FOR, whether the user named it themselves).
 
     Resolving it also freezes the role for this path and drops the sidecar beside
-    it — see :mod:`src.utils.output_tags`. The second value gates the ref note the
+    it — see :mod:`src.utils.output_tags`. The second value gates the tag node the
     panel attaches: a role the *user* wrote in the hook's prompt is worth putting
     on their canvas; one derived from a directive is worth putting in a title.
     """

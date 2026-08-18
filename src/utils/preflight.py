@@ -32,9 +32,9 @@ import re
 from dataclasses import dataclass
 
 from src.utils.canvas_hooks import (_COLLECTOR_TYPES, _hook_ids, _output_targets,
-                                    _all_anchor_inputs, _slot_label,
-                                    is_connection_type, missing_collector_files,
-                                    unresolved_anchor_refs)
+                                    _all_anchor_inputs, _slot_label, canvas_tags,
+                                    is_connection_type, mentioned_tags,
+                                    missing_collector_files, unresolved_anchor_refs)
 
 from src.utils.canvas_hooks import is_terminal
 
@@ -221,6 +221,9 @@ def check(hooks: list | None, base_prompt: dict | None) -> list:
             f"not exist: {'; '.join(graph_check['missing'][:4])}. The collector skips "
             f"what it cannot find, so the run uses fewer images than the list says.")))
 
+    # Every name a directive is allowed to use, read once for the whole graph.
+    tags = canvas_tags(prompt)
+
     # ── per hook ────────────────────────────────────────────────────────────
     for h in hooks:
         hid = str(h.get("hook_node_id"))
@@ -242,6 +245,25 @@ def check(hooks: list | None, base_prompt: dict | None) -> list:
                 f"{len(wired)} input(s) wired ({', '.join(wired) or 'none'}) and no "
                 f"reading of that name reaches one. Whatever it expects there, it "
                 f"will not find.")))
+
+        # A `#name` that names nothing. The canvas offers the list when you type
+        # "#" in a prompt box, so a tag reached this state by being typed out by
+        # hand, pasted from another graph, or renamed on the node afterwards.
+        # Either way the agent sees a word that looks like a reference and has no
+        # node to attach it to, which is exactly when it picks the nearest input
+        # instead — a wrong reference nobody can see they asked for.
+        #
+        # Only on a canvas that HAS tags. A `#` on one that doesn't is somebody
+        # writing prose, and a check that reads "#soon" in a sentence as a broken
+        # reference warns about graphs where nothing is wrong.
+        for tag in (mentioned_tags(directive) if tags else []):
+            if tag in tags:
+                continue
+            known = ", ".join("#" + t for t in list(tags)[:6])
+            found.append(Finding("note", hid, (
+                f"the directive says `#{tag}`, but no `agentY add tag` node carries "
+                f"that name (tags here: {known}). It names nothing, so whatever it "
+                f"was meant to point at will be guessed at.")))
 
         # Two targets that want different things. This is a NOTE, not a blocker:
         # it is only unsatisfiable on the place_canvas_text path, which sends one

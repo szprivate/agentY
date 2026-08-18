@@ -2276,7 +2276,7 @@ class Pipeline:
             _push_progress(f"🎯 {note}.")
         if pruned_n:
             notes.append(f"dropped {pruned_n} node(s) that fed nothing and rendered "
-                         "nothing (hook context inputs, ref notes)")
+                         "nothing (hook context inputs, tag nodes)")
         if self._verbose and (scoped_n or pruned_n):
             print(f"pipeline: trimmed variants — scoped out {scoped_n}, pruned {pruned_n}.")
         return out, notes
@@ -3916,7 +3916,7 @@ class Pipeline:
         another thread — so there is no later point at which "this batch was the
         shot start frames" is still known. ``declared`` records that the user
         named the role themselves in the hook's prompt, which is what earns an
-        ``agentY ref note`` on the node dropped for it: decorating someone's
+        ``agentY add tag`` on the node dropped for it: decorating someone's
         canvas is a thing you do when asked, not by default.
         """
         try:

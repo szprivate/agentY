@@ -80,7 +80,7 @@ def _anchor_out_types(hooks) -> dict:
 
 
 # Slot types that carry no promise about what flows through them: a reroute, an
-# agentY ref note, an unwired-yet MatchType. They pass whatever they were given,
+# agentY add tag, an unwired-yet MatchType. They pass whatever they were given,
 # so they are compatible with any target rather than with none.
 _WILDCARD_TYPES = {"", "*", "COMFY_MATCHTYPE_V3", "COMFY_MULTITYPE_V3", "ANY"}
 
@@ -124,7 +124,7 @@ def splice_hook_nodes(prompt: dict, hooks: list | None = None) -> tuple[dict, li
         return clean, []
     target_types = _target_input_types(hooks)
     anchor_types = _anchor_out_types(hooks)
-    # An anchor drawn through an `agentY ref note` arrives at the hook FROM the
+    # An anchor drawn through an `agentY add tag` arrives at the hook FROM the
     # note, so the graph's link names the note while the hook payload reports the
     # node it wraps. Without this the anchor's type is unknown at exactly the
     # moment it decides which wire replaces the hook.
@@ -141,7 +141,7 @@ def splice_hook_nodes(prompt: dict, hooks: list | None = None) -> tuple[dict, li
         def _source_for(wire_type: str):
             """The anchor to pass through for a target of *wire_type*, or None.
 
-            Exact type first, then anything compatible (a reroute or a ref note
+            Exact type first, then anything compatible (a reroute or a tag node
             declares a wildcard and carries whatever it was handed). If the target
             has a declared type and we know the anchors' types, and none of them
             fits, the answer is **None** — leaving the input unwired. Passing the
@@ -249,24 +249,61 @@ def hook_scope_ids(prompt: dict, hook_ids=None) -> set | None:
     even though none of that sits downstream of the hook. Sibling branches that
     merely share an upstream loader come along as ancestors only if something kept
     actually consumes them, so unrelated output chains drop out.
+
+    A reference the directive names with ``#tag`` is kept too. Naming one is the
+    other way to hand a hook an input — the wire the user did not have to draw —
+    and this scope is what ``describe_hooks`` is later rendered from, so without
+    this a tagged reference nobody wired is trimmed away before the agent is ever
+    told it exists, and the `#name` in the directive resolves to nothing. Only its
+    ANCESTORS: what it takes to produce that reference, never what consumes it. A
+    tag pointing into another output chain must not drag that chain's render into
+    the run — the user named a reference, not a second job.
     """
     hooks_in_prompt = {str(nid) for nid, node in prompt.items()
                        if isinstance(node, dict) and node.get("class_type") == _HOOK_CLASS}
     if not hooks_in_prompt:
         return None
-    seeds = set(hooks_in_prompt)
+    chosen_hooks = set(hooks_in_prompt)
     if hook_ids:
         # Honour "the hooks being executed": a bypassed/muted hook is not collected
         # by the frontend, so it must not drag its branch into the run either.
         chosen = {str(h) for h in hook_ids if h is not None} & hooks_in_prompt
         if chosen:
-            seeds = chosen
-    for hid in list(seeds):
+            chosen_hooks = chosen
+    seeds = set(chosen_hooks)
+    for hid in chosen_hooks:
         for link in _anchor_links((prompt.get(hid) or {}).get("inputs") or {}):
             seeds.add(str(link[0]))
     if not seeds:
         return None
-    return _ancestors(prompt, _descendants(prompt, seeds))
+    keep = _ancestors(prompt, _descendants(prompt, seeds))
+    named = _directive_tag_nodes(prompt, chosen_hooks)
+    return keep | _ancestors(prompt, named) if named else keep
+
+
+def _directive_tag_nodes(prompt: dict, hook_ids) -> set:
+    """Node ids the given hooks' directives name with ``#tag``.
+
+    Both ends of each named reference: the node the tag actually points at (the
+    loader) and the ``agentY add tag`` node carrying the name, so the annotation
+    survives alongside the thing it annotates and the glossary still resolves.
+
+    Read off the hook NODES in the prompt rather than the hook payloads, because
+    scoping runs on the graph alone — the same reason this takes a prompt.
+    """
+    tags = canvas_tags(prompt)
+    if not tags:
+        return set()
+    out: set = set()
+    for hid in hook_ids:
+        directive = ((prompt.get(str(hid)) or {}).get("inputs") or {}).get("directive")
+        for name in mentioned_tags(directive):
+            info = tags.get(name)
+            if not info:
+                continue
+            out.add(str(info.get("node_id")))
+            out.add(str(info.get("note_id")))
+    return {nid for nid in out if nid in prompt}
 
 
 # Nodes that exist to end a graph. Named rather than asked, because this is on the
@@ -314,7 +351,7 @@ def prune_dead_nodes(prompt: dict) -> tuple[dict, list]:
     """Drop nodes that feed nothing and produce nothing. ``(pruned, dropped_ids)``.
 
     Splicing a hook out leaves its anchors behind. An image wired into a hook as
-    *context* — a reference the agent was meant to look at, an ``agentY ref note``
+    *context* — a reference the agent was meant to look at, an ``agentY add tag``
     describing it — has no consumer once the hook is gone, so it sits in every
     generated workflow doing nothing: it cannot affect the result, and it makes the
     baked graph unreadable and the reference chain look like part of the render.
@@ -994,17 +1031,77 @@ def _order_standin_chains(standin_hooks: list) -> list:
     return chains
 
 
+# The class id never changed: the node was called "agentY ref note" until it grew
+# a tag field and became "agentY add tag". Every saved canvas, and every reference
+# below, keys off the class — renaming it would orphan the graphs it annotates.
 _REF_NOTE_CLASS = "AgentYRefNote"
 _REF_NOTE_HOPS = 4  # notes on notes: follow a few, then stop rather than loop
 
+# What a tag may contain, mirroring web/agent_tags.js. The field is free text on
+# the canvas, so "#hero face" and "hero_face" have to arrive at the same tag —
+# otherwise a directive matches a tag the user believes they typed and the agent
+# reads a name that names nothing.
+_TAG_STRIP = re.compile(r"[^A-Za-z0-9_\-]+")
+
+
+def normalise_tag(raw) -> str:
+    """``"#hero face"`` → ``"hero_face"``. Empty for anything with no name in it."""
+    return _TAG_STRIP.sub("_", str(raw or "").strip().lstrip("#")).strip("_")
+
+
+# How a directive writes a tag. `#` only counts at the START of a word, matching
+# web/agent_tags.js — mid-word it is an ordinary character (an id, a hex colour,
+# "shot#3") and reading it as a name would invent references nobody asked for.
+_TAG_MENTION = re.compile(r"(?:^|[\s([{<,;:!?\"'])#([A-Za-z0-9_-]+)")
+
+
+def mentioned_tags(text) -> list[str]:
+    """The tags a directive names, in order, de-duplicated.
+
+    A mention with no letter in it is not a name — "#3", "#1" are how people write
+    a shot number or a rank, and on a canvas that uses tags at all those would
+    otherwise read as references to something.
+    """
+    out: list = []
+    for m in _TAG_MENTION.finditer(str(text or "")):
+        tag = normalise_tag(m.group(1))
+        if tag and any(c.isalpha() for c in tag) and tag not in out:
+            out.append(tag)
+    return out
+
+
+def _note_sources(base_prompt: dict | None) -> tuple[dict, dict]:
+    """``({note_id: node}, {note_id: source_id})`` for every tag node on the graph.
+
+    The source is the first node UP the wire that is not itself a tag node, so a
+    note stacked on a note still names the loader rather than the note below it.
+    """
+    if not isinstance(base_prompt, dict):
+        return {}, {}
+    notes = {nid: node for nid, node in base_prompt.items()
+             if isinstance(node, dict) and node.get("class_type") == _REF_NOTE_CLASS}
+
+    def _link(nid: str):
+        link = ((notes[nid].get("inputs") or {}).get("input"))
+        return str(link[0]) if isinstance(link, list) and link else None
+
+    src_of: dict = {}
+    for nid in notes:
+        src, hops = _link(nid), 0
+        while src in notes and hops < _REF_NOTE_HOPS:
+            src, hops = _link(src), hops + 1
+        if src is not None:
+            src_of[nid] = src
+    return notes, src_of
+
 
 def ref_notes(base_prompt: dict | None) -> tuple[dict, dict]:
-    """Read the ``agentY ref note`` nodes off the graph.
+    """Read the ``agentY add tag`` nodes off the graph.
 
-    A ref note sits ON the wire that carries a reference — LoadImage → ref note →
+    The node sits ON the wire that carries a reference — LoadImage → add tag →
     wherever — and says what the agent should take from it ("the face, not the
     styling"). Living on the wire is the point: there is no node id to keep in
-    sync, because whatever is plugged into the note is what the note is about.
+    sync, because whatever is plugged into it is what it is about.
 
     Returns ``(role_by_node_id, wrapped_by_note_id)``. The first answers "does this
     input come with a stated role", keyed by the node the user actually recognises
@@ -1013,32 +1110,84 @@ def ref_notes(base_prompt: dict | None) -> tuple[dict, dict]:
     agent nothing about what it is looking at.
     """
     roles: dict = {}
-    wrapped: dict = {}
-    if not isinstance(base_prompt, dict):
-        return roles, wrapped
-
-    notes = {nid: node for nid, node in base_prompt.items()
-             if isinstance(node, dict) and node.get("class_type") == _REF_NOTE_CLASS}
-
-    def _source(nid: str) -> str | None:
-        link = ((notes[nid].get("inputs") or {}).get("input"))
-        return str(link[0]) if isinstance(link, list) and link else None
-
+    notes, wrapped = _note_sources(base_prompt)
     for nid, node in notes.items():
         role = str((node.get("inputs") or {}).get("role") or "").strip()
-        # Walk back to the first node that isn't itself a note, so a note stacked
-        # on a note still names the loader rather than the note below it.
-        src, hops = _source(nid), 0
-        while src in notes and hops < _REF_NOTE_HOPS:
-            src, hops = _source(src), hops + 1
-        if src is not None:
-            wrapped[nid] = src
         if not role:
             continue
+        src = wrapped.get(nid)
         roles[nid] = role
         if src is not None and src not in roles:
             roles[src] = role
-    return roles, wrapped
+    return roles, dict(wrapped)
+
+
+def canvas_tags(base_prompt: dict | None) -> dict:
+    """``{tag: {"node_id", "note_id", "role"}}`` for every named reference.
+
+    A tag is the short handle the user gave a reference on an ``agentY add tag``
+    node — ``hero_face``, ``alley_light``. Hook directives use it as ``#hero_face``
+    (the canvas offers the list when they type ``#``), so a directive can point at
+    one exact wire instead of describing an input and hoping the right one is
+    picked. ``node_id`` is what the tag actually names: the node up the wire, not
+    the annotation.
+
+    Two nodes carrying the same tag collapse to one entry — the same reference
+    annotated twice is not a conflict, and the lowest node id wins so the answer
+    does not depend on dict order.
+    """
+    out: dict = {}
+    notes, src_of = _note_sources(base_prompt)
+    for nid in sorted(notes, key=lambda s: (len(str(s)), str(s))):
+        tag = normalise_tag((notes[nid].get("inputs") or {}).get("tag"))
+        if not tag or tag in out:
+            continue
+        out[tag] = {
+            "node_id": src_of.get(nid, nid),
+            "note_id": nid,
+            "role": str((notes[nid].get("inputs") or {}).get("role") or "").strip(),
+        }
+    return out
+
+
+def tagged_inputs(hook: dict, base_prompt: dict | None) -> list:
+    """``[(node_id, class_type, scalar_inputs, role, tag), …]`` — the references a
+    hook's DIRECTIVE names with ``#tag`` and nothing wired into it.
+
+    Naming a tag is the second way to hand a hook an input. The wire is still the
+    only thing that can feed the user's own canvas graph — a loader connected to
+    nothing cannot reach a node, in ComfyUI or anywhere else — but for everything
+    the *agent* does with a reference (look at it, describe it, upload it into a
+    workflow it generates, carry it into the prompt it writes) the name is enough,
+    and it saves drawing a wire per reference into every hook that mentions one.
+
+    Anything already wired is left out: it is described as the anchor it is, on the
+    slot it arrived on, and listing it twice would read as two references.
+
+    A tag whose node is the annotation itself (nothing plugged into it) names no
+    reference, so it is not an input either — :func:`describe_hooks` reports that
+    separately, where it reads as the mistake it is rather than as an input.
+    """
+    tags = canvas_tags(base_prompt)
+    if not tags:
+        return []
+    wired = {aid for aid, *_ in _all_anchor_inputs(hook, base_prompt)}
+    out: list = []
+    seen: set = set()
+    for name in mentioned_tags(hook.get("directive")):
+        info = tags.get(name)
+        if not info:
+            continue
+        nid = str(info.get("node_id") or "")
+        if not nid or nid == str(info.get("note_id") or "") or nid in wired or nid in seen:
+            continue
+        seen.add(nid)
+        node = (base_prompt or {}).get(nid) or {}
+        inputs = {k: v for k, v in (node.get("inputs") or {}).items()
+                  if not isinstance(v, list)}
+        out.append((nid, str(node.get("class_type") or "?"), inputs,
+                    str(info.get("role") or ""), name))
+    return out
 
 
 def _all_anchor_inputs(hook: dict, base_prompt: dict | None) -> list:
@@ -1050,9 +1199,11 @@ def _all_anchor_inputs(hook: dict, base_prompt: dict | None) -> list:
     older frontends that only send one. *tap* is ``(wire_type, paths)`` when
     :mod:`src.utils.canvas_tap` rendered this anchor's wire to disk — it carried a
     runtime tensor rather than a named file — and ``None`` for everything else.
-    *role* is what an ``agentY ref note`` on this input says the reference is FOR,
-    or ``""`` — an anchor drawn on the note itself is reported as the node the note
-    wraps, since the note is an annotation on the wire, not the subject.
+    *role* is what an ``agentY add tag`` on this input says the reference is FOR,
+    and *tag* is the name the same node gave it (what a directive writes as
+    ``#tag``), or ``""`` for either — an anchor drawn on the tag node itself is
+    reported as the node it wraps, since it is an annotation on the wire, not the
+    subject.
     """
     entries: list = []
     plural = hook.get("anchors")
@@ -1063,16 +1214,20 @@ def _all_anchor_inputs(hook: dict, base_prompt: dict | None) -> list:
                                 a.get("tapped_type"), a.get("tapped"),
                                 str(a.get("role") or "").strip(),
                                 str(a.get("title") or "").strip(),
-                                str(a.get("to_input") or "")))
+                                str(a.get("to_input") or ""),
+                                normalise_tag(a.get("tag"))))
     elif hook.get("anchor_node_id") is not None:
         entries.append((str(hook["anchor_node_id"]), hook.get("anchor_type"),
                         hook.get("anchor_widgets"), None, None, "",
-                        str(hook.get("anchor_title") or "").strip(), ""))
+                        str(hook.get("anchor_title") or "").strip(), "", ""))
 
     roles, wrapped = ref_notes(base_prompt)
+    # tag → the node it names, inverted: an anchor is looked up by node, and the
+    # graph is the only place a tag survives when an older frontend sends none.
+    tag_of = {str(v.get("node_id")): t for t, v in canvas_tags(base_prompt).items()}
     out: list = []
     seen: set = set()
-    for aid, atype, widgets, wire, tapped, sent, title, slot in entries:
+    for aid, atype, widgets, wire, tapped, sent, title, slot, sent_tag in entries:
         # The frontend already resolves a note on the anchor's own wire (so every
         # consumer sees the real node); reading the graph catches the rest — a note
         # elsewhere on that loader, or an older frontend that sends neither.
@@ -1097,7 +1252,8 @@ def _all_anchor_inputs(hook: dict, base_prompt: dict | None) -> list:
         paths = [str(p) for p in (tapped or []) if str(p).strip()]
         out.append((aid, atype or "?", inputs,
                     (str(wire or "live"), paths) if paths else None,
-                    role or roles.get(aid, ""), title, slot))
+                    role or roles.get(aid, ""), title, slot,
+                    sent_tag or tag_of.get(aid, "")))
     return out
 
 
@@ -1612,7 +1768,7 @@ def is_conditional(hook: dict) -> bool:
 # the way people write it in a sentence ("tag the outputs as 'alley night'").
 # Deliberately not inferred from the directive as a whole: a role that fires on
 # every hook is a label nobody trusts, and it is used to DECORATE the user's
-# canvas — an auto ref note per output — which has to be something they asked for.
+# canvas — an auto tag node per output — which has to be something they asked for.
 _ROLE_PATTERNS = (
     re.compile(r"\[\s*roles?\s*[:=]\s*([^\]\n]+)\]", re.I),
     re.compile(r"^[\s\-*>]*roles?\s*[:=]\s*(.+?)\s*$", re.I | re.M),
@@ -1628,7 +1784,7 @@ def declared_output_role(hook_or_text) -> str:
 
     Accepts a hook dict or a raw directive. The value is what a generated file
     gets tagged with — its sidecar, the title of the node dropped for it, and
-    (only when it is stated like this) an ``agentY ref note`` attached to that
+    (only when it is stated like this) an ``agentY add tag`` attached to that
     node, so the next run reads the user's own words rather than a filename.
     """
     text = hook_or_text if isinstance(hook_or_text, str) else \
@@ -1822,12 +1978,16 @@ def sitrep_lines(hooks: list, base_prompt: dict | None = None,
                 f"hook {hid} feeds only {who} — nothing it produces reaches a node that "
                 "renders. Assuming it is a written value, not a generation."
             )
-        if not anchors and not _chain_inputs(h, ids) and not real and not chain \
+        # A reference NAMED with `#tag` counts as wired in: the user handed the hook
+        # an input, they just did it with a name instead of a wire. Telling them to
+        # "wire an anchor" there is advice to undo the thing they did.
+        if not anchors and not tagged_inputs(h, base_prompt) \
+                and not _chain_inputs(h, ids) and not real and not chain \
                 and not _is_standin(h):
             items.append(
                 f"hook {hid} has nothing wired in and nothing wired out. Assuming its "
-                "directive stands on its own; wire an anchor if it was meant to act on "
-                "something."
+                "directive stands on its own; wire an anchor (or name a #tag) if it "
+                "was meant to act on something."
             )
         if is_conditional(h) and not producers.get(hid):
             items.append(
@@ -1911,7 +2071,7 @@ def _recorded_role(inputs: dict) -> str:
 
 
 def _render_anchor(aid: str, atype: str, inputs: dict, tap: tuple | None = None,
-                   role: str = "", title: str = "") -> str:
+                   role: str = "", title: str = "", tag: str = "") -> str:
     """Human-readable description of one real-node anchor input.
 
     An agentY collector node is expanded to its listed on-disk file paths (available
@@ -1926,6 +2086,10 @@ def _render_anchor(aid: str, atype: str, inputs: dict, tap: tuple | None = None,
     # The user said what this reference is FOR. It qualifies everything else on the
     # line, so it goes last, where it reads as the instruction it is.
     note = f'  ← USE THIS FOR: "{role.strip()}" (take only that from it)' if role.strip() else ""
+    # The name the user gave this reference. It goes BEFORE the role, because it is
+    # an identity, not an instruction: a directive that says `#hero_face` is
+    # pointing at this line, and the mapping is what makes the word mean a node.
+    tag_mark = f' [#{tag.strip()}]' if str(tag or "").strip() else ""
     # Failing that: what the file itself says it is (agentY generated it and left a
     # record), then the node's title. Both are the user's or the agent's own words
     # about this input, and either beats making the next turn look at it again.
@@ -1947,11 +2111,11 @@ def _render_anchor(aid: str, atype: str, inputs: dict, tap: tuple | None = None,
         paths = [ln.strip().strip('"') for ln in str(files or "").splitlines() if ln.strip()]
         kind = "image" if atype == "AgentYImageCollector" else "video"
         if not paths:
-            return f"node {aid} (agentY {kind} collector) — EMPTY (no files added yet){note}"
-        return (f"node {aid} (agentY {kind} collector) — {len(paths)} {kind} file(s) already "
+            return f"node {aid} (agentY {kind} collector){tag_mark} — EMPTY (no files added yet){note}"
+        return (f"node {aid} (agentY {kind} collector){tag_mark} — {len(paths)} {kind} file(s) already "
                 f"on disk (use these paths directly, no run needed): " + "; ".join(paths) + note)
     params = ", ".join(f"{k}={v!r}" for k, v in (inputs or {}).items()) or "(no scalar inputs)"
-    base = f"node {aid} ({atype}) inputs[{params}]"
+    base = f"node {aid} ({atype}){tag_mark} inputs[{params}]"
     if tap:
         wire, paths = tap
         noun = "file" if len(paths) == 1 else "files"
@@ -1987,15 +2151,21 @@ def _input_context(hook: dict, base_prompt: dict | None, hook_ids: set,
         return f"the value you produce for hook {aid}"
 
     rows: list = []
-    for aid, atype, inputs, tap, role, title, slot in _all_anchor_inputs(hook, base_prompt):
+    for aid, atype, inputs, tap, role, title, slot, tag in _all_anchor_inputs(hook, base_prompt):
         text = _from_hook(aid) if aid in hook_ids else \
-            _render_anchor(aid, atype, inputs, tap, role, title)
+            _render_anchor(aid, atype, inputs, tap, role, title, tag)
         rows.append((_slot_order(slot), _slot_label(slot), text))
     seen = {aid for aid, *_ in _all_anchor_inputs(hook, base_prompt)}
     for slot, hid in _chain_inputs(hook, hook_ids):
         if hid not in seen:
             rows.append((_slot_order(slot), _slot_label(slot), _from_hook(hid)))
-    if not rows:
+    # References the directive NAMED rather than wired. Rendered exactly like an
+    # anchor — same filenames, same stated role — because that is what they are to
+    # everything the agent does; only where they came from differs, and that is
+    # said once rather than left to be inferred from a missing slot name.
+    named = [_render_anchor(nid, cls, inputs, None, role, "", tag)
+             for nid, cls, inputs, role, tag in tagged_inputs(hook, base_prompt)]
+    if not rows and not named:
         return "no input wired"
     rows.sort(key=lambda r: r[0])
     # Name the slot each input arrived on when we know it — directives refer to
@@ -2008,6 +2178,9 @@ def _input_context(hook: dict, base_prompt: dict | None, hook_ids: set,
     out: list = []
     for i, (_o, label, text) in enumerate(rows, 1):
         out.append(f"#{i} ({label}): {text}" if label else f"#{i}: {text}")
+    if named:
+        out.append("NAMED IN THE DIRECTIVE (an input to this hook, though no wire "
+                   "was drawn — treat it as one): " + "; ".join(named))
     return "; ".join(out)
 
 
@@ -2140,6 +2313,40 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
         "the name from the quoted title below, or from what the hook's directive "
         "asks for when it has no title of its own.]"
     ]
+
+    # The scene's vocabulary. A tag is a name the user put on a reference so a
+    # directive can point at it — "#hero_face", offered by the canvas itself when
+    # they type "#" in a prompt box. Without this list the agent reads the word and
+    # has nothing on the graph to attach it to, which is worse than no tag at all:
+    # it looks like an instruction and resolves to a guess.
+    tags = canvas_tags(base_prompt)
+    if tags:
+        lines.append(
+            "\nTAGS ON THIS CANVAS — each is an `agentY add tag` node NAMING the "
+            "reference on a wire. A directive that writes `#name` means EXACTLY the "
+            "node listed here — resolve it from this list, never from which input "
+            "looks closest. A `#name` that is NOT in this list names nothing: say so "
+            "rather than picking the nearest input. Anchor lines below repeat the tag "
+            "in `[#name]`, so you can see which wired input each one is:"
+        )
+        for tag, info in tags.items():
+            nid = str(info.get("node_id") or "")
+            note_id = str(info.get("note_id") or "")
+            node = (base_prompt or {}).get(nid) or {}
+            role = str(info.get("role") or "").strip()
+            says = f' — "{_trim(role, 200)}" (take only that from it)' if role else ""
+            if nid == note_id or not node:
+                # The tag node sits on nothing yet, so the name is real but points at
+                # no reference. Saying that is the useful answer; describing the
+                # annotation's own widgets as if they were the subject is not.
+                lines.append(f"- #{tag} (tag node {note_id}) — NOT WIRED to anything "
+                             f"yet, so it names no reference{says}")
+                continue
+            cls = str(node.get("class_type") or "?")
+            scalars = [f"{k}={v!r}" for k, v in (node.get("inputs") or {}).items()
+                       if not isinstance(v, list)][:4]
+            what = f" [{', '.join(scalars)}]" if scalars else ""
+            lines.append(f"- #{tag} → node {nid} ({cls}){what}{says}")
 
     if cached_hooks:
         lines.append(
@@ -2402,13 +2609,23 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
 
         def _input_desc(h: dict) -> str:
             anchors = _all_anchor_inputs(h, base_prompt)
-            if not anchors:
+            parts = [_render_anchor(aid, atype, inputs, tap, role, title, tag)
+                     for aid, atype, inputs, tap, role, title, _slot, tag in anchors]
+            # A reference the prompt NAMED is an input to what you generate, the
+            # same as a wired one — upload it and bind it. Reading "no input wired"
+            # off a hook whose prompt says `#hero_face` is how a request to edit a
+            # reference comes back as a text-to-image of something else entirely.
+            named = [_render_anchor(nid, cls, inputs, None, role, "", tag)
+                     for nid, cls, inputs, role, tag in tagged_inputs(h, base_prompt)]
+            if not parts and not named:
                 return "no input wired — treat the prompt as text-to-media"
-            parts = [_render_anchor(aid, atype, inputs, tap, role, title)
-                     for aid, atype, inputs, tap, role, title, _slot in anchors]
-            if len(parts) == 1:
-                return f"input from {parts[0]}"
-            return "inputs from " + "; ".join(parts)
+            said = ("NAMED in the prompt, not wired — still an input to what you "
+                    "generate: " + "; ".join(named)) if named else ""
+            if not parts:
+                return said
+            wired = (f"input from {parts[0]}" if len(parts) == 1
+                     else "inputs from " + "; ".join(parts))
+            return f"{wired}; {said}" if said else wired
 
         def _output_desc(h: dict) -> str:
             n = _export_count(h)

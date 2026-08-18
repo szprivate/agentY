@@ -1,8 +1,10 @@
-"""An `agentY ref note` says what a reference input is FOR.
+"""An `agentY add tag` says what a reference input is FOR.
 
-Wired onto the wire that carries a reference — LoadImage → ref note → wherever —
+Wired onto the wire that carries a reference — LoadImage → add tag → wherever —
 it carries a line like "the face, not the styling". The agent reads it with the
 input, so a reference stops being just an image and becomes an image with a job.
+(The node was called "agentY ref note" until it grew a tag field; its class id,
+and everything below, is unchanged. The naming half lives in test_canvas_tags.)
 
 Living on the wire is what makes it trustworthy: there is no node id recorded
 anywhere to drift out of date, because whatever is plugged into the note is what
