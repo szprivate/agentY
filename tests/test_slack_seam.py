@@ -76,6 +76,14 @@ class SeamTest(unittest.TestCase):
 
         self.script = [{"type": "text", "data": "Rendered it."}, {"type": "done"}]
         self.enterContext(mock.patch.object(srv, "_run_pipeline_stream", fake_stream))
+        # Hand over whatever the cache holds, without the wait. The waiting
+        # itself — asking the panel, and refusing a snapshot too old to trust —
+        # is what test_canvas_for_slack is for, and paying eight seconds for it
+        # in every test here made this file take two minutes.
+        srv._canvas_cache.clear()
+        self.addCleanup(srv._canvas_cache.clear)
+        self.enterContext(mock.patch.object(
+            srv, "request_canvas", lambda wait=0: dict(srv._canvas_cache)))
         self.enterContext(mock.patch.object(srv.cs, "add_message", lambda *a, **k: 1))
         self.enterContext(mock.patch.object(srv.cs, "get_thread",
                                             lambda tid: {"id": tid} if tid else None))
@@ -219,6 +227,22 @@ class SeamTest(unittest.TestCase):
         self.bridge.on_turn_event({"type": "done"}, turn)
         out = self.bridge.route("U_ME", "make another one")
         self.assertEqual(out["action"], "turn")
+
+    # ── the canvas, for a turn with no browser behind it ──────────────────────
+    def test_a_slack_turn_is_given_the_canvas_the_panel_can_see(self):
+        """It used to arrive with none, and every canvas tool then said "no
+        on-canvas graph is loaded" — which reads as a refusal to look at a
+        workflow that is open in front of you."""
+        srv.remember_canvas({"3": {"class_type": "KSampler"}},
+                            [{"hook_node_id": "5"}], [{"id": "3"}])
+        self.bridge.route("U_ME", "what is on my canvas?")
+        self.assertEqual(self.ran[0]["canvas_prompt"], {"3": {"class_type": "KSampler"}})
+        self.assertEqual(self.ran[0]["canvas_hooks"], [{"hook_node_id": "5"}])
+
+    def test_with_no_panel_answering_it_runs_without_one_rather_than_stalling(self):
+        self.bridge.route("U_ME", "hello")
+        self.assertIsNone(self.ran[0]["canvas_prompt"])
+        self.assertEqual(self.ran[0]["canvas_hooks"], [])
 
     # ── a picture or a clip sent from a phone ─────────────────────────────────
     def _file_dm(self, name, text="make this warmer"):

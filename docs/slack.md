@@ -188,11 +188,24 @@ Under **Slack bridge** in the settings dialog (`[slack]` in
 
 ---
 
+## The canvas, from Slack
+
+The agent can see the workflow you have open, because the host asks the panel for
+it: a flag on the health check the panel already polls every five seconds, and the
+panel posts the same graph + hooks + selection a typed message carries. A message
+you sent in the panel counts as an answer too, so the common case costs nothing.
+
+That means **ComfyUI has to be open** somewhere for a Slack turn to see a canvas.
+If nothing answers within a few seconds the turn runs without one, and the canvas
+tools say so rather than inventing a graph.
+
+A snapshot older than three minutes is **not** used. A graph handed over as
+current when it is minutes out of date is worse than none — the agent would edit
+nodes that have moved, or report on a workflow you closed, and nothing on either
+side would say so.
+
 ## What it does not do
 
-* **No canvas context.** A turn started from Slack has no open graph, no hooks and
-  no selection — it is a chat turn. Anything that needs the canvas has to be
-  started from the panel (and you will still see it in Slack).
 * **DMs only.** Channel mentions are not wired up.
 * **No slash commands.** `/qa`, `/switch_model` and friends are panel-side.
 

@@ -101,6 +101,80 @@ _reply_registry: dict[str, tuple] = {}
 _run_registry: dict[str, dict] = {}
 
 
+# ── The canvas, for a turn that has no browser behind it ──────────────────────
+#
+# The graph reaches the agent because the PANEL captures it and posts it with the
+# message. A turn asked for from Slack has no browser round-trip, so it arrived
+# with no graph, no hooks and no selection — and every canvas tool answered "no
+# on-canvas graph is loaded this turn", which reads as the agent refusing to look
+# at a workflow that is plainly open.
+#
+# So the host asks for one. A flag rides out on /agentY/health (polled every 5s
+# by the panel's heartbeat), the panel posts the same payload it would send with
+# a message, and the snapshot is cached here. Kept with the time it was taken:
+# a graph presented as current when it is four minutes old is the kind of wrong
+# that costs a run rather than a sentence.
+_canvas_lock = threading.Lock()
+_canvas_cache: dict = {}          # {prompt, hooks, selection, ts}
+_canvas_wanted_until = 0.0        # a request is outstanding until this time
+_CANVAS_REQUEST_TTL = 30.0        # stop asking if nobody answers
+_CANVAS_WAIT = 8.0                # how long a Slack turn waits for a fresh one
+_CANVAS_FRESH = 20.0              # newer than this and it is worth using as-is
+_CANVAS_STALE = 180.0             # older than this and it is not worth trusting
+
+
+def canvas_wanted() -> bool:
+    """Whether the panel should post its graph on the next heartbeat."""
+    with _canvas_lock:
+        return time.time() < _canvas_wanted_until
+
+
+def remember_canvas(prompt, hooks, selection) -> None:
+    """Cache what the panel says is on screen right now."""
+    global _canvas_wanted_until
+    with _canvas_lock:
+        _canvas_cache.update({
+            "prompt": prompt if isinstance(prompt, dict) else None,
+            "hooks": [h for h in (hooks or []) if isinstance(h, dict)],
+            "selection": [n for n in (selection or []) if isinstance(n, dict)],
+            "ts": time.time(),
+        })
+        _canvas_wanted_until = 0.0
+
+
+def request_canvas(wait: float = _CANVAS_WAIT) -> dict:
+    """Ask the panel for the live graph and wait briefly for it.
+
+    Returns the snapshot (possibly a stale one, possibly empty). Never raises and
+    never blocks for long: a turn that cannot see the canvas is worth running
+    anyway — it just has to be told what it is looking at.
+    """
+    global _canvas_wanted_until
+    with _canvas_lock:
+        before = _canvas_cache.get("ts", 0.0)
+        if before and time.time() - before < _CANVAS_FRESH:
+            return dict(_canvas_cache)     # someone just sent one; do not wait
+        _canvas_wanted_until = time.time() + _CANVAS_REQUEST_TTL
+    deadline = time.time() + max(0.0, wait)
+    while time.time() < deadline:
+        time.sleep(0.25)
+        with _canvas_lock:
+            if _canvas_cache.get("ts", 0.0) > before:
+                return dict(_canvas_cache)
+    with _canvas_lock:
+        stale = dict(_canvas_cache)
+    age = time.time() - stale.get("ts", 0.0) if stale.get("ts") else None
+    if age is None or age > _CANVAS_STALE:
+        # Nobody answered and what we have is old. A graph handed over as
+        # current when it is minutes out of date is worse than none: the agent
+        # edits nodes that have moved, or reports on a workflow you closed. With
+        # nothing, the canvas tools say so and the agent can ask.
+        logger.info("slack: no usable canvas snapshot (age %s)",
+                    "none" if age is None else f"{age:.0f}s")
+        return {}
+    return stale
+
+
 # ── Slash commands (mirrors the frontend popup list) ──────────────────────────
 
 # The /help command points here (GitHub renders the guide with its images inline).
@@ -2426,7 +2500,21 @@ def _build_app():
         # can relaunch it later with no env var or manual config.
         return jsonify({"status": "ok", "pipeline": _agent_ref is not None,
                         "project_root": str(_project_root()),
+                        # "post me the graph on your next tick" — how a turn with
+                        # no browser behind it (Slack) gets to see the canvas.
+                        "want_canvas": canvas_wanted(),
                         "boot_id": _BOOT_ID, "uptime": round(time.time() - _BOOT_TIME, 1)})
+
+    @app.route("/agentY/canvas", methods=["POST", "OPTIONS"])
+    def canvas_snapshot():
+        """The panel answering `want_canvas` — the same payload it sends with a
+        message, minus the message."""
+        if request.method == "OPTIONS":
+            return "", 204
+        body = request.get_json(silent=True) or {}
+        remember_canvas(body.get("canvas_prompt"), body.get("canvas_hooks"),
+                        body.get("canvas_selection"))
+        return jsonify({"ok": True})
 
     @app.route("/agentY/commands", methods=["GET"])
     def commands():
@@ -3047,6 +3135,10 @@ def _build_app():
                     len(canvas_paths),
                 )
 
+        # The panel just told us what is on its canvas. Keep it: a Slack turn a
+        # moment later has no browser of its own to ask, and this one is free.
+        remember_canvas(canvas_prompt, canvas_hooks, canvas_selection)
+
         # Persist the user's message (raw text).
         if message:
             cs.add_message(thread_id, "user", message)
@@ -3288,11 +3380,19 @@ def _slack_start_turn(text: str, image_paths: list, thread_id: str = "") -> str:
         thread_id = cs.create_thread(title="New chat")
     if text:
         cs.add_message(thread_id, "user", text)
+    # Ask the browser what is on the canvas. Without this a Slack turn has no
+    # graph at all and every canvas tool answers "no on-canvas graph is loaded",
+    # which reads as the agent refusing to look at a workflow that is open in
+    # front of you.
+    snap = request_canvas()
     q: queue.Queue = queue.Queue()
     rid = uuid.uuid4().hex
     threading.Thread(target=_run_pipeline_stream,
                      args=(thread_id, text, list(image_paths or []), q, rid),
-                     kwargs={"origin": "slack"},
+                     kwargs={"origin": "slack",
+                             "canvas_prompt": snap.get("prompt"),
+                             "canvas_hooks": snap.get("hooks") or [],
+                             "canvas_selection": snap.get("selection") or []},
                      name="agentY-slack-turn", daemon=True).start()
     # Nothing reads this queue: Slack is fed by the bus, not by the stream. Drain
     # it anyway, or the turn blocks on a queue that fills and never empties.
