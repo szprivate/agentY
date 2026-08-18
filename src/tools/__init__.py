@@ -62,7 +62,13 @@ from src.tools.image_handling import (  # noqa: F401
     download_image,
     upload_file_to_url,
 )
-from src.tools.video_handling import analyze_video, set_video_agent  # noqa: F401
+from src.tools.video_handling import (  # noqa: F401
+    analyze_video,
+    set_video_agent,
+    # agenty_core owns the implementation (agentY-mcp offers the same tool);
+    # this is the thin agentY wrapper that adds dry-run stand-in handling.
+    split_video_into_shots,
+)
 # Mark up an image (circle / box / arrow a subject) without regenerating it.
 from src.tools.annotate import annotate_image, set_output_sink  # noqa: F401
 from src.tools.comfyui import check_model  # noqa: F401
@@ -402,6 +408,7 @@ ORCHESTRATOR_TOOLS: list = [
     get_image_resolution,
     analyze_image,
     analyze_video,       # understand a video input (samples frames -> Video Agent)
+    split_video_into_shots,  # find the cuts in a video, write one file per shot
     annotate_image,      # circle/box/arrow things in an image (overlay, not a re-render)
     download_image,
     upload_file_to_url,  # PUT a local file to a presigned URL (MCP upload flows)

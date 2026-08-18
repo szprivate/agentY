@@ -20,6 +20,12 @@ from typing import Optional
 from strands import Agent, tool
 
 from src.tools.image_handling import _MAX_IMAGE_BYTES, AgentPool, _downsize
+# Shot detection/splitting is shared with agentY-mcp, so it lives in the core
+# layer; only the dry-run behaviour below is agentY's.
+from agenty_core.tools.video import (
+    _MIN_SHOT_SECONDS,
+    split_video_into_shots as _core_split_video_into_shots,
+)
 
 _video_agent: Optional[Agent] = None
 _video_pool: Optional[AgentPool] = None
@@ -206,3 +212,61 @@ def analyze_video(file_path: str = "", question: str = "", max_frames: int = 8) 
     return {"status": "success", "content": [{"text": (
         f"Video analysis for {resolved} ({len(frames)} frames, ~{dur:.1f}s):\n\n{result}"
     )}]}
+
+
+@tool
+def split_video_into_shots(file_path: str = "", detector: str = "content",
+                           threshold: float = 27.0,
+                           min_shot_seconds: float = _MIN_SHOT_SECONDS,
+                           detect_only: bool = False, output_dir: str = "",
+                           fast: bool = False, max_shots: int = 0) -> dict:
+    """Detect the cuts in a video and split it into one file per shot.
+
+    Finds shot boundaries automatically and writes each shot as its own video
+    file, so a clip can be worked on shot by shot — restyle one shot, feed each to
+    a per-shot workflow, or just find out where the cuts are. Run it with
+    ``detect_only=True`` first when unsure of the settings: that reads the file
+    and writes nothing.
+
+    Args:
+        file_path: The video to split. A path, or a bare filename sitting in
+            ComfyUI's input dir.
+        detector: ``content`` (default) compares consecutive frames — right for
+            edited footage with hard cuts. ``adaptive`` scores against a rolling
+            window instead, which stops fast camera motion, whip pans and strobes
+            from reading as cuts; use it on handheld or high-motion material.
+        threshold: Sensitivity. LOWER finds more cuts. 27.0 suits ``content``; for
+            ``adaptive`` the comparable default is 3.0. If a known cut is missed,
+            lower it; if one shot comes back split into several, raise it.
+        min_shot_seconds: Ignore any shot shorter than this (default 0.4), so a
+            flash frame or a one-frame glitch is not reported as a shot.
+        detect_only: Report where the cuts are and write nothing.
+        output_dir: Where the shots go. Defaults to a ``<name>_shots`` folder
+            under the agent's videos directory.
+        fast: Stream-copy instead of re-encoding. Much faster, but a copy can only
+            cut on a keyframe, so shots may open with a fraction of a second of
+            the previous one. Leave this off when the boundaries matter.
+        max_shots: Stop writing after this many (default 200). Detection still
+            reports everything it found.
+
+    Returns:
+        ``{"status", "content": [{"text"}], "shots": [...], "output_dir", "meta"}``
+        — each shot carrying its index, start/end in seconds and timecode, its
+        duration, and (unless ``detect_only``) the path written.
+    """
+    # The whole tool is agenty_core's, so agentY-mcp can offer the same one. What
+    # is agentY's and stays here: a dry run's "generations" are paths with no file
+    # behind them, and a chain like "make the video, then split it into shots"
+    # must not report itself broken because the second stage could not open the
+    # first stage's stand-in. Same contract analyze_video/analyze_image keep.
+    try:
+        from src.utils import dry_run as _dry
+        if _dry.active() and _dry.is_stand_in(file_path):
+            return {"status": "ok", "shots": [], "meta": {}, "output_dir": "",
+                    "content": [{"text": _dry.stand_in_notice(file_path)}]}
+    except Exception:  # noqa: BLE001
+        pass
+    return _core_split_video_into_shots(
+        file_path=file_path, detector=detector, threshold=threshold,
+        min_shot_seconds=min_shot_seconds, detect_only=detect_only,
+        output_dir=output_dir, fast=fast, max_shots=max_shots)

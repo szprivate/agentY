@@ -66,6 +66,14 @@ ddgs>=9.0.0
 # — both ship the same `cv2` package and overwrite each other.
 imageio[ffmpeg]>=2.34.0
 opencv-python-headless>=4.9.0
+# Shot detection for split_video_into_shots (agenty_core/tools/video.py): finds
+# where a video cuts, then each shot is written with the ffmpeg binary imageio
+# already ships — deliberately not one on PATH, which on Windows there usually
+# isn't. It was already installed here as somebody's stray transitive dep and
+# named by nobody, which is exactly how OpenCV quietly took analyze_video with it
+# on a clean machine. Declared in agenty_core's pyproject too, since the import
+# lives there; named here as well so check_env.py can hold the line.
+scenedetect>=0.7.0
 
 # ── Image annotation: locating what to mark ─────────────────────────────────
 # SAM 3 turns a text prompt into boxes + masks, so "circle the bolts" resolves

@@ -41,6 +41,8 @@ REQUIRED: list[tuple[str, str, str]] = [
     ("mcp", "mcp", "config/mcp.json servers (Magnific et al.) and their OAuth flow"),
     ("cv2", "opencv-python-headless", "analyze_video - sampling frames for the video agent"),
     ("imageio", "imageio[ffmpeg]", "Vision QA of generated video (falls back to OpenCV, then ffmpeg)"),
+    ("imageio_ffmpeg", "imageio[ffmpeg]", "the bundled ffmpeg binary split_video_into_shots cuts shots with"),
+    ("scenedetect", "scenedetect", "split_video_into_shots - finding where a video cuts"),
     ("yaml", "PyYAML", "skill frontmatter validation in scripts/build_skill.py"),
     ("ddgs", "ddgs", "web search"),
     ("tqdm", "tqdm", "download progress"),

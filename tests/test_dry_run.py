@@ -385,6 +385,16 @@ class ToolsThatWouldOpenOneTest(unittest.TestCase):
         self.assertEqual(out["status"], "ok")
         self.assertIn("DRY RUN", out["content"][0]["text"])
 
+    def test_splitting_one_into_shots_does_too(self):
+        # The chain this protects: "make the video, then split it into shots".
+        # Stage 2 opening stage 1's stand-in and reporting a missing file is a dry
+        # run saying the pipeline is broken when nothing about it is.
+        from src.tools.video_handling import split_video_into_shots
+        out = split_video_into_shots(file_path=self.path)
+        self.assertEqual(out["status"], "ok")
+        self.assertIn("DRY RUN", out["content"][0]["text"])
+        self.assertEqual(out["shots"], [], "nothing was detected, and none is claimed")
+
     def test_staging_one_answers_with_the_name_a_real_upload_would(self):
         from src.tools.image_handling import _upload_one
         out = _upload_one(self.path)
