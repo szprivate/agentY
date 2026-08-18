@@ -8,13 +8,11 @@ Consolidates all image-related @tool functions:
   • analyze_image: forward an image to the model for visual inspection
 """
 
-import io
 import json
 import os
 import re
 import threading
 import time
-import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Optional
@@ -151,184 +149,42 @@ def vision_agents() -> list[Agent]:
     return pool.instances() if pool else []
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# Constants
-# ═══════════════════════════════════════════════════════════════════════════════
-
-# Anthropic's API limit is 5 MB applied to the BASE64-ENCODED image.
-# Strands sends images as base64, which inflates raw bytes by ~33% (4/3 factor).
-# To stay safely under the 5 MB base64 limit: 5 MB * 0.72 ≈ 3.6 MB raw.
-_MAX_IMAGE_BYTES = int(5 * 1024 * 1024 * 0.72)   # ~3.6 MB raw → ~4.8 MB base64
-_OPTIMAL_LONG_EDGE = 1568            # Claude resizes beyond this anyway
-
-
-def _input_long_edge() -> int:
-    """Max long edge (px) for downsized input images. ``AGENTY_INPUT_MAX_DIM``
-    overrides the Claude-tuned default (1568) — lower it (e.g. 1024 or 768) to cut
-    per-image tokens for smaller vision models. Applies to every image staged as a
-    vision block or sent to analyze_image; leave unset to keep Claude behaviour.
-    """
-    raw = os.environ.get("AGENTY_INPUT_MAX_DIM", "").strip()
-    if raw:
-        try:
-            v = int(raw)
-            if v > 0:
-                return v
-        except ValueError:
-            pass
-    return _OPTIMAL_LONG_EDGE
-
-_FORMAT_MAP: dict[str, str] = {
-    "png":  "png",
-    "jpg":  "jpeg",
-    "jpeg": "jpeg",
-    "gif":  "gif",
-    "webp": "webp",
-}
-
+# ── moved to agenty_core ─────────────────────────────────────────────────────
+# These are the parts agentY and agentY-mcp were maintaining twice: byte
+# wrangling (98-100% identical), staging a local file into ComfyUI's input dir,
+# fetching a web image, and the presigned PUT. They now live in the shared layer
+# and are re-exported here under the names the rest of this repo already imports
+# (src/utils/qa.py, agentY_server.py, video_handling.py, annotate.py), so nothing
+# downstream had to change.
+#
+# What stays local is what genuinely differs per host: analyze_image and
+# view_image, because this app delegates to a Vision Agent to keep pixels out of
+# the orchestrator's context while an MCP host looks at the image itself.
+from agenty_core.tools.image_io import (  # noqa: F401
+    comfy_input_dir as _comfy_input_dir,
+    download_image,
+    resolve_local_image as _resolve_local_image,
+    stage_image as _stage_image,
+    upload_file_to_url,
+)
+from agenty_core.utils.image_bytes import (  # noqa: F401
+    MAX_IMAGE_BYTES as _MAX_IMAGE_BYTES,
+    OPTIMAL_LONG_EDGE as _OPTIMAL_LONG_EDGE,
+    detect_format as _detect_format,
+    downsize as _downsize,
+    input_long_edge as _input_long_edge,
+)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Internal helpers
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _comfy_input_dir() -> Optional[str]:
-    """Best-effort lookup of ComfyUI's configured input directory, or ``None``.
-
-    Tries both the shared ``agenty_core`` module and the local ``src`` shim so it
-    works regardless of which package exposes ``get_comfyui_dirs`` at runtime.
-    """
-    for _imp in ("agenty_core.tools.comfyui", "src.tools.comfyui"):
-        try:
-            mod = __import__(_imp, fromlist=["get_comfyui_dirs"])
-            info = json.loads(mod.get_comfyui_dirs()) or {}
-            v = info.get("input_dir")
-            if v and v != "unknown":
-                return v
-        except Exception:  # noqa: BLE001 — best-effort; fall through to next source
-            continue
-    return None
 
 
-def _resolve_local_image(file_path: str) -> Optional[str]:
-    """Resolve a possibly-bare image path to an existing file on disk.
-
-    Tries, in order: the path as given (absolute or relative to CWD, expanding
-    ``~``), then CWD-joined, then ``<ComfyUI input dir>/<basename>``. The last
-    step is what makes canvas-selected images work: a ``LoadImage`` widget stores
-    its image by *bare filename* (e.g. ``photo.jpg``), and that file lives in
-    ComfyUI's input dir — not the agent's CWD. Returns the resolved path, or
-    ``None`` if the file is nowhere to be found.
-    """
-    if not file_path:
-        return None
-    p = Path(file_path).expanduser()
-    if p.is_file():
-        return str(p)
-    cwd_p = Path(os.getcwd()) / file_path
-    if cwd_p.is_file():
-        return str(cwd_p)
-    in_dir = _comfy_input_dir()
-    if in_dir:
-        staged = Path(in_dir) / os.path.basename(file_path)
-        if staged.is_file():
-            return str(staged)
-    return None
 
 
-def _detect_format(path_or_name: str, mime: str = "") -> Optional[str]:
-    """Resolve the Strands image format string from a filename or MIME type."""
-    ext = Path(path_or_name).suffix.lstrip(".").lower()
-    fmt = _FORMAT_MAP.get(ext)
-    if fmt:
-        return fmt
-    if mime.startswith("image/"):
-        sub = mime.split("/")[-1].lower()
-        return _FORMAT_MAP.get(sub)
-    return None
 
 
-def _downsize(data: bytes, img_fmt: str) -> tuple[bytes, str]:
-    """Downsize image in-memory to fit Claude API constraints.
-
-    Caps long edge at 1568 px and enforces the 5 MB hard limit.
-    Uses a small internal safety margin (_SAFE_IMAGE_BYTES) so images
-    never land exactly on the boundary.
-
-    Returns:
-        (image_bytes, actual_format) where actual_format may differ from
-        img_fmt if the image was converted (e.g. PNG → JPEG) to meet size limits.
-    """
-    _SAFE_IMAGE_BYTES = _MAX_IMAGE_BYTES - 64 * 1024  # small headroom; _MAX_IMAGE_BYTES already base64-adjusted
-    _cap = _input_long_edge()  # 1568 by default; AGENTY_INPUT_MAX_DIM lowers it for small VLMs
-
-    if len(data) <= _SAFE_IMAGE_BYTES:
-        img = Image.open(io.BytesIO(data))
-        if max(img.width, img.height) <= _cap:
-            return data, img_fmt
-
-    img = Image.open(io.BytesIO(data))
-    long_edge = max(img.width, img.height)
-
-    if long_edge > _cap:
-        ratio = _cap / long_edge
-        new_w, new_h = int(img.width * ratio), int(img.height * ratio)
-        img = img.resize((new_w, new_h), Image.LANCZOS)
-
-    pil_fmt = "PNG" if img_fmt == "png" else "JPEG"
-    if img.mode == "RGBA" and pil_fmt == "JPEG":
-        img = img.convert("RGB")
-
-    buf = io.BytesIO()
-    quality = 90
-    while quality >= 20:
-        buf.seek(0)
-        buf.truncate()
-        if pil_fmt == "JPEG":
-            if img.mode not in ("RGB", "L", "CMYK"):
-                img = img.convert("RGB")
-            img.save(buf, format=pil_fmt, quality=quality, optimize=True)
-        else:
-            img.save(buf, format=pil_fmt, optimize=True)
-        # Use len(getvalue()) — not buf.tell() — because PIL's optimize=True JPEG
-        # encoding performs a Huffman-table seek pass that can leave the cursor at
-        # a position other than end-of-file, making tell() an unreliable size proxy.
-        if len(buf.getvalue()) <= _SAFE_IMAGE_BYTES:
-            break
-        if pil_fmt == "PNG":
-            pil_fmt = "JPEG"
-            if img.mode not in ("RGB", "L", "CMYK"):
-                img = img.convert("RGB")
-            continue
-        quality -= 10
-
-    # Hard fallback: if the quality loop wasn't enough, halve dimensions
-    # progressively until the image fits.  Converts to JPEG at quality=20
-    # which is always far smaller than a lossless format at any resolution.
-    while len(buf.getvalue()) > _SAFE_IMAGE_BYTES and max(img.width, img.height) >= 128:
-        new_w = max(1, img.width // 2)
-        new_h = max(1, img.height // 2)
-        img = img.resize((new_w, new_h), Image.LANCZOS)
-        if img.mode not in ("RGB", "L"):
-            img = img.convert("RGB")
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=20, optimize=True)
-        pil_fmt = "JPEG"
-
-    result = buf.getvalue()
-    # Final safety net: if somehow still too large, return a guaranteed-small thumbnail.
-    # Use _SAFE_IMAGE_BYTES (not _MAX_IMAGE_BYTES) so we always enforce the conservative limit.
-    if len(result) > _SAFE_IMAGE_BYTES:
-        img = img.resize((max(1, img.width // 4), max(1, img.height // 4)), Image.LANCZOS)
-        if img.mode not in ("RGB", "L"):
-            img = img.convert("RGB")
-        emergency_buf = io.BytesIO()
-        img.save(emergency_buf, format="JPEG", quality=20, optimize=True)
-        result = emergency_buf.getvalue()
-        pil_fmt = "JPEG"
-
-    # Map PIL format name back to the Strands format string
-    actual_fmt = "jpeg" if pil_fmt == "JPEG" else "png"
-    return result, actual_fmt
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -341,14 +197,14 @@ def _upload_one(
     image_type: str = "input",
     overwrite: bool = False,
 ) -> dict:
-    """Core single-image upload shared by ``upload_image`` and
-    ``upload_image_multiple``. Returns a plain ``dict`` (not a JSON string):
-    the ComfyUI ``{name, subfolder, type}`` response, an idempotency skip note,
-    or ``{"error": ...}``.
+    """Stage one image into ComfyUI's input dir, with agentY's dry-run behaviour.
+
+    The staging itself is ``agenty_core.tools.image_io.stage_image`` — resolving a
+    bare canvas filename, the idempotency skip, the API upload. What is agentY's
+    is the line above it: a dry-run stand-in has no bytes to stage, so answer with
+    the name a real upload would have returned, letting the caller bind it to the
+    next stage's loader and keeping the chain under test moving.
     """
-    # A dry-run stand-in has no bytes to stage. Answer with the name a real upload
-    # would have returned, so the caller can bind it to the next stage's loader and
-    # the chain under test keeps going.
     try:
         from src.utils import dry_run as _dry
         if _dry.active() and _dry.is_stand_in(file_path):
@@ -357,47 +213,8 @@ def _upload_one(
                     "note": _dry.stand_in_notice(file_path)}
     except Exception:  # noqa: BLE001
         pass
-    # Resolve bare/relative names against ComfyUI's input dir too, so images the
-    # user selected on the canvas (LoadImage widgets store just the filename) are
-    # found — not only paths relative to the agent's CWD.
-    resolved = _resolve_local_image(file_path)
-    if resolved is None:
-        return {"error": f"File not found: {file_path}"}
-
-    filename = os.path.basename(resolved)
-
-    # Idempotency: if this file is already staged in ComfyUI's input dir, don't
-    # re-upload it — return its bare filename instead. Covers (a) the user
-    # pointing at a file that already lives in the input dir, (b) a canvas
-    # LoadImage widget that references an input by bare name, and (c) a second
-    # agent re-staging a file that was already staged this turn. Only for flat
-    # input uploads (no subfolder) and when not explicitly overwriting.
-    # Best-effort: any failure falls through to a normal upload.
-    if image_type == "input" and not subfolder and not overwrite:
-        try:
-            input_dir = _comfy_input_dir()
-            if input_dir:
-                staged = os.path.join(input_dir, filename)
-                same_path = os.path.abspath(resolved) == os.path.abspath(staged)
-                if os.path.isfile(staged) and (
-                    same_path or os.path.getsize(staged) == os.path.getsize(resolved)
-                ):
-                    return {
-                        "name": filename, "subfolder": "", "type": "input",
-                        "note": "already staged in ComfyUI input dir; upload skipped",
-                    }
-        except Exception:
-            pass
-
-    try:
-        with open(resolved, "rb") as f:
-            files = {"image": (filename, f, "image/png")}
-            data = {"type": image_type, "overwrite": str(overwrite).lower()}
-            if subfolder:
-                data["subfolder"] = subfolder
-            return get_client().post("/upload/image", data=data, files=files)
-    except Exception as e:
-        return {"error": str(e)}
+    return _stage_image(file_path, subfolder=subfolder, image_type=image_type,
+                        overwrite=overwrite)
 
 
 @tool
@@ -489,120 +306,6 @@ def upload_image_multiple(
     })
 
 
-@tool
-def download_image(image_url: str, subfolder: str = "", downsize: bool = True) -> str:
-    """Download a web image straight into ComfyUI's input folder so a workflow can load it.
-
-    Use this right after ``web_search_images`` to fetch a reference image you
-    found (pass the result's ``image_url``).  The image is uploaded into ComfyUI's
-    input directory root (no subfolder — LoadImage on some builds can't read input
-    subdirectories) and can then be referenced directly
-    by a ``LoadImage`` node using the returned ``name`` and ``subfolder`` — no
-    separate ``upload_image`` call is needed.
-
-    A browser User-Agent is sent so hosts that block hot-linking still serve the
-    file.
-
-    Args:
-        image_url: Direct http/https URL of the image (the ``image_url`` field
-                   returned by ``web_search_images``).
-        subfolder: Input-dir subfolder to store the image in. Defaults to
-                   ``agent/references``.
-        downsize:  When True (default), oversized images are downscaled to the
-                   pipeline's 5 MB / 1568 px limit so they stay usable everywhere
-                   (matches how user-uploaded images are handled).  Set False to
-                   keep the original full-resolution file.
-
-    Returns:
-        JSON ``{"name", "subfolder", "type", "saved_to", "width", "height",
-        "size_bytes", "source_url"}`` on success, or ``{"error": "<message>"}``.
-        ``name`` + ``subfolder`` are what a ``LoadImage`` node references;
-        ``saved_to`` is the resolved on-disk path (for ``analyze_image`` etc.).
-    """
-    try:
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-            ),
-            "Accept": "image/avif,image/webp,image/png,image/jpeg,*/*;q=0.8",
-        }
-        resp = requests.get(image_url, headers=headers, timeout=30)
-        resp.raise_for_status()
-        data = resp.content
-        mime = resp.headers.get("content-type", "")
-
-        # Resolve image format from content-type / URL extension, then magic bytes.
-        img_fmt = _detect_format(image_url.split("?")[0], mime)
-        if img_fmt is None:
-            if data[:4] == b"\x89PNG":
-                img_fmt = "png"
-            elif data[:3] == b"\xff\xd8\xff":
-                img_fmt = "jpeg"
-            elif data[:6] in (b"GIF87a", b"GIF89a"):
-                img_fmt = "gif"
-            elif data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-                img_fmt = "webp"
-        if img_fmt is None:
-            return json.dumps(
-                {"error": f"URL did not return a recognised image (content-type={mime!r})."}
-            )
-
-        # Optionally normalise to the pipeline's size/edge limits. _downsize only
-        # targets png/jpeg; gif/webp are uploaded as-is.
-        ext = img_fmt
-        if downsize and img_fmt in ("png", "jpeg"):
-            try:
-                data, ext = _downsize(data, img_fmt)
-            except Exception:
-                ext = img_fmt  # keep original bytes if downsizing fails
-
-        suffix = "jpg" if ext == "jpeg" else ext
-        base = image_url.split("?")[0].rstrip("/").rsplit("/", 1)[-1]
-        stem = re.sub(r"[^A-Za-z0-9._-]", "_", Path(base).stem)[:48] or "reference"
-        filename = f"{stem}_{uuid.uuid4().hex[:8]}.{suffix}"
-
-        # Upload into ComfyUI's input dir via the API (filesystem-agnostic; works
-        # whether ComfyUI is local or remote).  ComfyUI creates the subfolder and
-        # returns the authoritative {name, subfolder, type}.
-        files = {"image": (filename, io.BytesIO(data), f"image/{ext}")}
-        form: dict = {"type": "input", "overwrite": "false"}
-        if subfolder:
-            form["subfolder"] = subfolder
-        up = get_client().post("/upload/image", data=form, files=files)
-        if not isinstance(up, dict) or "name" not in up:
-            return json.dumps({"error": f"Unexpected /upload/image response: {up!r}"})
-
-        # Best-effort resolve the on-disk path for analyze_image/get_image_resolution.
-        saved_to = ""
-        try:
-            from src.tools.comfyui import get_comfyui_dirs  # lazy: avoid import cycle
-            input_dir = json.loads(get_comfyui_dirs()).get("input_dir", "")
-            if input_dir and input_dir != "unknown":
-                saved_to = str(Path(input_dir) / up.get("subfolder", "") / up["name"])
-        except Exception:
-            pass
-
-        try:
-            with Image.open(io.BytesIO(data)) as im:
-                width, height = im.size
-        except Exception:
-            width = height = None
-
-        return json.dumps(
-            {
-                "name": up.get("name"),
-                "subfolder": up.get("subfolder", subfolder),
-                "type": up.get("type", "input"),
-                "saved_to": saved_to,
-                "width": width,
-                "height": height,
-                "size_bytes": len(data),
-                "source_url": image_url,
-            }
-        )
-    except Exception as exc:
-        return json.dumps({"error": str(exc)})
 
 
 # Extension → Content-Type for the PUT header when the caller doesn't pass one.
@@ -614,61 +317,6 @@ _MIME_BY_EXT = {
 }
 
 
-@tool
-def upload_file_to_url(url: str, file_path: str, content_type: str = "") -> str:
-    """HTTP PUT a local file's raw bytes to a presigned upload URL.
-
-    Use this for the **presigned-PUT step of an MCP upload flow** (e.g. Magnific:
-    ``creations_create_upload`` returns a ``proxyUploadUrl`` + a server-side
-    ``path``; PUT the file here, then call ``creations_finalize_upload`` with that
-    ``path``). It reads ``file_path`` from disk and sends the body as raw binary —
-    do **not** hand-write a ``python -c`` / ``curl`` script for this (multi-line
-    inline scripts silently fail to execute via ``run_script`` on Windows).
-
-    The returned ``status`` and ``ok`` are the **actual HTTP result**, so you can
-    verify the upload really landed before finalizing — an unverified finalize is
-    what produces "Upload not found … Did the PUT succeed?".
-
-    Args:
-        url: The presigned PUT target (e.g. Magnific's ``proxyUploadUrl``).
-        file_path: Local path to the file to upload (absolute preferred; a
-                   relative path is resolved against the project root).
-        content_type: Value for the ``Content-Type`` header. Defaults to the type
-                      inferred from the file extension (falls back to
-                      ``application/octet-stream``).
-
-    Returns:
-        JSON ``{"ok", "status", "file_path", "size_bytes", "content_type",
-        "response"}`` — ``ok`` is true only for a 2xx status. ``response`` is the
-        server body (truncated). On a local failure (missing file, network error)
-        returns ``{"ok": false, "error": "<message>"}``.
-    """
-    try:
-        p = Path(file_path)
-        if not p.is_absolute():
-            # Match how staged inputs are addressed elsewhere in the codebase.
-            p = (Path(__file__).resolve().parent.parent.parent / file_path).resolve()
-        if not p.exists():
-            return json.dumps({"ok": False, "error": f"file not found: {p}"})
-        if not p.is_file():
-            return json.dumps({"ok": False, "error": f"not a file: {p}"})
-
-        ct = content_type.strip() or _MIME_BY_EXT.get(
-            p.suffix.lower(), "application/octet-stream"
-        )
-        data = p.read_bytes()
-        resp = requests.put(url, data=data, headers={"Content-Type": ct}, timeout=120)
-        body = (resp.text or "")[:500]
-        return json.dumps({
-            "ok": 200 <= resp.status_code < 300,
-            "status": resp.status_code,
-            "file_path": str(p),
-            "size_bytes": len(data),
-            "content_type": ct,
-            "response": body,
-        })
-    except Exception as exc:  # noqa: BLE001
-        return json.dumps({"ok": False, "error": str(exc), "file_path": file_path})
 
 
 @tool

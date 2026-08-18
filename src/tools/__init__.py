@@ -138,6 +138,15 @@ _SHARED_CORE_TOOLS = [
     "validate_workflow", "check_model",
     # huggingface
     "search_huggingface_models", "get_model_info", "find_hf_file", "download_hf_model",
+    # image i/o — moved to the shared layer, so they arrive here as the plain
+    # callables every other core tool does and need the same wrapping. They used
+    # to be agentY-local @tool functions; missing them here hands Strands a bare
+    # function where it expects a DecoratedFunctionTool.
+    "download_image", "upload_file_to_url",
+    # per-project memory — moved to the shared layer (a Claude Desktop session on
+    # the same ComfyUI now reads and writes the same facts the panel does), so it
+    # arrives as a plain callable and needs wrapping like every other core tool.
+    "project_memory_read", "project_memory_write", "project_memory_forget",
     # file / shell / web
     "read_text_file", "write_text_file", "run_script", "web_search", "web_search_images",
     # batch
