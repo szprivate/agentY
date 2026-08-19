@@ -22,8 +22,8 @@ import unittest
 from unittest import mock
 
 from pipeline_stub import pipeline_stub, tools
-from src.utils.canvas_view import (_VALUE_CHARS, _render_value, describe_canvas,
-                                   node_detail, node_line)
+from src.utils.canvas_view import (_PATH_CHARS, _VALUE_CHARS, _render_value,
+                                   describe_canvas, node_detail, node_line)
 
 
 def _graph():
@@ -67,13 +67,41 @@ class LineTest(unittest.TestCase):
         self.assertIn("…", line)
         self.assertIn("a cinematic wide shot of Tokyo", line)
 
-    def test_a_long_path_keeps_its_filename(self):
-        # Cutting a path from the right deletes the one part that says WHICH file
-        # it is, and leaves it ending at a directory. Shown `…\RND_0500\ima…` for
-        # a loader, the agent reported the reference as "a directory, not a
-        # specific image file" and wrote that into project memory.
-        p = ("W:/0207_omaze/02_build/comfy/sebastian.zilius/output/rnd/RND_0500/"
-             "FF_Car_Social_01_v02.png")
+    def test_a_real_loader_path_is_shown_whole(self):
+        # The actual failure. 96 characters, cut at 70, landed on `...RND_0500\imag`
+        # — a directory — and that is what reached project memory as the reference.
+        # A path this size must arrive intact and USABLE, not merely recognisable:
+        # an agent copying it has to get something it can open.
+        p = (r"W:\0207_omaze\02_build\comfy\sebastian.zilius\output\rnd\RND_0500"
+             r"\image_FF_Car_Social_01_v02.png")
+        line = node_line("135", {"class_type": "VHS_LoadImagePath",
+                                 "inputs": {"image": p, "custom_width": 0,
+                                            "custom_height": 0}})
+        self.assertIn(p, line, "the path must survive whole, ellipsis-free")
+        self.assertNotIn("…", line)
+
+    def test_a_path_last_on_its_line_keeps_its_filename_too(self):
+        # The line cap cuts from the right as well, so a path in the final slot
+        # loses its filename to THAT instead of to the value cap — the same bug
+        # one layer out. Sized so the line genuinely needs the wider cap: a real
+        # loader path after a few widgets runs past what used to be allowed.
+        p = (r"W:\0207_omaze\02_build\comfy\sebastian.zilius\output\rnd\RND_0500"
+             r"\image_FF_Car_Social_01_v02.png")
+        line = node_line("9", {"class_type": "VHS_LoadImagePath", "inputs": {
+            "custom_width": 1920, "custom_height": 1080, "force_rate": 0,
+            "frame_load_cap": 0, "select_every_nth": 1, "image": p}})
+        self.assertGreater(len(line), 190, "or this passes without the wider cap")
+        self.assertIn("image_FF_Car_Social_01_v02.png", line)
+        self.assertNotIn("…", line)
+
+    def test_a_path_past_even_the_path_budget_keeps_its_filename(self):
+        # Beyond what is worth printing whole, it loses its MIDDLE, never its end:
+        # cutting from the right deletes the one part saying WHICH file it is and
+        # leaves the value ending at a directory, which is then read as one.
+        p = ("W:/0207_omaze/02_build/comfy/sebastian.zilius/output/rnd/" +
+             "/".join(f"very_long_intermediate_folder_{i}" for i in range(5)) +
+             "/FF_Car_Social_01_v02.png")
+        self.assertGreater(len(p), _PATH_CHARS)
         line = node_line("7", {"class_type": "VHS_LoadImagePath",
                                "inputs": {"image": p}})
         self.assertIn("FF_Car_Social_01_v02.png", line, "the filename must survive")
@@ -106,10 +134,11 @@ class LineTest(unittest.TestCase):
         # Checked on _render_value, because node_line's own line cap would hide a
         # runaway value behind a second truncation and the test would pass anyway.
         long_name = "refs/" + "x" * 300 + ".png"
-        self.assertLessEqual(len(_render_value(long_name)), _VALUE_CHARS + 1)
+        self.assertLessEqual(len(_render_value(long_name)), _VALUE_CHARS + 1,
+                             "a filename too big to keep falls back to a plain cut")
         self.assertLessEqual(
             len(_render_value("W:/a/b/c/" + "y" * 200 + "/shot.png")),
-            _VALUE_CHARS + 2)
+            _PATH_CHARS + 2)
 
     def test_prose_with_a_slash_in_it_is_not_treated_as_a_path(self):
         # "a 50/50 split" has a separator and is not a path; keeping its last

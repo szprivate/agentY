@@ -54,7 +54,19 @@ _SKIP_INPUTS = {"control_after_generate"}
 # Per-value and per-line limits. A prompt runs to paragraphs; showing the opening
 # is enough to recognise it, and get_canvas_node returns the whole thing.
 _VALUE_CHARS = 70
-_LINE_CHARS = 190
+# A FILE PATH gets a far bigger budget than other values, because it is the one
+# value on a line that the agent has to reproduce exactly rather than merely
+# recognise, and because real ones are only a hundred-odd characters. Cut at 70 a
+# loader path lost its filename and ended at a directory, and the agent wrote
+# that directory into project memory as the reference. Middle-elision saved the
+# filename but still leaves a `…` in the middle — recognisable, not usable — so
+# the point is to not cut normal paths at all.
+_PATH_CHARS = 160
+# The whole line is capped too, and that cap has the same teeth: it cuts from the
+# right, so a path sitting last on its line would lose its filename to THIS
+# instead. Wide enough that a loader carrying a full path and a couple of small
+# widgets fits. The block's own character budget still bounds the total.
+_LINE_CHARS = 240
 # Budget for the DESCRIBED lines, in characters (~4 chars/token). Past this,
 # nodes are listed by id and type only — still findable, just not described.
 _BLOCK_CHARS = 6000
@@ -93,10 +105,12 @@ def _render_value(value) -> str:
     # A separator alone does not make it a path — "a 50/50 split composition" is
     # prose, and keeping its last clause instead of its opening helps nobody. A
     # FILENAME is wanted, so the last segment has to look like one: an extension,
-    # and short enough that keeping it still shortens the line.
+    # and short enough that keeping it still shortens the value.
     tail = text.replace("\\", "/").rsplit("/", 1)[-1]
-    if tail != text and "." in tail and 0 < len(tail) <= _VALUE_CHARS - 8:
-        return text[:_VALUE_CHARS - len(tail) - 2] + "…/" + tail
+    if tail != text and "." in tail and 0 < len(tail) <= _PATH_CHARS - 8:
+        if len(text) <= _PATH_CHARS:
+            return text                       # shown whole: usable, not just legible
+        return text[:_PATH_CHARS - len(tail) - 2] + "…/" + tail
     return text[:_VALUE_CHARS] + "…"
 
 
