@@ -22,7 +22,8 @@ import unittest
 from unittest import mock
 
 from pipeline_stub import pipeline_stub, tools
-from src.utils.canvas_view import describe_canvas, node_detail, node_line
+from src.utils.canvas_view import (_VALUE_CHARS, _render_value, describe_canvas,
+                                   node_detail, node_line)
 
 
 def _graph():
@@ -65,6 +66,59 @@ class LineTest(unittest.TestCase):
         line = node_line("6", _graph()["6"])
         self.assertIn("…", line)
         self.assertIn("a cinematic wide shot of Tokyo", line)
+
+    def test_a_long_path_keeps_its_filename(self):
+        # Cutting a path from the right deletes the one part that says WHICH file
+        # it is, and leaves it ending at a directory. Shown `…\RND_0500\ima…` for
+        # a loader, the agent reported the reference as "a directory, not a
+        # specific image file" and wrote that into project memory.
+        p = ("W:/0207_omaze/02_build/comfy/sebastian.zilius/output/rnd/RND_0500/"
+             "FF_Car_Social_01_v02.png")
+        line = node_line("7", {"class_type": "VHS_LoadImagePath",
+                               "inputs": {"image": p}})
+        self.assertIn("FF_Car_Social_01_v02.png", line, "the filename must survive")
+        self.assertIn("W:/0207_omaze", line, "and so must the root, to place it")
+        self.assertIn("…", line)
+        self.assertNotIn(p, line, "it is still shortened")
+
+    def test_a_short_path_is_left_whole(self):
+        line = node_line("7", {"class_type": "LoadImage",
+                               "inputs": {"image": "refs/hero.png"}})
+        self.assertIn("image=refs/hero.png", line)
+        self.assertNotIn("…", line)
+
+    def test_a_windows_path_keeps_its_filename_too(self):
+        p = "W:\\0207_omaze\\02_build\\comfy\\sebastian.zilius\\output\\rnd\\shot_04.png"
+        line = node_line("7", {"class_type": "VHS_LoadImagePath",
+                               "inputs": {"image": p}})
+        self.assertIn("shot_04.png", line)
+
+    def test_prose_is_still_cut_from_the_end(self):
+        # A sentence is identified by how it OPENS; only paths are identified by
+        # how they end. Middle-eliding prose would lose the opening for nothing.
+        line = node_line("7", {"class_type": "CLIPTextEncode", "inputs": {
+            "text": "a cinematic wide shot of Tokyo at night in the rain " * 3}})
+        self.assertIn("a cinematic wide shot of Tokyo", line)
+        self.assertTrue(line.rstrip().endswith("…"))
+
+    def test_a_path_whose_filename_is_itself_enormous_still_shortens(self):
+        # Keeping the tail must never make the value LONGER than cutting would.
+        # Checked on _render_value, because node_line's own line cap would hide a
+        # runaway value behind a second truncation and the test would pass anyway.
+        long_name = "refs/" + "x" * 300 + ".png"
+        self.assertLessEqual(len(_render_value(long_name)), _VALUE_CHARS + 1)
+        self.assertLessEqual(
+            len(_render_value("W:/a/b/c/" + "y" * 200 + "/shot.png")),
+            _VALUE_CHARS + 2)
+
+    def test_prose_with_a_slash_in_it_is_not_treated_as_a_path(self):
+        # "a 50/50 split" has a separator and is not a path; keeping its last
+        # clause instead of its opening would lose what identifies it.
+        text = "a cinematic wide shot with a 50/50 split composition lit warmly " * 2
+        out = _render_value(text)
+        self.assertTrue(out.startswith("a cinematic wide shot"))
+        self.assertTrue(out.endswith("…"))
+        self.assertNotIn("…/", out)
 
     def test_a_node_with_nothing_to_show_is_just_its_head(self):
         self.assertEqual(node_line("1", {"class_type": "PreviewImage",

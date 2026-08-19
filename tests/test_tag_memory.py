@@ -193,6 +193,46 @@ class StoredPathTests(_Store):
         self.assertEqual(sync(chain), [])
 
 
+class InjectedBlockTests(_Store):
+    """What the agent is told about a reference before it reads anything.
+
+    A reference's first line says what it is FOR; the file is on a later line and
+    used to need a read to see. So the agent saw a description and no path, said
+    the entries "don't carry the resolved file paths", and described the entry
+    rather than using it. For this one type the path IS the fact.
+    """
+
+    def test_a_reference_shows_its_file_in_the_block(self):
+        canvas = {
+            "43": _node("VHS_LoadImagePath",
+                        image="W:/proj/output/rnd/RND_0500/car_02.png"),
+            "51": _node("AgentYRefNote", input=["43", 0], tag="car",
+                        role="the car only", remember=True),
+        }
+        sync(canvas)
+        block = PM.render_context()
+        self.assertIn("the car only", block)
+        self.assertIn("W:/proj/output/rnd/RND_0500/car_02.png", block)
+
+    def test_an_entry_with_no_file_gains_no_brackets(self):
+        PM.write_entry("grade", "Warm highlights, crushed blacks.", type="style")
+        line = next(l for l in PM.render_context().splitlines() if "grade" in l)
+        self.assertIn("Warm highlights", line)
+        self.assertNotIn("[", line, "nothing to point at, so nothing is appended")
+
+    def test_only_references_carry_a_path(self):
+        # A style note that happens to mention a path is not a reference, and
+        # promoting it would put a stale path in front of every turn.
+        PM.write_entry("look", "The look.\npath: W:/somewhere/else.png", type="style")
+        self.assertNotIn("W:/somewhere/else.png", PM.render_context())
+
+    def test_the_file_property_reads_the_path_line(self):
+        PM.write_entry("r", "A face.\npath: W:/a/b.png\nnoise", type="reference")
+        self.assertEqual(PM.read_entry("r").file, "W:/a/b.png")
+        PM.write_entry("s", "Just prose.", type="reference")
+        self.assertEqual(PM.read_entry("s").file, "")
+
+
 class ResolutionTests(_Store):
     def test_the_canvas_wins_over_memory(self):
         sync(_canvas())

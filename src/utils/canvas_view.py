@@ -75,11 +75,29 @@ def _title(node: dict) -> str:
 
 
 def _render_value(value) -> str:
-    """One input's value, short enough to sit on a shared line."""
+    """One input's value, short enough to sit on a shared line.
+
+    A PATH is shortened in the middle rather than at the end. Cutting a path from
+    the right removes its filename — the one part that says which file it is —
+    and what survives ends at a directory, which is then read as one. That is not
+    hypothetical: shown ``…\\RND_0500\\ima…`` for a loader, the agent reported the
+    reference as "a directory, not a specific image file" and wrote it into
+    project memory that way. Prose is still cut from the end, where the opening
+    is what identifies it.
+    """
     if isinstance(value, bool) or isinstance(value, (int, float)):
         return str(value)
     text = " ".join(str(value).split())
-    return (text[:_VALUE_CHARS] + "…") if len(text) > _VALUE_CHARS else text
+    if len(text) <= _VALUE_CHARS:
+        return text
+    # A separator alone does not make it a path — "a 50/50 split composition" is
+    # prose, and keeping its last clause instead of its opening helps nobody. A
+    # FILENAME is wanted, so the last segment has to look like one: an extension,
+    # and short enough that keeping it still shortens the line.
+    tail = text.replace("\\", "/").rsplit("/", 1)[-1]
+    if tail != text and "." in tail and 0 < len(tail) <= _VALUE_CHARS - 8:
+        return text[:_VALUE_CHARS - len(tail) - 2] + "…/" + tail
+    return text[:_VALUE_CHARS] + "…"
 
 
 def node_line(node_id: str, node: dict, *, values: bool = True) -> str:
