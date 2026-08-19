@@ -243,9 +243,13 @@ def split_video_into_shots(file_path: str = "", detector: str = "content",
         detect_only: Report where the cuts are and write nothing.
         output_dir: Where the shots go. Defaults to a ``<name>_shots`` folder
             under the agent's videos directory.
-        fast: Stream-copy instead of re-encoding. Much faster, but a copy can only
-            cut on a keyframe, so shots may open with a fraction of a second of
-            the previous one. Leave this off when the boundaries matter.
+        fast: Stream-copy instead of re-encoding. LEAVE THIS OFF unless you know
+            the source is keyframe-dense: a copy can only start on a keyframe, and
+            generated video (ComfyUI's savers, most model APIs) is usually written
+            with a single keyframe at the start, which makes every shot run from
+            the beginning of the file. That is detected and re-cut properly rather
+            than returned, so the cost of asking for it wrongly is wasted time,
+            not wrong files — but it buys nothing on that footage.
         max_shots: Stop writing after this many (default 200). Detection still
             reports everything it found.
 

@@ -37,6 +37,15 @@ def _canvas():
     }
 
 
+def _canvas_untagged():
+    """The same shape, but no `agentY add tag` node carries a name."""
+    return {
+        "43": _node("LoadImage", image="hero.png"),
+        "51": _node("AgentYRefNote", input=["43", 0], role="the face"),
+        "242": _node("OpenAIGPTImageNodeV2", prompt="x"),
+    }
+
+
 def _hook(anchor_id, directive="put #hero_face under #alley_light", **anchor):
     a = {"node_id": str(anchor_id), "type": "AgentYRefNote", "widgets": {}}
     a.update(anchor)
@@ -323,6 +332,17 @@ class PreflightTests(unittest.TestCase):
 
     def setUp(self):
         self.enterContext(mock.patch.object(preflight, "_schema", return_value={}))
+        # Whether `#word` is a broken reference or ordinary prose depends on
+        # whether the PROJECT has a tag vocabulary, and that store is a real
+        # directory on the machine running the tests. Left alone, these tests pass
+        # on an empty install and fail on a working one — which is what happened.
+        # The store is stated per test instead; `_remembered_project` covers the
+        # branch where it is not empty.
+        self._remembered = set()
+        self.enterContext(mock.patch.object(
+            preflight, "_any_remembered", lambda: bool(self._remembered)))
+        self.enterContext(mock.patch.object(
+            preflight, "_remembered", lambda t: t in self._remembered))
 
     def _notes(self, directive, prompt):
         hook = _hook("51", directive=directive)
@@ -338,11 +358,22 @@ class PreflightTests(unittest.TestCase):
 
     def test_prose_on_an_untagged_canvas_is_left_alone(self):
         # No tags anywhere means "#" is punctuation, not a broken reference.
-        prompt = {"43": _node("LoadImage", image="hero.png"),
-                  "51": _node("AgentYRefNote", input=["43", 0], role="the face"),
-                  "242": _node("OpenAIGPTImageNodeV2", prompt="x")}
-        notes = self._notes("shortlist #1 and #2, ship it #soon", prompt)
+        notes = self._notes("shortlist #1 and #2, ship it #soon", _canvas_untagged())
         self.assertFalse(any("names nothing" in n for n in notes))
+
+    def test_a_remembered_name_resolves_without_a_node(self):
+        # The project remembers it from another graph, so it points at a file
+        # rather than at nothing.
+        self._remembered = {"hero_face"}
+        notes = self._notes("put #hero_face in the frame", _canvas_untagged())
+        self.assertFalse(any("names nothing" in n for n in notes))
+
+    def test_a_project_vocabulary_makes_prose_checkable_again(self):
+        # Once the project HAS tags, a `#name` outside them is worth calling out
+        # even on a canvas that carries none of its own.
+        self._remembered = {"hero_face"}
+        notes = self._notes("ship it #soon", _canvas_untagged())
+        self.assertTrue(any("#soon" in n and "names nothing" in n for n in notes))
 
 
 if __name__ == "__main__":
