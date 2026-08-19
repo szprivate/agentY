@@ -24,7 +24,11 @@ from pathlib import Path
 _HOOK_CLASS = "AgentYHook"
 
 IMG_EXTS = {"png", "jpg", "jpeg", "webp", "bmp", "gif", "tiff"}
-VID_EXTS = {"mp4", "mov", "webm", "mkv", "avi"}
+# Kept in step with _COLLECT_VID_EXTS in the extension's __init__.py: one
+# collector node holds images and video together now, so a suffix this side
+# does not know is a video counted as an image — and offered to the vision
+# model as one.
+VID_EXTS = {"mp4", "mov", "webm", "mkv", "avi", "m4v", "mpg", "mpeg"}
 
 
 def _anchor_links(inputs: dict) -> list:
@@ -444,6 +448,16 @@ _FILE_WIDGETS = ("image", "video", "file", "filename", "audio")
 
 _AUDIO_EXTS = {"mp3", "wav", "flac", "ogg", "m4a"}
 _MEDIA_EXTS = IMG_EXTS | VID_EXTS | _AUDIO_EXTS
+
+
+def _looks_like_video_file(value: str) -> bool:
+    """Whether *value* names a video, as opposed to an image.
+
+    One collector holds both since the two nodes merged, so the split has to be
+    made from the path — there is no longer a node type saying which it is.
+    """
+    parts = _basename(value).rsplit(".", 1)
+    return len(parts) == 2 and parts[1].lower() in VID_EXTS
 
 
 def _looks_like_media_file(value: str) -> bool:
@@ -2135,10 +2149,17 @@ def _render_anchor(aid: str, atype: str, inputs: dict, tap: tuple | None = None,
     if atype in _COLLECTOR_TYPES:
         files = inputs.get("files") if isinstance(inputs, dict) else None
         paths = [ln.strip().strip('"') for ln in str(files or "").splitlines() if ln.strip()]
-        kind = "image" if atype == "AgentYImageCollector" else "video"
         if not paths:
-            return f"node {aid} (agentY {kind} collector){tag_mark} — EMPTY (no files added yet){note}"
-        return (f"node {aid} (agentY {kind} collector){tag_mark} — {len(paths)} {kind} file(s) already "
+            return f"node {aid} (agentY collector){tag_mark} — EMPTY (no files added yet){note}"
+        # One collector holds both kinds, so say which is which: an image is
+        # something to look at with analyze_image, a video needs analyze_video, and
+        # a count that lumps them together leaves the agent to guess from suffixes.
+        vids = [p for p in paths if _looks_like_video_file(p)]
+        imgs = [p for p in paths if p not in vids]
+        what = ", ".join(part for part in (
+            f"{len(imgs)} image(s)" if imgs else "",
+            f"{len(vids)} video(s)" if vids else "") if part)
+        return (f"node {aid} (agentY collector){tag_mark} — {what} already "
                 f"on disk (use these paths directly, no run needed): " + "; ".join(paths) + note)
     params = ", ".join(f"{k}={v!r}" for k, v in (inputs or {}).items()) or "(no scalar inputs)"
     base = f"node {aid} ({atype}){tag_mark} inputs[{params}]"

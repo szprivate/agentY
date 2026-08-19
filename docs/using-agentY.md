@@ -922,11 +922,28 @@ re-generation could fix.
   from the add-node menu and the double-click search — both stay fully
   functional wherever they already sit on a graph. Turn on ComfyUI's
   **Settings ▸ Enable dev mode options** if you want them offered in search.
-- **Collector nodes** (`agentY image collector` / `agentY video collector`) —
-  hand the agent a batch of on-disk files. Their paths live in the node (no
-  pre-run needed), so an anchored collector is rendered to the agent as its
-  explicit file list — it can bind every path directly. Use them as anchor inputs
-  to a hook to run one directive across many files.
+- **`agentY collector`** — hand the agent a batch of on-disk files. Their paths
+  live in the node (no pre-run needed), so an anchored collector is rendered to
+  the agent as its explicit file list — it can bind every path directly. Use it as
+  an anchor input to a hook to run one directive across many files. Type `#` in
+  the list to pick from the canvas's tags and the project's remembered references;
+  what lands in the box is the file's **path**, exactly as the picker would have
+  added it, so the list stays literal.
+
+  It takes **images and video in one node**, with an output for each (`images` is
+  a stacked IMAGE batch, `videos` a list of VIDEO objects, `paths` the whole list
+  as text) — wire whichever you need. That is also why this used to be two nodes:
+  the two output *types* are genuinely different and ComfyUI fixes them at
+  registration, so no single output could ever be both. The old
+  `agentY video collector` is still registered but deprecated, purely so saved
+  workflows keep opening.
+- **`agentY load item`** — loads one entry from [project memory](#memory): a
+  remembered reference image or clip, or a written fact. Pick it from a dropdown
+  of what is actually stored; the `item` output takes the **type of whatever the
+  entry is** (IMAGE, VIDEO, or the text), so the same node feeds a sampler, a
+  video node or a prompt box. An image or video entry is **previewed on the node**
+  without running anything — the file is already on disk. `text` and `path` come
+  out alongside, so a graph that wants both doesn't need two nodes.
 - **`agentY expand image batch`** — splits an image batch into one image per
   output (`image_1` … `image_8`, plus a `count`).
 
@@ -937,7 +954,7 @@ re-generation could fix.
   and the render is built from one, with no error anywhere. So:
 
   ```
-  agentY image collector ──▶ agentY expand image batch ──┬─▶ image_1
+  agentY collector ──▶ agentY expand image batch ──┬─▶ image_1
                                                          ├─▶ image_2
                                                          └─▶ image_3
   ```

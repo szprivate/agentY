@@ -202,7 +202,9 @@ SLASH_COMMANDS = [
 # ── Media helpers ─────────────────────────────────────────────────────────────
 
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
-_VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+# Same list as canvas_hooks.VID_EXTS and the collector node's own, so a file
+# is the same kind of thing everywhere it is asked about.
+_VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".mpg", ".mpeg"}
 
 # Node classes the frontend will try (first one registered in ComfyUI wins) when
 # it drops a loader onto the graph for a generated output. Which node, and which
@@ -488,7 +490,7 @@ def _resolve_media_ref(value: str, kind: str = "") -> str | None:
 
 
 # agentY collector nodes (AgentYImageCollector) wired as hook anchors carry
-# on-disk image paths in their ``files`` widget — plain node data, so the agent can
+# on-disk media paths in their ``files`` widget — plain node data, so the agent can
 # see them with NO pre-run (unlike a runtime IMAGE batch, which exists only after a
 # run). At most this many are embedded as vision blocks per turn to bound token
 # cost; describe_hooks still lists every path so the agent can bind them all.
@@ -516,7 +518,11 @@ def _collector_hook_images(canvas_hooks: list) -> list[str]:
                 continue
             for line in files.splitlines():
                 p = line.strip().strip('"')
-                if not p or p in seen:
+                # The collector holds video as well since the two were merged, and
+                # a .mp4 is not something to embed as a vision block. The agent
+                # reads those with analyze_video from the path, which describe_hooks
+                # lists either way.
+                if not p or p in seen or not _is_image_path(p):
                     continue
                 seen.add(p)
                 resolved = _resolve_media_ref(p, "image")
