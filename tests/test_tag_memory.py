@@ -111,6 +111,88 @@ class SyncTests(_Store):
         self.assertIsNotNone(remembered_reference("other_ref"))
 
 
+class StoredPathTests(_Store):
+    """What a remembered tag records about WHERE the picture is.
+
+    The bug: entries came back naming a folder and no filename, which reads like
+    a reference and is not one — an agent that opens it cannot find an image, and
+    a later turn believes the folder is the answer. Two causes, both here.
+    """
+
+    def test_an_absolute_path_is_stored_whole(self):
+        canvas = {
+            "43": _node("VHS_LoadImagePath", image="W:/proj/output/rnd/RND_0500/car_02.png"),
+            "51": _node("AgentYRefNote", input=["43", 0], tag="car",
+                        role="the car only", remember=True),
+        }
+        self.assertEqual(sync(canvas), ["car"])
+        path = remembered_reference("car")["path"]
+        self.assertEqual(path, "W:/proj/output/rnd/RND_0500/car_02.png")
+        self.assertTrue(path.endswith("car_02.png"),
+                        "a folder is not a reference — the filename must survive")
+
+    def test_a_bare_name_is_resolved_against_the_input_dir(self):
+        with mock.patch("agenty_core.tools.image_io.comfy_input_dir",
+                        lambda: str(self.root)):
+            (self.root / "hero_face.png").write_bytes(b"x")
+            self.assertEqual(sync(_canvas()), ["hero_face"])
+            path = remembered_reference("hero_face")["path"]
+        self.assertTrue(path.endswith("/hero_face.png"))
+        self.assertTrue(Path(path).is_absolute(), "a full path, not a bare name")
+
+    def test_an_unresolvable_name_is_kept_as_given(self):
+        # Guessing a directory onto a name that does not resolve would invent a
+        # path that looks authoritative and points nowhere.
+        self.assertEqual(sync(_canvas()), ["hero_face"])
+        self.assertEqual(remembered_reference("hero_face")["path"], "hero_face.png")
+
+    def test_a_tag_behind_another_node_still_finds_the_file(self):
+        # THE regression: only the node the tag sat on was inspected, so a tag
+        # wired behind a resize named a node with no filename, the reference was
+        # skipped in silence, and the agent later wrote prose about the folder.
+        canvas = {
+            "43": _node("LoadImage", image="hero_face.png"),
+            "44": _node("ImageScale", image=["43", 0], width=1024),
+            "51": _node("AgentYRefNote", input=["44", 0], tag="hero_face",
+                        role="the face", remember=True),
+        }
+        self.assertEqual(sync(canvas), ["hero_face"])
+        self.assertEqual(remembered_reference("hero_face")["path"], "hero_face.png")
+
+    def test_the_nearest_file_up_the_wire_wins(self):
+        # Two loaders above the tag at different depths. The walk must widen a
+        # ring at a time and take the closer one; following one branch to its end
+        # first would reach `far.png` and record the wrong picture — which is
+        # worse than recording none, because it looks like an answer.
+        canvas = {
+            "40": _node("LoadImage", image="far.png"),
+            "44": _node("ImageScale", image=["40", 0]),
+            "43": _node("LoadImage", image="near.png"),
+            "45": _node("ImageBlend", a=["44", 0], b=["43", 0]),
+            "51": _node("AgentYRefNote", input=["45", 0], tag="t", remember=True),
+        }
+        self.assertEqual(sync(canvas), ["t"])
+        self.assertEqual(remembered_reference("t")["path"], "near.png")
+
+    def test_a_tag_with_no_file_anywhere_upstream_writes_nothing(self):
+        # An entry whose whole content is "there was a tag here" is not a fact.
+        canvas = {
+            "44": _node("EmptyLatentImage", width=1024, height=1024),
+            "51": _node("AgentYRefNote", input=["44", 0], tag="empty", remember=True),
+        }
+        self.assertEqual(sync(canvas), [])
+        self.assertIsNone(remembered_reference("empty"))
+
+    def test_the_walk_does_not_run_away_across_the_graph(self):
+        # Bounded, so a tag on a long chain adopts nothing from an unrelated
+        # branch far above it.
+        chain = {"51": _node("AgentYRefNote", input=["1", 0], tag="t", remember=True)}
+        for i in range(1, 12):
+            chain[str(i)] = _node("ImageScale", image=[str(i + 1), 0])
+        chain["12"] = _node("LoadImage", image="miles_away.png")
+        self.assertEqual(sync(chain), [])
+
+
 class ResolutionTests(_Store):
     def test_the_canvas_wins_over_memory(self):
         sync(_canvas())

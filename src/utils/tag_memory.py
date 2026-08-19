@@ -31,34 +31,72 @@ _PATH_PREFIX = "path: "
 _ORIGIN = "Remembered from the `agentY add tag` node tagged `#{tag}` on a canvas."
 
 
-def _input_relative(path: str) -> str:
-    """The path as ComfyUI would name it — input-relative when it lives there.
+def stored_path(path: str) -> str:
+    """The path as stored: FULL, wherever one can be worked out.
 
-    An input-relative name is what survives the project moving between machines,
-    which is the form ``project_memory_write`` asks for. Anything outside the
-    input dir is kept absolute, because a bare name would be a lie about where it
-    lives.
+    This used to store the path input-RELATIVE when the file lived under
+    ComfyUI's input directory, for portability between machines. That was the
+    wrong trade. The entry is read by an agent that has to open the file;
+    references routinely live outside the input dir (an output folder, a network
+    share); and a relative name that no longer resolves is indistinguishable from
+    one naming a different file. A full path is unambiguous on the machine that
+    wrote it, which is the machine reading it back.
+
+    A bare filename is resolved against the input dir — that is where ComfyUI
+    means it — and anything that cannot be resolved is kept exactly as given
+    rather than guessed at.
     """
     raw = str(path or "").strip().strip('"')
     if not raw:
         return ""
+    p = Path(raw)
+    if p.is_absolute():
+        return str(p).replace("\\", "/")
     try:
         from agenty_core.tools.image_io import comfy_input_dir
         base = comfy_input_dir()
         if base:
-            p = Path(raw)
-            if not p.is_absolute():
-                cand = Path(base) / raw
-                if cand.is_file():
-                    return raw.replace("\\", "/")
-            else:
-                try:
-                    return str(p.relative_to(Path(base))).replace("\\", "/")
-                except ValueError:
-                    pass
+            cand = Path(base) / raw
+            if cand.is_file():
+                return str(cand).replace("\\", "/")
     except Exception:  # noqa: BLE001
         pass
     return raw.replace("\\", "/")
+
+
+# How far up the wire a tag's file is looked for. Bounded, and nearest-first, so
+# a tag behind a couple of nodes still resolves without reaching across the graph
+# and adopting some unrelated branch's image.
+_FILE_SEARCH_HOPS = 6
+
+
+def _file_upstream(base_prompt: dict, start_id: str) -> str:
+    """The nearest file up the wire from *start_id*, or ''.
+
+    Only the node the tag sits directly on used to be looked at, on the
+    assumption that it is the loader. Often it is. But a tag wired behind a
+    resize, a batch, a switch or an upscale names a node carrying no filename of
+    its own, and the reference was then skipped SILENTLY: the tag stored nothing,
+    and the agent — later asked to remember it — wrote its own prose describing
+    the folder it could see instead of the file. Following the wire up costs
+    nothing and is what the user meant by the tag either way.
+    """
+    seen, frontier, hops = {str(start_id)}, [str(start_id)], 0
+    while frontier and hops <= _FILE_SEARCH_HOPS:
+        nxt: list = []
+        for nid in frontier:
+            node = base_prompt.get(nid)
+            if not isinstance(node, dict):
+                continue
+            hit = _file_of(node)
+            if hit:
+                return hit
+            for value in (node.get("inputs") or {}).values():
+                if isinstance(value, list) and value and str(value[0]) not in seen:
+                    seen.add(str(value[0]))
+                    nxt.append(str(value[0]))
+        frontier, hops = nxt, hops + 1
+    return ""
 
 
 def _file_of(node: dict) -> str:
@@ -81,7 +119,7 @@ def entry_body(tag: str, file_path: str, role: str) -> str:
     head = str(role or "").strip() or f"Reference image `{Path(file_path).name}`."
     lines = [head]
     if file_path:
-        lines.append(_PATH_PREFIX + _input_relative(file_path))
+        lines.append(_PATH_PREFIX + stored_path(file_path))
     lines.append(_ORIGIN.format(tag=tag))
     return "\n".join(lines)
 
@@ -119,12 +157,12 @@ def sync(base_prompt: dict | None) -> list[str]:
         note = remembered.get(str(info.get("note_id")))
         if note is None:
             continue
-        src = base_prompt.get(str(info.get("node_id"))) or {}
-        file_path = _file_of(src)
+        file_path = _file_upstream(base_prompt, str(info.get("node_id")))
         if not file_path:
-            # The tag names a node with no file of its own — a mid-graph tensor,
-            # or a loader that has not been pointed at anything yet. There is
-            # nothing to remember but the name, so nothing is written.
+            # Nothing up this wire names a file — a tag on a mid-graph tensor, or
+            # a loader not pointed at anything yet. There is nothing to remember
+            # but the name, and an entry whose whole content is "there was a tag
+            # here" is not a fact worth carrying.
             continue
         try:
             if write_entry(tag, entry_body(tag, file_path, info.get("role") or ""),
