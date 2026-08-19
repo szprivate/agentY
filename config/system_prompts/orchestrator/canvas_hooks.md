@@ -281,8 +281,13 @@ A `#name` can also resolve to a **remembered reference** rather than a node on
 this canvas — the user turned on `remember for the project` on a tag node in some
 other graph, and it was written into project memory. Those are listed as
 `REMEMBERED reference (not on this canvas)` with a file path. Treat that as a
-FILE, not an input: upload it and wire it into what you generate if you need it,
-and never claim a node id for it, because there isn't one here.
+FILE, not an input: hand the path over as the VALUE for an image input and the
+loader is built for you — chosen against what this ComfyUI actually has, and the
+file staged into the input directory only if that turns out to be needed. Never
+claim a node id for it, because there isn't one here. And never build a
+`LoadImage` around it yourself: that node names a file *inside* ComfyUI's input
+directory and cannot hold a path at all, so one carrying a remembered path looks
+right on the canvas and fails when the graph runs.
 
 The one thing a name cannot do is **wire one node into another inside the user's
 own graph**. A reference that has to reach a node on their canvas — the image a

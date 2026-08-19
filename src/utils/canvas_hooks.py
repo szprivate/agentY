@@ -21,6 +21,9 @@ import random
 import re
 from pathlib import Path
 
+from src.utils.media_loaders import image_loader_node
+from src.utils.media_loaders import value_for as loader_value
+
 _HOOK_CLASS = "AgentYHook"
 
 IMG_EXTS = {"png", "jpg", "jpeg", "webp", "bmp", "gif", "tiff"}
@@ -539,15 +542,30 @@ def as_connection(prompt: dict, value, current=None) -> list | None:
     if isinstance(src, dict):               # clone the user's own loader
         for key in _FILE_WIDGETS:
             if isinstance((src.get("inputs") or {}).get(key), str):
+                # The clone keeps the user's loader class, so it also inherits
+                # what that class can be handed: a path loader takes the path, a
+                # name loader takes a name in the input directory and the file
+                # has to be staged there first.
+                value = loader_value(str(src.get("class_type") or ""), text)
+                if value is None:
+                    break               # cannot make this loader load that file
                 nid = _free_id(prompt)
                 clone = copy.deepcopy(src)
-                clone.setdefault("inputs", {})[key] = text
+                clone.setdefault("inputs", {})[key] = value
                 prompt[nid] = clone
                 return [nid, 0]
     if _basename(text).rsplit(".", 1)[-1].lower() in IMG_EXTS:
+        # Not "add a LoadImage". Core's LoadImage names a file in the input
+        # directory and CANNOT take a path, so writing one into it — which is
+        # what a remembered `#tag` resolves to — builds a node that looks right
+        # and fails at run time. Ask what this ComfyUI has instead: a VHS path
+        # loader reads the file where it lies, and without one the file is
+        # staged into the input directory and the copy's name written.
+        node = image_loader_node(text)
+        if node is None:
+            return None
         nid = _free_id(prompt)
-        prompt[nid] = {"class_type": "LoadImage",
-                       "inputs": {"image": text, "upload": "image"}}
+        prompt[nid] = node
         return [nid, 0]
     return None
 
@@ -2406,9 +2424,16 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
         for tag, ref in remembered.items():
             role = str(ref.get("role") or "").strip()
             says = f' — "{_trim(role, 200)}" (take only that from it)' if role else ""
+            # NOT "upload it and wire it in". That is what this used to say, and
+            # it steered the agent into building a core `LoadImage` — the one
+            # loader that cannot hold a path — and writing the remembered path
+            # into it. Handing the path over as the value is enough: the loader
+            # is chosen against what this ComfyUI actually has, and the file is
+            # staged only if that turns out to be necessary.
             lines.append(f"- #{tag} → REMEMBERED reference (not on this canvas): "
-                         f"{ref.get('path') or '?'}{says}. It is a file, not a node: "
-                         "upload it and wire it in if you need it as an input.")
+                         f"{ref.get('path') or '?'}{says}. It is a file, not a node "
+                         "— give this path as the value for an image input and a "
+                         "loader that can read it is added for you.")
 
     if cached_hooks:
         lines.append(
