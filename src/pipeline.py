@@ -1079,9 +1079,34 @@ class Pipeline:
                 # Which targets take a wire rather than a value — the hooks know,
                 # the spliced graph no longer does.
                 from src.utils.canvas_hooks import connection_targets as _conn
+                from src.utils.canvas_hooks import misrouted_resolutions as _misrouted
+                from src.utils.canvas_hooks import unresolved_targets as _unresolved
+                # Refuse BEFORE queueing, not after. A node id written into a
+                # prompt box is a mistake the graph can prove — the value is the
+                # id of a node on this canvas and the slot wants words — and the
+                # run that did it queued three generations and reported `ok`,
+                # which is why it went round nine times. The tool saying yes to
+                # something it can see is wrong costs more than any prompt.
+                wrong = _misrouted(base, self._canvas_hooks, list(resolutions))
+                if wrong:
+                    return json.dumps({
+                        "error": "these resolutions would put a node id where words "
+                                 "belong — nothing was queued",
+                        "problems": wrong,
+                        "fix": "call apply_canvas_hooks again with the same "
+                               "resolutions, except write real content for the "
+                               "STRING input(s) named above.",
+                    })
                 prompts, notes = _build_batch(
                     base, list(resolutions), cap=cap, labels=labels,
                     connection_inputs=_conn(self._canvas_hooks))
+                # A hook feeding several inputs delivers its own value to every
+                # one no resolution named. Correct, and worth saying out loud:
+                # the receipt otherwise lists only what was swept, and an input
+                # filled by default reads as an input nobody filled.
+                for key in _unresolved(self._canvas_hooks, list(resolutions)):
+                    notes.append(f"{key} had no resolution — it receives the hook's "
+                                 "own produced value")
             # A collector's batch aimed at a single numbered slot uses only its
             # first image, silently. Re-routed through the expander here rather
             # than left for the agent to notice: it is a mechanical rewrite with

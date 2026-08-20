@@ -34,7 +34,8 @@ from dataclasses import dataclass
 from src.utils.canvas_hooks import (_COLLECTOR_TYPES, _hook_ids, _output_targets,
                                     _all_anchor_inputs, _slot_label, canvas_tags,
                                     is_connection_type, mentioned_tags,
-                                    missing_collector_files, unresolved_anchor_refs)
+                                    missing_collector_files, type_satisfies,
+                                    unresolved_anchor_refs)
 
 from src.utils.canvas_hooks import is_terminal
 
@@ -326,9 +327,13 @@ def check(hooks: list | None, base_prompt: dict | None) -> list:
         for tid, _ttype, tin, tintype, _ttitle in targets:
             if not tin or not is_connection_type(tintype) or str(tid) in ids:
                 continue
-            # A connection target this hook has nothing to feed with.
-            if have and tintype not in have and "*" not in have and not (
-                    have & {"COMFY_MATCHTYPE_V3", "COMFY_MULTITYPE_V3"}):
+            # A connection target this hook has nothing to feed with. The same
+            # rule decides which anchors the target line OFFERS for this input
+            # (canvas_hooks._target_context), so the two are one function: a note
+            # saying nothing here produces an IMAGE, printed above a line naming
+            # an anchor to connect, is the contradiction that sent the agent
+            # looking for its own answer.
+            if have and not any(type_satisfies(t, tintype) for t in have):
                 found.append(Finding("note", hid, (
                     f"its output feeds node {tid}'s `{tin}` ({tintype}), but nothing "
                     f"wired into this hook produces a {tintype} "

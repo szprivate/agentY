@@ -479,6 +479,28 @@ def is_connection_type(wire_type: str | None) -> bool:
     return bool(wire_type) and str(wire_type).strip().upper() not in _PRIMITIVE_WIRE_TYPES
 
 
+# Types that satisfy anything: ComfyUI's own wildcard, and the V3 schema's
+# match/multi types, which resolve to whatever they are connected to.
+_WILDCARD_WIRE_TYPES = {"*", "COMFY_MATCHTYPE_V3", "COMFY_MULTITYPE_V3"}
+
+
+def type_satisfies(produced: str | None, wanted: str | None) -> bool:
+    """Whether a wire carrying *produced* can feed an input that wants *wanted*.
+
+    Unknown on either side is TRUE. A type the frontend did not report is not
+    evidence of a mismatch, and excluding on missing information would hide a
+    perfectly good choice — the failure this guards against is offering one that
+    cannot work, not withholding one that can.
+    """
+    p = str(produced or "").strip()
+    w = str(wanted or "").strip()
+    if not p or not w:
+        return True
+    if p.upper() in _WILDCARD_WIRE_TYPES or w.upper() in _WILDCARD_WIRE_TYPES:
+        return True
+    return p == w
+
+
 def _basename(value) -> str:
     return Path(str(value).replace("\\", "/")).name
 
@@ -1739,6 +1761,111 @@ def connection_targets(hooks: list | None) -> set:
     return out
 
 
+def target_input_types(hooks: list | None) -> dict:
+    """``{"<node>.<input>": "TYPE"}`` for every real input a hook's output feeds.
+
+    :func:`connection_targets` answers the same question as a yes/no, which is all
+    the delivery path needs — link or literal. It is not enough to CHECK anything:
+    "takes a value" covers a prompt, a filename and a frame count equally, so a
+    node id written into a prompt box is indistinguishable from a deliberate one.
+    Keeping the declared type is what makes that detectable.
+    """
+    out: dict = {}
+    for h in (hooks or []):
+        if not isinstance(h, dict):
+            continue
+        for tid, _ttype, tin, tintype, _ttitle in _output_targets(h):
+            if tin:
+                out[f"{tid}.{tin}"] = str(tintype or "")
+    return out
+
+
+def _resolution_key(res: dict) -> str:
+    nid = str(res.get("target_node_id", res.get("node_id", "")) or "")
+    param = str(res.get("param", "") or "")
+    return f"{nid}.{param}" if nid and param else ""
+
+
+def misrouted_resolutions(base_prompt: dict | None, hooks: list | None,
+                          resolutions: list | None) -> list[str]:
+    """Resolutions about to write a NODE ID into a slot that wants words.
+
+    The failure this catches, in the agent's own words from the run that produced
+    it: *"For the STRING target (`prompt`), I should pass the anchor node id
+    (#141) as the value for all runs."* Three image generations were queued with
+    the prompt ``"141"``, and the batch reported ``ok``. Nothing was wrong with
+    the graph; the two targets of one hook had simply been filled with each
+    other's kind of thing.
+
+    Scoped deliberately to the case that is ambiguous: a hook feeding a
+    CONNECTION input **and** a text input, where a node id is genuinely the right
+    answer for one of them. A hook that feeds only text slots gets no check at
+    all — there is no node-id confusion available to make, so a value that
+    happens to look like an id is the user's business.
+    """
+    if not isinstance(base_prompt, dict) or not resolutions:
+        return []
+    types = target_input_types(hooks)
+    # Only hooks that ALSO feed a wire; see the docstring.
+    ambiguous = set()
+    for h in (hooks or []):
+        if not isinstance(h, dict):
+            continue
+        targets = _output_targets(h)
+        if any(tin and is_connection_type(tintype)
+               for _tid, _tt, tin, tintype, _ti in targets):
+            ambiguous.update(f"{tid}.{tin}" for tid, _tt, tin, _ty, _ti in targets if tin)
+    problems: list[str] = []
+    for res in resolutions:
+        if not isinstance(res, dict):
+            continue
+        key = _resolution_key(res)
+        if not key or key not in ambiguous:
+            continue
+        if str(types.get(key, "")).strip().upper() != "STRING":
+            continue
+        values = res.get("values")
+        if not isinstance(values, list):
+            values = [res.get("value")] if res.get("value") is not None else []
+        for v in values:
+            text = str(v).strip()
+            if text and text in base_prompt:
+                node = base_prompt.get(text) or {}
+                problems.append(
+                    f"{key} is a STRING input and would be written the literal "
+                    f'text "{text}" — which is the id of node {text} '
+                    f"({node.get('class_type', '?')}) on this canvas. A node id "
+                    f"belongs in the CONNECTION input this hook also feeds, not "
+                    f"here: write the actual words for {key}, and give the node "
+                    f"id to the input marked [CONNECTION].")
+                break
+    return problems
+
+
+def unresolved_targets(hooks: list | None, resolutions: list | None) -> list[str]:
+    """``"<node>.<input>"`` for real inputs a hook feeds that no resolution names.
+
+    Those are not skipped — they receive the hook's own single produced value.
+    That is the right default for a hook with one target and a silent surprise for
+    a hook with several: a run that resolved the image input and said nothing
+    about the prompt had the prompt filled anyway, and the receipt listed only the
+    image. Naming them is the whole fix; they still get delivered.
+    """
+    named = {_resolution_key(r) for r in (resolutions or []) if isinstance(r, dict)}
+    out: list[str] = []
+    for h in (hooks or []):
+        if not isinstance(h, dict):
+            continue
+        targets = _output_targets(h)
+        if len(targets) < 2:
+            continue      # one target IS the hook's value; nothing to disambiguate
+        for tid, _ttype, tin, _tintype, _ttitle in targets:
+            key = f"{tid}.{tin}"
+            if tin and key not in named and key not in out:
+                out.append(key)
+    return out
+
+
 def _hook_ids(hooks: list) -> set:
     """The set of node ids that are themselves hooks (for chain detection)."""
     return {str(h.get("hook_node_id")) for h in hooks if h.get("hook_node_id") is not None}
@@ -2286,7 +2413,7 @@ def _target_context(hook: dict, hook_ids: set | None = None) -> str:
         return ""
     # Anchors are the obvious things to connect a CONNECTION target to: the user
     # wired them into this hook as the material to choose from.
-    anchors = [str(a.get("node_id")) for a in (hook.get("anchors") or [])
+    anchors = [a for a in (hook.get("anchors") or [])
                if isinstance(a, dict) and a.get("node_id") is not None]
     parts: list = []
     for tid, ttype, tin, tintype, _ttitle in targets:
@@ -2295,9 +2422,25 @@ def _target_context(hook: dict, hook_ids: set | None = None) -> str:
         line = f"node {tid} ({ttype})'s {slot} input{tt}"
         if is_connection_type(tintype):
             # This one carries a wire, not a value the agent can write. Say so at
-            # the point of use, and name the nodes it can be connected to.
-            pick = f" — connect one of {', '.join(anchors)}" if anchors else ""
-            line += f" [CONNECTION: supply a node id{pick}, not a value]"
+            # the point of use, and name the nodes it can be connected to —
+            # BY TYPE. Every anchor used to be offered for every connection
+            # target, so a hook holding one STRING anchor and feeding an IMAGE
+            # input printed "connect one of 141" under that input, where 141 was
+            # the text node. The pre-flight in the same block had already worked
+            # out that nothing here produces an IMAGE; this line just had not
+            # asked. Offering a node that cannot satisfy the input is worse than
+            # offering none: it reads as an instruction, and it outranks whatever
+            # the user wrote in the directive.
+            fit = [str(a["node_id"]) for a in anchors
+                   if type_satisfies(a.get("from_output_type"), tintype)]
+            if fit:
+                line += (f" [CONNECTION: supply a node id — connect one of "
+                         f"{', '.join(fit)}, not a value]")
+            else:
+                line += (f" [CONNECTION: supply a node id, not a value — but no "
+                         f"anchor wired into this hook carries a {tintype}, so "
+                         f"there is nothing here to choose from. Name a node id "
+                         f"from elsewhere on the canvas, or a file.]")
         parts.append(line)
     return "; ".join(parts)
 
