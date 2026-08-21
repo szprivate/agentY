@@ -116,6 +116,7 @@ planner = "system_prompt.planner.md"
 info = "system_prompt.info.md"
 learnings = "system_prompt.learnings.md"
 qa_checker = "system_prompt.qaChecker.md"
+refine_loop = "system_prompt.refineLoop.md"
 vision_agent = "system_prompt.vision_agent.md"
 search_web = "system_prompt.search_web.md"
 coder = "system_prompt.coder.md"
@@ -280,6 +281,13 @@ video_frames = 3
 # Named briefings: <briefing_dir>/<name>.md holds the criteria, and an optional
 # sibling <name>.refs/ folder holds its mood images.
 briefing_dir = "./config/qa/"
+
+# Refine loops — `refine_canvas_until`, the agent running the graph you have open
+# over and over until its output meets a condition you stated. Every iteration is
+# a real generation, so this is a spend ceiling and not a suggestion: the agent
+# may ask for fewer runs, never for more. Raise it if you want longer loops.
+[refine]
+max_runs = 4
 
 # Slack — a SECOND line into agentY, never a replacement for the sidebar panel.
 # Turns are mirrored to your Slack DM as they run, including the ones you start in

@@ -40,6 +40,12 @@ It does **not** queue the graph. The user runs it themselves when they are ready
 and running it because you changed something is not what they asked for. (This is
 distinct from `[CANVAS HOOKS]`, which *is* a request to run.)
 
+The one thing that *does* run the graph they have open is a **loop they asked
+for** — "keep trying until …". `refine_canvas_until` queues their own graph,
+judges the output against the condition they stated, changes one value and goes
+again (see the `canvas-refine-loop` skill). Naming a stopping condition is what
+asks for the runs; changing a value never is.
+
 ### Deleting
 
 `delete_canvas_nodes([ids], reason)` removes nodes. It is the only canvas edit

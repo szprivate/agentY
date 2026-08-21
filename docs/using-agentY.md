@@ -27,6 +27,7 @@ node, ready to wire into your next step.*
   - [Tagging a reference](#tagging-a-reference-the-agenty-add-tag-node)
   - [Asking the agent to change a setting](#asking-the-agent-to-change-a-setting)
   - [Letting the agent edit the whole graph](#letting-the-agent-read-and-edit-the-whole-graph)
+  - [Loops: keep trying until it's right](#loops-keep-trying-until-its-right)
   - [Dry run: check the logic first](#dry-run-check-the-logic-before-you-pay-for-it)
   - [Review: stop and pick what continues](#review-stop-and-pick-what-continues)
   - [The keep switch](#the-keep-switch-should-this-outlive-the-run)
@@ -418,7 +419,49 @@ leave it off if you mostly generate.
 
 Values in the listing are shortened to fit one line per node; the agent is told to
 re-read a truncated value in full before rewriting it, so a long prompt does not
-get half-rewritten. Editing never queues the graph — you run it yourself.
+get half-rewritten. Editing never queues the graph — you run it yourself. The one
+exception is a loop you asked for, below.
+
+### Loops: keep trying until it's right
+
+You have a workflow that works and you want the agent to *keep going* until the
+output meets a condition. No hook nodes, no template — your own graph, as it is
+on the canvas:
+
+> *"Ok let's try a loop — you change the prompt until the woman's position in the
+> output matches her position in the original frame."*
+
+The agent runs your graph, looks at what came out, judges it against the condition
+you wrote, rewrites the prompt, and runs it again. You watch the prompt change in
+your own node between runs. It stops the moment the condition is met.
+
+What makes it work:
+
+- **A condition you can see in the picture.** It becomes the criteria each output
+  is graded on — by the same judge as [QA](#checking-outputs-qa), so the same rules
+  apply. *"She stands where she does in the reference"* is judgeable; *"make it
+  better"* will just churn.
+- **The reference is usually already there.** "The original frame" is the image
+  your graph loads, and that is what it compares against unless you name another.
+- **One value changes.** By default the prompt — it will not pick a *negative*
+  prompt on its own, and it never touches your checkpoint, sampler or seed. Say
+  which node to vary if your graph has more than one prompt.
+- **A budget you set.** `Settings ▸ refine ▸ max_runs` (default **4**) caps how
+  many generations one loop may spend. The agent can ask for fewer, never more.
+- **You can stop it.** Type anything while it's running and it stops at the end of
+  the current generation.
+
+It reports what happened per run, not just the last picture — which value was
+tried, what the judge objected to, which run landed it. If none did, your original
+prompt is in the report and the agent can put it back.
+
+Your graph needs a saver that writes to ComfyUI's **output** folder, so each result
+can be fetched and judged (for the bEpic viewer node that means `save_to_output`
+**ON**). Temp-mode previews cannot be read back, and the loop will say so.
+
+This is the *closed* loop — you state the goal once and wait. For the *open* one,
+where you look at each result and say what to change next, see
+[Iterative refinement](#iterative-refinement-the-iterate-purpose).
 
 ### The seven purposes
 
@@ -778,6 +821,11 @@ can **jump back**:
 
 Keep going until you say **stop**. (Driven by the `iterate_step` tool and the
 `iterative-refine` skill.)
+
+This is the loop **you** steer, one step per turn. If instead you want to state a
+goal once and have the agent keep going on its own until the output meets it —
+with no hook node at all — see [Loops: keep trying until it's
+right](#loops-keep-trying-until-its-right).
 
 ---
 

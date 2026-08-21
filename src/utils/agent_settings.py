@@ -81,6 +81,9 @@ _ALLOWED = (
             low=0, high=10),
     Setting("qa.video_frames", "int", "frames sampled from a video for QA",
             low=1, high=10),
+    Setting("refine.max_runs", "int",
+            "how many generations one refine loop may spend before it gives up; "
+            "each one is a real render", low=1, high=12),
     Setting("llm.history_window", "int",
             "how many past messages each turn carries", low=2, high=50),
 )

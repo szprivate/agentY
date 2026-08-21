@@ -2020,6 +2020,282 @@ class Pipeline:
             })
 
         @_tool
+        async def refine_canvas_until(condition: str, node_id: str = "", param: str = "",
+                                      max_runs: int = 0, references: list | None = None,
+                                      start_value: str = "", vary_seed: bool = False) -> str:
+            """Run the graph the user has OPEN, judge each output, change one value, run again.
+
+            The closed loop: *"change the prompt until the woman's position matches
+            the original frame"*. One call does the whole thing — it queues the
+            user's own on-canvas graph, judges the output against ``condition``,
+            rewrites the one value it is varying, and runs again, until the
+            condition is met or the budget runs out. No template is chosen, nothing
+            is assembled, and no second workflow appears on their canvas.
+
+            Use it when the user asks for a **loop / "keep trying until" / "iterate
+            until"** on the workflow they already have working. For a step-by-step
+            refinement they steer turn by turn, use ``iterate_step`` instead; for a
+            single run of a graph you built, ``run_workflow_now``.
+
+            It stops early — and reports why — when the condition is met, when the
+            judge cannot be read (it will not claim a match on a broken judge), when
+            the reviser runs out of new values, or when the user types something
+            while it is running.
+
+            Do NOT call ``signal_workflow_ready`` afterwards: everything here has
+            already run. Report which run met the condition (or what the judge kept
+            objecting to) and show the output.
+
+            Args:
+                condition: What the output must satisfy, in the user's own words.
+                    This is the criteria every run is judged against, so it has to
+                    be checkable by looking at the picture — "her position matches
+                    the reference frame", "no text anywhere in the image".
+                node_id: The node whose value the loop varies. Leave empty to let
+                    the loop pick, which it only does when exactly one node carries
+                    a prompt; otherwise it comes back with the candidates for you to
+                    choose from. It never picks a negative prompt on its own.
+                param: The widget on that node, when the node has more than one.
+                max_runs: How many generations to allow. 0 = the configured cap
+                    (Settings, ``[refine] max_runs``), which is also the ceiling —
+                    ask for more and you get the cap, with a note saying so.
+                references: Absolute paths of images the output is compared against
+                    ("the original frame"). Leave empty and the loop uses the images
+                    the graph's own loaders hold, which is usually exactly right.
+                start_value: The first value to try. Default: whatever the node
+                    already holds — normally what you want, since the loop is meant
+                    to improve on the user's own prompt.
+                vary_seed: Also reroll every seed each run. Off by default so that a
+                    changed result is evidence the *value* did it; turn it on when
+                    the goal depends on the roll (composition, pose) rather than on
+                    wording.
+            """
+            import copy as _copy
+            import tempfile as _tempfile
+
+            from src.utils import canvas_loop as _loop
+            from src.utils.canvas_patch import push as _push_patch
+            from src.utils.qa import QaBriefing, check_output
+
+            def _interjected() -> bool:
+                """Whether the user has said something while the loop was running.
+
+                A loop can hold the turn for several minutes, and an interjection is
+                only delivered at a TOOL boundary — so without this, "stop" typed at
+                run 2 of 6 is read four generations too late. Peeked, never drained:
+                the message still reaches the model the ordinary way.
+                """
+                try:
+                    from src.utils import interject_bus as _ib
+                    return _ib.pending_count() > 0
+                except Exception:  # noqa: BLE001
+                    return False
+
+            goal = str(condition or "").strip()
+            if not goal:
+                return json.dumps({"error": "say what the output has to satisfy — the "
+                                   "condition is the thing every run is judged against, "
+                                   "and without it there is nothing to loop toward."})
+            if self._hook_run_stopped:
+                return json.dumps({
+                    "error": "this hook run was stopped ("
+                             + str(self._hook_run_stopped.get("reason", "")) + ") — "
+                             "nothing more runs this turn.",
+                })
+            # Runs here and now, so a review halt does not shut it: this is the tool
+            # a revision during the stop is made of.
+            gate = self._plan_gate_refusal() or self._review_gate_refusal(inline=True)
+            if gate:
+                return json.dumps(gate)
+            if self._dry_run:
+                # A stand-in cannot serve a loop. Every iteration exists to be
+                # LOOKED at — the judge's verdict is what picks the next value, so a
+                # dry run would loop on nothing and report a made-up verdict.
+                return json.dumps({
+                    "error": "this is a DRY RUN, and a refine loop is judged on real "
+                             "pixels — there is nothing to look at and nothing to steer "
+                             "by. Tell the user the loop needs a full run.",
+                })
+            base = getattr(self, "_canvas_base_prompt", None)
+            if not isinstance(base, dict) or not base:
+                return json.dumps({"error": "no graph is open in the ComfyUI canvas this "
+                                   "turn — open the workflow the loop should run, then "
+                                   "retry."})
+
+            target, refusal = _loop.choose_target(base, node_id, param)
+            if refusal:
+                return json.dumps(refusal)
+            tid, tparam = target["node_id"], target["param"]
+            label = target.get("title") or target.get("class_type") or "node"
+            original = str((base[tid].get("inputs") or {}).get(tparam, "") or "")
+            value = str(start_value or "").strip() or original
+            if not value.strip():
+                return json.dumps({
+                    "error": f"{tid}.{tparam} is empty and no `start_value` was given, so "
+                             "the loop has nothing to start from. Pass the first value in "
+                             "`start_value`, or ask the user what it should be."})
+
+            runs, cap = _loop.clamp_runs(max_runs)
+            given = [str(p).strip().strip('"') for p in (references or []) if str(p or "").strip()]
+            missing = [p for p in given if not Path(p).exists()]
+            refs = [p for p in given if p not in missing]
+            from_graph = False
+            if not refs:
+                try:
+                    from src.utils.agentY_server import _resolve_media_ref as _resolve
+                except Exception:  # noqa: BLE001
+                    _resolve = None
+                refs = _loop.graph_reference_images(base, _resolve)
+                from_graph = bool(refs)
+            briefing = QaBriefing(criteria=goal, reference_paths=tuple(refs),
+                                  sources=("refine loop",))
+
+            from src.executor import execute_workflow as _execute_workflow
+
+            history: list = []
+            outputs: list = []
+            outcome, stopped = "missed", ""
+            _push_progress(f"🔁 Refine loop on {label} (#{tid}) `{tparam}` — up to "
+                           f"{runs} run{'' if runs == 1 else 's'}.")
+            for run in range(1, runs + 1):
+                if _interjected():
+                    outcome, stopped = "interrupted", "the user said something mid-loop"
+                    break
+                # Put the value on the user's canvas BEFORE it runs, so they watch
+                # the loop work in their own graph rather than being told about it
+                # afterwards. It also means an interrupted loop leaves the canvas
+                # holding the value that produced the last output they saw.
+                _push_patch({"node_id": tid, "params": {tparam: value},
+                             "node_title": target.get("title") or target.get("class_type") or ""})
+                graph = _copy.deepcopy(base)
+                graph[tid].setdefault("inputs", {})[tparam] = value
+                if vary_seed:
+                    self._reroll_seeds(graph)
+                run_dir = Path(_tempfile.mkdtemp(prefix="agenty_refine_"))
+                wf = run_dir / f"refine_{run}.json"
+                wf.write_text(json.dumps(graph), encoding="utf-8")
+
+                _push_progress(f"🔁 Run {run}/{runs} …")
+                collected = self._session.current_output_paths
+                before = len(collected)
+                try:
+                    async for _line in _execute_workflow(
+                        str(wf), self._last_brainbriefing_json or "{}", user_message="",
+                        verbose=self._verbose, collected_paths=collected, qa_briefing=None,
+                    ):
+                        _push_progress(str(_line))
+                        if self._verbose:
+                            print(f"[refine_canvas_until] {_line}")
+                except Exception as exc:  # noqa: BLE001
+                    return json.dumps({"error": f"run {run} failed: {exc}",
+                                       "varied": f"{tid}.{tparam}", "history": history,
+                                       "original_value": original})
+                produced = list(collected[before:])
+                self._chain_output_paths.extend(produced)
+                if not produced:
+                    return json.dumps({
+                        "error": "the run produced no fetchable output, so there is nothing "
+                                 "to judge and the loop cannot turn. If your saver is the "
+                                 "bEpic viewer node, turn its `save_to_output` ON — only "
+                                 "then are files written where the agent can fetch them.",
+                        "varied": f"{tid}.{tparam}", "history": history,
+                        "original_value": original})
+                outputs.extend(produced)
+                out_path = produced[0]
+
+                result = await asyncio.to_thread(check_output, out_path, briefing,
+                                                 request=goal)
+                status, summary, failures = _loop.verdict_of(result)
+                history.append({"run": run, "value": value, "output": out_path,
+                                "status": status, "summary": summary,
+                                "failures": failures})
+                outcome = status
+                if status == "matched":
+                    _push_progress(f"✅ Run {run} met the condition.")
+                elif status == "unjudged":
+                    _push_progress(f"⚠️ Run {run} could not be judged — {summary}")
+                else:
+                    _push_progress(f"❌ Run {run} missed — "
+                                   + (summary or "; ".join(failures) or "no reason given"))
+                if status == "matched":
+                    break
+                if status == "unjudged":
+                    # The judge passes on doubt so it can never condemn the user's
+                    # work; here that same doubt would end the loop in a success
+                    # nobody verified. Stop, and say the verdict is missing.
+                    stopped = f"the judge could not be read ({summary})"
+                    break
+                if run == runs:
+                    break
+
+                messages = _loop.revision_messages(goal, target, value, failures, history)
+                if messages is None:
+                    outcome, stopped = "stalled", ("the reviser's prompt file is missing "
+                                                   "its `system` / `user` sections")
+                    break
+                try:
+                    from src.utils.llm_functions import LLMFunctions
+                    reply = await LLMFunctions.from_settings().chat(messages)
+                except Exception as exc:  # noqa: BLE001
+                    outcome, stopped = "stalled", f"could not write the next value ({exc})"
+                    break
+                nxt = _loop.clean_revision(reply)
+                if _loop.already_tried(nxt, history):
+                    outcome, stopped = "stalled", ("the reviser came back with a value "
+                                                   "already tried, so the next run would "
+                                                   "reproduce a result already judged")
+                    break
+                value = nxt
+
+            on_canvas = history[-1]["value"] if history else original
+            match = next((h for h in history if h["status"] == "matched"), None)
+            message = {
+                "matched": (f"Run {match['run'] if match else len(history)} met the "
+                            "condition. The canvas now holds the value that did it. Show "
+                            "the user that output and say what changed about the value."),
+                "missed": (f"All {len(history)} run(s) were judged and none met the "
+                           "condition. The canvas holds the last value tried; "
+                           "`original_value` is what it held before, if they want it back. "
+                           "Show the closest result, say what the judge kept objecting to, "
+                           "and ask whether to keep going (call again) or change tack."),
+                "unjudged": ("The loop stopped because the verdict could not be read — it "
+                             "did NOT meet the condition, it was never judged. Say so "
+                             "plainly, show what was produced, and let the user decide."),
+                "stalled": ("The loop stopped early: no new value was left to try. Show "
+                            "what was produced, say what the judge kept objecting to, and "
+                            "ask the user how to steer it — a different value to vary, or "
+                            "a sharper condition."),
+                "interrupted": ("The loop stopped because the user spoke. Report where it "
+                                "got to and answer them — do not restart it unasked."),
+            }.get(outcome, "The loop ended.")
+            out = {
+                "status": "matched" if match else outcome,
+                "runs": len(history),
+                "budget": runs,
+                "varied": f"{tid}.{tparam}",
+                "node": f"{label} (#{tid})",
+                "value_on_canvas": on_canvas,
+                "original_value": original,
+                "outputs": outputs,
+                "history": history,
+                "message": message + " Do NOT call signal_workflow_ready — this already ran.",
+            }
+            if stopped:
+                out["stopped_because"] = stopped
+            if refs:
+                out["judged_against"] = refs
+                if from_graph:
+                    out["references_note"] = ("no references were given, so the images the "
+                                              "graph's own loaders hold were used")
+            if missing:
+                out["references_not_found"] = missing
+            if int(max_runs or 0) > cap:
+                out["budget_note"] = (f"{max_runs} runs were asked for; the cap is {cap} "
+                                      "(Settings ▸ refine ▸ max_runs). Call again to "
+                                      "continue from where this stopped.")
+            return json.dumps(out)
+
+        @_tool
         async def send_to_slack(paths: list, message: str = "") -> str:
             """Put file(s) in the user's Slack DM, where they can open them.
 
@@ -2087,7 +2363,7 @@ class Pipeline:
                  run_web_search, run_planner, apply_canvas_hooks, stop_hook_run,
                  halt_for_review, run_workflow_now, add_canvas_workflow,
                  get_canvas_node, set_canvas_node_params, place_canvas_text,
-                 delete_canvas_nodes, iterate_step,
+                 delete_canvas_nodes, iterate_step, refine_canvas_until,
                  list_agent_settings, set_agent_setting]
         # Offered only where there is a Slack to send to. Every tool in this list
         # is described to the model on every call, so one nobody can use is a
