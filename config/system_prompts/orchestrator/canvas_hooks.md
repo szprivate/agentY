@@ -172,6 +172,37 @@ value(s) for the target — the amount depends on the directive:
     its own. That is the whole point of pairing — crossing them would caption the
     wrong picture.
 
+### You may also fill an input NO hook feeds
+
+A resolution is not limited to the inputs the hooks are wired into. It can name
+**any** input on any node in the graph — including a **connection input with
+nothing plugged into it**, such as an empty reference slot on a model node. That
+is how you honour *"run these again, but this time with the image I just gave
+you as a reference"* without the user rewiring anything.
+
+- **Find the slot.** `get_canvas_node(node_id)` lists `open_inputs`: the inputs
+  that node really has and nothing is wired to, read from ComfyUI's own schema.
+  An unwired input is **absent from the graph**, so the `[CANVAS GRAPH]` block
+  cannot show it and its absence there is not evidence it does not exist. Do not
+  conclude a node has no image input because you cannot see one — look.
+- **Fill it like any other CONNECTION target**: give a **file path** (a loader is
+  added and wired for you, using a class this ComfyUI actually has) or the **id of
+  a node** already producing that type. The short slot name is fine — `image_1` is
+  understood as `model.images.image_1`.
+- **Only for the runs that want it.** An **empty string** leaves the slot unwired
+  for that run, so `["ref.png", "ref.png", "ref.png", ""]` in a `zip_group` with
+  the prompts gives three runs a reference and the fourth none.
+- **It is temporary.** The wire is added to the copy of the graph this batch runs
+  from. The canvas the user has open is not modified, and nothing to add or undo
+  afterwards. Say so when you report — "for these runs only" is the true
+  description.
+
+**Never fake a reference by naming the file in the prompt text.** Writing
+`"…, reference: photo.jpg"` into a prompt is not wiring an image: the model never
+receives the picture, the run reports success, and the output is a plain
+text-to-image render that looks like the request was honoured. If a reference
+cannot be wired, the batch note says why — pass that on instead.
+
 When a context input reads *"the value you produce for hook N"*, that input is
 another hook's output: produce hook N first and reuse exactly what you wrote — do
 **not** re-read it from the graph. If a producer's **output is UNWIRED**, there is

@@ -23,6 +23,7 @@ request, through ``get_canvas_node`` — which is also why truncation here is sa
 from __future__ import annotations
 
 import os
+import re
 
 
 def full_graph_visible() -> bool:
@@ -225,11 +226,50 @@ def deletion_impact(prompt: dict | None, node_ids) -> dict:
             "orphaned": orphaned}
 
 
+_NUMBERED = re.compile(r"^(.*?)(\d+)$")
+
+
+def _fold_numbered(open_map: dict) -> dict:
+    """Collapse a numbered family of identical free slots into one entry.
+
+    Ten empty ``IMAGE`` slots are one fact about the node, and printing all ten
+    crowds out everything else it has to say. The first name is kept in full —
+    that is the one a resolution names — and the rest are summarised.
+    """
+    families: dict = {}
+    order: list = []
+    for param, wtype in open_map.items():
+        m = _NUMBERED.match(str(param))
+        key = (m.group(1), str(wtype)) if m else (str(param), str(wtype))
+        if key not in families:
+            families[key] = []
+            order.append(key)
+        families[key].append(str(param))
+    out: dict = {}
+    for key in order:
+        _stem, wtype = key
+        members = families[key]
+        first = members[0]
+        if len(members) == 1:
+            out[first] = wtype
+        else:
+            last = members[-1].rpartition(".")[2]
+            out[first] = f"{wtype} — and {members[1]} … {last}, all free"
+    return out
+
+
 def node_detail(prompt: dict | None, node_id: str) -> dict | None:
     """Everything one node carries: its class, title, values and wired inputs.
 
     Untruncated on purpose — this is what a line in the block could not show, and
     the reason a truncated line is safe to print in the first place.
+
+    ``open_inputs`` is the part the graph cannot show at all: an input that takes
+    a wire and has none is simply ABSENT from the node, so a reference slot
+    waiting to be filled and a slot that does not exist look identical from here.
+    Asking ComfyUI what the class declares is the only way to tell them apart, and
+    not being able to tell is what once made an agent decide a node had no image
+    input and write the filename into its prompt instead.
     """
     if not isinstance(prompt, dict):
         return None
@@ -242,10 +282,24 @@ def node_detail(prompt: dict | None, node_id: str) -> dict | None:
             wired[name] = f"from #{value[0]} output {value[1]}"
         else:
             values[name] = value
-    return {
+    out = {
         "node_id": str(node_id),
         "class_type": str(node.get("class_type") or ""),
         "title": _title(node),
         "values": values,
         "wired_inputs": wired,
     }
+    try:
+        from src.utils.canvas_hooks import open_inputs
+        free = _fold_numbered(open_inputs(prompt, node_id))
+    except Exception:  # noqa: BLE001
+        free = {}                       # ComfyUI unreachable — say nothing
+    if free:
+        out["open_inputs"] = free
+        out["open_inputs_note"] = (
+            "these inputs exist on this node and NOTHING is wired to them. A "
+            "canvas-hook resolution can fill one: give it a file path or the id of "
+            "a node that produces the type, and a loader is wired in for that run "
+            "only. The user's canvas is not modified."
+        )
+    return out

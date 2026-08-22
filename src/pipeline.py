@@ -990,6 +990,18 @@ class Pipeline:
             ``values``), ``folder`` (needs ``folder``, optional ``extensions`` and
             ``use_full_path``). Call this ONCE with all resolutions.
 
+            FILLING AN INPUT NO HOOK FEEDS. A resolution can name any input on any
+            node, including a **connection input with nothing wired to it** — an
+            empty reference slot on a model node, say. Give it a file path and a
+            loader is added and wired for you; give it a node id and that node is
+            connected. `get_canvas_node` lists such slots as ``open_inputs`` (an
+            unwired input is absent from the graph, so it cannot be seen there).
+            An empty string leaves the slot unwired for that run, which is how
+            "use the reference on three of the four" is expressed. The wire is
+            added to the copy this batch runs from — the user's canvas is NOT
+            modified. Never substitute naming a file in the prompt text: the model
+            never receives the picture and the run still reports success.
+
             ZIP / PAIR (advance inputs together instead of crossing them). Give two+
             resolutions the same ``zip_group`` and they step in lockstep — run i takes
             the i-th of each — rather than cross-producting. Two ways to pair:

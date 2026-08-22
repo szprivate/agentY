@@ -800,8 +800,16 @@ def build_batch(base_prompt: dict, resolutions: list, cap: int = 25,
     :func:`connection_targets`) names the inputs that take a WIRE even when the
     graph shows none — an input whose hook was spliced out and left unwired still
     needs a link, and a literal written there reaches the node as a string.
+
+    A resolution may also name an input **no hook feeds and nothing is wired to**
+    — an empty reference slot on the model node, say. The hooks cannot vouch for
+    those, so the node's own schema is asked instead (:func:`open_inputs`), and a
+    loader is added for the file and connected. That happens on the COPY this
+    batch is built from; the graph the user has open is never touched.
     """
     notes: list[str] = []
+    conn_keys: set = set(connection_inputs or ())
+    schema_open: dict = {}          # node id -> its unwired connection inputs
     # Bucket resolutions into groups, preserving encounter order. Each ungrouped
     # resolution is its own singleton group (a plain product axis, as before).
     groups: dict[str, list] = {}
@@ -818,6 +826,17 @@ def build_batch(base_prompt: dict, resolutions: list, cap: int = 25,
         if nid not in base_prompt:
             notes.append(f"node {nid} is not in the canvas graph — skipped")
             continue
+        param = canonical_param(base_prompt, nid, param)
+        key = f"{nid}.{param}"
+        # Does this input take a WIRE? The hooks answer for the inputs they feed.
+        # For anything else the node's own schema is the only witness, and without
+        # asking it a file path aimed at an empty IMAGE slot is written as a
+        # literal: stored, never read, and reported by nobody as a problem.
+        if key not in conn_keys:
+            if nid not in schema_open:
+                schema_open[nid] = open_inputs(base_prompt, nid)
+            if is_connection_type(schema_open[nid].get(param)):
+                conn_keys.add(key)
         gid = str(res.get("zip_group", "") or "").strip()
         if not gid:
             gid = f"\x00solo{solo}"
@@ -847,31 +866,45 @@ def build_batch(base_prompt: dict, resolutions: list, cap: int = 25,
 
     prompts: list[dict] = []
     unresolved: dict = {}
+    opened: dict = {}
     for combo in combos:
         p = copy.deepcopy(base_prompt)
         label: dict = {}
         for row in combo:                       # each row is one group's aligned assignments
             for (nid, param, val) in row:
-                label[f"{nid}.{param}"] = val
+                key = f"{nid}.{param}"
+                label[key] = val
                 node = p.get(nid)
                 if not isinstance(node, dict):
                     continue
-                if not _write_input(p, node, param, val,
-                                    f"{nid}.{param}" in (connection_inputs or ())):
-                    # A connection input (IMAGE, LATENT, …) we could not turn into
-                    # a link. Leave the wire intact and say so once, rather than
-                    # writing a literal that would disconnect it.
-                    unresolved.setdefault(f"{nid}.{param}", set()).add(str(val)[:60])
+                had = param in (node.get("inputs") or {})
+                if not _write_input(p, node, param, val, key in conn_keys):
+                    # A connection input (IMAGE, LATENT, …) we could not turn
+                    # into a link. Leave the input exactly as it was and say so
+                    # once, rather than writing a literal — which would either
+                    # disconnect a wire or sit unread in an empty slot.
+                    unresolved.setdefault(key, set()).add(str(val)[:60])
+                elif not had and isinstance((node.get("inputs") or {}).get(param), list):
+                    # A slot that had nothing in it now has a wire. Worth saying:
+                    # the receipt otherwise reads as though the graph already had
+                    # somewhere to put this, and the user's own canvas does not.
+                    opened.setdefault(key, set()).add(_basename(val) or str(val)[:60])
         prompts.append(p)
         if labels is not None:
             labels.append(label)
+    for slot, vals in opened.items():
+        notes.append(
+            f"{slot} had nothing wired to it — connected "
+            + ", ".join(sorted(vals))
+            + " through a loader added to THIS RUN's copy of the graph. The canvas "
+              "the user has open is unchanged.")
     for slot, vals in unresolved.items():
         notes.append(
             f"{slot} is a connection input — could not wire "
             + ", ".join(sorted(vals))
-            + " to a node that produces it; left the existing wire in place. Give a "
-              "node id to connect (e.g. one of the hook's anchors), or a file the "
-              "canvas can load.")
+            + " to a node that produces it; left it as it was. Give a node id to "
+              "connect (e.g. one of the hook's anchors), or a file the canvas can "
+              "load — prose cannot be wired.")
     return prompts, notes
 
 
@@ -1528,7 +1561,69 @@ _EXPAND_CLASS = "AgentYImageBatchExpand"
 _EXPAND_MAX_OUT = 8          # image_1 … image_8; slot 8 is `count`
 
 
-def autogrow_slots(class_type: str) -> dict:
+def _node_schema(class_type: str) -> dict:
+    """One class's ComfyUI schema, or ``{}`` when it cannot be asked.
+
+    Wrapped rather than imported at module scope: :mod:`preflight` imports from
+    here, and what is worth sharing is its per-class cache — a ComfyUI that is
+    down should cost one refused connection for the whole turn, not one per node.
+    """
+    try:
+        from src.utils.preflight import _schema
+        return _schema(str(class_type or "")) or {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _combo_option(opts: dict, path: str, values: dict | None) -> list:
+    """The dynamic combo option in force at *path*, as a 0/1-item list.
+
+    Which inputs exist depends on it, and not only cosmetically: Seedream 5.0
+    *lite* declares fourteen image slots and 5.0 *pro* ten, so merging every
+    option would offer ``image_12`` on a graph that has no such slot. The node's
+    own value picks the option; with nothing to go on, take the first, which is
+    what ComfyUI defaults a combo to.
+    """
+    options = [o for o in (opts.get("options") or []) if isinstance(o, dict)]
+    if not options:
+        return []
+    chosen = str((values or {}).get(path, "") or "").strip()
+    if chosen:
+        for opt in options:
+            if str(opt.get("key", "") or "").strip() == chosen:
+                return [opt]
+    return options[:1]
+
+
+def _walk_schema(block: dict, prefix: str = "", values: dict | None = None):
+    """Yield ``(dotted_path, kind, opts)`` for every input a schema block declares.
+
+    The API prompt addresses a nested input by the path the frontend built, not by
+    the option it came from: a V3 dynamic combo contributes its inputs under the
+    COMBO's own name (``model`` → ``model.width``), so the recursion keeps the
+    prefix and drops the option key. Autogrow groups are yielded whole — what
+    their numbered slots are called is the caller's business.
+
+    *values* is the node's own ``inputs``, which is how a dynamic combo's branch
+    is chosen; see :func:`_combo_option`.
+    """
+    for group in ("required", "optional"):
+        for name, spec in ((block or {}).get(group) or {}).items():
+            if isinstance(spec, list) and spec:
+                kind, opts = spec[0], (spec[1] if len(spec) > 1 else {})
+            else:
+                kind, opts = spec, {}
+            if not isinstance(opts, dict):
+                opts = {}
+            path = f"{prefix}.{name}" if prefix else str(name)
+            yield path, kind, opts
+            if kind == "COMFY_DYNAMICCOMBO_V3":
+                for opt in _combo_option(opts, path, values):
+                    yield from _walk_schema((opt or {}).get("inputs") or {},
+                                            path, values)
+
+
+def autogrow_slots(class_type: str, values: dict | None = None) -> dict:
     """``{"model.images": ["image_1", …]}`` — the numbered slots a class declares.
 
     The names are not at the top of the schema. A node like Seedream keeps them
@@ -1538,34 +1633,119 @@ def autogrow_slots(class_type: str) -> dict:
     rather than guessed — knowing that ``image_2`` really exists is the whole
     licence for wiring one.
 
+    Pass the node's own ``inputs`` as *values* so a dynamic combo resolves to the
+    branch it is actually set to; see :func:`_combo_option`.
+
     ``{}`` when ComfyUI cannot be asked, which is the answer that changes nothing.
     """
-    try:
-        from src.utils.preflight import _schema
-        schema = _schema(str(class_type or ""))
-    except Exception:  # noqa: BLE001
-        return {}
     out: dict = {}
-
-    def _walk(block: dict, prefix: str) -> None:
-        for group in ("required", "optional"):
-            for name, spec in ((block or {}).get(group) or {}).items():
-                if not (isinstance(spec, list) and spec):
-                    continue
-                kind, opts = spec[0], (spec[1] if len(spec) > 1 else {})
-                path = f"{prefix}.{name}" if prefix else str(name)
-                if kind == "COMFY_AUTOGROW_V3":
-                    names = ((opts or {}).get("template") or {}).get("names") or []
-                    if names:
-                        out[path] = [str(n) for n in names]
-                elif kind == "COMFY_DYNAMICCOMBO_V3":
-                    # The option KEY is not part of the address — every option
-                    # contributes its slots under the combo's own name.
-                    for opt in ((opts or {}).get("options") or []):
-                        _walk((opt or {}).get("inputs") or {}, path)
-
-    _walk((schema or {}).get("input") or {}, "")
+    for path, kind, opts in _walk_schema(
+            _node_schema(class_type).get("input") or {}, "", values):
+        if kind != "COMFY_AUTOGROW_V3":
+            continue
+        names = ((opts or {}).get("template") or {}).get("names") or []
+        if names:
+            out[path] = [str(n) for n in names]
     return out
+
+
+def _template_type(template: dict) -> str:
+    """The wire type one autogrow slot carries, read off the group's template."""
+    for group in ("required", "optional"):
+        for _name, spec in (((template or {}).get("input") or {}).get(group) or {}).items():
+            t = spec[0] if isinstance(spec, list) and spec else spec
+            if isinstance(t, str):
+                return t
+    return ""
+
+
+_COMBO_KINDS = {"COMFY_DYNAMICCOMBO_V3"}
+
+
+def declared_inputs(class_type: str, values: dict | None = None) -> dict:
+    """``{dotted_param: TYPE}`` for every input *class_type* declares.
+
+    Addressed the way the API prompt addresses them, autogrow groups expanded into
+    their numbered names. This is the only thing that knows an input EXISTS when
+    the graph does not show it: an unwired optional slot is simply absent from a
+    node's ``inputs``, so the graph alone can never tell "no such input" from
+    "nothing plugged into it yet".
+
+    *values* is the node's own ``inputs``, which decides which branch of a dynamic
+    combo is in force — pass it whenever there is a node, or the answer describes
+    a differently-configured node of the same class.
+    """
+    out: dict = {}
+    for path, kind, opts in _walk_schema(
+            _node_schema(class_type).get("input") or {}, "", values):
+        if kind == "COMFY_AUTOGROW_V3":
+            # A pure container: the prompt carries ``model.images.image_1`` and
+            # never ``model.images`` itself.
+            template = (opts or {}).get("template") or {}
+            wtype = _template_type(template)
+            for name in (template.get("names") or []):
+                out[f"{path}.{name}"] = wtype
+        elif isinstance(kind, list):
+            # An inline list of choices. Tested BEFORE the combo names, because a
+            # list is unhashable and ``kind in _COMBO_KINDS`` raises on one.
+            out[path] = "COMBO"
+        elif isinstance(kind, str):
+            # A dynamic combo is NOT a pure container: it holds the option key
+            # itself (``model = "seedream 5.0 pro"``) as well as contributing
+            # that option's inputs under its own name. A real input; just never
+            # a wireable one, which ``is_connection_type`` already knows.
+            out[path] = "COMBO" if kind in _COMBO_KINDS else kind
+    return out
+
+
+def open_inputs(prompt: dict, node_id) -> dict:
+    """``{param: TYPE}`` — connection inputs *node_id* has that NOTHING feeds.
+
+    The ten empty image slots on an API model node are the case this exists for:
+    they are real, none of them appear in the graph, and a run that wanted to hand
+    one a reference had no way to discover they were there. Wiring one is
+    :func:`as_connection`'s job; knowing one is available is this one's.
+    """
+    node = (prompt or {}).get(str(node_id))
+    if not isinstance(node, dict):
+        return {}
+    inputs = node.get("inputs") or {}
+    out: dict = {}
+    declared = declared_inputs(str(node.get("class_type") or ""), inputs)
+    for param, wtype in declared.items():
+        if not is_connection_type(wtype):
+            continue
+        if param in inputs:
+            continue                            # already wired, or already set
+        out[param] = str(wtype)
+    return out
+
+
+def canonical_param(prompt: dict, node_id, param: str) -> str:
+    """The address the API prompt uses for *param* on this node.
+
+    A numbered autogrow slot is DECLARED ``image_1`` and ADDRESSED
+    ``model.images.image_1``. The short name is what the node's own tooltip says
+    and what the user says out loud, so it is what arrives here — and written
+    short, the value lands under a key the node never reads: accepted by ComfyUI,
+    ignored by the node, reported by nobody.
+
+    Returns *param* unchanged when the graph already holds it, when the schema
+    cannot be read, or when the short name is ambiguous across two groups — a
+    guess between them would be worse than the honest failure downstream.
+    """
+    param = str(param or "")
+    node = (prompt or {}).get(str(node_id))
+    if not param or not isinstance(node, dict):
+        return param
+    inputs = node.get("inputs") or {}
+    if param in inputs:
+        return param
+    declared = declared_inputs(str(node.get("class_type") or ""), inputs)
+    if not declared or param in declared:
+        return param
+    hits = [p for p in declared if p.rpartition(".")[2] == param]
+    return hits[0] if len(hits) == 1 else param
 
 
 def _collector_files(node: dict) -> list:
@@ -1616,7 +1796,8 @@ def expand_image_batches(prompt: dict) -> tuple[dict, list]:
             if not files or len(files) < 2:
                 continue
             if declared is None:
-                declared = autogrow_slots(str(node.get("class_type") or ""))
+                declared = autogrow_slots(str(node.get("class_type") or ""),
+                                          node.get("inputs"))
             group, _, slot = str(name).rpartition(".")
             names = declared.get(group) or declared.get(str(name)) or []
             if slot not in names:

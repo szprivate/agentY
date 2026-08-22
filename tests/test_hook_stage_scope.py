@@ -35,8 +35,11 @@ def canvas():
     return {
         "7":   {"class_type": "LoadImage", "inputs": {"image": "ben.png"}},
         "8":   {"class_type": "AgentYRefNote", "inputs": {"any": ["7", 0], "note": "Ben"}},
+        # The dotted name is what the frontend really serialises a numbered
+        # autogrow slot as (see any captured Seedream graph); the bare
+        # `image_1` this used to say is not an address the node reads.
         "348": {"class_type": "ByteDanceSeedreamNodeV2",
-                "inputs": {"prompt": "", "image_1": ["7", 0]}},
+                "inputs": {"prompt": "", "model.images.image_1": ["7", 0]}},
         "349": {"class_type": "SaveImage", "inputs": {"images": ["348", 0]}},
         "283": {"class_type": "ByteDanceSeedanceNode", "inputs": {"prompt": ""}},
         "284": {"class_type": "SaveVideo", "inputs": {"video": ["283", 0]}},
@@ -105,7 +108,7 @@ class DeadNodesTest(unittest.TestCase):
     def test_a_reference_that_only_fed_the_hook_is_dropped(self):
         """Its consumer was spliced out; it cannot reach the render."""
         graph = canvas()
-        del graph["348"]["inputs"]["image_1"]        # splicing removed that wire
+        del graph["348"]["inputs"]["model.images.image_1"]   # splicing removed it
         pruned, dropped = prune_dead_nodes(graph)
         self.assertNotIn("7", pruned)
         self.assertNotIn("8", pruned)                # the note goes with it
@@ -196,23 +199,25 @@ class ThroughTheToolTest(unittest.TestCase):
         reference workflows come out with no images in them.
         """
         graph = canvas()
-        del graph["348"]["inputs"]["image_1"]        # what splicing leaves behind
+        del graph["348"]["inputs"]["model.images.image_1"]   # what splicing leaves
         for nid, fn in (("9", "ana.png"), ("11", "cy.png")):
             graph[nid] = {"class_type": "LoadImage", "inputs": {"image": fn}}
         pipe = pipeline_stub(_canvas_base_prompt=graph, _dry_run=True,
-                             _canvas_hooks=[hook("5", "348",
-                                                 extra=[("image_1", "IMAGE")])])
+                             _canvas_hooks=[hook(
+                                 "5", "348",
+                                 extra=[("model.images.image_1", "IMAGE")])])
         with mock.patch("agenty_core.tools.comfyui.open_workflow_in_canvas"), \
              mock.patch("src.executor._autoload_workflows_into_canvas", return_value=False):
             out = json.loads(asyncio.run(tools(pipe)["apply_canvas_hooks"]([
                 {"target_node_id": "348", "param": "prompt", "mode": "value_list",
                  "values": ["Ben", "Ana", "Cy"], "zip_group": "shot"},
-                {"target_node_id": "348", "param": "image_1", "mode": "value_list",
+                {"target_node_id": "348", "mode": "value_list",
+                 "param": "model.images.image_1",
                  "values": ["7", "9", "11"], "zip_group": "shot"}])))
         self.assertEqual(out["count"], 3)
         picked = []
         for graph_v in self._graphs(out):
-            wire = graph_v["348"]["inputs"].get("image_1")
+            wire = graph_v["348"]["inputs"].get("model.images.image_1")
             self.assertIsInstance(wire, list, "the selected image was not wired in")
             picked.append(wire[0])
             self.assertIn(wire[0], graph_v, "wired to a node that is not in the graph")
@@ -221,15 +226,17 @@ class ThroughTheToolTest(unittest.TestCase):
     def test_each_variant_keeps_only_the_reference_it_uses(self):
         """The other two are unwired in THIS variant, so they are dead in it."""
         graph = canvas()
-        del graph["348"]["inputs"]["image_1"]
+        del graph["348"]["inputs"]["model.images.image_1"]
         graph["9"] = {"class_type": "LoadImage", "inputs": {"image": "ana.png"}}
         pipe = pipeline_stub(_canvas_base_prompt=graph, _dry_run=True,
-                             _canvas_hooks=[hook("5", "348", param="image_1",
-                                                 param_type="IMAGE")])
+                             _canvas_hooks=[hook(
+                                 "5", "348", param="model.images.image_1",
+                                 param_type="IMAGE")])
         with mock.patch("agenty_core.tools.comfyui.open_workflow_in_canvas"), \
              mock.patch("src.executor._autoload_workflows_into_canvas", return_value=False):
             out = json.loads(asyncio.run(tools(pipe)["apply_canvas_hooks"]([
-                {"target_node_id": "348", "param": "image_1", "mode": "value_list",
+                {"target_node_id": "348", "mode": "value_list",
+                 "param": "model.images.image_1",
                  "values": ["7", "9"]}])))
         first, second = self._graphs(out)
         self.assertIn("7", first)
