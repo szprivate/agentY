@@ -28,6 +28,7 @@ node, ready to wire into your next step.*
   - [Asking the agent to change a setting](#asking-the-agent-to-change-a-setting)
   - [Letting the agent edit the whole graph](#letting-the-agent-read-and-edit-the-whole-graph)
   - [Loops: keep trying until it's right](#loops-keep-trying-until-its-right)
+  - [Screenshots of your workflow](#screenshots-of-your-workflow)
   - [Dry run: check the logic first](#dry-run-check-the-logic-before-you-pay-for-it)
   - [Review: stop and pick what continues](#review-stop-and-pick-what-continues)
   - [The keep switch](#the-keep-switch-should-this-outlive-the-run)
@@ -421,6 +422,34 @@ Values in the listing are shortened to fit one line per node; the agent is told 
 re-read a truncated value in full before rewriting it, so a long prompt does not
 get half-rewritten. Editing never queues the graph — you run it yourself. The one
 exception is a loop you asked for, below.
+
+### Screenshots of your workflow
+
+Ask for a picture of the graph and you get one:
+
+> *"send me a screenshot of my workflow on Slack"*
+
+It is your canvas as **you** have it — your node positions, your groups and
+colours, whatever you have collapsed — not a re-drawing of the same workflow from
+its JSON. The agent takes it, then hands it to Slack if that is where you wanted
+it. Your view does not move: the zoom is put back before the browser paints a
+frame, so you will not see anything happen.
+
+Two things worth knowing.
+
+**Big graphs come back as an overview.** ComfyUI stops drawing node text below a
+certain zoom, so a workflow too large to fit on one page at readable size arrives
+showing its shape and wiring with no labels on the nodes. The agent is told to say
+so rather than pretend otherwise. If you want to *read* something, select the part
+you mean and ask again — a handful of nodes is photographed at full size.
+
+**It needs the browser open.** The picture is drawn by the ComfyUI page, so a
+closed tab means no picture. The agent will tell you that rather than sit waiting.
+
+If several workflows are open in ComfyUI's tabs, the agent is told which ones and
+which is active. It only ever reads, edits, runs or photographs the **active** tab
+— the others exist as saved state, not as live graphs — so if you mean a different
+one, click it first and ask again. It will ask rather than switch your tab for you.
 
 ### Loops: keep trying until it's right
 

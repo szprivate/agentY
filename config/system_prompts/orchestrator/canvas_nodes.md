@@ -76,3 +76,27 @@ without going looking for it. With no title, name the type: `the KSampler (#12)`
 
 Do not inventory the graph unprompted. If they asked one question about one node,
 answer that; a node-by-node tour nobody asked for buries the answer.
+
+### Showing the graph as a picture
+
+`screenshot_canvas` photographs the workflow as the user actually sees it —
+their layout, their colours, their collapsed nodes. Pair it with `send_to_slack`
+when they are away from the machine: *"send me a screenshot of my workflow"* is
+those two calls and nothing else.
+
+It is **not** how you read the graph. `[CANVAS GRAPH]` and `get_canvas_node`
+answer "what is the seed" exactly and for almost no tokens; a picture answers it
+badly or not at all. Take one when a PERSON is going to look at it.
+
+Two things in the result decide what you say about it:
+
+- **`detail: "full"`** — every node title and value is legible. Describe it as
+  the workflow.
+- **`detail: "overview"`** — the graph was too large to draw at readable zoom, so
+  the picture has its shape and wiring but **no text on the nodes**. Say that
+  plainly. If they wanted to read something off it, ask them to select the part
+  they mean and take it again with `only_selected: true`, which fits a handful of
+  nodes at full size.
+
+The picture is drawn by the ComfyUI page, so it needs their browser to be open.
+If it reports the page did not answer, say the tab is closed — do not retry.

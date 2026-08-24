@@ -552,6 +552,8 @@ class Pipeline:
         # (id/type/title/widgets), so the orchestrator can read — and, via
         # set_canvas_node_params, write back — arbitrary node parameters.
         self._canvas_selection: list = []
+        # ComfyUI's open workflow tabs, as the panel last reported them.
+        self._open_workflows: list = []
         self._delegation_tools: list = self._build_delegation_tools()
         if orchestrator_agent is not None:
             self.set_orchestrator(orchestrator_agent)
@@ -2308,6 +2310,105 @@ class Pipeline:
             return json.dumps(out)
 
         @_tool
+        async def screenshot_canvas(only_selected: bool = False,
+                                    reason: str = "") -> str:
+            """Take a PICTURE of the workflow open in the user's ComfyUI canvas.
+
+            Use when the useful thing is what the graph LOOKS like — sending it to
+            Slack, showing which nodes are wired to what, or letting the user see
+            the layout they are describing from memory. The image is the user's own
+            view: their node positions, their colours, whatever they have collapsed.
+
+            You do NOT need this to read or edit the graph. The whole canvas is
+            already described in the ``[CANVAS GRAPH]`` block and any node can be
+            read exactly with ``get_canvas_node`` — both cheaper than a picture and
+            far better at answering "what is the seed". Reach for this when a
+            PERSON is going to look at it.
+
+            Returns the path of a PNG on disk. To send it, pass that path to
+            ``send_to_slack``.
+
+            READ ``detail`` IN THE RESULT. ``"full"`` means every node's title and
+            widget values are legible. ``"overview"`` means the graph was too big
+            to draw at readable zoom, so the picture shows layout and wiring with
+            NO text on the nodes — say so rather than describing it as a picture
+            of the settings. The fix for that is ``only_selected``.
+
+            It needs the ComfyUI page to be open (it is drawn by the browser). A
+            closed tab is reported as such rather than waited on.
+
+            Args:
+                only_selected: Photograph just the nodes the user has SELECTED,
+                    instead of the whole graph. Use when they say "this part" —
+                    and when a whole-graph shot came back as ``overview``, since a
+                    handful of nodes fit at full zoom. Errors if nothing is
+                    selected, rather than quietly sending the whole graph.
+                reason: Optional note for the log saying what the picture is for.
+            """
+            import time as _time
+            from src.utils import canvas_probe as _probe
+
+            if self._dry_run:
+                return json.dumps({
+                    "error": "this is a dry run — nothing is drawn or sent.",
+                })
+            _push_progress("📸 Taking a picture of the canvas…")
+            # Drawing is one synchronous redraw in the page; the wait is the poll
+            # round-trip. Off the event loop so the turn's other work is not held.
+            payload = {"only_selected": True} if only_selected else {}
+            reply = await asyncio.to_thread(_probe.request, "screenshot", payload, 20.0)
+            if reply.get("error"):
+                out = {"error": reply["error"]}
+                if reply.get("timeout"):
+                    out["what_to_do"] = (
+                        "Say the picture could not be taken because ComfyUI is not "
+                        "open in a browser. Do not retry — it will not answer until "
+                        "the tab is back.")
+                return json.dumps(out)
+
+            data_url = str(reply.get("data_url") or "")
+            marker = "base64,"
+            if marker not in data_url:
+                return json.dumps({"error": "the page returned no image data"})
+            import base64 as _b64
+            try:
+                blob = _b64.b64decode(data_url.split(marker, 1)[1])
+            except Exception as exc:  # noqa: BLE001
+                return json.dumps({"error": f"the image could not be decoded: {exc}"})
+
+            # Beside the agent's other artefacts, not among the generated images:
+            # this is a picture OF the work, not a piece of it, and it should not
+            # turn up in an output listing as though a run had produced it.
+            shots = Path(__file__).parent.parent / "output" / "agent" / "screenshots"
+            shots.mkdir(parents=True, exist_ok=True)
+            name = str(reply.get("workflow") or "canvas").strip() or "canvas"
+            name = re.sub(r"[^A-Za-z0-9_.-]+", "_", name)[:60]
+            if reply.get("scoped"):
+                name += "_selection"
+            path = shots / f"{name}_{_time.strftime('%Y%m%d_%H%M%S')}.png"
+            path.write_bytes(blob)
+
+            if self._verbose:
+                print(f"pipeline: screenshot_canvas wrote {path} "
+                      f"({len(blob)} bytes, {reply.get('nodes')} nodes)")
+            out = {
+                "status": "captured",
+                "path": str(path),
+                "size_bytes": len(blob),
+                "dimensions": f"{reply.get('width')}x{reply.get('height')}",
+                "nodes": reply.get("nodes"),
+                "detail": reply.get("detail") or "full",
+                "scope": "selected nodes" if reply.get("scoped") else "whole graph",
+                "workflow": reply.get("workflow") or "",
+                "reason": str(reason or ""),
+                "message": ("The canvas as the user has it. Pass `path` to "
+                            "send_to_slack to put it in their DM."),
+            }
+            if reply.get("note"):
+                out["note"] = reply["note"]
+            return json.dumps(out)
+
+        @_tool
         async def send_to_slack(paths: list, message: str = "") -> str:
             """Put file(s) in the user's Slack DM, where they can open them.
 
@@ -2373,6 +2474,7 @@ class Pipeline:
         # the legacy free_agent=False router path.
         tools = [prepare_workflow, run_info,
                  run_web_search, run_planner, apply_canvas_hooks, stop_hook_run,
+                 screenshot_canvas,
                  halt_for_review, run_workflow_now, add_canvas_workflow,
                  get_canvas_node, set_canvas_node_params, place_canvas_text,
                  delete_canvas_nodes, iterate_step, refine_canvas_until,
@@ -3086,6 +3188,15 @@ class Pipeline:
             if graph_block:
                 pin += graph_block + "\n\n"
 
+        # Several workflows open in ComfyUI's tabs. Silent for the ordinary
+        # single-tab case (see describe_open_workflows) — it speaks up only when
+        # "the canvas" has become ambiguous in a way the user cannot see.
+        if getattr(self, "_open_workflows", None):
+            from src.utils.canvas_probe import describe_open_workflows
+            tabs_block = describe_open_workflows(self._open_workflows)
+            if tabs_block:
+                pin += tabs_block + "\n\n"
+
         # Input-image handling guidance — attached only when the user has input
         # images to stage or generated images to reference (else it's dead weight).
         has_input_images = bool(getattr(self._session, "last_user_input_images", None)) \
@@ -3238,7 +3349,8 @@ class Pipeline:
 
     async def _astream_orchestrator(self, user_input, *, qa_reply_queue: asyncio.Queue | None = None,
                                     canvas_prompt: dict | None = None, canvas_hooks: list | None = None,
-                                    canvas_selection: list | None = None, qa_briefing=None,
+                                    canvas_selection: list | None = None,
+                                    open_workflows: list | None = None, qa_briefing=None,
                                     dry_run: bool = False):
         """Stream the orchestrator for one turn, then run any signalled workflow.
 
@@ -3316,6 +3428,9 @@ class Pipeline:
         # Arbitrary selected nodes (id/type/title/widgets) the orchestrator can
         # read and write back via set_canvas_node_params.
         self._canvas_selection = [n for n in (canvas_selection or []) if isinstance(n, dict)]
+        # ComfyUI's open tabs. The graph above is whichever one is ACTIVE, and
+        # nothing in it says whether it was one of several.
+        self._open_workflows = [w for w in (open_workflows or []) if isinstance(w, dict)]
         # The canvas EXACTLY as the user has it, kept apart from the spliced and
         # hook-scoped `_canvas_base_prompt` below. That one is "what would run";
         # this one is "what is on screen", and it is what read/write on arbitrary

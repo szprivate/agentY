@@ -945,6 +945,7 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
                          canvas_prompt: dict | None = None,
                          canvas_hooks: list | None = None,
                          canvas_selection: list | None = None,
+                         open_workflows: list | None = None,
                          dry_run: bool = False, origin: str = "panel") -> None:
     """Run one turn, guaranteeing the SSE queue is always terminated.
 
@@ -967,7 +968,8 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
     try:
         _run_pipeline_turn(thread_id, message, image_paths, out_q, req_id, finished,
                            canvas_prompt=canvas_prompt, canvas_hooks=canvas_hooks,
-                           canvas_selection=canvas_selection, dry_run=dry_run)
+                           canvas_selection=canvas_selection,
+                           open_workflows=open_workflows, dry_run=dry_run)
     except BaseException as exc:  # noqa: BLE001 — the stream must close on ANY failure
         logger.error("turn %s died before completing: %s", req_id, exc, exc_info=True)
         # Also into the turn log with a full traceback: the terminal scrollback is
@@ -1002,6 +1004,7 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
                        canvas_prompt: dict | None = None,
                        canvas_hooks: list | None = None,
                        canvas_selection: list | None = None,
+                       open_workflows: list | None = None,
                        dry_run: bool = False) -> None:
     """Drive the pipeline for one turn on a private event loop, pushing SSE dicts
     to *out_q*. Interactive asks register on ``_reply_registry`` so POST
@@ -1270,7 +1273,8 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
             async for event in pipeline.stream_async(
                 content, qa_reply_queue=qa_queue,
                 canvas_prompt=canvas_prompt, canvas_hooks=canvas_hooks,
-                canvas_selection=canvas_selection, qa_briefing=qa_briefing,
+                canvas_selection=canvas_selection, open_workflows=open_workflows,
+                qa_briefing=qa_briefing,
                 dry_run=dry_run,
             ):
                 if isinstance(event, dict):
@@ -2603,6 +2607,47 @@ def _build_app():
             snap["pending"] = 0
         return jsonify(snap)
 
+    # ── Canvas probes: ask the open page something and wait for its answer ──
+    # The one place the host asks the PAGE a question. Deliberately not on the
+    # SSE stream: that drains inside the orchestrator's event loop, so a tool
+    # blocked on an answer would be holding the channel meant to deliver it.
+    @app.route("/agentY/canvas_probe", methods=["GET"])
+    def canvas_probe_poll():
+        """Long-poll: hand the panel the next probe, or nothing after a while.
+
+        Held open rather than answered empty immediately — a screenshot should
+        appear when the agent asks for it, not up to one poll interval later.
+        Returns promptly when a probe arrives, and always within `wait`.
+        """
+        from src.utils import canvas_probe
+        try:
+            wait = float(request.args.get("wait", "25") or 25)
+        except (TypeError, ValueError):
+            wait = 25.0
+        wait = max(0.0, min(wait, 55.0))    # under any sane proxy read timeout
+        deadline = time.time() + wait
+        while True:
+            probe = canvas_probe.take()
+            if probe is not None:
+                return jsonify({"ok": True, "probe": probe})
+            if time.time() >= deadline:
+                return jsonify({"ok": True, "probe": None})
+            time.sleep(0.15)
+
+    @app.route("/agentY/canvas_probe/reply", methods=["POST", "OPTIONS"])
+    def canvas_probe_reply():
+        if request.method == "OPTIONS":
+            return "", 204
+        from src.utils import canvas_probe
+        body = request.get_json(silent=True) or {}
+        pid = str(body.get("probe_id") or "")
+        if not pid:
+            return jsonify({"ok": False, "error": "probe_id is required"}), 400
+        # False = nobody is waiting any more (the tool timed out first). Not an
+        # error: the answer simply arrived too late to be of use.
+        delivered = canvas_probe.reply(pid, body.get("data") or {})
+        return jsonify({"ok": True, "delivered": bool(delivered)})
+
     # ── Available models (per vendor) for the quick-switch dropdown ─────────
     @app.route("/agentY/models", methods=["GET"])
     def models():
@@ -3161,6 +3206,10 @@ def _build_app():
         # Arbitrary selected nodes (any type) with their widget values, so the
         # agent can read/alter their parameters and write the change back live.
         canvas_selection = [n for n in (body.get("canvas_selection") or []) if isinstance(n, dict)]
+        # ComfyUI's open workflow tabs. The graph above is the ACTIVE one and
+        # cannot say whether it was one of several — so without this, "the other
+        # workflow" gets answered about this one, confidently and wrongly.
+        open_workflows = [w for w in (body.get("open_workflows") or []) if isinstance(w, dict)]
         # Dry run: the panel's "Run agentY hooks ▾ → Dry run". Build every graph,
         # submit none of them (src/utils/dry_run.py).
         dry_run = bool(body.get("dry_run"))
@@ -3260,7 +3309,8 @@ def _build_app():
         threading.Thread(target=_run_pipeline_stream,
                          args=(thread_id, message, image_paths, q, rid),
                          kwargs={"canvas_prompt": canvas_prompt, "canvas_hooks": canvas_hooks,
-                                 "canvas_selection": canvas_selection, "dry_run": dry_run},
+                                 "canvas_selection": canvas_selection,
+                                 "open_workflows": open_workflows, "dry_run": dry_run},
                          daemon=True).start()
 
         def gen():
