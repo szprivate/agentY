@@ -3824,7 +3824,8 @@ class Pipeline:
 
     async def stream_async(self, user_input, *, qa_reply_queue: asyncio.Queue | None = None,
                            canvas_prompt: dict | None = None, canvas_hooks: list | None = None,
-                           canvas_selection: list | None = None, qa_briefing=None,
+                           canvas_selection: list | None = None,
+                           open_workflows: list | None = None, qa_briefing=None,
                            dry_run: bool = False):  # noqa: ANN201
         """Async generator for one turn: the orchestrator owns the whole turn
         and streams its events (and those of the specialists it delegates to).
@@ -3855,7 +3856,8 @@ class Pipeline:
             async for event in self._astream_orchestrator(
                 user_input, qa_reply_queue=qa_reply_queue,
                 canvas_prompt=canvas_prompt, canvas_hooks=canvas_hooks,
-                canvas_selection=canvas_selection, qa_briefing=qa_briefing,
+                canvas_selection=canvas_selection, open_workflows=open_workflows,
+                qa_briefing=qa_briefing,
                 dry_run=dry_run,
             ):
                 yield event
