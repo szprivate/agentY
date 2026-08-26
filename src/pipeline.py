@@ -379,6 +379,45 @@ def _extract_json(text: str) -> str | None:
     return None
 
 
+def staged_reference_paths(manifest: str) -> list[str]:
+    """On-disk paths of the images a Reference Scout run actually staged.
+
+    The scout answers with ``{"references": [{"mode": "image", "path": …}, …]}``
+    (see ``system_prompt.search_web.md``). Only ``image`` entries have a file;
+    ``text`` ones are a written description and nothing was downloaded.
+
+    Tolerant on purpose. This decides whether the user SEES what was found, so a
+    model that wraps its JSON in a fence, adds a sentence in front of it, or spells
+    the key ``saved_to`` instead of ``path`` should not cost them the pictures.
+    Anything that cannot be read yields no paths — never an exception.
+    """
+    blob = _extract_json(str(manifest or ""))
+    if not blob:
+        return []
+    try:
+        data = json.loads(blob)
+    except (ValueError, TypeError):
+        return []
+    refs = data.get("references") if isinstance(data, dict) else None
+    if not isinstance(refs, list):
+        return []
+    out: list[str] = []
+    for ref in refs:
+        if not isinstance(ref, dict):
+            continue
+        # `mode` says how the reference is meant to be USED, and a missing one is
+        # not a reason to drop a file that exists — the path is the evidence.
+        for key in ("path", "saved_to"):
+            raw_path = ref.get(key)
+            if not isinstance(raw_path, str) or not raw_path.strip():
+                continue
+            path = raw_path.strip()
+            if path not in out and Path(path).is_file():
+                out.append(path)
+            break
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Per-turn aggregated metrics helper
 # ---------------------------------------------------------------------------
@@ -944,10 +983,33 @@ class Pipeline:
         async def run_web_search(request: str) -> str:
             """Search the web and stage reference image(s); returns a JSON manifest.
 
+            Every image it stages is dropped onto the user's ComfyUI canvas as a
+            loader node and shown in the chat, the same as anything else this turn
+            produces — so "find me a picture of X" is this call and nothing more.
+            Do NOT follow it with upload/stage calls to put them there.
+
+            The manifest's `description` fields are what you pass on to a generator
+            or repeat to the user; the files are already where they can be seen.
+
             Args:
                 request: What reference to find (e.g. "a 1950s American diner interior").
             """
-            return await _run_specialist(self._search_web_agent, "WEB", request)
+            manifest = await _run_specialist(self._search_web_agent, "WEB", request)
+            # Publish what it staged. The scout downloads into ComfyUI's input dir
+            # and reports the paths, but nothing was ever told to SHOW them — so a
+            # plain "search the web for X" ended with a JSON manifest in the log
+            # and an empty canvas. Done here rather than asked of the agent: the
+            # files are already on disk and which ones they are is not a judgement
+            # call.
+            found = staged_reference_paths(manifest)
+            for path in found:
+                self._register_output_path(path)
+            if found:
+                _push_progress(f"🌐 {len(found)} reference(s) found — dropping "
+                               "onto the canvas.")
+                if self._verbose:
+                    print(f"pipeline: run_web_search staged {len(found)} reference(s)")
+            return manifest
 
         @_tool
         async def run_planner(request: str) -> str:
