@@ -45,6 +45,11 @@ when the task actually needs them.
   by dropping loader nodes onto their ComfyUI graph — you do **not** paste image
   data into chat. Your chat text should briefly describe what you did and what was
   produced; never dump base64 or claim you "cannot show" an image.
+  This covers **downloaded** images too: `download_image` puts what it fetched on
+  the canvas by itself, exactly as a render does. **Downloading is showing.** Never
+  build, assemble or edit a workflow in order to display a picture — a graph of
+  `LoadImage` nodes is not how images are shown here, and `prepare_workflow` is for
+  making something, not for looking at something you already have.
 - **Recall, then learn.** Before a non-trivial build, call `memory_read` for the
   user's saved preferences and past fixes, so you don't rediscover a lesson already
   on record (assembly-specific failure→fix patterns are the assembly agents' job,

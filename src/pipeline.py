@@ -31,6 +31,7 @@ from src.agent import create_fix_workflow_assembly_agent, create_generate_new_wo
 from src.tools.image_handling import set_vision_agent as _set_vision_agent, vision_agents as _vision_agents
 from src.tools.video_handling import set_video_agent as _set_video_agent, video_agents as _video_agents
 from src.tools.annotate import set_output_sink as _set_output_sink
+from agenty_core.tools.image_io import set_output_sink as _set_download_sink
 from src.utils.chat_summary import summarize_conversation, log_agent_messages, log_agent_exchange, set_log_thread
 from src.utils.comfyui_interrupt_hook import INTERRUPT_NAME
 from agenty_core.utils.comfyui_progress import stream_comfyui_job as _stream_comfyui_job
@@ -379,45 +380,6 @@ def _extract_json(text: str) -> str | None:
     return None
 
 
-def staged_reference_paths(manifest: str) -> list[str]:
-    """On-disk paths of the images a Reference Scout run actually staged.
-
-    The scout answers with ``{"references": [{"mode": "image", "path": …}, …]}``
-    (see ``system_prompt.search_web.md``). Only ``image`` entries have a file;
-    ``text`` ones are a written description and nothing was downloaded.
-
-    Tolerant on purpose. This decides whether the user SEES what was found, so a
-    model that wraps its JSON in a fence, adds a sentence in front of it, or spells
-    the key ``saved_to`` instead of ``path`` should not cost them the pictures.
-    Anything that cannot be read yields no paths — never an exception.
-    """
-    blob = _extract_json(str(manifest or ""))
-    if not blob:
-        return []
-    try:
-        data = json.loads(blob)
-    except (ValueError, TypeError):
-        return []
-    refs = data.get("references") if isinstance(data, dict) else None
-    if not isinstance(refs, list):
-        return []
-    out: list[str] = []
-    for ref in refs:
-        if not isinstance(ref, dict):
-            continue
-        # `mode` says how the reference is meant to be USED, and a missing one is
-        # not a reason to drop a file that exists — the path is the evidence.
-        for key in ("path", "saved_to"):
-            raw_path = ref.get(key)
-            if not isinstance(raw_path, str) or not raw_path.strip():
-                continue
-            path = raw_path.strip()
-            if path not in out and Path(path).is_file():
-                out.append(path)
-            break
-    return out
-
-
 # ---------------------------------------------------------------------------
 # Per-turn aggregated metrics helper
 # ---------------------------------------------------------------------------
@@ -655,6 +617,14 @@ class Pipeline:
         # list as its sink is what makes a marked-up image show up in the panel
         # and get staged into ComfyUI's input dir like any generated output.
         _set_output_sink(self._register_output_path)
+        # Same for a downloaded reference. It lands in ComfyUI's input directory
+        # and is named in a tool result, which is not the same as being SHOWN —
+        # and an agent that has downloaded eight reference photos with no way to
+        # display them starts building a workflow of LoadImage nodes to do it.
+        # The sink lives in the shared layer because every caller downloads
+        # through the same tool: the orchestrator directly, and the Reference
+        # Scout inside run_web_search.
+        _set_download_sink(self._register_output_path)
         # Per-turn usage tracking: list of (delta_usage_dict, agent_obj) for every
         # agent that contributed tokens this turn. Reset at the start of each turn.
         self._last_turn_usages: list = []
@@ -994,22 +964,11 @@ class Pipeline:
             Args:
                 request: What reference to find (e.g. "a 1950s American diner interior").
             """
-            manifest = await _run_specialist(self._search_web_agent, "WEB", request)
-            # Publish what it staged. The scout downloads into ComfyUI's input dir
-            # and reports the paths, but nothing was ever told to SHOW them — so a
-            # plain "search the web for X" ended with a JSON manifest in the log
-            # and an empty canvas. Done here rather than asked of the agent: the
-            # files are already on disk and which ones they are is not a judgement
-            # call.
-            found = staged_reference_paths(manifest)
-            for path in found:
-                self._register_output_path(path)
-            if found:
-                _push_progress(f"🌐 {len(found)} reference(s) found — dropping "
-                               "onto the canvas.")
-                if self._verbose:
-                    print(f"pipeline: run_web_search staged {len(found)} reference(s)")
-            return manifest
+            # Whatever the scout downloads is published by `download_image`
+            # itself (see the sink registered in __init__), so there is nothing
+            # to collect here — the same mechanism covers the orchestrator
+            # downloading directly, which is how this most often happens.
+            return await _run_specialist(self._search_web_agent, "WEB", request)
 
         @_tool
         async def run_planner(request: str) -> str:
