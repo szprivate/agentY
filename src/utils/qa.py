@@ -364,6 +364,11 @@ class QaResult:
     summary: str = ""
     checks: list = field(default_factory=list)
     error: str = ""
+    # True when nothing was judged because the QA model cannot read images at
+    # all. `passed` is still True — our misconfiguration must not condemn the
+    # user's work — but this says the pass means nothing, which a caller
+    # deciding whether to re-render, or to claim an output was checked, needs.
+    blind: bool = False
 
     def failed_criteria(self) -> list[str]:
         """The criteria that did not pass — what a retry has to fix."""
@@ -651,6 +656,26 @@ def check_output(path: str, briefing: QaBriefing, *, request: str = "",
         agent.messages.clear()  # stateless: this output is judged on its own
         reply = str(agent(ref_blocks + out_blocks + [{"text": question}]))
     except Exception as exc:  # noqa: BLE001
+        # Passing on doubt is right for a judge that could not be REACHED. It is
+        # wrong for one that cannot see: that is not doubt, it is a setting, and
+        # it will wave through every output ever judged until someone changes it.
+        # Still not a FAIL — condemning the user's work over our own
+        # misconfiguration is the worse error — but it must not be silent.
+        from src.utils.vision_capability import (blind_model_message, looks_blind,
+                                                   model_name)
+        if looks_blind(exc):
+            model = model_name(agent)
+            note = blind_model_message("qa_judge", model, str(exc))
+            logger.error("qa: the QA model cannot see images — every output will "
+                         "pass unchecked until this is changed (%s)", model or "?")
+            try:
+                from src.utils.status_bus import emit as _status
+                _status("⚠️ QA is not actually checking anything: the qa_judge "
+                        f"model{f' ({model})' if model else ''} cannot read images. "
+                        "Point it at a vision model.")
+            except Exception:  # noqa: BLE001
+                pass
+            return QaResult(path=path, passed=True, error=note, blind=True)
         logger.warning("qa: check failed for %s — %s", path, exc)
         return QaResult(path=path, passed=True, error=str(exc))
 

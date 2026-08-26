@@ -579,6 +579,18 @@ def analyze_image(
             # telling it to "call mode='describe'" here is the advice it just
             # followed, and reporting success invites it to invent a description
             # for an image nobody looked at. Say what broke, and say it failed.
+            # A model that cannot take images fails identically forever, so
+            # "retry" is the one piece of advice that must not be given: it is
+            # what turned this into three retries, a re-upload, a temp copy and
+            # a different question before the user was told anything useful.
+            from src.utils.vision_capability import (blind_model_message,
+                                                       looks_blind, model_name)
+            if looks_blind(_describe_error):
+                model = model_name(_vision_agent)
+                return {"status": "error", "content": [{"text": (
+                    f"Could not analyse {source_name}.\n\n"
+                    + blind_model_message("vision", model, _describe_error)
+                )}]}
             return {"status": "error", "content": [{"text": (
                 f"Could not analyse {source_name}: the vision agent call failed "
                 f"({_describe_error}).\n\nNo description was produced and this "
