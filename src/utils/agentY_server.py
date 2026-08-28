@@ -2459,7 +2459,106 @@ def _update_settings_file(new_settings: dict) -> list:
 # ── Flask application ─────────────────────────────────────────────────────────
 
 def _sse(obj: dict) -> str:
-    return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
+    """One SSE frame. Never raises — a frame it cannot render is still a frame.
+
+    This runs inside the streaming generator, where an exception does not merely
+    drop one event: it tears the generator down, so the `done` sitting behind it
+    in the queue is never sent. The panel listens for exactly that, so it stays
+    in its streaming state and ignores everything typed afterwards. The turn
+    itself finished perfectly, which is why it reads as "the agent went quiet"
+    rather than as a crash.
+
+    So anything json cannot render is rendered with `str` instead. Losing the
+    exact shape of one event is a far smaller thing than losing the end of the
+    turn.
+    """
+    try:
+        body = json.dumps(obj, ensure_ascii=False)
+    except (TypeError, ValueError):
+        try:
+            body = json.dumps(obj, ensure_ascii=False, default=str)
+        except Exception:  # noqa: BLE001 — a frame must come out regardless
+            body = json.dumps({"type": "error",
+                               "message": "an event could not be encoded"})
+    return f"data: {body}\n\n"
+
+
+def _stream_turn(q, rid: str, thread_id: str, poll: float = 15.0):
+    """Yield one turn's SSE frames, ending — always — with `done`.
+
+    Lifted out of the route so it can be driven directly. The failure this
+    guards against is invisible from outside: the turn completes, the runner
+    logs `post:emit_done`, and the panel still never hears about it.
+    """
+    # Breadcrumbed separately from the runner thread: if the runner logs
+    # `post:emit_done` but the panel still hangs, the loss is on the wire
+    # (or in the browser); if the runner never gets there, the turn is
+    # parked and the keep-alive count below shows how long we waited.
+    yield _sse({"type": "thread", "id": thread_id})
+    yield _sse({"type": "request", "request_id": rid})
+    idle = 0
+    sent_done = False
+
+    def _release():
+        """The frame that lets the panel out of its streaming state.
+
+        It listens for exactly one thing, so a turn that ends any other way
+        leaves it deaf to everything typed afterwards until the tab is reloaded.
+        """
+        _wd.note(rid, "sse closing without a done — releasing the panel")
+        return _sse({"type": "done"})
+
+    try:
+        while True:
+            try:
+                item = q.get(timeout=poll)
+            except queue.Empty:
+                idle += 1
+                # Liveness check, not a timeout: a turn may legitimately be
+                # silent for a long time (a video render). But if the runner
+                # is no longer tracked, it exited without terminating this
+                # queue — keep-aliving on would leave the panel streaming
+                # forever, which is the "agent went quiet" failure. Close it
+                # so the panel unblocks and can send again.
+                if not _wd.is_in_flight(rid):
+                    _wd.note(rid, "sse runner gone without done — closing stream")
+                    yield _sse({"type": "error", "message":
+                                "The turn ended without completing. "
+                                "You can send another message."})
+                    yield _sse({"type": "done"})
+                    sent_done = True
+                    break
+                # Every ~2min of silence, mark it: a healthy turn is either
+                # streaming events or finished, not quiet for minutes.
+                if idle % 8 == 0:
+                    _wd.note(rid, f"sse idle — {idle * poll:.0f}s with no event, still keep-alive")
+                yield ": keep-alive\n\n"  # keep the stream warm / defeat idle buffering
+                continue
+            if item is None:
+                break
+            if isinstance(item, dict) and item.get("type") == "done":
+                _wd.note(rid, "sse yielding done")
+                sent_done = True
+            yield _sse(item)
+        if not sent_done:
+            yield _release()
+    except GeneratorExit:
+        # The client went away (tab closed, Stop, network). Recorded because
+        # a disconnect mid-turn leaves the runner writing into a queue no
+        # one drains — worth seeing in the trace next to the runner's phases.
+        # Nothing to release: there is no one left to tell.
+        _wd.note(rid, "sse client disconnected before done")
+        raise
+    except Exception as exc:  # noqa: BLE001
+        # Something else killed the loop with the turn's `done` still in the
+        # queue behind it. Name what broke — that is the one fact this trace
+        # could not give before, and it is the difference between "the agent
+        # went quiet again" and something to go and fix.
+        _wd.note(rid, f"sse stream failed: {type(exc).__name__}: {exc}")
+        if not sent_done:
+            yield _release()
+    finally:
+        _wd.note(rid, "sse generator closed")
 
 
 def _build_app():
@@ -3313,53 +3412,7 @@ def _build_app():
                                  "open_workflows": open_workflows, "dry_run": dry_run},
                          daemon=True).start()
 
-        def gen():
-            # Breadcrumbed separately from the runner thread: if the runner logs
-            # `post:emit_done` but the panel still hangs, the loss is on the wire
-            # (or in the browser); if the runner never gets there, the turn is
-            # parked and the keep-alive count below shows how long we waited.
-            yield _sse({"type": "thread", "id": thread_id})
-            yield _sse({"type": "request", "request_id": rid})
-            idle = 0
-            try:
-                while True:
-                    try:
-                        item = q.get(timeout=15)
-                    except queue.Empty:
-                        idle += 1
-                        # Liveness check, not a timeout: a turn may legitimately be
-                        # silent for a long time (a video render). But if the runner
-                        # is no longer tracked, it exited without terminating this
-                        # queue — keep-aliving on would leave the panel streaming
-                        # forever, which is the "agent went quiet" failure. Close it
-                        # so the panel unblocks and can send again.
-                        if not _wd.is_in_flight(rid):
-                            _wd.note(rid, "sse runner gone without done — closing stream")
-                            yield _sse({"type": "error", "message":
-                                        "The turn ended without completing. "
-                                        "You can send another message."})
-                            yield _sse({"type": "done"})
-                            break
-                        # Every ~2min of silence, mark it: a healthy turn is either
-                        # streaming events or finished, not quiet for minutes.
-                        if idle % 8 == 0:
-                            _wd.note(rid, f"sse idle — {idle * 15}s with no event, still keep-alive")
-                        yield ": keep-alive\n\n"  # keep the stream warm / defeat idle buffering
-                        continue
-                    if item is None:
-                        break
-                    if isinstance(item, dict) and item.get("type") == "done":
-                        _wd.note(rid, "sse yielding done")
-                    yield _sse(item)
-            except GeneratorExit:
-                # The client went away (tab closed, Stop, network). Recorded because
-                # a disconnect mid-turn leaves the runner writing into a queue no
-                # one drains — worth seeing in the trace next to the runner's phases.
-                _wd.note(rid, "sse client disconnected before done")
-                raise
-            finally:
-                _wd.note(rid, "sse generator closed")
-        return _sse_response(gen())
+        return _sse_response(_stream_turn(q, rid, thread_id))
 
     # ── Legacy bridge endpoints ────────────────────────────────────────────
     @app.route("/agentY/pending_previews", methods=["GET", "OPTIONS"])
