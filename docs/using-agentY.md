@@ -22,7 +22,10 @@ node, ready to wire into your next step.*
   - [Talking to a turn that is already running](#talking-to-a-turn-that-is-already-running)
 - [Generating & editing](#generating--editing)
   - [Finding reference images on the web](#finding-reference-images-on-the-web)
+  - [Marking up an image](#marking-up-an-image)
+  - [Asking about a video](#asking-about-a-video)
   - [Seeing the plan first](#seeing-the-plan-first)
+  - [Long jobs: batches and background work](#long-jobs-batches-and-background-work)
 - [Slash commands](#slash-commands)
 - [**The hook system**](#the-hook-system)  ← the most powerful part
   - [Tagging a reference](#tagging-a-reference-the-agenty-add-tag-node)
@@ -36,6 +39,7 @@ node, ready to wire into your next step.*
   - [The keep switch](#the-keep-switch-should-this-outlive-the-run)
   - [Memorize: produce once](#memorize-produce-once-reuse-until-something-changes)
   - [Naming what a hook produces](#naming-what-a-hook-produces)
+- [Slack: a second way in](#slack-a-second-way-in)
 - [Checking outputs (QA)](#checking-outputs-qa)
 - [The agentY python node & collectors](#the-agenty-python-node--collectors)
 - [Settings & secrets](#settings--secrets)
@@ -44,6 +48,7 @@ node, ready to wire into your next step.*
 - [Memory](#memory)
 - [Choosing models](#choosing-models)
 - [Custom workflow templates](#custom-workflow-templates)
+- [Building a node for a new model](#building-a-node-for-a-new-model)
 - [Troubleshooting](#troubleshooting)
 
 ---
@@ -215,6 +220,33 @@ A file that turns out not to be an image (a hotlink block, a login page served a
 `…/photo.jpg`) is not placed: a loader node pointing at an HTML page shows nothing
 and fails when the graph runs.
 
+### Marking up an image
+
+> *"Circle the bolts."*  *"Put a red box around the logo."*  *"Show me where the
+> damage is."*
+
+The marks are drawn **on top of** your picture — it is your photograph with ink
+on it, not a re-generated lookalike, so nothing else in the frame moves or
+changes. You choose the shape (circle, box, arrow), the colour, and whether each
+mark is numbered or labelled. The result lands on the canvas like any other
+output.
+
+Locating the thing you named is the only part that needs a model; everything
+after that — de-duplicating overlapping hits, scaling to the image, drawing —
+is fixed, so the same request twice gives the same marks.
+
+### Asking about a video
+
+Attach a clip and ask about it. Frames are sampled across its length and read by
+a video-understanding agent, so *"what happens in this shot"*, *"when does the
+camera start moving"* and *"is the logo visible at the end"* are answerable
+without you scrubbing through it. It is the video counterpart of the vision
+agent that reads your images, and it uses the same **Vision** tier.
+
+For cutting rather than reading, ask for the shots: agentY can find the cuts in
+a clip and write one file per shot, which is what the
+[collectors](#the-agenty-python-node--collectors) then hand back to a workflow.
+
 ### Seeing the plan first
 
 Anything that takes more than one step — a graph with several hooks, a chain of
@@ -236,6 +268,23 @@ execute refuse for that turn, and the panel says **✋ holding**. Your next mess
 releases it — a *yes* runs the plan as stated, a change is applied first. One
 round trip, not one per step; the next new request asks again. To override a
 standing rule for a single turn, just say *"go ahead"* or *"just do it"*.
+
+### Long jobs: batches and background work
+
+*"Run every image in this folder through that workflow."* A run over many inputs
+does not block the conversation: it is scheduled as a **batch job** and a
+detached worker drives ComfyUI on its own, so you can keep talking while it
+works. Ask how it is going and the agent reports progress; ask it to stop and it
+stops.
+
+Stages chain. With two workflows, each input goes through the first, its output
+feeds the second, and you get one final file per input — which is the usual shape
+for *"upscale everything, then add grain"*.
+
+Some things finish long after the turn that started them — an async provider
+render, for instance. Those arrive on their own: the file is downloaded, dropped
+onto the canvas as a loader node, and a notification tells you it landed, whether
+or not you were looking at the panel.
 
 ---
 
@@ -359,7 +408,7 @@ a hook's prompt hands that hook the reference, the same as wiring it in. The hoo
 block reports it under `NAMED IN THE DIRECTIVE`, the run keeps that node (and
 whatever it takes to produce it) in scope instead of trimming it away, and a
 `make_workflow` hook that names one builds an image-to-image job rather than
-treating the prompt as text-to-image. So five references and three hooks no longer
+treating the prompt as text-to-image. So five references and three hooks do not
 mean fifteen wires — tag each image once, name the ones each hook needs.
 
 **Making a tag outlive the graph.** Turn on **`remember for the project`** on the
@@ -783,10 +832,9 @@ switch is **labelled** differently — it is not a second decision you make:
 
 **The hook is never rewired.** Whichever way the switch is set, it stays wired
 exactly as you drew it and the `agentY text` node is dropped *unconnected* as a
-human-readable reference. `freeze` used to bake a text hook's value into its
-target input and take over the hook's downstream link; it doesn't any more. The
-hook chain is your graph's readable statement of what happens, and a switch about
-keeping a *result* has no business rewriting it.
+human-readable reference. The hook chain is your graph's readable statement of
+what happens, and a switch about keeping a *result* has no business rewriting
+it.
 
 > **This was three switches** — `bake_to_canvas`, `freeze` and `memorize` — then
 > two. They were always one question asked several ways. Your saved graphs migrate
@@ -917,6 +965,47 @@ right](#loops-keep-trying-until-its-right).
 
 ---
 
+## Slack: a second way in
+
+Off by default. Turned on, Slack becomes a **second line** into the same agent —
+never a replacement for the panel, and never a separate conversation.
+
+- **Every turn is mirrored to your Slack DM as it runs** — including the ones you
+  start in the panel. Queue a render at your desk, walk away, watch it finish on
+  your phone.
+- **A DM back drives the same conversation.** Reply and the agent answers there
+  and in the panel; the thread you are in is the thread it is in.
+- **Send it images and video** and it takes them as inputs, exactly as the 📎
+  button does.
+- **The agent can send you files** — *"send me a screenshot of my workflow on
+  Slack"*, one frame out of sixty, a JSON it just wrote. Generated media is
+  already mirrored, so this is for the things nothing else would send.
+
+One conversation is one Slack thread. Reply **in the thread** to continue it;
+message the bot **at top level** to start a new one.
+
+While a turn is running, what a DM means depends on where you put it. A reply
+**in that turn's own thread** is handed to it mid-flight, exactly like
+[talking to a running turn](#talking-to-a-turn-that-is-already-running) in the
+panel. Anything else — a top-level message, or a reply in a different thread —
+is answered **busy** and not queued: there is one agent, and a message written
+for another conversation should not be dropped into this one.
+
+The connection is **outbound only** (Socket Mode), so nothing on your machine has
+to be reachable from the internet.
+
+It needs a Slack app of your own — bot token, an app-level token, and your member
+id — then `slack.enabled` under **Settings ▸ Slack**. It takes effect at the next
+agent start.
+
+> **`SLACK_ALLOWED_USERS` is not optional.** Empty means every message is refused,
+> deliberately: anyone who could DM the bot would otherwise be able to run
+> generations and tools on your machine.
+
+**[Full setup walkthrough → docs/slack.md](slack.md)**
+
+---
+
 ## Checking outputs (QA)
 
 agentY can generate a thing. It can also tell you whether the thing is any good —
@@ -1031,8 +1120,8 @@ and then, when a run made several, the whole set is judged **together** for the
 criteria only a set can answer: one grade across all of them, consistent
 character identity, no accidental near-duplicates. The per-file judge is told to
 mark set-criteria `n/a` rather than fail an image for the absence of images it
-was never shown, which is what used to send an entire batch back for a reason no
-re-generation could fix.
+was never shown — a failure no re-generation could fix, since the missing images
+were never that image's job.
 
 ### The rest of Settings ▸ qa
 
@@ -1068,11 +1157,9 @@ re-generation could fix.
 
   It takes **images and video in one node**, with an output for each (`images` is
   a stacked IMAGE batch, `videos` a list of VIDEO objects, `paths` the whole list
-  as text) — wire whichever you need. That is also why this used to be two nodes:
-  the two output *types* are genuinely different and ComfyUI fixes them at
-  registration, so no single output could ever be both. The old
-  `agentY video collector` is still registered but deprecated, purely so saved
-  workflows keep opening.
+  as text) — wire whichever you need. It has three outputs rather than one
+  because the types are genuinely different and ComfyUI fixes them at
+  registration, so no single output could be all three.
 - **`agentY load item`** — loads one entry from [project memory](#memory): a
   remembered reference image or clip, or a written fact. Pick it from a dropdown
   of what is actually stored; the `item` output takes the **type of whatever the
@@ -1117,8 +1204,7 @@ button.
 ![agentY application settings](images/settings.png)
 
 - **Viewers** — the message-history log, the long-term-memory editor, and the
-  [token usage](#token-usage--cost) breakdown. This is the one place they open
-  from (they used to be duplicated as separate rows in ComfyUI's Settings).
+  [token usage](#token-usage--cost) breakdown. This is where they open from.
 - **Authentication (.env)** — your API keys and host settings, stored in `.env`
   on the agent host. Secrets are masked; tick **Show secret values** to reveal.
   **+ Add auth key** appends a new `.env` variable (e.g. a secret an MCP server
@@ -1143,8 +1229,7 @@ button.
 
   `ollama_server_url` in Connections is the single address for *everything* that
   talks to Ollama — agents on a local model, the memory embedder, and the small
-  `llm_functions` helper. (The older `llm.ollama.host` still works when it's blank;
-  `OLLAMA_HOST` overrides both.)
+  `llm_functions` helper. `OLLAMA_HOST` overrides it.
 - **Model pricing (config/pricing.json)** — per-model USD prices per million
   tokens, so the [token-usage](#token-usage--cost) cost column matches your
   endpoint (handy for private/MaaS deployments and models the built-in tables
@@ -1332,6 +1417,22 @@ Or from chat: `/add_workflow <path>` (or `/add_workflow canvas <name>` to
 register the open graph) and `/remove_workflow <name>`. Custom templates live in
 `comfyui_workflow_templates_custom/templates/`; the shared template/recipe
 corpus lives in **agenty_core**.
+
+---
+
+## Building a node for a new model
+
+Point the agent at a model's GitHub repo and it writes a ComfyUI node pack for it:
+
+> *"Build me a ComfyUI node for github.com/…"*
+
+The repo is shallow-cloned (weights skipped), the **coder** agent reads its
+README, docs and inference code, and writes a complete importable pack —
+`__init__.py`, `nodes.py`, `requirements.txt`, `README.md`, `pyproject.toml` —
+into `output/custom_nodes/<name>/`, ready to publish as its own repo.
+
+It is for a model that has **no** ComfyUI node yet. If one already exists,
+installing it is the better answer, and the agent will say so.
 
 ---
 

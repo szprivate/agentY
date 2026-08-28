@@ -2,12 +2,10 @@
 
 An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanonymous/ComfyUI) workflows through natural language. Built on the [Strands Agents SDK](https://github.com/strands-agents/sdk-python), it runs on Claude, Ollama, Alibaba/DashScope (Qwen), OpenAI (GPT), or Google (Gemini) models and is driven from a **chat panel that lives inside ComfyUI** — a sidebar tab provided by a small companion custom node.
 
-> **The UI is native to ComfyUI.** The old Chainlit web GUI (with its Postgres
-> thread store and MinIO file storage, all in Docker) has been removed. You chat
-> with the agent in ComfyUI's left sidebar; conversations persist to a local
-> **SQLite** file; and instead of showing generated media inline, the agent drops
-> a **`LoadImage` / video-loader node onto the graph** for every result — ready to
-> wire straight into your next workflow.
+> **The UI is native to ComfyUI.** You chat with the agent in ComfyUI's left
+> sidebar; conversations persist to a local **SQLite** file; and every result is
+> dropped onto the graph as a **`LoadImage` / video-loader node** — ready to wire
+> straight into your next workflow. No Docker, no Postgres, no separate web app.
 
 > 📖 **New to agentY?** The [**Using agentY guide**](docs/using-agentY.md) is a
 > screenshot-driven tour of the whole thing — chat, the canvas **hook system**,
@@ -25,7 +23,7 @@ An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanony
 - **Custom-node creator** — point the agent at a model's GitHub repo (`create_custom_node`) and it clones the repo, reads its docs + inference code, and writes a self-contained **ComfyUI custom-node pack** (`__init__.py`, `nodes.py`, `requirements.txt`, `README.md`, `pyproject.toml`) into `output/custom_nodes/<name>/` — ready to publish as its own repo.
 - **Image & video generation** — Flux, WAN2.1/2.2, Qwen, HunyuanVideo, and many other models.
 - **Image editing** — reference-based editing, inpainting, upscaling, and more.
-- **Results as graph nodes** — every generated image/video is added to the open ComfyUI graph as a `LoadImage` / video-loader node (staged into ComfyUI's input dir), instead of being shown inline. The chat carries the agent's *text*.
+- **Results as graph nodes** — every generated image/video is added to the open ComfyUI graph as a `LoadImage` / video-loader node (staged into ComfyUI's input dir). The chat carries the agent's *text*.
 - **Canvas hook nodes** — annotate the graph with **`agentY hook`** nodes ("sweep the seed 6×", "upscale then add film grain") and let the agent run them; chain hooks for multi-step tasks, **bake** a chain into reusable native ComfyUI **subgraphs**, or run an interactive **iterative-refine loop** (one gen per turn, feeding each result back in). See [Canvas nodes](#canvas-nodes) and the [hook system guide](docs/using-agentY.md#the-hook-system).
 - **Refine loops on your own graph** — *"change the prompt until the woman's position matches the original frame"*. With a workflow already open in the canvas and no hook nodes at all, the agent runs **your** graph, judges each output against the condition you stated (same judge as QA, comparing against the images your graph loads), rewrites one value, and goes again — stopping the run it lands on, or when the budget (`[refine] max_runs`, default 4) is spent. You watch the value change in your own node, and typing anything stops it. See [Loops](docs/using-agentY.md#loops-keep-trying-until-its-right).
 - **Web references, straight onto the canvas** — *“search the web for images of this car, from every angle”*. The agent searches, picks, downloads into ComfyUI's `input` dir, and every picture it keeps is dropped on your graph as a loader node — downloading **is** showing, with no extra step. Name a number and it stages that many; otherwise it takes the best one or two. Watermarked stock previews are skipped, and a hotlink block served at `…/photo.jpg` is never placed as a node that would show nothing. See [Finding references](docs/using-agentY.md#finding-reference-images-on-the-web).
