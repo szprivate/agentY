@@ -470,6 +470,13 @@ showing its shape and wiring with no labels on the nodes. The agent is told to s
 so rather than pretend otherwise. If you want to *read* something, select the part
 you mean and ask again — a handful of nodes is photographed at full size.
 
+**Multiline text does not appear in it.** Prompts, hook directives — anything in a
+big text box — are HTML overlays that ComfyUI floats *above* the canvas, and a
+canvas drawing cannot see them. Everything else is there: node titles, single-line
+widget values, groups, colours, wiring. So a screenshot is the right way to show
+someone the *shape* of a workflow and the wrong way to show them a prompt; for
+that, ask the agent to read it back to you.
+
 **It needs the browser open.** The picture is drawn by the ComfyUI page, so a
 closed tab means no picture. The agent will tell you that rather than sit waiting.
 
