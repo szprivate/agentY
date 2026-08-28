@@ -21,12 +21,14 @@ node, ready to wire into your next step.*
 - [The chat panel](#the-chat-panel)
   - [Talking to a turn that is already running](#talking-to-a-turn-that-is-already-running)
 - [Generating & editing](#generating--editing)
+  - [Finding reference images on the web](#finding-reference-images-on-the-web)
   - [Seeing the plan first](#seeing-the-plan-first)
 - [Slash commands](#slash-commands)
 - [**The hook system**](#the-hook-system)  ← the most powerful part
   - [Tagging a reference](#tagging-a-reference-the-agenty-add-tag-node)
   - [Asking the agent to change a setting](#asking-the-agent-to-change-a-setting)
   - [Letting the agent edit the whole graph](#letting-the-agent-read-and-edit-the-whole-graph)
+  - [Filling a slot nothing is wired to](#filling-a-slot-nothing-is-wired-to)
   - [Loops: keep trying until it's right](#loops-keep-trying-until-its-right)
   - [Screenshots of your workflow](#screenshots-of-your-workflow)
   - [Dry run: check the logic first](#dry-run-check-the-logic-before-you-pay-for-it)
@@ -190,6 +192,28 @@ graph** (staged into ComfyUI's `input` dir), so the result is immediately
 wireable into your next workflow. The chat carries the agent's *text*; the media
 lands on the canvas. Toggle **🖼 autograph** off if you'd rather the agent not
 place nodes automatically.
+
+### Finding reference images on the web
+
+Ask for references and they arrive on the canvas, the same way generated images
+do:
+
+> *"Search the web for images of this car — from every angle, and the interior."*
+
+The agent searches, picks, downloads into ComfyUI's `input` directory, and every
+picture it keeps is dropped onto your graph as a loader node. **Downloading is
+showing**: there is no extra step, and nothing to ask for. If you name a number
+("five options") it stages that many; otherwise it takes the best one or two,
+because a reference that is going to feed a generation wants the *right* picture
+rather than a pile.
+
+It skips watermarked stock previews where it can — image search is full of them,
+and a logo across the middle ruins the picture both to look at and to generate
+from.
+
+A file that turns out not to be an image (a hotlink block, a login page served at
+`…/photo.jpg`) is not placed: a loader node pointing at an HTML page shows nothing
+and fails when the graph runs.
 
 ### Seeing the plan first
 
@@ -429,9 +453,12 @@ Ask for a picture of the graph and you get one:
 
 > *"send me a screenshot of my workflow on Slack"*
 
+![A workflow photographed by `screenshot_canvas`](images/canvas-screenshot.png)
+
 It is your canvas as **you** have it — your node positions, your groups and
 colours, whatever you have collapsed — not a re-drawing of the same workflow from
-its JSON. The agent takes it, then hands it to Slack if that is where you wanted
+its JSON. It is cropped to the graph, so there is no empty background around it,
+and ComfyUI's own render-stats overlay is left out. The agent takes it, then hands it to Slack if that is where you wanted
 it. Your view does not move: the zoom is put back before the browser paints a
 frame, so you will not see anything happen.
 
@@ -450,6 +477,32 @@ If several workflows are open in ComfyUI's tabs, the agent is told which ones an
 which is active. It only ever reads, edits, runs or photographs the **active** tab
 — the others exist as saved state, not as live graphs — so if you mean a different
 one, click it first and ask again. It will ask rather than switch your tab for you.
+
+### Filling a slot nothing is wired to
+
+An empty input is invisible in the graph — an unwired slot simply is not there
+until something is plugged into it. So a model node with ten free reference slots
+and nothing in them looks, to anything reading the workflow, exactly like a node
+with no reference slots at all.
+
+That mattered, because it is the shape of a very ordinary request:
+
+> *"Run those two again, but with the photo I just gave you as a reference."*
+
+The agent can now fill a slot **nothing is wired to**. It reads what the node
+really has from ComfyUI's own schema, adds a loader for your file, and connects
+it — for that run only. Your canvas is untouched: nothing to undo afterwards, and
+nothing left behind.
+
+Two things follow from that:
+
+- **Only for some of the runs, if you like.** An empty value leaves the slot
+  unwired for that one, so "use the reference on three of the four" is a thing you
+  can simply say.
+- **It never fakes it.** Naming a file inside the prompt text is not wiring a
+  reference — the model never receives the picture, and the run reports success
+  anyway. If a reference cannot be wired, you are told why rather than handed a
+  render that quietly ignored it.
 
 ### Loops: keep trying until it's right
 
@@ -1064,12 +1117,23 @@ button.
   on the agent host. Secrets are masked; tick **Show secret values** to reveal.
   **+ Add auth key** appends a new `.env` variable (e.g. a secret an MCP server
   references) and applies it to the live process.
-- **Application settings** — only two groups are shown by default: **Connections**
-  (ComfyUI, the agentY host, and your Ollama server) and **Models & providers**.
-  Everything else — ComfyUI paths, output & logs, behaviour toggles, memory, output
-  QA, system prompts, per-provider tuning — is behind **Show advanced settings**.
-  Only changed values are written to the gitignored `config/settings.local.json`;
-  committed defaults are left untouched.
+- **Application settings** — six sections, in the order you are likely to want
+  them. **Models** is first and already open, because it is what most people came
+  to change:
+
+  | section | what is in it |
+  |---|---|
+  | **Models** | the six tiers, plus per-role overrides folded underneath |
+  | **Connections** | ComfyUI, the agentY host, your Ollama server |
+  | **Canvas** | what the agent may see and do on your open graph |
+  | **Output checks** | [QA](#checking-outputs-qa) and [refine loops](#loops-keep-trying-until-its-right) |
+  | **Slack** | the [second line](slack.md) into the agent |
+  | **Updates** | whether agentY updates itself |
+
+  **Show advanced settings** adds five more — Memory, Providers (per-vendor
+  tuning), Files & logs, Prompts, Annotation — none of which you need to touch to
+  use agentY. Only changed values are written to the gitignored
+  `config/settings.local.json`; committed defaults are left untouched.
 
   `ollama_server_url` in Connections is the single address for *everything* that
   talks to Ollama — agents on a local model, the memory embedder, and the small
@@ -1082,8 +1146,8 @@ button.
 
 ### Choosing models: six tiers, not sixteen dropdowns
 
-Under **Models & providers** you set six **tiers**, and every role inherits from
-one of them:
+**Models** is the first section and opens with the panel. You set six **tiers**,
+and every role inherits from one of them:
 
 | tier | who uses it |
 |---|---|
@@ -1236,8 +1300,7 @@ over that role's tier until you clear it:
 
 The scope dropdown next to it offers **All tiers**, each of the six **tiers**,
 and each individual **role** (labelled with the tier it belongs to). It is built
-from the agent's own tier map at startup, so it always matches Settings ▸ Models
-& providers.
+from the agent's own tier map at startup, so it always matches Settings ▸ Models.
 
 Switching a **tier** is the normal move. Switching a single **role** writes a
 per-role override, which then beats that role's tier until you clear it in
@@ -1271,6 +1334,14 @@ corpus lives in **agenty_core**.
 - **Panel shows "▶ Start server" / can't connect** — the agent host isn't
   running. Run `.\run_agent.ps1` (or click the button), and check the backend URL
   (`localStorage.agentY_backend`).
+- **"The model configured for vision / qa_judge is not multimodal"** — that
+  tier is pointed at a text-only model, so it cannot be handed a picture at
+  all. Point it at a vision model in Settings ▸ Models (for DashScope that
+  means a `-vl-` one). Worth knowing which way each fails: **vision** fails
+  loudly, because nothing can be described; **qa_judge** fails *quietly* — a
+  judge that cannot see will pass every output rather than condemn work it was
+  unable to read, so QA looks like it is running and is not. agentY now says
+  so instead of leaving you to notice.
 - **Autograph toggle or MCP section does nothing / 404** — those routes live in a
   newer host build; **restart `run_agent.ps1`** so the `:5000` host serves them.
 - **Canvas nodes/UI look stale after an update** — the ComfyUI copy of
