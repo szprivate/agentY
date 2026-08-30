@@ -5,7 +5,7 @@ An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanony
 > **The UI is native to ComfyUI.** You chat with the agent in ComfyUI's left
 > sidebar; conversations persist to a local **SQLite** file; and every result is
 > dropped onto the graph as a **`LoadImage` / video-loader node** — ready to wire
-> straight into your next workflow. No Docker, no Postgres, no separate web app.
+> straight into your next workflow.
 
 > 📖 **New to agentY?** The [**Using agentY guide**](docs/using-agentY.md) is a
 > screenshot-driven tour of the whole thing — chat, the canvas **hook system**,
@@ -17,27 +17,26 @@ An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanony
 
 ## Features
 
-- **Natural language → ComfyUI workflow** — describe what you want; a free **Orchestrator agent** builds and submits it.
-- **Free-agent orchestration** — one Orchestrator owns each turn with the full toolset: it calls tools directly, **delegates** to specialists (research / assembly / info / planner / web), spawns ad-hoc subagents, and can **author skills live**. No intent classifier, no fixed routing.
+- **Natural language → ComfyUI workflow** — describe what you want; the agent researches a template, builds the workflow, runs it, and puts the result on your graph.
 - **Canvas hook nodes** — annotate the graph with **`agentY hook`** nodes ("sweep the seed 6×", "upscale then add film grain") and let the agent run them. Chain hooks for multi-step tasks, **bake** a chain into native ComfyUI **subgraphs**, stop mid-chain with a `review` hook to pick what continues, or run an interactive **iterative-refine loop**. See [Canvas nodes](#canvas-nodes) and the [hook system guide](docs/using-agentY.md#the-hook-system).
 - **Output QA against *your* briefing** — a checklist as a `qa` hook, a reusable file, or `/qa` in chat; a separate QA agent judges every finished image and video criterion by criterion and re-generates what missed. Nothing runs without a briefing. See [Checking outputs](docs/using-agentY.md#checking-outputs-qa).
 - **The countable half is measured, not eyeballed** — an **`agentY qa briefing`** node puts ratio, resolution, sharpness, grain, clipping and **likeness** on dropdowns, each settled from the file before the model is asked anything. A vision model is handed a *resized* copy, so "is this 16:9?" is a question it cannot actually answer; likeness is a real score (a face embedding, or a perceptual metric for a place or product) because "match the reference" is what people write most and models answer worst.
+- **A briefing per stage** — an unwired briefing judges everything a run makes; wire its `out` into a hook and it judges only that stage, so the reference frames and the video they feed can have different standards. See [One briefing per stage](docs/using-agentY.md#one-briefing-per-stage).
 - **A ranking score that learns your taste** — separate from the pass/fail gates, one 0-1 number orders a run's outputs, shown when a `review` hook stops the chain. Every review you answer is a preference label, and `scripts/fit_fitness_weights.py` **refuses to install weights that don't beat the defaults** on reviews it held back. See [Which of these is best?](docs/using-agentY.md#which-of-these-is-best).
 - **Refine loops on your own graph** — *"change the prompt until the woman's position matches the original frame"*. No hook nodes: the agent runs **your** open graph, judges each output against your condition, rewrites one value and goes again, within a budget you set (`[refine] max_runs`, default 4). See [Loops](docs/using-agentY.md#loops-keep-trying-until-its-right).
 - **Image & video generation and editing** — Flux, WAN2.1/2.2, Qwen, HunyuanVideo and many others; reference-based editing, inpainting, upscaling.
 - **Results as graph nodes** — every generated image or video is added to the open graph as a loader node (staged into ComfyUI's input dir). The chat carries the agent's *text*.
 - **Web references, straight onto the canvas** — *"search the web for images of this car, from every angle"*. Downloading **is** showing: the agent searches, picks, downloads into ComfyUI's `input` dir and drops each keeper on your graph, skipping watermarked previews and anything that isn't really an image. See [Finding references](docs/using-agentY.md#finding-reference-images-on-the-web).
-- **Fill a slot nothing is wired to** — an unwired input is *absent* from the graph, so ten empty reference slots look like a node with none. The agent reads what the node really declares from ComfyUI's schema and wires a loader in for that run only, leaving your canvas untouched. See [Filling a slot](docs/using-agentY.md#filling-a-slot-nothing-is-wired-to).
 - **Screenshots of your canvas** — drawn by the ComfyUI page itself, so it is your graph as **you** have it: your layout, groups, colours and collapsed nodes, with the prompt text painted back in and your view restored before the browser paints. See [Screenshots](docs/using-agentY.md#screenshots-of-your-workflow).
-- **Custom-node creator** — point the agent at a model's GitHub repo and it reads the docs and inference code and writes a self-contained **ComfyUI node pack** into `output/custom_nodes/<name>/`, ready to publish. See [Building a node](docs/using-agentY.md#building-a-node-for-a-new-model).
 - **MCP support** — call tools from external **MCP servers** (`config/mcp.json`; `http`/`sse`/`stdio`, with `none` / `header` / **OAuth** auth). Ships with **Magnific** wired via OAuth. See [MCP servers](docs/using-agentY.md#mcp-servers).
 - **Slack bridge (optional, off by default)** — a **second line** into the agent, never instead of the panel. Every turn is mirrored to your DM as it runs, *including ones you start in the panel*, and a DM back drives the same conversation. Outbound Socket Mode, so nothing has to be reachable from the internet. See [Slack](docs/slack.md).
-- **Persistent chat history** — threads, messages and the per-thread gallery in a local **SQLite** file (`memory/conversations.sqlite`). No Docker, Postgres or S3.
+- **Persistent chat history** — threads, messages and the per-thread gallery in a local **SQLite** file (`memory/conversations.sqlite`).
 - **FAISS memory** — long-term memory via mem0 + local Ollama embeddings (`nomic-embed-text`).
 - **Slash commands** — `/restart`, `/stop`, `/unload`, `/clear_vram`, `/images`, `/project_memory`, `/clearhistory`, `/switch_model`, `/add_workflow`, `/remove_workflow`, `/resend`, `/qa` — with an in-panel autocomplete popup.
 - **In-panel Settings & token usage** — auth keys (`.env`), settings (`config/settings.local.json`) and per-model token cost, all from ComfyUI's own Settings panel.
 - **Hugging Face model management** — search, check local availability, download on demand.
 - **Multiple LLM backends** — Claude, Ollama, Alibaba/DashScope (Qwen), OpenAI (GPT) and Google (Gemini). Models are picked by **tier** (six of them) with per-role overrides for the exceptions, and the list is **discovered live** from each provider, so a vendor appears only when its key is set.
+- **Custom-node creator** (⚠️ *experimental, untested*) — point the agent at a model's GitHub repo and it reads the docs and inference code and writes a self-contained **ComfyUI node pack** into `output/custom_nodes/<name>/`. See [Building a node](docs/using-agentY.md#building-a-node-for-a-new-model).
 
 ---
 
@@ -82,8 +81,6 @@ Each user turn is owned by the **Orchestrator** agent (a normal Claude / Ollama 
 - At least one LLM backend: an **Anthropic API key** (Claude), a local **Ollama** install, a **DashScope / Alibaba Model Studio key** (Qwen), an **OpenAI API key** (GPT), and/or a **Google Gemini API key**
 - A **Hugging Face token** (for gated-model downloads)
 - **Ollama** with `nomic-embed-text` pulled if you want long-term FAISS memory
-
-No Docker, Postgres, or MinIO.
 
 ---
 
@@ -295,7 +292,7 @@ Each finished image/video appears as a **loader node on your graph**. Type `/` i
 
   Its `out` **output** is type-agnostic, so one hook can gather several inputs and produce an image, a video **or a scalar** for the next one; wire hooks output→input to build a **multi-step chain**. One `remember` switch decides whether what a hook produced outlives the run — [baked into a subgraph](docs/using-agentY.md#the-keep-switch-should-this-outlive-the-run) for `make_workflow`, memorized for the rest. A hook is inert on a normal *Queue Prompt*, so it never affects a manual run, and **Bypass** (`Ctrl+B`) or mute disables one without deleting it.
 
-- **`agentY qa briefing`** — the checkable half of a briefing as controls rather than prose: aspect ratio, minimum resolution, sharpness, grain, clipping, black and frozen frames, **likeness** against the images wired into `reference`, and a retry budget. Each is settled by measuring the finished file; `notes` carries what needs judgement. Anything left on `any` is not checked, and an empty node enforces nothing. See [the qa briefing node](docs/using-agentY.md#ticking-the-boxes-the-agenty-qa-briefing-node).
+- **`agentY qa briefing`** — the checkable half of a briefing as controls rather than prose: aspect ratio, minimum resolution, sharpness, grain, clipping, black and frozen frames, **likeness** against the images wired into `reference`, and a retry budget. Each is settled by measuring the finished file; `notes` carries what needs judgement. Anything left on `any` is not checked, and an empty node enforces nothing. Wire `out` into a hook to judge only that stage. See [the qa briefing node](docs/using-agentY.md#ticking-the-boxes-the-agenty-qa-briefing-node).
 
 - **`agentY python`** — runs an agent-authored Python snippet as a node, so a value computed at runtime becomes a genuine re-runnable output. ⚠️ **It executes arbitrary Python whenever the graph runs** — meant for your own, self-hosted, agent-built workflows; don't run baked workflows from untrusted sources. `AGENTY_PYTHON_NODE_DISABLED=1` makes it a no-op.
 

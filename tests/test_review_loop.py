@@ -93,7 +93,7 @@ class ThroughTheToolsTest(unittest.TestCase):
         """`run_now=True` is a revision: it renders now and the user sees it."""
         pipe = _halted()
 
-        async def ran(paths, notes, labels=None):
+        async def ran(paths, notes, labels=None, hook_id=""):
             return json.dumps({"status": "ran"})
 
         pipe._run_canvas_batch = ran

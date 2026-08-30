@@ -363,6 +363,39 @@ def briefing_from_thread(thread_id: str) -> QaBriefing | None:
 
 # ── resolution ──────────────────────────────────────────────────────────────────
 
+def briefing_for_hook(hooks: list | None, hook_id: str,
+                      resolver=None) -> QaBriefing | None:
+    """The briefing in force for the outputs of ONE hook.
+
+    A briefing left unwired applies to everything the run produces — right for a
+    one-stage graph, wrong for a chain, where the reference frames and the video
+    they feed want different standards. Wiring a briefing node's ``out`` into a
+    hook's anchor scopes it to that hook, and the panel reports the link as
+    ``applies_to``.
+
+    So: unscoped briefings always count, a briefing naming *this* hook counts, and
+    one naming a different hook is left out. Scoped ones are merged last, which is
+    what makes them win a disagreement — the statement about this stage in
+    particular beats the one about the graph in general.
+
+    Used where the stage is known, which is the inline run path. The end-of-turn
+    queued path has no hook to hand and keeps merging everything, so scoping can
+    only ever narrow what a stage is judged against, never leave an output
+    unchecked.
+    """
+    hid = str(hook_id or "")
+    unscoped, scoped = [], []
+    for hook in (hooks or []):
+        if not isinstance(hook, dict):
+            continue
+        names = [str(x) for x in (hook.get("applies_to") or []) if str(x).strip()]
+        if not names:
+            unscoped.append(hook)
+        elif hid and hid in names:
+            scoped.append(hook)
+    return briefing_from_hooks(unscoped + scoped, resolver)
+
+
 def resolve_briefing(hooks: list | None = None, thread_id: str = "",
                      resolver=None) -> QaBriefing | None:
     """The briefing in force for this turn, or None when QA should not run.

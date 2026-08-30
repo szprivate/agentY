@@ -1194,7 +1194,9 @@ class Pipeline:
                         "your work here is done; do NOT call signal_workflow_ready."
                     ),
                 })
-            return await self._run_canvas_batch(paths, notes, labels)
+            return await self._run_canvas_batch(
+                paths, notes, labels,
+                hook_id=str((hook or {}).get("hook_node_id") or ""))
 
         @_tool
         async def stop_hook_run(reason: str, question: str = "",
@@ -2529,8 +2531,41 @@ class Pipeline:
             pass
         return tools
 
+    def _briefing_for(self, hook_id: str = ""):
+        """The QA briefing for one stage's outputs, or the turn's if it has none.
+
+        Falling back to the turn briefing is what keeps scoping additive: a canvas
+        where nobody wired a briefing to anything behaves exactly as before, and a
+        failure to work out the scope costs a narrower verdict, never an unchecked
+        output.
+        """
+        if not hook_id or not self._canvas_hooks:
+            return self._qa_briefing
+        try:
+            from src.utils.agentY_server import _resolve_media_ref as _resolve
+            from src.utils.canvas_hooks import _is_qa
+            from src.utils.qa import briefing_for_hook
+            on_canvas = any(_is_qa(h) for h in self._canvas_hooks
+                            if isinstance(h, dict))
+            scoped = briefing_for_hook(self._canvas_hooks, hook_id, _resolve)
+        except Exception as exc:  # noqa: BLE001
+            if self._verbose:
+                print(f"pipeline: could not scope the QA briefing to hook {hook_id} ({exc})")
+            return self._qa_briefing
+        # An empty result with briefings ON the canvas means they all name other
+        # stages, and the honest answer is that this one has no standard — NOT the
+        # merged briefing, which would judge these outputs by the next stage's
+        # rules and is the thing scoping exists to stop. With none on the canvas
+        # the turn briefing came from `/qa` or a file, which is not scoped at all.
+        if not scoped:
+            return None if on_canvas else self._qa_briefing
+        if self._verbose:
+            print(f"pipeline: hook {hook_id} judged against — {scoped.describe()}")
+        return scoped
+
     async def _run_canvas_batch(self, paths: list[str], notes: list,
-                                labels: list | None = None) -> str:
+                                labels: list | None = None,
+                                hook_id: str = "") -> str:
         """Execute canvas-hook variants NOW and report per-variant outcomes.
 
         The deferred path can't answer "did they work?" — it runs after the turn.
@@ -2544,11 +2579,12 @@ class Pipeline:
         before = len(collected)
         _clear_exec_errors()
         qa_verdicts: dict = {}
+        briefing = self._briefing_for(hook_id)
         try:
             async for _line in _execute_workflows_batch(
                 paths, self._last_brainbriefing_json or "",
                 user_message="", verbose=self._verbose,
-                collected_paths=collected, qa_briefing=self._qa_briefing,
+                collected_paths=collected, qa_briefing=briefing,
                 qa_retry_fn=self._qa_retry, repair_fn=self._heal_exec_failure,
                 max_concurrent_repairs=3, qa_verdicts=qa_verdicts,
             ):

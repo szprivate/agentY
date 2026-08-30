@@ -44,6 +44,7 @@ node, ready to wire into your next step.*
   - [Ticking the boxes instead of writing them](#ticking-the-boxes-the-agenty-qa-briefing-node)
   - [Does it match the reference?](#does-it-match-the-reference)
   - [Which of these is best?](#which-of-these-is-best)
+  - [One briefing per stage](#one-briefing-per-stage)
 - [The agentY python node & collectors](#the-agenty-python-node--collectors)
 - [Settings & secrets](#settings--secrets)
 - [MCP servers](#mcp-servers)
@@ -58,12 +59,10 @@ node, ready to wire into your next step.*
 
 ## The big picture
 
-agentY is a **free-agent orchestrator**: one agent owns each turn with the full
-toolset. You describe what you want; it researches a template, assembles a
-ComfyUI workflow, submits it, waits, optionally QA-checks the result with a
-vision model, and stages the output back onto your graph. It can also delegate
-to specialists (research / assembly / info / web), spawn subagents, and author
-skills live.
+You describe what you want; agentY researches a template, assembles a ComfyUI
+workflow, submits it, waits, checks the result against your
+[QA briefing](#checking-outputs-qa) if you set one, and stages the output back
+onto your graph.
 
 Two ways to drive it:
 
@@ -73,9 +72,8 @@ Two ways to drive it:
    the agent to run it. This is where agentY becomes a graph-native automation
    tool rather than just a chat box — see [The hook system](#the-hook-system).
 
-Everything is local: chat history lives in a SQLite file, results are staged
-into ComfyUI's `input` dir and dropped as nodes, and no Docker/Postgres/S3 is
-involved.
+Everything is local: chat history lives in a SQLite file, and results are staged
+into ComfyUI's `input` dir and dropped onto the graph as nodes.
 
 ---
 
@@ -997,10 +995,12 @@ images the `likeness` check compares against wired into `reference`.*
 | `retries` | this briefing's own retry budget |
 
 `notes` carries what needs judgement and reads exactly like a `qa` hook's
-directive; reference images wire into `reference`. Anything left on `any` is **not
-checked**, and an empty node enforces nothing. What is set is decided *before* the
-model is asked anything, and the model is shown the answers and told not to
-re-judge them — so a measurement cannot be argued with, and costs no round trip.
+directive; reference images wire into `reference`; `out` says which stage this
+briefing is for ([below](#one-briefing-per-stage)). Anything left on `any` is
+**not checked**, and an empty node enforces nothing. What is set is decided
+*before* the model is asked anything, and the model is shown the answers and told
+not to re-judge them — so a measurement cannot be argued with, and costs no round
+trip.
 
 ### Does it match the reference?
 
@@ -1061,6 +1061,37 @@ learnable.
 Labels live in `output/agent/preferences.jsonl` (gitignored — your judgements, not
 the repository's) and store the *numbers*, not just paths, so they outlive the
 pictures. Delete `config/fitness_weights.json` to go back to the hand-set weights.
+
+### One briefing per stage
+
+A briefing left unwired judges **everything the run produces**. That is right for
+a one-stage graph and wrong for a chain: reference frames and the video they feed
+have genuinely different standards, and merging both is how a still gets failed
+for not moving.
+
+So wire the briefing node's **`out` into a hook's anchor** and it judges only what
+*that* hook produces:
+
+```
+[qa briefing: 16:9, sharp] ─▶ make_workflow  ─▶  review  ─▶  make_workflow  ◀─ [qa briefing: no black frames]
+                              "one reference               "animate the
+                               per character"               chosen refs"
+```
+
+- one briefing can name **several** hooks;
+- an **unwired** briefing still applies to all of them, so put the house rules in
+  one and the stage-specific ones in others;
+- where they disagree, the one naming the hook wins — the statement about this
+  stage beats the statement about the graph;
+- a stage **no** briefing names is judged by nothing, rather than by the other
+  stage's rules. That is the whole point.
+
+Nothing travels down that wire: it is a scope marker, so the agent is not told a
+briefing is one of the hook's inputs, and a plain **Queue Prompt** is unaffected.
+
+Scoping only ever *narrows*. It applies where the stage is known, which is a hook
+run inline; a `/qa` briefing, a named file, and the end-of-turn queued path are
+unscoped and still check everything.
 
 ### Writing a briefing — four ways
 

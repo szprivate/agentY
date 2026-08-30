@@ -23,6 +23,7 @@ from src.pipeline import Pipeline
 # starts calling a new one — that is the whole point of having it in one place.
 _BOUND = (
     "_run_canvas_batch",
+    "_briefing_for",
     "_batch_limit_refusal",
     "_canvas_limit_refusal",
     "_count_handback",
