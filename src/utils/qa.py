@@ -109,9 +109,13 @@ class QaBriefing:
     # same generation again" but "go back a stage" — which hook to re-enter.
     retry_budget: int | None = None
     retry_hook: str = ""
+    # Technical requirements set with checkboxes rather than written out — see
+    # :mod:`src.utils.qa_checks`. They are settled by measuring the file, so they
+    # never reach the model as something to judge.
+    technical: dict = field(default_factory=dict)
 
     def __bool__(self) -> bool:
-        return bool(self.criteria.strip() or self.reference_paths)
+        return bool(self.criteria.strip() or self.reference_paths or self.technical)
 
     def merged_with(self, other: "QaBriefing | None") -> "QaBriefing":
         """This briefing with *other* folded in (other's criteria appended)."""
@@ -120,11 +124,16 @@ class QaBriefing:
         criteria = "\n".join(t for t in (self.criteria.strip(), other.criteria.strip()) if t)
         refs = list(self.reference_paths)
         refs += [p for p in other.reference_paths if p not in set(refs)]
+        # Later technical settings lose to earlier ones, matching `retry_budget`
+        # above: the briefing nearest the work wins.
+        technical = dict(other.technical or {})
+        technical.update(self.technical or {})
         return QaBriefing(criteria=criteria, reference_paths=tuple(refs),
                           sources=tuple(dict.fromkeys(self.sources + other.sources)),
                           retry_budget=(self.retry_budget if self.retry_budget is not None
                                         else other.retry_budget),
-                          retry_hook=self.retry_hook or other.retry_hook)
+                          retry_hook=self.retry_hook or other.retry_hook,
+                          technical=technical)
 
     def describe(self) -> str:
         """One line for the chat panel: what is being enforced and from where."""
@@ -137,8 +146,11 @@ class QaBriefing:
             retry = f", re-run hook {self.retry_hook} on a fail"
         elif self.retry_budget is not None:
             retry = f", {self.retry_budget} retr{'y' if self.retry_budget == 1 else 'ies'}"
-        return (f"{bullets} criteri{'on' if bullets == 1 else 'a'}{ref_txt}{retry} "
-                f"(from {where})")
+        tech = len([k for k, v in (self.technical or {}).items()
+                    if v not in ("", "any", "off", None, False)])
+        tech_txt = f", {tech} technical check{'' if tech == 1 else 's'}" if tech else ""
+        return (f"{bullets} criteri{'on' if bullets == 1 else 'a'}{ref_txt}{tech_txt}"
+                f"{retry} (from {where})")
 
 
 # What the user writes in a qa briefing to say what a failure should cause.
@@ -218,6 +230,8 @@ def briefing_from_hooks(hooks: list, resolver=None) -> QaBriefing | None:
 
     criteria: list[str] = []
     refs: list[str] = []
+    technical: dict = {}
+    retries: int | None = None
     found = False
     for hook in (hooks or []):
         if not isinstance(hook, dict) or not _is_qa(hook):
@@ -226,6 +240,15 @@ def briefing_from_hooks(hooks: list, resolver=None) -> QaBriefing | None:
         text = str(hook.get("directive") or "").strip()
         if text:
             criteria.append(text)
+        # The `agentY qa briefing` node's dropdowns and switches. It arrives here
+        # as a qa hook because that is what it is; what is different is that these
+        # are settled by measuring the file rather than read by the model.
+        spec = hook.get("technical")
+        if isinstance(spec, dict):
+            technical.update({k: v for k, v in spec.items()
+                              if v not in ("", "any", None, False)})
+        if retries is None and str(hook.get("retries", "")).strip().isdigit():
+            retries = int(hook["retries"])
         for anchor in (hook.get("anchors") or []):
             if isinstance(anchor, dict):
                 for path in anchor_media_paths(anchor, resolver):
@@ -234,10 +257,21 @@ def briefing_from_hooks(hooks: list, resolver=None) -> QaBriefing | None:
     if not found:
         return None
     body = "\n".join(criteria)
+    # The technical requirements go into the criteria too. They are not judged
+    # from there — they are already settled — but the briefing is also what the
+    # user reads back, and a requirement appearing nowhere in it looks dropped.
+    if technical:
+        from src.utils.qa_checks import describe
+        spoken = describe(technical)
+        if spoken:
+            body = (body + "\n" if body else "") + spoken
     budget, retry_hook = parse_retry(body)
+    if budget is None and retries is not None:
+        budget = retries
     return QaBriefing(criteria=body, reference_paths=tuple(refs),
                       sources=("canvas qa hook",),
-                      retry_budget=budget, retry_hook=retry_hook)
+                      retry_budget=budget, retry_hook=retry_hook,
+                      technical=technical)
 
 
 # ── surface 2: named briefing files ─────────────────────────────────────────────
@@ -636,6 +670,7 @@ def check_output(path: str, briefing: QaBriefing, *, request: str = "",
     trigger a re-render loop on its own malfunction.
     """
     cfg = qa_settings()
+    settled: list[dict] = []
     try:
         if agent is None:
             from src.agent import create_qa_agent
@@ -667,7 +702,15 @@ def check_output(path: str, briefing: QaBriefing, *, request: str = "",
 
         prompts = load_qa_prompts()
         criteria = briefing.criteria.strip() or prompts.get("no_criteria", "")
-        measured = render_measurements(measure_output(path))
+        facts = measure_output(path)
+        measured = render_measurements(facts)
+        # The technical half is decided here, by arithmetic, before the model is
+        # asked anything. It is then shown the answers so it does not guess at
+        # the same questions and contradict them.
+        settled = _settle_technical(briefing, facts)
+        if settled:
+            from src.utils.qa_checks import render_for_model
+            measured = (measured + "\n\n" + render_for_model(settled)).strip()
         question = (prompts.get("question", "")
                     .replace("{{IMAGE_DESCRIPTION}}", description)
                     .replace("{{REQUEST}}", (request or "").strip() or "(not recorded)")
@@ -706,7 +749,12 @@ def check_output(path: str, briefing: QaBriefing, *, request: str = "",
     if not data:
         logger.warning("qa: unparseable verdict for %s: %s", path, reply[:200])
         return QaResult(path=path, passed=True, error="the QA model returned no usable verdict")
-    checks = [c for c in (data.get("checks") or []) if isinstance(c, dict)]
+    model_checks = [c for c in (data.get("checks") or []) if isinstance(c, dict)]
+    # The measured verdicts go in FIRST and are not overwritten: a model that
+    # re-judged one anyway must not be able to talk its way past a number.
+    named = {str(s.get("criterion", "")).strip().lower() for s in settled}
+    checks = settled + [c for c in model_checks
+                        if str(c.get("criterion", "")).strip().lower() not in named]
     verdict = str(data.get("verdict", "")).strip().lower()
     # Trust `verdict`, but a stated pass alongside a failed check is a contradiction
     # the user cares about — resolve it the safe way.
@@ -716,6 +764,22 @@ def check_output(path: str, briefing: QaBriefing, *, request: str = "",
         passed = not failed
     return QaResult(path=path, passed=passed, summary=str(data.get("summary") or "").strip(),
                     checks=checks)
+
+
+def _settle_technical(briefing: QaBriefing, facts: dict) -> list[dict]:
+    """The briefing's checkbox requirements, judged against the measured file.
+
+    Never raises: a technical check that cannot be evaluated contributes nothing,
+    which leaves the written criteria to carry the verdict on their own.
+    """
+    if not getattr(briefing, "technical", None) or not facts:
+        return []
+    try:
+        from src.utils.qa_checks import evaluate
+        return evaluate(briefing.technical, facts)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("qa: technical checks failed — %s", exc)
+        return []
 
 
 def check_set(paths: list, briefing: QaBriefing, *, request: str = "",
