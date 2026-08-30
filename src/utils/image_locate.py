@@ -92,12 +92,29 @@ def idle_unload_seconds() -> float:
 
 
 def _device() -> str:
+    """The accelerator to run SAM3 grounding on.
+
+    CUDA first, then Apple's MPS, then CPU — an order that is preference, not
+    availability: a machine with both is a machine where CUDA wins. CPU is a real
+    fallback rather than an error, but a slow one (a grounding call goes from
+    ~0.2s to about a minute), which is why MPS is worth the two lines: on a Mac it
+    is the difference between the feature being usable and being technically
+    present.
+    """
     want = str(_cfg("AGENTY_SAM3_DEVICE", "sam3_device", "auto")).strip().lower()
-    if want in ("cpu", "cuda"):
+    if want in ("cpu", "cuda", "mps"):
         return want
     try:
         import torch
-        return "cuda" if torch.cuda.is_available() else "cpu"
+        if torch.cuda.is_available():
+            return "cuda"
+        # getattr: torch.backends.mps only exists from 1.12, and this must not
+        # raise on an older build — an unknown accelerator is a CPU run, never a
+        # crash on startup.
+        mps = getattr(torch.backends, "mps", None)
+        if mps is not None and mps.is_available():
+            return "mps"
+        return "cpu"
     except Exception:  # noqa: BLE001
         return "cpu"
 
@@ -258,6 +275,19 @@ def unload(reason: str = "") -> bool:
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+        else:
+            # The reaper exists to hand memory back; on unified memory that is the
+            # same promise and a different call, so skipping it would make the
+            # idle-unload a no-op on exactly the machines with least to spare.
+            #
+            # Both halves are checked, because they are two different objects:
+            # `torch.backends.mps` answers whether the device is usable, and
+            # `torch.mps` is what owns the cache. A build can have one without the
+            # other, and asking the wrong one is how this becomes an AttributeError
+            # swallowed by the except below — a reaper that silently frees nothing.
+            mps = getattr(torch.backends, "mps", None)
+            if mps is not None and mps.is_available() and hasattr(torch, "mps"):
+                torch.mps.empty_cache()
     except Exception:  # noqa: BLE001
         pass
     print(f"[locate] SAM3 unloaded{f' ({reason})' if reason else ''}")

@@ -5,6 +5,8 @@
 # sidebar talks to over HTTP/SSE on http://127.0.0.1:<Port>. No Chainlit, Docker,
 # Postgres, or MinIO.
 #
+# On macOS use run_agent.sh — the same steps and switches, spelled for a shell.
+#
 # Usage:
 #   .\run_agent.ps1                                          # backend on port 5000
 #   .\run_agent.ps1 -Port 5001

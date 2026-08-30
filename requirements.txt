@@ -128,9 +128,15 @@ numpy>=1.26
 # Two imports sam3 does not declare. triton is a distance-transform kernel pulled
 # in transitively by `import sam3` itself, and upstream triton publishes no
 # Windows wheels — the community fork does, under the same `triton` module name.
+#
+# The second marker says `== "linux"` and not `!= "win32"` for a reason: upstream
+# triton ships manylinux wheels and NOTHING else — no macOS wheel, and no sdist to
+# fall back on. Written as "not Windows" it made `pip install -r requirements.txt`
+# die outright on a Mac, at a line that is only there to satisfy an import sam3
+# forgot to declare. Marked as Linux, macOS simply skips it.
 psutil>=5.9.0
 triton-windows>=3.7.1 ; sys_platform == "win32"
-triton>=3.0.0 ; sys_platform != "win32"
+triton>=3.0.0 ; sys_platform == "linux"
 # GPU torch is NOT resolvable from PyPI on Windows (the win_amd64 wheel there is
 # CPU-only, ~0.12 GB), and on CPU a single grounding call goes from ~0.2s to the
 # order of a minute. Install it from the CUDA index BEFORE this file, so the

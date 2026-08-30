@@ -48,7 +48,7 @@ up; this is what each one is:
 
 | Repo | Location | Role |
 |---|---|---|
-| **agentY** (this repo) | your working copy | The Strands chat host / pipeline (`run_agent.ps1`). |
+| **agentY** (this repo) | your working copy | The Strands chat host / pipeline (`run_agent.ps1` / `run_agent.sh`). |
 | **[agenty_core](https://github.com/szprivate/agenty_core)** | sibling folder next to `agentY` | Shared ComfyUI/HuggingFace/web/file tool layer + the canonical template/recipe corpus. Installed **editable** (`-e ../agenty_core`); **required**. |
 | **[agentY-comfyuiConnect](https://github.com/szprivate/agentY-comfyuiConnect)** | `<ComfyUI>/custom_nodes/` | The **agentY** sidebar tab **and** the canvas nodes (`agentY hook`, `agentY qa briefing`, `agentY python`). |
 | **[agentY-mcp](https://github.com/szprivate/agentY-mcp)** | sibling folder next to `agentY` | The alternative **MCP-server / Claude-Desktop** front end (also consumes `agenty_core`). Optional. |
@@ -77,6 +77,10 @@ Each user turn is owned by the **Orchestrator** agent (a normal Claude / Ollama 
 
 ## Requirements
 
+- **Windows**, or **macOS 14+ on Apple Silicon**. Each has its own installer and
+  launcher (`.ps1` / `.sh`); everything above them is the same code. On a Mac run
+  `xcode-select --install` first — `insightface` and `sam3` ship as source and are
+  compiled during the install.
 - **[uv](https://docs.astral.sh/uv/getting-started/installation/)** (Python 3.11+ env manager) and **git** on your PATH
 - A running **ComfyUI** instance (default: `http://127.0.0.1:8188`)
 - At least one LLM backend: an **Anthropic API key** (Claude), a local **Ollama** install, a **DashScope / Alibaba Model Studio key** (Qwen), an **OpenAI API key** (GPT), and/or a **Google Gemini API key**
@@ -97,14 +101,19 @@ cd agentY
 ### 2. Run the installer (recommended)
 
 ```powershell
-.\install_agent.ps1
+.\install_agent.ps1     # Windows
+```
+```bash
+./install_agent.sh      # macOS
 ```
 
-The installer sets up the **whole stack** in one pass:
+Same seven stages either way, and a test keeps them in step by comparing the two
+scripts' stages, flags and prompts. The installer sets up the **whole stack** in
+one pass:
 
 1. checks for `git` + `uv`;
 2. clones the sibling repos it needs — **agenty_core** (required) and **agentY-mcp** (optional) — next to `agentY` if they aren't there already, and fast-forwards them if they are;
-3. creates agentY's `.venv` (via `uv`), offers the **CUDA build of torch** when it sees an NVIDIA GPU (the wheel on PyPI is CPU-only, which makes SAM3 grounding take about a minute a call), and installs `requirements.txt` (which pulls in `agenty_core` editable);
+3. creates agentY's `.venv` (via `uv`), sorts out **torch** — on Windows it offers the CUDA build when it sees an NVIDIA GPU, because the wheel on PyPI is CPU-only and that makes SAM3 grounding take about a minute a call; on a Mac the PyPI wheel already carries Metal, so it just reports whether MPS was found — and installs `requirements.txt` (which pulls in `agenty_core` editable);
 4. copies `.env_example` → `.env` and **prompts** you for `HF_TOKEN`, `ANTHROPIC_API_KEY`, and the optional `COMFYUI_API_KEY` / `DASHSCOPE_API_KEY` (Enter keeps an existing value);
 5. **finds your ComfyUI** (auto-detects common paths, otherwise asks) and clones **agentY-comfyuiConnect** into its `custom_nodes/`, optionally pointing `settings.local.json` at your ComfyUI URL;
 6. sets up **agentY-mcp**'s own venv + `.env` and reuses the tokens you just entered;
@@ -121,6 +130,16 @@ Useful flags:
 .\install_agent.ps1 -TorchIndexUrl "https://download.pytorch.org/whl/cu126"
 .\install_agent.ps1 -Help
 ```
+```bash
+./install_agent.sh --comfyui-path ~/ComfyUI
+./install_agent.sh --skip-mcp
+./install_agent.sh --skip-comfy-node
+./install_agent.sh --non-interactive
+./install_agent.sh --help
+```
+
+There is no `--skip-torch` on macOS, and nothing is missing: the PyPI wheel is
+already the right build there, so there is no second one to decline.
 
 That last step is also a standalone command, worth running whenever a feature is
 mysteriously doing nothing: most of these packages are somebody else's dependency
@@ -130,8 +149,11 @@ too, so a gap only shows up on the machine that resolved differently.
 .venv\Scripts\python.exe scripts\check_env.py        # full report
 .venv\Scripts\python.exe scripts\check_env.py --gpu  # + is torch actually on CUDA?
 ```
+```bash
+.venv/bin/python scripts/check_env.py --gpu           # macOS: reports MPS
+```
 
-`run_agent.ps1` runs it quietly on every start and speaks up only when something
+The launcher runs it quietly on every start and speaks up only when something
 required is missing.
 
 <details>
@@ -194,19 +216,18 @@ After the restart you get, from the one node pack:
   everything else (auth keys, model tiers, MCP servers, pricing, and the log /
   memory / token-usage viewers).
 
-Keeping it current is automatic: every `run_agent.ps1` start fast-forwards agentY,
+Keeping it current is automatic: every launcher start fast-forwards agentY,
 `agenty_core` **and** this extension (see [Staying current](#staying-current)).
 
 ### Staying current
 
-`run_agent.ps1` checks each remote at startup and fast-forwards the three repos
+The launcher checks each remote at startup and fast-forwards the three repos
 that make up agentY. It never touches a checkout with uncommitted changes or
 unpushed commits, it is `--ff-only` (no merge, rebase or reset), and being offline
 is not an error — whatever it declines to do, it says so. `requirements.txt`
 changes trigger a reinstall before the app starts.
 
-Opt out with `auto_update = false` in settings, `.
-un_agent.ps1 -NoUpdate`, or
+Opt out with `auto_update = false` in settings, `-NoUpdate` / `--no-update`, or
 `AGENTY_NO_UPDATE=1`. Set `comfyui_dir` if your ComfyUI isn't next to agentY.
 
 ### 5. Configure defaults (optional)
@@ -264,6 +285,17 @@ Start the chat host (it builds the agent and serves the sidebar backend):
 
 # Help
 .\run_agent.ps1 -Help
+```
+
+The same switches on macOS, spelled the way a shell spells them:
+
+```bash
+./run_agent.sh
+./run_agent.sh --port 5001
+./run_agent.sh --host 0.0.0.0
+./run_agent.sh --llm-query-templates "ollama,qwen3-coder:32b"
+./run_agent.sh --llm-assemble-workflow "claude,claude-sonnet-4-5"
+./run_agent.sh --help
 ```
 
 Then open **ComfyUI**, click the **agentY** tab in the left sidebar, and chat:

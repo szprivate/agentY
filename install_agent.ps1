@@ -15,7 +15,12 @@
     The UI is the "agentY" tab inside ComfyUI. There is no Chainlit, Docker,
     Postgres, or MinIO - conversations persist to a local SQLite file.
 
-    Runs on Windows PowerShell 5.1+ and PowerShell 7+ (Windows/macOS/Linux).
+    Runs on Windows PowerShell 5.1+ and PowerShell 7+.
+
+    On macOS use install_agent.sh instead: same seven stages and the same
+    switches, but it checks for the Command Line Tools that insightface and
+    sam3 need to compile there, and it does not offer a CUDA build of torch
+    that macOS has no wheel for.
 
 .PARAMETER ComfyUIPath
     Path to your ComfyUI install (the folder containing custom_nodes\). If omitted

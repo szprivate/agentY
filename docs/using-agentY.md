@@ -18,6 +18,7 @@ node, ready to wire into your next step.*
 - [The big picture](#the-big-picture)
 - [Starting a session](#starting-a-session)
 - [Staying up to date](#staying-up-to-date)
+- [On a Mac](#on-a-mac)
 - [The chat panel](#the-chat-panel)
   - [Talking to a turn that is already running](#talking-to-a-turn-that-is-already-running)
 - [Generating & editing](#generating--editing)
@@ -84,11 +85,15 @@ into ComfyUI's `input` dir and dropped onto the graph as nodes.
    `http://127.0.0.1:5000`):
 
    ```powershell
-   .\run_agent.ps1
+   .\run_agent.ps1     # Windows
+   ```
+   ```bash
+   ./run_agent.sh      # macOS
    ```
 
-   Restarting `run_agent.ps1` is how you pick up agent-side code/config changes.
-   If the host isn't running, the chat panel shows a **▶ Start server** button.
+   Restarting the launcher is how you pick up agent-side code/config changes.
+   If the host isn't running, the chat panel shows a **▶ Start server** button —
+   which opens a PowerShell window on Windows and a Terminal window on a Mac.
 
    On start it also **checks for updates** and fast-forwards agentY, `agenty_core`
    and the ComfyUI sidebar extension — see [Staying up to date](#staying-up-to-date).
@@ -102,7 +107,42 @@ into ComfyUI's `input` dir and dropped onto the graph as nodes.
 > If the backend runs on a non-default URL, set it once in the browser console:
 > `localStorage.agentY_backend = "http://host:port"`.
 
-### Staying up to date
+### On a Mac
+
+Everything above the launcher is the same code, so the panel, the hooks, the QA
+briefings and the canvas nodes behave identically. Four things differ, and they
+are all at the edges:
+
+**The launcher and installer are shell scripts.** `./install_agent.sh` and
+`./run_agent.sh`, with the same stages and the same switches as their PowerShell
+counterparts — spelled `--port` rather than `-Port`. If `./run_agent.sh` says
+*permission denied*, `chmod +x run_agent.sh` (the installer does this for you).
+
+**The GPU is Metal, not CUDA.** SAM3 grounding — what locates the thing you asked
+to circle — runs on MPS, and `check_env.py --gpu` tells you whether torch found
+it. Nothing needs installing for that: the ordinary PyPI wheel carries Metal, so
+there is no macOS equivalent of the CUDA-index step Windows needs. If it reports
+no MPS, reinstall torch rather than hunting for a special build; there isn't one.
+
+**▶ Start server opens Terminal** instead of a PowerShell window, and runs the
+script there so you can read what it says. That is the point of a visible window:
+when the host refuses to start — a port in use, a broken `.env` — the reason is
+printed, and a background process would swallow it.
+
+**The collector nodes' file dialog may come from AppleScript.** They use Tk when
+ComfyUI's Python has it; Homebrew's python omits it unless `python-tk` was
+installed too, and in that case the node falls back to the system dialog. Same
+picker, nothing to install, and multi-select works either way.
+
+Two things to know before you start: the install needs **Xcode Command Line
+Tools** (`xcode-select --install`), because `insightface` and `sam3` publish no
+macOS wheel and are compiled during setup; and **Apple Silicon on macOS 14+** is
+the tested target — on an Intel Mac, `onnxruntime` and `faiss-cpu` ship arm64-only
+wheels at current versions, so face-likeness QA would need older pins.
+
+---
+
+## Staying up to date
 
 Each start checks the remotes and fast-forwards the three checkouts that make up
 agentY: this repo, `agenty_core`, and the sidebar extension (both the clone
@@ -130,11 +170,11 @@ app starts. If it touched the extension, you're told to restart ComfyUI (or just
 reload the browser, for JS-only changes).
 
 Turn it off with `auto_update = false` (Settings ▸ advanced ▸ Behaviour),
-`.\run_agent.ps1 -NoUpdate`, or `AGENTY_NO_UPDATE=1`. If your ComfyUI isn't in an
+`-NoUpdate` / `--no-update`, or `AGENTY_NO_UPDATE=1`. If your ComfyUI isn't in an
 obvious spot next to agentY, point `comfyui_dir` at it so the extension is found.
 
-> `run_agent.ps1` updates *itself* too, but the copy already running is the old
-> one — changes to the launcher apply from the next start.
+> The launcher updates *itself* too, but the copy already running is the old
+> one — changes to it apply from the next start.
 
 ---
 
@@ -1548,7 +1588,7 @@ installing it is the better answer, and the agent will say so.
 ## Troubleshooting
 
 - **Panel shows "▶ Start server" / can't connect** — the agent host isn't
-  running. Run `.\run_agent.ps1` (or click the button), and check the backend URL
+  running. Run the launcher (or click the button), and check the backend URL
   (`localStorage.agentY_backend`).
 - **"The model configured for vision / qa_judge is not multimodal"** — that tier
   points at a text-only model, so it cannot be handed a picture at all. Point it
@@ -1558,7 +1598,7 @@ installing it is the better answer, and the agent will say so.
   rather than condemn work it could not read, so QA looks like it is running and
   is not. agentY says so rather than leaving you to notice.
 - **Autograph toggle or MCP section does nothing / 404** — those routes live in a
-  newer host build; **restart `run_agent.ps1`** so the `:5000` host serves them.
+  newer host build; **restart the launcher** so the `:5000` host serves them.
 - **Canvas nodes/UI look stale after an update** — the ComfyUI copy of
   `agentY-comfyuiConnect` is separate from your dev clone; `git pull` it in
   `<ComfyUI>/custom_nodes/` and reload ComfyUI.

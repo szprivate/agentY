@@ -2623,6 +2623,10 @@ def _build_app():
         # can relaunch it later with no env var or manual config.
         return jsonify({"status": "ok", "pipeline": _agent_ref is not None,
                         "project_root": str(_project_root()),
+                        # ...and which script restarts it. The panel forwards this
+                        # to the extension, which would otherwise have to guess an
+                        # operating system it cannot see.
+                        "launcher": _launcher_name(),
                         # "post me the graph on your next tick" — how a turn with
                         # no browser behind it (Slack) gets to see the canvas.
                         "want_canvas": canvas_wanted(),
@@ -3484,17 +3488,30 @@ def _quiet_poll_logging() -> None:
         wz.addFilter(_QuietPollFilter())
 
 
+def _launcher_name(platform: str = "") -> str:
+    """The script that starts this host on *platform* (default: this one).
+
+    Named by the HOST's platform, not the extension's: the button runs the script
+    on the machine the host lives on, and that is the machine running this code.
+    """
+    return "run_agent.ps1" if (platform or sys.platform) == "win32" else "run_agent.sh"
+
+
 def _register_with_comfyui() -> None:
     """Best-effort: tell the ComfyUI sidebar extension where this host lives, so its
-    "Start server" button can relaunch run_agent.ps1 when the host is down. Fire-
-    and-forget; never blocks or fails startup."""
+    "Start server" button can relaunch the launcher when the host is down. Fire-
+    and-forget; never blocks or fails startup.
+
+    The launcher is named by THIS process's platform, not the extension's, which is
+    the correct way round: the button runs the script on the machine the host lives
+    on, and that is the machine running this code."""
     def _do() -> None:
         try:
             from src.utils.settings import load_settings
             import urllib.request
             base = str(load_settings().get("comfyui_url", "http://127.0.0.1:8188")).rstrip("/")
             body = json.dumps({"project_root": str(_project_root()),
-                               "run_script": "run_agent.ps1"}).encode("utf-8")
+                               "run_script": _launcher_name()}).encode("utf-8")
             req = urllib.request.Request(base + "/agent/register_host", data=body,
                                          headers={"Content-Type": "application/json"}, method="POST")
             urllib.request.urlopen(req, timeout=5).read()

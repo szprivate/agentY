@@ -1,0 +1,13 @@
+# Shell scripts must check out with LF on every platform.
+#
+# This repo is developed on Windows with core.autocrlf=true, which rewrites text
+# files to CRLF on checkout. For a shell script that is fatal rather than untidy:
+# the kernel reads the shebang literally, so `#!/usr/bin/env bash\r` sends it
+# looking for an interpreter named "bash\r" and the script dies with
+# "bad interpreter: no such file or directory" — an error that names the right
+# file and says nothing about the carriage return that caused it.
+*.sh text eol=lf
+
+# PowerShell is the mirror image: keep CRLF, which is what Windows tooling and
+# every existing checkout of these files expect.
+*.ps1 text eol=crlf

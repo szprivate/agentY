@@ -89,6 +89,37 @@ def _report(title: str, checks: list[tuple[str, str, str]], quiet: bool = False)
     return missing
 
 
+def gpu_line(torch, platform: str) -> str:
+    """What ``--gpu`` says about the accelerator torch found.
+
+    A function so it can be tested on a platform you are not sitting at, because the
+    advice differs per platform and the WRONG advice is worse than none: a Mac used
+    to be told to reinstall torch "from the CUDA index", which publishes no macOS
+    wheel at all, so following it faithfully got you nowhere.
+
+    The pitfall it exists for: PyPI's win_amd64 wheel is CPU-only, and on CPU a
+    single SAM3 grounding call goes from ~0.2s to about a minute.
+    """
+    mps = getattr(torch.backends, "mps", None)
+    if torch.cuda.is_available():
+        return f"GPU: torch {torch.__version__} sees CUDA ({torch.cuda.get_device_name(0)})"
+    if mps is not None and mps.is_available():
+        return f"GPU: torch {torch.__version__} sees Metal (MPS)"
+    if platform == "darwin":
+        # No CUDA remedy here. On Apple Silicon the ordinary PyPI wheel already
+        # carries MPS, so a Mac reporting none has a broken install rather than a
+        # missing download to go and find.
+        return (f"GPU: torch {torch.__version__} reports no Metal (MPS) support."
+                "\n     SAM3 grounding will take about a minute per call. On Apple"
+                "\n     Silicon the ordinary PyPI wheel carries MPS, so reinstalling"
+                "\n     torch is usually the fix:"
+                "\n       .venv/bin/python -m pip install --force-reinstall torch torchvision")
+    return (f"GPU: torch {torch.__version__} is CPU-only. SAM3 grounding will take about a"
+            "\n     minute per call. Reinstall it from the CUDA index:"
+            "\n       .venv/Scripts/python -m pip install torch torchvision --index-url"
+            " https://download.pytorch.org/whl/cu128")
+
+
 def main(argv: list[str]) -> int:
     # --quiet: say nothing at all unless something REQUIRED is missing. That is
     # the form run_agent.ps1 uses on every start, to catch a venv that has
@@ -109,18 +140,10 @@ def main(argv: list[str]) -> int:
         return 1
 
     if "--gpu" in argv and _importable("torch"):
-        # The documented pitfall: PyPI's win_amd64 torch wheel is CPU-only, and on
-        # CPU a single grounding call goes from ~0.2s to about a minute.
         try:
             import torch  # noqa: PLC0415  (deliberately deferred - importing torch is slow)
 
-            if torch.cuda.is_available():
-                print(f"\nGPU: torch {torch.__version__} sees CUDA ({torch.cuda.get_device_name(0)})")
-            else:
-                print(f"\nGPU: torch {torch.__version__} is CPU-only. SAM3 grounding will take about a"
-                      "\n     minute per call. Reinstall it from the CUDA index:"
-                      "\n       .venv/Scripts/python -m pip install torch torchvision --index-url"
-                      " https://download.pytorch.org/whl/cu128")
+            print("\n" + gpu_line(torch, sys.platform))
         except Exception as exc:
             print(f"\nGPU: could not query torch ({exc})")
 
