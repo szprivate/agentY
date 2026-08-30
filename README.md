@@ -19,6 +19,8 @@ An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanony
 
 - **Natural language → ComfyUI workflow** — describe what you want; a free **Orchestrator agent** builds and submits the workflow automatically.
 - **Output QA against *your* briefing** — write a checklist (and wire in mood/reference images) as a `qa` canvas hook, a reusable file, or `/qa` in chat; a separate QA agent judges every finished image/video criterion by criterion and re-generates what missed. Nothing runs without a briefing. See [Checking outputs](docs/using-agentY.md#checking-outputs-qa).
+- **The countable half is measured, not eyeballed** — an **`agentY qa briefing`** node puts ratio, resolution, sharpness, grain, clipping and *likeness* on dropdowns. Each is decided from the file before the model is asked anything, and the model is shown the answers and told not to re-judge them: a vision model is handed a *resized* copy, so "is this 16:9?" is a question it cannot actually answer. **Likeness** is a real score — a face embedding for "is this the same person", a perceptual metric for the same place or product — because "match the reference" is the criterion people write most and models answer worst.
+- **A ranking score that learns your taste** — separate from the pass/fail gates, one 0-1 number orders the outputs of a run, shown when a `review` hook stops the chain to let you choose. Every review you answer is a preference label; `scripts/fit_fitness_weights.py` fits the weights to them and **refuses to install anything that doesn't beat the defaults** on reviews it held back. See [Which of these is best?](docs/using-agentY.md#which-of-these-is-best).
 - **Free-agent orchestration** — one Orchestrator owns each turn with the full toolset. It calls tools directly, **delegates** to specialists (research / assembly / info / story / DOP / planner / web), spawns ad-hoc subagents, and can even **author skills live**. No brittle intent classifier or fixed routing.
 - **Custom-node creator** — point the agent at a model's GitHub repo (`create_custom_node`) and it clones the repo, reads its docs + inference code, and writes a self-contained **ComfyUI custom-node pack** (`__init__.py`, `nodes.py`, `requirements.txt`, `README.md`, `pyproject.toml`) into `output/custom_nodes/<name>/` — ready to publish as its own repo.
 - **Image & video generation** — Flux, WAN2.1/2.2, Qwen, HunyuanVideo, and many other models.
@@ -49,7 +51,7 @@ up; this is what each one is:
 |---|---|---|
 | **agentY** (this repo) | your working copy | The Strands chat host / pipeline (`run_agent.ps1`). |
 | **[agenty_core](https://github.com/szprivate/agenty_core)** | sibling folder next to `agentY` | Shared ComfyUI/HuggingFace/web/file tool layer + the canonical template/recipe corpus. Installed **editable** (`-e ../agenty_core`); **required**. |
-| **[agentY-comfyuiConnect](https://github.com/szprivate/agentY-comfyuiConnect)** | `<ComfyUI>/custom_nodes/` | The **agentY** sidebar tab **and** the canvas nodes (`agentY hook`, `agentY python`). |
+| **[agentY-comfyuiConnect](https://github.com/szprivate/agentY-comfyuiConnect)** | `<ComfyUI>/custom_nodes/` | The **agentY** sidebar tab **and** the canvas nodes (`agentY hook`, `agentY qa briefing`, `agentY python`). |
 | **[agentY-mcp](https://github.com/szprivate/agentY-mcp)** | sibling folder next to `agentY` | The alternative **MCP-server / Claude-Desktop** front end (also consumes `agenty_core`). Optional. |
 
 ---
@@ -190,7 +192,7 @@ git clone https://github.com/szprivate/agentY-comfyuiConnect  <ComfyUI>\custom_n
 
 After the restart you get, from the one node pack:
 - the **agentY** tab in ComfyUI's left sidebar (the chat panel);
-- the **agentY** node category with **`agentY hook`** and **`agentY python`** (see [Canvas nodes](#canvas-nodes));
+- the **agentY** node category with **`agentY hook`**, **`agentY qa briefing`** and **`agentY python`** (see [Canvas nodes](#canvas-nodes));
 - an **Open agentY Settings…** entry in ComfyUI's Settings panel — the one door to
   everything else (auth keys, model tiers, MCP servers, pricing, and the log /
   memory / token-usage viewers).
@@ -281,7 +283,7 @@ Each finished image/video appears as a **loader node on your graph**. Type `/` i
 
 ### Canvas nodes
 
-Installing `agentY-comfyuiConnect` adds two nodes under the **agentY** category. They let you drive the agent *from the graph itself*:
+Installing `agentY-comfyuiConnect` adds a set of nodes under the **agentY** category. They let you drive the agent *from the graph itself*:
 
 - **`agentY hook`** — an instruction attached to the canvas. Wire any node's output into its **auto-growing `anchor` input(s)** and type a directive. Purposes:
   - *inline_parameter* — annotate an existing node ("sweep the seed 6×", "iterate the files in this folder"); the agent expands and runs your on-canvas graph.
@@ -289,8 +291,11 @@ Installing `agentY-comfyuiConnect` adds two nodes under the **agentY** category.
   - *text* — the agent writes a string answer and drops a wireable `agentY text` node carrying it.
   - *iterate* — an interactive **refinement loop**: the agent runs the graph one generation per turn, feeds each result back into the wired `LoadImage`, and asks for your next prompt (you can jump back to an earlier generation) until you say stop.
   - *qa* — your **quality briefing** for the graph: the directive is the checklist, the wired anchors are reference/mood images. A separate QA agent judges every produced image/video against it criterion by criterion, and re-generates a failing output against exactly what it missed. See [Checking outputs](docs/using-agentY.md#checking-outputs-qa).
+  - *review* — a deliberate **stop** between two stages, so you pick what goes on to the next one. See [Review](docs/using-agentY.md#review-stop-and-pick-what-continues).
 
   Its `out` **output** is type-agnostic, so one hook can gather several inputs and produce a result — image, video, **or scalars (string/int/float)** — for the next hook. Wire hooks output→input to build a **multi-step chain**. `freeze` decides whether the agent keeps the hook live (injects the value at run time) or bakes it into a plain workflow. A hook is inert on a normal *Queue Prompt* (it's a pure passthrough the agent removes before running), so it never affects a manual run. **Bypass** (`Ctrl+B`) or mute a hook to disable it without deleting it — the agent skips hooks in those modes.
+
+- **`agentY qa briefing`** — the checkable half of a QA briefing as controls rather than prose: aspect ratio, minimum resolution, sharpness, grain, clipping, black/frozen frames for video, **likeness** against the images wired into `reference`, and this briefing's retry budget. Each is settled by measuring the finished file, so it is exact and costs no round trip; `notes` carries everything that needs judgement and reads exactly like a `qa` hook's directive. Anything left on `any` is not checked, and a node with nothing set enforces nothing. Inert on a normal run. See [the qa briefing node](docs/using-agentY.md#ticking-the-boxes-the-agenty-qa-briefing-node).
 
 - **`agentY python`** — runs an agent-authored Python snippet as a node. It's used by *baking* (below): a value the agent computed at runtime (e.g. a video's length) is placed here so it becomes a genuine, re-runnable output. ⚠️ **It executes arbitrary Python whenever the graph runs** — meant for your own, self-hosted, agent-built workflows; don't run baked workflows from untrusted sources. Set `AGENTY_PYTHON_NODE_DISABLED=1` to make it a no-op.
 

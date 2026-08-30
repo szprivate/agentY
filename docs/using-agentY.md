@@ -647,7 +647,11 @@ value goes to the wired target, a plain question is answered in chat:
 
 **6. `qa`** — not a job, a **standard**. The directive is your checklist and the
 wired anchors are reference images; every output the graph produces is judged
-against them. See [Checking outputs](#checking-outputs-qa).
+against them. For the half that is countable — ratio, resolution, sharpness,
+grain, whether it is the same face as the reference — there is a node with
+dropdowns instead: see
+[the qa briefing node](#ticking-the-boxes-the-agenty-qa-briefing-node) and
+[Checking outputs](#checking-outputs-qa).
 
 **7. `review`** — a deliberate **stop**, so you can choose what goes on to the
 next stage. See [Review](#review-stop-and-pick-what-continues) below.
@@ -746,6 +750,18 @@ amber and reads **Continue with these** while a run is halted (its menu carries
 
 Nothing is deleted either way — the files the stage produced stay on disk, and the
 collector stays on the canvas as the record of what that stage ran with.
+
+**It hands you the measurements too.** Each candidate is measured and the agent
+is given them ordered best first, so *"4 and 7 are the softest of these"* is
+something it can tell you at thumbnail size. It is a
+[ranking aid](#which-of-these-is-best), never a verdict: it does not drop
+anything, and if you keep the one it ranked last, that is the answer.
+
+**And your choice teaches it.** What you left in the collector against what you
+deleted is a preference between real outputs of the same run — the only kind of
+label that reflects *your* taste. agentY writes it down, and after a dozen or so
+you can fit the ranking weights to it. Nothing about it is automatic and nothing
+leaves your machine; see [Which of these is best?](#which-of-these-is-best).
 
 **You can just say it.** Editing the node is the precise way, but *"continue, but
 drop the second one"* works too — your words win over the node's contents, and the
@@ -1015,9 +1031,12 @@ agentY can generate a thing. It can also tell you whether the thing is any good 
 but only by *your* standard, never an invented one. **With no briefing, no QA
 runs at all.**
 
-A **briefing** is two things, because "is this right?" usually is:
+A **briefing** is three things, because "is this right?" usually is:
 
-- **criteria** — prose or bullets, one checkable statement per line;
+- **controls** — the countable requirements, ticked rather than typed: ratio,
+  resolution, sharpness, grain, clipping, likeness. Decided by measuring the file;
+- **criteria** — prose or bullets, one checkable statement per line, for
+  everything a measurement cannot settle;
 - **references** — mood images the output should sit beside without looking out
   of place. A grade or a character look is not something words are good at.
 
@@ -1153,12 +1172,18 @@ judgements, not the repository's), and they store the *numbers*, not just the
 paths, so they stay usable long after the pictures are deleted. Delete
 `config/fitness_weights.json` at any time to go back to the hand-set weights.
 
-### Writing a briefing — three ways
+### Writing a briefing — four ways
 
-(Four, counting the briefing node above — which *is* a `qa` hook as far as
-everything below is concerned, and combines with the rest the same way.)
+All four combine rather than compete, and the first two are the same thing to
+everything downstream: the briefing node reaches agentY as a `qa` hook, because
+that is what it is.
 
-**1. A `qa` hook on the canvas** (the main one). Drop an `agentY hook`, set
+**1. The [`agentY qa briefing` node](#ticking-the-boxes-the-agenty-qa-briefing-node)**
+— the easiest start. Controls for the countable half, `notes` for the rest,
+reference images into `reference`.
+
+**2. A `qa` hook on the canvas** — the same thing written out, and the right one
+when your criteria are all prose. Drop an `agentY hook`, set
 `purpose: qa`, type the checklist in `directive`, and wire your reference images
 into its **anchors**.
 
@@ -1174,11 +1199,11 @@ Several QA hooks on one graph **combine** rather than compete — two notes pinn
 to one canvas both apply. And the briefing is saved with the workflow, so it is
 still there when you reopen it next month.
 
-**2. A named file** — `config/qa/<name>.md`, with mood images in an optional
+**3. A named file** — `config/qa/<name>.md`, with mood images in an optional
 sibling `<name>.refs/` folder. Reusable across graphs and threads, and it lives
 in version control. See `config/qa/README.md`.
 
-**3. `/qa` in the chat panel** — for turns with no canvas graph:
+**4. `/qa` in the chat panel** — for turns with no canvas graph:
 
 ```
 /qa                                      show what's active
@@ -1581,6 +1606,20 @@ installing it is the better answer, and the agent will say so.
   on).
 - **A hook did nothing on Queue Prompt** — that's by design: hooks are inert on a
   normal run. Ask the **agentY agent** to run the graph.
+- **The likeness check says "not measurable"** — it needs a face it can find in
+  *both* the output and at least one image wired into `reference`. A profile, a
+  very small face, a landscape wired in as a reference: any of those and the
+  comparison simply isn't made. That is not a failure — the written criterion
+  still goes to the QA model, which judges it by eye as before.
+- **The first QA run with `likeness` on takes minutes** — it's downloading the
+  scoring models (~3.6 GB, into `models/` beside the checkout). It happens once.
+  Later runs cost about a second per comparison, on the CPU by design so QA never
+  competes with ComfyUI for the GPU. Leave `likeness` on `any` and none of this
+  is ever touched.
+- **`fit_fitness_weights.py` won't install its weights** — it refuses on purpose
+  unless they beat the hand-set ones on reviews it held back, and unless there
+  are at least a dozen reviews to learn from. It prints which of the two stopped
+  it. `--force` overrides, for experiments.
 - **Model switch had no effect** — model-per-stage changes apply on the next
   agent start; use `/switch_model` for a live change.
 
