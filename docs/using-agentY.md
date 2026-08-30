@@ -980,6 +980,11 @@ The same goes for how the picture *looks*:
 None of that needs *writing*. Drop an **`agentY qa briefing`** node and the
 technical half is dropdowns:
 
+![The agentY qa briefing node, with a reference wired in](images/qa-briefing-node.png)
+
+*`notes` for what needs judgement, controls for what doesn't, and the reference
+images the `likeness` check compares against wired into `reference`.*
+
 | control | what it does |
 |---|---|
 | `aspect_ratio` | compared against real dimensions, within a rounding tolerance — 1312x736 counts as 16:9 |
