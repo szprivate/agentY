@@ -1354,6 +1354,18 @@ class Pipeline:
             })
             _push_progress(f"⏸️ Stopped at review hook {hid} — {len(files)} output(s) "
                            "waiting for you on the canvas.")
+            # Measured, ordered, and handed over with the halt: this is the moment
+            # a choice is being asked for, so it is the moment a ranking is worth
+            # anything. It never decides — the collector does — but "4 and 7 are
+            # the softest of these" is a thing the user cannot see at thumbnail
+            # size and we can.
+            ranking = []
+            try:
+                from src.utils.fitness import rank_files
+                ranking = rank_files(files)
+            except Exception as exc:  # noqa: BLE001
+                if self._verbose:
+                    print(f"pipeline: could not rank the review outputs ({exc})")
             if self._verbose:
                 print(f"pipeline: halt_for_review at hook {hid} with {len(files)} "
                       f"output(s); gated hooks {remaining or 'none'}.")
@@ -1363,6 +1375,12 @@ class Pipeline:
                 "collected": len(files),
                 "files": files,
                 "not_run": remaining,
+                "quality_ranking": ranking,
+                "about_the_ranking": (
+                    "Measured from the files, best first, 0-1. A RANKING aid only "
+                    "— never a verdict, and never a reason to drop one for them. "
+                    "Mention it only where it helps them choose."
+                ) if ranking else "",
                 "message": (
                     # Deliberately does NOT claim the node was placed or wired:
                     # this runs on the server and the node is created in the
@@ -3546,6 +3564,7 @@ class Pipeline:
             from src.utils.canvas_patch import push as _push_patch
             _push_patch({"op": "review_released", "answer": self._review_reply,
                          "hook_node_id": self._review_halt.hook_node_id})
+            self._record_review_preference(user_text)
 
         # ComfyUI run failures are healed inline by the executor (repair_fn below):
         # each failed member is repaired concurrently and re-queued on the fly,
@@ -4650,6 +4669,45 @@ class Pipeline:
         than papering over with the list from the halt.
         """
         return list((self._review_collector() or {}).get("files") or [])
+
+    def _record_review_preference(self, request: str = "") -> None:
+        """A review the user has just answered, written down as a label.
+
+        What they left in the collector they chose; what they deleted from it they
+        rejected. That is a preference between two real outputs of the same run,
+        produced as a side effect of a decision they were making anyway — see
+        :mod:`src.utils.preference_log`, which is where the weights in
+        :mod:`src.utils.fitness` are eventually meant to come from.
+
+        Best-effort and silent. A review is the user's decision and a logging
+        failure has no business affecting it, so nothing here can raise and
+        nothing here reads back into the turn.
+        """
+        halt = getattr(self, "_review_halt", None)
+        if halt is None or self._review_reply != "continue":
+            return                      # "stop" rejects everything: no pair in it
+        try:
+            produced = [str(p) for p in (halt.produced or []) if p]
+            kept = [str(p) for p in self._review_collector_files() if p]
+            if not produced or not kept:
+                return
+            # Matched on the filename as well as the path: the collector's rows
+            # are whatever the user left there, and a file they re-pointed at a
+            # copy of itself is still the same choice.
+            keep_keys = {Path(p).name for p in kept} | {str(Path(p)) for p in kept}
+            dropped = [p for p in produced
+                       if Path(p).name not in keep_keys and str(Path(p)) not in keep_keys]
+            if not dropped:
+                return                  # they kept everything: not a preference
+            from src.utils.preference_log import record_review
+            n = record_review(kept, dropped, hook_node_id=halt.hook_node_id,
+                              question=halt.question, request=request)
+            if n and self._verbose:
+                print(f"pipeline: review at hook {halt.hook_node_id} logged "
+                      f"{n} preference pair(s) ({len(kept)} kept, {len(dropped)} dropped)")
+        except Exception as exc:  # noqa: BLE001
+            if self._verbose:
+                print(f"pipeline: could not log the review preference ({exc})")
 
     def _review_gate_refusal(self, announce: bool = True,
                              inline: bool = False) -> dict | None:

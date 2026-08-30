@@ -638,6 +638,16 @@ def render_measurements(facts: dict) -> str:
         lines.extend(render_likeness(facts))
     except Exception as exc:  # noqa: BLE001
         logger.debug("qa: could not render likeness facts — %s", exc)
+    # The one number that is NOT a gate. It goes in labelled as a ranking aid,
+    # because the judge is being handed a pile of thresholds either side of it
+    # and would otherwise be entitled to read this as one more of them.
+    try:
+        from src.utils.fitness import render_score, score
+        line = render_score(score(facts))
+        if line:
+            lines.append(line)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("qa: could not render the quality score — %s", exc)
     return "\n".join(lines)
 
 

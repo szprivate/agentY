@@ -43,6 +43,7 @@ node, ready to wire into your next step.*
 - [Checking outputs (QA)](#checking-outputs-qa)
   - [Ticking the boxes instead of writing them](#ticking-the-boxes-the-agenty-qa-briefing-node)
   - [Does it match the reference?](#does-it-match-the-reference)
+  - [Which of these is best?](#which-of-these-is-best)
 - [The agentY python node & collectors](#the-agenty-python-node--collectors)
 - [Settings & secrets](#settings--secrets)
 - [MCP servers](#mcp-servers)
@@ -1111,6 +1112,46 @@ the written criterion goes to the model instead; doubt never condemns your work.
 Both scorers are optional and load only when the control is set — the first run
 downloads their weights (~3.6 GB, into `models/` beside the checkout, not your
 home folder) and they run on the CPU, because the GPU belongs to ComfyUI.
+
+### Which of these is best?
+
+Everything above is a **gate**: pass or fail, and nothing compensates for
+anything. That is right for *"must be 16:9"* and useless for the other question a
+run of eight variants raises — *which one?*
+
+So there is a second, separate number: a **technical quality score**, 0 to 1,
+from the same measurements. Sharpness, focus, cleanliness, headroom, and likeness
+when it was measured, each normalised and weighted. You will see it in two
+places: beside each output when a [`review` hook](#review-stop-and-pick-what-continues)
+stops the chain to let you choose, and in the facts the QA judge is given.
+
+**It never decides anything.** It is not a gate and it cannot fail an output — a
+weighted sum lets a strong feature pay for a weak one, which is exactly what you
+want for ordering and exactly what you do not want for a requirement. Your taste
+outranks it, always. What it is good for is the thing thumbnails are bad at:
+*"4 and 7 are the softest of these"*.
+
+**And it learns what you actually like.** Every time you answer a review hook —
+delete the rows you do not want, say continue — agentY writes down which outputs
+you kept and which you dropped, with each one's measured features. That is a
+preference label, collected from a decision you were making anyway. Once you have
+a dozen or so:
+
+```
+.venv/Scripts/python.exe scripts/fit_fitness_weights.py            # what would change
+.venv/Scripts/python.exe scripts/fit_fitness_weights.py --write    # install, if better
+```
+
+It fits the weights to your choices, holds a slice of them back, and **refuses to
+install anything that does not beat the defaults on reviews it has not seen**.
+Two weights start at zero for exactly this reason — contrast and brightness are
+style, not quality, so a hand-set score must not touch them, but if you
+consistently keep the darker take, that is learnable and it will be learned.
+
+The labels live in `output/agent/preferences.jsonl` (gitignored — they are your
+judgements, not the repository's), and they store the *numbers*, not just the
+paths, so they stay usable long after the pictures are deleted. Delete
+`config/fitness_weights.json` at any time to go back to the hand-set weights.
 
 ### Writing a briefing — three ways
 
