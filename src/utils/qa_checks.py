@@ -48,6 +48,18 @@ CLEAN_OK = {"clean", "light grain"}
 # Not zero: a spec highlight or a light source legitimately clips.
 CLIP_LIMIT = 0.02
 
+# What the likeness dropdown offers, and which scorer answers each option.
+WANT_FACE = "must match the reference face"
+WANT_SUBJECT = "must match the reference subject"
+LIKENESS_SCORERS = {WANT_FACE: "face_match", WANT_SUBJECT: "subject_match"}
+
+# Bands from src.utils.likeness that satisfy the demand. The face bar sits at
+# "likely the same person" (0.70 cosine) because that lands in a gap rather than
+# on a judgement call: on this machine's own renders the same character never
+# scored below 0.95 and different characters never above 0.54.
+FACE_OK = {"likely the same person", "the same person"}
+SUBJECT_OK = {"the same subject", "clearly related"}
+
 
 def _result(criterion: str, ok: bool, note: str) -> dict:
     """One verdict row, in the shape the QA agent's own checks already use."""
@@ -136,6 +148,28 @@ def _motion_check(enabled, facts: dict) -> dict | None:
                    if n else "motion throughout")
 
 
+def _likeness_check(spec: str, facts: dict) -> dict | None:
+    """Does the output actually look like the reference it was given?
+
+    Yields nothing when the comparison could not be made — no reference with a
+    face in it, no face in the output, or the scorer is not installed. The
+    written criterion still reaches the model in that case, which is the right
+    fallback: an eye answers this question less exactly, but it always can.
+    """
+    key = LIKENESS_SCORERS.get(spec)
+    if key is None:
+        return None
+    m = facts.get(key) or {}
+    if not m.get("available"):
+        return None
+    ok = m.get("band") in (FACE_OK if key == "face_match" else SUBJECT_OK)
+    what = "face" if key == "face_match" else "subject"
+    return _result(spec, ok,
+                   f"{what} similarity {m.get('score')} vs {m.get('reference')} "
+                   f"({m.get('band')})"
+                   + ("" if ok else " — not the reference"))
+
+
 _CHECKS = {
     "aspect_ratio": _ratio_check,
     "resolution": _resolution_check,
@@ -144,6 +178,7 @@ _CHECKS = {
     "no_clipping": _clipping_check,
     "no_black_frames": _black_frames_check,
     "no_stalled_motion": _motion_check,
+    "likeness": _likeness_check,
 }
 
 # What the node writes when a control is left alone. Nothing is checked for these.
@@ -205,6 +240,8 @@ def describe(spec: dict) -> str:
         lines.append("- no black frames")
     if spec.get("no_stalled_motion") not in _UNSET:
         lines.append("- the clip must not stall")
+    if spec.get("likeness") not in _UNSET:
+        lines.append(f"- {spec['likeness']}")
     return "\n".join(lines)
 
 

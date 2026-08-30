@@ -21,6 +21,10 @@ output_workflows/
 # Agent scratch: scripts it writes (output/scripts) + code-change proposals
 # (output/proposals). Media itself lands under ComfyUI's output dir, not here.
 /output/
+# QA scoring model weights (ArcFace ~0.6 GB, DreamSim ~3 GB). Downloaded on first
+# use, deliberately here rather than in a home directory: they are large, they
+# belong to this checkout, and C: is not where model weights go.
+/models/
 /.files
 /memory
 

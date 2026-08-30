@@ -633,6 +633,11 @@ def render_measurements(facts: dict) -> str:
         lines.extend(render_quality(facts))
     except Exception as exc:  # noqa: BLE001
         logger.debug("qa: could not render quality facts — %s", exc)
+    try:
+        from src.utils.likeness import render_likeness
+        lines.extend(render_likeness(facts))
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("qa: could not render likeness facts — %s", exc)
     return "\n".join(lines)
 
 
@@ -703,6 +708,7 @@ def check_output(path: str, briefing: QaBriefing, *, request: str = "",
         prompts = load_qa_prompts()
         criteria = briefing.criteria.strip() or prompts.get("no_criteria", "")
         facts = measure_output(path)
+        facts.update(_likeness_facts(path, briefing, ref_paths))
         measured = render_measurements(facts)
         # The technical half is decided here, by arithmetic, before the model is
         # asked anything. It is then shown the answers so it does not guess at
@@ -764,6 +770,53 @@ def check_output(path: str, briefing: QaBriefing, *, request: str = "",
         passed = not failed
     return QaResult(path=path, passed=passed, summary=str(data.get("summary") or "").strip(),
                     checks=checks)
+
+
+# How many frames of a clip are compared against the references. A character can
+# be out of shot for part of a take, so one frame is not enough; every extra one
+# costs a full comparison against every reference, so it is not many either.
+LIKENESS_FRAMES = 3
+
+
+def _likeness_facts(path: str, briefing: QaBriefing, ref_paths: list) -> dict:
+    """How much the output looks like the references, as a number.
+
+    Only computed when the briefing's likeness control actually asked for it. The
+    subject scorer's first load is ~100 s and 3 GB of weights, and a run that
+    never mentions a reference must not pay a second of that — so the question is
+    checked before anything is imported.
+
+    Never raises. An unmeasurable comparison leaves the written criterion to reach
+    the model on its own, which is a worse answer but always an available one.
+    """
+    want = str((getattr(briefing, "technical", None) or {}).get("likeness") or "")
+    refs = [str(p) for p in (ref_paths or [])]
+    if not want or not refs:
+        return {}
+    try:
+        from src.utils.qa_checks import LIKENESS_SCORERS
+        key = LIKENESS_SCORERS.get(want)
+        if not key:
+            return {}
+        candidates = [path] if is_image(path) else _likeness_frames(path)
+        if not candidates:
+            return {}
+        import src.utils.likeness as likeness
+        got = getattr(likeness, key)(candidates, refs)
+        return {key: got} if got else {}
+    except Exception as exc:  # noqa: BLE001
+        logger.info("qa: could not measure likeness for %s — %s", path, exc)
+        return {}
+
+
+def _likeness_frames(path: str) -> list:
+    """A clip as a handful of stills, so it can be compared to a reference."""
+    try:
+        from agenty_core.utils.video_frames import extract_frames
+        return [str(f) for f in (extract_frames(Path(path), count=LIKENESS_FRAMES) or [])]
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("qa: could not sample %s for likeness — %s", path, exc)
+        return []
 
 
 def _settle_technical(briefing: QaBriefing, facts: dict) -> list[dict]:

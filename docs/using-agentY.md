@@ -41,6 +41,8 @@ node, ready to wire into your next step.*
   - [Naming what a hook produces](#naming-what-a-hook-produces)
 - [Slack: a second way in](#slack-a-second-way-in)
 - [Checking outputs (QA)](#checking-outputs-qa)
+  - [Ticking the boxes instead of writing them](#ticking-the-boxes-the-agenty-qa-briefing-node)
+  - [Does it match the reference?](#does-it-match-the-reference)
 - [The agentY python node & collectors](#the-agenty-python-node--collectors)
 - [Settings & secrets](#settings--secrets)
 - [MCP servers](#mcp-servers)
@@ -1046,7 +1048,74 @@ So criteria can be exact, and it's worth making them exact:
 - No visible text anywhere in frame.
 ```
 
+The same trade applies to how the picture *looks*, not just how big it is.
+**Softness, grain and blown highlights** are the complaints people actually make,
+and a vision model estimates all three badly from a resized copy — so they are
+measured too, and the numbers go to the judge as fact:
+
+- **sharpness**, with the sharpest *region* reported separately. A portrait with
+  a soft background reads soft overall, and without that second number the check
+  would reject exactly the picture you asked for;
+- **grain**, measured on a copy that has had the fine detail smoothed out first,
+  so texture is not mistaken for noise;
+- **exposure** — the mean, the contrast, and how much of the frame is pinned at
+  pure white or pure black. Detail that clipped is gone and cannot be graded back.
+
+### Ticking the boxes: the `agentY qa briefing` node
+
+Everything above is exact, which means none of it needs to be *written*. Drop an
+**`agentY qa briefing`** node on the canvas and the technical half is dropdowns
+and switches:
+
+| control | what it does |
+|---|---|
+| `aspect_ratio` | compared against the file's real dimensions, within a rounding tolerance — 1312x736 counts as 16:9 |
+| `resolution` | minimum **short** side, which is how "1080p" is usually meant |
+| `sharpness` | fails a soft render; a shallow depth of field still passes |
+| `grain` | fails visible grain. Leave it on `any` when grain is the look |
+| `no_clipping` | fails more than 2% of pixels pinned at pure white or black |
+| `no_black_frames` / `no_stalled_motion` | video only: a black sampled frame, or a clip that freezes |
+| `likeness` | see [below](#does-it-match-the-reference) |
+| `retries` | this briefing's own retry budget |
+
+`notes` carries everything a measurement cannot settle — mood, framing, whether it
+looks right — and is read exactly like a `qa` hook's directive. Wire reference
+images into `reference`.
+
+Anything left on `any` (or off) is **not checked**, and a node with nothing set
+enforces nothing. What is set is decided *before* the model is asked anything, and
+the model is then shown the answers and told not to re-judge them — so a
+measurement cannot be argued with, and it costs no round trip.
+
+### Does it match the reference?
+
+*"The character must match the reference"* is the criterion people write most
+often and the one a vision model answers worst: it will call any two dark-haired
+men the same person. Set **`likeness`** on the briefing node and it becomes a
+number instead:
+
+- **`must match the reference face`** — a face embedding (ArcFace), compared by
+  cosine against every image wired into `reference`. On this machine's own renders
+  the same character scores 0.95-0.98 and different characters 0.09-0.54,
+  stylised faces included.
+- **`must match the reference subject`** — for everything a face cannot answer: a
+  location, a product, a grade. This one (DreamSim) was trained on human
+  judgements of *diffusion-generated* images, so its notion of "alike" is fitted
+  to the pictures agentY actually makes.
+
+A video is compared frame by frame and the best frame counts — a character out of
+shot for part of a take still matches. If the comparison cannot be made at all (no
+face in the output, no reference with a face in it), it yields **no verdict** and
+the written criterion goes to the model instead; doubt never condemns your work.
+
+Both scorers are optional and load only when the control is set — the first run
+downloads their weights (~3.6 GB, into `models/` beside the checkout, not your
+home folder) and they run on the CPU, because the GPU belongs to ComfyUI.
+
 ### Writing a briefing — three ways
+
+(Four, counting the briefing node above — which *is* a `qa` hook as far as
+everything below is concerned, and combines with the rest the same way.)
 
 **1. A `qa` hook on the canvas** (the main one). Drop an `agentY hook`, set
 `purpose: qa`, type the checklist in `directive`, and wire your reference images

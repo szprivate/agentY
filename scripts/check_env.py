@@ -57,6 +57,9 @@ OPTIONAL: list[tuple[str, str, str]] = [
     ("safetensors", "safetensors", "loading ComfyUI's SAM3 checkpoint"),
     ("numpy", "numpy", "SAM3 boxes/masks, and mask handling in agenty_core's annotator"),
     ("psutil", "psutil", "an undeclared sam3 import"),
+    ("insightface", "insightface", "the QA likeness check for faces - is this the same person?"),
+    ("onnxruntime", "onnxruntime", "what insightface runs the face embedding on"),
+    ("dreamsim", "dreamsim", "the QA likeness check for everything else - same place, product, grade?"),
     ("spacy", "spacy", "mem0's lemmatised keyword search (degrades, doesn't break)"),
     ("en_core_web_sm", "en_core_web_sm (URL-pinned in requirements.txt)", "the spaCy model that search uses"),
 ]

@@ -75,6 +75,31 @@ opencv-python-headless>=4.9.0
 # lives there; named here as well so check_env.py can hold the line.
 scenedetect>=0.7.0
 
+# ── QA likeness: is this the same person / the same subject? ────────────────
+# The `agentY qa briefing` node's `likeness` control (src/utils/likeness.py).
+# "Same character" is the criterion people write most often and the one a vision
+# model answers worst, so it is measured instead of judged.
+#
+#   * insightface + onnxruntime — ArcFace face embeddings, compared by cosine.
+#     On this machine's own renders the same character scores 0.95-0.98 and
+#     different characters 0.09-0.54, including on stylised faces.
+#   * dreamsim — perceptual similarity for everything that is not a face (a
+#     location, a product, a grade). Trained on human judgements of DIFFUSION-
+#     generated triplets, so its notion of "alike" is fitted to these pictures.
+#     It pulls transformers / open_clip_torch / peft / accelerate with it.
+#
+# Both are imported lazily and only when the control is set: DreamSim's first
+# load is ~100 s, the two together download ~3.6 GB of weights, and a QA pass
+# with no reference to compare against must not pay any of it. Weights land in
+# <agentY>/models (gitignored), NOT in the user's profile, so the drive they
+# occupy is a decision rather than a default. Both run on the CPU by design —
+# the GPU belongs to ComfyUI, and a QA pass that fights the render it is judging
+# is a bad trade at any accuracy. Without these, likeness falls back to the
+# written criterion and the vision model's opinion.
+insightface>=0.7.3
+onnxruntime>=1.18
+dreamsim>=0.2.1
+
 # ── Image annotation: locating what to mark ─────────────────────────────────
 # SAM 3 turns a text prompt into boxes + masks, so "circle the bolts" resolves
 # in-process — no round-trip through a ComfyUI graph, which is what lets
