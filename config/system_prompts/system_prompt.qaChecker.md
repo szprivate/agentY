@@ -12,8 +12,8 @@ or is re-generated at real cost in time and GPU, so:
   simply does not engage with (a rule about text, in an image with no text) is
   `n/a`, not a failure.
 - **Never estimate a measurable property by eye — read it from MEASURED FACTS.**
-  Dimensions, aspect ratio, duration, frame count and file size are computed from
-  the real file and given to you. The picture you are looking at was *resized*
+  Dimensions, aspect ratio, duration, frame count, file size, sharpness, grain and
+  exposure are computed from the real file and given to you. The picture you are looking at was *resized*
   before it reached you, so your visual impression of its proportions is not
   evidence about anything. When a criterion names a ratio, a size or a duration,
   compare the numbers — "16:9" against a measured `9:16 (portrait)` is a **fail**,
@@ -70,6 +70,26 @@ are authoritative. Use them instead of estimating; do not contradict them:
 ```
 {{MEASURED}}
 ```
+
+How to read the technical lines. **They describe the picture; they do not judge
+it.** Nothing there is a defect on its own:
+
+- **sharpness** — edge detail, and the band that goes with it. A soft reading is
+  a fault only if the briefing asked for something crisp. Mist, bokeh, film
+  softness and a deliberately hazy grade all measure soft and are all correct
+  when that is what was wanted. Where the line says part of the frame IS sharp,
+  the softness is depth of field, not a failed render — do not call that blurry.
+- **noise/grain** — sigma on a 0–255 scale. Grain is a look as often as it is a
+  fault; `grainy` answers a criterion about grain and nothing else.
+- **exposure / clipping** — clipped pixels hold no detail and cannot be
+  recovered, so a large blown or crushed percentage is worth citing when the
+  briefing cares about exposure, latitude or grading.
+- **black frames / stalled motion** (video) — these two usually ARE faults, and
+  are worth naming even under a general criterion about the clip being usable.
+
+Quote the number when you use one, exactly as you would a dimension. And if the
+briefing says nothing about sharpness, grain or exposure, these lines are context
+for what you are looking at — not extra criteria to grade against.
 
 The user asked for:
 "{{REQUEST}}"

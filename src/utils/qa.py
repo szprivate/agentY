@@ -533,6 +533,7 @@ def measure_output(path: str) -> dict:
                               "format": (img.format or "").upper(), "mode": img.mode})
         except Exception as exc:  # noqa: BLE001
             logger.debug("qa: could not measure image %s — %s", path, exc)
+        facts.update(_quality_facts(path, is_video=False))
         return facts
 
     try:
@@ -554,7 +555,24 @@ def measure_output(path: str) -> dict:
             cap.release()
     except Exception as exc:  # noqa: BLE001
         logger.debug("qa: could not measure video %s — %s", path, exc)
+    facts.update(_quality_facts(path, is_video=True))
     return facts
+
+
+def _quality_facts(path: str, *, is_video: bool) -> dict:
+    """Sharpness, noise, exposure — the same trade as the dimensions above.
+
+    Softness, grain and blown highlights are the complaints people actually make,
+    and a vision model estimates all three badly from a resized copy. Measuring
+    them costs milliseconds and no GPU, so the judge is handed numbers instead of
+    an impression. Never fatal: an unreadable frame simply contributes nothing.
+    """
+    try:
+        from src.utils.image_facts import measure
+        return measure(path, is_video=is_video)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("qa: could not measure quality of %s — %s", path, exc)
+        return {}
 
 
 def render_measurements(facts: dict) -> str:
@@ -576,6 +594,11 @@ def render_measurements(facts: dict) -> str:
         detail = (detail + ", " if detail else "") + f"{size / 1024 / 1024:.2f} MB"
     if detail:
         lines.append(f"- file: {detail}")
+    try:
+        from src.utils.image_facts import render_quality
+        lines.extend(render_quality(facts))
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("qa: could not render quality facts — %s", exc)
     return "\n".join(lines)
 
 
