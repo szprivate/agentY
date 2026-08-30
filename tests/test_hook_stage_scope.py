@@ -61,7 +61,29 @@ def hook(hid, target, param="prompt", param_type="STRING", extra=()):
             "targets": targets}
 
 
-class ScopeToOneStageTest(unittest.TestCase):
+class SchemaOffline:
+    """Answer the "is this class an output node?" question without ComfyUI.
+
+    `is_terminal` is deliberately biased: a class it cannot ask about counts as an
+    output, so with the server down NOTHING is ever pruned and every assertion
+    below about dropped nodes fails. That bias is right in production — keeping a
+    dead node costs a line of JSON, dropping a live one costs the render — and
+    wrong here, where what is being tested is the pruning itself.
+
+    None of these fixtures is an output node; the ones that are (`SaveImage`,
+    `SaveVideo`, `PreviewImage`) are recognised by name before the schema is
+    consulted at all, so a flat "no" is the whole of ComfyUI's answer.
+    """
+
+    def setUp(self):
+        super().setUp()
+        patch = mock.patch("src.utils.preflight._schema",
+                           return_value={"output_node": False})
+        patch.start()
+        self.addCleanup(patch.stop)
+
+
+class ScopeToOneStageTest(SchemaOffline, unittest.TestCase):
 
     def test_a_hook_keeps_only_the_branch_its_output_drives(self):
         scoped, dropped = scope_to_hook(canvas(), hook("5", "348"))
@@ -103,7 +125,7 @@ class ScopeToOneStageTest(unittest.TestCase):
         self.assertEqual(scoped, canvas())
 
 
-class DeadNodesTest(unittest.TestCase):
+class DeadNodesTest(SchemaOffline, unittest.TestCase):
 
     def test_a_reference_that_only_fed_the_hook_is_dropped(self):
         """Its consumer was spliced out; it cannot reach the render."""
