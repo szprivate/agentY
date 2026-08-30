@@ -6160,11 +6160,15 @@ class Pipeline:
         """Inline QA-retry callback for ``execute_workflows_batch``.
 
         Called when a member RAN cleanly but its output missed the user's QA
-        briefing. Deliberately small: reroll the seeds and rewrite the positive
-        prompt to address exactly the criteria that failed. It does not re-plan or
-        re-assemble — the graph is proven to run and the user chose it; what was
-        wrong is the picture. Rebuilding the graph would also invalidate the very
-        verdict that asked for the retry.
+        briefing. Three levers, in order of how certain they are: set the
+        parameter that DECIDES a measurable requirement (shape, size), reroll the
+        seeds, and rewrite the positive prompt against the criteria that failed.
+        It does not re-plan or re-assemble — the graph is proven to run and the
+        user chose it; rebuilding it would invalidate the very verdict that asked
+        for the retry.
+
+        When the only failure is one nothing in the graph decides, it declines
+        rather than spending a generation to reach a conclusion already known.
 
         Writes a SIBLING file rather than editing in place, so the rejected
         workflow (and the output it made) remains exactly as it was for comparison.
@@ -6180,6 +6184,36 @@ class Pipeline:
             graph = json.loads(src_path.read_text(encoding="utf-8"))
         except Exception as exc:  # noqa: BLE001
             return {"status": "failed", "error": f"could not read the workflow: {exc}"}
+
+        # 0. Fix what a PARAMETER decides, before touching the two things that
+        #    only influence it. A wrong aspect ratio is not a sampling accident:
+        #    rerolling the seed reproduces the same shape, and a rewritten prompt
+        #    has never changed an image's dimensions. Left to those two levers
+        #    this retry re-rendered 1024x1024 against a 16:9 briefing and came
+        #    back failing with the identical number, having spent a generation.
+        fixed: list = []
+        ungoverned: list = []
+        technical = dict(getattr(self._qa_briefing, "technical", None) or {})
+        if technical:
+            try:
+                from src.utils.qa_repair import apply_fix, describe_fix, plan_fixes
+                plans, ungoverned = plan_fixes(graph, technical)
+                for plan in plans:
+                    if apply_fix(graph, plan):
+                        fixed.append(describe_fix(plan))
+            except Exception as exc:  # noqa: BLE001
+                print(f"pipeline: QA retry could not fit the graph ({exc})")
+
+        # A failure nothing in the graph can address is not worth a generation.
+        # Saying so is the whole value: the verdict is already known, and paying
+        # to confirm it is the behaviour this replaced.
+        if ungoverned and not fixed:
+            controls = ", ".join(c.replace("_", " ") for c in ungoverned)
+            return {"status": "failed",
+                    "error": (f"not retrying: the briefing asks for {controls}, and "
+                              "nothing in this graph sets it. Re-running would "
+                              "produce the same verdict at the same cost — change "
+                              "the node that decides it, or the briefing.")}
 
         # 1. Reroll every seed. Without this a re-run reproduces the rejected image
         #    byte-for-byte and the retry is pure waste — this alone fixes a good
@@ -6216,11 +6250,14 @@ class Pipeline:
                 print(f"pipeline: QA retry could not rewrite the prompt ({exc}) — "
                       "re-running with a fresh seed only.")
 
-        if not rerolled and not rewrote:
+        if not rerolled and not rewrote and not fixed:
             # Nothing would differ, so a re-run would reproduce the same output.
             return {"status": "failed",
-                    "error": "no seed or positive prompt to change in this workflow"}
+                    "error": "no seed, positive prompt or governing parameter to "
+                             "change in this workflow"}
 
+        for line in fixed:
+            print(f"pipeline: QA retry fitted {line}")
         out_path = src_path.with_name(f"{src_path.stem}.qa{_random.randint(1000, 9999)}.json")
         try:
             out_path.write_text(json.dumps(graph, indent=2), encoding="utf-8")

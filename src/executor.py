@@ -259,6 +259,52 @@ def _load_node_titles(workflow_path: str) -> dict[str, str]:
         return {}
 
 
+def _fit_to_briefing(workflow_path: str, qa_briefing) -> tuple:
+    """Make the graph satisfy the briefing's measurable requirements up front.
+
+    QA can only ever report that an output came out the wrong shape — after the
+    generation is paid for, and to a retry whose levers (seed, prompt) cannot
+    change a shape at all. But the requirement is knowable *now*: the briefing
+    says 16:9, the graph says 1024x1024, and one parameter decides which wins.
+
+    So the check that would have failed is answered before submission. Returns
+    ``(path_to_submit, lines)`` — a SIBLING file when anything changed, so the
+    workflow the user chose is left exactly as it was for comparison.
+
+    Never raises and never blocks: a graph it cannot read, or a requirement it
+    cannot place, submits unchanged and is judged afterwards as before.
+    """
+    lines: list[str] = []
+    technical = getattr(qa_briefing, "technical", None)
+    if not technical:
+        # Same answer either way; the point is not reading and parsing the
+        # workflow on every run that has no measurable requirement to meet.
+        return workflow_path, lines
+    try:
+        import random as _random
+
+        from src.utils.qa_repair import apply_fix, describe_fix, plan_fixes
+
+        src_path = Path(workflow_path)
+        graph = json.loads(src_path.read_text(encoding="utf-8"))
+        fixes, unfixable = plan_fixes(graph, technical)
+        for control in unfixable:
+            lines.append(f"⚠️ Your briefing asks for {control.replace('_', ' ')} "
+                         f"{technical.get(control)!r}, and nothing in this graph sets it — "
+                         "it will be judged on what comes out.")
+        if not fixes:
+            return workflow_path, lines
+        for fix in fixes:
+            if apply_fix(graph, fix):
+                lines.append(f"📐 Fitted to your briefing — {describe_fix(fix)}")
+        out_path = src_path.with_name(f"{src_path.stem}.fit{_random.randint(1000, 9999)}.json")
+        out_path.write_text(json.dumps(graph, indent=2), encoding="utf-8")
+        return str(out_path), lines
+    except Exception as exc:  # noqa: BLE001 — a fit is a courtesy, never a gate
+        logger.debug("executor: could not fit the graph to the briefing — %s", exc)
+        return workflow_path, lines
+
+
 def _submit_workflow(workflow_path: str, client_id: str = "") -> str:
     """Submit *workflow_path* to ComfyUI and return the ``prompt_id``.
 
@@ -633,6 +679,9 @@ async def execute_workflow(
     # ── 1. Submit ──────────────────────────────────────────────────────────
     _free_vram_for_comfyui()
     _clear_comfyui_history()  # scope history to this run (no stale prior outputs)
+    workflow_path, _fit_lines = _fit_to_briefing(workflow_path, qa_briefing)
+    for _line in _fit_lines:
+        yield _line
     yield "🚀 Submitting workflow to ComfyUI…"
     client_id = uuid.uuid4().hex
     try:
@@ -957,6 +1006,9 @@ async def execute_workflows_batch(
         yield f"🚀 Queuing iteration {idx}/{total}…"
         cid = uuid.uuid4().hex
         try:
+            wf_path, _fit_lines = _fit_to_briefing(wf_path, qa_briefing)
+            for _line in _fit_lines:
+                await out_q.put(("line", f"{label}{_line}"))
             prompt_id = _submit_workflow(wf_path, client_id=cid)
             yield f"✅ Iteration {idx}/{total} queued · prompt_id=`{prompt_id}`"
             if verbose:

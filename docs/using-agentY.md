@@ -45,6 +45,7 @@ node, ready to wire into your next step.*
   - [Does it match the reference?](#does-it-match-the-reference)
   - [Which of these is best?](#which-of-these-is-best)
   - [One briefing per stage](#one-briefing-per-stage)
+  - [It fixes the shape rather than re-rolling](#it-fixes-the-shape-rather-than-re-rolling)
 - [The agentY python node & collectors](#the-agenty-python-node--collectors)
 - [Settings & secrets](#settings--secrets)
 - [MCP servers](#mcp-servers)
@@ -1138,6 +1139,60 @@ They compose, and they have a precedence. A `qa` hook **wins** over the thread's
 a named file with `@name` and add to it:
 
 > `@house-style plus the logo must stay legible`
+
+### It fixes the shape rather than re-rolling
+
+A measurable requirement is not just checkable — it is usually *settable*. If your
+briefing says 16:9 and the graph says 1024x1024, one parameter decides which wins,
+and agentY now finds it.
+
+**Before the run.** The graph is fitted to the briefing before anything is
+submitted, so the check that would have failed never gets the chance:
+
+```
+📐 Fitted to your briefing — node 1 (EmptyLatentImage): 1024x1024 -> 1920x1080
+   (your briefing asks for aspect ratio 16:9 and at least 1080p)
+```
+
+Your workflow is untouched — the fitted copy is a sibling file, so the graph you
+built stays exactly as it was.
+
+**Which node.** A graph can name a size in several places: a latent, the
+generator, a resize on the way to the saver. Only one of them is the shape the
+picture is *made* at, so the walk goes upstream from the output and takes the
+furthest one it finds. Rescaling afterwards would satisfy the measurement and
+misreport the render. Where the generator carries the parameter itself — Kling's
+`aspect_ratio`, Seedream's `size_preset` — that is the only candidate and it wins
+by default.
+
+**What it changes it to.** A menu is read, not computed: the cheapest option that
+qualifies is chosen, because spending more than you asked for is not agentY's
+decision. Width and height are arithmetic instead — the ratio is applied while
+holding the pixel count you chose, and sides land on multiples of 8, which is what
+a latent actually requires.
+
+**What it leaves alone.** A size already right, within the same tolerance the
+check uses — 1920x1088 is 16:9 as far as QA is concerned, so it is not "fixed" to
+1920x1080. And a parameter something else is wired into: that link is deciding it,
+and overwriting would drop it.
+
+**After a failure**, the same thing happens first, ahead of the seed re-roll and
+the prompt rewrite — which is the point, because neither of those has ever changed
+an image's dimensions.
+
+**And when nothing governs it, it declines:**
+
+```
+not retrying: the briefing asks for aspect ratio, and nothing in this graph sets
+it. Re-running would produce the same verdict at the same cost — change the node
+that decides it, or the briefing.
+```
+
+That is most of the value. Sharpness, grain, clipping, likeness and black frames
+are properties of a picture rather than settings, so nothing can be turned to fix
+them; for those the re-roll is still the right lever and still runs. But a wrong
+*shape* re-rendered with a new seed comes back the wrong shape, and paying to be
+told that twice is what this replaced.
 
 ### What happens on a failure
 
