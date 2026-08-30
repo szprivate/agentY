@@ -59,6 +59,16 @@ SCHEMAS = {
         "aspect_ratio": ["COMBO", {"default": "16:9",
                                    "options": ["16:9", "9:16", "1:1"]}],
         "mode": ["COMBO", {"options": ["std", "pro"]}]}}},
+    "OpenAIGPTImage1": {"input": {"required": {
+        "prompt": ["STRING", {}],
+        "size": [["auto", "1024x1024", "1024x1536", "1536x1024", "2048x2048",
+                  "2048x1152", "1152x2048", "3840x2160", "2160x3840", "Custom"]]}}},
+    "OpenAIDalle3": {"input": {"required": {
+        "prompt": ["STRING", {}],
+        "size": [["1024x1024", "1024x1792", "1792x1024"]]}}},
+    "OpenAIDalle2": {"input": {"required": {
+        "prompt": ["STRING", {}],
+        "size": [["256x256", "512x512", "1024x1024"]]}}},
     "ByteDanceSeedreamNode": {"input": {"required": {
         "prompt": ["STRING", {}],
         "size_preset": ["COMBO", {"options": ["1024x1024", "1280x720", "1920x1080",
@@ -214,7 +224,7 @@ class ChoosingTheValueTest(unittest.TestCase):
 
     def test_a_menu_with_nothing_that_fits_is_reported_not_forced(self):
         _fixes, un = fixes_for(kling(), {"aspect_ratio": "2.39:1"})
-        self.assertEqual(un, ["aspect_ratio"])
+        self.assertEqual([p["control"] for p in un], ["aspect_ratio"])
 
     def test_the_cheapest_option_that_qualifies_wins(self):
         """Spending more than was asked for is not ours to decide."""
@@ -230,6 +240,56 @@ class ChoosingTheValueTest(unittest.TestCase):
              "2": {"class_type": "SaveImage", "inputs": {"images": ["1", 0]}}}
         (fix,), _ = fixes_for(g, {"aspect_ratio": "16:9", "resolution": "1080p"})
         self.assertEqual(fix["to"], "1920x1080")
+
+
+class SizeOnlyMenusTest(unittest.TestCase):
+    """Some nodes name resolutions and never mention a ratio — GPT Image, DALL-E.
+
+    A briefing that asks for 16:9 still has to be answerable there, because the
+    ratio is in the numbers: 2048x1152 IS 16:9, whether or not the menu says so.
+    """
+
+    def _api(self, cls, size):
+        return {"1": {"class_type": cls, "inputs": {"prompt": "x", "size": size}},
+                "2": {"class_type": "SaveImage", "inputs": {"images": ["1", 0]}}}
+
+    def test_a_ratio_is_read_out_of_a_resolution_menu(self):
+        (fix,), _ = fixes_for(self._api("OpenAIGPTImage1", "1024x1024"),
+                              {"aspect_ratio": "16:9"})
+        self.assertEqual(fix["to"], "2048x1152")
+
+    def test_the_cheapest_16_9_wins_over_the_4k_one(self):
+        """3840x2160 is also 16:9. Spending that is not ours to decide."""
+        (fix,), _ = fixes_for(self._api("OpenAIGPTImage1", "1024x1024"),
+                              {"aspect_ratio": "16:9"})
+        self.assertNotEqual(fix["to"], "3840x2160")
+
+    def test_options_that_name_no_shape_are_ignored(self):
+        """`auto` and `Custom` are on that menu and mean nothing measurable."""
+        for opt in ("auto", "Custom"):
+            self.assertIsNone(ratio_of(opt))
+
+    def test_a_model_that_cannot_make_the_shape_says_so_precisely(self):
+        """DALL-E 2 offers squares only. That is not a missing parameter."""
+        _fixes, problems = fixes_for(self._api("OpenAIDalle2", "512x512"),
+                                     {"aspect_ratio": "16:9"})
+        self.assertEqual(problems[0]["status"], "unreachable")
+        self.assertIn("OpenAIDalle2", problems[0]["why"])
+        self.assertIn("256x256", problems[0]["why"])
+
+    def test_nothing_setting_it_at_all_reads_differently(self):
+        """The two send a reader to different places, so they must not share words."""
+        g = {"1": {"class_type": "KSampler", "inputs": {"seed": 1}},
+             "2": {"class_type": "SaveImage", "inputs": {"images": ["1", 0]}}}
+        _fixes, problems = fixes_for(g, {"aspect_ratio": "16:9"})
+        self.assertEqual(problems[0]["status"], "ungoverned")
+        self.assertIn("nothing in this graph sets it", problems[0]["why"])
+
+    def test_a_resolution_floor_the_menu_cannot_reach_is_unreachable(self):
+        """DALL-E 3 has a 16:9-ish option, but its short side is 1024."""
+        _fixes, problems = fixes_for(self._api("OpenAIDalle3", "1024x1024"),
+                                     {"aspect_ratio": "16:9", "resolution": "1080p"})
+        self.assertEqual(problems[0]["status"], "unreachable")
 
 
 class WhatItWillNotDoTest(unittest.TestCase):
@@ -250,7 +310,7 @@ class WhatItWillNotDoTest(unittest.TestCase):
         g = {"1": {"class_type": "KSampler", "inputs": {"seed": 1}},
              "2": {"class_type": "SaveImage", "inputs": {"images": ["1", 0]}}}
         _fixes, un = fixes_for(g, {"aspect_ratio": "16:9"})
-        self.assertEqual(un, ["aspect_ratio"])
+        self.assertEqual([p["control"] for p in un], ["aspect_ratio"])
 
     def test_the_downstream_resize_is_never_the_answer(self):
         """Rescaling satisfies the ruler and misreports the render."""

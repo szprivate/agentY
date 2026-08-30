@@ -6208,12 +6208,14 @@ class Pipeline:
         # Saying so is the whole value: the verdict is already known, and paying
         # to confirm it is the behaviour this replaced.
         if ungoverned and not fixed:
-            controls = ", ".join(c.replace("_", " ") for c in ungoverned)
+            controls = ", ".join(sorted({p["control"].replace("_", " ")
+                                         for p in ungoverned}))
+            why = ungoverned[0].get("why") or "nothing in this graph sets it"
             return {"status": "failed",
                     "error": (f"not retrying: the briefing asks for {controls}, and "
-                              "nothing in this graph sets it. Re-running would "
-                              "produce the same verdict at the same cost — change "
-                              "the node that decides it, or the briefing.")}
+                              f"{why}. Re-running would produce the same verdict at "
+                              "the same cost — change what decides it, or the "
+                              "briefing.")}
 
         # 1. Reroll every seed. Without this a re-run reproduces the rejected image
         #    byte-for-byte and the retry is pure waste — this alone fixes a good

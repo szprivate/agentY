@@ -266,14 +266,19 @@ def evaluate_shape(prompt: dict, want_ratio: float | None, want_short: int | Non
                    why: str = "", schema_of=None) -> tuple:
     """``(status, fix)`` for the shape a graph will produce.
 
-    ``"fix"`` with an edit to make; ``"satisfied"`` when a parameter governs the
-    shape and already gives it; ``"ungoverned"`` when nothing in the graph decides
-    it, or nothing it offers fits.
+    Four answers, because they mean four different things to whoever reads them:
 
-    Those last two are kept apart on purpose. "Already right" and "nothing decides
-    this" both plan no edit and mean opposite things — one is a graph that will
-    pass, the other a requirement that cannot be met as wired — and collapsing
-    them puts a warning on a healthy graph.
+    * ``"fix"`` — an edit to make;
+    * ``"satisfied"`` — a parameter governs the shape and already gives it;
+    * ``"ungoverned"`` — nothing in the graph decides it at all;
+    * ``"unreachable"`` — something decides it, and cannot reach what was asked.
+
+    The last two look identical from here (no edit planned) and are opposite
+    advice. `OpenAIDalle2` only offers squares, so a 16:9 briefing is not a
+    missing parameter to go and find — it is a model that cannot make that
+    picture, and telling someone to look for the knob wastes their afternoon.
+    "Satisfied" is kept apart for the same reason in reverse: reporting a problem
+    on a graph that will pass teaches people to ignore the ones that are real.
 
     Ratio and resolution arrive **together** because they are one decision about
     one thing. Planned separately they overwrite each other: 1024x1024 becomes
@@ -283,7 +288,9 @@ def evaluate_shape(prompt: dict, want_ratio: float | None, want_short: int | Non
     if want_ratio is None and want_short is None:
         return ("ungoverned", None)
 
+    tried: list = []
     for cand in governing_params(prompt, schema_of):
+        tried.append(cand)
         if cand["kind"] in ("ratio", "size"):
             # A menu that names ratios cannot also be asked for a pixel count, and
             # one that names sizes can be asked for both. Hold the ratio it
@@ -306,6 +313,13 @@ def evaluate_shape(prompt: dict, want_ratio: float | None, want_short: int | Non
             return ("fix", {"node_id": cand["node_id"], "class_type": cand["class_type"],
                             "params": ["width", "height"], "from": dict(cand["value"]),
                             "to": {"width": dims[0], "height": dims[1]}, "why": why})
+    # Candidates existed but none could be made to fit: the menus on offer do not
+    # contain the shape asked for, which is the model's answer, not ours.
+    if tried:
+        return ("unreachable", {"node_id": tried[0]["node_id"],
+                                "class_type": tried[0]["class_type"],
+                                "param": tried[0].get("param") or "width/height",
+                                "options": tried[0].get("options") or []})
     return ("ungoverned", None)
 
 
@@ -337,7 +351,8 @@ def evaluate_control(prompt: dict, control: str, want: str, schema_of=None) -> t
 
 def plan_fix(prompt: dict, control: str, want: str, schema_of=None) -> dict | None:
     """The edit that makes *prompt* satisfy one requirement, or ``None``."""
-    return evaluate_control(prompt, control, want, schema_of)[1]
+    status, fix = evaluate_control(prompt, control, want, schema_of)
+    return fix if status == "fix" else None
 
 
 def apply_fix(prompt: dict, fix: dict) -> bool:
@@ -373,12 +388,11 @@ def describe_fix(fix: dict) -> str:
 
 
 def plan_fixes(prompt: dict, technical: dict, schema_of=None) -> tuple:
-    """``(fixes, unfixable)`` for every stated requirement a parameter governs.
+    """``(fixes, problems)`` for the shape requirements a briefing states.
 
-    *unfixable* names the controls nothing in the graph decides — worth reporting
-    either way round: before a run it says the requirement cannot be met as
-    wired, and after one it says a retry would be paying for a conclusion that is
-    already known.
+    Each problem is ``{control, status, why}`` — ``why`` being a sentence worth
+    showing, since "nothing sets this" and "the model cannot make that shape" send
+    a reader to two different places.
     """
     from src.utils.qa_checks import _UNSET
 
@@ -392,10 +406,21 @@ def plan_fixes(prompt: dict, technical: dict, schema_of=None) -> tuple:
         # question that needs any of it.
         return [], []
     try:
-        status, fix = evaluate_shape(prompt, want_ratio, want_short, why, schema_of)
+        status, payload = evaluate_shape(prompt, want_ratio, want_short, why, schema_of)
     except Exception as exc:  # noqa: BLE001 — never worth a turn
         logger.debug("qa_repair: could not plan the shape — %s", exc)
         return [], []
     if status == "fix":
-        return [fix], []
-    return [], (asked if status == "ungoverned" else [])
+        return [payload], []
+    if status == "satisfied":
+        return [], []
+    if status == "unreachable":
+        where = f"node {payload['node_id']} ({payload['class_type']}) sets it via " \
+                f"`{payload['param']}`"
+        offers = payload.get("options") or []
+        detail = (f", and offers only {', '.join(offers)}" if offers
+                  else ", and cannot reach it")
+        reason = f"{where}{detail}"
+    else:
+        reason = "nothing in this graph sets it"
+    return [], [{"control": c, "status": status, "why": reason} for c in asked]

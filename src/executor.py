@@ -287,10 +287,11 @@ def _fit_to_briefing(workflow_path: str, qa_briefing) -> tuple:
 
         src_path = Path(workflow_path)
         graph = json.loads(src_path.read_text(encoding="utf-8"))
-        fixes, unfixable = plan_fixes(graph, technical)
-        for control in unfixable:
+        fixes, problems = plan_fixes(graph, technical)
+        for problem in problems:
+            control = problem["control"]
             lines.append(f"⚠️ Your briefing asks for {control.replace('_', ' ')} "
-                         f"{technical.get(control)!r}, and nothing in this graph sets it — "
+                         f"{technical.get(control)!r}: {problem['why']} — "
                          "it will be judged on what comes out.")
         if not fixes:
             return workflow_path, lines

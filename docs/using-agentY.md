@@ -1176,6 +1176,26 @@ check uses — 1920x1088 is 16:9 as far as QA is concerned, so it is not "fixed"
 1920x1080. And a parameter something else is wired into: that link is deciding it,
 and overwriting would drop it.
 
+**A menu of resolutions is still a menu of ratios.** Several API nodes never
+mention a ratio — GPT Image and DALL·E offer `size` as a list of resolutions — but
+the ratio is in the numbers, so asking for 16:9 works there anyway:
+
+| you ask | what happens |
+|---|---|
+| 16:9 on GPT Image 1 | `size` → `2048x1152`, which is exactly 16:9 (and not the 4K one — the cheapest that qualifies wins) |
+| 16:9 on DALL·E 3 | `size` → `1792x1024` (1.75, inside the tolerance) |
+| 16:9 **and** 1080p on DALL·E 3 | *unreachable* — its 16:9 option is only 1024 on the short side |
+| 16:9 on DALL·E 2 | *unreachable* — it offers squares only |
+
+`auto` and `Custom` sit on those menus and name no shape, so they are skipped
+rather than guessed at.
+
+**Two different "no", said differently.** *Unreachable* means something does set
+the shape and cannot reach what you asked — a model that only makes squares is not
+a missing parameter to go and find, and the message names the node and lists what
+it does offer. *Nothing in this graph sets it* means what it says. Sending you to
+look for a knob that was never there is the mistake worth avoiding.
+
 **After a failure**, the same thing happens first, ahead of the seed re-roll and
 the prompt rewrite — which is the point, because neither of those has ever changed
 an image's dimensions.
