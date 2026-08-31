@@ -2903,7 +2903,11 @@ class Pipeline:
             return None
         try:
             from src.utils.qa import check_set
-            res = await asyncio.to_thread(check_set, list(paths), self._qa_briefing)
+            # Plus anything the briefing's `judge` input named: a set criterion
+            # ("one grade across these") is exactly the kind a user wires a
+            # collector in to ask about.
+            res = await asyncio.to_thread(
+                check_set, self._qa_briefing.outputs_with(paths), self._qa_briefing)
         except Exception as exc:  # noqa: BLE001
             if self._verbose:
                 print(f"[qa] set check unavailable: {exc}")

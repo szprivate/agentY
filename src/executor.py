@@ -577,10 +577,20 @@ async def _process_completed_job(
         from src.utils.qa import check_output, qa_settings
 
         cfg = qa_settings()
-        checked = saved_paths[:cfg["max_outputs"]]
-        skipped = len(saved_paths) - len(checked)
+        # Files an `agentY qa` node named through its `judge` input — a collector,
+        # a loader, a path — are judged alongside what this run produced, not
+        # instead of it. `judge` says which outputs a briefing is ABOUT; reading
+        # it as "only these" would let one mis-wire quietly excuse everything else
+        # from being checked, and an unchecked output is the failure QA exists to
+        # prevent. Already-seen paths are dropped, so a collector holding this
+        # run's own output does not get judged twice and reported as two failures.
+        judgeable = qa_briefing.outputs_with(saved_paths)
+        checked = judgeable[:cfg["max_outputs"]]
+        skipped = len(judgeable) - len(checked)
+        named = len(judgeable) - len(saved_paths)
         yield (f"{pfx}🔍 QA — {qa_briefing.describe()}"
-               + (f" · checking {len(checked)} of {len(saved_paths)} outputs" if skipped else ""))
+               + (f" · +{named} named by `judge`" if named > 0 else "")
+               + (f" · checking {len(checked)} of {len(judgeable)} outputs" if skipped else ""))
         # One agent for the whole job: constructing it costs a model handshake, and
         # it is wiped between outputs anyway so each is still judged on its own.
         agent = None

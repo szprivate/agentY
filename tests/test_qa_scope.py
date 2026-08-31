@@ -29,6 +29,98 @@ from src.pipeline import Pipeline
 from src.utils.qa import QaBriefing, briefing_from_hooks, check_set, parse_retry
 
 
+class JudgeInputTest(unittest.TestCase):
+    """What an `agentY qa` node's `judge` input means.
+
+    The node merges what used to be two: a `qa` hook carrying prose and a separate
+    briefing node carrying the measured checks. The report that prompted it was
+    not about either half — it was "it's quite unclear what to wire into the qa
+    node", after wiring a save node's image tensor in and getting nothing.
+
+    That instinct was right and the old node read it backwards. A wired image was
+    a REFERENCE — something to compare against — while the thing being judged was
+    named by wiring the briefing's `out` INTO a hook, an arrow pointing from the
+    standard to the work. Now `judge` says what to assess and `reference` says
+    what to compare it against, and the panel resolves whatever is wired into
+    `judge` to the stage it belongs to.
+    """
+
+    def test_files_named_by_judge_are_judged(self):
+        b = briefing_from_hooks([{
+            "purpose": "qa", "directive": "warm grade",
+            "judged": [{"node_id": "9", "type": "AgentYImageCollector",
+                        "widgets": {"files": "/out/a.png\n/out/b.png"}}],
+        }])
+        self.assertEqual(b.judge_paths, ("/out/a.png", "/out/b.png"))
+
+    def test_judged_files_do_not_become_references(self):
+        """The whole point of two inputs. A file wired into `judge` is being
+        marked; the same file wired into `reference` is the marking scheme."""
+        b = briefing_from_hooks([{
+            "purpose": "qa", "directive": "warm grade",
+            "judged": [{"node_id": "9", "type": "AgentYImageCollector",
+                        "widgets": {"files": "/out/a.png"}}],
+        }])
+        self.assertEqual(b.reference_paths, ())
+        self.assertEqual(b.judge_paths, ("/out/a.png",))
+
+    def test_references_do_not_become_judged(self):
+        b = briefing_from_hooks([{
+            "purpose": "qa", "directive": "warm grade",
+            "anchors": [{"node_id": "3", "type": "AgentYImageCollector",
+                         "widgets": {"files": "/ref/mood.png"}}],
+        }])
+        self.assertEqual(b.reference_paths, ("/ref/mood.png",))
+        self.assertEqual(b.judge_paths, ())
+
+    def test_judged_files_are_added_to_the_run_outputs_never_substituted(self):
+        """`judge` says which outputs the briefing is ABOUT. Reading it as "only
+        these" would let one mis-wire quietly excuse every other output from being
+        checked — and an unchecked output is the failure QA exists to prevent."""
+        b = QaBriefing(criteria="x", judge_paths=("/named/extra.png",))
+        self.assertEqual(b.outputs_with(["/run/out1.png", "/run/out2.png"]),
+                         ["/run/out1.png", "/run/out2.png", "/named/extra.png"])
+
+    def test_a_file_arriving_both_ways_is_judged_once(self):
+        """A collector wired into `judge` that holds this very run's output. Judged
+        twice, one failure would be reported as two."""
+        b = QaBriefing(criteria="x", judge_paths=("/run/out1.png", "/named/extra.png"))
+        self.assertEqual(b.outputs_with(["/run/out1.png"]),
+                         ["/run/out1.png", "/named/extra.png"])
+
+    def test_no_judge_input_still_judges_the_run(self):
+        """Unwired is the common case and means "everything this run produced"."""
+        b = QaBriefing(criteria="x")
+        self.assertEqual(b.outputs_with(["/run/a.png"]), ["/run/a.png"])
+
+    def test_judge_paths_survive_a_merge(self):
+        a = QaBriefing(criteria="a", judge_paths=("/a.png",))
+        b = QaBriefing(criteria="b", judge_paths=("/b.png",))
+        self.assertEqual(a.merged_with(b).judge_paths, ("/a.png", "/b.png"))
+
+    def test_a_merge_does_not_duplicate_a_shared_file(self):
+        a = QaBriefing(criteria="a", judge_paths=("/same.png",))
+        b = QaBriefing(criteria="b", judge_paths=("/same.png", "/other.png"))
+        self.assertEqual(a.merged_with(b).judge_paths, ("/same.png", "/other.png"))
+
+    def test_scoping_still_travels_as_applies_to(self):
+        """Whatever is wired into `judge` — a hook, an image, a collector — the
+        panel resolves it to the stage it belongs to and sends that as
+        `applies_to`. The agent side is unchanged by the new node, which is why
+        per-stage scoping did not have to be rebuilt."""
+        from src.utils.qa import briefing_for_hook
+        hooks = [
+            {"purpose": "qa", "directive": "for stage 5", "applies_to": ["5"]},
+            {"purpose": "qa", "directive": "for everything"},
+        ]
+        five = briefing_for_hook(hooks, "5")
+        self.assertIn("for stage 5", five.criteria)
+        self.assertIn("for everything", five.criteria)
+        seven = briefing_for_hook(hooks, "7")
+        self.assertNotIn("for stage 5", seven.criteria)
+        self.assertIn("for everything", seven.criteria)
+
+
 class RetryScopeTest(unittest.TestCase):
     """What a failing verdict should cause, in the user's own words."""
 

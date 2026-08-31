@@ -2970,9 +2970,11 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
 
     if qa_hooks:
         lines.append(
-            "\nQA hook(s) — these are NOT work for you. Each carries the user's QUALITY "
-            "BRIEFING for this graph: its directive is the checklist and its wired "
-            "anchors are reference/mood images. A separate QA agent applies it to every "
+            "\nQA node(s) — these are NOT work for you. Each carries the user's QUALITY "
+            "BRIEFING for this graph: its notes are the checklist, its `reference` "
+            "images are what outputs are compared against, and its `judge` input says "
+            "which stage it applies to (unwired = all of them). A separate QA agent "
+            "applies it to every "
             "image/video the run produces, AFTER generation — you do not have to check "
             "anything yourself, and you must NOT treat the anchors as inputs to a "
             "workflow, place_canvas_text them, or apply_canvas_hooks them. Note the "

@@ -113,9 +113,30 @@ class QaBriefing:
     # :mod:`src.utils.qa_checks`. They are settled by measuring the file, so they
     # never reach the model as something to judge.
     technical: dict = field(default_factory=dict)
+    # Files named directly by an `agentY qa` node's `judge` input — a collector's
+    # list, a loader's image, a path. Judged IN ADDITION to what the run produced,
+    # never instead of it: `judge` says which outputs a briefing is about, and
+    # reading it as "only these" would let a mis-wire quietly excuse everything
+    # else from being checked.
+    judge_paths: tuple[str, ...] = ()
 
     def __bool__(self) -> bool:
         return bool(self.criteria.strip() or self.reference_paths or self.technical)
+
+    def outputs_with(self, produced) -> list[str]:
+        """What this briefing judges: the run's outputs plus any file it names.
+
+        Order and de-duplication matter — the same file can arrive both ways (a
+        collector wired into `judge` that holds this very run's output), and
+        judging it twice would report one failure as two.
+        """
+        seen, out = set(), []
+        for path in list(produced or []) + list(self.judge_paths):
+            key = str(path)
+            if key and key not in seen:
+                seen.add(key)
+                out.append(key)
+        return out
 
     def merged_with(self, other: "QaBriefing | None") -> "QaBriefing":
         """This briefing with *other* folded in (other's criteria appended)."""
@@ -124,6 +145,8 @@ class QaBriefing:
         criteria = "\n".join(t for t in (self.criteria.strip(), other.criteria.strip()) if t)
         refs = list(self.reference_paths)
         refs += [p for p in other.reference_paths if p not in set(refs)]
+        judged = list(self.judge_paths)
+        judged += [p for p in other.judge_paths if p not in set(judged)]
         # Later technical settings lose to earlier ones, matching `retry_budget`
         # above: the briefing nearest the work wins.
         technical = dict(other.technical or {})
@@ -133,7 +156,7 @@ class QaBriefing:
                           retry_budget=(self.retry_budget if self.retry_budget is not None
                                         else other.retry_budget),
                           retry_hook=self.retry_hook or other.retry_hook,
-                          technical=technical)
+                          technical=technical, judge_paths=tuple(judged))
 
     def describe(self) -> str:
         """One line for the chat panel: what is being enforced and from where."""
@@ -230,6 +253,7 @@ def briefing_from_hooks(hooks: list, resolver=None) -> QaBriefing | None:
 
     criteria: list[str] = []
     refs: list[str] = []
+    judged: list[str] = []
     technical: dict = {}
     retries: int | None = None
     found = False
@@ -254,6 +278,16 @@ def briefing_from_hooks(hooks: list, resolver=None) -> QaBriefing | None:
                 for path in anchor_media_paths(anchor, resolver):
                     if path not in refs:
                         refs.append(path)
+        # `judged` are the nodes wired into an `agentY qa` node's `judge` input
+        # that name files rather than a stage — a collector, a loader, a path.
+        # Resolved through the same code as a reference, because the question
+        # ("which files does this node mean?") is identical; what differs is which
+        # side of the comparison they land on.
+        for target in (hook.get("judged") or []):
+            if isinstance(target, dict):
+                for path in anchor_media_paths(target, resolver):
+                    if path not in judged:
+                        judged.append(path)
     if not found:
         return None
     body = "\n".join(criteria)
@@ -271,7 +305,7 @@ def briefing_from_hooks(hooks: list, resolver=None) -> QaBriefing | None:
     return QaBriefing(criteria=body, reference_paths=tuple(refs),
                       sources=("canvas qa hook",),
                       retry_budget=budget, retry_hook=retry_hook,
-                      technical=technical)
+                      technical=technical, judge_paths=tuple(judged))
 
 
 # ── surface 2: named briefing files ─────────────────────────────────────────────

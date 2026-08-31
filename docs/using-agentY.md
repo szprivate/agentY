@@ -42,7 +42,7 @@ node, ready to wire into your next step.*
   - [Naming what a hook produces](#naming-what-a-hook-produces)
 - [Slack: a second way in](#slack-a-second-way-in)
 - [Checking outputs (QA)](#checking-outputs-qa)
-  - [Ticking the boxes instead of writing them](#ticking-the-boxes-the-agenty-qa-briefing-node)
+  - [Ticking the boxes instead of writing them](#the-agenty-qa-node)
   - [Does it match the reference?](#does-it-match-the-reference)
   - [Which of these is best?](#which-of-these-is-best)
   - [One briefing per stage](#one-briefing-per-stage)
@@ -635,15 +635,7 @@ three different style directions as renders"*.
 **5. `iterate`** — turn the graph into an **interactive refinement loop**. See
 [Iterative refinement](#iterative-refinement-the-iterate-purpose) below.
 
-**6. `qa`** — not a job, a **standard**. The directive is your checklist and the
-wired anchors are reference images; every output the graph produces is judged
-against them. For the half that is countable — ratio, resolution, sharpness,
-grain, whether it is the same face as the reference — there is a node with
-dropdowns instead: see
-[the qa briefing node](#ticking-the-boxes-the-agenty-qa-briefing-node) and
-[Checking outputs](#checking-outputs-qa).
-
-**7. `review`** — a deliberate **stop**, so you can choose what goes on to the
+**6. `review`** — a deliberate **stop**, so you can choose what goes on to the
 next stage. See [Review](#review-stop-and-pick-what-continues) below.
 
 ### Chaining hooks into pipelines
@@ -784,10 +776,10 @@ canvas is the record and it will still be waiting next week.
 Two review hooks in one chain means two stops; a review hook on one chain doesn't
 stop an unrelated chain on the same canvas.
 
-> **`review` vs `qa`.** Same shape, same place in a chain, opposite judge: `qa`
-> asks a model against your written criteria and carries on by itself; `review`
-> stops and asks *you*. Use `qa` for standards you can write down, `review` for
-> the ones you can only recognise on sight.
+> **`review` vs the [`agentY qa` node](#the-agenty-qa-node).** Same shape, same
+> place in a chain, opposite judge: QA asks a model against your written criteria
+> and carries on by itself; `review` stops and asks *you*. Use QA for standards
+> you can write down, `review` for the ones you can only recognise on sight.
 
 ### Baking a chain into subgraphs
 
@@ -818,8 +810,8 @@ and the `agentY text` node is dropped *unconnected* as a readable reference. The
 hook chain is your graph's statement of what happens; a switch about keeping a
 *result* has no business rewriting it.
 
-It is hidden on `qa` and `iterate`, which produce nothing to keep — presentation
-only, so flipping `purpose` back brings the value back untouched.
+It is hidden on `review` and `iterate`, which produce nothing to keep —
+presentation only, so flipping `purpose` back brings the value back untouched.
 
 ### Memorize: produce once, reuse until something changes
 
@@ -1015,15 +1007,34 @@ The same goes for how the picture *looks*:
 - **exposure** — mean, contrast, and how much of the frame is pinned at pure white
   or black. Clipped detail is gone and cannot be graded back.
 
-### Ticking the boxes: the `agentY qa briefing` node
+### The `agentY qa` node
 
-None of that needs *writing*. Drop an **`agentY qa briefing`** node and the
-technical half is dropdowns:
+Everything QA is one node. Drop an **`agentY qa (quality assessment)`** node: the
+technical half is dropdowns, `notes` carries what needs judgement, and two inputs
+say what it applies to.
 
-![The agentY qa briefing node, with a reference wired in](images/qa-briefing-node.png)
+![The agentY qa node, with a reference wired in](images/qa-briefing-node.png)
 
-*`notes` for what needs judgement, controls for what doesn't, and the reference
-images the `likeness` check compares against wired into `reference`.*
+*`notes` for what needs judgement, controls for what doesn't.*
+
+**The two inputs are the whole node**, and getting them the wrong way round is
+the mistake the layout exists to prevent:
+
+| input | means | wire in |
+|---|---|---|
+| **`judge`** | what to **assess** | a hook's `out` (that stage), an IMAGE (that branch), a collector (its files), a path (that file) |
+| **`reference`** | what to **compare against** | mood boards, grade stills, character sheets |
+
+The same picture is a thing being marked in one and the marking scheme in the
+other. Leave `judge` unwired and it judges **everything the run produces**, which
+is right for a one-stage graph — an unwired QA node is a complete one.
+
+> This used to be two nodes: a `qa` hook holding the prose and a separate
+> `agentY qa briefing` holding the controls, with scoping wired *backwards* —
+> the briefing's `out` went into a hook, so the arrow pointed from the standard
+> to the work. Both are now this one node, and the stage flows into `judge` like
+> everything else on a canvas flows toward what consumes it. `qa` is no longer
+> offered as a hook purpose; a saved graph still set to it keeps working.
 
 | control | what it does |
 |---|---|
@@ -1036,10 +1047,10 @@ images the `likeness` check compares against wired into `reference`.*
 | `likeness` | see [below](#does-it-match-the-reference) |
 | `retries` | this briefing's own retry budget |
 
-`notes` carries what needs judgement and reads exactly like a `qa` hook's
-directive; reference images wire into `reference`; `out` says which stage this
-briefing is for ([below](#one-briefing-per-stage)). Anything left on `any` is
-**not checked**, and an empty node enforces nothing. What is set is decided
+`notes` carries what needs judgement, in your own words; reference images wire
+into `reference`; `judge` says which outputs this is about
+([below](#one-briefing-per-stage)). Anything left on `any` is **not checked**,
+and an empty node enforces nothing. What is set is decided
 *before* the model is asked anything, and the model is shown the answers and told
 not to re-judge them — so a measurement cannot be argued with, and costs no round
 trip.
@@ -1111,44 +1122,55 @@ a one-stage graph and wrong for a chain: reference frames and the video they fee
 have genuinely different standards, and merging both is how a still gets failed
 for not moving.
 
-So wire the briefing node's **`out` into a hook's anchor** and it judges only what
-*that* hook produces:
+So wire the stage **into the QA node's `judge`** and it judges only what that
+stage produces:
 
 ```
-[qa briefing: 16:9, sharp] ─▶ make_workflow  ─▶  review  ─▶  make_workflow  ◀─ [qa briefing: no black frames]
-                              "one reference               "animate the
-                               per character"               chosen refs"
+   make_workflow  ─▶  review  ─▶  make_workflow
+   "one reference               "animate the
+    per character"               chosen refs"
+        │                             │
+        ▼                             ▼
+  [agentY qa:                   [agentY qa:
+   16:9, sharp]                  no black frames]
 ```
 
-- one briefing can name **several** hooks;
-- an **unwired** briefing still applies to all of them, so put the house rules in
-  one and the stage-specific ones in others;
-- where they disagree, the one naming the hook wins — the statement about this
+You do not have to wire the hook itself. Anything in the stage will do — the
+IMAGE off its sampler, its save node, a collector holding its output — because
+the panel resolves whatever you wire to the **nearest hook**, which is the stage
+that produced it. That is what makes the instinctive wiring work: an image tensor
+straight from a save node means "judge what this branch renders".
+
+- one QA node can name **several** stages;
+- an **unwired** one still applies to all of them, so put the house rules in one
+  and the stage-specific ones in others;
+- where they disagree, the one naming the stage wins — the statement about this
   stage beats the statement about the graph;
-- a stage **no** briefing names is judged by nothing, rather than by the other
-  stage's rules. That is the whole point.
+- a stage **no** QA node names is judged by nothing, rather than by the other
+  stage's rules. That is the whole point;
+- a graph with no hooks at all has one stage, so everything is judged and there is
+  nothing to scope.
 
-Nothing travels down that wire: it is a scope marker, so the agent is not told a
-briefing is one of the hook's inputs, and a plain **Queue Prompt** is unaffected.
+Wiring a **collector, a `LoadImage` or a path** into `judge` does one more thing:
+those files are judged *as well as* the run's outputs, which is how you assess
+something already on disk. They are added, never substituted — `judge` says which
+outputs a briefing is about, and reading it as "only these" would let one mis-wire
+quietly excuse every other output from being checked.
+
+A plain **Queue Prompt** is unaffected: the node is inert, and forwards whatever
+is wired into `judge` so splicing it inline cannot break the graph.
 
 Scoping only ever *narrows*. It applies where the stage is known, which is a hook
 run inline; a `/qa` briefing, a named file, and the end-of-turn queued path are
 unscoped and still check everything.
 
-### Writing a briefing — four ways
+### Writing a briefing — three ways
 
-All four combine rather than compete, and the first two are the same thing to
-everything downstream: the briefing node reaches agentY as a `qa` hook, because
-that is what it is.
+All three combine rather than compete.
 
-**1. The [`agentY qa briefing` node](#ticking-the-boxes-the-agenty-qa-briefing-node)**
-— the easiest start. Controls for the countable half, `notes` for the rest,
-reference images into `reference`.
-
-**2. A `qa` hook on the canvas** — the same thing written out, and the right one
-when your criteria are all prose. Drop an `agentY hook`, set
-`purpose: qa`, type the checklist in `directive`, and wire your reference images
-into its **anchors**.
+**1. The [`agentY qa` node](#the-agenty-qa-node)** — the usual one. Controls for
+the countable half, `notes` for the rest, `judge` for what it applies to and
+`reference` for what to compare against.
 
 Wiring is the point. A turn can carry inputs, outputs and references at the same
 time, and no amount of careful phrasing reliably keeps them apart — but an image
@@ -1158,15 +1180,15 @@ to the workflow. Anything that resolves to a file works as an anchor: a
 whole folder, even a mid-graph node (it gets rendered to a file first, exactly as
 in [What the agent can see](#what-the-agent-can-see-on-an-anchor)).
 
-Several QA hooks on one graph **combine** rather than compete — two notes pinned
+Several QA nodes on one graph **combine** rather than compete — two notes pinned
 to one canvas both apply. And the briefing is saved with the workflow, so it is
 still there when you reopen it next month.
 
-**3. A named file** — `config/qa/<name>.md`, with mood images in an optional
+**2. A named file** — `config/qa/<name>.md`, with mood images in an optional
 sibling `<name>.refs/` folder. Reusable across graphs and threads, and it lives
 in version control. See `config/qa/README.md`.
 
-**4. `/qa` in the chat panel** — for turns with no canvas graph:
+**3. `/qa` in the chat panel** — for turns with no canvas graph:
 
 ```
 /qa                                      show what's active
@@ -1175,8 +1197,8 @@ in version control. See `config/qa/README.md`.
 /qa off                                  clear it
 ```
 
-They compose, and they have a precedence. A `qa` hook **wins** over the thread's
-`/qa` briefing — it's the more specific, more visible statement. Either can cite
+They compose, and they have a precedence. A canvas QA node **wins** over the
+thread's `/qa` briefing — it's the more specific, more visible statement. Either can cite
 a named file with `@name` and add to it:
 
 > `@house-style plus the logo must stay legible`
