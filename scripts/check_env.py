@@ -113,6 +113,78 @@ def hidden_pth_files(directories: list[str] | None = None,
     return found
 
 
+def duplicate_openmp(directories: list[str] | None = None,
+                     platform: str = sys.platform) -> list[str]:
+    """Real (non-symlink) copies of libomp.dylib shipped inside the venv.
+
+    Two or more means the process can abort with OMP Error #15 the moment the
+    second one runs OpenMP work. macOS only: it is the one platform where both
+    torch and faiss-cpu bundle the same LLVM runtime. On Windows they ship
+    different implementations (torch libiomp5md.dll, faiss vcomp140.dll), which
+    do not trip each other's duplicate check.
+    """
+    if platform != "darwin":
+        return []
+
+    def dylibs_in(folder: str) -> list[str]:
+        try:
+            with os.scandir(folder) as it:
+                return [e.path for e in it
+                        if e.name.startswith("libomp") and e.name.endswith(".dylib")]
+        except OSError:
+            return []
+
+    found: list[str] = []
+    for directory in (site_dirs() if directories is None else directories):
+        if not directory:
+            continue
+        # Two levels deep, which is where wheels put a bundled runtime:
+        # torch/lib/libomp.dylib and faiss/.dylibs/libomp.dylib. Bounded rather
+        # than a full walk because this runs on every start, and site-packages is
+        # tens of thousands of files.
+        #
+        # os.scandir rather than glob: glob's ** skips dot-directories, so it
+        # silently could not see faiss's .dylibs - the very copy that collides.
+        try:
+            with os.scandir(directory) as packages:
+                subdirs = [pkg.path for pkg in packages if pkg.is_dir()]
+        except OSError:
+            continue
+        for pkg in subdirs:
+            found.extend(dylibs_in(pkg))
+            try:
+                with os.scandir(pkg) as inner:
+                    for sub in inner:
+                        if sub.is_dir():
+                            found.extend(dylibs_in(sub.path))
+            except OSError:
+                continue
+    # A symlink is the fix, not the fault: it is how two become one.
+    return sorted(p for p in found if not os.path.islink(p))
+
+
+def duplicate_openmp_advice(paths: list[str]) -> str:
+    """What to say about more than one OpenMP runtime, or "" when at most one.
+
+    Worth reporting before anything breaks, because of how it breaks: the abort
+    comes from whichever library reaches OpenMP *first at runtime*, not from
+    import order, so it arrives as an intermittent crash with no obvious trigger
+    and a message that names no package.
+    """
+    if len(paths) < 2:
+        return ""
+    names = "\n".join(f"             {p}" for p in paths)
+    return ("[check_env] More than one OpenMP runtime is installed in this venv:\n"
+            f"{names}\n"
+            "            The second one to run OpenMP work aborts the process\n"
+            "            (\"OMP: Error #15 ... Abort trap: 6\"). Leave one by pointing\n"
+            "            faiss's copy at torch's:\n"
+            "                ./install_agent.sh      (does this for you)\n"
+            "            KMP_DUPLICATE_LIB_OK=TRUE also silences it, but its own\n"
+            "            error text calls that unsafe - two runtimes, two thread\n"
+            "            pools, and possibly wrong results rather than a crash.")
+
+
 def hidden_pth_advice(paths: list[str]) -> str:
     """What to say about hidden .pth files, or "" when there are none.
 
@@ -204,6 +276,9 @@ def main(argv: list[str]) -> int:
     # installed it and macOS hid the .pth that publishes it. Those need opposite
     # remedies, and only one of them is guessable from a MISSING line.
     shadowed = hidden_pth_advice(hidden_pth_files())
+    # Not a missing package, so it never shows up as one - and it takes the whole
+    # host down rather than degrading a feature.
+    doubled = duplicate_openmp_advice(duplicate_openmp())
 
     if quiet:
         if not missing_req:
@@ -212,6 +287,8 @@ def main(argv: list[str]) -> int:
             # files, one install away from taking the run down.
             if shadowed:
                 print(shadowed)
+            if doubled:
+                print(doubled)
             return 0
         print("[check_env] Missing dependencies this install needs:")
         for module, dist, what in missing_req:
@@ -235,6 +312,8 @@ def main(argv: list[str]) -> int:
     print()
     if shadowed:
         print(shadowed + "\n")
+    if doubled:
+        print(doubled + "\n")
     if missing_req:
         if shadowed:
             print(f"{len(missing_req)} required package(s) missing. Clear the flag above "

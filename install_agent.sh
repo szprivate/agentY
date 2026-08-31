@@ -176,6 +176,53 @@ ensure_repo() {   # $1 = name  $2 = url  $3 = dir  $4 = "required"|""
 
 venv_python() { printf '%s/.venv/bin/python' "$1"; }
 
+# macOS: leave exactly one OpenMP runtime in the venv. A no-op anywhere else.
+#
+# torch and faiss-cpu each ship their own libomp.dylib in their macOS wheels, and
+# both get mapped into the agent host, which imports torch for SAM3 grounding and
+# faiss for the memory index. The SECOND one to actually run OpenMP work - not to
+# be imported, to run work - aborts the process:
+#
+#   OMP: Error #15: Initializing libomp.dylib, but found libomp.dylib already
+#   initialized ... Abort trap: 6
+#
+# It fires in either import order, because it is about which library reaches
+# OpenMP first at runtime, so it reads as a random crash rather than a broken
+# install.
+#
+# The documented workaround, KMP_DUPLICATE_LIB_OK=TRUE, is documented as unsafe:
+# it lets two runtimes coexist, each with its own thread pool, and its own error
+# text warns it "may cause crashes or silently produce incorrect results". Wrong
+# vector-search results that nobody notices is a bad trade for a fixed crash.
+#
+# So there is one runtime instead: faiss's copy becomes a symlink to torch's.
+# Both are LLVM libomp at the same ABI (3.20), and torch's is the newer build.
+# Verified with both libraries doing heavy threaded work in one process - one
+# runtime mapped, no abort, and faiss's nearest-neighbour answers still exact.
+#
+# The original is kept alongside as libomp.dylib.orig, so this is reversible, and
+# it is re-applied after every install because reinstalling faiss restores its own.
+# Only when BOTH are present: torch is optional here, and a venv without it has
+# nothing to collide with.
+dedupe_openmp() {   # $1 = venv dir
+  local sp faiss_omp torch_omp
+  [ "$IS_MAC" = "1" ] || return 0
+  for sp in "$1"/lib/python*/site-packages; do
+    [ -d "$sp" ] || continue
+    faiss_omp="$sp/faiss/.dylibs/libomp.dylib"
+    torch_omp="$sp/torch/lib/libomp.dylib"
+    [ -e "$torch_omp" ] || continue
+    [ -e "$faiss_omp" ] || continue
+    [ -L "$faiss_omp" ] && continue          # already pointed at torch's
+    cp -p "$faiss_omp" "$faiss_omp.orig" 2>/dev/null
+    if ln -sf ../../torch/lib/libomp.dylib "$faiss_omp" 2>/dev/null; then
+      info "Linked faiss's libomp to torch's (one OpenMP runtime, avoids OMP Error #15)"
+    fi
+  done
+  return 0
+}
+
+
 # Clear the macOS "hidden" flag from a venv's .pth files. A no-op anywhere else:
 # chflags is BSD, and no other platform has the flag to begin with.
 #
@@ -246,6 +293,7 @@ setup_venv() {   # $1 = name  $2 = dir  $3 = "with-torch"|""
   ( cd "$dir" && uv pip install --python "$py" -r requirements.txt ) \
     || die "uv pip install ($name) failed."
   unhide_pth "$venv"
+  dedupe_openmp "$venv"
   [ "$with_torch" = "with-torch" ] && report_torch "$dir"
   success "$name environment ready"
 }

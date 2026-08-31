@@ -285,6 +285,115 @@ class AgentServerPort(unittest.TestCase):
         self.assertEqual(port, self._settings().default_agent_port())
 
 
+class DuplicateOpenMP(unittest.TestCase):
+    """Two OpenMP runtimes in one process, which is an abort rather than a bug.
+
+    torch and faiss-cpu each bundle libomp.dylib in their macOS wheels. The agent
+    host imports both — torch for SAM3 grounding, faiss for the memory index —
+    and the SECOND one to run OpenMP work kills the process outright:
+
+        OMP: Error #15: Initializing libomp.dylib, but found libomp.dylib
+        already initialized ... Abort trap: 6
+
+    It depends on which library reaches OpenMP first at RUNTIME, not on import
+    order, so it reads as an intermittent crash rather than a broken install.
+
+    Windows is not affected and both answers are pinned below, because the
+    tempting fix — set KMP_DUPLICATE_LIB_OK everywhere — would paper over a
+    problem that platform does not have while making this one silently unsafe.
+    """
+
+    @staticmethod
+    def _check_env():
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import check_env
+        return check_env
+
+    def _venv(self, faiss_real=True, torch_real=True, faiss_symlink=False):
+        """A fake site-packages laid out the way the real wheels lay themselves out."""
+        import tempfile
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, d, True)
+        torch_lib = d / "torch" / "lib"
+        faiss_lib = d / "faiss" / ".dylibs"     # note the dot — glob's ** skips these
+        torch_lib.mkdir(parents=True)
+        faiss_lib.mkdir(parents=True)
+        if torch_real:
+            (torch_lib / "libomp.dylib").write_bytes(b"torch omp")
+        if faiss_symlink:
+            (faiss_lib / "libomp.dylib").symlink_to(torch_lib / "libomp.dylib")
+        elif faiss_real:
+            (faiss_lib / "libomp.dylib").write_bytes(b"faiss omp")
+        return str(d)
+
+    def test_two_real_copies_are_reported(self):
+        found = self._check_env().duplicate_openmp([self._venv()], "darwin")
+        self.assertEqual(len(found), 2, found)
+
+    def test_a_dot_directory_is_still_searched(self):
+        """faiss bundles into `.dylibs`. The first version of this check used
+        glob's `**`, which skips dot-directories, so it could not see the one copy
+        that actually collides and reported a clean venv."""
+        found = self._check_env().duplicate_openmp([self._venv()], "darwin")
+        self.assertTrue(any("/.dylibs/" in f for f in found), found)
+
+    def test_the_symlinked_fix_is_not_reported_as_a_fault(self):
+        found = self._check_env().duplicate_openmp(
+            [self._venv(faiss_real=False, faiss_symlink=True)], "darwin")
+        self.assertEqual(len(found), 1, found)
+
+    def test_torch_alone_is_fine(self):
+        found = self._check_env().duplicate_openmp([self._venv(faiss_real=False)], "darwin")
+        self.assertEqual(len(found), 1, found)
+
+    def test_windows_reports_nothing_because_it_cannot_happen(self):
+        """torch ships libiomp5md.dll (Intel) and faiss-cpu ships vcomp140.dll
+        (Microsoft) — different implementations, so neither trips the other's
+        duplicate check. Verified against the win_amd64 wheels."""
+        self.assertEqual(self._check_env().duplicate_openmp([self._venv()], "win32"), [])
+
+    def test_one_runtime_says_nothing(self):
+        self.assertEqual(self._check_env().duplicate_openmp_advice(["/a/libomp.dylib"]), "")
+        self.assertEqual(self._check_env().duplicate_openmp_advice([]), "")
+
+    def test_the_advice_names_the_abort_and_the_fix(self):
+        text = self._check_env().duplicate_openmp_advice(
+            ["/a/faiss/.dylibs/libomp.dylib", "/a/torch/lib/libomp.dylib"])
+        self.assertIn("Error #15", text)
+        self.assertIn("install_agent.sh", text)
+
+    def test_the_advice_does_not_recommend_the_unsafe_workaround(self):
+        """KMP_DUPLICATE_LIB_OK is mentioned only to say what it costs. Its own
+        error text warns it may "silently produce incorrect results" — and wrong
+        vector-search answers nobody notices is worse than a crash somebody does."""
+        text = self._check_env().duplicate_openmp_advice(
+            ["/a/faiss/.dylibs/libomp.dylib", "/a/torch/lib/libomp.dylib"])
+        self.assertIn("unsafe", text)
+
+    def test_both_launchers_leave_one_runtime(self):
+        install = (ROOT / "install_agent.sh").read_text(encoding="utf-8")
+        run = (ROOT / "run_agent.sh").read_text(encoding="utf-8")
+        self.assertIn("dedupe_openmp()", install)
+        self.assertIn('dedupe_openmp "$venv"', install)
+        self.assertIn("torch/lib/libomp.dylib", run)
+        for name, text in (("install_agent.sh", install), ("run_agent.sh", run)):
+            with self.subTest(script=name):
+                # Keeps the original alongside, so the change is reversible.
+                self.assertIn(".orig", text)
+
+    def test_no_launcher_sets_the_unsafe_env_var(self):
+        """Comments stripped first, exactly as test_no_bash_4_only_syntax does:
+        these scripts NAME the workaround they refuse, in the comment explaining
+        why. Scanning the prose flags the documentation that keeps the rule alive.
+        """
+        for name in ("install_agent.sh", "run_agent.sh", "run_agent.ps1", "install_agent.ps1"):
+            with self.subTest(script=name):
+                raw = (ROOT / name).read_text(encoding="utf-8", errors="replace")
+                code = "\n".join(ln for ln in raw.splitlines()
+                                 if not ln.lstrip().startswith(("#", "//")))
+                self.assertNotIn("KMP_DUPLICATE_LIB_OK", code)
+
+
 class TheSidebarIsToldThePort(unittest.TestCase):
     """The panel is a browser tab. It cannot read a settings file, a --port flag or
     an environment variable, so it has to be told which port to call — and what it

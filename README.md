@@ -250,6 +250,35 @@ in the panel's own settings dialog) — a value you chose wins on every platform
 If you would rather have 5000 back on a Mac, turn off **System Settings → General
 → AirDrop & Handoff → AirPlay Receiver** and set the port explicitly.
 
+### OpenMP on macOS
+
+If the agent host dies with `Abort trap: 6` and this above it:
+
+```
+OMP: Error #15: Initializing libomp.dylib, but found libomp.dylib already initialized.
+```
+
+then two OpenMP runtimes are loaded. torch and faiss-cpu each bundle their own
+`libomp.dylib` in their macOS wheels, and the host imports both — torch for SAM3
+grounding, faiss for the memory index. The second one to *run OpenMP work* aborts
+the process. It depends on which library reaches OpenMP first at runtime rather
+than on import order, so it presents as an intermittent crash.
+
+`./install_agent.sh` and `./run_agent.sh` fix this by leaving one runtime:
+faiss's copy becomes a symlink to torch's (both are LLVM libomp at the same ABI;
+the original is kept as `libomp.dylib.orig`). Reinstalling faiss restores its own
+copy, which is why both scripts re-apply it. `scripts/check_env.py` reports the
+condition if it ever comes back.
+
+`KMP_DUPLICATE_LIB_OK=TRUE` also silences it and is deliberately **not** used
+here — its own error text warns it "may cause crashes or silently produce
+incorrect results", and wrong vector-search answers nobody notices are worse than
+a crash somebody does.
+
+**Windows is not affected.** There the two ship different implementations —
+torch `libiomp5md.dll` (Intel), faiss-cpu `vcomp140.dll` (Microsoft) — and
+neither trips the other's duplicate check.
+
 ### 5. Configure defaults (optional)
 
 `config/settings.default.toml` holds the committed defaults; put your machine's values (ComfyUI URL/paths, model choices, private endpoints) in `config/settings.local.json` (gitignored, deep-merged over the defaults).

@@ -306,6 +306,26 @@ if command -v chflags >/dev/null 2>&1; then
   done
 fi
 
+# One OpenMP runtime, not two. torch and faiss-cpu each ship a libomp.dylib in
+# their macOS wheels; both end up mapped into this process, and the second one to
+# run OpenMP work aborts it outright ("OMP: Error #15 ... Abort trap: 6"). It
+# depends on which library reaches OpenMP first at runtime rather than on import
+# order, so it presents as an intermittent crash. Pointing faiss's copy at torch's
+# leaves a single runtime; see dedupe_openmp() in install_agent.sh for why this is
+# preferred over KMP_DUPLICATE_LIB_OK, which its own error text calls unsafe.
+# Repeated here because reinstalling faiss restores its own copy.
+if [ "$(uname -s)" = "Darwin" ]; then
+  for _sp in "$PROJECT_ROOT"/.venv/lib/python*/site-packages; do
+    _faiss_omp="$_sp/faiss/.dylibs/libomp.dylib"
+    _torch_omp="$_sp/torch/lib/libomp.dylib"
+    if [ -e "$_torch_omp" ] && [ -e "$_faiss_omp" ] && [ ! -L "$_faiss_omp" ]; then
+      cp -p "$_faiss_omp" "$_faiss_omp.orig" 2>/dev/null
+      ln -sf ../../torch/lib/libomp.dylib "$_faiss_omp" 2>/dev/null \
+        && say "[run_agent] Linked faiss's libomp to torch's (one OpenMP runtime)." "$C_CYAN"
+    fi
+  done
+fi
+
 # shellcheck disable=SC1091
 . "$PROJECT_ROOT/.venv/bin/activate"
 

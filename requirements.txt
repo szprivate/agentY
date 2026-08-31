@@ -43,6 +43,13 @@ slack-sdk>=3.27.0
 
 # Local FAISS memory layer (mem0 + nomic-embed-text via Ollama)
 mem0ai>=1.0.0
+# On macOS this and torch each bundle their own libomp.dylib, and the second one
+# to run OpenMP work aborts the process ("OMP: Error #15 ... Abort trap: 6") —
+# whichever that turns out to be at runtime, so it looks like a random crash.
+# install_agent.sh / run_agent.sh leave a single runtime by pointing faiss's copy
+# at torch's; check_env.py reports it if that ever stops happening. Windows is
+# unaffected: there faiss ships vcomp140.dll (Microsoft) and torch libiomp5md.dll
+# (Intel), which do not trip each other's duplicate check.
 faiss-cpu>=1.7.0
 # spaCy — optional NLP for mem0 (lemmatized BM25 keyword search + entity
 # extraction). The memory layer works without it, just in a degraded mode.
