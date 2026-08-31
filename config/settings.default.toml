@@ -9,7 +9,19 @@
 
 comfyui_url = "http://127.0.0.1:8188"
 # Address the ComfyUI sidebar connects to (the agentY chat host / agent server).
+#
+# Two numbers because macOS does not leave 5000 free: ControlCenter's AirPlay
+# Receiver listens on *:5000 there on a stock machine, and it ANSWERS (a 403 from
+# AirTunes, not a refused connection), so a sidebar pointed at 5000 on a Mac
+# reports the host as down while the host runs perfectly well beside it. macOS
+# therefore defaults to 5001; Windows keeps 5000, where nothing claims it.
+#
+# Overriding `agent_server_url` in settings.local.json wins on BOTH platforms - a
+# port you chose by hand or in the settings UI is never second-guessed. The
+# running host also tells the sidebar which port it actually bound, so `--port`
+# and AGENTY_UI_PORT are followed too, without either file being edited.
 agent_server_url = "http://127.0.0.1:5000"
+agent_server_url_macos = "http://127.0.0.1:5001"
 # Ollama server. One address for everything that talks to Ollama — agents on a local
 # model, the memory embedder, and the small llm_functions helper — so it sits here
 # with the other server URLs rather than inside the Ollama tuning block. The older

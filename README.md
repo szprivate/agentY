@@ -62,7 +62,7 @@ ComfyUI  (your browser)
   ├─ agentY sidebar tab   ┐
   └─ agentY hook / python │── agentY-comfyuiConnect  (in <ComfyUI>/custom_nodes/)
      nodes on the canvas  ┘
-        │  HTTP + SSE (default http://127.0.0.1:5000)
+        │  HTTP + SSE (default :5000, or :5001 on macOS — see Ports)
         ▼
   agentY chat host  ── src/agenty_ui_server.py  →  src/utils/agentY_server.py
         │  Orchestrator agent (+ specialist delegates, Executor stage)
@@ -194,7 +194,7 @@ COMFYUI_API_KEY=comfyui-...     # only if your ComfyUI requires auth / uses API 
 
 # Optional
 # AGENTY_UI_HOST=127.0.0.1
-# AGENTY_UI_PORT=5000
+# AGENTY_UI_PORT=5000        # 5001 on macOS; unset = whatever config/ says
 # AGENTY_CONVERSATION_DB=./memory/conversations.sqlite
 # AGENTY_PYTHON_NODE_DISABLED=1   # make the agentY python node a no-op (see Canvas nodes)
 ```
@@ -229,6 +229,26 @@ changes trigger a reinstall before the app starts.
 
 Opt out with `auto_update = false` in settings, `-NoUpdate` / `--no-update`, or
 `AGENTY_NO_UPDATE=1`. Set `comfyui_dir` if your ComfyUI isn't next to agentY.
+
+### Ports
+
+The chat host serves on **5000**, and on **5001 on macOS**. The split is not a
+preference: on a stock Mac, ControlCenter's AirPlay Receiver already listens on
+`*:5000` (and `*:7000`), and it *answers* — a `403` from `Server: AirTunes/...`
+rather than a refused connection — so a sidebar pointed at 5000 there reports the
+host as down while the host is running perfectly well beside it.
+
+You do not have to keep the two ends in step. The host registers the port it
+actually bound with the ComfyUI extension on every start, and the sidebar asks for
+it, so `--port`, `AGENTY_UI_PORT` and `agent_server_url` all reach the panel
+without anything being configured twice.
+
+To pin a port yourself, set `agent_server_url` in `config/settings.local.json` (or
+in the panel's own settings dialog) — a value you chose wins on every platform.
+`--port` on the launcher overrides even that, for one run.
+
+If you would rather have 5000 back on a Mac, turn off **System Settings → General
+→ AirDrop & Handoff → AirPlay Receiver** and set the port explicitly.
 
 ### 5. Configure defaults (optional)
 
@@ -272,7 +292,8 @@ Each `"provider,model"` value can be `"claude,claude-opus-4-8"`, `"ollama,qwen3-
 Start the chat host (it builds the agent and serves the sidebar backend):
 
 ```powershell
-# Default — backend on http://127.0.0.1:5000
+# Default — backend on the port config/settings.default.toml names
+# (5000, or 5001 on macOS, where AirPlay Receiver holds 5000)
 .\run_agent.ps1
 
 # Custom port / bind address

@@ -7,7 +7,7 @@
 # HTTP/SSE on http://127.0.0.1:<port>.
 #
 # Usage:
-#   ./run_agent.sh                                        # backend on port 5000
+#   ./run_agent.sh                                        # port from the settings
 #   ./run_agent.sh --port 5001
 #   ./run_agent.sh --llm-query-templates "ollama,qwen3-coder:32b"
 #   ./run_agent.sh --llm-assemble-workflow "claude,claude-sonnet-4-5"
@@ -21,7 +21,12 @@
 # which those are, and `set -e` would turn every one of them into a dead start.
 set -uo pipefail
 
-PORT=5000
+# Empty, not 5000: the port is decided in ONE place — the settings files, read by
+# src/utils/settings.agent_server_url() once the venv is active (below). Deciding
+# it here as well is how a Mac ended up on 5000 no matter what the settings said,
+# and 5000 is the one port a Mac cannot have: ControlCenter's AirPlay Receiver
+# holds it and answers there. --port still overrides everything.
+PORT=""
 BIND_HOST="127.0.0.1"
 DEBUG=0
 NO_UPDATE=0
@@ -40,7 +45,9 @@ usage() {
 Usage: ./run_agent.sh [OPTIONS]
 
 Options:
-  --port <number>                      Backend port the ComfyUI sidebar connects to (default: 5000).
+  --port <number>                      Backend port the ComfyUI sidebar connects to.
+                                       Default: config/settings.default.toml
+                                       (5000; 5001 on macOS, where AirPlay holds 5000).
   --host <addr>                        Bind address (default: 127.0.0.1; use 0.0.0.0 for LAN).
   --llm-query-templates "prov,model"   LLM for the QueryTemplates stage (sets env vars).
   --llm-assemble-workflow "prov,model" LLM for the AssembleWorkflow stage (sets env vars).
@@ -378,6 +385,27 @@ free_port() {   # $1 = port
   [ "$killed_any" = "1" ] && sleep 1
   return 0
 }
+# Settle the port now: free_port, the message below and the exec all need a real
+# number, and the answer lives in the settings files. Asking the same resolver the
+# host itself uses is what keeps the launcher and the host from disagreeing about
+# where the host is — which the sidebar would then be the one to discover.
+if [ -z "$PORT" ]; then
+  PORT="$(python - <<'PY' 2>/dev/null
+from urllib.parse import urlsplit
+try:
+    from src.utils.settings import agent_server_url, default_agent_port
+    print(urlsplit(agent_server_url()).port or default_agent_port())
+except Exception:
+    print("")
+PY
+)"
+fi
+if [ -z "$PORT" ]; then
+  # Settings unreadable. Say so rather than starting somewhere nobody expects.
+  say "[run_agent] Could not read the port from config/ - falling back to 5000." "$C_YELLOW"
+  PORT=5000
+fi
+
 free_port "$PORT"
 
 # ── Refresh ComfyUI model caches ────────────────────────────────────────────

@@ -81,8 +81,9 @@ into ComfyUI's `input` dir and dropped onto the graph as nodes.
 
 ## Starting a session
 
-1. **Start the agent host** (the SSE backend the sidebar talks to, default
-   `http://127.0.0.1:5000`):
+1. **Start the agent host** (the SSE backend the sidebar talks to, on
+   `http://127.0.0.1:5000` — `:5001` on macOS, where AirPlay Receiver holds
+   5000; the sidebar is told which, so you do not have to match it by hand):
 
    ```powershell
    .\run_agent.ps1     # Windows
@@ -1598,7 +1599,7 @@ installing it is the better answer, and the agent will say so.
   rather than condemn work it could not read, so QA looks like it is running and
   is not. agentY says so rather than leaving you to notice.
 - **Autograph toggle or MCP section does nothing / 404** — those routes live in a
-  newer host build; **restart the launcher** so the `:5000` host serves them.
+  newer host build; **restart the launcher** so the host serves them.
 - **Canvas nodes/UI look stale after an update** — the ComfyUI copy of
   `agentY-comfyuiConnect` is separate from your dev clone; `git pull` it in
   `<ComfyUI>/custom_nodes/` and reload ComfyUI.

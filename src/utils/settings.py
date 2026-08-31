@@ -114,6 +114,69 @@ def set_local(overrides: dict) -> dict:
         return merged
 
 
+# The port the chat host listens on when nothing else says otherwise, per platform.
+#
+# macOS is not 5000 because macOS does not leave 5000 free. ControlCenter's AirPlay
+# Receiver listens on *:5000 (and *:7000) on a stock machine, and the reason this is
+# worth a platform switch rather than a line in the README is that it ANSWERS:
+# a 403 from `Server: AirTunes/...`, not a refused connection. A sidebar pointed at
+# 5000 on a Mac therefore reports the host as down while the host is running
+# perfectly well beside it, and every obvious diagnosis - is it started? is the port
+# right? - says everything is fine.
+#
+# 5001 is the neighbour AirPlay does not take. Windows keeps 5000: nothing there
+# claims it, and moving it would change the address under installs that already
+# have it in a bookmark or a firewall rule.
+_DEFAULT_AGENT_PORT = 5000
+_PLATFORM_AGENT_PORT = {"darwin": 5001}
+
+
+def default_agent_port(platform: str | None = None) -> int:
+    """The shipped default chat-host port for *platform* (default: this machine).
+
+    Takes the platform rather than reading it so both answers can be checked from
+    either machine - a platform switch whose other branch nothing exercises is a
+    platform switch that quietly rots.
+    """
+    import sys
+
+    return _PLATFORM_AGENT_PORT.get(platform or sys.platform, _DEFAULT_AGENT_PORT)
+
+
+def agent_server_url(platform: str | None = None, *,
+                     defaults: dict | None = None,
+                     local: dict | None = None) -> str:
+    """The address the chat host serves on and the ComfyUI sidebar calls.
+
+    Precedence, and the reason for each step:
+
+    1. ``agent_server_url`` in settings.local.json - an explicit choice for THIS
+       machine, and what the settings UI writes. It wins on every platform,
+       including a Mac, or choosing a port in the UI would silently do nothing
+       there.
+    2. ``agent_server_url_macos`` in the committed defaults, on macOS only - the
+       shipped answer to AirPlay holding 5000 (see _PLATFORM_AGENT_PORT).
+    3. ``agent_server_url`` in the committed defaults - the cross-platform value.
+    4. Failing all of that, loopback on this platform's default port.
+
+    *defaults* and *local* are for tests; left alone they are read from disk.
+    """
+    import sys
+
+    plat = platform or sys.platform
+    if defaults is None:
+        defaults = load_defaults()
+    if local is None:
+        local = load_local()
+
+    chosen = str((local or {}).get("agent_server_url") or "").strip()
+    if not chosen and plat == "darwin":
+        chosen = str((defaults or {}).get("agent_server_url_macos") or "").strip()
+    if not chosen:
+        chosen = str((defaults or {}).get("agent_server_url") or "").strip()
+    return chosen or f"http://127.0.0.1:{default_agent_port(plat)}"
+
+
 def ollama_host() -> str:
     """The Ollama server URL every caller should use.
 

@@ -198,6 +198,179 @@ class GpuAdvice(unittest.TestCase):
         self.assertIn("CPU-only", line)
 
 
+class AgentServerPort(unittest.TestCase):
+    """Which port the chat host serves on, per platform.
+
+    macOS does not leave 5000 free: ControlCenter's AirPlay Receiver holds *:5000
+    on a stock Mac. What makes it worth a platform switch rather than a note in
+    the README is that AirPlay ANSWERS — a 403 from `Server: AirTunes/...`, not a
+    refused connection — so the sidebar reports the host as down while the host is
+    running perfectly well, and nothing in the obvious places looks wrong.
+
+    Both answers are pinned here, so moving either is a deliberate act.
+    """
+
+    @staticmethod
+    def _settings():
+        from src.utils import settings
+        return settings
+
+    def test_the_default_port_differs_only_on_macos(self):
+        st = self._settings()
+        self.assertEqual(st.default_agent_port("darwin"), 5001)
+        self.assertEqual(st.default_agent_port("win32"), 5000)
+        self.assertEqual(st.default_agent_port("linux"), 5000)
+
+    def test_the_shipped_defaults_state_both_numbers(self):
+        """Read from the committed file, not from the constants: the TOML is what
+        an install actually gets, and the two could drift apart silently."""
+        st = self._settings()
+        defaults = st.load_defaults()
+        self.assertEqual(defaults.get("agent_server_url"), "http://127.0.0.1:5000")
+        self.assertEqual(defaults.get("agent_server_url_macos"), "http://127.0.0.1:5001")
+
+    def test_macos_takes_the_macos_default(self):
+        st = self._settings()
+        url = st.agent_server_url("darwin",
+                                  defaults={"agent_server_url": "http://127.0.0.1:5000",
+                                            "agent_server_url_macos": "http://127.0.0.1:5001"},
+                                  local={})
+        self.assertEqual(url, "http://127.0.0.1:5001")
+
+    def test_windows_ignores_the_macos_default(self):
+        st = self._settings()
+        url = st.agent_server_url("win32",
+                                  defaults={"agent_server_url": "http://127.0.0.1:5000",
+                                            "agent_server_url_macos": "http://127.0.0.1:5001"},
+                                  local={})
+        self.assertEqual(url, "http://127.0.0.1:5000")
+
+    def test_a_local_override_wins_on_a_mac_too(self):
+        """The trap this avoids: a Mac user picks a port in the settings UI, which
+        writes agent_server_url to settings.local.json, and a platform default that
+        outranked it would silently ignore the choice."""
+        st = self._settings()
+        url = st.agent_server_url("darwin",
+                                  defaults={"agent_server_url": "http://127.0.0.1:5000",
+                                            "agent_server_url_macos": "http://127.0.0.1:5001"},
+                                  local={"agent_server_url": "http://127.0.0.1:6000"})
+        self.assertEqual(url, "http://127.0.0.1:6000")
+
+    def test_a_local_override_wins_on_windows(self):
+        st = self._settings()
+        url = st.agent_server_url("win32",
+                                  defaults={"agent_server_url": "http://127.0.0.1:5000"},
+                                  local={"agent_server_url": "http://127.0.0.1:6000"})
+        self.assertEqual(url, "http://127.0.0.1:6000")
+
+    def test_empty_files_still_give_a_usable_address(self):
+        st = self._settings()
+        self.assertEqual(st.agent_server_url("darwin", defaults={}, local={}),
+                         "http://127.0.0.1:5001")
+        self.assertEqual(st.agent_server_url("win32", defaults={}, local={}),
+                         "http://127.0.0.1:5000")
+
+    def test_a_blank_setting_is_not_an_address(self):
+        """A key present but empty is the shape a half-edited config takes."""
+        st = self._settings()
+        self.assertEqual(
+            st.agent_server_url("darwin", defaults={"agent_server_url_macos": ""},
+                                local={"agent_server_url": "   "}),
+            "http://127.0.0.1:5001")
+
+    def test_the_server_derives_host_and_port_from_it(self):
+        from src.agenty_ui_server import _agent_server_url_defaults
+        host, port = _agent_server_url_defaults()
+        self.assertEqual(host, "127.0.0.1")
+        self.assertEqual(port, self._settings().default_agent_port())
+
+
+class TheSidebarIsToldThePort(unittest.TestCase):
+    """The panel is a browser tab. It cannot read a settings file, a --port flag or
+    an environment variable, so it has to be told which port to call — and what it
+    used to do instead was assume 5000, the one number a Mac cannot use.
+
+    The host registers the port it ACTUALLY BOUND rather than one re-read from
+    settings, because `--port` on the launcher appears in no file at all: reading
+    the config back would confidently report the wrong number.
+    """
+
+    def _capture_registration(self, port):
+        """Run _register_with_comfyui against a stub standing in for ComfyUI, and
+        return the JSON body it posted."""
+        import http.server
+        import json as _json
+        import socketserver
+        import threading
+
+        received = {}
+
+        class Stub(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                n = int(self.headers.get("Content-Length", 0))
+                received.update(_json.loads(self.rfile.read(n) or b"{}"))
+                received["_path"] = self.path
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"ok":true}')
+
+            def log_message(self, *a):
+                pass
+
+        srv = socketserver.TCPServer(("127.0.0.1", 0), Stub)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        from src.utils import settings as st
+        from src.utils import agentY_server as A
+
+        previous = st._cache
+        st._cache = dict(st.load_settings())
+        st._cache["comfyui_url"] = f"http://127.0.0.1:{srv.server_address[1]}"
+        try:
+            A._register_with_comfyui(port)
+            for t in threading.enumerate():
+                if t.name == "agentY-register-host":
+                    t.join(timeout=10)
+        finally:
+            st._cache = previous
+            srv.shutdown()
+            srv.server_close()
+        return received
+
+    def test_the_bound_port_reaches_the_extension(self):
+        body = self._capture_registration(5001)
+        self.assertEqual(body.get("_path"), "/agent/register_host")
+        self.assertEqual(body.get("agent_server_port"), 5001)
+        self.assertTrue(body.get("project_root"))
+        self.assertTrue(body.get("run_script"))
+
+    def test_an_unusual_port_is_reported_as_it_is(self):
+        """A --port nobody could have predicted is exactly the case this exists
+        for, so it must not be normalised into anything tidier."""
+        self.assertEqual(self._capture_registration(6123).get("agent_server_port"), 6123)
+
+    def test_no_port_is_sent_rather_than_a_wrong_one(self):
+        """A caller that does not know the port must leave the key out entirely.
+        Sending 0, or a guess, would overwrite a good recorded value on the other
+        side with something that cannot be dialled."""
+        self.assertNotIn("agent_server_port", self._capture_registration(0))
+
+    def test_the_call_site_passes_what_was_bound(self):
+        """Read from the source because the alternative — actually starting the
+        host — is not a unit test. `port` here is start_agentY_server's own
+        argument; if this ever became a fresh settings read, --port would stop
+        reaching the panel and nothing else would notice.
+        """
+        src = (ROOT / "src" / "utils" / "agentY_server.py").read_text(encoding="utf-8")
+        body = src[src.index("def start_agentY_server("):][:3000]
+        self.assertIn("_register_with_comfyui(port)", body)
+
+    def test_the_signature_no_longer_hardcodes_5000(self):
+        src = (ROOT / "src" / "utils" / "agentY_server.py").read_text(encoding="utf-8")
+        self.assertIn("port: int | None = None", src)
+        self.assertNotIn('port: int = 5000', src)
+
+
 class HiddenPthFiles(unittest.TestCase):
     """The macOS file flag that makes a correct install unimportable.
 

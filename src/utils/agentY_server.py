@@ -3497,21 +3497,35 @@ def _launcher_name(platform: str = "") -> str:
     return "run_agent.ps1" if (platform or sys.platform) == "win32" else "run_agent.sh"
 
 
-def _register_with_comfyui() -> None:
+def _register_with_comfyui(port: int = 0) -> None:
     """Best-effort: tell the ComfyUI sidebar extension where this host lives, so its
-    "Start server" button can relaunch the launcher when the host is down. Fire-
-    and-forget; never blocks or fails startup.
+    "Start server" button can relaunch the launcher when the host is down, and so
+    the panel knows which port to call. Fire-and-forget; never blocks or fails
+    startup.
 
     The launcher is named by THIS process's platform, not the extension's, which is
     the correct way round: the button runs the script on the machine the host lives
-    on, and that is the machine running this code."""
+    on, and that is the machine running this code.
+
+    *port* is the port actually bound, which is why it is passed in rather than
+    re-read from settings. It is the only value that is true no matter how it was
+    chosen - a settings file, AGENTY_UI_PORT, or `--port` on the launcher, which no
+    file records at all. The panel used to assume 5000 and had no way to learn
+    otherwise; on a Mac, where AirPlay holds 5000 and answers, that assumption
+    reports a healthy host as down. Sent as a port rather than a whole URL so the
+    panel keeps building the address from its own location.hostname and a sidebar
+    reaching ComfyUI across the network still works.
+    """
     def _do() -> None:
         try:
             from src.utils.settings import load_settings
             import urllib.request
             base = str(load_settings().get("comfyui_url", "http://127.0.0.1:8188")).rstrip("/")
-            body = json.dumps({"project_root": str(_project_root()),
-                               "run_script": _launcher_name()}).encode("utf-8")
+            payload = {"project_root": str(_project_root()),
+                       "run_script": _launcher_name()}
+            if port:
+                payload["agent_server_port"] = int(port)
+            body = json.dumps(payload).encode("utf-8")
             req = urllib.request.Request(base + "/agent/register_host", data=body,
                                          headers={"Content-Type": "application/json"}, method="POST")
             urllib.request.urlopen(req, timeout=5).read()
@@ -3521,9 +3535,17 @@ def _register_with_comfyui() -> None:
     threading.Thread(target=_do, name="agentY-register-host", daemon=True).start()
 
 
-def start_agentY_server(agent, host: str = "127.0.0.1", port: int = 5000) -> bool:
-    """Start the agentY bridge + chat host in a background daemon thread."""
+def start_agentY_server(agent, host: str = "127.0.0.1", port: int | None = None) -> bool:
+    """Start the agentY bridge + chat host in a background daemon thread.
+
+    *port* None means this platform's default - 5000, or 5001 on macOS, where
+    AirPlay holds 5000. Resolved here rather than in the signature so the answer
+    is this machine's, not whichever machine imported the module.
+    """
     global _server_thread, _agent_ref
+    if port is None:
+        from src.utils.settings import default_agent_port
+        port = default_agent_port()
     _agent_ref = agent
     cs.init_db()
 
@@ -3550,7 +3572,8 @@ def start_agentY_server(agent, host: str = "127.0.0.1", port: int = 5000) -> boo
     _server_thread = threading.Thread(target=_run, name="agentY-bridge-server", daemon=True)
     _server_thread.start()
     logger.info("agentY chat host started on http://%s:%d", host, port)
-    _register_with_comfyui()  # so the sidebar's "Start server" button knows where we live
+    # The port too: it is what the panel calls, and only this process knows it.
+    _register_with_comfyui(port)
     _start_slack_bridge()
     return True
 

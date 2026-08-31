@@ -103,7 +103,7 @@ SLACK_ALLOWED_USERS   U01ABCDEF          (comma-separated for more than one)
 ```
 
 Then open the **Slack bridge** group in the same dialog and turn `enabled` on.
-**Restart the agent host** (`:5000`) — the connection is made at startup.
+**Restart the agent host** — the connection is made at startup.
 
 You should get a `💬 Slack bridge connected` line in the panel, and your next turn
 appears in your DM with the bot.

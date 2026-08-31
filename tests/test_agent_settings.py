@@ -27,7 +27,8 @@ class AllowlistTest(unittest.TestCase):
     def test_the_dangerous_kinds_are_absent(self):
         """Not by a rule that could be relaxed — they are simply not on the list."""
         keys = [s.key for s in st.allowed()]
-        for banned in ("comfyui_url", "agent_server_url", "output_dir", "comfyui_dir",
+        for banned in ("comfyui_url", "agent_server_url", "agent_server_url_macos",
+                       "output_dir", "comfyui_dir",
                        "conversation_db", "memory.store_dir", "qa.briefing_dir",
                        "memory.embedder.model", "memory.embedder.embedding_dims",
                        "memory.embedder.api_key_env", "llm.tiers.orchestrator",

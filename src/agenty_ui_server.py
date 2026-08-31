@@ -70,30 +70,31 @@ def _unload_ollama_models() -> None:
 
 
 def _agent_server_url_defaults() -> tuple[str, int]:
-    """Default (host, port) for the chat host, read from config/settings.json.
+    """Default (host, port) for the chat host, from the settings files.
 
-    The single ``agent_server_url`` setting (e.g. ``http://127.0.0.1:5000``) is
-    the source of truth; host + port are derived from it. Env vars
-    (AGENTY_UI_HOST / AGENTY_UI_PORT) still override, and a CLI flag overrides
-    everything. Falls back to 127.0.0.1:5000 if the file/URL is absent or
-    unparseable.
+    ``settings.agent_server_url()`` decides which address applies here - a local
+    override first, then this platform's shipped default (macOS differs, because
+    AirPlay holds 5000 there). Host and port are derived from that one URL. Env
+    vars (AGENTY_UI_HOST / AGENTY_UI_PORT) still override, and a CLI flag
+    overrides everything. Falls back to loopback on the platform default if the
+    files or the URL are absent or unparseable.
     """
-    host, port = "127.0.0.1", 5000
+    from src.utils.settings import default_agent_port
+
+    host, port = "127.0.0.1", default_agent_port()
     try:
         from urllib.parse import urlsplit
-        from src.utils.settings import load_settings
+        from src.utils.settings import agent_server_url
 
-        cfg = load_settings()
-        if cfg:
-            url = str(cfg.get("agent_server_url", "")).strip()
-            if url:
-                if "//" not in url:
-                    url = "//" + url  # allow a bare host:port
-                parts = urlsplit(url)
-                if parts.hostname:
-                    host = parts.hostname
-                if parts.port:
-                    port = parts.port
+        url = agent_server_url().strip()
+        if url:
+            if "//" not in url:
+                url = "//" + url  # allow a bare host:port
+            parts = urlsplit(url)
+            if parts.hostname:
+                host = parts.hostname
+            if parts.port:
+                port = parts.port
     except Exception:
         pass
     return host, port
