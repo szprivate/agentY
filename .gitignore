@@ -67,3 +67,13 @@ scripts/recipe_reliability/downloaded_models*.jsonl
 scripts/recipe_reliability/sweep_final.log
 # Understand-Anything knowledge-graph output
 .ua/
+
+# Never the agentY repo's own directory. Project memory lives in ComfyUI's user
+# directory, which the pipeline moves per project; a `user/` here only ever means
+# something resolved that path wrongly (see agenty_core get_comfyui_dirs).
+user/
+
+# `> nul` is a Windows device name. On macOS it is an ordinary file, so a command
+# copied across platforms silently drops a junk file in the repo root.
+nul
+
