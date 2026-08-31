@@ -139,6 +139,94 @@ class ProjectSwitchTests(StoreTestCase):
             self.assertIsNone(pm.store_dir())
 
 
+class WhereComfyUIKeepsItsFiles(unittest.TestCase):
+    """How the user directory is resolved — the step everything above assumes.
+
+    Every test in this file mocks that answer, which is right for testing the
+    store and wrong as the only coverage: the answer itself was broken, and no
+    test here could have noticed. agentY wrote project memory to
+    <agentY>/user/agentY/project while the ComfyUI nodes read
+    <ComfyUI>/user/agentY/project, so the load-item node reported "nothing stored
+    yet" about a store that existed and had two references in it.
+
+    The cause was one `.resolve()`. `python main.py` reports argv[0] as
+    "./main.py", and resolving a relative path uses the CALLER's working
+    directory — agentY's, not ComfyUI's.
+    """
+
+    def setUp(self):
+        from agenty_core.tools import comfyui
+        self.mod = comfyui
+        comfyui._tool_dirs_result = None
+        self.addCleanup(setattr, comfyui, "_tool_dirs_result", None)
+
+    def _dirs(self, argv, route=None):
+        """get_comfyui_dirs() with ComfyUI reporting *argv*, and the extension's
+        /agent/comfy_dirs answering *route* (None = absent, as on an older build)."""
+        class Client:
+            def get(_self, path, *a, **k):
+                if path == "/system_stats":
+                    return {"system": {"argv": list(argv)}}
+                if path == "/agent/comfy_dirs":
+                    if route is None:
+                        raise RuntimeError("404 Not Found")
+                    return route
+                raise AssertionError(path)
+
+        with mock.patch.object(self.mod, "get_client", lambda: Client()):
+            fn = getattr(self.mod.get_comfyui_dirs, "func", self.mod.get_comfyui_dirs)
+            return json.loads(fn())
+
+    def test_a_relative_argv0_is_not_resolved_against_our_own_directory(self):
+        """The regression. "./main.py" says nothing about where ComfyUI lives, and
+        the old code turned it into an absolute path under whatever directory
+        agentY happened to be running from."""
+        got = self._dirs(["./main.py"])
+        self.assertEqual(got["user_dir"], "unknown")
+        self.assertNotIn("agentY", got["user_dir"])
+
+    def test_a_bare_filename_is_not_resolved_either(self):
+        # `python main.py` from inside the ComfyUI folder.
+        self.assertEqual(self._dirs(["main.py"])["user_dir"], "unknown")
+
+    def test_an_absolute_argv0_still_names_the_root(self):
+        got = self._dirs(["/opt/ComfyUI/main.py"])
+        self.assertEqual(got["user_dir"], str(Path("/opt/ComfyUI/user")))
+        self.assertEqual(got["input_dir"], str(Path("/opt/ComfyUI/input")))
+
+    def test_an_explicit_flag_still_wins(self):
+        got = self._dirs(["./main.py", "--user-directory", "/srv/projectA/user"])
+        self.assertEqual(got["user_dir"], "/srv/projectA/user")
+
+    def test_comfyui_is_asked_when_argv_cannot_say(self):
+        """The fix: folder_paths knows, so ask the process that has it."""
+        got = self._dirs(["./main.py"], route={
+            "ok": True, "user_dir": "/real/ComfyUI/user",
+            "input_dir": "/real/ComfyUI/input", "output_dir": "/real/ComfyUI/output"})
+        self.assertEqual(got["user_dir"], "/real/ComfyUI/user")
+        self.assertEqual(got["source"], "argv+comfyui")
+
+    def test_what_comfyui_says_beats_what_argv0_implies(self):
+        """A ComfyUI started by absolute path but with a moved user directory —
+        the project switch this whole store depends on."""
+        got = self._dirs(["/opt/ComfyUI/main.py"], route={
+            "ok": True, "user_dir": "/srv/projectB/user"})
+        self.assertEqual(got["user_dir"], "/srv/projectB/user")
+
+    def test_an_extension_that_fails_is_not_fatal(self):
+        """An install without the sidebar is a supported install."""
+        got = self._dirs(["/opt/ComfyUI/main.py"], route={"ok": False, "error": "no"})
+        self.assertEqual(got["user_dir"], str(Path("/opt/ComfyUI/user")))
+
+    def test_unknown_survives_to_the_store_as_no_memory(self):
+        """"unknown" must reach project_memory as None, never as a directory named
+        "unknown" quietly created next to the agent."""
+        with mock.patch("src.tools.comfyui.get_comfyui_dirs",
+                        side_effect=lambda: json.dumps({"user_dir": "unknown"})):
+            pm.forget_miss()
+            self.assertIsNone(pm.store_dir())
+
+
 class InjectedBlockTests(StoreTestCase):
     def test_an_empty_project_injects_nothing(self):
         self.assertEqual(pm.render_context(), "")
