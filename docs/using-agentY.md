@@ -635,7 +635,7 @@ three different style directions as renders"*.
 **5. `iterate`** — turn the graph into an **interactive refinement loop**. See
 [Iterative refinement](#iterative-refinement-the-iterate-purpose) below.
 
-**6. `review`** — a deliberate **stop**, so you can choose what goes on to the
+**6. `human_review`** — a deliberate **stop**, so you can choose what goes on to the
 next stage. See [Review](#review-stop-and-pick-what-continues) below.
 
 ### Chaining hooks into pipelines
@@ -697,7 +697,7 @@ hook feeding one image slot while its directive talks about all of them.
 
 A chain that makes reference frames and then feeds them into a video runs the
 whole way through, every time — and the video is the expensive half. A hook with
-**`purpose: review`** breaks it between the stage that produces candidates and the
+**`purpose: human_review`** breaks it between the stage that produces candidates and the
 stage that consumes them:
 
 ```
@@ -776,10 +776,11 @@ canvas is the record and it will still be waiting next week.
 Two review hooks in one chain means two stops; a review hook on one chain doesn't
 stop an unrelated chain on the same canvas.
 
-> **`review` vs the [`agentY qa` node](#the-agenty-qa-node).** Same shape, same
+> **`human_review` vs the [`agentY qa` node](#the-agenty-qa-node).** Same shape, same
 > place in a chain, opposite judge: QA asks a model against your written criteria
-> and carries on by itself; `review` stops and asks *you*. Use QA for standards
-> you can write down, `review` for the ones you can only recognise on sight.
+> and carries on by itself; `human_review` stops and asks *you*. Use QA for
+> standards you can write down, `human_review` for the ones you can only
+> recognise on sight.
 
 ### Baking a chain into subgraphs
 
@@ -810,7 +811,7 @@ and the `agentY text` node is dropped *unconnected* as a readable reference. The
 hook chain is your graph's statement of what happens; a switch about keeping a
 *result* has no business rewriting it.
 
-It is hidden on `review` and `iterate`, which produce nothing to keep —
+It is hidden on `human_review` and `iterate`, which produce nothing to keep —
 presentation only, so flipping `purpose` back brings the value back untouched.
 
 ### Memorize: produce once, reuse until something changes
@@ -1088,7 +1089,7 @@ Right for *"must be 16:9"*, useless for the other question eight variants raise 
 So there is a separate **technical quality score**, 0 to 1, from the same
 measurements: sharpness, focus, cleanliness, headroom, and likeness where it was
 measured. You see it beside each output when a
-[`review` hook](#review-stop-and-pick-what-continues) stops the chain, and in the
+[`human_review` hook](#review-stop-and-pick-what-continues) stops the chain, and in the
 facts the QA judge is given.
 
 **It never decides anything.** A weighted sum lets a strong feature pay for a weak

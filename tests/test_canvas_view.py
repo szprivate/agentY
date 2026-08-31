@@ -316,7 +316,7 @@ class OffIsTheOldBehaviourTest(unittest.TestCase):
     def test_the_review_ballot_exemption_survives_it_being_off(self):
         """It is not about visibility — the node is created in the browser."""
         from src.utils.review_gate import ReviewHalt
-        hooks = [{"hook_node_id": "11", "purpose": "review", "directive": "which?",
+        hooks = [{"hook_node_id": "11", "purpose": "human_review", "directive": "which?",
                   "targets": [], "anchors": [
                       {"node_id": "77", "type": "AgentYImageCollector",
                        "widgets": {"files": "C:/out/a.png"}}]}]

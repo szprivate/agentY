@@ -153,7 +153,7 @@ class TheBallotIsNotDeletableTest(unittest.TestCase):
 
     def _pipe(self):
         from src.utils.review_gate import ReviewHalt
-        hooks = [{"hook_node_id": "11", "purpose": "review", "directive": "which?",
+        hooks = [{"hook_node_id": "11", "purpose": "human_review", "directive": "which?",
                   "targets": [], "anchors": [
                       {"node_id": "77", "type": "AgentYImageCollector",
                        "widgets": {"files": "C:/out/a.png\nC:/out/b.png"}}]}]

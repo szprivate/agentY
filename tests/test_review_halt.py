@@ -48,11 +48,40 @@ def _chain():
 
 class PurposeTest(unittest.TestCase):
 
-    def test_review_is_its_own_purpose_now(self):
+    def test_human_review_is_its_own_purpose(self):
         """It used to be a tolerant alias for `qa`, which would swallow it whole."""
-        h = _hook(11, "review")
+        h = _hook(11, "human_review")
         self.assertTrue(_is_review(h))
-        self.assertFalse(_is_qa(h), "a review hook is not a QA briefing")
+        self.assertFalse(_is_qa(h), "a human_review hook is not a QA briefing")
+
+    def test_the_node_offers_human_review_and_not_review(self):
+        """The combo's own list, read from the node, so the canonical spelling and
+        the matcher cannot drift. A purpose the node offers but nothing matches is
+        a stop that never stops — and the expensive stage it was placed to gate
+        runs unguarded, which is the one failure this hook exists to prevent."""
+        import re
+        from pathlib import Path
+        src = Path(__file__).resolve().parents[1] / "src"
+        node = None
+        for base in (src.parent.parent / "ComfyUI" / "custom_nodes" / "agentY-comfyuiConnect",):
+            if (base / "__init__.py").exists():
+                node = (base / "__init__.py").read_text(encoding="utf-8")
+        if node is None:
+            self.skipTest("the ComfyUI extension is not installed beside this checkout")
+        options = re.search(r'"purpose",\s*\n\s*options=\[(.*?)\]', node, re.S)
+        self.assertIsNotNone(options, "could not find the purpose combo")
+        listed = re.findall(r'"([a-z_]+)"', options.group(1))
+        self.assertIn("human_review", listed)
+        self.assertNotIn("review", listed)
+        for purpose in listed:
+            with self.subTest(purpose=purpose):
+                # Every purpose the node offers must be one agentY recognises.
+                from src.utils.canvas_hooks import _is_iterate, _is_qa as qa
+                known = (_is_review(_hook(1, purpose)) or qa(_hook(1, purpose))
+                         or _is_iterate(_hook(1, purpose))
+                         or purpose in ("inline_parameter", "make_workflow", "text",
+                                        "general_request"))
+                self.assertTrue(known, f"the node offers {purpose!r} and nothing reads it")
 
     def test_qa_keeps_its_own_spellings(self):
         for p in ("qa", "quality", "check", "qa_check"):
@@ -61,7 +90,10 @@ class PurposeTest(unittest.TestCase):
                 self.assertFalse(_is_review(_hook(9, p)))
 
     def test_the_spellings_a_user_might_type(self):
-        for p in ("review", "halt", "pause", "check_in"):
+        """The node offers one spelling; the agent and the user say it several
+        ways in prose. A missed one is read as an ordinary hook, so the stop does
+        not stop."""
+        for p in ("human_review", "human review", "review", "halt", "pause", "check_in"):
             with self.subTest(p=p):
                 self.assertTrue(_is_review(_hook(11, p)))
 

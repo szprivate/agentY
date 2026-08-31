@@ -953,7 +953,14 @@ def _is_qa(hook: dict) -> bool:
     return str(hook.get("purpose", "") or "").strip().lower() in _QA_PURPOSES
 
 
-_REVIEW_PURPOSES = {"review", "halt", "pause", "check_in", "check-in", "checkin"}
+# `human_review` is what the node's combo offers. The rest are tolerated because
+# the agent and the user both refer to this hook loosely in prose ("the halt",
+# "the check-in") and a purpose that only matched one spelling would silently
+# treat a mis-said one as an ordinary hook — i.e. run the expensive stage the
+# stop was placed to gate. `review` stays for the same reason, and because a
+# canvas saved before the rename still says it.
+_REVIEW_PURPOSES = {"human_review", "human review", "review",
+                    "halt", "pause", "check_in", "check-in", "checkin"}
 
 
 def _is_review(hook: dict) -> bool:
