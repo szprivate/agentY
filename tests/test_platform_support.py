@@ -198,6 +198,105 @@ class GpuAdvice(unittest.TestCase):
         self.assertIn("CPU-only", line)
 
 
+class HiddenPthFiles(unittest.TestCase):
+    """The macOS file flag that makes a correct install unimportable.
+
+    Since 3.11, site.addpackage() skips any .pth file carrying UF_HIDDEN and says
+    nothing. agenty_core is installed editable, so it reaches the interpreter
+    through exactly one .pth file: flag that file and the shared tool layer is
+    gone at import time while the package, its dist-info and its finder all sit
+    correctly on disk. It cost an afternoon once. It should cost a line now.
+    """
+
+    @staticmethod
+    def _check_env():
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import check_env
+        return check_env
+
+    def _venv_with_pth(self, hidden):
+        """A directory holding one .pth file, flagged or not. Returns its path."""
+        import tempfile
+        d = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, d, True)
+        pth = Path(d) / "__editable__.agenty_core-0.1.0.pth"
+        pth.write_text("import nothing\n", encoding="utf-8")
+        if hidden:
+            import subprocess
+            if subprocess.run(["chflags", "hidden", str(pth)]).returncode != 0:
+                self.skipTest("chflags could not set the flag")
+        return d
+
+    def test_no_flag_means_nothing_to_report(self):
+        d = self._venv_with_pth(hidden=False)
+        self.assertEqual(self._check_env().hidden_pth_files([d], "darwin"), [])
+
+    @unittest.skipIf(sys.platform != "darwin", "UF_HIDDEN needs a real chflags")
+    def test_a_flagged_pth_is_found(self):
+        d = self._venv_with_pth(hidden=True)
+        found = self._check_env().hidden_pth_files([d], "darwin")
+        self.assertEqual([Path(f).name for f in found],
+                         ["__editable__.agenty_core-0.1.0.pth"])
+
+    @unittest.skipIf(sys.platform != "darwin", "UF_HIDDEN needs a real chflags")
+    def test_windows_never_reports_a_flag_it_cannot_have(self):
+        # The same flagged file, asked about as Windows. st_flags does not exist
+        # there, so the honest answer is "none" - anything else is a fault
+        # invented for a platform that cannot suffer it.
+        d = self._venv_with_pth(hidden=True)
+        self.assertEqual(self._check_env().hidden_pth_files([d], "win32"), [])
+
+    def test_a_missing_directory_is_not_an_error(self):
+        self.assertEqual(
+            self._check_env().hidden_pth_files(["/nonexistent/site-packages"], "darwin"), [])
+
+    def test_silence_when_there_is_nothing_to_say(self):
+        self.assertEqual(self._check_env().hidden_pth_advice([]), "")
+
+    def test_the_advice_names_the_fix_that_works(self):
+        text = self._check_env().hidden_pth_advice(
+            ["/x/lib/python3.12/site-packages/__editable__.agenty_core-0.1.0.pth"])
+        self.assertIn("chflags", text)
+        self.assertIn("nohidden", text)
+        self.assertIn("__editable__.agenty_core-0.1.0.pth", text)
+
+    def test_the_advice_does_not_send_you_to_reinstall(self):
+        """The whole point. `uv pip install` finds the requirement satisfied, does
+        nothing, and leaves the package visible on disk and unimportable - so the
+        one instruction that must NOT appear here is the one you would try first.
+        """
+        text = self._check_env().hidden_pth_advice(["/x/site-packages/a.pth"])
+        self.assertNotIn("uv pip install", text)
+        self.assertNotIn("requirements.txt", text)
+
+
+class HiddenPthIsClearedByTheLaunchers(unittest.TestCase):
+    """Detecting it is second best. Both entry points must clear it unasked."""
+
+    def test_the_installer_clears_it_after_installing(self):
+        sh = (ROOT / "install_agent.sh").read_text(encoding="utf-8")
+        self.assertIn("unhide_pth()", sh)
+        # Called, not merely defined - and after the install that writes the .pth.
+        self.assertIn('unhide_pth "$venv"', sh)
+        self.assertLess(sh.index("uv pip install --python"), sh.index('unhide_pth "$venv"'))
+
+    def test_the_runner_clears_it_before_activating(self):
+        """The flag can arrive after the install, so the runner cannot assume the
+        installer already dealt with it."""
+        sh = (ROOT / "run_agent.sh").read_text(encoding="utf-8")
+        self.assertIn("chflags nohidden", sh)
+        self.assertLess(sh.index("chflags nohidden"),
+                        sh.index('. "$PROJECT_ROOT/.venv/bin/activate"'))
+
+    def test_both_guard_on_chflags_existing(self):
+        """Linux has no chflags. An unguarded call is a command-not-found on every
+        start of the platform this repo also runs on."""
+        for name in ("install_agent.sh", "run_agent.sh"):
+            with self.subTest(script=name):
+                sh = (ROOT / name).read_text(encoding="utf-8")
+                self.assertIn("command -v chflags", sh)
+
+
 class LauncherName(unittest.TestCase):
     """The host tells the sidebar which script restarts it."""
 

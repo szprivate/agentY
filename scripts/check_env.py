@@ -20,6 +20,7 @@ packages are reported but do not fail the run).
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 
 # (module, distribution, what stops working without it)
@@ -72,6 +73,76 @@ def _importable(module: str) -> bool:
         # A half-installed or namespace-shadowed package raises here - from the
         # caller's point of view that is just as broken as absent.
         return False
+
+
+def site_dirs() -> list[str]:
+    """Where this interpreter would read .pth files from."""
+    import sysconfig  # noqa: PLC0415
+
+    return [d for d in dict.fromkeys(
+        sysconfig.get_path(k) for k in ("purelib", "platlib")) if d]
+
+
+def hidden_pth_files(directories: list[str] | None = None,
+                     platform: str = sys.platform) -> list[str]:
+    """.pth files in those directories that macOS has flagged hidden.
+
+    Empty on every other platform: UF_HIDDEN is a BSD file flag, and os.stat()
+    elsewhere has no st_flags to read - so a Windows box would report every .pth
+    as fine no matter what, and must, or it would invent a fault it cannot have.
+
+    The arguments exist so both answers can be tested from either machine, the
+    same reason ``gpu_line`` takes its platform rather than reading it.
+    """
+    if platform != "darwin":
+        return []
+    import glob      # noqa: PLC0415  (only ever needed on the one platform)
+    import stat
+
+    found: list[str] = []
+    for directory in (site_dirs() if directories is None else directories):
+        if not directory:
+            continue
+        for path in sorted(glob.glob(os.path.join(directory, "*.pth"))):
+            try:
+                flags = getattr(os.stat(path), "st_flags", 0)
+            except OSError:
+                continue
+            if flags & stat.UF_HIDDEN:
+                found.append(path)
+    return found
+
+
+def hidden_pth_advice(paths: list[str]) -> str:
+    """What to say about hidden .pth files, or "" when there are none.
+
+    Why this is worth a function of its own: the failure it describes is invisible
+    and the ordinary advice is actively wrong. Since 3.11, site.addpackage() skips
+    any .pth file carrying UF_HIDDEN without printing a thing. agenty_core is
+    installed editable, so it reaches the interpreter through exactly one .pth
+    file - flag that file and the shared tool layer is missing at import time
+    while the package, its dist-info and its finder all sit correctly on disk.
+
+    Told only "MISSING agenty_core", you reinstall. That cannot help: the
+    requirement is already satisfied, so the install is a no-op and you are left
+    staring at a package you can see in Finder and cannot import. So when the flag
+    is present it replaces the reinstall advice rather than joining it.
+
+    Reported even when nothing is missing yet, because the same flag on the same
+    files is one editable install away from breaking the run, and it is far
+    cheaper to read here than to rediscover.
+    """
+    if not paths:
+        return ""
+    names = "\n".join(f"             {os.path.basename(p)}" for p in paths)
+    return ("[check_env] macOS has flagged these .pth files hidden, and Python\n"
+            "            skips a hidden .pth file without saying so:\n"
+            f"{names}\n"
+            "            Whatever they install is then missing at import time while\n"
+            "            sitting correctly on disk - for an editable package such as\n"
+            "            agenty_core, that is the entire package. Reinstalling does\n"
+            "            not fix it; clearing the flag does:\n"
+            "                chflags -R nohidden .venv")
 
 
 def _report(title: str, checks: list[tuple[str, str, str]], quiet: bool = False) -> list[tuple[str, str, str]]:
@@ -129,14 +200,28 @@ def main(argv: list[str]) -> int:
         print(f"agentY dependency check - {sys.executable}")
     missing_req = _report("Required:", REQUIRED, quiet)
     missing_opt = _report("Optional (a feature degrades):", OPTIONAL, quiet)
+    # A package can be absent because nobody installed it, or because something
+    # installed it and macOS hid the .pth that publishes it. Those need opposite
+    # remedies, and only one of them is guessable from a MISSING line.
+    shadowed = hidden_pth_advice(hidden_pth_files())
 
     if quiet:
         if not missing_req:
+            # --quiet is otherwise silent on a healthy venv. This is not healthy:
+            # it is the same flag that hides an editable install, on the same
+            # files, one install away from taking the run down.
+            if shadowed:
+                print(shadowed)
             return 0
         print("[check_env] Missing dependencies this install needs:")
         for module, dist, what in missing_req:
             print(f"             {module:16} ({dist}) - {what}")
-        print("[check_env] Fix with:  uv pip install -r requirements.txt")
+        if shadowed:
+            print(shadowed)
+            print("[check_env] Then re-check. If anything is still missing:")
+            print("                uv pip install -r requirements.txt")
+        else:
+            print("[check_env] Fix with:  uv pip install -r requirements.txt")
         return 1
 
     if "--gpu" in argv and _importable("torch"):
@@ -148,8 +233,14 @@ def main(argv: list[str]) -> int:
             print(f"\nGPU: could not query torch ({exc})")
 
     print()
+    if shadowed:
+        print(shadowed + "\n")
     if missing_req:
-        print(f"{len(missing_req)} required package(s) missing. Install them with:")
+        if shadowed:
+            print(f"{len(missing_req)} required package(s) missing. Clear the flag above "
+                  "first - if any are still\nmissing after that, install them with:")
+        else:
+            print(f"{len(missing_req)} required package(s) missing. Install them with:")
         print("    uv pip install -r requirements.txt")
         return 1
     if missing_opt:

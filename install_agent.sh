@@ -176,6 +176,33 @@ ensure_repo() {   # $1 = name  $2 = url  $3 = dir  $4 = "required"|""
 
 venv_python() { printf '%s/.venv/bin/python' "$1"; }
 
+# Clear the macOS "hidden" flag from a venv's .pth files. A no-op anywhere else:
+# chflags is BSD, and no other platform has the flag to begin with.
+#
+# Since 3.11, site.addpackage() SKIPS any .pth file carrying UF_HIDDEN, silently
+# and with no warning. agenty_core is installed editable, so it reaches the
+# interpreter through exactly one .pth file - flag that file and `import
+# agenty_core` fails while the package, its dist-info and its finder all sit
+# correctly on disk. The install looks broken in a way it is not, and the obvious
+# remedy makes it worse: the requirement is already satisfied, so reinstalling
+# changes nothing and you are left staring at a package you can see and cannot
+# import.
+#
+# Anything that hides dotfiles can do this - .venv is one, and a pass that
+# recurses reaches every .pth inside it. Clearing costs milliseconds, so it is
+# done on every install and every start rather than diagnosed a second time.
+unhide_pth() {   # $1 = venv dir
+  local pth
+  command -v chflags >/dev/null 2>&1 || return 0
+  [ -d "$1" ] || return 0
+  # site-packages by name rather than `find`: the .pth files that matter are all
+  # there, and walking a 45,000-file venv to reach them takes two seconds.
+  for pth in "$1"/lib/python*/site-packages/*.pth; do
+    [ -e "$pth" ] && chflags nohidden "$pth" 2>/dev/null
+  done
+  return 0
+}
+
 report_torch() {  # $1 = dir
   # No CUDA branch here, and none is missing: on a Mac the PyPI wheel is the right
   # build. torch talks to the GPU through Metal (MPS), which ships in that same
@@ -218,6 +245,7 @@ setup_venv() {   # $1 = name  $2 = dir  $3 = "with-torch"|""
   # an install that reports success and imports nothing.
   ( cd "$dir" && uv pip install --python "$py" -r requirements.txt ) \
     || die "uv pip install ($name) failed."
+  unhide_pth "$venv"
   [ "$with_torch" = "with-torch" ] && report_torch "$dir"
   success "$name environment ready"
 }

@@ -96,6 +96,32 @@ envpath="$(ensure_env_file "$T/bare" 2>/dev/null)"; rc=$?
 check "missing example fails" "$rc" "1"
 check "and echoes no path"    "$envpath" ""
 
+# ── unhide_pth: the macOS flag that hides an install from Python ────────────
+# Python 3.11+ skips a .pth file carrying UF_HIDDEN and says nothing, so a flagged
+# __editable__.agenty_core*.pth means "No module named agenty_core" from an install
+# that is complete and correct on disk.
+mkdir -p "$T/venv/lib/python3.12/site-packages"
+PTH="$T/venv/lib/python3.12/site-packages/__editable__.agenty_core-0.1.0.pth"
+printf 'import x\n' > "$PTH"
+
+unhide_pth "$T/nonexistent"; check "missing venv is fine"  "$?" "0"
+unhide_pth "$T/venv";        check "nothing to clear"      "$?" "0"
+check "and the file survived" "$([ -f "$PTH" ] && echo yes)" "yes"
+
+mkdir -p "$T/empty/lib/python3.12/site-packages"
+unhide_pth "$T/empty"; check "no .pth at all is fine" "$?" "0"
+
+if command -v chflags >/dev/null 2>&1; then
+  chflags hidden "$PTH"
+  check "flag really set" "$(ls -lO "$PTH" | awk '{print $5}')" "hidden"
+  unhide_pth "$T/venv"
+  check "flag cleared"    "$(ls -lO "$PTH" | awk '{print $5}')" "-"
+else
+  # Linux: no chflags, so the helper must return cleanly rather than spray
+  # command-not-found on every install.
+  check "no chflags, no output" "$(unhide_pth "$T/venv" 2>&1)" ""
+fi
+
 rm -rf "$T" "$FNS"
 echo "installer helpers: $ok passed, $bad failed"
 [ "$bad" -eq 0 ]

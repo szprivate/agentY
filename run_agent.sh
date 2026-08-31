@@ -283,6 +283,22 @@ if [ ! -x "$VENV_PY" ]; then
   say "[run_agent] Installing dependencies..." "$C_YELLOW"
   "$VENV_PY" -m pip install -r requirements.txt
 fi
+# Clear the macOS "hidden" flag from the venv's .pth files before anything imports
+# through them. Since 3.11, site.addpackage() SKIPS a hidden .pth without a word,
+# and agenty_core is installed editable - it reaches the interpreter through
+# exactly one .pth file. Flag that file and the whole shared tool layer is missing
+# at import time while sitting correctly on disk.
+#
+# The installer does this too. It is repeated here because the flag can arrive
+# AFTER the install: anything that hides dotfiles reaches .venv, and every .pth
+# inside it if it recurses. Naming site-packages rather than walking the tree
+# keeps it at milliseconds, so it costs nothing to do on every start.
+if command -v chflags >/dev/null 2>&1; then
+  for pth in "$PROJECT_ROOT"/.venv/lib/python*/site-packages/*.pth; do
+    [ -e "$pth" ] && chflags nohidden "$pth" 2>/dev/null
+  done
+fi
+
 # shellcheck disable=SC1091
 . "$PROJECT_ROOT/.venv/bin/activate"
 
