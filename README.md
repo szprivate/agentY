@@ -250,6 +250,70 @@ in the panel's own settings dialog) — a value you chose wins on every platform
 If you would rather have 5000 back on a Mac, turn off **System Settings → General
 → AirDrop & Handoff → AirPlay Receiver** and set the port explicitly.
 
+### Security
+
+The chat host listens on localhost. That is not the same as being private: any
+page in any browser tab can call a local server, and this one holds your `.env`
+and an agent that can run commands. Three things stand in the way, all on by
+default and all configurable under `[security]` in
+`config/settings.default.toml` (or the panel's Settings ▸ Security).
+
+**Only the panel may call the host.** Requests are refused unless their `Origin`
+is the page ComfyUI served, and the host will not answer to a name that is not an
+IP address or `localhost` (that check is what stops DNS rebinding — add your
+machine's real name to `security.allowed_hosts` if you use one). Nothing needs
+configuring for a LAN install: the panel builds the backend address from its own
+hostname, so both ends agree by construction.
+
+**A session token.** It lives in `.agenty_token` beside the checkout; ComfyUI
+reads it from there and hands it to the panel, which sends it on every call. This
+is what stops a script, or another machine, which has no browser to be honest
+about where it came from.
+
+The token is **kept across restarts**, on purpose. A ComfyUI tab reads it once, at
+page load, and the host gets restarted far more often than the tab does — so a
+token that changed every start would silently break every open panel and offer no
+cure but a reload nobody knew to do. It buys nothing either: the file is
+owner-only and sits beside `.env`, so anyone who can read one can read every key
+you own. Delete `.agenty_token` to rotate it deliberately. A panel that somehow
+has the wrong one asks ComfyUI again and retries by itself, so opening the tab
+before the host exists still works.
+
+**Your API keys are never sent to the browser.** `GET /agentY/settings` returns a
+mask, not the values. Type over a field to replace a key; leave it alone and it
+stays as it is.
+
+Alongside those, the host warns at startup when a key has been in `.env` for more
+than `security.api_key_max_age_days` (30 by default, `0` to switch it off). A key
+does not expire on its own, so rotating on a clock is the only protection that
+does not depend on noticing a leak. Pasting a new value restarts the clock by
+itself — there is nothing to acknowledge, and the ledger in `config/key_ages.json`
+stores fingerprints, never the keys.
+
+### What the agent may run
+
+`run_script` executes **one program, with no shell**. Pipes, redirects, `&&`
+chains and `$(…)` are refused rather than silently mangled, so the whole class of
+quoting and chaining attacks is gone — there is no shell left to attack. The
+program must be one of a named set (python, ffmpeg/ffprobe, git, and the usual
+listing and searching tools; add more with `security.shell_allowed_commands`),
+and path arguments must stay inside the project, ComfyUI's directories or a temp
+file (`security.shell_extra_roots` adds more).
+
+That is a real limit and it is not containment, which is worth being plain about:
+`python` is on the list because skills need it, and a Python process can do
+anything Python can do. So the tools whose effects leave this process —
+`run_script`, `iterate`, and `install_custom_node`, which clones and installs code
+from the internet — **stop and ask you first**, in the panel, showing the exact
+command. Answer *allow once* or *allow for this session*; anything else, including
+closing the tab, declines.
+
+If no panel is open to ask — a turn driven from Slack, or a machine left alone —
+the request is declined and the agent is told to ask you. Set
+`security.unattended_tool_policy = "allow"` if you deliberately want an agent
+running with nobody watching. The list itself is `security.ask_before_tools`;
+empty it to never be asked.
+
 ### OpenMP on macOS
 
 If the agent host dies with `Abort trap: 6` and this above it:

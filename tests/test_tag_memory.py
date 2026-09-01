@@ -295,9 +295,10 @@ class EditorRouteTests(_Store):
         super().setUp()
         PM.write_entry("hero", "Anna, 30s, red coat.", type="character")
         PM.write_entry("grade", "Cool shadows, warm skin.", type="style")
+        from tests.route_client import authorised_client
         app = srv._build_app()
         app.testing = True
-        self.client = app.test_client()
+        self.client = authorised_client(app)
 
     def _list(self):
         return json.loads(self.client.get("/agentY/project_memory").data)

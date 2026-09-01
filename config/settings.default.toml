@@ -51,6 +51,13 @@ comfyui_user_dir = ""
 conversation_db = "./memory/conversations.sqlite"
 # Auto-open every workflow the agent runs onto the ComfyUI canvas. Env: AGENTY_CANVAS_AUTOLOAD (1/0).
 autoload_workflows_into_canvas = false
+# Drop each finished image/video onto the canvas as a loader node pointed at it.
+# On, because it is how a result becomes something you can wire into the next
+# thing rather than a filename in a chat log. Turn it off when you are generating
+# in bulk and would rather keep the graph clean — nothing is lost either way: the
+# files are written exactly the same, and the chat names each one with its path.
+# Env: AGENTY_CANVAS_DROP (1/0).
+drop_outputs_into_canvas = true
 # Canvas hooks: when an anchor is wired to a mid-graph node (a VAEDecode, an upscaler,
 # a mask op) its value is a tensor with no file anywhere, so the agent has nothing to
 # look at. With this on, that wire is rendered to a temp file before the turn starts —
@@ -92,6 +99,51 @@ comfyui_console_lines = true
 auto_update = true
 message_history_log = "./.logs/message_history.log"
 tokens_usage_log = "./.logs/tokens_usage.log"
+
+# Who may talk to the agent host, and how long an API key may sit unrotated.
+#
+# The host listens on localhost, which is not the same as being private: any page
+# in any browser tab can call a local server, and this one holds your .env and an
+# agent that can run commands. See src/utils/api_guard.py for what each check does.
+[security]
+# Refuse a request whose Origin is not the page we serve. Off is for diagnosing a
+# panel that will not connect, and for nothing else — with it off, any website you
+# have open can drive the agent and read your keys.
+check_origin = true
+# Require the session token (X-AgentY-Token). The panel gets it from ComfyUI at
+# page load; a script or another machine has to be given it deliberately. Turn off
+# only if an old sidebar extension locks you out, and update the extension instead.
+require_token = true
+# Extra origins allowed to call this host, e.g. ["http://studio.local:8188"].
+# Only needed when the panel is served from somewhere this cannot work out itself.
+allowed_origins = []
+# Extra names this host may be addressed by. Anything that is not an IP address or
+# "localhost" is refused by default, because a name is what DNS rebinding needs.
+allowed_hosts = []
+# Warn at startup when an API key in .env has been in place this many days.
+# A key never expires by itself, so the only defence that does not rely on
+# noticing a breach is rotating on a clock. Pasting a new value restarts the clock
+# on its own — nothing to acknowledge. 0 turns the warning off entirely.
+api_key_max_age_days = 30
+# Tools that stop and ask before they run. These are the ones whose effects leave
+# this process: a program, evaluated Python, and code cloned from the internet.
+# The prompt appears in the agentY panel with the exact command, and offers
+# "allow once" or "allow for this session". Empty list = never ask.
+ask_before_tools = ["run_script", "iterate", "install_custom_node"]
+# How long a prompt waits for an answer before declining by itself.
+tool_prompt_timeout_seconds = 120
+# What to do when a tool needs approval and no panel is open to give it — a turn
+# driven from Slack, or a machine left alone. "deny" refuses and tells the agent
+# to ask you; "allow" runs it unreviewed, which is only sensible if you meant to
+# leave this agent running unattended.
+unattended_tool_policy = "deny"
+# Extra programs run_script may launch, beyond python/ffmpeg/git and the usual
+# listing tools. Note that a shell or a downloader here (bash, sh, curl, wget)
+# makes the whole list decorative — anything can be run through it.
+shell_allowed_commands = []
+# Extra folders run_script may point at. ComfyUI's input/output/user directories
+# are added automatically; this is for media kept somewhere else.
+shell_extra_roots = []
 
 # Image annotation — `annotate_image` circles/boxes/arrows things in a picture by
 # compositing an overlay onto the untouched original (never a re-render). Finding

@@ -19,6 +19,17 @@ def iterate(python_call: str, iter: int) -> str:
     Each iteration's stdout, stderr, and (for expressions) return value are
     captured and returned as a JSON array.
 
+    **This asks the user first.** It evaluates the string inside the agent
+    process, with no restriction on what it may import, read, write or reach — so
+    unlike ``run_script``, which is confined to named programs and folders, there
+    is nothing here to confine it. That is why it is on the approval list in
+    ``security.ask_before_tools``, and why a decline comes back as an ordinary
+    tool result rather than an error: pick another way rather than retrying.
+
+    Prefer ``run_script`` on a file written with ``write_text_file`` when the work
+    is a script. Use this for a short computation over a loop, which is what it is
+    for.
+
     Args:
         python_call: A valid Python expression or statement to execute.
                      If it is an expression its value is recorded under

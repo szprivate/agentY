@@ -233,7 +233,8 @@ class RouteTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         from src.utils.agentY_server import _build_app
-        cls.client = _build_app().test_client()
+        from tests.route_client import authorised_client
+        cls.client = authorised_client(_build_app())
 
     def setUp(self):
         interject_bus.close_run(interject_bus.active_run() or "")

@@ -467,6 +467,29 @@ def _brand_tokens(name: str) -> list[str]:
 # Pipeline callable
 # ---------------------------------------------------------------------------
 
+def interrupted_turn_note(result) -> str:
+    """The line to end a turn on when ComfyUI was STOPPED, or "" when it wasn't.
+
+    A job the user cancelled is not a job that failed, and the difference has to
+    be made here rather than left to the agent to infer. Handing the interrupt
+    back as an ordinary tool result gives it
+    ``{"interrupted": true, "error": "Execution interrupted"}`` — and an agent
+    that receives an error about a workflow repairs the workflow. It did exactly
+    that: printed "not a workflow error", then queued a repaired version of the
+    graph the user had just cancelled.
+
+    Pressing stop has to mean stopped, so this ends the turn instead of resuming
+    the agent. Saying why matters as much: an agent that goes quiet after a stop
+    looks broken, and the next thing the user needs to know is that nothing is
+    wrong with the workflow.
+    """
+    if not (isinstance(result, dict) and result.get("interrupted")):
+        return ""
+    return ("\n\n🛑 _ComfyUI job stopped. Nothing was wrong with the workflow, so "
+            "there is nothing to repair — say what you'd like changed and I'll run "
+            "it again._")
+
+
 class Pipeline:
     """Chains Query Templates → Assemble Workflow with logging and JSON validation.
 
@@ -3877,6 +3900,24 @@ class Pipeline:
                     history_result_o = ev["history"] if "history" in ev else ev
                     break
                 yield {"data": f"\n_{ev}_"}
+            # A job the USER stopped is not a job that failed, and the difference
+            # has to be made here rather than left to the agent to infer.
+            #
+            # Handing the interrupt back as an ordinary result gives the agent
+            # `{"interrupted": true, "error": "Execution interrupted"}` — and an
+            # agent that receives an error about a workflow repairs the workflow.
+            # It did exactly that: printed "not a workflow error", then re-queued
+            # a repaired version of the graph the user had just cancelled. Pressing
+            # stop has to mean stopped.
+            _stopped_note = interrupted_turn_note(history_result_o)
+            if _stopped_note:
+                yield {"data": _stopped_note}
+                self._record_chat_summary(user_text, synth, status="interrupted",
+                                          raw_json=self._last_brainbriefing_json)
+                self._record_agent_usage(self._orchestrator_agent, _snap)
+                self._session.last_agent = "orchestrator"
+                self._log_orchestrator()
+                return
             yield {"data": "\n_✅ ComfyUI job finished — resuming…_"}
             current_input = [
                 {

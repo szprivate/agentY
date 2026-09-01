@@ -2469,9 +2469,17 @@ def _render_anchor(aid: str, atype: str, inputs: dict, tap: tuple | None = None,
     if not note:
         was = _recorded_role(inputs)
         if not was:
-            # A title the user (or the drop) gave the node. Agent-dropped nodes are
-            # titled "agentY · <role>", so take the part after the mark — and drop
-            # it entirely when it is just the filename again, which says nothing.
+            # A title the USER gave the node — their own words about this input,
+            # which beats making the next turn look at the pixels again.
+            #
+            # The " · " split is for graphs from when agent drops were retitled
+            # "agentY · <role>". They no longer are: a role is a sentence out of a
+            # hook directive, and putting one in a title made litegraph widen the
+            # node to fit it. The role reaches here through _recorded_role instead,
+            # which reads the .agenty.json beside the file and is the better
+            # channel anyway — it survives a retitle, a reload and a new thread.
+            # Dropped entirely when the title is just the filename, which says
+            # nothing the line does not already carry.
             stem = " ".join(str(title or "").split()).split(" · ", 1)[-1].strip()
             named = {str(v).strip().replace("\\", "/").rsplit("/", 1)[-1].lower()
                      for v in (inputs or {}).values() if isinstance(v, str)}

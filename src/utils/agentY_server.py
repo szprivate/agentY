@@ -315,6 +315,71 @@ def _effective_comfyui_user_dir() -> str | None:
     return None
 
 
+def _drop_outputs_into_canvas() -> bool:
+    """Should a finished image/video be dropped onto the canvas as a loader node?
+
+    Decided here rather than in the panel so one answer covers every route a
+    result can arrive by — a turn's own stream, a background Magnific completion,
+    a Slack-driven run watched from the sidebar. A browser-side toggle would have
+    to be repeated in each of them, and would disagree with itself the moment one
+    was missed.
+    """
+    env = os.environ.get("AGENTY_CANVAS_DROP", "").strip().lower()
+    if env in ("1", "true", "yes", "on"):
+        return True
+    if env in ("0", "false", "no", "off"):
+        return False
+    try:
+        from src.agent import _load_settings
+        return bool((_load_settings() or {}).get("drop_outputs_into_canvas", True))
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def _configure_shell_sandbox() -> None:
+    """Tell agenty_core which folders and programs run_script may use here.
+
+    agenty_core defaults to the checkout and a temp directory, because it is
+    framework-agnostic and resolving ComfyUI's directories means an HTTP call it
+    has no business making on every command. agentY knows them, so it says so
+    once, at startup.
+
+    Best-effort throughout: a ComfyUI that is not up yet costs the media folders,
+    not the ability to start.
+    """
+    roots: list[str] = []
+    try:
+        from src.agent import _load_settings
+        settings = _load_settings() or {}
+        sec = settings.get("security") or {}
+        extra_cmds = list(sec.get("shell_allowed_commands") or [])
+        roots.extend(str(r) for r in (sec.get("shell_extra_roots") or []))
+        for key in ("comfyui_models_dir", "output_dir", "output_workflows_dir"):
+            value = str(settings.get(key) or "").strip()
+            if value:
+                roots.append(value)
+    except Exception:  # noqa: BLE001
+        extra_cmds = []
+
+    try:
+        from agenty_core.tools.comfyui import get_comfyui_dirs
+        dirs = json.loads(get_comfyui_dirs())
+        for key in ("input_dir", "output_dir", "user_dir", "base_dir", "comfyui_dir"):
+            value = str(dirs.get(key) or "").strip()
+            if value and value.lower() != "unknown":
+                roots.append(value)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("ComfyUI directories not added to the shell sandbox: %s", exc)
+
+    try:
+        from agenty_core import sandbox
+        sandbox.configure(executables=extra_cmds, roots=roots)
+        logger.info("run_script sandbox: %d root(s), %d extra program(s)",
+                    len(sandbox.allowed_roots()), len(extra_cmds))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("could not configure the run_script sandbox: %s", exc)
+
+
 def _output_role(path: str) -> tuple[str, bool]:
     """(what this output is FOR, whether the user named it themselves).
 
@@ -441,6 +506,11 @@ def _handle_magnific_complete(identifier: str, asset_url: str, kind: str,
         "name": path.name,
         "node_candidates": _NODE_CANDIDATES.get(real_kind, []),
         "web_url": (meta or {}).get("web_url", ""),
+        # A background completion is still the agent putting a result on the
+        # canvas, so it answers to the same setting. Asked here rather than
+        # trusted from the turn that started it: this lands minutes later, and the
+        # setting may have been changed in between.
+        "drop": _drop_outputs_into_canvas(),
     }
 
 
@@ -1087,6 +1157,7 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
                 "filename": staged, "name": os.path.basename(p),
                 "role": role, "role_declared": declared,
                 "node_candidates": _NODE_CANDIDATES.get(kind, []),
+                "drop": _drop_outputs_into_canvas(),
             })
 
     def _emit_paths(paths: list[str], caption: str = "") -> None:
@@ -1100,6 +1171,7 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
                 "type": "output", "kind": kind, "path": p, "filename": staged,
                 "name": os.path.basename(p), "caption": caption,
                 "node_candidates": _NODE_CANDIDATES.get(kind, []),
+                "drop": _drop_outputs_into_canvas(),
             })
 
     def _translate(event: dict) -> None:
@@ -1362,23 +1434,59 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
 
 # ── Stop / interrupt helpers ──────────────────────────────────────────────────
 
-def _interrupt_comfy() -> None:
-    """Best-effort: tell ComfyUI to interrupt any running job (POST /interrupt)."""
+def _interrupt_comfy() -> dict:
+    """Stop the agent's work in ComfyUI: the running job AND everything it queued.
+
+    Interrupting alone was not stopping. ``POST /interrupt`` ends the job that is
+    running and ComfyUI immediately starts the next one, so a run several prompts
+    deep — a batch member per variant, a repaired graph queued behind the original
+    — carried on until somebody pressed Stop once per remaining item.
+
+    Clearing the whole queue would be the wrong cure: the user queues their own
+    work in the same ComfyUI. So only the prompts agentY submitted are removed
+    (:mod:`agenty_core.queue_ledger` records each one at submission), and anything
+    else in the queue is left exactly where it is.
+
+    The running job is interrupted unless the queue says it is one of the user's —
+    a stop meant for the agent should not end somebody else's render. When the
+    queue cannot be read at all we interrupt anyway: the person pressed Stop, and
+    a stop that does nothing is the worse failure.
+    """
+    report: dict = {}
     try:
-        from agenty_core.utils.comfyui_client import get_client
-        get_client().post("/interrupt", json_data={})
+        from agenty_core import queue_ledger
+        report = queue_ledger.cancel_ours()
     except Exception as exc:  # noqa: BLE001
-        logger.debug("ComfyUI interrupt failed: %s", exc)
+        logger.debug("could not clear the agent's ComfyUI queue: %s", exc)
+
+    interrupt = True
+    if report.get("ok") and report.get("running") and not report.get("running_is_ours"):
+        interrupt = False
+        logger.info("stop: leaving ComfyUI's running job alone — it is not ours (%s)",
+                    ", ".join(report.get("running") or []))
+    if interrupt:
+        try:
+            from agenty_core.utils.comfyui_client import get_client
+            get_client().post("/interrupt", json_data={})
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("ComfyUI interrupt failed: %s", exc)
+
+    deleted = report.get("deleted") or []
+    if deleted:
+        logger.info("stop: removed %d queued agentY prompt(s); left %d of the user's",
+                    len(deleted), report.get("kept", 0))
+    report["interrupted_running"] = interrupt
+    return report
 
 
 def _cancel_run(req_id: str) -> bool:
-    """Cancel the active pipeline run *req_id* and interrupt ComfyUI.
+    """Cancel the active pipeline run *req_id*. Returns True if one matched.
 
-    Returns True when a matching run was found and its cancellation scheduled.
-    Always interrupts ComfyUI (harmless when nothing is running) so a Stop during
-    a GPU generation halts the job too, not just the agent loop.
+    The agent loop only. Stopping ComfyUI is :func:`_interrupt_comfy`, called once
+    by the route rather than from in here — it now reads and edits the queue, and
+    doing that twice per Stop meant the second pass reported nothing to remove
+    because the first had already removed it.
     """
-    _interrupt_comfy()
     with _reply_lock:
         entry = _run_registry.get(req_id)
     if not entry:
@@ -2099,6 +2207,101 @@ def _env_path() -> Path:
     return _project_root() / ".env"
 
 
+# ── Request admission ────────────────────────────────────────────────────────
+# The rules live in src.utils.api_guard (pure, and tested there); this is the
+# Flask end of them: read the settings, read the request, ask.
+from src.utils import api_guard as _api_guard  # noqa: E402
+from src.utils import key_age as _key_age  # noqa: E402
+
+# The port actually bound, recorded at startup. Needed to tell an Origin on our
+# own port (a viewer page we served) from one that merely claims to be local.
+_bound_port: int = 0
+
+
+def set_bound_port(port: int) -> None:
+    """Record the port actually bound, for the Origin check's port rule."""
+    global _bound_port
+    _bound_port = int(port or 0)
+
+
+def _security_settings() -> dict:
+    try:
+        from src.agent import _load_settings
+        cfg = (_load_settings() or {}).get("security")
+        return cfg if isinstance(cfg, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+# Refusals seen recently: {(path, reason) -> [first_logged_at, count]}. A panel
+# that cannot authenticate does not fail once — it polls, so the same refusal
+# arrives several times a second. Logging each one buries the startup banner, the
+# key-age warning and every real error under a wall of identical lines, which is
+# how a useful message becomes noise nobody reads.
+_refusals: dict[tuple[str, str], list] = {}
+_REFUSAL_QUIET_SECONDS = 60.0
+
+
+def _log_refusal(method: str, path: str, why: str) -> None:
+    """Say it once, then say how often it kept happening — not every time."""
+    key = (str(path), str(why)[:60])
+    now = time.time()
+    seen = _refusals.get(key)
+    if seen is None:
+        # Count starts at 0, not 1: it counts what has been SUPPRESSED since the
+        # last line, and this one is being printed. Starting at 1 made the summary
+        # report the occurrence it had already reported.
+        _refusals[key] = [now, 0]
+        logger.warning("refused %s %s: %s", method, path, why)
+        return
+    seen[1] += 1
+    if now - seen[0] < _REFUSAL_QUIET_SECONDS:
+        return
+    logger.warning("refused %s %s (%d more times in the last %ds): %s",
+                   method, path, seen[1], int(now - seen[0]), why)
+    _refusals[key] = [now, 0]
+
+
+def _guard_verdict(request) -> tuple[bool, str]:
+    """Admit this request? Memoised per request — before_request and after_request
+    both need the answer, and settings reads are not free."""
+    try:
+        from flask import g
+        cached = getattr(g, "_agentY_verdict", None)
+        if cached is not None:
+            return cached
+    except Exception:  # noqa: BLE001
+        g = None  # type: ignore[assignment]
+
+    sec = _security_settings()
+    try:
+        from src.agent import _load_settings
+        comfy = str((_load_settings() or {}).get("comfyui_url", "http://127.0.0.1:8188"))
+    except Exception:  # noqa: BLE001
+        comfy = "http://127.0.0.1:8188"
+
+    result = _api_guard.verdict(
+        method=request.method,
+        path=request.path,
+        host_header=request.headers.get("Host", ""),
+        origin=request.headers.get("Origin", ""),
+        token=request.headers.get(_api_guard.TOKEN_HEADER, ""),
+        expected_token=_api_guard.session_token(_project_root()),
+        agent_port=_bound_port,
+        comfyui_url=comfy,
+        allowed_hosts=tuple(sec.get("allowed_hosts") or ()),
+        allowed_origins=tuple(sec.get("allowed_origins") or ()),
+        check_origin=bool(sec.get("check_origin", True)),
+        require_token=bool(sec.get("require_token", True)),
+    )
+    try:
+        if g is not None:
+            g._agentY_verdict = result
+    except Exception:  # noqa: BLE001
+        pass
+    return result
+
+
 def _pricing_config_path() -> Path:
     return _project_root() / "config" / "pricing.json"
 
@@ -2412,6 +2615,79 @@ def _update_env_file(updates: dict) -> None:
     path.write_text("".join(lines), encoding="utf-8")
     for k, v in updates.items():
         os.environ[str(k)] = str(v)
+    # A key that just changed should stop being "old" immediately, not at the next
+    # restart — otherwise the one action the warning asks for appears not to work.
+    _note_key_ages()
+
+
+# ── API-key age ──────────────────────────────────────────────────────────────
+
+# What the settings API sends in place of a secret it will not disclose.
+#
+# A fixed string, carrying nothing of the value — not even the last few
+# characters. The field name (HF_TOKEN) already says which credential it is, so a
+# partial reveal would buy nothing and cost the one thing masking is for. Its
+# other job is to be recognisable on the way back in: the panel only sends fields
+# the user edited, but a save that did include an untouched field must not write
+# the mask over the key.
+_SECRET_MASK = "\u2022" * 8
+
+
+def _masked_env(env: dict) -> dict:
+    """The .env as the settings API is allowed to describe it.
+
+    Secrets become the mask; everything else (endpoints, the Slack allow-list)
+    keeps its real value, because those are settings the UI has to round-trip and
+    none of them is a credential.
+    """
+    out: dict[str, str] = {}
+    for key, value in (env or {}).items():
+        text = str(value or "")
+        out[key] = (_SECRET_MASK if (text and _key_age.is_secret_key(key)) else text)
+    return out
+
+
+def _drop_masked(updates: dict) -> dict:
+    """Discard any incoming value that is just the mask we sent out.
+
+    Belt and braces: today's panel only submits fields whose value changed, so
+    this should never fire. It exists because the failure it prevents is
+    unrecoverable and silent — the mask written into .env, the real key gone, and
+    nothing to say so until the next API call fails with a 401.
+    """
+    return {k: v for k, v in (updates or {}).items()
+            if not (isinstance(v, str) and v.strip("\u2022 ") == "" and v.strip())}
+
+
+def _key_age_path() -> Path:
+    """Beside settings.local.json: machine state, gitignored, not a secret itself."""
+    return _project_root() / "config" / "key_ages.json"
+
+
+def _max_key_age_days() -> float:
+    raw = _security_settings().get("api_key_max_age_days",
+                                   _key_age.DEFAULT_MAX_AGE_DAYS)
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return float(_key_age.DEFAULT_MAX_AGE_DAYS)
+
+
+def _note_key_ages() -> list[dict]:
+    """Fold the current .env into the age ledger and return the per-key report.
+
+    Called at startup and after every settings save, so the ledger only ever
+    describes keys that are really there.
+    """
+    try:
+        env = _read_env_file()
+        path = _key_age_path()
+        ledger = _key_age.record(env, _key_age.load(path), env_path=_env_path())
+        _key_age.save(path, ledger)
+        return _key_age.report(env, ledger, _max_key_age_days())
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("key-age bookkeeping skipped: %s", exc)
+        return []
 
 
 def _diff_leaves(old, new, prefix: tuple = ()) -> list:
@@ -2585,11 +2861,41 @@ def _build_app():
     except Exception as exc:  # noqa: BLE001
         logger.warning("magnific_watch wiring skipped: %s", exc)
 
+    # ── Who may call this host ─────────────────────────────────────────────
+    # This used to be `Access-Control-Allow-Origin: *` and nothing else, which
+    # made every response readable by any page in any tab — including
+    # GET /agentY/settings, which returns .env. See src.utils.api_guard for what
+    # replaced it and why each check is there.
+    @app.before_request
+    def _guard():
+        ok, why = _guard_verdict(request)
+        if ok:
+            return None
+        _log_refusal(request.method, request.path, why)
+        # 403 rather than 401: there is no credential the caller could supply that
+        # would make a cross-site request acceptable, and a WWW-Authenticate
+        # challenge would invite a browser to prompt for one.
+        return jsonify({"ok": False, "error": why}), 403
+
     @app.after_request
     def _cors(resp):
-        resp.headers["Access-Control-Allow-Origin"] = "*"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        # Reflect the one origin we accepted, never "*". A reflected origin is
+        # what lets the panel read its own responses while leaving every other
+        # page with a CORS error — the browser enforces this on our behalf, which
+        # is the only reason it works at all.
+        origin = request.headers.get("Origin", "")
+        if origin and _guard_verdict(request)[0]:
+            resp.headers["Access-Control-Allow-Origin"] = origin
+            # Caches sit between us and the panel (and the viewers are plain
+            # pages). Without this a response allowed for one origin can be
+            # replayed to another out of the browser cache.
+            resp.headers["Vary"] = "Origin"
+        resp.headers["Access-Control-Allow-Headers"] = f"Content-Type, {_api_guard.TOKEN_HEADER}"
         resp.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
+        # A preflight the browser re-asks for on every request is a visible stall
+        # on a panel that polls; ten minutes is short enough that a settings
+        # change is not stuck behind it.
+        resp.headers["Access-Control-Max-Age"] = "600"
         return resp
 
     def _sse_response(generator):
@@ -2714,6 +3020,40 @@ def _build_app():
     # The one place the host asks the PAGE a question. Deliberately not on the
     # SSE stream: that drains inside the orchestrator's event loop, so a tool
     # blocked on an answer would be holding the channel meant to deliver it.
+    # ── Tool permission prompts ────────────────────────────────────────────
+    # Long-polled on its own connection, for the reason canvas_probe is: the
+    # agent thread is BLOCKED inside the tool while this question is outstanding,
+    # so nothing that rides on the turn's own stream could deliver it.
+    @app.route("/agentY/permission", methods=["GET", "OPTIONS"])
+    def permission_take():
+        if request.method == "OPTIONS":
+            return "", 204
+        from src.utils import tool_permissions as tp
+        # ?wait=N holds the connection open until there is something to say. The
+        # panel used to ask every second or so instead, which cost two requests a
+        # second through the access log — the token header makes even a GET a
+        # non-simple request, so each poll is a preflight and then the poll.
+        try:
+            wait = min(30.0, max(0.0, float(request.args.get("wait", 0))))
+        except (TypeError, ValueError):
+            wait = 0.0
+        return jsonify({"request": tp.take(wait), "granted": tp.granted_for_session()})
+
+    @app.route("/agentY/permission/reply", methods=["POST", "OPTIONS"])
+    def permission_reply():
+        if request.method == "OPTIONS":
+            return "", 204
+        from src.utils import tool_permissions as tp
+        body = request.get_json(silent=True) or {}
+        ok = tp.answer(str(body.get("permission_id") or ""),
+                       bool(body.get("allowed")),
+                       remember=bool(body.get("remember")),
+                       note=str(body.get("note") or ""))
+        # False means the waiter gave up first (the timeout ran out, or the turn
+        # was stopped). Reported rather than treated as an error: the panel should
+        # take the prompt down either way.
+        return jsonify({"ok": ok, "expired": not ok})
+
     @app.route("/agentY/canvas_probe", methods=["GET"])
     def canvas_probe_poll():
         """Long-poll: hand the panel the next probe, or nothing after a while.
@@ -2817,6 +3157,10 @@ def _build_app():
         if not page.exists():
             return "log_viewer.html not found", 404
         html = page.read_text(encoding="utf-8", errors="replace")
+        # These pages are opened as a navigation, which cannot carry a header, so
+        # the token is handed to them in the document itself. The Origin check is
+        # what stops another page from fetching this HTML to read it out.
+        html = _api_guard.inject_token(html, _api_guard.session_token(_project_root()))
         return Response(html, mimetype="text/html; charset=utf-8")
 
     @app.route("/agentY/message_history", methods=["GET", "OPTIONS"])
@@ -2879,6 +3223,10 @@ def _build_app():
         if not page.exists():
             return "project_memory_viewer.html not found", 404
         html = page.read_text(encoding="utf-8", errors="replace")
+        # These pages are opened as a navigation, which cannot carry a header, so
+        # the token is handed to them in the document itself. The Origin check is
+        # what stops another page from fetching this HTML to read it out.
+        html = _api_guard.inject_token(html, _api_guard.session_token(_project_root()))
         return Response(html, mimetype="text/html; charset=utf-8")
 
     @app.route("/agentY/project_memory", methods=["GET", "OPTIONS"])
@@ -2929,6 +3277,10 @@ def _build_app():
         if not page.exists():
             return "memory_viewer.html not found", 404
         html = page.read_text(encoding="utf-8", errors="replace")
+        # These pages are opened as a navigation, which cannot carry a header, so
+        # the token is handed to them in the document itself. The Origin check is
+        # what stops another page from fetching this HTML to read it out.
+        html = _api_guard.inject_token(html, _api_guard.session_token(_project_root()))
         return Response(html, mimetype="text/html; charset=utf-8")
 
     @app.route("/agentY/memory", methods=["GET", "OPTIONS"])
@@ -3021,8 +3373,16 @@ def _build_app():
             except Exception:  # noqa: BLE001
                 _tier_labels = {}
             return jsonify({
-                "env": env,
+                # Masked, never the real values. This response used to carry every
+                # API key in plaintext to anyone who asked, which — with the old
+                # `Allow-Origin: *` — meant any website the user had open.
+                "env": _masked_env(env),
                 "env_keys": list(dict.fromkeys(_KNOWN_ENV_KEYS + list(env.keys()))),
+                "env_mask": _SECRET_MASK,
+                # How long each key has been in place, so the panel can show the
+                # same rotation warning the host prints at startup.
+                "key_ages": _note_key_ages(),
+                "key_age_limit": _max_key_age_days(),
                 "settings": settings,
                 "tier_labels": _tier_labels,
                 "model_groups": _available_models(),
@@ -3032,7 +3392,7 @@ def _build_app():
         body = request.get_json(silent=True) or {}
         result: dict = {"ok": True}
         try:
-            env_updates = body.get("env")
+            env_updates = _drop_masked(body.get("env"))
             if isinstance(env_updates, dict) and env_updates:
                 _update_env_file({str(k): "" if v is None else str(v)
                                   for k, v in env_updates.items()})
@@ -3265,13 +3625,16 @@ def _build_app():
         thread_id = body.get("thread_id")
         found = _cancel_run(req_id) if req_id else False
         # Fallback: if the request_id was unknown (e.g. Stop pressed before it
-        # reached the client), cancel by thread. _cancel_run already interrupts
-        # ComfyUI; ensure we do so even when nothing matched.
+        # reached the client), cancel by thread.
         if not found and thread_id:
             found = _cancel_run_by_thread(thread_id)
-        if not found:
-            _interrupt_comfy()
-        return jsonify({"ok": True, "cancelled": found})
+        # Unconditionally, and after the cancel: stopping the agent's loop does
+        # nothing about the prompts it has ALREADY put in ComfyUI's queue, and
+        # those are most of what "stop" means to somebody watching a batch run.
+        report = _interrupt_comfy()
+        return jsonify({"ok": True, "cancelled": found,
+                        "queue_removed": len(report.get("deleted") or []),
+                        "queue_kept": report.get("kept", 0)})
 
     # ── Chat (SSE) ─────────────────────────────────────────────────────────
     @app.route("/agentY/chat", methods=["POST", "OPTIONS"])
@@ -3462,7 +3825,12 @@ _server_thread: threading.Thread | None = None
 # real message drowns in "GET /agentY/health 200". The polling still happens; only
 # its *successful* log lines are dropped. A poll that 404s or 500s still prints —
 # that is exactly the thing worth seeing. Set AGENTY_LOG_POLLS=1 to log them all.
-_QUIET_POLL_PATHS = ("/agentY/health", "/agentY/notifications", "/agentY/status")
+_QUIET_POLL_PATHS = ("/agentY/health", "/agentY/notifications", "/agentY/status",
+                     # Long polls. They are quiet per minute rather than per
+                     # second, but each one is now TWO lines — the token header
+                     # makes them non-simple requests, so the browser sends a CORS
+                     # preflight first and OPTIONS is logged like anything else.
+                     "/agentY/permission", "/agentY/canvas_probe")
 _ACCESS_LINE_RE = re.compile(r'"[A-Z]+ (?P<path>[^" ]+) HTTP/[\d.]+" (?P<code>\d{3})')
 # Werkzeug wraps the request line in ANSI colour for anything that isn't a plain
 # 200, which would otherwise stop the pattern above from matching.
@@ -3556,6 +3924,20 @@ def start_agentY_server(agent, host: str = "127.0.0.1", port: int | None = None)
     except ImportError:
         logger.error("Flask is not installed. Run: pip install flask")
         return False
+
+    # Before the app: the guard reads it on the very first request, and the token
+    # file must exist before the panel asks ComfyUI for it.
+    set_bound_port(port)
+    _api_guard.session_token(_project_root())
+    _note_key_ages()
+    _configure_shell_sandbox()
+    # A restart is a new session: "allow for this session" must not survive the
+    # process whose session it was.
+    try:
+        from src.utils.tool_permissions import reset_session
+        reset_session()
+    except Exception:  # noqa: BLE001
+        pass
 
     app = _build_app()
     _quiet_poll_logging()

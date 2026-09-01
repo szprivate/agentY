@@ -117,9 +117,10 @@ class HealthTest(unittest.TestCase):
         srv._canvas_cache.clear()
         srv._canvas_wanted_until = 0.0
         self.addCleanup(srv._canvas_cache.clear)
+        from tests.route_client import authorised_client
         app = srv._build_app()
         app.config["TESTING"] = True
-        self.client = app.test_client()
+        self.client = authorised_client(app)
 
     def test_health_says_when_the_canvas_is_wanted(self):
         self.assertFalse(self.client.get("/agentY/health").get_json()["want_canvas"])

@@ -159,6 +159,32 @@ def _refresh_workflow_corpus() -> None:
           + (f" - {len(failed)} unreadable: {', '.join(failed[:5])}" if failed else ""))
 
 
+def _warn_about_old_keys() -> None:
+    """Say, once per start, which API keys have been sitting there too long.
+
+    Printed after the ready banner rather than before it: the banner is what
+    someone is waiting for, and a warning above it scrolls away unread. Nothing
+    here can stop a start — a rotation reminder that prevents you working is a
+    reminder that gets deleted.
+    """
+    try:
+        from src.utils.agentY_server import _max_key_age_days, _note_key_ages
+        from src.utils.key_age import warning_lines
+        limit = _max_key_age_days()
+        if limit <= 0:
+            return
+        stale = [e for e in _note_key_ages() if e.get("stale")]
+        lines = warning_lines(stale, limit)
+        if not lines:
+            return
+        print("  ⚠️  " + lines[0])
+        for line in lines[1:]:
+            print("      " + line.strip())
+        print()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[agenty-ui] key-age check skipped: {exc}")
+
+
 def main() -> None:
     # Defaults come from settings.json (agent_server_url); env vars override; a CLI flag wins.
     _def_host, _def_port = _agent_server_url_defaults()
@@ -215,11 +241,16 @@ def main() -> None:
     print("  Stop:     Ctrl+C, or type /stop in the chat.")
     print("=" * 64 + "\n")
 
+    _warn_about_old_keys()
+
     # Block the main thread until interrupted; the server runs in a daemon thread.
     stop = threading.Event()
 
     def _handle(_sig, _frm):  # noqa: ANN001
         print("\n[agenty-ui] Shutting down.")
+        # The token is deliberately LEFT behind. Deleting it here meant every
+        # restart invalidated every open ComfyUI tab, which reads the token once
+        # at page load — see api_guard.session_token.
         stop.set()
 
     signal.signal(signal.SIGINT, _handle)

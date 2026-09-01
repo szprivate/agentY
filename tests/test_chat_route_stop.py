@@ -37,9 +37,10 @@ class ChatRouteTest(unittest.TestCase):
                                             lambda tid: {"id": tid, "messages": []}))
         self.enterContext(mock.patch.object(srv.cs, "add_message", lambda *a, **k: 1))
         self.enterContext(mock.patch.object(srv.cs, "save_panel", lambda *a, **k: None))
+        from tests.route_client import authorised_client
         app = srv._build_app()
         app.config["TESTING"] = True
-        self.client = app.test_client()
+        self.client = authorised_client(app)
 
     def _post(self, message, halted, thread_id="t1"):
         self.asked = []

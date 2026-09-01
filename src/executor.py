@@ -342,6 +342,14 @@ def _submit_workflow(workflow_path: str, client_id: str = "") -> str:
 
     result = client.post("/prompt", json_data=payload)
     if isinstance(result, dict) and "prompt_id" in result:
+        # Note it as ours. Stop deletes exactly the queued prompts in this ledger,
+        # which is what lets it clear a whole batch without touching the jobs the
+        # user queued in ComfyUI themselves.
+        try:
+            from agenty_core.queue_ledger import remember as _remember_prompt
+            _remember_prompt(result["prompt_id"])
+        except Exception:  # noqa: BLE001
+            pass
         return result["prompt_id"]
     raise RuntimeError(f"Unexpected response from ComfyUI /prompt: {result!r}")
 

@@ -665,6 +665,54 @@ class ToolActivityHookProvider:
             pass
 
 
+class ToolPermissionHookProvider:
+    """Hold a tool that acts outside this process until a person says yes.
+
+    ``cancel_tool`` is Strands' own primitive for this: setting it turns the call
+    into an error result the agent reads and can respond to, rather than an
+    exception that ends the turn. A declined command should leave the agent able
+    to say "you declined that, shall I do X instead" — which is the difference
+    between a permission prompt and a crash.
+
+    The decision itself lives in :mod:`src.utils.tool_permissions`; this is only
+    the wiring, so the policy can be tested without an agent.
+    """
+
+    def register_hooks(self, registry: HookRegistry, **kwargs) -> None:  # noqa: ARG002
+        from strands.hooks.events import BeforeToolCallEvent
+        registry.add_callback(BeforeToolCallEvent, self._on_before)
+
+    def _on_before(self, event, **kwargs) -> None:  # noqa: ANN001, ARG002
+        try:
+            from src.utils import tool_permissions as tp
+            tu = getattr(event, "tool_use", None) or {}
+            name = str(tu.get("name", ""))
+
+            settings = _load_settings() or {}
+            sec = settings.get("security") or {}
+            ask_for = sec.get("ask_before_tools", list(tp.DEFAULT_ASK_TOOLS))
+            if not isinstance(ask_for, (list, tuple)) or name not in ask_for:
+                return
+
+            decision = tp.request(
+                name, tu.get("input", {}) or {},
+                timeout=float(sec.get("tool_prompt_timeout_seconds", tp.DEFAULT_TIMEOUT) or 0),
+                unattended_allows=(str(sec.get("unattended_tool_policy", "deny")).lower()
+                                   == "allow"),
+            )
+            if not decision.allowed:
+                event.cancel_tool = (
+                    f"Not run — {decision.reason} Do not retry this call; ask the "
+                    "user what they would like instead, or propose a different "
+                    "approach.")
+        except Exception as exc:  # noqa: BLE001
+            # A broken gate must not become a broken agent — but it must not
+            # silently become an open gate either, so it is said out loud.
+            logging.getLogger("agentY.tool_permissions").warning(
+                "tool permission check failed for %s (allowing): %s",
+                (getattr(event, "tool_use", None) or {}).get("name", "?"), exc)
+
+
 class MagnificWatchHookProvider:
     """Auto-register async Magnific creations for background auto-drop.
 
@@ -949,7 +997,13 @@ def _make_agent(
     _hooks = list(agent_kwargs.get("hooks") or [])
     if not any(isinstance(h, ToolActivityHookProvider) for h in _hooks):
         _hooks.append(ToolActivityHookProvider(role=role))
-        agent_kwargs["hooks"] = _hooks
+    # Approval applies to EVERY agent, not just the one you are talking to. A
+    # subagent or a delegate holds the same run_script the orchestrator does, and
+    # a gate that only covered the visible agent would be a gate with a documented
+    # way around it.
+    if not any(isinstance(h, ToolPermissionHookProvider) for h in _hooks):
+        _hooks.append(ToolPermissionHookProvider())
+    agent_kwargs["hooks"] = _hooks
     agent = Agent(**agent_kwargs)
     # Attach light-weight cost metadata so callers can compute run cost.
     try:

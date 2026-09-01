@@ -77,3 +77,14 @@ user/
 # copied across platforms silently drops a junk file in the repo root.
 nul
 
+# The agent host's session token. The ComfyUI panel reads it from here to
+# authenticate to the host — a real credential, and one that means nothing on any
+# other machine.
+#
+# Glob, not the bare name: a sync tool or a Finder copy leaves ".agenty_token 2"
+# beside it, and a stray file holding a live token is the last thing that should
+# be able to slip into a commit because the pattern was exact.
+.agenty_token*
+# When each API key in .env was first seen, so the host can warn about ones that
+# have gone unrotated. Holds fingerprints, never the keys themselves.
+config/key_ages.json
