@@ -91,7 +91,11 @@ class CandidateOfferTests(unittest.TestCase):
 
     def test_and_the_block_says_why_there_is_nothing_to_choose(self):
         line = _target_context(STRING_ANCHOR)
-        self.assertIn("no anchor wired into this hook carries a IMAGE", line)
+        self.assertIn("nothing wired into this hook carries a IMAGE", line)
+        # And it now says what WOULD fill it. Leading with "supply a node id" is
+        # what sent a run to name the node that generates the references, which
+        # wires the generator in and runs it again instead of reusing its output.
+        self.assertIn("FILE PATH", line)
         self.assertIn("CONNECTION", line, "it is still marked as taking a wire")
 
     def test_matching_anchors_are_offered(self):

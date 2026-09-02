@@ -203,7 +203,12 @@ class ThroughTheRealToolTests(unittest.TestCase):
 
     def test_a_value_within_the_limit_still_places_and_injects(self):
         res, pipe = self._place("a prompt that fits")
-        self.assertEqual(res["status"], "placed")
+        # Not `status == "placed"`: whether a text NODE is also drawn is a
+        # setting, and this test is about the value reaching the graph — which
+        # happens either way. Asserting the node here made the suite depend on
+        # whoever ran it having Canvas → place text nodes switched on.
+        self.assertIn(res["status"], ("placed", "injected"))
+        self.assertNotIn("error", res)
         self.assertEqual(res["injected_targets"], ["283"])
         self.assertEqual(pipe._canvas_base_prompt["283"]["inputs"]["prompt"],
                          "a prompt that fits")

@@ -431,7 +431,9 @@ class TurnTest(unittest.TestCase):
         tool = {t.tool_name: t for t in Pipeline._build_delegation_tools(pipe)}
         out = json.loads(asyncio.run(tool["place_canvas_text"](
             hook_node_id="30", text="a warm, low-contrast alley")))
-        self.assertEqual(out["status"], "placed")
+        # "placed" or "injected" — the text-node switch decides which, and the
+        # journalling this test is about happens either way.
+        self.assertNotIn("error", out)
         self.assertEqual(hc.read(hooks[0]["_cache_key"])["value"],
                          "a warm, low-contrast alley")
 

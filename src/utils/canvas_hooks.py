@@ -2076,6 +2076,9 @@ def gated_by_review(hooks: list | None) -> set:
     reviews = {str(h.get("hook_node_id")) for h in hooks if _is_review(h)}
     if not reviews:
         return set()
+    # Through plain nodes too: a stage that reads the collector a review hook
+    # fills is downstream of that review, however the wire is drawn.
+    writers = _writers_by_node(hooks)
     gated: set = set()
     # Walk forward until nothing new is gated: a hook is gated if any of its
     # producers is a review hook or is itself gated.
@@ -2086,19 +2089,48 @@ def gated_by_review(hooks: list | None) -> set:
             hid = str(h.get("hook_node_id"))
             if hid in gated or hid in reviews:
                 continue
-            producers = _hook_predecessors(h, ids)
+            producers = _hook_predecessors(h, ids, writers)
             if producers & (reviews | gated):
                 gated.add(hid)
                 changed = True
     return gated
 
 
-def _hook_predecessors(hook: dict, hook_ids: set) -> set:
+def _writers_by_node(hooks: list) -> dict:
+    """real node id -> {ids of hooks whose output is wired into that node}.
+
+    The other half of a dependency nobody was joining up. A hook that anchors on a
+    plain node is reading whatever was put there, and when what puts it there is
+    another hook, the two are ordered — but the anchor says only "node 41" and the
+    producer says only "I feed node 41", and neither side alone is a dependency.
+
+    The case that made this necessary: hook 6 generates the character references
+    into an ``agentY collector``, hook 37 anchors on that collector to build the
+    video. Ordered without this, hook 37 ran first and read an empty collector.
+    """
+    out: dict = {}
+    ids = _hook_ids(hooks)
+    for h in (hooks or []):
+        if not isinstance(h, dict):
+            continue
+        hid = str(h.get("hook_node_id"))
+        for tid, _ty, _ti, _tt, _title in _output_targets(h):
+            if tid not in ids:              # hook→hook is already understood
+                out.setdefault(tid, set()).add(hid)
+    return out
+
+
+def _hook_predecessors(hook: dict, hook_ids: set, writers: dict | None = None) -> set:
     """Ids of hooks whose output feeds one of *hook*'s inputs (its producers).
 
     A hook depends on another when the latter is wired into one of its anchors
     (``anchors[].node_id`` is a hook id) or recorded in ``prev_hook_ids``. Those
     producers must run first so their value exists when this hook is processed.
+
+    *writers* (from :func:`_writers_by_node`) extends that one node further: an
+    anchor on a PLAIN node still depends on any hook that writes into that node.
+    Optional only so the existing callers that do not care keep working; pass it
+    and a collector standing between two hooks stops hiding the wire.
     """
     ids: set = {str(p) for p in (hook.get("prev_hook_ids") or []) if str(p) in hook_ids}
     for a in (hook.get("anchors") or []):
@@ -2106,6 +2138,8 @@ def _hook_predecessors(hook: dict, hook_ids: set) -> set:
             aid = str(a.get("node_id"))
             if aid in hook_ids:
                 ids.add(aid)
+            elif writers:
+                ids |= {w for w in writers.get(aid, ()) if w in hook_ids}
     if hook.get("prev_hook_id") is not None and str(hook["prev_hook_id"]) in hook_ids:
         ids.add(str(hook["prev_hook_id"]))
     ids.discard(str(hook.get("hook_node_id")))
@@ -2182,10 +2216,11 @@ def _producers_of(hooks: list) -> dict:
     all and the plan silently degrades to nothing.
     """
     ids = _hook_ids(hooks)
+    writers = _writers_by_node(hooks)
     producers: dict = {i: set() for i in ids}
     for h in hooks:
         hid = str(h.get("hook_node_id"))
-        for pid in _hook_predecessors(h, ids):        # recorded on the consumer
+        for pid in _hook_predecessors(h, ids, writers):   # recorded on the consumer
             producers.setdefault(hid, set()).add(pid)
         for tid, _ty, _ti, _tt, _title in _output_targets(h):   # on the producer
             if tid in ids and tid != hid:
@@ -2203,18 +2238,150 @@ def _is_chain_only(hook: dict, hook_ids: set) -> bool:
     return bool(chain) and not real
 
 
-def gating_hook_ids(hooks: list) -> set:
-    """Ids of hooks whose RESULTS a conditional hook depends on.
+def _produces_files(hook: dict, hook_ids: set) -> bool:
+    """Does running this hook put files on disk?
 
-    Everything upstream of a conditional hook, transitively: those hooks have to
-    be *run* (``apply_canvas_hooks(run_now=True)`` / ``run_workflow_now``) rather
-    than queued, or there is nothing for the condition to read — the turn ends,
-    the batch runs afterwards, and the check never happens.
+    A text hook writes a string with ``place_canvas_text`` — there is nothing to
+    execute. A hook whose output only reaches other HOOKS fills no graph input, so
+    it has nothing to run either. Neither can be the answer to "who makes the
+    image", and naming one sends the agent to apply_canvas_hooks to be told "no
+    batch was produced".
+    """
+    return not (_is_text(hook) or _is_chain_only(hook, hook_ids))
+
+
+def media_targets(hook: dict, hook_ids: set | None = None) -> list[str]:
+    """``["<node>.<input> (IMAGE)", …]`` for every REAL input this hook must wire.
+
+    Chain targets are excluded, and that exclusion is the whole reason *hook_ids*
+    is a parameter: a hook's ``out`` carries any type, so one hook feeding another
+    hook's anchor looks exactly like an unfilled IMAGE input unless you know the
+    node at the other end is a hook.
+    """
+    targets, _chain = _split_targets(hook, set(hook_ids or ()))
+    return [f"{tid}.{tin} ({tintype})"
+            for tid, _ttype, tin, tintype, _title in targets
+            if tin and is_connection_type(tintype)]
+
+
+def media_gap(hook: dict, hook_ids: set | None = None) -> list[str]:
+    """Media targets this hook must connect that nothing wired INTO it can satisfy.
+
+    The shape of the failure that started all of this. Hook 37 fed a video node's
+    ``reference_images.image_1`` (an IMAGE wire) with three hooks wired into it,
+    all of them carrying the strings those hooks AUTHOR — the screenplay, the
+    storyboard prompt, the reference prompts. A hook's wire never carries the files
+    its value produced when the graph ran, so there was no image anywhere in reach.
+    The block said exactly that, and the agent then supplied the id of the node
+    that *makes* the references — which wires the generator in and runs it again.
+    """
+    anchors = [a for a in (hook.get("anchors") or [])
+               if isinstance(a, dict) and a.get("node_id") is not None]
+    targets, _chain = _split_targets(hook, set(hook_ids or ()))
+    gaps: list[str] = []
+    for tid, _ttype, tin, tintype, _title in targets:
+        if not tin or not is_connection_type(tintype):
+            continue
+        if any(type_satisfies(a.get("from_output_type"), tintype) for a in anchors):
+            continue
+        gaps.append(f"{tid}.{tin} ({tintype})")
+    return gaps
+
+
+def file_dependencies(hooks: list, hook: dict) -> set:
+    """Hook ids whose PRODUCED FILES *hook* needs before it can be worked.
+
+    The same need arrives in two shapes, and the user tried both:
+
+    * **Nothing fits.** Hooks wired straight into this one, all carrying strings,
+      and a media input to connect (:func:`media_gap`). The only images in the run
+      are the ones an upstream hook produced, so every producer upstream counts.
+    * **A collector fits.** An anchor that *does* satisfy the input, but it is a
+      node another hook writes into. What that anchor will carry IS the upstream
+      hook's product — and it carries nothing until that hook has run.
+
+    Only hooks that actually generate are returned: a screenplay upstream of a
+    video is a real dependency for its *words*, and no help at all for its images.
+
+    Empty for the ordinary case, which is the point — every inline run serialises
+    the turn, and it should be paid for only where the wiring says a later hook
+    cannot proceed without the files.
+    """
+    ids = _hook_ids(hooks)
+    hid = str(hook.get("hook_node_id"))
+    deps: set = set()
+
+    if media_gap(hook, ids):
+        # Everything upstream, transitively — any of them might be the stage whose
+        # output was meant to be the reference.
+        producers = _producers_of(hooks)
+        stack, seen = list(producers.get(hid, ())), set()
+        while stack:
+            pid = stack.pop()
+            if pid in seen or pid == hid:
+                continue
+            seen.add(pid)
+            stack.extend(producers.get(pid, ()))
+        deps |= seen
+
+    wanted = {t.rsplit("(", 1)[-1].rstrip(")") for t in media_targets(hook, ids)}
+    if wanted:
+        writers = _writers_by_node(hooks)
+        for a in (hook.get("anchors") or []):
+            if not isinstance(a, dict) or a.get("node_id") is None:
+                continue
+            if not any(type_satisfies(a.get("from_output_type"), w) for w in wanted):
+                continue
+            deps |= {w for w in writers.get(str(a["node_id"]), ()) if w in ids}
+
+    deps.discard(hid)
+    by_id = {str(h.get("hook_node_id")): h for h in hooks}
+    return {d for d in deps if d in by_id and _produces_files(by_id[d], ids)}
+
+
+def product_consumers(hooks: list, hook_id: str) -> list[str]:
+    """Ids of the hooks that read *hook_id*'s output, in the order they are worked.
+
+    Named after what the caller wants it for: once a hook's stage has run, these
+    are the hooks its files are an input to, and the ones worth telling about them
+    while the paths are still in hand.
+    """
+    hid = str(hook_id or "")
+    if not hid:
+        return []
+    producers = _producers_of(hooks)
+    return [str(h.get("hook_node_id")) for h in hooks
+            if hid in producers.get(str(h.get("hook_node_id")), set())]
+
+
+def gating_hook_ids(hooks: list) -> set:
+    """Ids of hooks whose RESULTS a later hook depends on.
+
+    Everything upstream of such a hook, transitively: those hooks have to be *run*
+    (``apply_canvas_hooks(run_now=True)`` / ``run_workflow_now``) rather than
+    queued, or there is nothing there when it is wanted — the turn ends, the batch
+    runs afterwards, and the moment it was needed for has passed.
+
+    Two ways a hook needs results rather than promises:
+
+    * its directive is **conditional** — "if any reference failed, stop" — and a
+      condition over queued work can never be evaluated;
+    * it has **file dependencies** (:func:`file_dependencies`): it must connect an
+      image or video input, and what would satisfy it is a file an upstream hook
+      has to produce first — either because nothing is wired in at all, or because
+      what is wired in is a collector another hook fills.
+
+    The second was learned the hard way. It used to depend entirely on the user
+    happening to write "wait for the other stages to finish" in the directive of
+    the hook that needed the files — with that sentence the producers were run
+    inline and the paths existed; without it they were queued for after the turn
+    and the consumer had nothing, silently. Whether a stage's files are needed is a
+    property of the wiring, and the wiring is right here to be read.
     """
     producers = _producers_of(hooks)
     gating: set = set()
     for h in hooks:
-        if not is_conditional(h):
+        if not (is_conditional(h) or file_dependencies(hooks, h)):
             continue
         hid = str(h.get("hook_node_id"))
         # Per-hook walk: a cycle (or a hook wired back into its own producer) must
@@ -2237,7 +2404,7 @@ def gating_hook_ids(hooks: list) -> set:
     # sends it to apply_canvas_hooks, which can only answer "no batch was produced".
     ids = _hook_ids(hooks)
     quiet = {str(h.get("hook_node_id")) for h in hooks
-             if _is_text(h) or _is_chain_only(h, ids)}
+             if not _produces_files(h, ids)}
     return gating - quiet
 
 
@@ -2245,48 +2412,73 @@ def plan_lines(hooks: list) -> list[str]:
     """The RUN PLAN block: order, what must be run rather than queued, what gates.
 
     Derived from the wiring and the directives, not from the model — the ordering
-    is already a topological sort, and whether a step's *results* are needed in
-    this turn is decided by whether a downstream directive is conditional. The
-    plan exists because getting this wrong is silent: the agent queues a batch,
-    reaches a conditional hook it cannot evaluate, and stops — cancelling the very
-    work the condition was about.
+    is already a topological sort, and whether a step's *results* are needed this
+    turn is read off the graph. The plan exists because getting this wrong is
+    silent: the agent queues a batch, reaches the hook that needed it, and finds
+    nothing — a condition it cannot evaluate, or an image input with no image.
+
+    Numbered on the way out rather than in each string. They were hardcoded, so a
+    canvas with two conditional hooks printed two step 4s.
     """
     if not hooks:
         return []
     gating = gating_hook_ids(hooks)
     conditional = [h for h in hooks if is_conditional(h)]
-    if not conditional:
+    needs_files = [(h, file_dependencies(hooks, h)) for h in hooks]
+    needs_files = [(h, deps) for h, deps in needs_files if deps]
+    # No condition to evaluate and no input that only a produced file can fill:
+    # ordinary hooks, ordinary run, and a plan block would be ceremony.
+    if not conditional and not needs_files:
         return []
     order = " → ".join(str(h.get("hook_node_id")) for h in hooks)
-    out = [
-        "\nRUN PLAN (derived from the wiring — follow it):\n"
-        "  1. Say this plan in the chat before you start on it — one short numbered "
+    steps: list[str] = [
+        "Say this plan in the chat before you start on it — one short numbered "
         "line per hook, in your own words. Then get on with it: it is an announcement, "
-        "not a question (wait for an answer only if a [PLAN APPROVAL] block says to)."
+        "not a question (wait for an answer only if a [PLAN APPROVAL] block says to).",
+        f"Work the hooks in this order: {order}.",
     ]
-    out.append(f"  2. Work the hooks in this order: {order}.")
     if gating:
         ids = ", ".join(sorted(gating, key=lambda x: (len(x), x)))
-        out.append(
-            f"  3. Hook(s) {ids} must be RUN THIS TURN, not queued — a later hook's "
-            "directive is conditional on how they turn out. When such a hook generates, "
-            "call apply_canvas_hooks(..., run_now=true) (or run_workflow_now for a single "
-            "workflow): both execute immediately and return per-variant success/failure, "
-            "which is what the condition reads. apply_canvas_hooks WITHOUT run_now defers "
-            "to the end of the turn — its results do not exist while you are still working, "
-            "so a condition over them can never be evaluated."
+        why = []
+        if conditional:
+            why.append("a later hook's directive is conditional on how they turn out")
+        if needs_files:
+            why.append("a later hook needs the FILES they produce as an input")
+        steps.append(
+            f"Hook(s) {ids} must be RUN THIS TURN, not queued — " + " and ".join(why)
+            + ". When such a hook generates, call apply_canvas_hooks(..., run_now=true) "
+            "(or run_workflow_now for a single workflow): both execute immediately and "
+            "return per-variant success/failure plus the staged output paths. "
+            "apply_canvas_hooks WITHOUT run_now defers to the end of the turn — those "
+            "results do not exist while you are still working, so nothing this turn can "
+            "read them."
         )
     producers = _producers_of(hooks)
+    for h, dep_ids in needs_files:
+        hid = h.get("hook_node_id")
+        deps = ", ".join(sorted(dep_ids, key=lambda x: (len(x), x)))
+        ids = _hook_ids(hooks)
+        slots = ", ".join(media_gap(h, ids) or media_targets(h, ids))
+        steps.append(
+            f"Hook {hid} has to CONNECT {slots}, and what fills it is a FILE hook "
+            f"{deps} produces — not anything written. Run {deps} first, then pass the "
+            "OUTPUT PATHS handed back as the value for that input; the loader for them "
+            "is built into this run's copy of the graph. Do NOT pass the id of the node "
+            "that generated them: that wires the generator in and runs it again, instead "
+            "of reusing what it already made."
+        )
     for h in conditional:
         hid = h.get("hook_node_id")
         deps = sorted(producers.get(str(hid), ()), key=lambda x: (len(x), x))
         dep_txt = f" (reads hook {', '.join(deps)})" if deps else ""
-        out.append(
-            f"  4. Hook {hid} is CONDITIONAL{dep_txt}: evaluate its condition against the "
+        steps.append(
+            f"Hook {hid} is CONDITIONAL{dep_txt}: evaluate its condition against the "
             "results you actually have. If the condition to stop is met, call "
             'stop_hook_run(reason="…", question="…") and reply — do not queue more work. '
             "If it is not met, carry on normally."
         )
+    out = ["\nRUN PLAN (derived from the wiring — follow it):\n  1. " + steps[0]]
+    out.extend(f"  {i}. {body}" for i, body in enumerate(steps[1:], start=2))
     return out
 
 
@@ -2390,6 +2582,7 @@ def _order_by_dependency(hooks: list) -> list:
     consumer reads it — the sequencing comes from the graph, not a live re-snapshot.
     """
     ids = _hook_ids(hooks)
+    writers = _writers_by_node(hooks)
     by_id = {str(h.get("hook_node_id")): h for h in hooks if h.get("hook_node_id") is not None}
     ordered: list = []
     seen: set = set()
@@ -2399,7 +2592,7 @@ def _order_by_dependency(hooks: list) -> list:
         if hid in seen or hid in stack:
             return
         stack.add(hid)
-        for pid in _hook_predecessors(h, ids):
+        for pid in _hook_predecessors(h, ids, writers):
             if pid in by_id:
                 visit(by_id[pid], stack)
         stack.discard(hid)
@@ -2633,10 +2826,19 @@ def _target_context(hook: dict, hook_ids: set | None = None) -> str:
                 line += (f" [CONNECTION: supply a node id — connect one of "
                          f"{', '.join(fit)}, not a value]")
             else:
-                line += (f" [CONNECTION: supply a node id, not a value — but no "
-                         f"anchor wired into this hook carries a {tintype}, so "
-                         f"there is nothing here to choose from. Name a node id "
-                         f"from elsewhere on the canvas, or a file.]")
+                # Nothing wired in fits, so the honest answer is almost always a
+                # FILE — the one an upstream hook produced. Saying "supply a node
+                # id" first is what sent a run to name the node that MAKES the
+                # references, which wires the generator in and re-runs it rather
+                # than reusing the three images it had just produced.
+                line += (f" [CONNECTION: nothing wired into this hook carries a "
+                         f"{tintype}, so there is nothing here to choose from. "
+                         f"Give a FILE PATH — an output path an earlier hook handed "
+                         f"back this turn, or any file on disk — and the loader for "
+                         f"it is built into this run's copy of the graph. A node id "
+                         f"works too, but only for a node that already HOLDS the "
+                         f"image; the id of the node that generated it wires the "
+                         f"generator in and makes it run again.]")
         parts.append(line)
     return "; ".join(parts)
 

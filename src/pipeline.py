@@ -564,6 +564,16 @@ class Pipeline:
         # Tracked so they survive the end-of-turn current_output_paths reset and
         # still get staged onto the canvas. Empty on every non-chain turn.
         self._chain_output_paths: list = []
+        # hook id -> the files that hook's stage produced THIS TURN.
+        #
+        # A hook's wire carries the value it authors; nothing carried what that
+        # value produced when the graph ran. So a chain that generated references
+        # and then wanted to use them had no way to say so: the consumer was told
+        # "the value you produce for hook 6" and got the prompt text, while the
+        # three images sat on disk unmentioned. `hook_cache` journals the same
+        # association at the END of a turn, which is what makes it work NEXT time
+        # — this is the within-turn half, and the one a chain actually needs.
+        self._hook_products: dict = {}
         # Interactive iterative-refine loop state (iterate_step). Unlike the canvas
         # fields above, this PERSISTS across turns — the loop spans many turns — so it
         # is init-ed here only, never in the per-turn reset. `_iterate_history` is the
@@ -1465,10 +1475,10 @@ class Pipeline:
             # One stage of a chain: tag its outputs with whatever this turn is for,
             # so the file that feeds the next stage carries its own description.
             hooks = [h for h in (self._canvas_hooks or []) if isinstance(h, dict)]
-            self._tag_run_outputs(hooks[0] if len(hooks) == 1 else None)
+            _only = hooks[0] if len(hooks) == 1 else None
+            self._tag_run_outputs(_only)
             if self._dry_run:
-                return self._dry_run_one(workflow_path,
-                                         hooks[0] if len(hooks) == 1 else None)
+                return self._dry_run_one(workflow_path, _only)
             base = self._session.current_output_paths
             before = len(base)
             brief = self._last_brainbriefing_json or "{}"
@@ -1491,17 +1501,23 @@ class Pipeline:
             # Preserve these past the end-of-turn current_output_paths reset so
             # they're still staged onto the canvas.
             self._chain_output_paths.extend(new)
+            products = self._record_hook_products(
+                str((_only or {}).get("hook_node_id") or ""), new)
             if self._verbose:
                 print(f"pipeline: run_workflow_now produced {len(new)} output(s).")
-            return json.dumps({
+            result = {
                 "status": "done",
                 "outputs": new,
                 "message": (
                     f"{len(new)} output(s) produced and staged onto the canvas. To "
                     "chain: upload_image one of these paths and bind it to the next "
                     "stage's loader, then run that stage."
+                    + self._products_note(products)
                 ) if new else "Workflow ran but produced no output files.",
-            })
+            }
+            if products.get("waiting"):
+                result["products_for"] = products["waiting"]
+            return json.dumps(result)
 
         @_tool
         async def add_canvas_workflow(name: str, description: str = "") -> str:
@@ -2637,6 +2653,7 @@ class Pipeline:
                                "notes": notes})
         new = list(collected[before:])
         self._chain_output_paths.extend(new)
+        products = self._record_hook_products(hook_id, new)
         # Only members inline healing could NOT fix land here — a healed failure
         # is a success, and reporting it as a failure would stop a run that worked.
         errors = _get_exec_errors()
@@ -2674,8 +2691,11 @@ class Pipeline:
                    "If a hook's directive says to stop when one fails, call "
                    "stop_hook_run now; otherwise continue with what did succeed.")
                 + f" {len(new)} output file(s) staged onto the canvas."
+                + self._products_note(products)
             ),
         }
+        if products.get("waiting"):
+            out["products_for"] = products["waiting"]
         if qa_missed:
             out["qa_failed_count"] = len(qa_missed)
             out["message"] += self._qa_instruction(len(qa_missed))
@@ -3540,6 +3560,7 @@ class Pipeline:
         # held against the next request.
         self._policy_retries = {}
         self._chain_output_paths = []
+        self._hook_products = {}
         # The QA briefing in force this turn, already resolved by the caller
         # (a canvas qa hook wins over the thread's /qa briefing). None = no QA.
         self._qa_briefing = qa_briefing
@@ -4199,6 +4220,51 @@ class Pipeline:
                 )
             )
             existing.add(p)
+
+    def _record_hook_products(self, hook_id: str, paths: list) -> dict:
+        """Note the files a hook's stage just made, and who is waiting for them.
+
+        Returns ``{"hook", "files", "waiting"}`` for the tool result to carry, or
+        ``{}`` when there is nothing worth saying. *waiting* is the hooks that read
+        this one — the whole reason to mention the paths at all: they are about to
+        be asked for an image, and these files are the only images in the run.
+
+        This is the moment the association exists and nowhere else. The runner is
+        holding both halves — which hook it ran for, and exactly which files came
+        out — and a few lines later they are one more batch of outputs in a folder.
+        """
+        hid = str(hook_id or "")
+        files = [str(p) for p in (paths or []) if p]
+        if not hid or not files:
+            return {}
+        self._hook_products.setdefault(hid, []).extend(files)
+        try:
+            from src.utils.canvas_hooks import product_consumers
+            waiting = product_consumers(self._canvas_hooks or [], hid)
+        except Exception:  # noqa: BLE001
+            waiting = []
+        return {"hook": hid, "files": files, "waiting": waiting}
+
+    def _products_note(self, record: dict) -> str:
+        """One sentence for the tool result, or "" — what these files are FOR.
+
+        Deliberately said here rather than left to the [CANVAS HOOKS] block: that
+        block is built once, before anything has run, so by the time a downstream
+        hook is reached its description of this input is a photograph taken before
+        the files existed. The tool result is the one place in the turn where the
+        paths and the hook that needs them are both current.
+        """
+        if not record or not record.get("waiting"):
+            return ""
+        files = record["files"]
+        return (
+            f" These {len(files)} file(s) are hook {record['hook']}'s product, and "
+            f"hook {', '.join(record['waiting'])} read this hook's output: when you "
+            "reach it, pass THESE PATHS as the value for any image/video input it "
+            "has to connect — a loader is built for them. Do not pass the id of the "
+            "node that generated them; that runs the generator again instead of "
+            "using what it made."
+        )
 
     def _journal_hook_outputs(self) -> None:
         """Record the files each hook produced this turn, against its cache key.
