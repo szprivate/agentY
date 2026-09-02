@@ -649,6 +649,137 @@ def enumerate_folder(folder: str, extensions=None, use_full_path: bool = False) 
     return out
 
 
+_FAN_MODES = {"fan_out", "fan", "all_slots", "fill_slots", "spread"}
+# image_1, image_2, … — a slot that is one NUMBERED member of a family.
+_NUMBERED_SLOT = re.compile(r"^(?P<stem>.*?)(?P<sep>[_\-]?)(?P<n>\d+)$")
+
+
+def slot_family(base_prompt: dict | None, node_id: str, param: str) -> list[str]:
+    """The full dotted slot names *param* is one number in, in order, or [].
+
+    Two witnesses, and the better one first. ComfyUI's schema knows the real
+    template names (``model.reference_images`` → ``image_1 … image_8``), which is
+    the only thing that makes wiring ``image_2`` legitimate rather than hopeful.
+    When it cannot be asked — no ComfyUI, an unknown class — the graph itself is
+    still evidence: siblings already present on the node are slots that certainly
+    exist, because something declared them.
+
+    Empty means "do not fan", and every caller treats it that way. Inventing slot
+    names would build a graph that looks right and fails validation, which is the
+    failure this whole area exists to avoid.
+    """
+    node = (base_prompt or {}).get(str(node_id))
+    if not isinstance(node, dict):
+        return []
+    group, _, slot = str(param).rpartition(".")
+    m = _NUMBERED_SLOT.match(slot)
+    if not m:
+        return []
+    try:
+        declared = autogrow_slots(str(node.get("class_type") or ""), node.get("inputs"))
+    except Exception:  # noqa: BLE001
+        declared = {}
+    names = declared.get(group) or declared.get(str(param)) or []
+    if not names:
+        # Fall back to the siblings the graph already shows.
+        stem, sep = m.group("stem"), m.group("sep")
+        found: list[tuple[int, str]] = []
+        for key in (node.get("inputs") or {}):
+            k_group, _, k_slot = str(key).rpartition(".")
+            if k_group != group:
+                continue
+            km = _NUMBERED_SLOT.match(k_slot)
+            if km and km.group("stem") == stem and km.group("sep") == sep:
+                found.append((int(km.group("n")), k_slot))
+        names = [n for _i, n in sorted(found)]
+    if slot not in names:
+        return []
+    return [f"{group}.{n}" if group else n for n in names]
+
+
+def _free_slots_text(names: list, param: str) -> str:
+    """"image_2 … image_30" — the slots after *param*, said in a fixed width.
+
+    Named as a range, not a list. Seedance declares thirty reference slots, and
+    spelling all of them out put a paragraph of ``image_17, image_18, …`` into a
+    block that is re-sent on every single turn.
+    """
+    if param not in names:
+        return ""
+    rest = [n.rpartition(".")[2] for n in names[names.index(param) + 1:]]
+    if not rest:
+        return ""
+    return rest[0] if len(rest) == 1 else f"{rest[0]} … {rest[-1]}"
+
+
+def _expand_fan_outs(base_prompt: dict, resolutions: list) -> tuple[list, list[str]]:
+    """Turn each ``mode: "fan_out"`` resolution into a zip across its sibling slots.
+
+    The thing this exists for: a hook's output is wired into ONE numbered slot —
+    ``model.reference_images.image_1`` — and the directive says to use ALL the
+    generated images in ONE run. Handed several values, the batch builder read the
+    only shape it had, an ordinary product axis, and queued one paid video
+    generation per image with a single reference each. Nothing reported it, because
+    from the builder's side that is simply what a list of values means.
+
+    A fan IS a positional zip: N slots advancing together, one value each, one
+    variant out. So it is rewritten into exactly that rather than given a parallel
+    code path — the zip already handles ordering, labelling, and crossing with
+    whatever else the batch sweeps.
+    """
+    out: list = []
+    notes: list[str] = []
+    fan = 0
+    for res in (resolutions or []):
+        if not isinstance(res, dict):
+            out.append(res)
+            continue
+        if str(res.get("mode", "") or "").strip().lower() not in _FAN_MODES:
+            out.append(res)
+            continue
+        nid = str(res.get("target_node_id", res.get("node_id", "")) or "")
+        param = str(res.get("param", "") or "")
+        values = [v for v in (res.get("values") or [])]
+        if not nid or not param or not values:
+            notes.append(f"fan_out on {nid}.{param}: nothing to spread — skipped")
+            continue
+        param = canonical_param(base_prompt, nid, param)
+        names = slot_family(base_prompt, nid, param)
+        if not names:
+            # Refused rather than quietly swept: a sweep is the OTHER meaning, and
+            # answering an ambiguous request with the expensive reading is how this
+            # started. One value is placed, and the shortfall is said out loud.
+            notes.append(
+                f"fan_out on {nid}.{param}: could not read the numbered slots this "
+                f"input belongs to (ComfyUI unreachable, or the node declares none), "
+                f"so {len(values) - 1} of {len(values)} value(s) could not be placed. "
+                f"Used the first only — wire an agentY collector if the rest matter.")
+            out.append({**res, "mode": "value_list", "values": values[:1]})
+            continue
+        start = names.index(param)
+        room = len(names) - start
+        placed = values[:room]
+        if len(values) > room:
+            notes.append(
+                f"fan_out on {nid}.{param}: {len(values)} value(s) but only {room} "
+                f"slot(s) to put them in ({', '.join(n.rpartition('.')[2] for n in names[start:])}); "
+                f"used the first {room}, and {len(values) - room} could not be placed")
+        gid = f"\x00fan{fan}"
+        fan += 1
+        for name, value in zip(names[start:], placed):
+            out.append({**res, "param": name, "mode": "value_list",
+                        "values": [value], "zip_group": gid})
+        if len(placed) > 1:
+            notes.append(
+                f"{nid}.{param}: spread {len(placed)} value(s) across "
+                f"{', '.join(names[start:start + len(placed)])} — ONE run using all "
+                f"of them, not {len(placed)} runs using one each")
+        # One value is not a spread, and saying "spread 1 value … not 1 runs" reads
+        # as a bug in the receipt. The shortfall note above has already said why
+        # only one landed, which is the part worth reading.
+    return out, notes
+
+
 def _resolve_values(res: dict) -> list:
     """Turn one resolution spec into the concrete list of values to sweep."""
     mode = str(res.get("mode", "value_list") or "value_list")
@@ -808,6 +939,10 @@ def build_batch(base_prompt: dict, resolutions: list, cap: int = 25,
     batch is built from; the graph the user has open is never touched.
     """
     notes: list[str] = []
+    # A fan is rewritten into a zip before anything else looks at the list, so the
+    # rest of this function never learns there is more than one kind of resolution.
+    resolutions, fan_notes = _expand_fan_outs(base_prompt, list(resolutions or []))
+    notes.extend(fan_notes)
     conn_keys: set = set(connection_inputs or ())
     schema_open: dict = {}          # node id -> its unwired connection inputs
     # Bucket resolutions into groups, preserving encounter order. Each ungrouped
@@ -1974,6 +2109,75 @@ def _resolution_key(res: dict) -> str:
     return f"{nid}.{param}" if nid and param else ""
 
 
+def ambiguous_slot_sweeps(base_prompt: dict | None, hooks: list | None,
+                          resolutions: list | None) -> list[str]:
+    """Several values aimed at ONE numbered media slot that has free siblings.
+
+    Two readings, both legitimate, and the graph cannot tell them apart:
+
+    * **sweep** — one run per value, a reference each ("one video per character");
+    * **fan** — one run using all of them across ``image_1 … image_N`` ("wire all
+      the generated images in").
+
+    The report that produced this: a hook wired into ``image_1`` alone, a directive
+    saying to use ALL the references in a SINGLE pass, and three separate Seedance
+    generations queued with one reference each. The builder was not wrong — a list
+    of values for one input is a sweep, and until ``fan_out`` existed there was no
+    way to say the other thing. But the two readings differ by N paid video
+    generations, so guessing is the one thing not to do here.
+
+    Only flagged where it is genuinely ambiguous: a media input, more than one
+    value, and somewhere for the extra values to go. ``mode: "fan_out"`` has
+    already said which it means; ``sweep: true`` says the other one out loud.
+    """
+    if not isinstance(base_prompt, dict) or not resolutions:
+        return []
+    types = target_input_types(hooks)
+    problems: list[str] = []
+    for res in resolutions:
+        if not isinstance(res, dict):
+            continue
+        mode = str(res.get("mode", "") or "").strip().lower()
+        if mode in _FAN_MODES or res.get("sweep") is True:
+            continue                      # the caller has said which it means
+        if str(res.get("zip_group", "") or "").strip():
+            # A zip has already said it: these advance TOGETHER, one value each
+            # per run — "run 1 gets a.png with this prompt, run 2 gets b.png with
+            # that one". There is no fan reading of an axis paired with another,
+            # and asking about it would bounce a batch that is already explicit.
+            continue
+        nid = str(res.get("target_node_id", res.get("node_id", "")) or "")
+        param = str(res.get("param", "") or "")
+        if not nid or not param:
+            continue
+        param = canonical_param(base_prompt, nid, param)
+        key = f"{nid}.{param}"
+        declared = types.get(key)
+        if declared is not None and not is_connection_type(declared):
+            continue                      # a prompt or a seed: a list is a sweep
+        if declared is None:
+            open_here = open_inputs(base_prompt, nid)
+            if not is_connection_type(open_here.get(param)):
+                continue
+        names = slot_family(base_prompt, nid, param)
+        free = len(names) - names.index(param) - 1 if param in names else 0
+        if free < 1:
+            continue                      # nowhere else to put them: a sweep it is
+        # Last, and only once the cheap checks have passed: `folder` mode walks a
+        # directory to answer this, and doing it here as well as in the build
+        # enumerated every swept folder twice.
+        values = _resolve_values(res)
+        if len(values) < 2:
+            continue
+        problems.append(
+            f"{key}: {len(values)} values for one numbered slot, with {free} more "
+            f"free beside it ({_free_slots_text(names, param)}). That is either "
+            f"{len(values)} separate runs using one each, or ONE run using all "
+            f"{len(values)}. Say which: mode \"fan_out\" for one run across the "
+            f"slots, or sweep: true for {len(values)} runs.")
+    return problems
+
+
 def misrouted_resolutions(base_prompt: dict | None, hooks: list | None,
                           resolutions: list | None) -> list[str]:
     """Resolutions about to write a NODE ID into a slot that wants words.
@@ -2791,7 +2995,8 @@ def _chain_note(chain: list) -> str:
     return f"{which} read the value you produce here as context"
 
 
-def _target_context(hook: dict, hook_ids: set | None = None) -> str:
+def _target_context(hook: dict, hook_ids: set | None = None,
+                    base_prompt: dict | None = None) -> str:
     """Describe where *hook*'s output goes — the producer's destination input(s).
 
     Only REAL node inputs; a wire into another hook is a chain handoff (see
@@ -2810,6 +3015,23 @@ def _target_context(hook: dict, hook_ids: set | None = None) -> str:
         slot = f"`{tin}`" if tin else "an input"
         line = f"node {tid} ({ttype})'s {slot} input{tt}"
         if is_connection_type(tintype):
+            # One wire lands on ONE slot, and nothing used to say the slot had
+            # siblings — so several images for that input read as several RUNS,
+            # and three paid video generations went out with one reference each.
+            # Naming the family is what gives "wire all of them" somewhere to go.
+            #
+            # Only for inputs that take a WIRE, matching the guard that refuses the
+            # ambiguous sweep. A numbered family of widgets — a stacker's `lora_1`,
+            # `lora_2` — is a real thing, and offering fan_out there would advertise
+            # a behaviour nothing in this area was designed against.
+            family = slot_family(base_prompt, tid, tin) if tin else []
+            free = _free_slots_text(family, tin) if tin else ""
+            if free:
+                n_free = len(family) - family.index(tin) - 1
+                line += (f" [one of {len(family)} numbered slots — {n_free} free "
+                         f"beside it ({free}). Several values here means several "
+                         f"RUNS, one slot each; pass mode \"fan_out\" to spread them "
+                         f"across the slots and run ONCE instead]")
             # This one carries a wire, not a value the agent can write. Say so at
             # the point of use, and name the nodes it can be connected to —
             # BY TYPE. Every anchor used to be offered for every connection
@@ -3096,14 +3318,20 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             "straight from the 'feeds' target (node id and input name); each variant runs "
             "automatically — do NOT also signal_workflow_ready. Modes: value_list "
             "(you author `values`), sweep_seed (`count`, optional `start`), folder "
-            "(`folder`, optional `extensions`)."
+            "(`folder`, optional `extensions`), fan_out.\n"
+            "  • ALL of them in ONE run (not one run each) → the numbered slots "
+            "(image_1, image_2, …) are what 'use all the references' means, and every "
+            "other mode SWEEPS — N values, N runs, one image each. Pass mode 'fan_out' "
+            "with the full list of paths on the FIRST slot and they are spread across "
+            "the free ones, running once. Several values on a numbered slot without "
+            "saying which you mean is refused rather than guessed."
         )
         for h in directive_hooks:
             hid = h.get("hook_node_id")
             directive = str(h.get("directive", "") or "").strip()
             ctx = _input_context(h, base_prompt, hook_id_set, cached_map)
             real, chain = _split_targets(h, hook_id_set)
-            tgt = _target_context(h, hook_id_set)
+            tgt = _target_context(h, hook_id_set, base_prompt)
             if tgt:
                 also = f" ({_chain_note(chain)})" if chain else ""
                 lines.append(
@@ -3150,7 +3378,7 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             hid = h.get("hook_node_id")
             directive = str(h.get("directive", "") or "").strip()
             ctx = _input_context(h, base_prompt, hook_id_set, cached_map)
-            tgt = _target_context(h, hook_id_set)
+            tgt = _target_context(h, hook_id_set, base_prompt)
             _real, chain = _split_targets(h, hook_id_set)
             where = (f" feeds {tgt}" if tgt else
                      f" ({_chain_note(chain)})" if chain else " (output unwired)")
@@ -3174,7 +3402,7 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
         for h in iterate_hooks:
             hid = h.get("hook_node_id")
             directive = str(h.get("directive", "") or "").strip()
-            tgt = _target_context(h, hook_id_set)
+            tgt = _target_context(h, hook_id_set, base_prompt)
             ctx = _input_context(h, base_prompt, hook_id_set, cached_map)
             prompt_where = (f"prompt → {tgt}" if tgt else
                             "prompt target UNWIRED — ask the user to wire this hook's OUTPUT "
@@ -3225,7 +3453,7 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             hid = h.get("hook_node_id")
             directive = str(h.get("directive", "") or "").strip()
             ctx = _input_context(h, base_prompt, hook_id_set, cached_map)
-            tgt = _target_context(h, hook_id_set)
+            tgt = _target_context(h, hook_id_set, base_prompt)
             _real, chain = _split_targets(h, hook_id_set)
             where = (f" feeds {tgt}" if tgt else
                      f" ({_chain_note(chain)})" if chain else

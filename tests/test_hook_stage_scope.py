@@ -259,7 +259,10 @@ class ThroughTheToolTest(unittest.TestCase):
             out = json.loads(asyncio.run(tools(pipe)["apply_canvas_hooks"]([
                 {"target_node_id": "348", "mode": "value_list",
                  "param": "model.images.image_1",
-                 "values": ["7", "9"]}])))
+                 # Two variants, one reference each — which on a numbered slot is
+                 # now one of two readings, so it has to be said (the other is one
+                 # run using both). See test_slot_fan_out.
+                 "values": ["7", "9"], "sweep": True}])))
         first, second = self._graphs(out)
         self.assertIn("7", first)
         self.assertNotIn("9", first)

@@ -1044,7 +1044,26 @@ class Pipeline:
             in the ``[CANVAS HOOKS]`` block). Modes: ``sweep_seed`` (needs
             ``count``, optional integer ``start``), ``value_list`` (needs
             ``values``), ``folder`` (needs ``folder``, optional ``extensions`` and
-            ``use_full_path``). Call this ONCE with all resolutions.
+            ``use_full_path``), ``fan_out`` (see below). Call this ONCE with all
+            resolutions.
+
+            ONE RUN USING ALL OF THEM, vs. ONE RUN EACH. Every mode above SWEEPS:
+            N values means N separate runs. When the input is one of a numbered
+            family (``model.reference_images.image_1``, and ``image_2 …`` beside
+            it), that is usually NOT what several images mean — "use all the
+            references in one video" is one run with the images spread across the
+            slots. Say so with ``fan_out``::
+
+                {"target_node_id": "40",
+                 "param": "model.reference_images.image_1",
+                 "mode": "fan_out",
+                 "values": ["/out/a.png", "/out/b.png", "/out/c.png"]}
+
+            → ONE variant: a→image_1, b→image_2, c→image_3. Extra values beyond
+            the free slots are dropped and reported. If you really do want one run
+            per value on such a slot, add ``"sweep": true`` to say so — otherwise
+            the call is refused and you are asked which you meant, because the two
+            differ by N paid generations.
 
             FILLING AN INPUT NO HOOK FEEDS. A resolution can name any input on any
             node, including a **connection input with nothing wired to it** — an
@@ -1149,6 +1168,7 @@ class Pipeline:
                 from src.utils.canvas_hooks import connection_targets as _conn
                 from src.utils.canvas_hooks import misrouted_resolutions as _misrouted
                 from src.utils.canvas_hooks import unresolved_targets as _unresolved
+                from src.utils.canvas_hooks import ambiguous_slot_sweeps as _ambiguous
                 # Refuse BEFORE queueing, not after. A node id written into a
                 # prompt box is a mistake the graph can prove — the value is the
                 # id of a node on this canvas and the slot wants words — and the
@@ -1164,6 +1184,21 @@ class Pipeline:
                         "fix": "call apply_canvas_hooks again with the same "
                                "resolutions, except write real content for the "
                                "STRING input(s) named above.",
+                    })
+                # Several images at one numbered slot means either N runs or one
+                # run using all of them. The difference is N paid generations, so
+                # it is asked rather than guessed — same rule as the check above,
+                # and for the same reason: the wrong answer reported `ok`.
+                unclear = _ambiguous(base, self._canvas_hooks, list(resolutions))
+                if unclear:
+                    return json.dumps({
+                        "error": "how many runs these values mean is ambiguous — "
+                                 "nothing was queued",
+                        "problems": unclear,
+                        "fix": "call apply_canvas_hooks again with the same "
+                               "resolutions, adding mode: \"fan_out\" to the one(s) "
+                               "meant as a single run across the numbered slots, or "
+                               "sweep: true to the one(s) meant as separate runs.",
                     })
                 prompts, notes = _build_batch(
                     base, list(resolutions), cap=cap, labels=labels,

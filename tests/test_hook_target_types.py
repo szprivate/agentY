@@ -248,9 +248,12 @@ class NothingIsQueuedTest(unittest.TestCase):
         self.assertEqual(out.get("count"), 2)
 
     def test_an_unresolved_second_target_is_reported_in_the_notes(self):
+        # `sweep: true` because two images on one numbered slot is otherwise
+        # ambiguous and refused (see test_slot_fan_out) — one run each is what
+        # this test means, and it now has to say so.
         out = self._apply(self._pipe(), [
             {"target_node_id": "31", "param": "model.images.image_1",
-             "mode": "value_list", "values": ["a.png", "b.png"]}])
+             "mode": "value_list", "values": ["a.png", "b.png"], "sweep": True}])
         self.assertNotIn("error", out)
         self.assertTrue(any("31.prompt" in n and "hook's own produced value" in n
                             for n in out.get("notes", [])), out.get("notes"))
