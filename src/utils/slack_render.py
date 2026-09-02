@@ -338,6 +338,12 @@ class TurnRender:
         # What landed on the canvas, said in words — the one part of a turn a
         # phone genuinely cannot show.
         op = str(ev.get("op") or "")
+        if op == "place_text" and ev.get("place") is False:
+            # Node placement is switched off. The answer is in the thread already
+            # and the value still reaches the graph, so the only thing left to say
+            # is the part nobody can see.
+            return self._log("📝 Wrote the answer into the graph "
+                             "(text node placement is off).")
         said = {
             "place_text": "📝 Placed a text node on the canvas.",
             "review_collector": "🗳️ Collected the outputs into a review node on the canvas.",

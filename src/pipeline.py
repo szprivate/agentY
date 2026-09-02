@@ -1886,25 +1886,41 @@ class Pipeline:
                     if self._verbose:
                         print(f"[hook-cache] could not store hook {hook_node_id}: {exc}")
 
+            # Whether the visible copy is wanted is the host's call, not this
+            # tool's and not the panel's — same as dropping finished media. What
+            # the switch governs is only the reference node: the injection above
+            # has already happened, so the graph runs identically either way.
+            from src.utils.agentY_server import _place_text_nodes_on_canvas
+            place = _place_text_nodes_on_canvas()
+
             _push_patch({
                 "op": "place_text",
                 "hook_node_id": str(hook_node_id),
                 "text": str(text),
                 "keep_live": keep_live,
+                "place": place,
             })
+            # Said plainly, because the agent repeats this to the user and a node
+            # it describes as being on the canvas has to actually be there.
+            head = ("Placed an 'agentY text' node on the canvas as a reference"
+                    if place else
+                    "Placed NO node on the canvas — that switch is off, so do not "
+                    "tell the user there is one")
             if keep_live:
-                msg = ("Placed an 'agentY text' node on the canvas as a reference; left the "
-                       "hook wired and injected your answer into the graph at run time"
+                msg = (head + "; left the hook wired and injected your answer into "
+                       "the graph at run time"
                        + (f" (targets {', '.join(injected)})." if injected
-                          else " (no wired real-node target — reference only)."))
+                          else " (no wired real-node target"
+                               + (" — reference only)." if place else ").")))
             else:
-                msg = ("Placed an 'agentY text' node on the canvas carrying your answer and "
-                       "froze it into the input the hook's output fed.")
+                msg = (head + " and froze your answer into the input the hook's "
+                       "output fed.")
             return json.dumps({
-                "status": "placed",
+                "status": "placed" if place else "injected",
                 "hook_node_id": str(hook_node_id),
                 "chars": len(text),
                 "keep_live": keep_live,
+                "placed_node": place,
                 "injected_targets": injected,
                 "message": msg,
             })

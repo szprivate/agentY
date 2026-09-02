@@ -315,6 +315,25 @@ def _effective_comfyui_user_dir() -> str | None:
     return None
 
 
+def _canvas_switch(env_var: str, setting: str) -> bool:
+    """An on-by-default canvas switch: env var if it says anything, else settings.
+
+    Unreadable settings mean ON. Failing closed here would silently withdraw a
+    feature rather than protect anything, and a canvas that quietly stopped
+    receiving results looks like a broken agent, not a setting.
+    """
+    env = os.environ.get(env_var, "").strip().lower()
+    if env in ("1", "true", "yes", "on"):
+        return True
+    if env in ("0", "false", "no", "off"):
+        return False
+    try:
+        from src.agent import _load_settings
+        return bool((_load_settings() or {}).get(setting, True))
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def _drop_outputs_into_canvas() -> bool:
     """Should a finished image/video be dropped onto the canvas as a loader node?
 
@@ -324,16 +343,18 @@ def _drop_outputs_into_canvas() -> bool:
     to be repeated in each of them, and would disagree with itself the moment one
     was missed.
     """
-    env = os.environ.get("AGENTY_CANVAS_DROP", "").strip().lower()
-    if env in ("1", "true", "yes", "on"):
-        return True
-    if env in ("0", "false", "no", "off"):
-        return False
-    try:
-        from src.agent import _load_settings
-        return bool((_load_settings() or {}).get("drop_outputs_into_canvas", True))
-    except Exception:  # noqa: BLE001
-        return True
+    return _canvas_switch("AGENTY_CANVAS_DROP", "drop_outputs_into_canvas")
+
+
+def _place_text_nodes_on_canvas() -> bool:
+    """Should a TEXT hook's answer also be placed as an "agentY text" node?
+
+    Same reasoning as the switch above, and the same place, so the two canvas
+    switches cannot drift apart. What this one turns off is only the visible copy:
+    the hook stays wired and the answer is still injected into the graph at run
+    time, so a run downstream of the hook is unaffected either way.
+    """
+    return _canvas_switch("AGENTY_CANVAS_TEXT", "place_text_nodes_on_canvas")
 
 
 def _configure_shell_sandbox() -> None:

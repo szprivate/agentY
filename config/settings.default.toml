@@ -58,6 +58,14 @@ autoload_workflows_into_canvas = false
 # files are written exactly the same, and the chat names each one with its path.
 # Env: AGENTY_CANVAS_DROP (1/0).
 drop_outputs_into_canvas = true
+# Place the agent's written answer to a TEXT canvas hook (purpose = "text") onto
+# the canvas as an "agentY text" node. The node is a readable reference only: the
+# hook stays wired exactly as you drew it, and the answer is injected into the
+# graph at run time whether or not this is on — so turning it off costs you the
+# copy you can see and read, not the value the graph consumes. Off suits a canvas
+# with many text hooks, where a node per answer buries the chain that produced
+# them. The answer is in the chat either way. Env: AGENTY_CANVAS_TEXT (1/0).
+place_text_nodes_on_canvas = true
 # Canvas hooks: when an anchor is wired to a mid-graph node (a VAEDecode, an upscaler,
 # a mask op) its value is a tensor with no file anywhere, so the agent has nothing to
 # look at. With this on, that wire is rendered to a temp file before the turn starts —

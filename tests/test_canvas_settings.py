@@ -1,10 +1,19 @@
-"""The Canvas settings: the new one, and whether the panel can explain any of them.
+"""The Canvas settings, and whether the panel can explain any of them.
+
+Two switches about the same instinct: agentY puts what it makes onto the canvas,
+and past a certain volume that buries the graph you are working in.
 
 Dropping every finished render onto the canvas is right until you are generating
-in bulk, at which point it buries the graph you are working in. So it is a switch
-now — and because a result that is neither drawn nor dropped would exist only as a
-file nobody mentioned, turning it off has to leave the chat saying where the file
-went.
+in bulk. And because a result that is neither drawn nor dropped would exist only
+as a file nobody mentioned, turning it off has to leave the chat saying where the
+file went.
+
+Placing a text hook's answer as an "agentY text" node is the same trade at a
+smaller scale, but with a difference worth pinning: that node is a readable copy
+and nothing else. The hook stays wired and the answer is injected into the graph
+at run time either way, so the switch must not touch the injection — and the tool
+result must stop claiming a node was placed, or the agent tells the user to go
+look at something that is not there.
 
 The rest of this file is about the settings *form*. It is generated from the TOML,
 so a key listed in a section that no longer exists renders nothing at all, and a
@@ -164,6 +173,150 @@ class ThePanelHonoursIt(unittest.TestCase):
         inject = inject[:inject.index("\n  _attachRefNote(")]
         skipped = inject[:inject.index("createNode")]
         self.assertIn("ev.path", skipped)
+
+
+
+def decide(fn, settings=None, env=None):
+    """Call one of the server's canvas switches with a known settings/env pair."""
+    from src.utils import agentY_server as srv
+    clean = {"AGENTY_CANVAS_DROP": "", "AGENTY_CANVAS_TEXT": ""}
+    with mock.patch.dict("os.environ", {**clean, **(env or {})}, clear=False):
+        for name, value in clean.items():
+            if not (env or {}).get(name):
+                import os
+                os.environ.pop(name, None)
+        with mock.patch("src.agent._load_settings", return_value=settings or {}):
+            return getattr(srv, fn)()
+
+
+class ThePlaceTextSetting(unittest.TestCase):
+    def test_it_is_on_by_default(self):
+        self.assertIs(defaults()["place_text_nodes_on_canvas"], True)
+
+    def test_an_unset_setting_means_on(self):
+        """Same upgrade path as the drop switch: an older settings.local.json has
+        no such key, and installing an update must not change what the canvas
+        does."""
+        self.assertTrue(decide("_place_text_nodes_on_canvas", {}))
+
+    def test_it_can_be_switched_off(self):
+        self.assertFalse(decide("_place_text_nodes_on_canvas",
+                                {"place_text_nodes_on_canvas": False}))
+
+    def test_the_env_var_wins_both_ways(self):
+        self.assertFalse(decide("_place_text_nodes_on_canvas",
+                                {"place_text_nodes_on_canvas": True},
+                                {"AGENTY_CANVAS_TEXT": "0"}))
+        self.assertTrue(decide("_place_text_nodes_on_canvas",
+                               {"place_text_nodes_on_canvas": False},
+                               {"AGENTY_CANVAS_TEXT": "1"}))
+
+    def test_unreadable_settings_mean_on(self):
+        from src.utils import agentY_server as srv
+        with mock.patch("src.agent._load_settings", side_effect=OSError("boom")):
+            self.assertTrue(srv._place_text_nodes_on_canvas())
+
+    def test_the_two_switches_do_not_move_together(self):
+        """They share one helper, so a copied env var name or settings key would
+        tie them silently: turning off bulk media drops would also stop text
+        answers being placed, which is not what either switch says it does."""
+        both_off = {"drop_outputs_into_canvas": False,
+                    "place_text_nodes_on_canvas": False}
+        self.assertTrue(decide("_place_text_nodes_on_canvas", both_off,
+                               {"AGENTY_CANVAS_TEXT": "1"}))
+        self.assertFalse(decide("_drop_outputs_into_canvas", both_off,
+                                {"AGENTY_CANVAS_TEXT": "1"}))
+        self.assertTrue(decide("_drop_outputs_into_canvas", both_off,
+                               {"AGENTY_CANVAS_DROP": "1"}))
+        self.assertFalse(decide("_place_text_nodes_on_canvas", both_off,
+                                {"AGENTY_CANVAS_DROP": "1"}))
+
+
+class TheTextHookPath(unittest.TestCase):
+    """What `place_canvas_text` does with the answer once it has one."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = (ROOT / "src" / "pipeline.py").read_text(encoding="utf-8")
+        start = cls.src.index("async def place_canvas_text(")
+        cls.tool = cls.src[start:cls.src.index("async def iterate_step(", start)]
+
+    def test_the_host_decides_and_stamps_it_on_the_event(self):
+        """The panel must not read this setting itself — it is the same argument
+        as the drop switch, one answer for every route."""
+        self.assertIn('"place": place', self.tool)
+        self.assertIn("_place_text_nodes_on_canvas()", self.tool)
+
+    def test_the_answer_still_reaches_the_graph_when_the_node_does_not(self):
+        """The switch governs the visible copy only. Reading it before the
+        injection would let a `False` skip the injection too, and a text hook
+        would then deliver nothing to the nodes wired downstream of it."""
+        self.assertLess(self.tool.index("_inject(self._canvas_base_prompt"),
+                        self.tool.index("_place_text_nodes_on_canvas()"),
+                        "the value must be injected before the switch is read")
+
+    def test_the_tool_does_not_report_a_node_it_did_not_place(self):
+        """The agent repeats this message to the user almost verbatim. "Placed an
+        agentY text node on the canvas" with the switch off sends someone hunting
+        the graph for something that was never added."""
+        self.assertIn('"status": "placed" if place else "injected"', self.tool)
+        self.assertIn("Placed NO node on the canvas", self.tool)
+
+
+class SlackSaysTheSameThing(unittest.TestCase):
+    """The sidebar is not the only place a turn is narrated."""
+
+    def render(self, event):
+        from src.utils.slack_render import TurnRender
+        renderer = TurnRender.__new__(TurnRender)
+        seen = []
+        renderer._log = lambda text: seen.append(text) or []
+        renderer._on_canvas_patch(event)
+        return " ".join(seen)
+
+    def test_a_placed_node_is_still_announced(self):
+        self.assertIn("canvas", self.render({"op": "place_text", "place": True}))
+
+    def test_a_host_without_the_setting_still_announces(self):
+        self.assertIn("canvas", self.render({"op": "place_text"}))
+
+    def test_nothing_placed_is_not_reported_as_placed(self):
+        said = self.render({"op": "place_text", "place": False})
+        self.assertNotIn("Placed", said)
+        self.assertIn("graph", said, "the injection is the part nobody can see")
+
+
+@unittest.skipIf(_PANEL is None, "the agentY-comfyuiConnect extension is not beside this checkout")
+class ThePanelHonoursTheTextSetting(unittest.TestCase):
+    def setUp(self):
+        self.chat = (_PANEL.parent / "agent_chat.js").read_text(encoding="utf-8")
+        body = self.chat[self.chat.index("\n  _placeCanvasText(ev) {"):]
+        self.body = body[:body.index("\n  // \u2500\u2500 canvas hooks")]
+
+    def test_it_checks_before_it_creates_the_node(self):
+        self.assertIn("ev.place === false", self.body)
+        self.assertLess(self.body.index("ev.place === false"),
+                        self.body.index("createNode"),
+                        "the check must come before the node is made")
+
+    def test_only_an_explicit_false_turns_it_off(self):
+        """A host older than this setting sends no `place` field, and its
+        behaviour was to place."""
+        self.assertNotIn("!ev.place", self.chat)
+
+    def test_it_still_says_the_value_reached_the_graph(self):
+        """With no node and no line, the one invisible half of a text hook — the
+        run-time injection — would have nothing anywhere saying it happened."""
+        skipped = self.body[:self.body.index("createNode")]
+        self.assertIn("injected", skipped)
+
+    def test_it_does_not_claim_something_landed_offscreen(self):
+        """_noteOffscreenDrop() tells the user to go and look at another tab. With
+        placement off there is nothing there to look at."""
+        case = self.chat[self.chat.index('case "canvas_patch":'):]
+        case = case[:case.index('case "system":')]
+        guard = case[:case.index("_noteOffscreenDrop()")]
+        self.assertIn('ev.op === "place_text" && ev.place === false', guard)
 
 
 if __name__ == "__main__":
