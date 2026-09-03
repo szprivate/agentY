@@ -75,6 +75,25 @@ def _importable(module: str) -> bool:
         return False
 
 
+def _bootstrap_agenty_core() -> bool:
+    """Apply the host's own sibling-checkout fallback here too; did it work?
+
+    A deliberate duplicate of ``src/__init__.py``'s ``_ensure_agenty_core_importable``
+    rather than an import of it: importing ``src`` would drag the whole tool layer
+    into a script whose promise is "spec lookups only, ~0.3s", and which has to be
+    able to run *because* that layer will not import.
+    """
+    import os.path  # noqa: PLC0415
+
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for cand in (os.environ.get("AGENTY_CORE_DIR", "").strip() or None,
+                 os.path.join(os.path.dirname(here), "agenty_core")):
+        if cand and os.path.isfile(os.path.join(cand, "agenty_core", "__init__.py")):
+            sys.path.insert(0, cand)
+            return _importable("agenty_core")
+    return False
+
+
 def site_dirs() -> list[str]:
     """Where this interpreter would read .pth files from."""
     import sysconfig  # noqa: PLC0415
@@ -185,7 +204,23 @@ def duplicate_openmp_advice(paths: list[str]) -> str:
             "            pools, and possibly wrong results rather than a crash.")
 
 
-def hidden_pth_advice(paths: list[str]) -> str:
+def in_icloud(path: str) -> bool:
+    """Is *path* inside a folder iCloud Drive syncs (Desktop & Documents sync)?
+
+    Asked by path rather than of the OS: the setting lives in a preferences plist
+    that needs no reading to answer the only question here - is this venv sitting
+    somewhere a daemon will keep re-hiding it. ~/Documents and ~/Desktop are the
+    two folders that sync turns into iCloud containers, plus the container itself
+    for anything moved there by hand.
+    """
+    home = os.path.expanduser("~")
+    real = os.path.realpath(path)
+    roots = [os.path.join(home, "Documents"), os.path.join(home, "Desktop"),
+             os.path.join(home, "Library", "Mobile Documents")]
+    return any(real == r or real.startswith(r + os.sep) for r in roots)
+
+
+def hidden_pth_advice(paths: list[str], covered: bool = False) -> str:
     """What to say about hidden .pth files, or "" when there are none.
 
     Why this is worth a function of its own: the failure it describes is invisible
@@ -200,21 +235,43 @@ def hidden_pth_advice(paths: list[str]) -> str:
     staring at a package you can see in Finder and cannot import. So when the flag
     is present it replaces the reinstall advice rather than joining it.
 
-    Reported even when nothing is missing yet, because the same flag on the same
-    files is one editable install away from breaking the run, and it is far
-    cheaper to read here than to rediscover.
+    What this used to say - `chflags -R nohidden .venv` - is only half true, and
+    the wrong half is the one that wastes an evening. Where the venv sits inside
+    iCloud Drive's Desktop & Documents sync, the flag is not yours to keep clear:
+    iCloud hides everything under a dot-named directory, and measured on this
+    failure it puts UF_HIDDEN back **0.75 s** after it is cleared. That is why the
+    launcher's chflags "fixed" it on some starts and not others - it is a race,
+    not a repair. So the flag is named as a symptom, the sync as the cause, and
+    moving the checkout out of the synced folder as the fix that holds.
+
+    *covered* says the host already routes around this (src/__init__.py puts the
+    sibling checkout on sys.path when the .pth cannot be read), which changes this
+    from "your install is broken" into "your install is being worked around".
     """
     if not paths:
         return ""
     names = "\n".join(f"             {os.path.basename(p)}" for p in paths)
-    return ("[check_env] macOS has flagged these .pth files hidden, and Python\n"
+    icloud = any(in_icloud(p) for p in paths)
+    head = ("[check_env] macOS has flagged these .pth files hidden, and Python\n"
             "            skips a hidden .pth file without saying so:\n"
             f"{names}\n"
             "            Whatever they install is then missing at import time while\n"
             "            sitting correctly on disk - for an editable package such as\n"
-            "            agenty_core, that is the entire package. Reinstalling does\n"
-            "            not fix it; clearing the flag does:\n"
-            "                chflags -R nohidden .venv")
+            "            agenty_core, that is the entire package.\n")
+    if covered:
+        head += ("            agentY works around it (the sibling checkout goes on\n"
+                 "            sys.path directly), so nothing is broken right now.\n")
+    if icloud:
+        return head + (
+            "            The cause is iCloud Drive: this venv is inside Desktop &\n"
+            "            Documents sync, and iCloud hides everything under a\n"
+            "            dot-named directory. It re-applies the flag under a second\n"
+            "            after it is cleared, so `chflags nohidden` does not hold.\n"
+            "            The fix that does - either one:\n"
+            "                move the checkouts out of ~/Documents (e.g. ~/dev/), or\n"
+            "                turn off iCloud Desktop & Documents sync for this Mac.")
+    return head + ("            Reinstalling does not fix it; clearing the flag does:\n"
+                   "                chflags -R nohidden .venv")
 
 
 def _report(title: str, checks: list[tuple[str, str, str]], quiet: bool = False) -> list[tuple[str, str, str]]:
@@ -270,12 +327,18 @@ def main(argv: list[str]) -> int:
     quiet = "--quiet" in argv
     if not quiet:
         print(f"agentY dependency check - {sys.executable}")
+    # Report on the environment the HOST gets, not on a stricter one it never
+    # runs in: src/__init__.py puts the sibling agenty_core checkout on sys.path
+    # when the editable install's .pth cannot be read, so a check that ignored
+    # that would report the one dependency that "nothing runs" without as missing
+    # on a machine where everything runs. The flag itself is still reported below.
+    covered = not _importable("agenty_core") and _bootstrap_agenty_core()
     missing_req = _report("Required:", REQUIRED, quiet)
     missing_opt = _report("Optional (a feature degrades):", OPTIONAL, quiet)
     # A package can be absent because nobody installed it, or because something
     # installed it and macOS hid the .pth that publishes it. Those need opposite
     # remedies, and only one of them is guessable from a MISSING line.
-    shadowed = hidden_pth_advice(hidden_pth_files())
+    shadowed = hidden_pth_advice(hidden_pth_files(), covered=covered)
     # Not a missing package, so it never shows up as one - and it takes the whole
     # host down rather than degrading a feature.
     doubled = duplicate_openmp_advice(duplicate_openmp())
@@ -285,7 +348,19 @@ def main(argv: list[str]) -> int:
             # --quiet is otherwise silent on a healthy venv. This is not healthy:
             # it is the same flag that hides an editable install, on the same
             # files, one install away from taking the run down.
-            if shadowed:
+            #
+            # One line rather than the full advice when the host is already
+            # routing around it: on an iCloud-synced checkout the flag is back
+            # within a second of every clear, so the full block would print on
+            # every single start and be scrolled past by the second day. The
+            # detail stays one command away.
+            if shadowed and covered:
+                print("[check_env] The editable install's .pth is flagged hidden "
+                      "(iCloud does this); agentY\n"
+                      "            is loading agenty_core from the sibling checkout "
+                      "instead. Details:\n"
+                      "                .venv/bin/python scripts/check_env.py")
+            elif shadowed:
                 print(shadowed)
             if doubled:
                 print(doubled)

@@ -17,6 +17,12 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(PROJECT_ROOT))
 
+# Imported for its side effect: src/__init__.py makes agenty_core importable even
+# when the editable install's .pth has been flagged hidden (iCloud does this to
+# everything under .venv). Without it this script reports "Could not import
+# utils" and the model cache silently goes stale.
+import src  # noqa: E402,F401
+
 from dotenv import load_dotenv
 load_dotenv(PROJECT_ROOT / ".env")
 

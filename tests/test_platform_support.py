@@ -643,3 +643,69 @@ class LineEndings(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AgentyCoreSurvivesAHiddenPth(unittest.TestCase):
+    """The .pth is one file flag away from gone, so nothing may depend on it.
+
+    agenty_core is installed editable: a single .pth in site-packages is the whole
+    of how it reaches the interpreter, and Python skips a hidden .pth in silence.
+    Clearing the flag is a race - inside iCloud's Desktop & Documents sync it is
+    back about 0.75s later - which is exactly the shape of the report: "sometimes
+    the CLI says agenty_core not found, and if I try again it works". These pin
+    the defence that does not race.
+    """
+
+    @staticmethod
+    def _check_env():
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import check_env
+        return check_env
+
+    def test_the_fallback_runs_before_the_import_it_protects(self):
+        """Ordering is the whole of it: after the import there is nothing to save."""
+        src = (ROOT / "src" / "__init__.py").read_text(encoding="utf-8")
+        self.assertLess(src.index("_ensure_agenty_core_importable()"),
+                        src.index("from agenty_core import set_project_root"))
+
+    def test_the_sibling_checkout_is_where_the_fallback_looks(self):
+        """The editable finder maps agenty_core to <parent>/agenty_core/agenty_core.
+        The fallback adds the checkout above it, so the two resolve identically."""
+        self.assertTrue((ROOT.parent / "agenty_core" / "agenty_core" / "__init__.py").is_file(),
+                        "the sibling checkout moved - the fallback needs the new path")
+
+    def test_the_package_imports_with_the_pth_unreadable(self):
+        """Proved by import, not by reading the source: `import src` must leave
+        agenty_core importable whatever site.py did or didn't do with the .pth."""
+        import importlib
+        import src  # noqa: F401 - imported for the side effect under test
+        self.assertIsNotNone(importlib.util.find_spec("agenty_core"))
+
+    def test_check_env_reports_what_the_host_actually_gets(self):
+        """A check that called agenty_core missing on a machine where the host
+        starts fine would send you to reinstall a package that is already there."""
+        ce = self._check_env()
+        self.assertTrue(ce._importable("agenty_core") or ce._bootstrap_agenty_core())
+
+    def test_the_advice_names_icloud_when_that_is_the_cause(self):
+        ce = self._check_env()
+        home = str(Path.home())
+        text = ce.hidden_pth_advice([home + "/Documents/agentY/.venv/lib/x/a.pth"])
+        self.assertIn("iCloud", text)
+        # And does NOT sell the clear as the repair, which is what wasted the time.
+        self.assertNotIn("chflags -R nohidden", text)
+
+    def test_outside_icloud_the_flag_clear_is_still_the_answer(self):
+        ce = self._check_env()
+        text = ce.hidden_pth_advice(["/opt/agentY/.venv/lib/x/a.pth"])
+        self.assertIn("chflags", text)
+        self.assertNotIn("iCloud", text)
+
+    def test_in_icloud_knows_the_two_synced_folders_from_the_rest(self):
+        ce = self._check_env()
+        home = str(Path.home())
+        self.assertTrue(ce.in_icloud(home + "/Documents/ai/agentY/.venv"))
+        self.assertTrue(ce.in_icloud(home + "/Desktop/agentY/.venv"))
+        self.assertFalse(ce.in_icloud(home + "/dev/agentY/.venv"))
+        # A prefix match must not swallow a sibling that merely starts the same.
+        self.assertFalse(ce.in_icloud(home + "/DocumentsBackup/agentY/.venv"))

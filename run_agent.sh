@@ -296,10 +296,18 @@ fi
 # exactly one .pth file. Flag that file and the whole shared tool layer is missing
 # at import time while sitting correctly on disk.
 #
-# The installer does this too. It is repeated here because the flag can arrive
-# AFTER the install: anything that hides dotfiles reaches .venv, and every .pth
-# inside it if it recurses. Naming site-packages rather than walking the tree
-# keeps it at milliseconds, so it costs nothing to do on every start.
+# Worth doing, and NOT the defence: where the checkout sits inside iCloud Drive's
+# Desktop & Documents sync, the flag is not ours to keep clear. iCloud hides
+# everything under a dot-named directory and puts UF_HIDDEN back about 0.75s
+# after it is cleared - long before the update check, the dependency install and
+# the model refresh below hand over to the first import. Whether a start survived
+# was down to whether the daemon happened to be busy, which is the whole of the
+# "sometimes it says agenty_core not found, and works if I try again". The fix
+# that does not race lives in src/__init__.py: when the .pth cannot be read, the
+# sibling checkout goes on sys.path directly. This stays as the cheap first try,
+# and covers a flag that arrived from something other than iCloud.
+#
+# Naming site-packages rather than walking the tree keeps it at milliseconds.
 if command -v chflags >/dev/null 2>&1; then
   for pth in "$PROJECT_ROOT"/.venv/lib/python*/site-packages/*.pth; do
     [ -e "$pth" ] && chflags nohidden "$pth" 2>/dev/null
