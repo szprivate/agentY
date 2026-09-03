@@ -1081,8 +1081,17 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
         except Exception:  # noqa: BLE001
             pass
         with _reply_lock:
-            _reply_registry.pop(req_id, None)
+            unanswered = _reply_registry.pop(req_id, None) is not None
             _run_registry.pop(req_id, None)
+        if unanswered:
+            # The turn asked the user something and ended without an answer (a
+            # Stop, a timeout, an exception, or the agent moving on). Worth a
+            # line: from here /agentY/reply for this id can only 404, and a panel
+            # that still believes it owes an answer sends every later message
+            # there. The panel retires the question on `done`; this is how anyone
+            # investigating can see one was open when the turn ended.
+            _wd.note(req_id, "turn ended with an unanswered ask — panel must "
+                             "retire it on done")
         if not finished["emitted"]:
             finished["emitted"] = True
             out_q.put({"type": "done"})
