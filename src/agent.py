@@ -1216,7 +1216,13 @@ def create_qa_agent(
     This is the role where a **stronger** model earns its cost, which is why it has
     its own setting rather than sharing ``executor_vision_model``: it runs once per
     finished output, and a weak judge is worse than none — it waves through defects
-    or fails clean work and triggers a pointless re-render. Must be multimodal.
+    or fails clean work and triggers a pointless re-render.
+
+    Multimodal is strongly preferred but no longer required: handed an image a
+    text-only model raises, and ``qa.check_output`` then relays through the vision
+    agent — the same route the orchestrator uses — and judges the description it
+    gets back. That verdict is real but second-hand, so a model that can look at
+    the output itself still gives a better answer.
 
     Configuration (in priority order):
     1. ``QA_AGENT_MODEL`` env var (``'provider,model'`` or a bare model name)

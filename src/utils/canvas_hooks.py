@@ -1089,18 +1089,19 @@ def _is_qa(hook: dict) -> bool:
 
 
 def _qa_will_run() -> bool:
-    """True when a QA briefing on this canvas will actually be judged.
+    """True when a QA node on this canvas will actually be judged.
 
-    ``qa.enabled`` is a settings switch, and with it off ``resolve_briefing``
-    returns None — no judge, no verdict, no message. The block below used to
-    promise a QA pass either way, so the orchestrator would tell the user "a
-    separate QA agent compares the output against the reference" while nothing
-    ever did. Err toward True: an unreadable settings file must not silence a
-    briefing that is switched on by default.
+    Only ever asked where a live QA hook exists, and a live QA hook overrides
+    ``qa.enabled`` (see :func:`src.utils.qa.resolve_briefing`) — so the one thing
+    left that can still silence it is the ``AGENTY_QA`` kill switch. The block
+    below used to promise a QA pass unconditionally, so the orchestrator would
+    tell the user "a separate QA agent compares the output against the reference"
+    while nothing ever did. Err toward True: an unreadable settings file must not
+    silence a briefing the user wired in on purpose.
     """
     try:
         from src.utils.qa import qa_settings
-        return bool(qa_settings()["enabled"])
+        return not qa_settings().get("forced_off", False)
     except Exception:  # noqa: BLE001
         return True
 
@@ -3434,16 +3435,16 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
         if not _qa_will_run():
             lines.append(
                 "\nQA node(s) — these are NOT work for you, and NOTHING WILL CHECK "
-                "THIS RUN: QA is switched off in the user's settings (Settings ▸ qa ▸ "
-                "enabled), so there is no QA agent this turn. Each node still carries "
-                "the user's QUALITY BRIEFING — its notes are the checklist and its "
-                "`reference` images are what they want matched — and satisfying it "
-                "while you write the prompt is now the ONLY thing standing behind it. "
-                "You must NOT treat the anchors as inputs to a workflow, "
-                "place_canvas_text them, or apply_canvas_hooks them. In your final "
-                "report say plainly that QA did NOT run, and that `/qa` or Settings ▸ "
-                "qa ▸ enabled turns it back on. Do not describe a check that will not "
-                "happen:"
+                "THIS RUN: QA is force-disabled for this server process "
+                "(`AGENTY_QA` is set to off in the environment), which overrides even "
+                "a QA node wired into the canvas, so there is no QA agent this turn. "
+                "Each node still carries the user's QUALITY BRIEFING — its notes are "
+                "the checklist and its `reference` images are what they want matched "
+                "— and satisfying it while you write the prompt is now the ONLY thing "
+                "standing behind it. You must NOT treat the anchors as inputs to a "
+                "workflow, place_canvas_text them, or apply_canvas_hooks them. In your "
+                "final report say plainly that QA did NOT run, and why. Do not "
+                "describe a check that will not happen:"
             )
         else:
             lines.append(

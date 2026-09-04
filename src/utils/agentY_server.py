@@ -661,7 +661,9 @@ def _resolve_qa_briefing(canvas_hooks: list | None, thread_id: str):
 
     Announces itself on the status bus when one is found: QA that switches on
     silently — spending a strong model's tokens and possibly re-rendering — is
-    the kind of thing a user should never have to discover from the bill.
+    the kind of thing a user should never have to discover from the bill. That
+    goes double when a live canvas node has just overridden a switch the user set
+    to off, so the announcement says when it did.
     """
     try:
         from src.utils.qa import resolve_briefing
@@ -671,36 +673,68 @@ def _resolve_qa_briefing(canvas_hooks: list | None, thread_id: str):
         logger.warning("qa: could not resolve a briefing (%s) — running without QA", exc)
         return None
     if briefing:
-        status_bus.notify(f"🔍 QA briefing active — {briefing.describe()}")
+        status_bus.notify(f"🔍 QA briefing active — {briefing.describe()}"
+                          + _override_note(canvas_hooks))
         return briefing
     _warn_qa_is_off(canvas_hooks, thread_id)
     return None
 
 
-def _warn_qa_is_off(canvas_hooks: list | None, thread_id: str) -> None:
-    """Say so when a briefing exists but the switch that would run it is off.
+def _override_note(canvas_hooks: list | None) -> str:
+    """" (a live QA node overrides …)" when the canvas beat a switched-off setting.
 
-    ``resolve_briefing`` answers None for two very different situations: nobody
-    wrote a briefing, and one is wired to the canvas but ``qa.enabled`` is false.
-    The second used to look exactly like the first — no status line, no verdict,
-    nothing — so a user who had just wired a QA node sat waiting for a check that
+    Spending a judge's tokens on a run where the user's own settings say QA is off
+    is exactly right — they wired the node — but it must never be a surprise.
+    """
+    try:
+        from src.utils.qa import briefing_from_hooks, qa_settings
+        if qa_settings()["enabled"]:
+            return ""
+        if briefing_from_hooks(canvas_hooks or [], _resolve_media_ref) is None:
+            return ""
+    except Exception as exc:  # noqa: BLE001 — a status line must never cost a turn
+        logger.warning("qa: could not tell whether the canvas overrode the switch (%s)", exc)
+        return ""
+    return (" (a live QA node on the canvas overrides Settings ▸ qa ▸ enabled; "
+            "bypass or mute the node to stop it)")
+
+
+def _warn_qa_is_off(canvas_hooks: list | None, thread_id: str) -> None:
+    """Say so when a briefing exists but nothing is going to read it.
+
+    ``resolve_briefing`` answers None for situations that look identical from
+    here and are not: nobody wrote a briefing, a thread briefing is shelved by
+    ``qa.enabled``, and — the only case that can still shelve a canvas node —
+    ``AGENTY_QA`` force-disabling QA for the whole process. Silence used to cover
+    all three, so a user who had just wired a QA node sat waiting for a check that
     was never going to come.
     """
     try:
         from src.utils.qa import (briefing_from_hooks, briefing_from_thread,
                                   qa_settings)
-        if qa_settings()["enabled"]:
+        cfg = qa_settings()
+        if cfg["enabled"]:
             return  # genuinely nothing to judge against — silence is correct
-        have = (briefing_from_hooks(canvas_hooks or [], _resolve_media_ref)
-                or briefing_from_thread(thread_id))
+        from_canvas = briefing_from_hooks(canvas_hooks or [], _resolve_media_ref)
+        have = from_canvas or briefing_from_thread(thread_id)
     except Exception as exc:  # noqa: BLE001 — a warning must never cost a turn
         logger.warning("qa: could not check for a shelved briefing (%s)", exc)
         return
     if not have:
         return
-    status_bus.notify("⚠️ QA is switched off (Settings ▸ qa ▸ enabled) — the briefing "
-                      f"on this run ({have.describe()}) will NOT be checked. Turn it "
-                      "back on to get verdicts.")
+    if from_canvas is not None:
+        # A live node was overridden, which only `AGENTY_QA` can do. Name the
+        # thing that actually did it — pointing at the settings switch here would
+        # send the user to change something that is no longer in charge.
+        status_bus.notify("⚠️ QA is force-disabled for this server process "
+                          "(`AGENTY_QA` in the environment) — the QA node on this "
+                          f"canvas ({have.describe()}) will NOT be checked, and it "
+                          "cannot override that. Unset AGENTY_QA and restart.")
+        return
+    status_bus.notify("⚠️ QA is switched off (Settings ▸ qa ▸ enabled) — this "
+                      f"conversation's briefing ({have.describe()}) will NOT be "
+                      "checked. Switch it on, or wire a QA node into the canvas, "
+                      "which overrides the setting.")
 
 
 def _orchestrator_supports_vision() -> bool:
@@ -1600,7 +1634,12 @@ def _handle_qa_command(thread_id: str, parts: list[str]) -> list[dict]:
         active = resolve_briefing(hooks=[], thread_id=thread_id)
         cfg = qa_settings()
         if not cfg["enabled"]:
-            return [_sys("🔍 QA is switched off in Settings ▸ qa ▸ enabled.")]
+            # True of this surface only: `/qa` sets the thread briefing, which the
+            # switch does shelve. A QA node on the canvas outranks it.
+            return [_sys("🔍 QA is switched off in Settings ▸ qa ▸ enabled, so a "
+                         "briefing set here will not be checked. A live `agentY qa` "
+                         "node on the canvas overrides the setting for the runs of "
+                         "that graph.")]
         if not active:
             return [_sys("🔍 No QA briefing set for this conversation.\n\n"
                          "`/qa <name>` to use a named one, `/qa <your criteria>` to type "

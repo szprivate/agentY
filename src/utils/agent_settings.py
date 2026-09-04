@@ -71,7 +71,9 @@ _ALLOWED = (
             effect="the next time the agent server is started"),
     Setting("memory.enabled", "bool", "long-term memory across conversations"),
     Setting("qa.enabled", "bool",
-            "judge finished outputs against a QA briefing (does nothing without one)"),
+            "judge finished outputs against a QA briefing (does nothing without one); "
+            "a live `agentY qa` node on the canvas overrides this and is checked "
+            "either way"),
     Setting("qa.max_retries", "int",
             "how many times a failing output is re-generated; 0 reports the verdict "
             "and stops", low=0, high=5),

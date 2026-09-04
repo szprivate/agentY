@@ -71,11 +71,19 @@ def qa_settings() -> dict:
             return default
 
     enabled = bool(raw.get("enabled", True))
+    # `forced_off` separates "the settings file says no" from "the environment
+    # says no". A live canvas QA node overrides the first (see `resolve_briefing`)
+    # — it is a deliberate per-graph act and beats a standing default — but not
+    # the second, which stays an absolute kill switch for a CI or cost-capped run
+    # that must not spend a judge's tokens whatever the canvas asks for.
+    forced_off = False
     env = os.environ.get("AGENTY_QA")
     if env is not None and env.strip() != "":
         enabled = env.strip().lower() not in ("0", "false", "no", "off")
+        forced_off = not enabled
     return {
         "enabled": enabled,
+        "forced_off": forced_off,
         "max_retries": _int("max_retries", 1),
         "max_outputs": _int("max_outputs", 6, low=1),
         "max_references": _int("max_references", 4),
@@ -438,11 +446,23 @@ def resolve_briefing(hooks: list | None = None, thread_id: str = "",
     specific, more visible statement — it's pinned to the graph the user is
     looking at. The thread briefing is the standing default for turns where no
     canvas says otherwise. Either may cite ``@name`` files, which are folded in.
+
+    For the same reason a canvas hook also **wins over ``qa.enabled``**. Wiring a
+    QA node into the graph in front of you and leaving it live is a decision about
+    THIS run; the settings switch is a standing default about runs in general, and
+    a default that silently discards the specific instruction is the bug this
+    exists to prevent. Bypassing or muting the node (Ctrl+B / Ctrl+M) is how you
+    take it back — a disabled hook is never collected by the panel, so it never
+    reaches here. ``AGENTY_QA=0`` in the environment still overrides everything.
     """
-    if not qa_settings()["enabled"]:
-        return None
+    cfg = qa_settings()
     briefing = briefing_from_hooks(hooks or [], resolver)
-    if briefing is None:
+    if briefing is not None:
+        if cfg.get("forced_off", False):
+            return None
+    else:
+        if not cfg["enabled"]:
+            return None
         briefing = briefing_from_thread(thread_id)
     if briefing is None:
         return None
@@ -470,6 +490,11 @@ class QaResult:
     # user's work — but this says the pass means nothing, which a caller
     # deciding whether to re-render, or to claim an output was checked, needs.
     blind: bool = False
+    # True when the judge could not read the image itself and was given a vision
+    # agent's written description instead. The verdict counts — it is a real
+    # check against the briefing — but it is second-hand, and a caller reporting
+    # "this was checked" should say how.
+    secondhand: bool = False
 
     def failed_criteria(self) -> list[str]:
         """The criteria that did not pass — what a retry has to fix."""
@@ -487,7 +512,8 @@ class QaResult:
             return f"QA unavailable for `{Path(self.path).name}`: {self.error}"
         mark = "✅ PASS" if self.passed else "❌ FAIL"
         tail = f" — {self.summary}" if self.summary else ""
-        return f"{mark} `{Path(self.path).name}`{tail}"
+        via = " _(judged from a vision agent's description)_" if self.secondhand else ""
+        return f"{mark} `{Path(self.path).name}`{tail}{via}"
 
 
 def parse_verdict(raw: str) -> dict:
@@ -718,6 +744,28 @@ def render_measurements(facts: dict) -> str:
     return "\n".join(lines)
 
 
+def _output_frame_paths(path: str, frames: int) -> tuple[list[str], str]:
+    """The files that stand for one produced output, plus how to describe them.
+
+    Separate from :func:`_output_blocks` because a judge that cannot read images
+    needs the same files as *paths*, to hand to the vision agent — see
+    :func:`_judge_from_descriptions`.
+    """
+    if is_image(path):
+        return [path], "the GENERATED OUTPUT image"
+    try:
+        from agenty_core.utils.video_frames import extract_frames
+        sampled = extract_frames(Path(path), count=max(1, frames))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("qa: could not sample %s — %s", path, exc)
+        return [], ""
+    paths = [str(f) for f in (sampled or [])]
+    if not paths:
+        return [], ""
+    return paths, (f"{len(paths)} FRAMES of the GENERATED OUTPUT video, in "
+                   f"chronological order — judge them as one clip")
+
+
 def _output_blocks(path: str, frames: int) -> tuple[list[dict], str]:
     """Image blocks for one produced file, plus how to describe them to the model.
 
@@ -726,20 +774,190 @@ def _output_blocks(path: str, frames: int) -> tuple[list[dict], str]:
     rather than answering the same question about N unrelated stills, which is what
     the previous per-frame loop did.
     """
-    if is_image(path):
-        block = _image_block(path)
-        return ([block] if block else []), "the GENERATED OUTPUT image"
-    try:
-        from agenty_core.utils.video_frames import extract_frames
-        sampled = extract_frames(Path(path), count=max(1, frames))
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("qa: could not sample %s — %s", path, exc)
-        return [], ""
-    blocks = [b for b in (_image_block(str(f)) for f in (sampled or [])) if b]
+    paths, desc = _output_frame_paths(path, frames)
+    blocks = [b for b in (_image_block(p) for p in paths) if b]
     if not blocks:
         return [], ""
-    return blocks, (f"{len(blocks)} FRAMES of the GENERATED OUTPUT video, in "
-                    f"chronological order — judge them as one clip")
+    return blocks, desc
+
+
+def _judge_question(path: str, briefing: QaBriefing, request: str,
+                    description: str, ref_paths: list) -> tuple[str, list[dict]]:
+    """The question put to the judge, plus the checks arithmetic already settled.
+
+    *description* is the "You are given …" sentence, which differs between the two
+    ways this gets asked: pixels attached, or a vision agent's written description
+    of them (:func:`_judge_from_descriptions`). Everything else — the measured
+    facts, the settled technical checks, the criteria — is the same question
+    either way, and is built here once so the two paths cannot drift apart.
+    """
+    prompts = load_qa_prompts()
+    criteria = briefing.criteria.strip() or prompts.get("no_criteria", "")
+    facts = measure_output(path)
+    facts.update(_likeness_facts(path, briefing, ref_paths))
+    measured = render_measurements(facts)
+    # The technical half is decided here, by arithmetic, before the model is
+    # asked anything. It is then shown the answers so it does not guess at
+    # the same questions and contradict them.
+    settled = _settle_technical(briefing, facts)
+    if settled:
+        from src.utils.qa_checks import render_for_model
+        measured = (measured + "\n\n" + render_for_model(settled)).strip()
+    question = (prompts.get("question", "")
+                .replace("{{IMAGE_DESCRIPTION}}", description)
+                .replace("{{REQUEST}}", (request or "").strip() or "(not recorded)")
+                .replace("{{MEASURED}}", measured or "(could not be measured)")
+                .replace("{{CRITERIA}}", criteria))
+    return question, settled
+
+
+def _vision_describe(paths: list, question: str) -> list[str]:
+    """Ask the vision agent to describe *paths*, the way the orchestrator does.
+
+    Same route as :func:`src.tools.image_handling.analyze_image` in ``describe``
+    mode — the pixels go to the vision agent and only text comes back — so a QA
+    model that cannot take image input can still be asked about an image.
+
+    Returns one description per file it managed to read, or ``[]`` when there is
+    no vision agent registered, or when the vision model turns out to be blind
+    too. Never raises: this runs inside a failure handler.
+    """
+    try:
+        from src.tools import image_handling as _ih
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("qa: no image tooling to relay to (%s)", exc)
+        return []
+    # Ask directly rather than reading the answer out of a fallback: with no
+    # vision agent registered `analyze_image` quietly degrades to returning raw
+    # bytes, which is exactly what the caller here cannot use.
+    if getattr(_ih, "_vision_agent", None) is None:
+        logger.warning("qa: the QA model cannot see and no vision agent is "
+                       "registered to relay to")
+        return []
+    out: list[str] = []
+    for p in paths:
+        try:
+            res = _ih.analyze_image(file_path=str(p), question=question,
+                                    mode="describe") or {}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("qa: vision relay failed for %s — %s", p, exc)
+            return []
+        if str(res.get("status", "")).lower() not in ("success", "ok"):
+            # A blind vision model reports itself here. Relaying to a second model
+            # that also cannot see is not a fallback, it is the same failure.
+            logger.warning("qa: vision relay unavailable for %s — %s", p,
+                           str(res.get("content"))[:200])
+            return []
+        text = " ".join(str(b.get("text") or "") for b in (res.get("content") or [])
+                        if isinstance(b, dict)).strip()
+        if text:
+            out.append(text)
+    return out
+
+
+def _judge_from_descriptions(path: str, briefing: QaBriefing, request: str,
+                             cfg: dict, agent) -> tuple[str, list[dict]] | None:
+    """Judge one output through the vision agent, for a QA model that cannot see.
+
+    The orchestrator has always handled its own blindness this way: it never
+    looks at pixels, it asks the vision agent and reasons over the description.
+    A text-only ``qa_judge`` can do exactly the same, and the alternative it
+    replaces is worthless — a blind judge passes every output forever.
+
+    A verdict from someone else's description is weaker than one from the image,
+    so the caller marks it: see ``QaResult.secondhand``. Returns None when the
+    relay is not available, leaving the caller to report the blindness.
+    """
+    out_paths, out_desc = _output_frame_paths(path, cfg["video_frames"])
+    if not out_paths:
+        return None
+    # Point the describer at what actually has to be decided. A generic
+    # "describe this image" spends its words on composition and mood and omits
+    # the one detail the briefing turns on.
+    ask = ("Describe this image in detail for a quality check. Be concrete and "
+           "literal about the subject, and cover these points specifically:\n"
+           + (briefing.criteria.strip() or "overall quality and content"))
+    out_texts = _vision_describe(out_paths, ask)
+    if not out_texts:
+        return None
+    ref_paths = [p for p in briefing.reference_paths if is_image(p)][:cfg["max_references"]]
+    ref_texts = _vision_describe(ref_paths, ask) if ref_paths else []
+
+    alone = (" This is ONE output, judged on its own; the run may have produced "
+             "others you cannot see, so any criterion about how outputs compare "
+             "to EACH OTHER is n/a here.")
+    lines = ["You cannot see images, so a vision model looked at them for you and "
+             "wrote the descriptions below. Judge from these descriptions."]
+    for i, text in enumerate(ref_texts, 1):
+        lines.append(f"\nDESCRIPTION OF REFERENCE IMAGE {i}:\n{text}")
+    label = ("DESCRIPTION OF " + out_desc.upper()) if out_desc else "DESCRIPTION OF THE OUTPUT"
+    for i, text in enumerate(out_texts, 1):
+        suffix = f" ({i} of {len(out_texts)})" if len(out_texts) > 1 else ""
+        lines.append(f"\n{label}{suffix}:\n{text}")
+    # A description cannot answer everything, and a judge that guesses anyway is
+    # the failure mode this whole path exists to avoid.
+    lines.append("\nA description is second-hand evidence: mark a criterion `n/a` "
+                 "when the description does not settle it, rather than guessing."
+                 + alone)
+    description = "\n".join(lines)
+
+    question, settled = _judge_question(path, briefing, request, description, ref_paths)
+    if not question.strip():
+        return None
+    agent.messages.clear()
+    reply = str(agent([{"text": description + "\n\n" + question}]))
+    return reply, settled
+
+
+def _set_from_descriptions(files: list, briefing: QaBriefing, request: str,
+                           cfg: dict, agent) -> str | None:
+    """The set question, asked through the vision agent, for a blind QA model.
+
+    One description per output — the set criteria are about how they relate, so
+    each needs saying once and the comparison happens in the judge's reading of
+    them. Returns None when there is nothing to relay through.
+    """
+    ask = ("Describe this image in detail for a quality check, so it can be "
+           "compared against others from the same run. Be concrete about colour "
+           "grade, lighting, style and subject, and cover:\n"
+           + (briefing.criteria.strip() or "overall quality and content"))
+    texts: list[str] = []
+    for p in files:
+        got = _vision_describe([str(p)], ask)
+        if not got:
+            return None
+        texts.append(got[0])
+    if len(texts) < 2:
+        return None
+    ref_paths = [p for p in briefing.reference_paths if is_image(p)][:cfg["max_references"]]
+    ref_texts = _vision_describe(ref_paths, ask) if ref_paths else []
+
+    lines = ["You cannot see images, so a vision model looked at them for you and "
+             "wrote the descriptions below. Judge from these descriptions."]
+    for i, text in enumerate(ref_texts, 1):
+        lines.append(f"\nDESCRIPTION OF REFERENCE IMAGE {i}:\n{text}")
+    for i, (p, text) in enumerate(zip(files, texts), 1):
+        lines.append(f"\nDESCRIPTION OF OUTPUT {i} (`{Path(str(p)).name}`):\n{text}")
+    lines.append("\nJudge them AS A SET: only the criteria about how the outputs "
+                 "relate to each other (consistency of style, grade, character "
+                 "identity, variety, no accidental repeats). A criterion about a "
+                 "single image on its own was already judged elsewhere — mark it "
+                 "n/a here. A description is second-hand evidence: mark a "
+                 "criterion `n/a` when the descriptions do not settle it, rather "
+                 "than guessing.")
+    description = "\n".join(lines)
+
+    prompts = load_qa_prompts()
+    criteria = briefing.criteria.strip() or prompts.get("no_criteria", "")
+    question = (prompts.get("question", "")
+                .replace("{{IMAGE_DESCRIPTION}}", description)
+                .replace("{{REQUEST}}", (request or "").strip() or "(not recorded)")
+                .replace("{{MEASURED}}", "(not applicable to a set)")
+                .replace("{{CRITERIA}}", criteria))
+    if not question.strip():
+        return None
+    agent.messages.clear()
+    return str(agent([{"text": description + "\n\n" + question}]))
 
 
 def check_output(path: str, briefing: QaBriefing, *, request: str = "",
@@ -753,6 +971,8 @@ def check_output(path: str, briefing: QaBriefing, *, request: str = "",
     """
     cfg = qa_settings()
     settled: list[dict] = []
+    reply: str | None = None
+    secondhand = False
     try:
         if agent is None:
             from src.agent import create_qa_agent
@@ -782,23 +1002,8 @@ def check_output(path: str, briefing: QaBriefing, *, request: str = "",
         else:
             description = f"You are given {out_desc}." + alone
 
-        prompts = load_qa_prompts()
-        criteria = briefing.criteria.strip() or prompts.get("no_criteria", "")
-        facts = measure_output(path)
-        facts.update(_likeness_facts(path, briefing, ref_paths))
-        measured = render_measurements(facts)
-        # The technical half is decided here, by arithmetic, before the model is
-        # asked anything. It is then shown the answers so it does not guess at
-        # the same questions and contradict them.
-        settled = _settle_technical(briefing, facts)
-        if settled:
-            from src.utils.qa_checks import render_for_model
-            measured = (measured + "\n\n" + render_for_model(settled)).strip()
-        question = (prompts.get("question", "")
-                    .replace("{{IMAGE_DESCRIPTION}}", description)
-                    .replace("{{REQUEST}}", (request or "").strip() or "(not recorded)")
-                    .replace("{{MEASURED}}", measured or "(could not be measured)")
-                    .replace("{{CRITERIA}}", criteria))
+        question, settled = _judge_question(path, briefing, request,
+                                            description, ref_paths)
         if not question.strip():
             return QaResult(path=path, passed=True, error="QA prompt file has no `question` section")
 
@@ -808,25 +1013,43 @@ def check_output(path: str, briefing: QaBriefing, *, request: str = "",
         # Passing on doubt is right for a judge that could not be REACHED. It is
         # wrong for one that cannot see: that is not doubt, it is a setting, and
         # it will wave through every output ever judged until someone changes it.
-        # Still not a FAIL — condemning the user's work over our own
-        # misconfiguration is the worse error — but it must not be silent.
         from src.utils.vision_capability import (blind_model_message, looks_blind,
                                                    model_name)
-        if looks_blind(exc):
+        blind = looks_blind(exc)
+        if blind:
+            # Blind is not the end of it. The orchestrator has never read pixels
+            # either and works fine, because it asks the vision agent — so ask
+            # the vision agent. A verdict from a description is weaker than one
+            # from the image, never worse than the nothing it replaces.
+            try:
+                relayed = _judge_from_descriptions(path, briefing, request, cfg, agent)
+            except Exception as relay_exc:  # noqa: BLE001
+                logger.warning("qa: vision relay failed for %s — %s", path, relay_exc)
+                relayed = None
+            if relayed is not None:
+                reply, settled = relayed
+                secondhand = True
+        if reply is None and blind:
+            # Nothing to relay through either. Still not a FAIL — condemning the
+            # user's work over our own misconfiguration is the worse error — but
+            # it must not be silent.
             model = model_name(agent)
             note = blind_model_message("qa_judge", model, str(exc))
-            logger.error("qa: the QA model cannot see images — every output will "
-                         "pass unchecked until this is changed (%s)", model or "?")
+            logger.error("qa: the QA model cannot see images and no vision agent "
+                         "could stand in — every output will pass unchecked until "
+                         "this is changed (%s)", model or "?")
             try:
                 from src.utils.status_bus import emit as _status
                 _status("⚠️ QA is not actually checking anything: the qa_judge "
-                        f"model{f' ({model})' if model else ''} cannot read images. "
-                        "Point it at a vision model.")
+                        f"model{f' ({model})' if model else ''} cannot read images "
+                        "and no vision agent was available to look for it. Point "
+                        "qa_judge at a vision model.")
             except Exception:  # noqa: BLE001
                 pass
             return QaResult(path=path, passed=True, error=note, blind=True)
-        logger.warning("qa: check failed for %s — %s", path, exc)
-        return QaResult(path=path, passed=True, error=str(exc))
+        if reply is None:
+            logger.warning("qa: check failed for %s — %s", path, exc)
+            return QaResult(path=path, passed=True, error=str(exc))
 
     data = parse_verdict(reply)
     if not data:
@@ -846,7 +1069,7 @@ def check_output(path: str, briefing: QaBriefing, *, request: str = "",
     if verdict not in ("pass", "fail"):
         passed = not failed
     return QaResult(path=path, passed=passed, summary=str(data.get("summary") or "").strip(),
-                    checks=checks)
+                    checks=checks, secondhand=secondhand)
 
 
 # How many frames of a clip are compared against the references. A character can
@@ -929,6 +1152,7 @@ def check_set(paths: list, briefing: QaBriefing, *, request: str = "",
     cfg = qa_settings()
     files = [str(p) for p in (paths or []) if p][:cfg["max_outputs"]]
     label = f"{len(files)} outputs"
+    secondhand = False
     if len(files) < 2:
         return QaResult(path=label, passed=True,
                         error="a set verdict needs at least two outputs")
@@ -973,8 +1197,22 @@ def check_set(paths: list, briefing: QaBriefing, *, request: str = "",
         agent.messages.clear()
         reply = str(agent(ref_blocks + out_blocks + [{"text": question}]))
     except Exception as exc:  # noqa: BLE001
-        logger.warning("qa: set check failed (%d outputs) — %s", len(files), exc)
-        return QaResult(path=label, passed=True, error=str(exc))
+        # Same relay as the per-file judge: a QA model that cannot take images
+        # can still be asked about them through the vision agent. A set question
+        # ("do these share one grade?") survives the trip surprisingly well —
+        # it is exactly the kind of thing a description states outright.
+        from src.utils.vision_capability import looks_blind
+        reply = None
+        if looks_blind(exc):
+            try:
+                reply = _set_from_descriptions(files, briefing, request, cfg, agent)
+            except Exception as relay_exc:  # noqa: BLE001
+                logger.warning("qa: set vision relay failed — %s", relay_exc)
+                reply = None
+            secondhand = reply is not None
+        if reply is None:
+            logger.warning("qa: set check failed (%d outputs) — %s", len(files), exc)
+            return QaResult(path=label, passed=True, error=str(exc))
 
     data = parse_verdict(reply)
     if not data:
@@ -986,5 +1224,5 @@ def check_set(paths: list, briefing: QaBriefing, *, request: str = "",
     passed = (verdict == "pass") and not failed
     if verdict not in ("pass", "fail"):
         passed = not failed
-    return QaResult(path=label, passed=passed,
+    return QaResult(path=label, passed=passed, secondhand=secondhand,
                     summary=str(data.get("summary") or "").strip(), checks=checks)
