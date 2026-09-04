@@ -36,7 +36,7 @@ import json
 import logging
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -467,7 +467,37 @@ def resolve_briefing(hooks: list | None = None, thread_id: str = "",
     if briefing is None:
         return None
     briefing = _expand_citations(briefing)
+    briefing = _infer_technical(briefing)
     return briefing if briefing else None
+
+
+def _infer_technical(briefing: QaBriefing) -> QaBriefing:
+    """Read the shape a briefing states in prose into its ``technical`` spec.
+
+    Only ``technical`` reaches :mod:`src.utils.qa_repair`, so until now a
+    requirement written in words could be judged and never fixed: the retry
+    rerolled the seed and rewrote the prompt, neither of which has ever changed
+    an image's dimensions. Inferred values are merged UNDER whatever the briefing
+    node's dropdowns set, so an explicit choice always wins.
+
+    Applied here rather than in `briefing_from_hooks` so every surface gets it —
+    canvas node, `/qa`, a named briefing file — and so the inferred requirement is
+    NOT appended to the criteria text: it is already in there, in the user's own
+    words, and saying it twice reads as two requirements.
+    """
+    try:
+        from src.utils.qa_checks import infer_technical
+        inferred = infer_technical(briefing.criteria)
+    except Exception as exc:  # noqa: BLE001 — never let this cost a turn
+        logger.warning("qa: could not read requirements from the briefing text (%s)", exc)
+        return briefing
+    if not inferred:
+        return briefing
+    merged = {**inferred, **(briefing.technical or {})}
+    if merged == (briefing.technical or {}):
+        return briefing
+    logger.info("qa: read %s from the briefing text", inferred)
+    return replace(briefing, technical=merged)
 
 
 # ── the check ───────────────────────────────────────────────────────────────────

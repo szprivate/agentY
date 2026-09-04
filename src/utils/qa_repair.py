@@ -63,6 +63,40 @@ MIN_SIDE = 256
 _RATIO_TEXT = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*[:x×]\s*(\d+(?:\.\d+)?)\s*$")
 _SIZE_TEXT = re.compile(r"(\d{3,5})\s*[x×*]\s*(\d{3,5})")
 
+# Names above are the confident route, and they will always be incomplete: there
+# is no naming standard, so the next node pack is free to call it `output_size`
+# or `image_dimensions` and be missed while its options sit there saying plainly
+# what they are. So when the name misses, the OPTIONS are asked instead — a combo
+# whose choices are mostly ratios or mostly pixel sizes is a sizing control
+# whatever it is called. Only reached when no known name matched on that node.
+_NOT_SIZING = ("batch", "seed", "step", "cfg", "denoise", "frame", "fps",
+               "count", "index", "version", "quality")
+
+# Two thresholds, both there to stop one stray "1:1" in an unrelated menu from
+# recruiting it. A control this finds is written to without asking, so a false
+# positive silently reshapes someone's render.
+_MIN_OPTIONS = 2
+_MIN_PARSED = 0.6
+
+
+def _sizing_kind(name: str, options: list) -> str:
+    """``"ratio"`` / ``"size"`` / ``""`` — what a combo's own options say it is."""
+    lowered = str(name).lower()
+    if any(word in lowered for word in _NOT_SIZING):
+        return ""
+    opts = [o for o in options if isinstance(o, str)]
+    if len(opts) < _MIN_OPTIONS:
+        return ""
+    sizes = [o for o in opts if short_side_of(o) is not None]
+    ratios = [o for o in opts if ratio_of(o) is not None]
+    # A pixel size parses as both, so it is counted as a size: it is the more
+    # specific reading and the one `_best_option` can rank by cost.
+    if len(sizes) >= max(_MIN_OPTIONS, int(len(opts) * _MIN_PARSED)):
+        return "size"
+    if len(ratios) >= max(_MIN_OPTIONS, int(len(opts) * _MIN_PARSED)):
+        return "ratio"
+    return ""
+
 
 def _combo_options(spec) -> list:
     """The options of a combo input, whichever shape the node declared it in."""
@@ -190,6 +224,22 @@ def governing_params(prompt: dict, schema_of=None) -> list:
                 not any(isinstance(values.get(n), list) for n in DIM_NAMES):
             found.append({**row, "kind": "dims", "params": list(DIM_NAMES),
                           "value": {n: values.get(n) for n in DIM_NAMES}})
+            continue
+
+        # Nothing matched by name. Ask the options what they are — this is what
+        # makes the walk survive a node pack that invents its own vocabulary.
+        for cand, spec in declared.items():
+            if isinstance(values.get(cand), list):
+                continue        # wired from another node, not a widget to set
+            opts = _combo_options(spec)
+            if not opts:
+                continue
+            kind = _sizing_kind(cand, opts)
+            if kind:
+                found.append({**row, "kind": kind, "param": cand,
+                              "options": opts, "value": values.get(cand),
+                              "by": "options"})
+                break
 
     # Furthest upstream wins: that is the size the picture is made at, and a
     # resize nearer the saver would satisfy the ruler while misreporting the

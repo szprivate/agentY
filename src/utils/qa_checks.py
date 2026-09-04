@@ -22,6 +22,7 @@ newer node must still run here.
 from __future__ import annotations
 
 import logging
+import re
 
 logger = logging.getLogger("agentY.qa_checks")
 
@@ -213,6 +214,111 @@ def evaluate(spec: dict, facts: dict) -> list[dict]:
             continue
         if row:
             out.append(row)
+    return out
+
+
+# ── a requirement stated in prose ───────────────────────────────────────────────
+#
+# The dropdowns on the `agentY qa briefing` node are the exact way to ask for a
+# shape, and they are the only way `qa_repair` could ever hear about one: it is
+# handed `technical`, and prose never reached it. So a briefing that said "16:9"
+# in words was judged (the ratio is measured either way and shown to the model)
+# and could not be repaired — the retry rerolled the seed, rewrote the prompt,
+# and came back failing with the identical number.
+#
+# This reads the same requirement out of the words. Deliberately narrow: it fires
+# on statements that are already unambiguous — a ratio, a pixel size, a named
+# resolution — and stays silent on everything else. "Cinematic", "widescreen
+# feel", "portrait orientation" are moods and orientations, not specs, and
+# quietly rewriting somebody's render off one of those is worse than not firing.
+
+# `:` only, deliberately. "16x9" is a legitimate way to write a ratio, but so is
+# "a 2x3 grid of variations", and the two are indistinguishable at this size —
+# reading the second as a 2:3 render is the kind of false positive that silently
+# reshapes someone's output. Pixel sizes keep the `x` form below, where three-to-
+# five digits a side make it unambiguous.
+_PROSE_RATIO = re.compile(
+    r"(?<![\d.])(\d{1,2}(?:\.\d+)?)\s*:\s*(\d{1,2}(?:\.\d+)?)(?![\d.])")
+_PROSE_SIZE = re.compile(r"(?<!\d)(\d{3,5})\s*[x×]\s*(\d{3,5})(?!\d)", re.I)
+_PROSE_HEIGHT = re.compile(r"(?<![\w])(720p|1080p|1440p|2160p|4k|uhd)(?![\w])", re.I)
+
+_HEIGHT_WORDS = {"720p": "720p", "1080p": "1080p", "1440p": "1440p",
+                 "2160p": "2160p (4K)", "4k": "2160p (4K)", "uhd": "2160p (4K)"}
+
+
+def _nearest_ratio(value: float) -> str:
+    """The RATIOS key *value* is, or "" when it is not one of them.
+
+    Uses the same tolerance the checker judges by, so inference cannot ask for a
+    shape the gate would then call wrong.
+    """
+    best, best_gap = "", None
+    for label, target in RATIOS.items():
+        gap = abs(value - target)
+        if gap <= RATIO_TOLERANCE * target and (best_gap is None or gap < best_gap):
+            best, best_gap = label, gap
+    return best
+
+
+def infer_technical(*texts: str) -> dict:
+    """The technical requirements *texts* state outright, as a ``technical`` spec.
+
+    Returns only keys it is sure about, so the result can be merged UNDER an
+    explicit dropdown without ever overriding one. Conflicting statements yield
+    nothing for that key: two different ratios in one briefing is a question for
+    the user, not something to resolve by picking one.
+    """
+    blob = "\n".join(str(t or "") for t in texts)
+    if not blob.strip():
+        return {}
+    ratios: set = set()
+    heights: set = set()
+
+    for a, b in _PROSE_RATIO.findall(blob):
+        try:
+            num, den = float(a), float(b)
+        except ValueError:
+            continue
+        if den <= 0 or num <= 0:
+            continue
+        label = _nearest_ratio(num / den)
+        if label:
+            ratios.add(label)
+
+    for w, h in _PROSE_SIZE.findall(blob):
+        try:
+            width, height = int(w), int(h)
+        except ValueError:
+            continue
+        if width <= 0 or height <= 0:
+            continue
+        # A pixel size states a shape and, when it is a standard one, a
+        # resolution. Both are read; neither is invented — an odd size that is
+        # no named ratio contributes nothing rather than the closest guess.
+        label = _nearest_ratio(width / height)
+        if label:
+            ratios.add(label)
+        short = min(width, height)
+        for name, value in HEIGHTS.items():
+            if short == value:
+                heights.add(name)
+
+    for word in _PROSE_HEIGHT.findall(blob):
+        name = _HEIGHT_WORDS.get(word.lower())
+        if name:
+            heights.add(name)
+
+    out: dict = {}
+    if len(ratios) == 1:
+        out["aspect_ratio"] = ratios.pop()
+    elif len(ratios) > 1:
+        logger.debug("qa_checks: %d different ratios stated — inferring none", len(ratios))
+    if len(heights) == 1:
+        out["resolution"] = heights.pop()
+    elif len(heights) > 1:
+        # Not ambiguous the way two ratios are: "at least" is a floor, and the
+        # largest floor satisfies every other one stated.
+        out["resolution"] = max(heights, key=lambda n: HEIGHTS[n])
     return out
 
 

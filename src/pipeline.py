@@ -6356,6 +6356,23 @@ class Pipeline:
         fixed: list = []
         ungoverned: list = []
         technical = dict(getattr(self._qa_briefing, "technical", None) or {})
+        # What the judge failed it ON, read the same way as the briefing. A shape
+        # can be required somewhere the briefing never mentions it — the user's
+        # own message, most often — and the verdict is where that surfaces: QA
+        # says "aspect ratio 16:9 — the image is 1:1" and, without this, nothing
+        # downstream could act on a number it had just been handed. Ranked below
+        # the briefing, which is the deliberate statement.
+        try:
+            from src.utils.qa_checks import infer_technical
+            # Only the criterion half. `QaResult.failed_criteria` returns
+            # "<criterion> - <note>", and the note is the judge's observation of
+            # what it GOT — "aspect ratio 16:9 - the image is 1:1" names two
+            # ratios, which reads as a contradiction and infers nothing. The
+            # requirement is on the left; what went wrong is on the right.
+            wanted = [str(f).split(" — ", 1)[0] for f in failures]
+            technical = {**infer_technical(*wanted), **technical}
+        except Exception as exc:  # noqa: BLE001
+            print(f"pipeline: could not read a requirement from the verdict ({exc})")
         if technical:
             try:
                 from src.utils.qa_repair import apply_fix, describe_fix, plan_fixes
