@@ -672,7 +672,35 @@ def _resolve_qa_briefing(canvas_hooks: list | None, thread_id: str):
         return None
     if briefing:
         status_bus.notify(f"🔍 QA briefing active — {briefing.describe()}")
-    return briefing
+        return briefing
+    _warn_qa_is_off(canvas_hooks, thread_id)
+    return None
+
+
+def _warn_qa_is_off(canvas_hooks: list | None, thread_id: str) -> None:
+    """Say so when a briefing exists but the switch that would run it is off.
+
+    ``resolve_briefing`` answers None for two very different situations: nobody
+    wrote a briefing, and one is wired to the canvas but ``qa.enabled`` is false.
+    The second used to look exactly like the first — no status line, no verdict,
+    nothing — so a user who had just wired a QA node sat waiting for a check that
+    was never going to come.
+    """
+    try:
+        from src.utils.qa import (briefing_from_hooks, briefing_from_thread,
+                                  qa_settings)
+        if qa_settings()["enabled"]:
+            return  # genuinely nothing to judge against — silence is correct
+        have = (briefing_from_hooks(canvas_hooks or [], _resolve_media_ref)
+                or briefing_from_thread(thread_id))
+    except Exception as exc:  # noqa: BLE001 — a warning must never cost a turn
+        logger.warning("qa: could not check for a shelved briefing (%s)", exc)
+        return
+    if not have:
+        return
+    status_bus.notify("⚠️ QA is switched off (Settings ▸ qa ▸ enabled) — the briefing "
+                      f"on this run ({have.describe()}) will NOT be checked. Turn it "
+                      "back on to get verdicts.")
 
 
 def _orchestrator_supports_vision() -> bool:

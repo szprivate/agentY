@@ -1088,6 +1088,23 @@ def _is_qa(hook: dict) -> bool:
     return str(hook.get("purpose", "") or "").strip().lower() in _QA_PURPOSES
 
 
+def _qa_will_run() -> bool:
+    """True when a QA briefing on this canvas will actually be judged.
+
+    ``qa.enabled`` is a settings switch, and with it off ``resolve_briefing``
+    returns None — no judge, no verdict, no message. The block below used to
+    promise a QA pass either way, so the orchestrator would tell the user "a
+    separate QA agent compares the output against the reference" while nothing
+    ever did. Err toward True: an unreadable settings file must not silence a
+    briefing that is switched on by default.
+    """
+    try:
+        from src.utils.qa import qa_settings
+        return bool(qa_settings()["enabled"])
+    except Exception:  # noqa: BLE001
+        return True
+
+
 # `human_review` is what the node's combo offers. The rest are tolerated because
 # the agent and the user both refer to this hook loosely in prose ("the halt",
 # "the check-in") and a purpose that only matched one spelling would silently
@@ -3414,20 +3431,35 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             lines.append(f"- ITERATE hook {hid}{_t(h)}: {prompt_where}; {fb_where}{tail}")
 
     if qa_hooks:
-        lines.append(
-            "\nQA node(s) — these are NOT work for you. Each carries the user's QUALITY "
-            "BRIEFING for this graph: its notes are the checklist, its `reference` "
-            "images are what outputs are compared against, and its `judge` input says "
-            "which stage it applies to (unwired = all of them). A separate QA agent "
-            "applies it to every "
-            "image/video the run produces, AFTER generation — you do not have to check "
-            "anything yourself, and you must NOT treat the anchors as inputs to a "
-            "workflow, place_canvas_text them, or apply_canvas_hooks them. Note the "
-            "criteria while you write prompts (satisfying them up front beats being sent "
-            "back), then carry on with the rest of the request as usual. If the QA agent "
-            "later reports a failure you will be given the failed criteria and asked to "
-            "adjust and re-run:"
-        )
+        if not _qa_will_run():
+            lines.append(
+                "\nQA node(s) — these are NOT work for you, and NOTHING WILL CHECK "
+                "THIS RUN: QA is switched off in the user's settings (Settings ▸ qa ▸ "
+                "enabled), so there is no QA agent this turn. Each node still carries "
+                "the user's QUALITY BRIEFING — its notes are the checklist and its "
+                "`reference` images are what they want matched — and satisfying it "
+                "while you write the prompt is now the ONLY thing standing behind it. "
+                "You must NOT treat the anchors as inputs to a workflow, "
+                "place_canvas_text them, or apply_canvas_hooks them. In your final "
+                "report say plainly that QA did NOT run, and that `/qa` or Settings ▸ "
+                "qa ▸ enabled turns it back on. Do not describe a check that will not "
+                "happen:"
+            )
+        else:
+            lines.append(
+                "\nQA node(s) — these are NOT work for you. Each carries the user's "
+                "QUALITY BRIEFING for this graph: its notes are the checklist, its "
+                "`reference` images are what outputs are compared against, and its "
+                "`judge` input says which stage it applies to (unwired = all of them). "
+                "A separate QA agent applies it to every image/video the run produces, "
+                "AFTER generation — you do not have to check anything yourself, and you "
+                "must NOT treat the anchors as inputs to a workflow, place_canvas_text "
+                "them, or apply_canvas_hooks them. Note the criteria while you write "
+                "prompts (satisfying them up front beats being sent back), then carry "
+                "on with the rest of the request as usual. If the QA agent later "
+                "reports a failure you will be given the failed criteria and asked to "
+                "adjust and re-run:"
+            )
         for h in qa_hooks:
             hid = h.get("hook_node_id")
             directive = str(h.get("directive", "") or "").strip()
