@@ -342,6 +342,32 @@ def _submit_workflow(workflow_path: str, client_id: str = "") -> str:
 
     result = client.post("/prompt", json_data=payload)
     if isinstance(result, dict) and "prompt_id" in result:
+        # A prompt_id is not an acceptance of the whole graph. ComfyUI validates
+        # per output node: when one output is invalid and another is fine, it
+        # DROPS the invalid branch, queues the rest, and answers 200 with the
+        # reason in `node_errors` — no top-level error, no exception, and
+        # /history later reports the run as "success". Returning just the id, as
+        # this did, threw away the only structured account of why the video the
+        # user asked for was never going to appear. Fail here instead: the
+        # rejection is a defect in the graph, the repair path can fix it (the
+        # real case was CreateVideo.bit_depth=16 against a max of 10), and a
+        # re-queued healed graph produces everything, not half of it.
+        _rejected = result.get("node_errors")
+        if isinstance(_rejected, dict) and _rejected:
+            from agenty_core.utils.comfyui_client import describe_node_errors
+            _detail = describe_node_errors(_rejected)
+            # Don't spend the GPU on a run whose result is already known to be
+            # incomplete. Best-effort: if it has already started, the heal
+            # re-queues it anyway and ComfyUI serves the good half from cache.
+            try:
+                client.post("/queue", json_data={"delete": [result["prompt_id"]]})
+            except Exception:  # noqa: BLE001
+                pass
+            raise RuntimeError(
+                f"ComfyUI rejected {len(_rejected)} output branch(es) at "
+                f"submission and would have run the rest, producing incomplete "
+                f"output: {_detail}"
+            )
         # Note it as ours. Stop deletes exactly the queued prompts in this ledger,
         # which is what lets it clear a whole batch without touching the jobs the
         # user queued in ComfyUI themselves.
