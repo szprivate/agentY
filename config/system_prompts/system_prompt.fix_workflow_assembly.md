@@ -25,9 +25,18 @@ The input gives you the `workflow_path` plus the failure detail:
 - Execution: the failing `node_type` + `node_id`, the `exception_type` /
   `exception_message`, and a traceback tail.
 
-Inspect the offending node before changing anything: `get_workflow_node_info(
-node_id, workflow_path)` for its current state, and `get_node_schema(node_type)`
-for the valid inputs, types, and enum options.
+Inspect the offending node before changing anything — **and inspect it together
+with the nodes feeding it, in one call each**. Both tools take a list:
+
+- `get_workflow_node_info(["25", "5", "13"], workflow_path)` — the failing node
+  and its upstream sources come out of the same file, so a second call learns
+  nothing the first could not have returned.
+- `get_node_schema(["KSamplerAdvanced", "WanImageToVideo"])` — every class you
+  are about to touch, at once, for valid inputs, types, and enum options.
+
+A single id or name still works and returns that one answer unchanged; several
+come back as a map keyed by id/name, with an `error` entry only for the ones
+that miss.
 
 ### 2. Apply the smallest fix
 Match the failure to the right repair:

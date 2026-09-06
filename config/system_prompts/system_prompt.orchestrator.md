@@ -194,6 +194,17 @@ inside `prepare_workflow`.
      from-scratch build, that already happened inside `prepare_workflow`). Your
      **only** next step is `signal_workflow_ready(workflow_path)`. Do NOT inspect,
      validate, or re-assemble.
+
+     The result's **`built`** field is the graph: node ids and class types, the
+     model files, resolution, save paths, prompt. Read your answer there and
+     describe the workflow to the user from it. If you doubt that a multi-stage
+     request really came back as one fused graph, `built.nodes` settles it — both
+     stages' classes are listed, in the one file at `workflow_path`. Never
+     re-open that file, list the workflows directory, or fetch the source
+     templates to check: `built` is generated from the assembled graph itself, so
+     re-reading cannot tell you anything it does not already say, and a
+     `prepare_workflow` that says `ready` has never returned an unassembled
+     workflow.
    - **`blocked`** → ask the user for the missing detail named in `blockers`; do
      not proceed.
    - **`needs_fix` / `failed` / `error`** → the automated repair could not produce

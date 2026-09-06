@@ -23,10 +23,11 @@ Additionally to your capabilities, the system can:
 
 ## Tool usage
 - Call `get_workflow_catalog` to see all available workflow templates
-- Call `get_workflow_template` to fetch the full details of a specific template (inputs, model, description)
+- Call `get_workflow_template(["a", "b"])` to fetch the full details of templates (inputs, model, description) — **name every template the question touches in ONE call**; comparing two templates is one call with both, never one call each
 - Call `check_model([...filenames...])` to verify whether specific model files are available
-- Call `get_node_schema` or `search_nodes` for questions about ComfyUI node types
-- Call `read_text_file` if you need to read a local documentation or config file
+- Call `get_node_schema(["KSampler", "VAEDecode", …])` or `search_nodes([...])` for questions about ComfyUI node types — again, every class in one call
+- Call `read_text_file([...])` if you need to read local documentation or config files — list them all at once
+- These list-taking tools return that one answer unchanged when you pass a single name, and a map keyed by name when you pass several. There is no reason to call any of them twice in a row: you already know the full set you need before the first call, and each extra call replays the whole conversation as input
 - Call `analyze_image` and respond with a description if the user asks you to
 - If the user hands over more than one image: issue **all** the `analyze_image` calls in a single turn — one call per image, emitted together, not one turn each. They run at the same time, so a batch costs about what one image costs. Combine the results in your response.
 - Call `web_search` to find up-to-date information, tutorials, style references, or anything not available locally. Present the most relevant results clearly.

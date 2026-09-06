@@ -26,6 +26,7 @@ from strands.hooks.events import AfterToolCallEvent
 # Removed `handoff_to_user` tool registration — not used by agents anymore.
 
 from src.utils.comfyui_interrupt_hook import ComfyUIInterruptHook
+from src.utils.unknown_tool_hook import UnknownToolHookProvider
 from src.utils.costs import compute_cost_from_usage, _extract_meta
 
 from src.tools import (
@@ -1003,6 +1004,11 @@ def _make_agent(
     # way around it.
     if not any(isinstance(h, ToolPermissionHookProvider) for h in _hooks):
         _hooks.append(ToolPermissionHookProvider())
+    # Likewise every agent: any of them can reach for a tool it does not hold,
+    # and "Unknown tool: X" on its own sends them improvising instead of picking
+    # the neighbouring tool that would have worked.
+    if not any(isinstance(h, UnknownToolHookProvider) for h in _hooks):
+        _hooks.append(UnknownToolHookProvider())
     agent_kwargs["hooks"] = _hooks
     agent = Agent(**agent_kwargs)
     # Attach light-weight cost metadata so callers can compute run cost.

@@ -45,6 +45,10 @@ DEFAULT_ASK_TOOLS = ("run_script", "iterate", "install_custom_node")
 # How long a question stays on screen before it answers itself.
 DEFAULT_TIMEOUT = 120.0
 
+# How often, while a question is outstanding, to re-check that anybody is still
+# there to answer it. See _wait_while_watched.
+_LISTENER_CHECK_SECONDS = 1.0
+
 # A question handed to the panel is held back this long before another poll can
 # take it, so a reload does not hand the same one to two places — and so a page
 # that vanished mid-question releases it rather than stranding the waiter.
@@ -118,6 +122,33 @@ def has_listener(within: float = 30.0) -> bool:
         return _last_poll > 0 and (_now() - _last_poll) <= within
 
 
+def _wait_while_watched(event: threading.Event, timeout: float) -> bool:
+    """Wait for *event*, but stop early once the panel stops listening.
+
+    ``has_listener`` is checked before asking, so a closed panel never gets a
+    question. It can still close *during* one — the tab is shut, the laptop
+    sleeps — and then the full timeout is spent waiting for an answer that has
+    no way to arrive, with the agent's thread blocked inside the tool for all of
+    it. Polling in slices costs one cheap check a second and turns that into the
+    listener window.
+
+    Note this does NOT shorten the ordinary case. A panel that is open keeps
+    long-polling for the next question, which refreshes ``_last_poll``, so
+    somebody who is present but thinking still gets the whole timeout. Deciding
+    slowly is not the same as being gone, and only the second one is worth
+    cutting short.
+    """
+    deadline = _now() + timeout
+    while True:
+        remaining = deadline - _now()
+        if remaining <= 0:
+            return False
+        if event.wait(timeout=min(_LISTENER_CHECK_SECONDS, remaining)):
+            return True
+        if not has_listener():
+            return False
+
+
 def request(tool_name: str, tool_input: dict, *, timeout: float = DEFAULT_TIMEOUT,
             unattended_allows: bool = False) -> Decision:
     """Ask, and block this thread until somebody answers.
@@ -150,7 +181,16 @@ def request(tool_name: str, tool_input: dict, *, timeout: float = DEFAULT_TIMEOU
         _PENDING[pid] = entry
     _ARRIVED.set()
     try:
-        if not event.wait(timeout=max(1.0, float(timeout or 0))):
+        if not _wait_while_watched(event, max(1.0, float(timeout or 0))):
+            if not has_listener():
+                # The panel stopped polling while the question was on screen: the
+                # tab was closed, or the browser slept. Waiting out the rest of
+                # the timeout would block the agent on an answer that can no
+                # longer arrive.
+                return Decision(False, (
+                    "the agentY panel stopped listening while this was waiting "
+                    "for approval, so it was not run. Re-open ComfyUI's agentY "
+                    "tab if you want to approve it."))
             return Decision(False, (
                 f"nobody approved this within {int(timeout)}s, so it was not run. "
                 "Say what you were trying to do and I can ask again."))

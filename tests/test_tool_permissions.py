@@ -72,6 +72,69 @@ class TheDefaultIsNo(unittest.TestCase):
         self.assertFalse(decision.allowed)
 
 
+class WhenThePanelLeavesMidQuestion(unittest.TestCase):
+    """A closed panel never gets a question. It can still close during one.
+
+    Until this, the whole timeout was then spent waiting for an answer with no
+    way to arrive, with the agent's thread blocked inside the tool for all of it.
+    """
+
+    def setUp(self):
+        tp.reset_session()
+
+    def test_it_gives_up_once_nobody_is_listening_any_more(self):
+        tp._last_poll = time.time()
+        # Go stale immediately: nothing has polled since before the window.
+        stale = threading.Thread(
+            target=lambda: (time.sleep(0.2),
+                            setattr(tp, "_last_poll", time.time() - 999)),
+            daemon=True)
+        stale.start()
+
+        started = time.time()
+        decision = tp.request("run_script", {"command": "x"}, timeout=30.0)
+        elapsed = time.time() - started
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("stopped listening", decision.reason)
+        self.assertLess(elapsed, 10.0,
+                        "it must not sit out the full timeout for an answer "
+                        "that can no longer come")
+
+    def test_someone_present_but_slow_still_gets_the_whole_timeout(self):
+        """Deciding slowly is not the same as being gone.
+
+        An open panel long-polls for the next question the whole time, which is
+        what keeps _last_poll fresh — so this must not cut anybody short.
+        """
+        tp._last_poll = time.time()
+        keep_polling = True
+
+        def poller():
+            while keep_polling:
+                tp._last_poll = time.time()
+                time.sleep(0.05)
+
+        t = threading.Thread(target=poller, daemon=True)
+        t.start()
+        try:
+            started = time.time()
+            decision = tp.request("run_script", {"command": "x"}, timeout=2.0)
+            elapsed = time.time() - started
+        finally:
+            keep_polling = False
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("nobody approved", decision.reason)
+        self.assertGreaterEqual(elapsed, 2.0)
+
+    def test_an_answer_still_arrives_normally(self):
+        tp._last_poll = time.time()
+        answer_after(0, tp.take, allowed=True)
+        decision = tp.request("run_script", {"command": "x"}, timeout=5.0)
+        self.assertTrue(decision.allowed)
+
+
 class TheAnswers(unittest.TestCase):
     def setUp(self):
         tp.reset_session()

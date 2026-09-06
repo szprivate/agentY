@@ -75,12 +75,16 @@ Assign fresh sequential string node IDs (`"1"`, `"2"`, ...) to any nodes you add
 
 ---
 
-## Step 4 — Inspect unfamiliar nodes
+## Step 4 — Inspect unfamiliar nodes, all in one call
 
-For any node class you are not certain about:
+Collect every node class you are unsure about **first**, then look them all up at
+once. The recipe already told you the full node list in Step 2, so nothing about
+the second lookup depends on the first — and each extra call replays the whole
+conversation as input.
 
-- **`get_node_schema(node_class)`** — required inputs, types, defaults, output slots. Use to verify input names and connection indices before wiring.
-- **`search_nodes(query)`** — find the right `class_type` for a capability (e.g. `"video combine"`, `"load image path"`).
+- **`get_node_schema([node_class, …])`** — required inputs, types, defaults, output slots. Use to verify input names and connection indices before wiring. Pass the whole list: `get_node_schema(["UNETLoader", "CLIPTextEncode", "KSampler", "VAEDecode"])`, not four calls.
+- **`search_nodes([query, …])`** — find the right `class_type` for a capability. Pass every term you want to try at once (e.g. `["video combine", "load image path"]`).
+- Both return that one answer unchanged for a single name, and a map keyed by name for several; a name that misses gets an `error` entry without spoiling the rest.
 
 Model paths come from the brainbriefing (Query Templates-verified via `check_model`). Do NOT look up models here.
 

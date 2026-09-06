@@ -929,6 +929,14 @@ class Pipeline:
                     "master_image|reference_image|mask|control_image|depth_map"}``.
                     Pass ``[]`` for pure text-to-image/video (no inputs).
 
+            Whenever a workflow exists, the result carries ``built``: the node
+            ids and class types actually in the graph, the model files, the
+            resolution, the save paths and the prompt. That IS the assembled
+            workflow — read it there. Do NOT re-open the file, list the workflows
+            directory, or fetch the templates to check the work; the graph on
+            disk is what ``built`` describes, including multi-stage graphs whose
+            stages were fused into one.
+
             Returns JSON with a ``status`` field:
               * ``ready``     → ``workflow_path`` is assembled & validated; call
                                 ``signal_workflow_ready(workflow_path)`` next.
@@ -971,6 +979,7 @@ class Pipeline:
                 _push_progress("🚧 Blocked — need more information.")
                 return json.dumps({"status": "blocked", "blockers": briefing.blockers})
             result = await self._assemble_deterministic(briefing)
+            self._attach_built_summary(result)
             return json.dumps(result)
 
         @_tool
@@ -5961,6 +5970,34 @@ class Pipeline:
                   f"server_errors={res.get('server_errors')}")
         return await self._run_fix_workflow_assembly(
             wf, problems=problems, server_errors=res.get("server_errors", {}))
+
+    def _attach_built_summary(self, result: dict) -> None:
+        """Add ``built`` — what the graph actually contains — to an assembly result.
+
+        A caller who is only told "ready" and a path cannot see the work, and an
+        orchestrator that cannot see the work goes looking for it: the run this
+        was written for answered a correct ``ready`` with six further tool calls
+        (a tool it does not have, a 120-second permission timeout, a directory
+        listing, both workflow JSONs re-read) and ~297K input tokens, before
+        concluding the graph had been right all along. A few hundred tokens of
+        node classes settles it in the same message.
+
+        Best-effort: a summary that cannot be produced is simply absent, never an
+        error on an otherwise-good assembly.
+        """
+        if not isinstance(result, dict):
+            return
+        path = result.get("workflow_path")
+        if not path:
+            return
+        try:
+            from agenty_core.tools.comfyui import (  # noqa: PLC0415
+                _load_workflow as _lw, summarize_workflow_graph as _sum,
+            )
+            result["built"] = _sum(_lw(path))
+        except Exception as exc:  # noqa: BLE001
+            if self._verbose:
+                print(f"pipeline: could not summarize {path}: {exc}")
 
     def _count_handback(self, violation) -> int:
         """Which attempt this is at the same input, this turn (1 for the first)."""
