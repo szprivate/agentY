@@ -41,8 +41,66 @@ _WEAK_TOKENS = frozenset({"get", "set", "list", "run", "read", "write", "new",
                           "all", "the", "a", "to", "for", "of", "and", "by"})
 
 
+# Some capabilities are not a differently-named tool — they sit behind a
+# specialist, and name similarity can never find them: `get_node_schema` and
+# `run_info` share no words at all. Measured against the orchestrator's own
+# registry, the bounce for `get_node_schema` offered `get_canvas_node`,
+# `create_custom_node` and `set_canvas_node_params`. None of those can answer
+# "what values does this input accept", so the run did the thing the message
+# below forbids: `run_script`, and 120 seconds waiting for an approval nobody
+# gave, over and over.
+#
+# `(trigger tokens, tool, what it can answer)`. The tool is only offered when the
+# agent actually holds it.
+_SPECIALIST_ROUTES = (
+    (frozenset({"schema", "object", "widget", "widgets", "enum", "combo",
+                "param", "parameter", "parameters", "spec", "option", "options"}),
+     "run_info",
+     "it reads a node class straight from ComfyUI — every input, its type, and "
+     "the exact list of values it accepts"),
+)
+
+# Tokens that only route when nothing matched well by name: a node question is
+# usually a node-schema question, but `delete_node` is not.
+_WEAK_ROUTE_TOKENS = frozenset({"node", "nodes"})
+
+
 def _tokens(name: str) -> set[str]:
     return {t for t in re.split(r"[^a-z0-9]+", str(name).lower()) if t}
+
+
+def names_the_same_tool(wanted: str, available) -> bool:
+    """True when the registry holds a tool that is *wanted* under another spelling."""
+    def flat(v) -> str:
+        return re.sub(r"[^a-z0-9]", "", str(v).lower())
+
+    want = flat(wanted)
+    if not want:
+        return False
+    return any(want == (f := flat(n)) or want in f or f in want for n in available)
+
+
+def route_to_specialist(wanted: str, available, strong_match: bool = False) -> tuple:
+    """``(tool, why)`` when *wanted* names a capability a specialist holds, else ``()``.
+
+    *strong_match* says the registry already holds a tool of essentially THIS
+    name, in which case only an unmistakable trigger routes: `delete_canvas_node`
+    means `delete_canvas_nodes` and nothing else. Merely sharing a word is not
+    enough — `search_nodes` shares "nodes" with `delete_canvas_nodes` and means
+    something entirely different.
+    """
+    have = set(available)
+    want = _tokens(wanted)
+    if not want:
+        return ()
+    for triggers, tool, why in _SPECIALIST_ROUTES:
+        if tool not in have:
+            continue
+        if want & triggers:
+            return tool, why
+        if not strong_match and (want & _WEAK_ROUTE_TOKENS):
+            return tool, why
+    return ()
 
 
 def rank_alternatives(wanted: str, available) -> list[str]:
@@ -106,7 +164,18 @@ class UnknownToolHookProvider(HookProvider):
                 return
 
             near = rank_alternatives(wanted, available)
-            if near:
+            route = route_to_specialist(
+                wanted, available,
+                strong_match=names_the_same_tool(wanted, available))
+            if route:
+                tool, why = route
+                # The specialist goes first: it is the one that can actually
+                # answer, where a near-named tool merely sounds like it.
+                advice = f"Call `{tool}` — {why}."
+                if near:
+                    advice += (" Closest by name, if you meant something else: "
+                               + ", ".join(f"`{n}`" for n in near) + ".")
+            elif near:
                 advice = ("Closest tools you DO have: "
                           + ", ".join(f"`{n}`" for n in near) + ".")
             else:
