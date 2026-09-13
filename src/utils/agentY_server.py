@@ -190,6 +190,7 @@ SLASH_COMMANDS = [
     {"name": "/unload",          "description": "Unload Ollama models from VRAM"},
     {"name": "/clear_vram",      "description": "Clear ComfyUI GPU VRAM"},
     {"name": "/images",          "description": "List images generated in this thread (reference them by number)"},
+    {"name": "/undo",            "description": "Undo the agent's last step in this conversation — its reply, its memory of it, and its canvas edits"},
     {"name": "/project_memory", "description": "Inspect and forget what is remembered for THIS project"},
     {"name": "/clearhistory",    "description": "Delete all conversation history (keeps the current thread)"},
     {"name": "/switch_model",    "description": "Switch an agent's LLM — /switch_model <agent|all> <provider,model> (use 'all' for every agent)"},
@@ -953,10 +954,28 @@ def _restore_state(pipeline, thread_id: str) -> None:
         pipeline._session.session_id = thread_id
     except Exception:
         pass
+    # The conversation as the agent remembers it: this process's own copy first;
+    # then the saved state, which is what survives a restart of the host; then,
+    # for a conversation saved before there was any saved state, the transcript.
+    # Without the last two, an old conversation resumed after a restart reached an
+    # agent that had never heard of it.
     agent = _memory_agent(pipeline)
-    cached = _thread_brain_cache.get(thread_id)
-    if agent is not None and hasattr(agent, "messages") and cached is not None:
-        agent.messages[:] = cached
+    if agent is not None and hasattr(agent, "messages"):
+        from src.utils.brain_memory import choose_history
+        cached = _thread_brain_cache.get(thread_id)
+        saved = (st or {}).get("brain_messages")
+        rows = None
+        if cached is None and not saved:
+            try:
+                rows = (cs.get_thread(thread_id) or {}).get("messages", [])
+            except Exception:  # noqa: BLE001
+                rows = None
+        history, source = choose_history(cached, saved, rows)
+        if history:
+            agent.messages[:] = history
+            if source != "cache":
+                logger.info("conversation %s: restored %d message(s) from the %s",
+                            thread_id, len(history), source)
     # Rebuild the generated-image gallery into the session so /images and
     # "use image 2" references work after a restart.
     sess = getattr(pipeline, "_session", None)
@@ -977,12 +996,20 @@ def _restore_state(pipeline, thread_id: str) -> None:
 def _save_state(pipeline, thread_id: str) -> None:
     """Snapshot pipeline state for *thread_id* (memory cache + durable SQLite)."""
     agent = _memory_agent(pipeline)
+    brain = None
     if agent is not None and hasattr(agent, "messages"):
         _thread_brain_cache[thread_id] = list(agent.messages)
+        try:
+            from src.utils.brain_memory import serialize_messages
+            brain = serialize_messages(agent.messages)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("could not serialise the conversation for %s: %s",
+                           thread_id, exc)
     session = getattr(pipeline, "_session", None)
     try:
         cs.save_state(
             thread_id,
+            brain_messages=brain,
             agent_session=session.model_dump() if session is not None else None,
             last_brainbriefing=getattr(pipeline, "_last_brainbriefing_json", None),
             last_prior_summary=getattr(pipeline, "_last_prior_summary", None),
@@ -1099,7 +1126,9 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
                          canvas_hooks: list | None = None,
                          canvas_selection: list | None = None,
                          open_workflows: list | None = None,
-                         dry_run: bool = False, origin: str = "panel") -> None:
+                         dry_run: bool = False, origin: str = "panel",
+                         canvas_graph: dict | None = None, canvas_hash: str = "",
+                         canvas_workflow: str = "") -> None:
     """Run one turn, guaranteeing the SSE queue is always terminated.
 
     The queue's ``None`` sentinel is what ends the stream, and ``done`` is what
@@ -1122,7 +1151,9 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
         _run_pipeline_turn(thread_id, message, image_paths, out_q, req_id, finished,
                            canvas_prompt=canvas_prompt, canvas_hooks=canvas_hooks,
                            canvas_selection=canvas_selection,
-                           open_workflows=open_workflows, dry_run=dry_run)
+                           open_workflows=open_workflows, dry_run=dry_run,
+                           origin=origin, canvas_graph=canvas_graph,
+                           canvas_hash=canvas_hash, canvas_workflow=canvas_workflow)
     except BaseException as exc:  # noqa: BLE001 — the stream must close on ANY failure
         logger.error("turn %s died before completing: %s", req_id, exc, exc_info=True)
         # Also into the turn log with a full traceback: the terminal scrollback is
@@ -1167,7 +1198,9 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
                        canvas_hooks: list | None = None,
                        canvas_selection: list | None = None,
                        open_workflows: list | None = None,
-                       dry_run: bool = False) -> None:
+                       dry_run: bool = False, origin: str = "panel",
+                       canvas_graph: dict | None = None, canvas_hash: str = "",
+                       canvas_workflow: str = "") -> None:
     """Drive the pipeline for one turn on a private event loop, pushing SSE dicts
     to *out_q*. Interactive asks register on ``_reply_registry`` so POST
     /agentY/reply can feed the answer thread-safely. Terminates *out_q* with None
@@ -1199,6 +1232,13 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
     qa_briefing = _resolve_qa_briefing(canvas_hooks, thread_id)
 
     _restore_state(pipeline, thread_id)
+    # Before the turn touches anything: the state an undo of it puts back. The
+    # panel is told which checkpoint this is, so it can mark where the step began.
+    _checkpoint = _push_checkpoint(pipeline, thread_id, message, origin,
+                                   canvas_graph, canvas_hash, canvas_workflow)
+    if _checkpoint:
+        out_q.put({"type": "checkpoint", "id": _checkpoint, "thread_id": thread_id,
+                   "text": (message or "")[:200]})
     session = getattr(pipeline, "_session", None)
     if image_paths and session is not None:
         session.last_user_input_images = image_paths
@@ -1522,6 +1562,9 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
         out_q.put(None)
         _wd.phase(req_id, "post:close_loop")
         _close_loop(loop)
+        # A model switch made while this turn ran was held back so it could not
+        # rebuild an agent out from under it. The turn is over: apply it now.
+        _apply_pending_model_change()
 
 
 # ── Stop / interrupt helpers ──────────────────────────────────────────────────
@@ -1672,6 +1715,120 @@ def _handle_qa_command(thread_id: str, parts: list[str]) -> list[dict]:
                  "in a named briefing's `.refs/` folder. `/qa off` to clear.")]
 
 
+# ── Undo one agent step ───────────────────────────────────────────────────────
+
+_CHECKPOINT_LABEL_CHARS = 80
+
+
+def _checkpoint_label(message: str) -> str:
+    text = " ".join(str(message or "").split())
+    if not text:
+        return "the last step"
+    if len(text) <= _CHECKPOINT_LABEL_CHARS:
+        return text
+    return text[:_CHECKPOINT_LABEL_CHARS - 1] + "…"
+
+
+def _push_checkpoint(pipeline, thread_id: str, message: str, origin: str,
+                     canvas_graph, canvas_hash: str, canvas_workflow: str) -> int | None:
+    """Record what this turn is about to change, so an undo can put it back.
+
+    Taken after the conversation is restored and before the turn does anything:
+    the agent's memory, its session, and — when the panel sent it — the canvas.
+    Never fails a turn; a step that could not be checkpointed just can't be undone.
+    """
+    try:
+        from src.utils.brain_memory import serialize_messages
+        agent = _memory_agent(pipeline)
+        session = getattr(pipeline, "_session", None)
+        return cs.push_checkpoint(
+            thread_id,
+            turn_text=message or "",
+            label=_checkpoint_label(message),
+            origin=origin or "",
+            brain_messages=serialize_messages(getattr(agent, "messages", None) or []),
+            agent_session=session.model_dump() if session is not None else None,
+            last_brainbriefing=getattr(pipeline, "_last_brainbriefing_json", None),
+            canvas_graph=canvas_graph if isinstance(canvas_graph, dict) else None,
+            canvas_before_hash=str(canvas_hash or "") or None,
+            canvas_workflow=str(canvas_workflow or "") or None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("could not checkpoint the turn in %s: %s", thread_id, exc)
+        return None
+
+
+def _undo_last_step(thread_id: str, origin: str = "panel") -> list[dict]:
+    """Take a conversation back to before its most recent turn.
+
+    Put back: the transcript (the turn's messages go), the agent's memory and
+    session (it no longer knows the turn happened), and the conversation's image
+    list (numbered references stop pointing at undone outputs). The canvas is the
+    panel's to restore: the ``undo`` event carries the graph as it was before the
+    turn, plus the hashes that let the panel tell whether anyone has edited it
+    since. Not put back: files on disk, downloaded models, installed nodes, and
+    anything written to long-term or project memory.
+    """
+    if not thread_id or cs.get_thread(thread_id) is None:
+        return [_sys("↩️ Nothing to undo — this conversation has no steps yet.")]
+    if _turn_running(thread_id):
+        return [_sys("⏳ A turn is still running in this conversation — stop it or let "
+                     "it finish, then undo.")]
+    cp = cs.pop_checkpoint(thread_id)
+    if cp is None:
+        return [_sys("↩️ Nothing to undo in this conversation.")]
+
+    removed, gallery_removed = cs.rewind_thread(thread_id, cp["transcript_cut"],
+                                                cp["gallery_cut"])
+    brain = cp.get("brain_messages") or []
+    prior = (cs.load_state(thread_id) or {}).get("last_prior_summary")
+    cs.save_state(thread_id, brain_messages=brain, agent_session=cp.get("agent_session"),
+                  last_brainbriefing=cp.get("last_brainbriefing"),
+                  last_prior_summary=prior)
+    # The live agent is reloaded from here at the start of the next turn.
+    _thread_brain_cache[thread_id] = list(brain)
+    # The saved panel still shows the undone step. An open panel re-saves its
+    # trimmed log; one that is not open rebuilds from the transcript next time.
+    try:
+        cs.save_panel(thread_id, "")
+    except Exception:  # noqa: BLE001
+        pass
+
+    remaining = cs.count_checkpoints(thread_id)
+    label = cp.get("label") or "the last step"
+    canvas = cp.get("canvas_graph")
+    touched_canvas = bool(canvas) and (not cp.get("canvas_after_hash")
+                                       or cp.get("canvas_before_hash") != cp.get("canvas_after_hash"))
+    parts = [f"↩️ Undid **{label}** — the conversation and the agent's memory are back "
+             "to before it."]
+    if gallery_removed:
+        parts.append(f"_{gallery_removed} output(s) from that step left this conversation's "
+                     "image list; the files are still on disk._")
+    if origin == "slack" and touched_canvas:
+        parts.append("_If the agentY panel is open, it puts the canvas back too; "
+                     "otherwise the canvas is left as it is._")
+    parts.append("_Not undone: files saved to disk, models downloaded, nodes installed, "
+                 "or anything written to long-term memory._")
+    if remaining:
+        parts.append(f"_{remaining} earlier step(s) can still be undone._")
+    event = {
+        "type": "undo", "thread_id": thread_id, "checkpoint_id": cp["id"],
+        "label": label, "removed_messages": removed, "remaining": remaining,
+        "canvas_graph": canvas, "canvas_workflow": cp.get("canvas_workflow"),
+        "canvas_before_hash": cp.get("canvas_before_hash"),
+        "canvas_after_hash": cp.get("canvas_after_hash"),
+        "message": "\n\n".join(parts),
+    }
+    if origin == "slack":
+        # No browser is on this request. Hand the canvas half to whichever panel
+        # is listening.
+        try:
+            notify_bus.emit({"kind": "undo", "undo": event})
+        except Exception:  # noqa: BLE001
+            pass
+    return [event]
+
+
 def _handle_command(thread_id: str, text: str, canvas_prompt: dict | None = None) -> list[dict]:
     low = text.strip().lower()
     parts = text.strip().split(None, 2)
@@ -1756,6 +1913,9 @@ def _handle_command(thread_id: str, text: str, canvas_prompt: dict | None = None
             return [_sys("⚠️ Usage: `/remove_workflow <template_name>`")]
         return _remove_workflow(parts[1].strip())
 
+    if cmd == "/undo":
+        return _undo_last_step(thread_id)
+
     if cmd in ("/switch_model", "switch_model"):
         return _switch_model(parts[1:] )
 
@@ -1805,18 +1965,6 @@ def _remove_workflow(name: str) -> list[dict]:
         return [_sys(f"❌ Failed to remove workflow: {exc}")]
 
 
-# Agents the pipeline holds LIVE, so a switch takes effect this turn instead of at
-# the next start. `orchestrator` is special-cased in _rebuild_agent (it needs its
-# delegation tools re-wired), the rest are a plain factory + attribute swap. Every
-# OTHER role is still switchable — the setting is written and picked up on restart;
-# see _switch_targets, which is the authority on what a target may be.
-_LIVE_AGENTS: dict[str, tuple[str, str]] = {
-    "query_templates": ("create_query_templates_agent", "_researcher"),
-    "info": ("create_info_agent", "_info_agent"),
-    "planner": ("create_planner_agent", "_planner_agent"),
-}
-
-
 def _switch_targets() -> tuple[list[str], list[str]]:
     """``(tiers, roles)`` a switch may target.
 
@@ -1835,52 +1983,63 @@ def _switch_targets() -> tuple[list[str], list[str]]:
     return tiers, roles
 
 
-def _rebuild_agent(agent_name: str, provider: str, model: str, llm_spec: str) -> str | None:
-    """Rebuild one pipeline agent with the given provider/model and swap it into
-    the live pipeline. Returns None on success, or an error string."""
-    from src.agent import (
-        _DASHSCOPE_PROVIDERS, _OPENAI_PROVIDERS, _GEMINI_PROVIDERS,
-        _settings as get_settings,
-        create_orchestrator_agent,
-        create_query_templates_agent, create_info_agent, create_planner_agent,
-    )
+# A model switch rebuilds agents, and a running turn is still using them. So while
+# a turn runs, the switch is saved at once and applied the moment the turn ends.
+_pending_model_before: dict | None = None
+_pending_model_force = False
+_model_change_lock = threading.Lock()
+
+
+def _turn_running(thread_id: str | None = None) -> bool:
+    """Is a turn in flight — any turn, or one in *thread_id*?"""
+    with _reply_lock:
+        return any(thread_id is None or entry.get("thread_id") == thread_id
+                   for entry in _run_registry.values())
+
+
+def _apply_model_change(before: dict, force: bool = False) -> dict:
+    """Rebuild the agents a settings change affects — now, or when the turn ends.
+
+    *before* is :func:`src.utils.model_reload.fingerprint` taken before the change
+    was written; *force* rebuilds every live agent (an API key changed, which no
+    fingerprint of model names can see). Returns ``{"state", "rebuilt",
+    "failures"}``, state being ``applied``, ``deferred`` or ``no_pipeline``.
+    """
+    global _pending_model_before, _pending_model_force
+    from src.utils import model_reload
+
     if _agent_ref is None:
-        return "pipeline not initialised"
+        return {"state": "no_pipeline", "rebuilt": [], "failures": {}}
+    with _model_change_lock:
+        if _turn_running():
+            # Keep the OLDEST picture: two switches during one turn are one change
+            # from what the agents were actually built with.
+            if _pending_model_before is None:
+                _pending_model_before = before
+            _pending_model_force = _pending_model_force or force
+            return {"state": "deferred", "rebuilt": [], "failures": {}}
+        after = model_reload.fingerprint()
+        names = (list(model_reload.LIVE_AGENTS) if force
+                 else model_reload.changed_agents(before, after))
+        rebuilt, failures = model_reload.reload_live_agents(_agent_ref, names)
+    if rebuilt or failures:
+        logger.info("model change applied live: rebuilt %s%s", rebuilt or "nothing",
+                    f"; could not rebuild {failures}" if failures else "")
+    return {"state": "applied", "rebuilt": rebuilt, "failures": failures}
 
-    # OpenAI-compatible providers (DashScope/OpenAI/Gemini) read their model from
-    # settings, which the caller has already written before getting here.
-    _OPENAI_COMPAT = _DASHSCOPE_PROVIDERS | _OPENAI_PROVIDERS | _GEMINI_PROVIDERS
 
-    # The orchestrator is rebuilt specially: its tool list must include the
-    # pipeline's delegation tools, and it must be re-wired (skills plugin + live
-    # context) via set_orchestrator rather than a plain setattr.
-    if agent_name == "orchestrator":
-        kwargs = {"llm": provider, "extra_tools": getattr(_agent_ref, "_delegation_tools", None)}
-        if provider not in _OPENAI_COMPAT and model:
-            kwargs["ollama_model" if provider == "ollama" else "anthropic_model"] = model
-        try:
-            _agent_ref.set_orchestrator(create_orchestrator_agent(**kwargs))
-            return None
-        except Exception as exc:  # noqa: BLE001
-            return str(exc)
-
-    entry = _LIVE_AGENTS.get(agent_name)
-    if entry is None:
-        return None  # not held live — the written setting applies at the next start
-    factory_name, attr = entry
-    factory = {
-        "create_query_templates_agent": create_query_templates_agent,
-        "create_info_agent": create_info_agent,
-        "create_planner_agent": create_planner_agent,
-    }[factory_name]
-    kwargs = {"llm": provider}
-    if provider not in _OPENAI_COMPAT and model:
-        kwargs["ollama_model" if provider == "ollama" else "anthropic_model"] = model
+def _apply_pending_model_change() -> None:
+    """Apply a switch that arrived while a turn was running. Never raises."""
+    global _pending_model_before, _pending_model_force
+    with _model_change_lock:
+        before, force = _pending_model_before, _pending_model_force
+        _pending_model_before, _pending_model_force = None, False
+    if before is None:
+        return
     try:
-        setattr(_agent_ref, attr, factory(**kwargs))
-        return None
+        _apply_model_change(before, force)
     except Exception as exc:  # noqa: BLE001
-        return str(exc)
+        logger.warning("deferred model change failed: %s", exc)
 
 
 def _switch_model(args: list[str]) -> list[dict]:
@@ -1889,9 +2048,9 @@ def _switch_model(args: list[str]) -> list[dict]:
 
     Writes to ``settings.local.json`` so the choice survives a restart: this picker
     lives in the composer bar and is how most model changes actually get made, so
-    silently reverting it at the next start would be the bigger surprise. Agents the
-    pipeline holds live are rebuilt immediately; the rest apply at the next start,
-    and the reply says which is which rather than implying everything took effect.
+    silently reverting it at the next start would be the bigger surprise. Every agent
+    the change reaches is rebuilt in place — no restart — or, if a turn is running,
+    the moment that turn ends (see src/utils/model_reload.py).
     """
     from src.agent import _ROLE_TIERS
     from src.utils.settings import set_local
@@ -1934,6 +2093,12 @@ def _switch_model(args: list[str]) -> list[dict]:
                      f"Tiers: `{'`, `'.join(tiers)}`\n\n"
                      f"Roles: `{'`, `'.join(roles)}`\n\nOr `all`.")]
 
+    from src.utils import model_reload
+    try:
+        before = model_reload.fingerprint()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("switch_model: could not fingerprint the models: %s", exc)
+        before = {}
     try:
         set_local(overrides)
     except Exception as exc:  # noqa: BLE001
@@ -1950,27 +2115,27 @@ def _switch_model(args: list[str]) -> list[dict]:
     except Exception as exc:  # noqa: BLE001
         logger.debug("switch_model: settings cache refresh skipped: %s", exc)
 
-    # Rebuild whatever the pipeline holds live so the change lands this turn. With
-    # no pipeline running there is nothing to swap and the setting simply applies at
-    # start — that is not a failure worth warning about.
-    live = (sorted(affected & ({"orchestrator"} | set(_LIVE_AGENTS)))
-            if _agent_ref is not None else [])
-    failures = [f"`{r}`: {err}" for r in live
-                if (err := _rebuild_agent(r, provider, model, llm_spec))]
-    ok_live = [r for r in live if not any(f.startswith(f"`{r}`") for f in failures)]
-    deferred = sorted(affected - set(ok_live))
+    # Rebuild every agent the change reaches, in place. With nothing to compare
+    # against, rebuild them all — slower, never wrong.
+    change = _apply_model_change(before, force=not before)
 
     lines = [f"✅ {what} → `{llm_spec}` (saved to `settings.local.json`)."]
-    if ok_live:
-        lines.append("Live now: " + ", ".join(f"`{r}`" for r in ok_live) + ".")
-    if deferred:
-        lines.append("Applies on the next agent start: "
-                     + ", ".join(f"`{r}`" for r in deferred) + ".")
+    if change["state"] == "deferred":
+        lines.append("A turn is running, so the switch lands the moment it finishes — "
+                     "no restart needed.")
+    elif change["state"] == "no_pipeline":
+        lines.append("Takes effect when the agent starts.")
+    else:
+        rebuilt = change["rebuilt"]
+        lines.append("Live now — no restart needed."
+                     + (" Rebuilt: " + ", ".join(f"`{r}`" for r in rebuilt) + "."
+                        if rebuilt else ""))
     if target in roles:
         lines.append(f"_`{target}` now ignores its `{_ROLE_TIERS.get(target)}` tier "
                      "until you clear the override in Settings._")
-    if failures:
-        lines.append("⚠️ Some live rebuilds failed:\n" + "\n".join(failures))
+    if change["failures"]:
+        lines.append("⚠️ Could not rebuild — these keep their previous model:\n"
+                     + "\n".join(f"`{r}`: {err}" for r, err in change["failures"].items()))
     return [_sys("\n\n".join(lines))]
 
 
@@ -3489,6 +3654,11 @@ def _build_app():
         body = request.get_json(silent=True) or {}
         result: dict = {"ok": True}
         try:
+            from src.utils import model_reload as _mr
+            _models_before = _mr.fingerprint()
+        except Exception:  # noqa: BLE001
+            _models_before = None
+        try:
             env_updates = _drop_masked(body.get("env"))
             if isinstance(env_updates, dict) and env_updates:
                 _update_env_file({str(k): "" if v is None else str(v)
@@ -3504,6 +3674,18 @@ def _build_app():
         except Exception as exc:  # noqa: BLE001
             logger.error("settings save failed: %s", exc, exc_info=True)
             return jsonify({"ok": False, "error": str(exc)}), 500
+        # Models change without a restart: rebuild whichever agents the save moved.
+        # A changed provider key reaches no agent that already holds the old one,
+        # so that rebuilds all of them.
+        if _models_before is not None and (result.get("settings_updated")
+                                           or result.get("env_updated")):
+            try:
+                from src.utils import model_reload as _mr
+                _force = _mr.env_affects_clients(result.get("env_updated") or [])
+                if result.get("settings_updated") or _force:
+                    result["models"] = _apply_model_change(_models_before, force=_force)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("live model reload after a settings save failed: %s", exc)
         return jsonify(result)
 
     # ── Auto-graph toggle (autoload_workflows_into_canvas) ──────────────────
@@ -3605,6 +3787,28 @@ def _build_app():
         body = request.get_json(silent=True) or {}
         cs.save_panel(tid, body.get("html", ""))
         return jsonify({"ok": True})
+
+    # ── Undo the last agent step (the panel's ↩ button; /undo does the same) ──
+    @app.route("/agentY/threads/<tid>/undo", methods=["POST", "OPTIONS"])
+    def thread_undo(tid):
+        if request.method == "OPTIONS":
+            return "", 204
+        return jsonify({"events": _undo_last_step(tid)})
+
+    # What the canvas looked like when a turn finished. Undo restores the graph
+    # from before the turn automatically only while the canvas still looks like this.
+    @app.route("/agentY/threads/<tid>/checkpoint_canvas", methods=["POST", "OPTIONS"])
+    def thread_checkpoint_canvas(tid):
+        if request.method == "OPTIONS":
+            return "", 204
+        body = request.get_json(silent=True) or {}
+        try:
+            checkpoint_id = int(body.get("checkpoint_id"))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "checkpoint_id is required"}), 400
+        ok = cs.set_checkpoint_canvas_after(
+            tid, checkpoint_id, str(body.get("canvas_after_hash") or "")[:128])
+        return jsonify({"ok": ok})
 
     @app.route("/agentY/threads/clear", methods=["POST", "OPTIONS"])
     def threads_clear():
@@ -3776,6 +3980,11 @@ def _build_app():
         # Dry run: the panel's "Run agentY hooks ▾ → Dry run". Build every graph,
         # submit none of them (src/utils/dry_run.py).
         dry_run = bool(body.get("dry_run"))
+        # The canvas as it stood when this message was sent (the panel's own
+        # serialisation), kept with the turn's checkpoint so undo can put it back.
+        canvas_graph = body.get("canvas_graph") if isinstance(body.get("canvas_graph"), dict) else None
+        canvas_hash = str(body.get("canvas_hash") or "")[:128]
+        canvas_workflow = str(body.get("canvas_workflow") or "")[:512]
         # agentY image-collector nodes wired as hook anchors carry on-disk image
         # paths (widget data) — surface them to the agent as vision with NO
         # pre-run. ONLY when the orchestrator is a vision model: a text-only
@@ -3873,7 +4082,9 @@ def _build_app():
                          args=(thread_id, message, image_paths, q, rid),
                          kwargs={"canvas_prompt": canvas_prompt, "canvas_hooks": canvas_hooks,
                                  "canvas_selection": canvas_selection,
-                                 "open_workflows": open_workflows, "dry_run": dry_run},
+                                 "open_workflows": open_workflows, "dry_run": dry_run,
+                                 "canvas_graph": canvas_graph, "canvas_hash": canvas_hash,
+                                 "canvas_workflow": canvas_workflow},
                          daemon=True).start()
 
         return _sse_response(_stream_turn(q, rid, thread_id))
@@ -4059,6 +4270,38 @@ def start_agentY_server(agent, host: str = "127.0.0.1", port: int | None = None)
 
 # ── Slack: a second line in, and a second place to watch ──────────────────────
 
+def _is_undo_request(text: str) -> bool:
+    """`undo` on its own, with or without the slash.
+
+    Slack's composer takes a leading `/` as one of ITS commands and never sends the
+    message, so from Slack the bare word has to be enough.
+    """
+    return str(text or "").strip().lower() in ("/undo", "undo")
+
+
+def _slack_undo(thread_id: str) -> str:
+    """Undo from Slack: rewind the conversation, answer in its thread."""
+    from src.utils import slack_bridge
+
+    thread_id = str(thread_id or "")
+    bound = None
+    if not thread_id:
+        text = ("_Reply `undo` inside a conversation's thread to undo its last step — "
+                "a message at the top level starts a new conversation, which has "
+                "nothing to undo._")
+    else:
+        events = _undo_last_step(thread_id, origin="slack")
+        text = "\n\n".join(str(e.get("message") or e.get("data") or "")
+                            for e in events).strip()
+        bound = cs.get_slack_thread(thread_id)
+    bridge = slack_bridge.current()
+    if bridge is not None and text:
+        channel = (bound or {}).get("channel") or bridge.default_channel
+        if channel:
+            bridge.post(channel, text, thread_ts=(bound or {}).get("root_ts", ""))
+    return uuid.uuid4().hex
+
+
 def _slack_start_turn(text: str, image_paths: list, thread_id: str = "") -> str:
     """Run a turn asked for from Slack, in the conversation it belongs to.
 
@@ -4070,6 +4313,8 @@ def _slack_start_turn(text: str, image_paths: list, thread_id: str = "") -> str:
 
     Its events reach the panel too; the turn bus does not care who asked.
     """
+    if _is_undo_request(text):
+        return _slack_undo(thread_id)
     thread_id = str(thread_id or "")
     if not thread_id or cs.get_thread(thread_id) is None:
         thread_id = cs.create_thread(title="New chat")

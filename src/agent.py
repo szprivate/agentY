@@ -812,6 +812,14 @@ def _orchestrator_skill_sources() -> list[str]:
     return _skill_sources(_ORCH_SKILL_NAMES) + [str(_ORCH_SKILLS_DIR), str(_SCRATCH_SKILLS_DIR)]
 
 
+# Roles whose agents run inside an orchestrator tool call and act on the task —
+# see SpecialistInterjectHook in src/utils/interject_hook.py.
+_SPECIALIST_INTERJECT_ROLES = frozenset({
+    "query_templates", "info", "planner", "search_web", "fix_workflow_assembly",
+    "generate_new_workflow", "coder", "subagent", "brain",
+})
+
+
 def _make_agent(
     *,
     role: str,
@@ -1009,6 +1017,15 @@ def _make_agent(
     # the neighbouring tool that would have worked.
     if not any(isinstance(h, UnknownToolHookProvider) for h in _hooks):
         _hooks.append(UnknownToolHookProvider())
+    # Agents that do the orchestrator's work INSIDE one of its tool calls. A message
+    # the user sends while one of them runs is shown to it at its next step, so a
+    # delegation does not have to finish the old version before anyone reads it.
+    # Not the orchestrator (its own hook takes the message), and not the vision,
+    # video or QA readers, which would swallow it into a description.
+    if role in _SPECIALIST_INTERJECT_ROLES:
+        from src.utils.interject_hook import SpecialistInterjectHook
+        if not any(isinstance(h, SpecialistInterjectHook) for h in _hooks):
+            _hooks.append(SpecialistInterjectHook(role))
     agent_kwargs["hooks"] = _hooks
     agent = Agent(**agent_kwargs)
     # Attach light-weight cost metadata so callers can compute run cost.

@@ -40,20 +40,35 @@ logger = logging.getLogger("agentY.interject")
 _FALLBACK = "[USER INTERJECTION]"
 
 
-def _envelope(urgent: bool) -> str:
-    """The instruction block that precedes the user's words."""
+def _partial(name: str) -> str:
+    """A prompt partial from config/system_prompts/orchestrator, or '' if unreadable."""
     try:
         from src.pipeline import _orch_partial  # lazy: pipeline imports agent imports this
-        text = _orch_partial("interjection_urgent" if urgent else "interjection")
+        return _orch_partial(name)
     except Exception:  # noqa: BLE001
-        text = ""
-    return text or _FALLBACK
+        return ""
 
 
-def _format(items: list[dict], urgent: bool) -> str:
-    """Envelope + every queued message, in the order the user sent them."""
+def _envelope(urgent: bool, kind: str | None = None) -> str:
+    """The instruction block that precedes the user's words."""
+    return _partial(kind or ("interjection_urgent" if urgent else "interjection")) or _FALLBACK
+
+
+def _format(items: list[dict], urgent: bool, kind: str | None = None) -> str:
+    """Envelope + every queued message, in the order the user sent them.
+
+    When a specialist was already shown the message mid-delegation, the orchestrator
+    is told which one, so it checks that step's result instead of redoing the work
+    to apply a change that has already been applied.
+    """
     body = "\n\n".join(str(i.get("text", "")).strip() for i in items if str(i.get("text", "")).strip())
-    return f"{_envelope(urgent)}\n\n{body}"
+    text = f"{_envelope(urgent, kind)}\n\n{body}"
+    relayed = sorted({str(r) for i in items for r in (i.get("relayed_to") or [])})
+    if relayed and kind != "interjection_specialist":
+        note = _partial("interjection_relayed")
+        if note:
+            text += "\n\n" + note.replace("{steps}", ", ".join(f"`{r}`" for r in relayed))
+    return text
 
 
 def _persist(items: list[dict]) -> None:
@@ -86,7 +101,7 @@ class InterjectHookProvider(HookProvider):
         try:
             if not interject_bus.has_urgent():
                 return
-            items = interject_bus.drain()
+            items = interject_bus.drain_detailed()
             if not items:
                 return
             name = (getattr(event, "tool_use", None) or {}).get("name", "tool")
@@ -105,7 +120,7 @@ class InterjectHookProvider(HookProvider):
         try:
             if not interject_bus.pending_count():
                 return
-            items = interject_bus.drain()
+            items = interject_bus.drain_detailed()
             if not items:
                 return
             result = getattr(event, "result", None)
@@ -122,3 +137,53 @@ class InterjectHookProvider(HookProvider):
                         len(items), (getattr(event, "tool_use", None) or {}).get("name", "tool"))
         except Exception as exc:  # noqa: BLE001
             logger.warning("interjection (after-tool) failed: %s", exc, exc_info=True)
+
+
+def take_pending(kind: str = "interjection") -> str | None:
+    """Take everything the user has said and return it ready for the model, or None.
+
+    For the moments no tool boundary is coming: the agent has already written its
+    answer, or ComfyUI is rendering and the orchestrator's loop has ended. The
+    caller hands the returned text to the orchestrator as its next input, wrapped
+    in the partial named *kind*. Recorded in the conversation, like any delivery.
+    """
+    items = interject_bus.drain_detailed()
+    if not items:
+        return None
+    _persist(items)
+    _push_progress(f"🗣 Reading your message now ({len(items)} message(s)).")
+    return _format(items, urgent=False, kind=kind)
+
+
+class SpecialistInterjectHook(HookProvider):
+    """Shows a specialist what the user said while it works — without taking it.
+
+    A delegation (template research, building a workflow, a repair) is ONE tool
+    call to the orchestrator, often a minute or two long, and the orchestrator's
+    hook cannot deliver until it returns. This one sits on the specialist: it shows
+    the message at the specialist's next step, so the work in hand can change
+    course, and leaves it in the mailbox — the orchestrator still reads it when the
+    delegation returns, told that the step already saw it.
+    """
+
+    def __init__(self, role: str) -> None:
+        self._role = str(role or "specialist")
+
+    def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:  # noqa: ARG002
+        registry.add_callback(AfterToolCallEvent, self._on_after)
+
+    def _on_after(self, event: AfterToolCallEvent, **kwargs: Any) -> None:  # noqa: ARG002
+        try:
+            result = getattr(event, "result", None)
+            if not isinstance(result, dict) or not interject_bus.pending_count():
+                return
+            items = interject_bus.peek_for(self._role)
+            if not items:
+                return
+            content = list(result.get("content") or [])
+            content.append({"text": _format(items, urgent=False, kind="interjection_specialist")})
+            event.result = {**result, "content": content}
+            _push_progress(f"🗣 Passed your message to `{self._role}` mid-step.")
+            logger.info("interjection shown to %s (%d message(s))", self._role, len(items))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("interjection (specialist %s) failed: %s", self._role, exc, exc_info=True)

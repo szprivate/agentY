@@ -29,6 +29,7 @@ from strands.types.exceptions import MaxTokensReachedException
 
 from src.agent import create_fix_workflow_assembly_agent, create_generate_new_workflow_agent, create_info_agent, create_orchestrator_agent, create_planner_agent, create_query_templates_agent, create_search_web_agent, create_vision_agent, create_video_agent, video_parallelism, vision_parallelism, _settings
 from src.tools.image_handling import set_vision_agent as _set_vision_agent, vision_agents as _vision_agents
+from src.utils.turn_checkin import interleave_checkins as _interleave_checkins
 from src.tools.video_handling import set_video_agent as _set_video_agent, video_agents as _video_agents
 from src.tools.annotate import set_output_sink as _set_output_sink
 from agenty_core.tools.image_io import set_output_sink as _set_download_sink
@@ -96,6 +97,18 @@ def _orch_partial(name: str) -> str:
         except Exception:  # noqa: BLE001
             _orch_partial_cache[name] = ""
     return _orch_partial_cache[name]
+
+
+# How many times one turn goes back to read messages that arrived after its last
+# tool call. Bounded so a stream of messages cannot hold a turn open forever;
+# anything past it goes back to the panel's queue as the next message.
+_MAX_LATE_REDRIVES = 5
+
+
+def _interject_pending() -> bool:
+    """Has the user said something the running turn has not read yet?"""
+    from src.utils import interject_bus
+    return interject_bus.pending_count() > 0
 
 
 # ---------------------------------------------------------------------------
@@ -617,34 +630,12 @@ class Pipeline:
         # its per-turn token usage can be folded into the cost accounting (it runs
         # outside the per-agent snapshot brackets, via the analyze_image tool).
         self._vision_agent: Agent | None = None
-        try:
-            self._vision_agent = create_vision_agent()
-            # A turn commonly asks about a whole folder of references at once, and
-            # one agent can only serve one call at a time. Hand the tool a factory
-            # so it can grow a small pool and actually run those in parallel; the
-            # cap follows the backend (1 for a local Ollama sharing one GPU).
-            _n_vision = vision_parallelism()
-            _set_vision_agent(self._vision_agent,
-                              factory=create_vision_agent if _n_vision > 1 else None,
-                              max_parallel=_n_vision)
-            if _n_vision > 1:
-                print(f"[agentY] Vision agent pool: up to {_n_vision} concurrent describes.")
-        except Exception as _va_exc:
-            print(f"[agentY] WARNING: could not initialise VisionAgent ({_va_exc}). "
-                  "analyze_image will fall back to mode='full'.")
+        self._init_vision_agent()
         # Initialise the Video Agent so analyze_video works (samples frames -> a
         # vision-language model, default Qwen2.5-VL on DashScope). Same lifecycle as
         # the Vision agent: shared, stateless, folded into the turn's cost below.
         self._video_agent: Agent | None = None
-        try:
-            self._video_agent = create_video_agent()
-            _n_video = video_parallelism()
-            _set_video_agent(self._video_agent,
-                             factory=create_video_agent if _n_video > 1 else None,
-                             max_parallel=_n_video)
-        except Exception as _vd_exc:
-            print(f"[agentY] WARNING: could not initialise VideoAgent ({_vd_exc}). "
-                  "analyze_video will return an error until it is configured.")
+        self._init_video_agent()
         # annotate_image writes a finished PNG mid-turn, outside the executor, so
         # it has no other way onto the canvas. Registering the session's output
         # list as its sink is what makes a marked-up image show up in the panel
@@ -889,6 +880,49 @@ class Pipeline:
         except Exception as exc:  # noqa: BLE001
             if getattr(self, "_verbose", False):
                 print(f"pipeline: WARNING: could not wire orchestrator context ({exc}).")
+
+    def _init_vision_agent(self, *, strict: bool = False) -> None:
+        """(Re)build the Vision Agent and register it with ``analyze_image``.
+
+        A method rather than inline in ``__init__`` so a model switch can rebuild
+        it live (src/utils/model_reload.py). At startup a failure only disables
+        describe mode, as it always has; *strict* re-raises instead, and leaves the
+        agent that was already registered in place.
+        """
+        try:
+            agent = create_vision_agent()
+            # A turn commonly asks about a whole folder of references at once, and
+            # one agent can only serve one call at a time. Hand the tool a factory
+            # so it can grow a small pool and actually run those in parallel; the
+            # cap follows the backend (1 for a local Ollama sharing one GPU).
+            n = vision_parallelism()
+            _set_vision_agent(agent, factory=create_vision_agent if n > 1 else None,
+                              max_parallel=n)
+            self._vision_agent = agent
+            if n > 1:
+                print(f"[agentY] Vision agent pool: up to {n} concurrent describes.")
+        except Exception as exc:
+            if strict:
+                raise
+            print(f"[agentY] WARNING: could not initialise VisionAgent ({exc}). "
+                  "analyze_image will fall back to mode='full'.")
+
+    def _init_video_agent(self, *, strict: bool = False) -> None:
+        """(Re)build the Video Agent and register it with ``analyze_video``.
+
+        Same shape, and the same *strict* contract, as :meth:`_init_vision_agent`.
+        """
+        try:
+            agent = create_video_agent()
+            n = video_parallelism()
+            _set_video_agent(agent, factory=create_video_agent if n > 1 else None,
+                             max_parallel=n)
+            self._video_agent = agent
+        except Exception as exc:
+            if strict:
+                raise
+            print(f"[agentY] WARNING: could not initialise VideoAgent ({exc}). "
+                  "analyze_video will return an error until it is configured.")
 
     def _build_delegation_tools(self) -> list:
         """Build the specialist-as-tool closures the orchestrator can delegate to.
@@ -3713,6 +3747,7 @@ class Pipeline:
         # ComfyUI run failures are healed inline by the executor (repair_fn below):
         # each failed member is repaired concurrently and re-queued on the fly,
         # bounded per-member, so there is no orchestrator re-drive loop here.
+        _late_redrives = 0
         while True:
             interrupt_result = None
             yield {"_orchestrator_start": True}
@@ -3738,6 +3773,17 @@ class Pipeline:
                 yield {"tool_activity": _ta}
             for _cp in _drain_canvas_patch():
                 yield {"canvas_patch": _cp}
+            # Something the user said after the agent's last tool call — while it was
+            # writing its answer — has no tool boundary left to ride on. Read it now,
+            # in this turn, instead of handing it back to wait for the next one.
+            if interrupt_result is None and _late_redrives < _MAX_LATE_REDRIVES:
+                from src.utils.interject_hook import take_pending as _take_pending
+                _late = _take_pending("interjection_after_answer")
+                if _late:
+                    _late_redrives += 1
+                    yield {"data": "\n\n"}
+                    current_input = _late
+                    continue
             yield {"_orchestrator_done": True}
 
             if interrupt_result is None:
@@ -3780,7 +3826,9 @@ class Pipeline:
                 exec_paths = self._session.current_output_paths
                 _outputs_before = len(exec_paths)  # chain outputs already staged
                 _qa_fail_event: dict | None = None
-                if workflow_paths:
+                _batch_no = 0
+                while workflow_paths:
+                    _batch_no += 1
                     # Name what is about to come out: the hook that drove this run if
                     # there was one, else the briefing the workflow was built from.
                     _hooks = [h for h in (self._canvas_hooks or []) if isinstance(h, dict)]
@@ -3791,8 +3839,9 @@ class Pipeline:
                         print(f"pipeline: Orchestrator signaled {tag} ready.")
                     # Fresh error mailbox for this run; the executor records only
                     # members it could NOT heal (healed failures never land here).
-                    _clear_exec_errors()
-                    async for line in _execute_workflows_batch(
+                    if _batch_no == 1:
+                        _clear_exec_errors()
+                    _batch = _execute_workflows_batch(
                         workflow_paths,
                         self._last_brainbriefing_json or "",
                         user_message=user_text,
@@ -3813,7 +3862,15 @@ class Pipeline:
                         # looping the fixer over their graph).
                         repair_fn=None if _keeplive_run else self._heal_exec_failure,
                         max_concurrent_repairs=3,
-                    ):
+                    )
+                    # The render is most of a turn, and the orchestrator is idle for all
+                    # of it. A message sent now wakes it to read and act on the message
+                    # while the render keeps going (src/utils/turn_checkin.py).
+                    async for _kind, line in _interleave_checkins(
+                            _batch, _interject_pending, self._render_checkin):
+                        if _kind == "checkin":
+                            yield line
+                            continue
                         if isinstance(line, dict) and line.get("qa_fail"):
                             _qa_fail_event = line
                             break
@@ -3837,6 +3894,19 @@ class Pipeline:
                                         + "; ".join(_set.get("missed") or [])
                                         + ". They are all delivered; say the word to "
                                           "re-run the ones that break it.")}
+
+                    if _qa_fail_event:
+                        break
+                    # A workflow the agent signalled while reading a message during this
+                    # batch runs now, after the batch it arrived in — not dropped when
+                    # the turn ends.
+                    _keeplive_run = False
+                    workflow_paths = self._expand_variations(
+                        self._pending_execution_paths(), self._last_brainbriefing_json or "")
+                    if self._dry_run and workflow_paths:
+                        for _wp in workflow_paths:
+                            self._dry_run_one(_wp, None)
+                        workflow_paths = []
 
                 # ── Surface members inline-healing couldn't fix ──────────────── #
                 # The executor already healed failed members on the fly (repair_fn
@@ -4008,6 +4078,32 @@ class Pipeline:
                     }
                 }
             ]
+
+    async def _render_checkin(self):
+        """The orchestrator reads a message that arrived while ComfyUI renders.
+
+        Its loop has ended — it signalled its workflows — so it is free to run while
+        the executor monitors the render. What it signals now is picked up after the
+        current batch; what it interrupts, the executor sees as interrupted.
+        """
+        from src.utils.interject_hook import take_pending
+        text = take_pending("interjection_during_render")
+        if not text or self._orchestrator_agent is None:
+            return
+        yield {"data": "\n\n"}
+        async for event in self._orchestrator_agent.stream_async(text):
+            yield event
+            for _prog_chunk in _drain_progress():
+                yield {"data": _prog_chunk}
+            for _ta in _drain_tools():
+                yield {"tool_activity": _ta}
+            for _cp in _drain_canvas_patch():
+                yield {"canvas_patch": _cp}
+        for _ta in _drain_tools():
+            yield {"tool_activity": _ta}
+        for _cp in _drain_canvas_patch():
+            yield {"canvas_patch": _cp}
+        yield {"data": "\n\n"}
 
     @staticmethod
     def _user_asked_for_subagent(text: str) -> bool:

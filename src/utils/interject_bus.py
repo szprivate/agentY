@@ -24,6 +24,10 @@ _lock = threading.Lock()
 _active_run: str | None = None
 _active_thread: str = ""
 _pending: list[dict] = []
+# Parallel to _pending: the specialists each message has already been SHOWN (see
+# peek_for). Showing is not delivering — the orchestrator still drains it — so this
+# lives beside the message rather than removing it.
+_relayed: list[set] = []
 
 
 def open_run(req_id: str, thread_id: str = "") -> None:
@@ -38,6 +42,7 @@ def open_run(req_id: str, thread_id: str = "") -> None:
         _active_run = str(req_id) if req_id else None
         _active_thread = str(thread_id or "")
         _pending.clear()
+        _relayed.clear()
 
 
 def thread_id() -> str:
@@ -59,6 +64,7 @@ def close_run(req_id: str) -> list[str]:
             return []
         left = [p["text"] for p in _pending]
         _pending.clear()
+        _relayed.clear()
         _active_run = None
         _active_thread = ""
         return left
@@ -79,6 +85,7 @@ def post(req_id: str, text: str, urgent: bool = False) -> bool:
         if _active_run is None or str(req_id) != _active_run:
             return False
         _pending.append({"text": text, "urgent": bool(urgent)})
+        _relayed.append(set())
         return True
 
 
@@ -97,4 +104,31 @@ def drain() -> list[dict]:
     with _lock:
         out = list(_pending)
         _pending.clear()
+        _relayed.clear()
+        return out
+
+
+def peek_for(listener: str) -> list[dict]:
+    """Messages *listener* has not been shown yet — marked shown, NOT taken.
+
+    For a specialist working inside one of the orchestrator's tool calls. It sees
+    the message at its own next step, so the work in hand can change course, and
+    the message stays in the mailbox for the orchestrator to read when the
+    delegation returns. Each listener is shown each message once.
+    """
+    with _lock:
+        fresh = []
+        for item, seen in zip(_pending, _relayed):
+            if listener not in seen:
+                seen.add(listener)
+                fresh.append(dict(item))
+        return fresh
+
+
+def drain_detailed() -> list[dict]:
+    """:func:`drain`, with ``relayed_to``: the specialists already shown each message."""
+    with _lock:
+        out = [{**item, "relayed_to": sorted(seen)} for item, seen in zip(_pending, _relayed)]
+        _pending.clear()
+        _relayed.clear()
         return out

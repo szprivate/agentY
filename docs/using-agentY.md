@@ -21,6 +21,7 @@ node, ready to wire into your next step.*
 - [On a Mac](#on-a-mac)
 - [The chat panel](#the-chat-panel)
   - [Talking to a turn that is already running](#talking-to-a-turn-that-is-already-running)
+  - [Undoing a step](#undoing-a-step)
 - [Generating & editing](#generating--editing)
   - [Finding reference images on the web](#finding-reference-images-on-the-web)
   - [Marking up an image](#marking-up-an-image)
@@ -190,6 +191,7 @@ obvious spot next to agentY, point `comfyui_dir` at it so the extension is found
 | **Thread dropdown** | Switch between saved conversations. |
 | **➕ New chat** | Start a fresh thread. |
 | **🗑 Delete** | Delete the current conversation. |
+| **↩ Undo** | Undo the agent's last step in this conversation — see [Undoing a step](#undoing-a-step). |
 | **📊 Token usage** | Open the [cost breakdown](#token-usage--cost). |
 | **🖼 Auto-graph** | Toggle **autograph** on/off — whether finished workflows/results are loaded onto the canvas automatically. Highlighted when on. Takes effect immediately (no restart). |
 
@@ -205,24 +207,54 @@ obvious spot next to agentY, point `comfyui_dir` at it so the extension is found
 
 ### Talking to a turn that is already running
 
-Anything you type while the agent is working becomes a **⏳ chip** above the
-composer and is sent when the turn ends. You don't have to wait for it, though:
+Just type. A message you send while the agent is working goes **straight into that
+turn** — you don't wait for it to finish:
 
-| On the chip | What happens |
-|---|---|
-| **↳** | Hands the message to the **running** turn. The agent reads it at its next step and carries on from where it is — it doesn't start over. |
-| **Shift + ↳** | Same, but **cancels the step it was about to take** so it reads you first. Nothing already produced is undone. |
-| **✕** | Drop it. |
+- **Between steps**, the agent reads it with the result of the step it's on and
+  carries on from there, folding your message in. It doesn't start over.
+- **While a specialist works** — researching a template, building or repairing a
+  workflow — that specialist sees the message at its own next step, so the work in
+  hand can change course. The agent reads it too when the step returns.
+- **While ComfyUI renders**, the agent is woken to read it straight away; the render
+  keeps going. Ask it to stop and it interrupts the run; ask for something extra
+  and it queues that right after.
+- **After its last step**, while it's writing its answer, it reads the message and
+  keeps going in the same turn.
 
-Two things worth knowing. The agent picks the message up **between tool calls**,
-so if it is in the middle of a long one — a batch of eleven generations, a
-specialist doing research — your words land when that finishes. To stop something
-already running, use **⏹ Stop**, which also interrupts ComfyUI. And if the turn
-happens to end before the message reaches the agent, nothing is lost: it goes
-back on the queue and is sent with the next turn, and the panel says so.
+**Ctrl + Enter** (⌘ + Enter) sends it **urgently**: the agent drops the step it was
+about to take and reads you first. Nothing already produced is undone. To stop
+everything outright, use **⏹ Stop**, which also interrupts ComfyUI.
 
-Messages with an attached image stay queue-only — a mid-run message reaches the
-agent as text.
+Attached images go in as file paths the agent can use. One limit: a single long
+step the agent runs *itself* — a `run_workflow_now` chain stage — can't be entered
+part-way; your message lands the moment that step returns.
+
+Slash commands and dry runs aren't messages to the running turn. They wait as a
+**⏳ chip** above the composer and go out when the turn ends (**↳** on a chip sends
+its text into the turn anyway; **✕** drops it).
+
+### Undoing a step
+
+**↩ Undo** in the top bar (or `/undo`) takes the conversation back to before the
+agent's last turn:
+
+- **The conversation** — that turn's messages leave the log, including anything
+  you sent into it while it ran.
+- **The agent's memory** — it no longer knows the turn happened, so your next
+  message is answered as if it never did.
+- **The image list** — that turn's outputs stop being "image 3".
+- **The canvas** — put back to how it was when you sent the message, *as long as
+  nobody has edited it since*. If you have, or you're on a different workflow tab,
+  the panel leaves your canvas alone and offers **Restore canvas anyway**.
+
+Press it again to go back another step; the last ten are kept per conversation.
+
+What undo can't take back: files already saved to disk, models it downloaded,
+node packs it installed, and anything it wrote to long-term or project memory. A
+turn that is still running has to finish, or be stopped, first.
+
+From Slack, reply **`undo`** inside the conversation's thread — Slack swallows a
+leading `/`. If the panel is open, it restores the canvas too.
 
 ---
 
@@ -332,6 +364,7 @@ Type `/` in the composer for an autocomplete menu.
 | `/unload` | Unload Ollama models from VRAM |
 | `/clear_vram` | Clear ComfyUI GPU VRAM |
 | `/images` | List images generated in this thread |
+| `/undo` | Undo the agent's last step in this conversation — see [Undoing a step](#undoing-a-step) |
 | `/project_memory` | Inspect and forget what is remembered for **this project** (characters, style, named references) |
 | `/clearhistory` | Delete all conversation history |
 | `/switch_model <target> <provider,model>` | Set a model **tier**, a single role, or `all` (e.g. `/switch_model fast_utility dashscope,qwen3.6-flash`). Saved to `settings.local.json` |
@@ -1523,6 +1556,13 @@ Long-term memory is a local **FAISS** index (`memory/agenty_memory.faiss`) via
 (`memory/conversations.sqlite`). Browse/edit both from **Settings → agentY →
 Viewers**.
 
+**Conversations survive a restart.** Go back to an existing conversation — in the
+panel, or in its Slack thread — and the agent picks up where it left off, even
+after the host was restarted: what it was working on and what its tools told it
+are saved with the conversation after every turn. Attached images aren't kept in
+that saved copy (their file paths are). A conversation from before this was added
+comes back from its transcript: the messages, without the tool steps behind them.
+
 Two models are involved and they are **not interchangeable**, though the startup
 line names both:
 
@@ -1570,9 +1610,11 @@ map at startup, so it always matches Settings ▸ Models. Switching a **tier** i
 normal move; switching a single **role** writes an override, and the reply says so.
 
 The model list is discovered live from each configured provider, so only vendors
-whose key is set appear and it never goes stale. Agents the pipeline holds live
-(orchestrator, query_templates, info, planner) switch immediately; the rest apply
-at the next agent start, and the reply tells you which is which.
+whose key is set appear and it never goes stale. **A switch takes effect without a
+restart** — from the picker, `/switch_model`, or Settings ▸ Models. Every agent the
+change reaches is rebuilt in place, and the orchestrator keeps the conversation it
+was in. If a turn is running, the switch lands the moment it finishes. Changing a
+provider's API key in Settings rebuilds all of them.
 
 ---
 
@@ -1652,8 +1694,10 @@ installing it is the better answer, and the agent will say so.
 - **`fit_fitness_weights.py` won't install its weights** — by design, unless they
   beat the hand-set ones on reviews it held back and there are at least a dozen
   reviews. It prints which of the two stopped it; `--force` overrides.
-- **Model switch had no effect** — model-per-stage changes apply on the next
-  agent start; use `/switch_model` for a live change.
+- **Model switch had no effect** — a switch waits for a running turn to finish
+  before it lands. If it still didn't take, look for an environment variable
+  pinning that role (e.g. `ORCHESTRATOR_LLM`): environment variables win over
+  Settings.
 
 ---
 

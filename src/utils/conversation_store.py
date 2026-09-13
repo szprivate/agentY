@@ -129,6 +129,24 @@ def init_db() -> None:
                 briefing    TEXT NOT NULL,
                 updated_at  REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS thread_checkpoints (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                thread_id           TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+                label               TEXT NOT NULL DEFAULT '',
+                origin              TEXT NOT NULL DEFAULT '',
+                transcript_cut      INTEGER NOT NULL,
+                gallery_cut         INTEGER NOT NULL,
+                brain_messages      TEXT,
+                agent_session       TEXT,
+                last_brainbriefing  TEXT,
+                canvas_graph        TEXT,
+                canvas_workflow     TEXT,
+                canvas_before_hash  TEXT,
+                canvas_after_hash   TEXT,
+                created_at          REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_checkpoints_thread
+                ON thread_checkpoints(thread_id, id);
             """
         )
     _INITIALISED = True
@@ -449,3 +467,138 @@ def thread_for_slack(channel: str, root_ts: str) -> Optional[str]:
             "SELECT thread_id FROM thread_slack WHERE channel=? AND root_ts=?",
             (str(channel), str(root_ts))).fetchone()
     return row["thread_id"] if row else None
+
+
+# ---------------------------------------------------------------------------
+# Checkpoints — undoing one agent step
+# ---------------------------------------------------------------------------
+# A row per turn, written as the turn starts: where the transcript and gallery
+# stood, what the agent remembered, and — when the panel sent it — the canvas.
+# Undo pops the newest and puts it back. Bounded per thread: each row carries a
+# copy of the agent's message window, and nobody undoes twenty steps back.
+
+MAX_CHECKPOINTS = 10
+
+_CHECKPOINT_JSON = ("brain_messages", "agent_session", "canvas_graph")
+
+
+def push_checkpoint(
+    thread_id: str,
+    *,
+    turn_text: str = "",
+    label: str = "",
+    origin: str = "",
+    brain_messages: Any = None,
+    agent_session: Any = None,
+    last_brainbriefing: Optional[str] = None,
+    canvas_graph: Any = None,
+    canvas_before_hash: Optional[str] = None,
+    canvas_workflow: Optional[str] = None,
+    keep: int = MAX_CHECKPOINTS,
+) -> int:
+    """Record the state a turn starts from. Returns the checkpoint id.
+
+    Where the transcript is cut on undo is decided here, while it is still true.
+    The chat route saves the turn's own message before the turn runs, so when the
+    newest user message IS *turn_text* the cut is that message, and undo takes it
+    too. Otherwise — a /resend replays an older message without saving a new one —
+    only what is added from now on belongs to this turn.
+    """
+    init_db()
+    now = time.time()
+    with _connect() as conn:
+        last_user = conn.execute(
+            "SELECT id, content FROM messages WHERE thread_id=? AND role='user' "
+            "ORDER BY id DESC LIMIT 1", (thread_id,)).fetchone()
+        top = conn.execute("SELECT COALESCE(MAX(id), 0) AS mx FROM messages").fetchone()
+        text = (turn_text or "").strip()
+        if text and last_user is not None and str(last_user["content"]).strip() == text:
+            transcript_cut = int(last_user["id"])
+        else:
+            transcript_cut = int(top["mx"]) + 1
+        gallery = conn.execute(
+            "SELECT COALESCE(MAX(idx), 0) AS mx FROM gallery WHERE thread_id=?",
+            (thread_id,)).fetchone()
+        cur = conn.execute(
+            """
+            INSERT INTO thread_checkpoints(
+                thread_id, label, origin, transcript_cut, gallery_cut,
+                brain_messages, agent_session, last_brainbriefing,
+                canvas_graph, canvas_workflow, canvas_before_hash, created_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                thread_id, label or "", origin or "", transcript_cut, int(gallery["mx"]),
+                json.dumps(brain_messages) if brain_messages is not None else None,
+                json.dumps(agent_session) if agent_session is not None else None,
+                last_brainbriefing,
+                json.dumps(canvas_graph) if canvas_graph is not None else None,
+                canvas_workflow, canvas_before_hash, now,
+            ),
+        )
+        checkpoint_id = int(cur.lastrowid)
+        conn.execute(
+            """
+            DELETE FROM thread_checkpoints WHERE thread_id=? AND id NOT IN (
+                SELECT id FROM thread_checkpoints WHERE thread_id=?
+                ORDER BY id DESC LIMIT ?)
+            """,
+            (thread_id, thread_id, max(1, int(keep))),
+        )
+    return checkpoint_id
+
+
+def set_checkpoint_canvas_after(thread_id: str, checkpoint_id: int,
+                                canvas_after_hash: str) -> bool:
+    """Record what the canvas looked like when the turn ended. False if no such row."""
+    init_db()
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE thread_checkpoints SET canvas_after_hash=? WHERE id=? AND thread_id=?",
+            (canvas_after_hash or None, int(checkpoint_id), thread_id))
+        return (cur.rowcount or 0) > 0
+
+
+def pop_checkpoint(thread_id: str) -> Optional[dict[str, Any]]:
+    """Remove and return the newest checkpoint for *thread_id*, decoded, or None."""
+    init_db()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM thread_checkpoints WHERE thread_id=? ORDER BY id DESC LIMIT 1",
+            (thread_id,)).fetchone()
+        if row is None:
+            return None
+        conn.execute("DELETE FROM thread_checkpoints WHERE id=?", (row["id"],))
+    out = dict(row)
+    for col in _CHECKPOINT_JSON:
+        raw = out.get(col)
+        try:
+            out[col] = json.loads(raw) if raw is not None else None
+        except (TypeError, ValueError):
+            out[col] = None
+    return out
+
+
+def count_checkpoints(thread_id: str) -> int:
+    """How many steps of *thread_id* can still be undone."""
+    init_db()
+    with _connect() as conn:
+        row = conn.execute("SELECT COUNT(*) AS n FROM thread_checkpoints WHERE thread_id=?",
+                           (thread_id,)).fetchone()
+    return int(row["n"])
+
+
+def rewind_thread(thread_id: str, transcript_cut: int, gallery_cut: int) -> tuple[int, int]:
+    """Drop the messages and gallery entries a checkpoint says came after it.
+
+    Returns ``(messages_removed, gallery_entries_removed)``. The gallery rows go;
+    the files they point at stay on disk.
+    """
+    init_db()
+    with _connect() as conn:
+        msgs = conn.execute("DELETE FROM messages WHERE thread_id=? AND id>=?",
+                            (thread_id, int(transcript_cut)))
+        gal = conn.execute("DELETE FROM gallery WHERE thread_id=? AND idx>?",
+                           (thread_id, int(gallery_cut)))
+        conn.execute("UPDATE threads SET updated_at=? WHERE id=?", (time.time(), thread_id))
+        return (msgs.rowcount or 0), (gal.rowcount or 0)
