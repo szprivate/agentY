@@ -393,12 +393,20 @@ ORCHESTRATOR_TOOLS: list = [
     get_comfyui_dirs,
     get_agent_output_dirs,
     submit_prompt,
+    # Models: is it installed, where is it on HuggingFace, download it into the
+    # folder ComfyUI loads that kind from. On the orchestrator and not only on the
+    # repair specialists, because "download the missing models" is something users
+    # ask for directly — and without these it improvised downloads in run_script.
+    check_model,
+    search_huggingface_models,
+    find_hf_file,
+    download_hf_model,
     # Workflow SET-UP is delegated to prepare_workflow (research + deterministic
     # assembly). Workflow REPAIR (assembly + execution errors) and BUILD-FROM-
     # SCRATCH are the fix_workflow_assembly / generate_new_workflow specialists,
     # invoked inside prepare_workflow / the pipeline. So the orchestrator no longer
-    # carries template-load, node-inspection, apply/patch/validate, node-install,
-    # or HF-download tools — that whole surface moved off its critical path.
+    # carries template-load, node-inspection, apply/patch/validate or node-install
+    # tools — that whole surface moved off its critical path.
     # It keeps only:
     #   duplicate_workflow + update_workflow — for the batch-handoff skill
     #     (duplicate the assembled base per iteration and swap the input); these
