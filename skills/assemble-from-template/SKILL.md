@@ -34,4 +34,4 @@ Assemble the workflow by applying the whole brainbriefing in ONE call, then corr
 - **Missing input nodes**: if `input_image_count` > the number of image-load nodes → add them via `update_workflow(workflow_path, add_nodes=[...])`.
 - If the workflow has a **ModelSamplingFlux** node and `apply_brainbriefing` left its inputs incomplete: activate the `flux-sampling` skill and set all four required inputs via `update_workflow`.
 - If `count_iter > 1` AND `variations == true`: activate the `image-batch` skill first (a `batch_request`: the same template run N times with substituted parameters — the structure does not change).
-- If you find a `BatchImagesNode`: call `replace_node(workflow_path, <node_id>, "ImageBatch")` immediately (it preserves all connections).
+- If you find a `BatchImagesNode`: call `replace_node(workflow_path, <node_id>, "ImageBatch", remap_inputs=true)` immediately (the slots have other names, so the wires are carried over by type).

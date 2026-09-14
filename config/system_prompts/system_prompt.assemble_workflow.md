@@ -46,7 +46,7 @@ This single tool call handles all patching programmatically:
 - If it returns `status: "error"`: proceed to step 1.2.1 first (if applicable), then attempt step 1.2.2 (fix and re-validate) before giving up.
 
 - If `brainbriefing.input_image_count == 2` AND any `input_nodes` entry has `role: control_image`: activate the `annotation` skill after `apply_brainbriefing` returns `status: "ok"`, and follow its **Brain — Annotation workflow assembly** section.
-- If the workflow contains a `BatchImagesNode`: call `replace_node(workflow_path, <node_id>, "ImageBatch")` immediately after `apply_brainbriefing`.
+- If the workflow contains a `BatchImagesNode`: call `replace_node(workflow_path, <node_id>, "ImageBatch", remap_inputs=true)` immediately after `apply_brainbriefing` (the batcher's slots have other names, so the wires are carried over by type).
 
 #### 1.2.1 Post-patch adjustments (always run if the workflow loaded successfully)
 - If the workflow contains a `BatchImagesNode`: call `replace_node` as noted above.

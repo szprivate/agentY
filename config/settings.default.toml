@@ -36,6 +36,11 @@ comfyui_models_dir = ""
 # Blank = try the usual spots next to agentY. Env: AGENTY_COMFYUI_DIR.
 comfyui_dir = ""
 comfyui_custom_templates_dir = "./comfyui_workflow_templates_custom/templates/"
+# Keep the official templates (in agenty_core) on the ones your ComfyUI ships. On
+# start agentY asks ComfyUI for its templates version and, when that changed,
+# mirrors ComfyUI's templates and rebuilds the recipe list - in the background,
+# once ComfyUI answers. A custom template with the same name always wins.
+sync_templates_from_comfyui = true
 output_dir = "./output_images/"
 # Where generated/patched workflow JSON is written. BLANK (the default) means
 # "into ComfyUI": <--user-directory>/default/workflows/agentY/, which is the

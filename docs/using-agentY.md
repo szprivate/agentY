@@ -1632,6 +1632,20 @@ register the open graph) and `/remove_workflow <name>`. Custom templates live in
 `comfyui_workflow_templates_custom/templates/`; the shared template/recipe
 corpus lives in **agenty_core**.
 
+The **official** templates - the ones ComfyUI itself ships - follow your ComfyUI.
+On every start agentY asks ComfyUI which templates version it has; when that
+changed, it copies ComfyUI's templates into the corpus and rebuilds the recipe
+list, in the background once ComfyUI answers:
+
+```
+[agenty-ui] Official templates now match ComfyUI (templates 0.11.48): +72 ~12 -107 -> 171 recipes
+```
+
+So a model ComfyUI has a template for is one the agent starts from instead of
+building by hand. A custom template with the same name always wins. Turn it off
+with `sync_templates_from_comfyui = false`; run it by hand with
+`python -m agenty_core.templates_sync --from-comfyui http://127.0.0.1:8188`.
+
 ---
 
 ## Building a node for a new model

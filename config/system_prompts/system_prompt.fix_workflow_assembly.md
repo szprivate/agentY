@@ -45,8 +45,15 @@ Match the failure to the right repair:
   `patches` array and call `update_workflow(workflow_path, patches)` **once** to
   apply every fix in a single call. Confirm against `get_node_schema` first.
 - **Wrong node id / missing required input** → same: one `update_workflow` pass.
-- **A node needs replacing wholesale** → `replace_node(workflow_path, node_id,
-  new_class)`.
+- **A node's class is missing, renamed or retired** → `replace_node(workflow_path,
+  node_id, new_class)` with an equivalent class. It keeps the node's job and refuses
+  a swap its wires cannot survive. Never swap a node to get round an input that
+  fails: a node rejecting an input is fixed by correcting that input, not by
+  replacing it with a node that does something else.
+- **`unexpected keyword argument '<name>'`** → a wire sits under a key the node does
+  not declare. An autogrow slot is keyed `<group>.<slot>` (`ref_images.ref_image_0`,
+  never the bare `ref_image_0`); `update_workflow` renames a bare slot name itself,
+  and `validate_workflow` lists the inputs the node does take.
 - **Unknown / missing node type** (the class isn't recognised) →
   `find_custom_node_for(node_type)` to locate the pack, then
   `install_custom_node(source)`. Installed nodes need a ComfyUI restart before

@@ -316,11 +316,21 @@ def _submit_workflow(workflow_path: str, client_id: str = "") -> str:
     """
     from agenty_core.utils.comfyui_client import get_client
 
-    p = Path(workflow_path)
+    p = Path(str(workflow_path).strip())
     if not p.exists():
         raise RuntimeError(f"Workflow file not found: {workflow_path}")
 
     workflow = json.loads(p.read_text(encoding="utf-8"))
+    # A wire under a bare autogrow slot name ('ref_image_0' where ComfyUI binds
+    # 'ref_images.ref_image_0') validates, runs everything upstream, then fails
+    # inside the node. update_workflow moves it; a graph that got here another way
+    # gets the same move - on disk as well, so a repair reads the graph that ran.
+    try:
+        from agenty_core.tools.comfyui import normalize_autogrow_wires
+        if normalize_autogrow_wires(workflow):
+            p.write_text(json.dumps(workflow, indent=2), encoding="utf-8")
+    except Exception:  # noqa: BLE001 — a safety net must never block a submission
+        pass
     client = get_client()
     payload: dict = {"prompt": workflow}
     if client_id:

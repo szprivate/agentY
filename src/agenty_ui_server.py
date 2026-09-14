@@ -159,6 +159,74 @@ def _refresh_workflow_corpus() -> None:
           + (f" - {len(failed)} unreadable: {', '.join(failed[:5])}" if failed else ""))
 
 
+# How long a start waits for ComfyUI before giving up on the template sync. ComfyUI
+# is routinely launched after agentY and loads custom nodes for a minute or more
+# before it answers anything.
+_TEMPLATE_SYNC_WAIT_S = 600
+_TEMPLATE_SYNC_RETRY_S = 15
+
+
+def _sync_official_templates(refresh=None, *, settings=None, sleep=time.sleep,
+                             clock=time.monotonic) -> dict | None:
+    """Keep the official templates on the ones this ComfyUI install ships.
+
+    The mirror in agenty_core was synced from GitHub by hand, and it lagged: the
+    local ComfyUI served MiniMax H3's local reference-to-video template while the
+    mirror had none, so the agent built that graph from nothing and guessed its
+    sampler. ComfyUI reports its templates version, so a start costs one request
+    when nothing changed; when it did, ComfyUI's templates are mirrored, the recipe
+    database is rebuilt, and the pipeline's cached recipe tree is dropped.
+
+    Runs on its own thread once the host is up. Waits for a ComfyUI that is not up
+    yet instead of failing; any other failure leaves the existing templates in
+    place and says so. Off with ``sync_templates_from_comfyui = false``.
+    """
+    from src.utils.settings import load_settings
+    cfg = load_settings() if settings is None else settings
+    if not cfg.get("sync_templates_from_comfyui", True):
+        return None
+    base = str(cfg.get("comfyui_url") or "http://127.0.0.1:8188").rstrip("/")
+    from agenty_core.templates_sync import ComfyUIUnreachable
+    if refresh is None:
+        from agenty_core.templates_sync import refresh_from_comfyui as refresh
+    deadline = clock() + _TEMPLATE_SYNC_WAIT_S
+    while True:
+        try:
+            result = refresh(base, log=lambda *_a: None)
+            break
+        except ComfyUIUnreachable:
+            if clock() >= deadline:
+                print(f"[agenty-ui] Template sync skipped: ComfyUI at {base} did not answer.")
+                return None
+            sleep(_TEMPLATE_SYNC_RETRY_S)
+        except Exception as exc:  # noqa: BLE001 — the templates already there still work
+            print(f"[agenty-ui] WARNING: template sync failed ({exc}); keeping the "
+                  f"existing templates.", file=sys.stderr)
+            return None
+    counts = [len(result.get(k) or []) for k in ("added", "changed", "removed")]
+    if result.get("status") == "synced" and any(counts):
+        _forget_recipe_tree()
+        recipes = result.get("recipes") or {}
+        tail = (f" - recipe rebuild failed: {recipes['error']}" if "error" in recipes
+                else f" -> {recipes.get('recipe_count', '?')} recipes")
+        # ASCII only: see _refresh_workflow_corpus on consoles that cannot encode more.
+        print(f"[agenty-ui] Official templates now match ComfyUI "
+              f"(templates {result.get('version') or '?'}): +{counts[0]} ~{counts[1]} "
+              f"-{counts[2]}{tail}")
+    return result
+
+
+def _forget_recipe_tree() -> None:
+    """Drop the recipe tree the running pipeline cached; the next turn reads the rebuilt one."""
+    try:
+        from src.utils import agentY_server
+        pipeline = agentY_server._agent_ref
+        if pipeline is not None:
+            pipeline._recipe_tasks_cache = None
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _warn_about_old_keys() -> None:
     """Say, once per start, which API keys have been sitting there too long.
 
@@ -230,6 +298,12 @@ def main() -> None:
     if not ok:
         print("[agenty-ui] ERROR: could not start the chat host (is Flask installed?).", file=sys.stderr)
         sys.exit(1)
+
+    # The official templates follow what this ComfyUI ships. In the background:
+    # ComfyUI is often still starting, and an unchanged version is one request.
+    if not args.no_reindex:
+        threading.Thread(target=_sync_official_templates, name="agentY-template-sync",
+                         daemon=True).start()
 
     url = f"http://{args.host}:{args.port}"
     print("\n" + "=" * 64)

@@ -47,7 +47,9 @@ def signal_workflow_ready(workflow_path: str) -> str:
             pass
         return json.dumps(hold)
 
-    p = Path(workflow_path)
+    # Paths come from an LLM, sometimes wrapped in newlines; one made a file that
+    # exists report "not found".
+    p = Path(str(workflow_path).strip())
     if not p.exists():
         return json.dumps({"error": f"Workflow file not found: {workflow_path}"})
 
