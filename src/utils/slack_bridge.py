@@ -62,6 +62,10 @@ _DOWNLOAD_DIRNAME = "slack_uploads"
 # agent is expected to reason about, so the ceiling is what a turn can actually
 # use rather than what Slack can carry.
 _MAX_INBOUND_FILES = 10
+# How long a message may be, tried in order. Slack documents 40,000 characters,
+# but chat.update refused a ~3,500-character answer with msg_too_long
+# (2026-09-15), so a refused message is sent again, shorter, until it fits.
+_MSG_LIMITS = (39000, 3000, 1200)
 
 
 def _env_list(name: str) -> list:
@@ -294,13 +298,13 @@ class SlackBridge:
         """
         if not self.client or not text.strip():
             return ""
-        kw = {"channel": channel, "text": clip(text, 39000)}
+        kw = {"channel": channel}
         if thread_ts:
             kw["thread_ts"] = thread_ts
             if broadcast:
                 kw["reply_broadcast"] = True
         try:
-            resp = self.client.chat_postMessage(**kw)
+            resp = self._fitting(self.client.chat_postMessage, text, **kw)
             return str((resp or {}).get("ts") or "")
         except Exception:  # noqa: BLE001
             logger.exception("slack: chat_postMessage failed")
@@ -309,7 +313,18 @@ class SlackBridge:
     def _do_update(self, channel: str, ts: str, text: str) -> None:
         if not self.client or not ts:
             return
-        self.client.chat_update(channel=channel, ts=ts, text=clip(text, 39000))
+        self._fitting(self.client.chat_update, text, channel=channel, ts=ts)
+
+    @staticmethod
+    def _fitting(send, text: str, **kw):
+        """Send *text*, cut shorter each time Slack answers msg_too_long."""
+        for limit in _MSG_LIMITS:
+            try:
+                return send(text=clip(text, limit), **kw)
+            except Exception as exc:  # noqa: BLE001
+                if "msg_too_long" not in str(exc) or limit == _MSG_LIMITS[-1]:
+                    raise
+        return None
 
     def _do_delete(self, channel: str, ts: str) -> None:
         if not self.client or not ts:
@@ -377,7 +392,12 @@ class SlackBridge:
         with self._lock:
             turns = list(self.turns.items())
         for rid, st in turns:
-            st.tick()
+            # Unguarded, one refused edit ended the worker thread, and with it
+            # every Slack message until the host was restarted (2026-09-15).
+            try:
+                st.tick()
+            except Exception:  # noqa: BLE001
+                logger.exception("slack: a throttled edit failed")
             if st.ended and now - st.ended > _TURN_TTL:
                 with self._lock:
                     self.turns.pop(rid, None)

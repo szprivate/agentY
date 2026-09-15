@@ -35,7 +35,6 @@ from dataclasses import dataclass
 _ANSWER_MAX = 3500
 _DETAIL_MAX = 2800
 _THINK_MAX = 1500
-_TOOL_ARG_MAX = 200
 # Lines of working-out kept in the turn's detail message.
 _LOG_LINES = 30
 NEWLINE = chr(10)
@@ -308,18 +307,17 @@ class TurnRender:
             return []
         name = str(ev.get("name") or "tool")
         ref = str(ev.get("id") or name)
+        # Only who called what. Arguments and results are JSON a phone cannot
+        # use, and one of them pushed the working-out past what Slack will hold.
+        agent = str(ev.get("agent") or "").strip()
+        tagged = re.match(r"^\[([^\]]+)\]\s*(.+)$", name)   # "[orchestrator] upload_image"
+        if tagged:
+            agent, name = agent or tagged.group(1), tagged.group(2)
+        label = (f"[{agent}] " if agent else "") + "`" + name + "`"
         if str(ev.get("phase") or "") == "result":
-            result = str(ev.get("result") or "").strip()
-            failed = result.lower().startswith("error")
-            line = ("⚠️ " if failed else "✅ ") + "`" + name + "`"
-            if result:
-                line += " — " + clip(_flat(result), _TOOL_ARG_MAX)
-            return self._log_replace(ref, line)
-        line = "🔧 `" + name + "`"
-        detail = str(ev.get("input") or "").strip()
-        if detail and detail not in ("{}", "None"):
-            line += " — " + clip(_flat(detail), _TOOL_ARG_MAX)
-        return self._log(line, ref=ref)
+            failed = str(ev.get("result") or "").strip().lower().startswith("error")
+            return self._log_replace(ref, ("⚠️ " if failed else "✅ ") + label)
+        return self._log("🔧 " + label, ref=ref)
 
     def _on_plan(self, ev) -> list:
         steps = [str(s) for s in (ev.get("steps") or [])]

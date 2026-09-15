@@ -181,7 +181,7 @@ Under **Slack bridge** in the settings dialog (`[slack]` in
 | `enabled` | off by default; takes effect on the next agent start |
 | `channel` | blank = the DM with the first allowed user. Set a channel id only if the whole team should see the pipeline |
 | `allowed_users` | fallback for `SLACK_ALLOWED_USERS`, if you would rather keep the list in settings |
-| `show_tools` | tool calls in the thread |
+| `show_tools` | tool calls in the thread — which agent called which tool, no arguments or results |
 | `show_thinking` | the agent's reasoning in the thread |
 | `max_upload_mb` | files above this are named rather than uploaded (Slack rejects them anyway) |
 | `max_download_mb` | ceiling on an attachment coming the other way — a phone video sent to the agent. Larger is refused with a note in the DM |

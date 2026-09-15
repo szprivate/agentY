@@ -178,7 +178,18 @@ class ThreadTest(unittest.TestCase):
                          "result": "4 images"})
         self.assertEqual(call[0].key, done[0].key, "same message, rewritten")
         self.assertEqual(done[0].where, "detail", "the result belongs in the thread too")
-        self.assertIn("4 images", done[0].text)
+        self.assertTrue(done[0].text.startswith("✅"), done[0].text)
+        self.assertNotIn("4 images", done[0].text, "results stay out of Slack")
+
+    def test_a_tool_line_names_only_the_agent_and_the_tool(self):
+        """Arguments and results are JSON a phone cannot use."""
+        r = _render()
+        _feed(r, {"type": "tool", "phase": "call", "id": "t1", "agent": "orchestrator",
+                  "name": "[orchestrator] apply_canvas_hooks", "input": "{'resolutions': [1]}"})
+        done = _feed(r, {"type": "tool", "phase": "result", "id": "t1",
+                         "name": "[orchestrator] apply_canvas_hooks",
+                         "result": '{"status": "queued", "count": 10}'})
+        self.assertEqual(done[0].text, "✅ [orchestrator] `apply_canvas_hooks`")
 
     def test_a_failed_tool_is_marked_as_failed(self):
         posts = _feed(_render(), {"type": "tool", "phase": "result", "id": "t1",

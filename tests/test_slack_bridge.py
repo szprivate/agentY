@@ -188,6 +188,39 @@ class MirrorTest(unittest.TestCase):
         self.b._tick_turns()
         self.b.flush()
 
+    def test_a_message_slack_calls_too_long_is_sent_again_shorter(self):
+        refused = []
+
+        def update(**kw):
+            if len(kw["text"]) > 3200:
+                refused.append(len(kw["text"]))
+                raise RuntimeError("The server responded with: {'ok': False, 'error': 'msg_too_long'}")
+            self.client.updated.append(kw)
+            return {"ok": True}
+
+        self.client.chat_update = update
+        self._feed({"type": "text", "data": "x" * 3400}, {"type": "text", "data": "y"},
+                   {"type": "done"})
+        self.assertTrue(refused, "the long edit was never tried")
+        self.assertLessEqual(len(self.client.updated[-1]["text"]), 3200)
+
+    def test_a_failing_edit_does_not_end_the_worker(self):
+        """It did once: every Slack message after it was lost until a restart."""
+        import logging
+        logging.disable(logging.CRITICAL)
+        self.addCleanup(logging.disable, logging.NOTSET)
+
+        class Broken:
+            ended = 0.0
+
+            def tick(self):
+                raise RuntimeError("msg_too_long")
+
+        self.b.turns["broken"] = Broken()
+        self.b._tick_turns()   # must not raise
+        self._feed({"type": "text", "data": "still here"})
+        self.assertTrue(self.client.posted)
+
     def test_a_panel_turn_shows_up_in_slack(self):
         """The whole point: work started at the desk, watched from a phone."""
         self._feed({"type": "text", "data": "On it."})
