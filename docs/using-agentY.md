@@ -1449,10 +1449,13 @@ or pressing **Escape**; **Save** is the only button.
   `ollama_server_url` in Connections is the single address for *everything* that
   talks to Ollama — agents on a local model, the memory embedder, the small
   `llm_functions` helper. `OLLAMA_HOST` overrides it.
-- **Model pricing (config/pricing.json)** — per-model USD prices per million
-  tokens, so the [token-usage](#token-usage--cost) cost column matches your
-  endpoint (handy for private/MaaS deployments and models the built-in tables
-  don't ship).
+- **Costs & MCP servers** — two cards:
+  - **Model pricing** is a table: pick a model from the list your providers
+    report, type its input and output price in USD per million tokens, add or
+    remove rows. A blank price shows the built-in one greyed out and falls back
+    to it. The [token-usage](#token-usage--cost) cost column uses these; they are
+    written to `config/pricing.json`.
+  - **MCP servers**: see [MCP servers](#mcp-servers).
 
 ### Choosing models: six tiers, not sixteen dropdowns
 
@@ -1490,20 +1493,33 @@ Resolution order is in [Choosing models](#choosing-models). Changes apply on the
 ## MCP servers
 
 agentY can call tools from external **MCP** (Model Context Protocol) servers.
-They're defined in `config/mcp.json` (tracked; holds no secrets) and edited from
-the same settings modal.
+They're defined in `config/mcp.json` (holds no secrets) and managed from
+**Settings ▸ Costs & MCP servers ▸ MCP servers**.
 
-![MCP servers section](images/mcp-settings.png)
+### Adding a server
 
-Each server has a **transport** (`http`, `sse`, or `stdio` with `command`/`args`),
-a **url** for http/sse, and an **auth** mode:
+1. Click **+ Add MCP server** and paste whatever the server's page tells you to
+   use. Any of these works:
+   - its **address**: `https://mcp.notion.com/mcp`
+   - the **command** that starts it: `npx -y @modelcontextprotocol/server-github`,
+     also with `KEY=value` in front, or as a `claude mcp add …` line
+   - its **JSON config**, in Claude Desktop / Cursor (`mcpServers`), VS Code
+     (`servers`) or bare-fragment form
+2. Click **Add**. agentY fills in the name, the connection type and the sign-in.
+   A key or token in what you pasted is **moved to `.env`**; the server entry
+   only references it as `${VAR}`. A placeholder such as `<YOUR_TOKEN>` becomes
+   an empty key field to fill in.
+3. Click **Test**. It connects once, using the form as it is (saved or not), and
+   lists the server's tools. If the server wants credentials, it says so: choose
+   **Sign-in ▸ API key** and paste the key, or **Browser sign-in**.
+4. **Save**. The server loads into the orchestrator on the **next agent start**.
 
-- **`none`**;
-- **`header`** — reference `${ENV_VAR}` in the server's `headers` and store the
-  secret in `.env` via **+ Add auth key** above;
-- **`oauth`** — browser sign-in; click **Authorize…** on the status row.
-
-Saved changes load into the orchestrator on the **next agent start**.
+Each server is a card: an **enable** switch, its status, and **Test**,
+**Authorize…** (browser sign-in only), **Edit** and **✕** (remove). **Edit**
+shows the address or command, the connection type (HTTP, SSE or local command),
+the sign-in choice, a password field for every key the server needs (fields
+already stored in `.env` say so), and **Headers & environment** as JSON for
+anything unusual.
 
 ### The Magnific example (OAuth)
 

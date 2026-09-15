@@ -2593,6 +2593,27 @@ def _save_pricing_config(data: dict) -> None:
     )
 
 
+def _builtin_prices() -> dict:
+    """``{model_id: {"in", "out"}}`` in USD per million tokens, from the built-in
+    tables, for every model a provider lists right now. The pricing table shows
+    these greyed out: the price a row falls back to when left blank."""
+    from src.utils import costs as _costs  # noqa: PLC0415
+    out: dict = {}
+    try:
+        groups = _available_models() or {}
+    except Exception:  # noqa: BLE001
+        return out
+    for models in groups.values():
+        for item in models if isinstance(models, list) else []:
+            if not isinstance(item, (list, tuple)) or not item:
+                continue
+            model_id = str(item[0]).split(",", 1)[-1]
+            prices = _costs._lookup_prices(model_id)
+            if prices:
+                out[model_id] = {"in": round(prices[0] * 1e6, 4), "out": round(prices[1] * 1e6, 4)}
+    return out
+
+
 # ── Token-usage overview ──────────────────────────────────────────────────────
 # Parse the token-usage log (written by src.agent.TokenUsageHookProvider) into
 # per-model aggregates for the "Token Usage" panel. Each line looks like:
@@ -3665,6 +3686,7 @@ def _build_app():
                 "tier_labels": _tier_labels,
                 "model_groups": _available_models(),
                 "pricing": _load_pricing_config(),
+                "pricing_builtin": _builtin_prices(),
             })
         # POST — persist env and/or settings changes (settings → settings.local.json).
         body = request.get_json(silent=True) or {}
@@ -3768,6 +3790,36 @@ def _build_app():
         except Exception as exc:  # noqa: BLE001
             logger.error("mcp authorize failed: %s", exc, exc_info=True)
             return jsonify({"ok": False, "error": str(exc)}), 500
+
+    @app.route("/agentY/mcp/parse", methods=["POST", "OPTIONS"])
+    def mcp_parse_route():
+        # Settings ▸ MCP servers ▸ Add: whatever the server's page says to paste
+        # (address, start command, JSON block) → entries, secrets split out for .env.
+        if request.method == "OPTIONS":
+            return "", 204
+        body = request.get_json(silent=True) or {}
+        from src.utils.mcp_import import McpImportError, parse_mcp_snippet
+        existing = body.get("existing") if isinstance(body.get("existing"), list) else []
+        try:
+            return jsonify({"ok": True, **parse_mcp_snippet(str(body.get("text") or ""), existing)})
+        except McpImportError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+
+    @app.route("/agentY/mcp/test", methods=["POST", "OPTIONS"])
+    def mcp_test_route():
+        # Settings ▸ MCP servers ▸ Test: one connection from the form as it stands,
+        # saved or not; nothing the orchestrator holds is replaced.
+        if request.method == "OPTIONS":
+            return "", 204
+        body = request.get_json(silent=True) or {}
+        from src.tools.mcp_tools import test_server
+        name = str(body.get("name") or "").strip() or "test"
+        secrets = body.get("secrets") if isinstance(body.get("secrets"), dict) else {}
+        try:
+            return jsonify(test_server(name, body.get("server"), secrets))
+        except Exception as exc:  # noqa: BLE001
+            logger.error("mcp test failed: %s", exc, exc_info=True)
+            return jsonify({"ok": False, "error": str(exc), "needs_auth": False}), 500
 
     # ── Threads ────────────────────────────────────────────────────────────
     @app.route("/agentY/threads", methods=["GET", "POST", "OPTIONS"])

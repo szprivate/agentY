@@ -518,6 +518,68 @@ def authorize_server(name: str) -> dict:
                         "orchestrator when it is next built (restart the agent to use them now).")}
 
 
+def _leaf_error(exc: BaseException, _depth: int = 0) -> str:
+    """The message worth showing from an exception the MCP stack has wrapped in
+    exception groups and initialization errors."""
+    if _depth < 12:
+        for sub in getattr(exc, "exceptions", None) or ():
+            if isinstance(sub, BaseException):
+                return _leaf_error(sub, _depth + 1)
+        cause = exc.__cause__ or exc.__context__
+        if cause is not None:
+            return _leaf_error(cause, _depth + 1)
+    return (str(exc).strip() or type(exc).__name__)[:300]
+
+
+_WANTS_CREDENTIALS = re.compile(r"\b40[13]\b|unauthori[sz]ed|forbidden|invalid[_ ]token|"
+                                r"authenticat", re.I)
+
+
+def test_server(name: str, sc: dict, secrets: dict | None = None) -> dict:
+    """Connect to one server as the settings form describes it (saved or not),
+    list its tools, and disconnect.
+
+    ``secrets`` are values typed into the form but not saved yet; they are in the
+    environment only while the connection is made, so a ``${VAR}`` reference
+    expands to them. The live clients the orchestrator uses are not touched. OAuth
+    never opens a browser here: a server with no stored token answers
+    ``needs_auth`` and the form points at Authorize. Returns ``{ok, tools, names}``
+    or ``{ok: False, error, needs_auth}``.
+    """
+    if not isinstance(sc, dict):
+        return {"ok": False, "error": "no server settings to test", "needs_auth": False}
+    overlay = {str(k): str(v) for k, v in (secrets or {}).items() if v not in (None, "")}
+    previous = {k: os.environ.get(k) for k in overlay}
+    client = None
+    try:
+        os.environ.update(overlay)
+        client, tools = _connect(name, sc, interactive=False)
+        prefix = f"{name}_"
+        names = []
+        for tool in tools:
+            tool_name = str(getattr(tool, "tool_name", "") or getattr(tool, "name", ""))
+            names.append(tool_name[len(prefix):] if tool_name.startswith(prefix) else tool_name)
+        return {"ok": True, "tools": len(tools), "names": names[:50]}
+    except _AuthRequired:
+        return {"ok": False, "needs_auth": True,
+                "error": "This server signs in through the browser."}
+    except Exception as exc:  # noqa: BLE001
+        message = _leaf_error(exc)
+        return {"ok": False, "error": message,
+                "needs_auth": bool(_WANTS_CREDENTIALS.search(message))}
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        if client is not None:
+            try:
+                client.stop(None, None, None)
+            except Exception:  # noqa: BLE001
+                pass
+
+
 def is_server_connected(name: str) -> bool:
     """True when *name* has a live MCP client in this process."""
     return name in _CLIENTS
