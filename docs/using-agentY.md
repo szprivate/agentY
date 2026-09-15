@@ -192,7 +192,6 @@ obvious spot next to agentY, point `comfyui_dir` at it so the extension is found
 | **➕ New chat** | Start a fresh thread. |
 | **🗑 Delete** | Delete the current conversation. |
 | **↩ Undo** | Undo the agent's last step in this conversation — see [Undoing a step](#undoing-a-step). |
-| **📊 Token usage** | Open the [cost breakdown](#token-usage--cost). |
 | **🖼 Auto-graph** | Toggle **autograph** on/off — whether finished workflows/results are loaded onto the canvas automatically. Highlighted when on. Takes effect immediately (no restart). |
 
 **Composer:**
@@ -1424,8 +1423,8 @@ or pressing **Escape**; **Save** is the only button.
 
 ![agentY application settings](images/settings.png)
 
-- **Viewers** — where the message-history log, the long-term-memory editor and the
-  [token usage](#token-usage--cost) breakdown open from.
+- **Viewers** — where the message-history log, the long-term-memory editor, the
+  project memory and the [token usage](#token-usage--cost) breakdown open from.
 - **Authentication (.env)** — API keys and host settings, stored in `.env` on the
   agent host. Secrets are masked; tick **Show secret values** to reveal. **+ Add
   auth key** appends a new `.env` variable (a secret an MCP server references, say)
@@ -1532,8 +1531,7 @@ provider rejects it).
 
 ## Token usage & cost
 
-The **📊** button in the chat top bar — or **Viewers ▸ Token usage…** inside
-the agentY Settings modal — breaks down token spend and cost from the persisted
+**Viewers ▸ Token usage…** in the agentY Settings modal breaks down token spend and cost from the persisted
 token log.
 
 ![Token usage overview](images/token-usage.png)
