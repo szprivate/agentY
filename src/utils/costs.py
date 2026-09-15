@@ -112,35 +112,45 @@ GEMINI_PRICES: Dict[str, Tuple[float, float]] = {
 
 # ---------------------------------------------------------------------------
 # Alibaba / Qwen (DashScope · Model Studio, OpenAI-compatible API)
-# Source: https://www.alibabacloud.com/help/en/model-studio/model-pricing (Jul 2026)
+# Source: https://help.aliyun.com/zh/model-studio/model-pricing (Sep 2026)
 #
-# Prices are the **International** (Singapore) endpoint — the app's default
-# base_url is dashscope-intl.aliyuncs.com. Values are the first input tier
-# (the ≤256K/≤32K band; the app's turns sit far below it) and the *non-thinking*
-# output price (thinking mode is off by default; enabling it raises the output
-# rate, e.g. qwen-plus $1.20→$4.00 — override via COST_*_PROVIDER_DASHSCOPE if
-# you turn it on or switch to the mainland endpoint, which is ~60-70% cheaper).
+# **Global deployment** rates (全球) - what the Alibaba Cloud console actually bills
+# for calls through dashscope-intl.aliyuncs.com. This table used to carry the
+# *International* (国际) rates, which are 1.4x to 3.5x higher for the same model,
+# and qwen3.8-flash was missing altogether (it fell back to the qwen-plus-class
+# default of $0.40/$1.20). Checked against the console for 2026-09-11/14/15: the
+# Global rates with the 20% cache-hit price below land within 10% of the bill.
+#
+# The docs list prices in CNY; converted at 7.34 CNY/USD, the rate the same page
+# uses for its own USD-priced models (qwen-flash International $0.05 = 0.367 CNY).
+# First input tier; non-thinking output. A model with no Global row keeps its
+# International rate and says so.
 # ---------------------------------------------------------------------------
 QWEN_PRICES: Dict[str, Tuple[float, float]] = {
     # Flash — cost-optimized; the agentY pipeline's default across every stage
-    "qwen3.6-flash":  _mtok(0.25, 1.50),
-    "qwen3.5-flash":  _mtok(0.10, 0.40),
-    "qwen-flash":     _mtok(0.05, 0.40),
+    "qwen3.8-flash":  _mtok(0.109, 0.368),   # 0.8 / 2.7 CNY
+    "qwen3.6-flash":  _mtok(0.163, 0.981),   # 1.2 / 7.2 CNY
+    "qwen3.5-flash":  _mtok(0.027, 0.272),   # 0.2 / 2 CNY
+    "qwen-flash":     _mtok(0.020, 0.204),   # 0.15 / 1.5 CNY (<=128K)
     # Plus — balanced
-    "qwen3.7-plus":   _mtok(0.40, 1.60),
-    "qwen3.6-plus":   _mtok(0.50, 3.00),
-    "qwen3.5-plus":   _mtok(0.40, 2.40),
-    "qwen-plus":      _mtok(0.40, 1.20),
+    "qwen3.7-plus":   _mtok(0.272, 1.090),   # 2 / 8 CNY list price (a 20% promo was running)
+    "qwen3.6-plus":   _mtok(0.272, 1.635),   # 2 / 12 CNY
+    "qwen3.5-plus":   _mtok(0.109, 0.654),   # 0.8 / 4.8 CNY
+    "qwen-plus":      _mtok(0.109, 0.272),   # 0.8 / 2 CNY (<=128K)
     # Max — flagship
-    "qwen3.7-max":    _mtok(2.50, 7.50),
-    "qwen3-max":      _mtok(1.20, 6.00),
-    "qwen-max":       _mtok(1.60, 6.40),
+    "qwen3.8-max":    _mtok(1.635, 4.905),   # 12 / 36 CNY
+    "qwen3.7-max":    _mtok(1.635, 4.905),   # 12 / 36 CNY
+    "qwen3-max":      _mtok(0.341, 1.362),   # 2.5 / 10 CNY
+    "qwen-max":       _mtok(1.60, 6.40),     # no Global row: International rate
+    # Open-weight
+    "qwen3.8-27b":    _mtok(0.409, 1.635),   # 3 / 12 CNY (no Global row: mainland rate)
     # Turbo — legacy budget tier
-    "qwen-turbo":     _mtok(0.05, 0.20),
+    "qwen-turbo":     _mtok(0.05, 0.20),     # no Global row: International rate
     # Vision-language
-    "qwen-vl-max":    _mtok(0.80, 3.20),
-    "qwen3-vl-plus":  _mtok(0.20, 1.60),
-    "qwen-vl-plus":   _mtok(0.21, 0.63),
+    "qwen3-vl-flash": _mtok(0.020, 0.204),   # 0.15 / 1.5 CNY (<=32K)
+    "qwen3-vl-plus":  _mtok(0.136, 1.362),   # 1 / 10 CNY (<=32K)
+    "qwen-vl-max":    _mtok(0.80, 3.20),     # no Global row: International rate
+    "qwen-vl-plus":   _mtok(0.21, 0.63),     # no Global row: International rate
 }
 
 # DashScope / Model Studio provider aliases (mirror of llm_functions._DASHSCOPE_PROVIDERS)
@@ -320,40 +330,76 @@ def get_model_prices_for(obj) -> Tuple[float, float]:
     return _mtok(3.00, 15.00)
 
 
-# Anthropic ephemeral (5-minute) prompt-cache multipliers, relative to the base
-# input-token price: cache reads bill at 0.1x and cache writes (cache creation)
-# at 1.25x. These are the standard Anthropic rates; cache-token usage fields are
-# only emitted for Anthropic models in this app, so a single multiplier pair
-# suffices. Override-friendly via the constants below if other providers are added.
-_CACHE_READ_MULTIPLIER = 0.1
-_CACHE_WRITE_MULTIPLIER = 1.25
+# ---------------------------------------------------------------------------
+# Cached input
+#
+# Providers report cache hits in one of two ways, and the bill depends on which:
+#
+# * Anthropic reports them BESIDE ``inputTokens``, which counts only fresh input.
+#   Hits bill at 0.1x the input price, cache creation at 1.25x.
+# * OpenAI-compatible APIs - DashScope among them - report ``prompt_tokens``
+#   INCLUDING the cached part, with ``cached_tokens`` as a breakdown of it (Strands
+#   maps those to inputTokens and cacheReadInputTokens).
+#
+# This used to treat every provider like Anthropic: a DashScope turn's cached
+# tokens were charged at the full input price as part of inputTokens, and then
+# again at 0.1x on top. With 90% of agentY's input served from cache, that alone
+# more than quadrupled the figure. DashScope's implicit cache - the automatic one
+# agentY relies on - bills a hit at 20% of the input price and creates the cache
+# at the normal input price (help.aliyun.com/zh/model-studio/context-cache).
+# ---------------------------------------------------------------------------
+_ANTHROPIC_PROVIDERS = {"anthropic", "claude", "bedrock"}
+
+# (cache-hit multiplier, cache-creation multiplier), relative to the input price.
+_CACHE_RATES_ANTHROPIC = (0.10, 1.25)
+_CACHE_RATES_DASHSCOPE = (0.20, 1.00)
+_CACHE_RATES_DEFAULT = (0.10, 1.00)
+
+
+def _cache_accounting(obj) -> Tuple[float, float, bool]:
+    """``(hit_multiplier, creation_multiplier, cached_included_in_input)`` for *obj*."""
+    provider, model_id, _is_ollama = _extract_meta(obj)
+    p = (provider or "").lower()
+    m = (model_id or "").lower()
+    if p in _ANTHROPIC_PROVIDERS or m.startswith("claude"):
+        return (*_CACHE_RATES_ANTHROPIC, False)
+    if p in _DASHSCOPE_PROVIDERS or m.startswith("qwen"):
+        return (*_CACHE_RATES_DASHSCOPE, True)
+    return (*_CACHE_RATES_DEFAULT, True)
 
 
 def compute_cost_from_usage(usage: dict, obj) -> Tuple[float, int]:
     """Compute total cost (USD) and total tokens from a usage dict and model obj.
 
-    Cost = inputTokens          * input_price
-         + outputTokens         * output_price
-         + cacheReadInputTokens  * input_price * 0.1   (cache hit)
-         + cacheWriteInputTokens * input_price * 1.25  (cache write)
+    Cost = fresh input   * input_price
+         + outputTokens  * output_price
+         + cache hits    * input_price * hit_multiplier
+         + cache writes  * input_price * creation_multiplier
 
-    Anthropic reports cached tokens *separately* from ``inputTokens`` (which counts
-    only the fresh, uncached input), so the cache terms are additive — omitting
-    them undercounts the real bill, most heavily for agents with large cached
-    system prompts / tool blocks. Ollama models price every term at 0.
+    where fresh input is ``inputTokens`` for Anthropic (which reports cache hits
+    separately) and ``inputTokens - cacheReadInputTokens`` for OpenAI-compatible
+    providers such as DashScope (which count them inside inputTokens). See the
+    notes above for the multipliers. Ollama models price every term at 0.
 
-    Returns (cost_in_dollars, total_tokens) where total_tokens now includes the
-    cache tokens too.
+    Returns (cost_in_dollars, total_tokens), each token counted once: cached
+    tokens are added to the total only where the provider reports them separately.
     """
     in_tok = int(usage.get("inputTokens", 0) or 0)
     out_tok = int(usage.get("outputTokens", 0) or 0)
     cache_read = int(usage.get("cacheReadInputTokens", 0) or 0)
     cache_write = int(usage.get("cacheWriteInputTokens", 0) or 0)
     in_price, out_price = get_model_prices_for(obj)
+    hit_mult, write_mult, included = _cache_accounting(obj)
+    # A breakdown can never exceed what it breaks down; if it does, the provider
+    # must be reporting the two separately after all.
+    if included and cache_read + cache_write > in_tok:
+        included = False
+    fresh = in_tok - cache_read - cache_write if included else in_tok
     cost = (
-        in_tok * in_price
+        fresh * in_price
         + out_tok * out_price
-        + cache_read * in_price * _CACHE_READ_MULTIPLIER
-        + cache_write * in_price * _CACHE_WRITE_MULTIPLIER
+        + cache_read * in_price * hit_mult
+        + cache_write * in_price * write_mult
     )
-    return cost, in_tok + out_tok + cache_read + cache_write
+    total = in_tok + out_tok + (0 if included else cache_read + cache_write)
+    return cost, total

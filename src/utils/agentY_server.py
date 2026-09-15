@@ -2651,7 +2651,10 @@ def _aggregate_token_usage(accept) -> dict:
         b = agg.get(key)
         if b is None:
             b = {"model": key, "input": 0, "output": 0,
-                 "cache_read": 0, "cache_write": 0, "cost": 0.0, "calls": 0}
+                 "cache_read": 0, "cache_write": 0, "cost": 0.0, "calls": 0,
+                 # Each token once. DashScope counts cache hits inside input,
+                 # so input + cache_read would count them twice.
+                 "tokens": 0}
             agg[key] = b
         return b
 
@@ -2703,18 +2706,21 @@ def _aggregate_token_usage(accept) -> dict:
                 if model:
                     provider, _, model_id = model.partition("/")
                     try:
-                        cost, _ = compute_cost_from_usage(
+                        cost, tokens = compute_cost_from_usage(
                             {"inputTokens": d_in, "outputTokens": d_out,
                              "cacheReadInputTokens": d_cr, "cacheWriteInputTokens": d_cw},
                             _Meta(provider, model_id),
                         )
                         b["cost"] += cost
+                        b["tokens"] += tokens
                     except Exception:
-                        pass
+                        b["tokens"] += d_in + d_out
+                else:
+                    b["tokens"] += d_in + d_out
 
     rows = sorted(agg.values(), key=lambda r: r["input"] + r["output"], reverse=True)
     total = {"input": 0, "output": 0, "cache_read": 0,
-             "cache_write": 0, "cost": 0.0, "calls": 0}
+             "cache_write": 0, "cost": 0.0, "calls": 0, "tokens": 0}
     for r in rows:
         for k in total:
             total[k] += r[k]
