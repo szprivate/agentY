@@ -151,6 +151,14 @@ def save_mcp_config(cfg: dict) -> None:
     p = _config_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps({"servers": servers}, indent=2), encoding="utf-8")
+    # A bundle whose server was removed takes its unpacked files with it.
+    try:
+        from src.utils.mcp_bundle import prune_unreferenced
+        removed = prune_unreferenced(servers)
+        if removed:
+            logger.info("mcp: removed unused bundle(s): %s", ", ".join(removed))
+    except Exception as exc:  # noqa: BLE001 — cleanup must never fail a save
+        logger.warning("mcp: could not prune unused bundles: %s", exc)
 
 
 # ── env expansion for header auth ────────────────────────────────────────────
@@ -397,9 +405,12 @@ def _transport_callable(sc: dict, provider):
         return lambda: sse_client(url, headers=headers, auth=provider)
     if transport == "stdio":
         from mcp import StdioServerParameters, stdio_client
+        # ${VAR} expands in the arguments too: an installed bundle can put a key
+        # there (``--token=${MCP_X_TOKEN}``). ``cwd`` is the bundle's own folder.
         params = StdioServerParameters(
-            command=sc["command"], args=list(sc.get("args") or []),
+            command=_expand(sc["command"]), args=[_expand(a) for a in (sc.get("args") or [])],
             env=_expand_map(sc.get("env")) or None,
+            cwd=_expand(sc["cwd"]) if sc.get("cwd") else None,
         )
         return lambda: stdio_client(params)
     raise ValueError(f"unknown transport {transport!r}")
@@ -554,11 +565,14 @@ def test_server(name: str, sc: dict, secrets: dict | None = None) -> dict:
     try:
         os.environ.update(overlay)
         client, tools = _connect(name, sc, interactive=False)
-        prefix = f"{name}_"
         names = []
         for tool in tools:
             tool_name = str(getattr(tool, "tool_name", "") or getattr(tool, "name", ""))
-            names.append(tool_name[len(prefix):] if tool_name.startswith(prefix) else tool_name)
+            # MCPClient(prefix="<name>_") names tools "<name>__<tool>" (strands adds
+            # its own separator): the form shows the server's own tool names.
+            if tool_name.startswith(name):
+                tool_name = tool_name[len(name):].lstrip("_") or tool_name
+            names.append(tool_name)
         return {"ok": True, "tools": len(tools), "names": names[:50]}
     except _AuthRequired:
         return {"ok": False, "needs_auth": True,

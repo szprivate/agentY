@@ -1514,6 +1514,31 @@ They're defined in `config/mcp.json` (holds no secrets) and managed from
    **Sign-in ▸ API key** and paste the key, or **Browser sign-in**.
 4. **Save**. The server loads into the orchestrator on the **next agent start**.
 
+### Installing a bundle (.mcpb)
+
+An **MCP Bundle** (`.mcpb`, formerly `.dxt`) is a zip with a local MCP server and
+everything it needs, the same file Claude Desktop installs with a click.
+
+1. Click **Install bundle (.mcpb)…** and choose the file.
+2. agentY reads it and shows its name, version and author, whether it is
+   **signed** (the signature is shown, not verified), the files it contains, and
+   the exact **command it will run on your machine**. It also checks that the
+   bundle supports this platform (if not, it can't be installed) and that its
+   runtime (`node`, `python`, `uv`) is on your PATH (if not, you get a warning with
+   what to install).
+3. Fill in the settings the bundle asks for. Keys are password fields, and
+   folders and files have **Browse…**. Defaults such as `${HOME}/Documents` are
+   filled in already.
+4. Click **Install**. The bundle is unpacked into `config/mcp_bundles/<name>/`
+   (never outside it) and appears as a new server card. A key you typed goes to
+   `.env`; the server entry only references it.
+5. **Test**, then **Save**.
+
+Installing the same bundle again offers its existing name and replaces its files.
+Removing a bundle's server (**✕**) and saving deletes its unpacked files too.
+A bundle is code that runs on this machine with your permissions, so install
+only bundles you trust.
+
 Each server is a card: an **enable** switch, its status, and **Test**,
 **Authorize…** (browser sign-in only), **Edit** and **✕** (remove). **Edit**
 shows the address or command, the connection type (HTTP, SSE or local command),

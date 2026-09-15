@@ -161,6 +161,13 @@ class TestButtonTest(unittest.TestCase):
         self.assertNotIn("MCP_DEMO_API_KEY", os.environ)
         client.stop.assert_called_once()
 
+    def test_tool_names_are_the_servers_own(self):
+        """A live MCPClient names a tool `<server>__<tool>`, two underscores."""
+        with mock.patch.object(mt, "_connect",
+                               lambda *a, **k: (mock.Mock(), [SimpleNamespace(tool_name="demo__fetch")])):
+            res = mt.test_server("demo", {"transport": "http", "url": "https://x"})
+        self.assertEqual(res["names"], ["fetch"])
+
     def test_the_live_connections_are_left_alone(self):
         live = {"magnific": object()}
         with mock.patch.dict(mt._CLIENTS, live, clear=True), \

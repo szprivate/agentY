@@ -3805,6 +3805,44 @@ def _build_app():
         except McpImportError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
 
+    @app.route("/agentY/mcp/bundle/inspect", methods=["POST", "OPTIONS"])
+    def mcp_bundle_inspect_route():
+        # Settings ▸ MCP servers ▸ Install bundle: the .mcpb file is the request
+        # body. Staged, then read: what it is, what it will run, what it asks for.
+        if request.method == "OPTIONS":
+            return "", 204
+        from src.tools.mcp_tools import load_mcp_config
+        from src.utils import mcp_bundle as mb
+        taken = [n for n in str(request.args.get("existing") or "").split(",") if n]
+        token = ""
+        try:
+            token = mb.stage_upload(request.stream, request.args.get("filename") or "")
+            return jsonify(mb.inspect(token, servers=load_mcp_config().get("servers") or {}, taken=taken))
+        except mb.BundleError as exc:
+            mb.discard(token)
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        except Exception as exc:  # noqa: BLE001
+            mb.discard(token)
+            logger.error("mcp bundle inspect failed: %s", exc, exc_info=True)
+            return jsonify({"ok": False, "error": str(exc)}), 500
+
+    @app.route("/agentY/mcp/bundle/install", methods=["POST", "OPTIONS"])
+    def mcp_bundle_install_route():
+        # Unpacks the staged bundle; the modal adds the returned entry as an
+        # unsaved server, and Save writes mcp.json and the bundle's keys to .env.
+        if request.method == "OPTIONS":
+            return "", 204
+        from src.utils import mcp_bundle as mb
+        body = request.get_json(silent=True) or {}
+        values = body.get("values") if isinstance(body.get("values"), dict) else {}
+        try:
+            return jsonify(mb.install(str(body.get("token") or ""), str(body.get("name") or ""), values))
+        except mb.BundleError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        except Exception as exc:  # noqa: BLE001
+            logger.error("mcp bundle install failed: %s", exc, exc_info=True)
+            return jsonify({"ok": False, "error": str(exc)}), 500
+
     @app.route("/agentY/mcp/test", methods=["POST", "OPTIONS"])
     def mcp_test_route():
         # Settings ▸ MCP servers ▸ Test: one connection from the form as it stands,

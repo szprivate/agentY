@@ -40,6 +40,8 @@ config/settings.local.json.*.bak
 # OAuth tokens + dynamic client registrations for MCP servers — SECRETS, never commit.
 # The MCP server definitions (config/mcp.json) hold no secrets and are tracked.
 config/.mcp_tokens/
+# Unpacked MCP bundles (.mcpb): third-party code installed on this machine.
+config/mcp_bundles/
 # Ranking weights fitted to THIS person's review choices (scripts/fit_fitness_weights.py).
 # One machine's taste is not a default for anyone else's; the hand-set weights in
 # src/utils/fitness.py are what ships. Delete the file to go back to them.
