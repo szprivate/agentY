@@ -116,47 +116,56 @@ def _said(events):
     return "".join(e.get("data", "") for e in events if e.get("type") == "text")
 
 
+def _status(events):
+    """The status lines, one per progress event, as the run card receives them."""
+    return [e["data"] for e in events if e.get("type") == "progress"]
+
+
 class ThroughTheTurnTest(unittest.TestCase):
+    """Executor lines are status, not reply. They used to ride the text channel,
+    so a ten-image batch appended forty lines to the answer and the transcript
+    kept them all under the agent's name; the panel's run card never saw one."""
 
     def setUp(self):
         raw_drain()
         self.addCleanup(raw_drain)
 
-    def test_the_executor_lines_land_one_per_line(self):
+    def test_the_executor_lines_arrive_as_status_one_per_line(self):
         events = _turn(self, [
             ("push", "🚀 Queuing iteration 1/8…"),
             ("push", "✅ Iteration 1/8 queued · prompt_id=`b765a975`"),
             ("push", "🚀 Queuing iteration 2/8…"),
             ("push", "⏳ All 8 workflow(s) queued — monitoring concurrently…"),
         ])
-        said = _said(events)
-        self.assertEqual(len(said.strip().splitlines()), 4, repr(said))
+        self.assertEqual(_status(events), [
+            "🚀 Queuing iteration 1/8…",
+            "✅ Iteration 1/8 queued · prompt_id=`b765a975`",
+            "🚀 Queuing iteration 2/8…",
+            "⏳ All 8 workflow(s) queued — monitoring concurrently…",
+        ])
 
-    def test_a_line_does_not_land_on_the_end_of_the_last_one(self):
-        """The reported shape, exactly: `…queued🚀 Queuing…` with no break."""
-        said = _said(_turn(self, [("push", "✅ Iteration 1/8 queued"),
-                                  ("push", "🚀 Queuing iteration 2/8…")]))
-        self.assertNotIn("queued🚀", said)
-
-    def test_a_line_does_not_land_on_the_end_of_what_the_agent_was_saying(self):
+    def test_they_stay_out_of_the_reply(self):
         said = _said(_turn(self, [("say", "Running the stage now."),
                                   ("wait", "0.35"),
-                                  ("push", "🚀 Queuing iteration 1/8…")]))
-        self.assertNotIn("now.🚀", said)
-        self.assertEqual(len(said.strip().splitlines()), 2, repr(said))
+                                  ("push", "[2/8] ⏳ Queue: 4 job(s) ahead"),
+                                  ("say", " Done.")]))
+        self.assertNotIn("Queue", said)
+        self.assertEqual(said, "Running the stage now. Done.")
 
     def test_the_pump_carries_them_live_rather_than_at_the_end(self):
         """Blocked in a tool, the buffer is the only thing streaming — a batch
         that only appeared once the turn finished would look like a hang."""
-        said = _said(_turn(self, [("push", "🚀 Queuing iteration 1/8…"),
-                                  ("wait", "0.35"),
-                                  ("say", "Queued them all.")]))
-        self.assertTrue(said.strip().startswith("🚀"), repr(said))
+        events = _turn(self, [("push", "🚀 Queuing iteration 1/8…"),
+                              ("wait", "0.35"),
+                              ("say", "Queued them all.")])
+        kinds = [e["type"] for e in events if e.get("type") in ("progress", "text")]
+        self.assertEqual(kinds, ["progress", "text"])
 
-    def test_the_reply_does_not_open_with_a_blank_line(self):
-        """The separator has nothing to separate when the line is said first."""
-        said = _said(_turn(self, [("push", "🎯 Hook scope: 14 node(s)…")]))
-        self.assertFalse(said.startswith("\n"), repr(said))
+    def test_a_status_line_carries_no_separator(self):
+        """The newline that kept a line off the previous one is text-channel
+        plumbing; a status event is already its own line."""
+        self.assertEqual(_status(_turn(self, [("push", "🎯 Hook scope: 14 node(s)…")])),
+                         ["🎯 Hook scope: 14 node(s)…"])
 
 
 class DownloadBarsKeepTheirChannelTest(unittest.TestCase):

@@ -3761,7 +3761,7 @@ class Pipeline:
                                 interrupt_result = intr
                                 break
                 for _prog_chunk in _drain_progress():
-                    yield {"data": _prog_chunk}
+                    yield {"data": _prog_chunk, "progress_line": True}
                 # Surface the agent's tool calls + results inline in the chat.
                 for _ta in _drain_tools():
                     yield {"tool_activity": _ta}
@@ -3874,7 +3874,7 @@ class Pipeline:
                         if isinstance(line, dict) and line.get("qa_fail"):
                             _qa_fail_event = line
                             break
-                        yield {"data": _line_chunk(line)}
+                        yield {"data": _line_chunk(line), "progress_line": True}
                         # Surface any tool calls the executor's agents make (QA,
                         # error-check) so they aren't stranded in the buffer.
                         for _ta in _drain_tools():
@@ -4094,7 +4094,7 @@ class Pipeline:
         async for event in self._orchestrator_agent.stream_async(text):
             yield event
             for _prog_chunk in _drain_progress():
-                yield {"data": _prog_chunk}
+                yield {"data": _prog_chunk, "progress_line": True}
             for _ta in _drain_tools():
                 yield {"tool_activity": _ta}
             for _cp in _drain_canvas_patch():
@@ -6699,7 +6699,7 @@ class Pipeline:
                         # download_hf_model) and surface them as plain data events,
                         # each on its own line (see src.utils.progress_lines).
                         for _prog_chunk in _drain_progress():
-                            yield {"data": _prog_chunk}
+                            yield {"data": _prog_chunk, "progress_line": True}
             except (TimeoutError, asyncio.TimeoutError):
                 # The attempt looped/stalled past the per-attempt cap. Reset the
                 # (now cancelled) message history and retry with a terser demand.

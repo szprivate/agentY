@@ -1418,6 +1418,16 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
         if "🔍 QA" in chunk or "Vision QA" in chunk:
             out_q.put({"type": "qa", "data": chunk})
             return
+        # An executor status line ("🚀 Queuing iteration 3/10…", "[2/10] ⏳ Queue: 4
+        # job(s) ahead"). It rode the text channel, so the panel appended it to the
+        # reply, forty lines for one batch, and the transcript kept every one under
+        # the agent's name. It is status: the panel folds it into the run card.
+        if event.get("progress_line"):
+            line = chunk.strip()
+            if line:
+                out_q.put({"type": "progress", "data": line})
+            _check_outputs()
+            return
         if cur_step.get("name"):
             if cur_step["name"].startswith("Assemble"):
                 assistant_parts.append(chunk)
@@ -1460,7 +1470,7 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
         # progress buffer on the pump's short timer streams it to the panel live.
         # drain() is atomic, so this never double-emits with the pipeline's drain.
         for _chunk in _drain_progress_chunks():
-            _translate({"data": _chunk})
+            _translate({"data": _chunk, "progress_line": True})
         for _ta in _drain_tool_activity():
             _translate({"tool_activity": _ta})
         for _cp in _drain_canvas_activity():

@@ -17,9 +17,12 @@ separate the lines with.
 So the conversion lives here rather than at each drain site: a line reaching the
 stream begins its own line, once, however it was pushed and whoever drains it.
 
-Consumers that classify a chunk by its opening characters (the panel routes
-``"⬇️ "`` download bars to their own channel) must therefore look past leading
-whitespace — see ``_translate`` in ``agentY_server``.
+Every drain site yields these as ``{"data": chunk, "progress_line": True}``. The
+flag is what makes them status: ``_translate`` in ``agentY_server`` sends a flagged
+chunk to the panel as a ``progress`` event (the run card), never as reply text, and
+keeps it out of the transcript. Unflagged, a ten-image batch appended forty queue
+lines to the answer. Consumers that classify a chunk by its opening characters
+must still look past the leading newline.
 """
 
 from __future__ import annotations
