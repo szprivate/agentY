@@ -1426,9 +1426,11 @@ or pressing **Escape**; **Save** is the only button.
 - **Viewers** — where the message-history log, the long-term-memory editor, the
   project memory and the [token usage](#token-usage--cost) breakdown open from.
 - **Authentication (.env)** — API keys and host settings, stored in `.env` on the
-  agent host. Secrets are masked; tick **Show secret values** to reveal. **+ Add
-  auth key** appends a new `.env` variable (a secret an MCP server references, say)
-  and applies it to the live process.
+  agent host. A key already set shows as dots and there is no way to read it back:
+  the host never sends a secret to the browser, it only says which keys are set.
+  Type over one to replace it; leave it alone and it stays as it is. **+ Add auth
+  key** appends a new `.env` variable (a secret an MCP server references, say) and
+  applies it to the live process.
 - **Application settings** — six sections, in the order you are likely to want
   them. **Models** is first and already open:
 
