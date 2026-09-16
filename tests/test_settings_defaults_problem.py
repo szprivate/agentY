@@ -65,5 +65,43 @@ class DefaultsProblemTest(unittest.TestCase):
         self.assertEqual(st.defaults_problem(), "")
 
 
+class HostCommitTest(unittest.TestCase):
+    """Settings names the host that answered, with its commit read from .git."""
+
+    def setUp(self):
+        from src.utils import agentY_server as srv
+        self.commit = srv._git_commit
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.git = self.root / ".git"
+        self.git.mkdir()
+
+    def test_a_branch_checkout(self):
+        (self.git / "HEAD").write_text("ref: refs/heads/main\n")
+        (self.git / "refs" / "heads").mkdir(parents=True)
+        (self.git / "refs" / "heads" / "main").write_text("4e8b8c3aabbccddeeff\n")
+        self.assertEqual(self.commit(self.root), "4e8b8c3")
+
+    def test_a_branch_only_in_packed_refs(self):
+        (self.git / "HEAD").write_text("ref: refs/heads/main\n")
+        (self.git / "packed-refs").write_text(
+            "# pack-refs with: peeled fully-peeled sorted\n6b8cc23aabbcc refs/heads/main\n")
+        self.assertEqual(self.commit(self.root), "6b8cc23")
+
+    def test_a_detached_head(self):
+        (self.git / "HEAD").write_text("b77b5a2ffeeddcc\n")
+        self.assertEqual(self.commit(self.root), "b77b5a2")
+
+    def test_no_repository_is_no_commit_not_an_error(self):
+        self.assertEqual(self.commit(self.root / "elsewhere"), "")
+
+    def test_this_checkout_reports_a_commit(self):
+        from src.utils import agentY_server as srv
+        identity = srv._host_identity()
+        self.assertRegex(identity["commit"], r"^[0-9a-f]{7}$")
+        self.assertTrue(identity["root"])
+
+
 if __name__ == "__main__":
     unittest.main()

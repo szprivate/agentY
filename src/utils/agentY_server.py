@@ -2593,6 +2593,42 @@ def _save_pricing_config(data: dict) -> None:
     )
 
 
+def _git_commit(root: Path) -> str:
+    """The checkout's HEAD commit (7 chars), read from .git without running git."""
+    git_dir = root / ".git"
+    try:
+        if git_dir.is_file():   # a worktree: ".git" is a file naming the real dir
+            target = git_dir.read_text(encoding="utf-8").split(":", 1)[1].strip()
+            git_dir = (root / target).resolve()
+        head = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
+        if not head.startswith("ref:"):
+            return head[:7]
+        ref = head[4:].strip()
+        loose = git_dir / ref
+        if loose.is_file():
+            return loose.read_text(encoding="utf-8").strip()[:7]
+        packed = git_dir / "packed-refs"
+        if packed.is_file():
+            for line in packed.read_text(encoding="utf-8").splitlines():
+                if line.endswith(" " + ref):
+                    return line.split()[0][:7]
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
+
+
+def _host_identity() -> dict:
+    """Which agentY host is answering: its checkout and commit.
+
+    A browser can keep talking to a different host than the one just updated — an
+    address pinned in localStorage outranks discovery for as long as it answers, and
+    a second checkout or a stale process answers just as well. Settings then shows
+    another machine's (or an older version's) settings, and nothing said which.
+    """
+    root = _project_root()
+    return {"root": str(root), "commit": _git_commit(root), "pid": os.getpid()}
+
+
 def _settings_defaults_problem() -> str:
     try:
         from src.utils.settings import defaults_problem  # noqa: PLC0415
@@ -3698,6 +3734,8 @@ def _build_app():
                 # Why the committed defaults could not be read, if they could not:
                 # the panel would otherwise show only the local overrides, silently.
                 "settings_problem": _settings_defaults_problem(),
+                # Which host this is, shown in the Settings header.
+                "host": _host_identity(),
             })
         # POST — persist env and/or settings changes (settings → settings.local.json).
         body = request.get_json(silent=True) or {}
