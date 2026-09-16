@@ -364,7 +364,10 @@ Type `/` in the composer for an autocomplete menu.
 | `/clear_vram` | Clear ComfyUI GPU VRAM |
 | `/images` | List images generated in this thread |
 | `/undo` | Undo the agent's last step in this conversation — see [Undoing a step](#undoing-a-step) |
+| `/history` | Open the message-history log viewer (also `/log`) |
+| `/memory` | Open the long-term memory viewer (also `/ltm`) |
 | `/project_memory` | Inspect and forget what is remembered for **this project** (characters, style, named references) |
+| `/costs` | Open the cost overview — token usage and cost per model (also `/usage`) |
 | `/clearhistory` | Delete all conversation history |
 | `/switch_model <target> <provider,model>` | Set a model **tier**, a single role, or `all` (e.g. `/switch_model fast_utility dashscope,qwen3.6-flash`). Saved to `settings.local.json` |
 | `/add_workflow <path>` \| `/add_workflow canvas <name>` | Register a workflow template (a JSON file, or the open graph) |
