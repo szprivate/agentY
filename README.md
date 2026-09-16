@@ -153,8 +153,11 @@ too, so a gap only shows up on the machine that resolved differently.
 .venv/bin/python scripts/check_env.py --gpu           # macOS: reports MPS
 ```
 
-The launcher runs it quietly on every start and speaks up only when something
-required is missing.
+The launcher keeps the environment in line on every start
+(`scripts/sync_deps.py`): it installs `requirements.txt` again when a required
+package is missing, or when the dependency files changed since this `.venv` was
+last installed — including after a `git pull` you ran yourself. When nothing is
+missing and nothing changed, it says nothing.
 
 <details>
 <summary><b>Manual setup</b> (instead of the installer)</summary>

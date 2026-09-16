@@ -337,27 +337,14 @@ fi
 # shellcheck disable=SC1091
 . "$PROJECT_ROOT/.venv/bin/activate"
 
-# A pull that changed requirements.txt / pyproject.toml needs the environment
-# brought back in line BEFORE the app imports anything.
-if [ -n "$(printf '%s' "$DEPS_CHANGED" | tr -d ' ')" ]; then
-  say "[update] Dependencies changed in:$DEPS_CHANGED - reinstalling..." "$C_CYAN"
-  if command -v uv >/dev/null 2>&1; then
-    uv pip install --python "$VENV_PY" -r requirements.txt
-  else
-    "$VENV_PY" -m pip install -r requirements.txt
-  fi
-  if [ $? -ne 0 ]; then
-    say "[update] Dependency install failed - check the output above." "$C_YELLOW"
-  fi
-  echo
-fi
-
-# Cheap sanity check on the venv (spec lookups only, ~0.3s). Silent unless
-# something required is missing — a venv can fall behind requirements.txt without a
-# pull ever touching it, and the symptom is otherwise a feature that quietly does
-# nothing.
-if [ -f "$PROJECT_ROOT/scripts/check_env.py" ]; then
-  python "$PROJECT_ROOT/scripts/check_env.py" --quiet || echo
+# Bring the environment in line with requirements.txt BEFORE the app imports
+# anything. scripts/sync_deps.py installs when the update above changed a
+# dependency file, when the files changed since this venv was last installed (a
+# `git pull` done by hand never reaches DEPS_CHANGED), or when a required package
+# is missing — and says nothing otherwise. It ends with check_env's quiet report.
+if [ -f "$PROJECT_ROOT/scripts/sync_deps.py" ]; then
+  _changed="$(printf '%s' "$DEPS_CHANGED" | sed 's/^ *//; s/ *$//')"
+  "$VENV_PY" "$PROJECT_ROOT/scripts/sync_deps.py" --quiet "--changed=$_changed" || echo
 fi
 
 # ── Per-stage LLM overrides ─────────────────────────────────────────────────

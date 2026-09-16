@@ -285,26 +285,16 @@ try {
         & $venvActivate
     }
 
-    # A pull that changed requirements.txt / pyproject.toml needs the environment
-    # brought back in line BEFORE the app imports anything.
-    if ($Script:DepsChanged.Count -gt 0) {
-        Write-Host "[update] Dependencies changed in: $($Script:DepsChanged -join ', ') - reinstalling..." -ForegroundColor Cyan
-        $uv = Get-Command uv -ErrorAction SilentlyContinue
-        if ($uv) { uv pip install --python $venvPy -r requirements.txt | Out-Host }
-        else { & $venvPy -m pip install -r requirements.txt | Out-Host }
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "[update] Dependency install returned $LASTEXITCODE - check the output above." -ForegroundColor Yellow
-        }
-        Write-Host ""
-    }
-
-    # Cheap sanity check on the venv (spec lookups only, ~0.3s). Silent unless
-    # something required is missing - a venv can fall behind requirements.txt
-    # without a pull ever touching it, and the symptom is otherwise a feature
-    # that quietly does nothing.
-    $checkEnv = Join-Path $ProjectRoot "scripts\check_env.py"
-    if (Test-Path $checkEnv) {
-        python $checkEnv --quiet | Out-Host
+    # Bring the environment in line with requirements.txt BEFORE the app imports
+    # anything. scripts/sync_deps.py installs when the update above changed a
+    # dependency file, when the files changed since this venv was last installed
+    # (a `git pull` done by hand never reaches $DepsChanged), or when a required
+    # package is missing - and says nothing otherwise. It ends with check_env's
+    # quiet report. "--changed=..." is one token on purpose: Windows PowerShell
+    # drops an empty-string argument to a native command.
+    $syncDeps = Join-Path $ProjectRoot "scripts\sync_deps.py"
+    if (Test-Path $syncDeps) {
+        & $venvPy $syncDeps --quiet "--changed=$($Script:DepsChanged -join ', ')" | Out-Host
         if ($LASTEXITCODE -ne 0) { Write-Host "" }
     }
 
