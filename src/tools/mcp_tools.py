@@ -48,6 +48,8 @@ import warnings
 import webbrowser
 from pathlib import Path
 
+from strands import tool
+
 logger = logging.getLogger("agentY.mcp")
 
 _DEFAULT_REDIRECT_PORT = 8199
@@ -529,6 +531,19 @@ def authorize_server(name: str) -> dict:
                         "orchestrator when it is next built (restart the agent to use them now).")}
 
 
+def _tool_names(server: str, tools) -> list:
+    """A server's own tool names. MCPClient(prefix="<name>_") hands them back as
+    "<name>__<tool>" (strands adds its own separator), which is how they appear in
+    an agent's tool list but not what the server calls them."""
+    names = []
+    for tool_obj in tools or ():
+        name = str(getattr(tool_obj, "tool_name", "") or getattr(tool_obj, "name", ""))
+        if name.startswith(server):
+            name = name[len(server):].lstrip("_") or name
+        names.append(name)
+    return names
+
+
 def _leaf_error(exc: BaseException, _depth: int = 0) -> str:
     """The message worth showing from an exception the MCP stack has wrapped in
     exception groups and initialization errors."""
@@ -565,15 +580,7 @@ def test_server(name: str, sc: dict, secrets: dict | None = None) -> dict:
     try:
         os.environ.update(overlay)
         client, tools = _connect(name, sc, interactive=False)
-        names = []
-        for tool in tools:
-            tool_name = str(getattr(tool, "tool_name", "") or getattr(tool, "name", ""))
-            # MCPClient(prefix="<name>_") names tools "<name>__<tool>" (strands adds
-            # its own separator): the form shows the server's own tool names.
-            if tool_name.startswith(name):
-                tool_name = tool_name[len(name):].lstrip("_") or tool_name
-            names.append(tool_name)
-        return {"ok": True, "tools": len(tools), "names": names[:50]}
+        return {"ok": True, "tools": len(tools), "names": _tool_names(name, tools)[:50]}
     except _AuthRequired:
         return {"ok": False, "needs_auth": True,
                 "error": "This server signs in through the browser."}
@@ -592,6 +599,76 @@ def test_server(name: str, sc: dict, secrets: dict | None = None) -> dict:
                 client.stop(None, None, None)
             except Exception:  # noqa: BLE001
                 pass
+
+
+_STATE_WORDS = {
+    "disabled": "switched off in agentY Settings ▸ MCP servers",
+    "needs_auth": "needs a browser sign-in — agentY Settings ▸ MCP servers ▸ Authorize…",
+    "not connected": "configured, but its tools are not loaded in this process "
+                     "(restart the agent to load them)",
+    "authorized (restart to load)": "signed in; its tools load when the agent is next started",
+}
+
+
+def mcp_server_report() -> str:
+    """What the MCP servers on this machine are, and whether their tools are usable.
+
+    The plain function behind :func:`list_mcp_servers`; the tool is the agent's way
+    in, this is the testable one.
+    """
+    servers = load_mcp_config().get("servers") or {}
+    if not servers:
+        return ("No MCP servers are configured. They are added in agentY Settings ▸ "
+                "MCP servers (paste a server's address, its start command or its JSON "
+                "config, or install a .mcpb bundle).")
+    try:
+        status = mcp_status()
+    except Exception:  # noqa: BLE001
+        status = {}
+    lines = []
+    for name, sc in servers.items():
+        sc = sc if isinstance(sc, dict) else {}
+        info = status.get(name) or {}
+        state = str(info.get("state") or "")
+        transport = str(sc.get("transport") or info.get("transport") or "http").lower()
+        how = "local command" if transport == "stdio" else transport
+        auth = str(sc.get("auth") or info.get("auth") or "none").lower()
+        sign_in = {"oauth": "browser sign-in", "header": "API key"}.get(auth, "no sign-in")
+        said = _STATE_WORDS.get(state)
+        if said is None and state.startswith("connected"):
+            said = "connected"
+            client = _CLIENTS.get(name)
+            if client is not None:
+                try:
+                    names = _tool_names(name, client.list_tools_sync())
+                    said = f"connected, {len(names)} tool(s): " + ", ".join(names[:25])
+                except Exception:  # noqa: BLE001
+                    said = f"connected ({state})"
+        elif said is None:
+            said = state.replace("error:", "failed to start:") or "unknown"
+        bundle = sc.get("bundle") if isinstance(sc.get("bundle"), dict) else None
+        origin = f" [installed bundle {bundle.get('name')} {bundle.get('version')}]" if bundle else ""
+        lines.append(f"- {name} — {how}, {sign_in} — {said}{origin}")
+    return ("MCP servers configured on this machine (their tools are the agent's, "
+            "prefixed with the server name):\n" + "\n".join(lines))
+
+
+@tool
+def list_mcp_servers() -> str:
+    """Which external MCP servers this system has, and whether their tools work now.
+
+    Answers "what MCP servers are set up?", "can you talk to Blender/Magnific?",
+    and anything about capabilities beyond ComfyUI itself. Ask it before telling
+    someone a capability is missing: a server can be configured yet not connected —
+    switched off, waiting for a browser sign-in, or failing to start — and its tools
+    are then absent from the tool list even though the user installed it.
+
+    Returns one line per server: its name, how it is reached (http/sse/local
+    command), its sign-in mode, and its state — connected (with its tool names),
+    switched off, needing a sign-in, or the error it failed with — plus the bundle
+    it was installed from, when it was.
+    """
+    return mcp_server_report()
 
 
 def is_server_connected(name: str) -> bool:

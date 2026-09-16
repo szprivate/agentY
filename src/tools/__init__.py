@@ -87,6 +87,9 @@ from src.tools.iterate import iterate  # noqa: F401
 # mis-assembled some templates).
 from src.tools.shell import run_script  # noqa: F401
 from src.tools.memory_tools import memory_read, memory_write  # noqa: F401
+# agentY-local: it reads THIS host's config/mcp.json and live MCP clients, so it
+# stays here rather than in the shared core layer.
+from src.tools.mcp_tools import list_mcp_servers  # noqa: F401
 from src.tools.project_memory import (project_memory_forget,  # noqa: F401
                                       project_memory_read, project_memory_write)
 from src.tools.web_search import web_search, web_search_images  # noqa: F401
@@ -166,6 +169,9 @@ INFO_TOOLS: list = [
     check_model,
     get_node_schema,
     search_nodes,
+    # "What can this system do?" includes the MCP servers the user has set up, and
+    # whether each one's tools are actually loaded right now.
+    list_mcp_servers,
     read_text_file,
     file_read,
     stop,
@@ -393,6 +399,10 @@ ORCHESTRATOR_TOOLS: list = [
     get_comfyui_dirs,
     get_agent_output_dirs,
     submit_prompt,
+    # The MCP servers' own tools arrive unlabelled and only when their server
+    # connected; this is how the orchestrator can tell a capability that is missing
+    # from one that is merely switched off or waiting to be authorized.
+    list_mcp_servers,
     # Models: is it installed, where is it on HuggingFace, download it into the
     # folder ComfyUI loads that kind from. On the orchestrator and not only on the
     # repair specialists, because "download the missing models" is something users

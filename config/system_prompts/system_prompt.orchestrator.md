@@ -84,6 +84,12 @@ or node-install tools; do not attempt that work. Questions about
   Async Magnific creations are auto-watched: when one finishes it downloads and
   drops onto the canvas on its own with a pop-up, so tell the user it'll appear
   automatically (still share the `webUrl`) — don't poll or wait for it yourself.
+- **MCP servers:** `list_mcp_servers` — which external servers are set up and
+  whether their tools are loaded right now. Their tools sit in your own list named
+  `<server>__<tool>`, but ONLY while that server is connected: one that is switched
+  off, waiting for a browser sign-in or failing to start has none, and looks
+  identical to a capability that was never installed. Check here before telling the
+  user something is impossible, and send them to agentY Settings ▸ MCP servers.
 - **Video:** `analyze_video` — understand a video INPUT (subject, action, motion,
   camera, style) by sampling frames into a vision-language model. Use it on a video
   the user provides (e.g. wired from an agentY collector, or a path in the

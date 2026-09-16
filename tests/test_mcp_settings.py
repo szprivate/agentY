@@ -136,6 +136,54 @@ class NotAServerTest(unittest.TestCase):
         self.assertIn("line", str(ctx.exception))
 
 
+class ListServersTest(unittest.TestCase):
+    """What an agent is told about the MCP servers on this machine.
+
+    Their tools reach the orchestrator unlabelled and only while the server is
+    connected, so a server that is off, unauthorized or broken is indistinguishable
+    from a capability nobody installed — unless something says so.
+    """
+
+    def _report(self, servers, status, clients=None):
+        with mock.patch.object(mt, "load_mcp_config", lambda: {"servers": servers}), \
+             mock.patch.object(mt, "mcp_status", lambda: status), \
+             mock.patch.dict(mt._CLIENTS, clients or {}, clear=True):
+            return mt.mcp_server_report()
+
+    def test_a_connected_server_lists_its_own_tool_names(self):
+        client = mock.Mock()
+        client.list_tools_sync.return_value = [SimpleNamespace(tool_name="blender__get_scene_info"),
+                                               SimpleNamespace(tool_name="blender__render")]
+        report = self._report(
+            {"blender": {"transport": "stdio", "auth": "none",
+                         "bundle": {"name": "Blender", "version": "1.0.3"}}},
+            {"blender": {"state": "connected (2)"}}, {"blender": client})
+        self.assertIn("local command", report)
+        self.assertIn("2 tool(s): get_scene_info, render", report)
+        self.assertIn("Blender 1.0.3", report)
+
+    def test_a_server_waiting_for_a_sign_in_says_where_to_do_it(self):
+        report = self._report({"magnific": {"transport": "http", "auth": "oauth"}},
+                              {"magnific": {"state": "needs_auth"}})
+        self.assertIn("browser sign-in", report)
+        self.assertIn("Authorize", report)
+
+    def test_a_switched_off_server_is_named_as_switched_off(self):
+        report = self._report({"demo": {"transport": "http", "auth": "none", "enabled": False}},
+                              {"demo": {"state": "disabled"}})
+        self.assertIn("switched off", report)
+
+    def test_a_server_that_failed_to_start_carries_its_error(self):
+        report = self._report({"demo": {"transport": "stdio", "auth": "none"}},
+                              {"demo": {"state": "error: uv not found"}})
+        self.assertIn("failed to start: uv not found", report)
+
+    def test_with_none_configured_it_says_where_they_are_added(self):
+        report = self._report({}, {})
+        self.assertIn("No MCP servers are configured", report)
+        self.assertIn("Settings", report)
+
+
 class TestButtonTest(unittest.TestCase):
     """One connection from the form, saved or not."""
 
