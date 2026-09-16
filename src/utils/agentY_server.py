@@ -2593,6 +2593,14 @@ def _save_pricing_config(data: dict) -> None:
     )
 
 
+def _settings_defaults_problem() -> str:
+    try:
+        from src.utils.settings import defaults_problem  # noqa: PLC0415
+        return defaults_problem()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _builtin_prices() -> dict:
     """``{model_id: {"in", "out"}}`` in USD per million tokens, from the built-in
     tables, for every model a provider lists right now. The pricing table shows
@@ -3687,6 +3695,9 @@ def _build_app():
                 "model_groups": _available_models(),
                 "pricing": _load_pricing_config(),
                 "pricing_builtin": _builtin_prices(),
+                # Why the committed defaults could not be read, if they could not:
+                # the panel would otherwise show only the local overrides, silently.
+                "settings_problem": _settings_defaults_problem(),
             })
         # POST — persist env and/or settings changes (settings → settings.local.json).
         body = request.get_json(silent=True) or {}

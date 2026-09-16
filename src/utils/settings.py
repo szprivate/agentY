@@ -18,6 +18,7 @@ file is machine-owned overrides.
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import tomllib
 from pathlib import Path
@@ -53,15 +54,52 @@ def _deep_merge(base: dict, over: dict) -> dict:
     return out
 
 
-def load_defaults() -> dict:
-    """Parse ``settings.default.toml`` (committed). Returns {} if absent/invalid."""
+_defaults_problem = ""
+
+
+def defaults_problem() -> str:
+    """Why ``settings.default.toml`` could not be read on the last load, or "".
+
+    An unreadable defaults file is not fatal — startup carries on with the local
+    overrides alone — but it must not be silent. Without the defaults, every
+    setting that is not also in settings.local.json disappears from the settings
+    panel, and a user looking at a Canvas section with one checkbox has no way to
+    tell that the other six were never loaded.
+    """
+    return _defaults_problem
+
+
+def _starts_with_bom() -> bool:
     try:
         with _DEFAULT_PATH.open("rb") as f:
-            return tomllib.load(f)
+            return f.read(3) == b"\xef\xbb\xbf"
+    except OSError:
+        return False
+
+
+def load_defaults() -> dict:
+    """Parse ``settings.default.toml`` (committed). Returns {} if absent/invalid;
+    the reason is logged and kept for :func:`defaults_problem`."""
+    global _defaults_problem
+    try:
+        with _DEFAULT_PATH.open("rb") as f:
+            data = tomllib.load(f)
     except FileNotFoundError:
+        _defaults_problem = f"{_DEFAULT_PATH} is missing"
+        logging.getLogger("agentY.settings").warning("settings: %s", _defaults_problem)
         return {}
-    except Exception:  # noqa: BLE001 — never let a bad file crash startup
+    except Exception as exc:  # noqa: BLE001 — never let a bad file crash startup
+        # A byte-order mark is the usual culprit on Windows: some editors, and
+        # PowerShell 5.1's `Set-Content -Encoding utf8`, add one on save, and TOML
+        # rejects it at line 1, column 1, which says nothing about why.
+        hint = (" The file starts with a byte-order mark: save it as UTF-8 without BOM, "
+                "or restore it with `git checkout -- config/settings.default.toml`."
+                if _starts_with_bom() else "")
+        _defaults_problem = f"config/settings.default.toml could not be read: {exc}.{hint}"
+        logging.getLogger("agentY.settings").warning("settings: %s", _defaults_problem)
         return {}
+    _defaults_problem = ""
+    return data
 
 
 def load_local() -> dict:
