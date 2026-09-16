@@ -15,6 +15,7 @@ Usage
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import re
@@ -971,6 +972,10 @@ class Pipeline:
             disk is what ``built`` describes, including multi-stage graphs whose
             stages were fused into one.
 
+            Several different generations (one per room, per shot, …) can be
+            prepared with parallel calls in the same message; each gets its own
+            workflow file.
+
             Returns JSON with a ``status`` field:
               * ``ready``     → ``workflow_path`` is assembled & validated; call
                                 ``signal_workflow_ready(workflow_path)`` next.
@@ -995,10 +1000,12 @@ class Pipeline:
             _push_progress("🔎 Researching template & prompt …")
             raw_json = None
             error = None
-            async for _ev in self._arun_researcher(request, staged_inputs):
-                if isinstance(_ev, dict) and "_researcher_done" in _ev:
-                    raw_json = _ev.get("raw_json")
-                    error = _ev.get("error")
+            async with self._researcher_lease() as _researcher:
+                async for _ev in self._arun_researcher(request, staged_inputs,
+                                                       researcher=_researcher):
+                    if isinstance(_ev, dict) and "_researcher_done" in _ev:
+                        raw_json = _ev.get("raw_json")
+                        error = _ev.get("error")
             if error:
                 _push_progress(f"⚠️ Research failed: {error}")
                 return json.dumps({"status": "error", "error": error})
@@ -6028,6 +6035,7 @@ class Pipeline:
         wf = tpl.get("workflow_path")
         if not wf or tpl.get("error"):
             return {"status": "error", "error": tpl.get("error") or "template load failed"}
+        wf = self._own_copy(wf)
 
         try:
             res = json.loads(_abb(wf, briefing.model_dump_json()))
@@ -6066,6 +6074,26 @@ class Pipeline:
                   f"server_errors={res.get('server_errors')}")
         return await self._run_fix_workflow_assembly(
             wf, problems=problems, server_errors=res.get("server_errors", {}))
+
+    @staticmethod
+    def _own_copy(template_path: str) -> str:
+        """A fresh file for one assembly, next to the template's loaded copy.
+
+        get_workflow_template caches by name and hands every caller the same
+        ``<workflows>/<template>.json``, and apply_brainbriefing writes back into
+        the file it is given. Two generations from one template (a bedroom and a
+        kitchen) therefore shared one file: the second patched the first's graph
+        and overwrote it, so both paths ran the kitchen. Each assembly patches
+        its own copy instead, which also leaves the loaded template clean.
+        """
+        import uuid  # noqa: PLC0415
+        src = Path(template_path)
+        try:
+            dst = src.with_name(f"{src.stem}_{uuid.uuid4().hex[:6]}{src.suffix}")
+            shutil.copyfile(src, dst)
+            return str(dst)
+        except OSError:
+            return template_path
 
     def _attach_built_summary(self, result: dict) -> None:
         """Add ``built`` — what the graph actually contains — to an assembly result.
@@ -6638,7 +6666,54 @@ class Pipeline:
             "failed to establish a new connection", "connectionerror",
             "newconnectionerror", "10061", "timed out", "connection aborted"))
 
-    async def _arun_researcher(self, user_input, staged_inputs: list | None = None):
+    # How many researchers may run at once. Parallel prepare_workflow calls past
+    # this wait for one to come free rather than each building another agent.
+    _MAX_PARALLEL_RESEARCH = 4
+
+    @contextlib.asynccontextmanager
+    async def _researcher_lease(self):
+        """Lend a researcher agent that nothing else is running right now.
+
+        A Strands agent takes one invocation at a time and refuses a second
+        ("Agent is already processing a request"), so parallel prepare_workflow
+        calls on the one researcher failed and the orchestrator fell back to
+        preparing each generation in turn. The primary researcher is lent first,
+        keeping its history exactly as before for the usual single call; a call
+        that finds it busy gets a spare, built from the same settings and started
+        from an empty history, since it is a different request. Spares are kept
+        for the next time, and dropped once the primary is rebuilt for another
+        model (model_reload only swaps the primary).
+        """
+        busy = self.__dict__.setdefault("_researchers_busy", [])
+        spares = self.__dict__.setdefault("_researcher_spares", [])
+        while len(busy) >= self._MAX_PARALLEL_RESEARCH:
+            await asyncio.sleep(0.25)
+        # Take the slot before building anything: a build awaits, and the next
+        # caller must already count this one.
+        slot: list = [None]
+        busy.append(slot)
+        primary = agent = self._researcher
+        try:
+            if any(s[0] is primary for s in busy):
+                spares[:] = [(of, a) for of, a in spares if of is primary]
+                if spares:
+                    agent = spares.pop()[1]
+                else:
+                    agent = await asyncio.to_thread(create_query_templates_agent)
+                agent.messages.clear()
+                if self._verbose:
+                    print(f"pipeline: researcher busy — preparing in parallel "
+                          f"({len(busy)} at once).")
+            slot[0] = agent
+            yield agent
+        finally:
+            busy[:] = [s for s in busy if s is not slot]
+            if agent is not primary and primary is self._researcher:
+                agent.messages.clear()
+                spares.append((primary, agent))
+
+    async def _arun_researcher(self, user_input, staged_inputs: list | None = None,
+                               researcher: Agent | None = None):
         """Run the Researcher, streaming its token output as Strands events.
 
         Streams the Researcher's token output (including tool-use events) so
@@ -6651,7 +6726,11 @@ class Pipeline:
 
         Callers must consume the stream, watch for the sentinel, then act on
         its ``raw_json`` / ``error`` fields.
+
+        *researcher* is the agent to drive — one leased from
+        :meth:`_researcher_lease` — and defaults to the primary one.
         """
+        researcher = researcher or self._researcher
         researcher_prompt_text, _ = self._build_researcher_prompt(user_input)
 
         last_error: str | None = None
@@ -6662,7 +6741,7 @@ class Pipeline:
         _eb_retries = 0  # empty-blocker rejections (bounded, then accept the block)
         _bad_tmpl_retries = 0  # hallucinated-template rejections (bounded → build_new)
         _downloaded = False  # attempted a named-missing-model download once
-        _researcher_snap = self._usage_snapshot(self._researcher)
+        _researcher_snap = self._usage_snapshot(researcher)
 
         for attempt in range(1 + self._MAX_RESEARCHER_RETRIES):
             if attempt == 0:
@@ -6689,7 +6768,7 @@ class Pipeline:
             chunks: list[str] = []
             try:
                 async with asyncio.timeout(self._RESEARCHER_ATTEMPT_TIMEOUT):
-                    async for event in self._researcher.stream_async(prompt):
+                    async for event in researcher.stream_async(prompt):
                         if isinstance(event, dict):
                             chunk = event.get("data", "")
                             if chunk:
@@ -6710,7 +6789,7 @@ class Pipeline:
                     print(f"pipeline: Researcher attempt {attempt} timed out "
                           f"({self._RESEARCHER_ATTEMPT_TIMEOUT:.0f}s); resetting and retrying.")
                 try:
-                    self._researcher.messages.clear()
+                    researcher.messages.clear()
                 except Exception:  # noqa: BLE001
                     pass
                 _context_reset = True
@@ -6728,7 +6807,7 @@ class Pipeline:
                     print(f"pipeline: Researcher hit max_tokens (attempt {attempt}); "
                           f"resetting context and retrying.")
                 try:
-                    self._researcher.messages.clear()
+                    researcher.messages.clear()
                 except Exception:  # noqa: BLE001
                     pass
                 _context_reset = True
@@ -6743,7 +6822,7 @@ class Pipeline:
                     print(f"pipeline: Researcher attempt {attempt} errored ({exc}); "
                           f"backing off and retrying.")
                 try:
-                    self._researcher.messages.clear()
+                    researcher.messages.clear()
                 except Exception:  # noqa: BLE001
                     pass
                 _context_reset = True
@@ -6772,7 +6851,7 @@ class Pipeline:
             # valid decision, force one from the draft via a tool-free JSON-mode call
             # (response_format=json_object, schema in the prompt) — which cannot run away.
             if decision is None:
-                constrained = self._constrain_briefing(user_input, list(self._researcher.messages))
+                constrained = self._constrain_briefing(user_input, list(researcher.messages))
                 if constrained:
                     try:
                         cand = ResearcherDecision.model_validate(json.loads(constrained))
@@ -6873,13 +6952,13 @@ class Pipeline:
                     f"status={briefing.status}, task={briefing.task.description!r}, "
                     f"template={briefing.template.name!r}"
                 )
-            log_agent_messages("RESEARCHER", list(self._researcher.messages))
-            self._record_agent_usage(self._researcher, _researcher_snap)
+            log_agent_messages("RESEARCHER", list(researcher.messages))
+            self._record_agent_usage(researcher, _researcher_snap)
             yield {"_researcher_done": True, "raw_json": raw_json, "error": None, "researcher_output": raw_json}
             return
 
-        log_agent_messages("RESEARCHER", list(self._researcher.messages))
-        self._record_agent_usage(self._researcher, _researcher_snap)
+        log_agent_messages("RESEARCHER", list(researcher.messages))
+        self._record_agent_usage(researcher, _researcher_snap)
         yield {
             "_researcher_done": True,
             "raw_json": None,
