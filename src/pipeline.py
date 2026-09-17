@@ -1914,6 +1914,90 @@ class Pipeline:
             return json.dumps(result)
 
         @_tool
+        async def run_python_node(code: str, inputs: list | None = None,
+                                  title: str = "", place: bool = True) -> str:
+            """Run Python INSIDE ComfyUI as an ``agentY python`` node on the canvas.
+
+            Use when the user wants code on the canvas ("add a node that counts
+            the frames", "compute the aspect ratio from this image") or when a
+            snippet needs a canvas node's output as a value — an IMAGE tensor, a
+            loaded video. For code only you need to run, use ``run_script``.
+
+            The snippet's contract:
+              * wired inputs arrive as ``in0``, ``in1``, … (and the list ``inputs``);
+              * set ``outputs = [value, …]`` — ``outputs[0]`` leaves on ``out0``
+                (four slots);
+              * ``save_image(image, "name.png")`` writes a ComfyUI IMAGE tensor,
+                an array or a PIL image and returns its path; any other file you
+                write, put its path in ``files`` (``output_dir`` is a folder for
+                them). Those files are this run's outputs: the user sees them
+                and you get their paths back.
+
+            The node is run once now, with only the canvas nodes it reads from.
+            With ``place`` (default) it is also put on the canvas with the code,
+            wired to the same inputs, showing what it produced.
+
+            Args:
+                code: The Python snippet.
+                inputs: What feeds ``in0``, ``in1``, … in order — canvas node ids
+                    (their first output) or ``{"node_id": "12", "output": 1}``.
+                title: A short title for the node.
+                place: Put the node on the canvas (False: just run it).
+            """
+            from src.utils import python_node as _py
+
+            if not str(code or "").strip():
+                return json.dumps({"error": "code is empty."})
+            base = self._canvas_base_prompt if isinstance(self._canvas_base_prompt, dict) else None
+            try:
+                wired = _py.parse_inputs(inputs, base)
+                prompt = _py.build_prompt(str(code), wired, base, title)
+                _push_progress("🐍 Running the python node …")
+                entry = await asyncio.to_thread(_py.run, prompt)
+            except _py.PythonNodeError as exc:
+                return json.dumps({"error": str(exc)})
+            except Exception as exc:  # noqa: BLE001
+                return json.dumps({"error": f"could not run the python node: {exc}"})
+
+            failed = _py.error_of(entry)
+            result = _py.read_result(entry)
+            from src.executor import _resolve_output_path
+            files = _py.local_paths(result["files"], _resolve_output_path)
+            if files:
+                # Staged like any other product this turn.
+                self._session.current_output_paths.extend(files)
+                self._chain_output_paths.extend(files)
+            if place:
+                from src.utils.canvas_patch import push as _push_patch
+                _push_patch({
+                    "op": "place_python",
+                    "code": str(code),
+                    "title": str(title or ""),
+                    "inputs": [{"node_id": n, "output": s} for n, s in wired],
+                    "result": result["outputs"] if not failed else [f"error: {failed}"],
+                })
+            if failed:
+                return json.dumps({
+                    "status": "error",
+                    "error": failed,
+                    "placed": bool(place),
+                    "what_to_do": "Fix the snippet and call this again"
+                                  + (" — the failing node is already on the canvas; "
+                                     "set_canvas_node_params can rewrite its `code`."
+                                     if place else "."),
+                })
+            return json.dumps({
+                "status": "done",
+                "outputs": result["outputs"],
+                "files": files,
+                "placed": bool(place),
+                "message": ("Ran" + (" and placed an 'agentY python' node on the canvas"
+                                     if place else "")
+                            + (f"; {len(files)} file(s) produced and staged." if files
+                               else "; it produced no files.")),
+            })
+
+        @_tool
         async def place_canvas_text(hook_node_id: str, text: str) -> str:
             """Place a written answer onto the canvas as a wireable string node.
 
@@ -2658,6 +2742,7 @@ class Pipeline:
                  screenshot_canvas,
                  halt_for_review, run_workflow_now, add_canvas_workflow,
                  get_canvas_node, set_canvas_node_params, place_canvas_text,
+                 run_python_node,
                  delete_canvas_nodes, iterate_step, refine_canvas_until,
                  list_agent_settings, set_agent_setting]
         # Offered only where there is a Slack to send to. Every tool in this list

@@ -1367,16 +1367,26 @@ were never that image's job.
 
 ## The agentY python node & collectors
 
-- **`agentY python`** — runs an agent-authored Python snippet as a node. It's the
-  companion to [baking](#baking-a-chain-into-subgraphs): a value the agent
-  computed at runtime is placed here so it becomes a genuine, re-runnable output.
+- **`agentY python`** — runs a Python snippet as a node. Add it from the node
+  menu and write the code yourself, or ask the agent for one ("add a node that
+  gives me this image's aspect ratio"): it runs the snippet in ComfyUI, puts the
+  node on the canvas wired to the nodes it reads, and tells you what came out.
+  - Wired inputs arrive as `in0`, `in1`, …; set `outputs = [value, …]` and each
+    value leaves on `out0` … `out3`.
+  - `save_image(image, "name.png")` writes an image (a ComfyUI IMAGE, an array or
+    a PIL image). Any other file you write, add its path to `files` (`output_dir`
+    is a folder for them). Those files are the run's outputs: ComfyUI previews
+    them and the agent gets them back like any generation.
+  - After a run the node shows what each output held (`out0: 8`, a tensor by its
+    shape) in its **result** box.
+  - It's also what [baking](#baking-a-chain-into-subgraphs) uses to make a value
+    the agent computed at runtime a genuine, re-runnable output.
+
   ⚠️ **It executes arbitrary Python whenever the graph runs** — meant for your
-  own, self-hosted, agent-built workflows; don't run baked workflows from
-  untrusted sources. Set `AGENTY_PYTHON_NODE_DISABLED=1` to make it a no-op.
-  Like **`agentY text`**, it is placed *by the agent* and is therefore hidden
-  from the add-node menu and the double-click search — both stay fully
-  functional wherever they already sit on a graph. Turn on ComfyUI's
-  **Settings ▸ Enable dev mode options** if you want them offered in search.
+  own, self-hosted workflows; don't run workflows containing it from untrusted
+  sources. Set `AGENTY_PYTHON_NODE_DISABLED=1` to make it a no-op. (**`agentY
+  text`** is still placed only by the agent and stays out of the add-node menu;
+  turn on **Settings ▸ Enable dev mode options** to find it in search.)
 - **`agentY collector`** — hand the agent a batch of on-disk files. The paths live
   in the node (no pre-run needed), so an anchored collector reaches the agent as an
   explicit file list it can bind directly. Use it as a hook's anchor to run one

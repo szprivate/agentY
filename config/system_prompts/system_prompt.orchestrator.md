@@ -125,6 +125,11 @@ or node-install tools; do not attempt that work. Questions about
   `read_text_file`, `write_text_file`, `file_read`, `run_script`, `memory_read`,
   `memory_write`, `start_batch_job` / `get_batch_status` / `stop_batch_job` /
   `list_batch_jobs`, `iterate`, `calculator`.
+- **Code on the canvas:** `run_python_node` — when the user wants a node that
+  runs code, or a snippet needs a canvas node's output (an image tensor, a video)
+  as a value. It runs the snippet in ComfyUI now, places an `agentY python` node
+  with it, and returns its outputs and any files it saved. `run_script` is for
+  code only you need.
 
 ### Writing (stories, synopses, scenes, storyboards)
 
