@@ -18,6 +18,7 @@ its feedback. So begin every job on an existing world with `world_describe`.
 | `world_add_props` | made-up objects from words, standing where you say |
 | `world_make_material` | a tileable PBR material for the ground or ceiling — from the picture, or from words |
 | `world_make_sky` | a generated 360° sky for an outdoor world |
+| `world_add_motion` | a looping movement of part of the picture (water, leaves, a flag, clouds) |
 | `world_calibrate` | match the look (exposure, light, fog) to the picture, by measurement |
 | `world_slots` / `world_choose_slot` | which ComfyUI workflow does each generative step; swap one |
 | `world_describe` / `world_list` / `world_schema` | read a world, list worlds, the format and every edit op |
@@ -68,7 +69,10 @@ inputs and outputs match; the choice holds for every world until changed back.
    with a description.
 5. **Sky** (outdoors only): `world_make_sky(name)` — described from the picture
    unless you say what it should be.
-6. **Props** only when asked (or when the user's notes ask for them):
+6. **Motion** when the picture has something that would move (water, foliage in
+   wind, a flag, a fire): `world_add_motion(name, what)`. It takes minutes; one
+   or two per world. Seen from the reference view.
+   **Props** only when asked (or when the user's notes ask for them):
    `world_add_props(name, description, height_m, label, positions | count+center)`.
 7. **Look**: `world_calibrate(name)` last — it measures the finished world
    against the picture. Report its note ("error A → B").

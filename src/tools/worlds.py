@@ -752,9 +752,53 @@ def world_make_sky(name: str, description: str = "", seed: int = 7) -> str:
         return _fail(exc)
 
 
+@tool
+def world_add_motion(name: str, what: str, motion: str = "", seconds: float = 5.0, seed: int = 7) -> str:
+    """Bring part of the picture to life: a short seamless loop (the motion
+    slot: Wan 2.2, starting and ending on the picture itself) played on the
+    world's hero view, only where `what` is (the segment slot finds it) —
+    water rippling, leaves stirring, a flag, flickering light, drifting clouds.
+    Seen best from the reference camera, where the hero view is. Takes minutes.
+
+    Args:
+        name: The world.
+        what: What moves, as segmentation should find it ("water", "trees",
+            "flag", "clouds"). "all" = the whole picture may move.
+        motion: How it moves, in words ("small ripples drifting left, glints of
+            light"). Empty = gentle natural motion of `what`.
+        seconds: Loop length, 2-5 s.
+        seed: Variant.
+    """
+    try:
+        staged = _post("/bepic_worlds/stage_reference", {"name": name})
+        ref, (w0, h0) = staged["reference"], staged.get("size") or (1280, 720)
+        scale = 832 / max(w0, h0)
+        width, height = max(16, int(w0 * scale) // 16 * 16), max(16, int(h0 * scale) // 16 * 16)
+        length = max(17, min(81, int(round(float(seconds) * 16 / 4)) * 4 + 1))
+        mask = None
+        if what.strip().lower() not in ("all", "everything", ""):
+            seg, _u, _m = _run_slot("segment", {"image": ref, "prompt": what, "individual": False},
+                                    f"worlds/{_slug(name)}/motion_seg")
+            mask = (seg.get("masks") or next(iter(seg.values())))[0]
+        prompt = (f"{motion or f'gentle, natural motion of the {what}'}. Locked-off tripod shot, the camera does "
+                  f"not move at all. Only the {what} moves; everything else stays perfectly still. A seamless loop.")
+        vid, used, _m = _run_slot("motion", {"image": ref, "prompt": prompt, "width": width, "height": height,
+                                             "length": length, "seed": int(seed)},
+                                  f"worlds/{_slug(name)}/motion", timeout=3600)
+        video = (vid.get("video") or next(iter(vid.values())))[0]
+        op = {"op": "set_motion", "video": video}
+        if mask:
+            op["mask"] = mask
+        res = _post("/bepic_worlds/edit", {"name": name, "ops": [op], "note": f"motion: {what} ({used})"})
+        return _ok(version=res.get("version"), video=video, mask=mask, size=[width, height], frames=length,
+                   workflow=used)
+    except Exception as exc:  # noqa: BLE001
+        return _fail(exc)
+
+
 WORLD_TOOLS = [
     world_schema, world_create, world_rebuild, world_list, world_describe, world_edit, world_revert,
     world_feedback, world_resolve_feedback, world_calibrate, world_open,
-    world_add_objects, world_add_props, world_make_material, world_make_sky,
+    world_add_objects, world_add_props, world_make_material, world_make_sky, world_add_motion,
     world_slots, world_choose_slot,
 ]
