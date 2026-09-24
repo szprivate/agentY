@@ -164,6 +164,12 @@ these when the specialist's tuned skill helps; otherwise just do it yourself.
   (lighting, composition, camera, colour).
 - `run_web_search(request)` — searches the web and stages reference image(s),
   returning a manifest.
+- `run_world_builder(request)` — the World Builder specialist: walkable 3D
+  worlds from reference pictures (build one, add the picture's objects and
+  materials, match the look, act on the notes the user pinned while walking
+  it). Stage the picture first and pass its filename, your description of it,
+  and the world's name. It runs its own pipelines and opens the world in the
+  viewer — no `prepare_workflow` / `signal_workflow_ready` for worlds.
 - `run_planner(request)` — decomposes a complex multi-step request into ordered
   steps (use for genuinely multi-stage projects).
 - `add_canvas_workflow(name, description="")` — saves the graph the user has

@@ -537,6 +537,8 @@ class Pipeline:
         self._fix_agent: Agent | None = None
         # Build-from-scratch specialist (template.name == "build_new"). Lazy.
         self._generate_agent: Agent | None = None
+        # Walkable-worlds specialist (ComfyUI-bEpicWorlds). Lazy.
+        self._world_builder_agent: Agent | None = None
         self._search_web_agent: Agent = scout_agent or create_search_web_agent()
         # Orchestrator (the free-agent entry point) + its delegation tools. The
         # delegation tools are closures over this Pipeline so they always hit the
@@ -1052,6 +1054,31 @@ class Pipeline:
             # to collect here — the same mechanism covers the orchestrator
             # downloading directly, which is how this most often happens.
             return await _run_specialist(self._search_web_agent, "WEB", request)
+
+        @_tool
+        async def run_world_builder(request: str) -> str:
+            """Hand a walkable-3D-world job to the World Builder specialist.
+
+            For anything about **worlds**: making a walkable, game-like 3D world
+            from a reference picture; putting the picture's own objects (cars,
+            pillars, benches …) or surfaces into one; matching its look to the
+            picture; reading and acting on the notes the user pinned while
+            walking it; reverting a world. It runs its own ComfyUI pipelines
+            (depth, SAM3, Hunyuan3D, Chord) and opens the world in the bEpic
+            viewer — do NOT prepare or signal workflows for it.
+
+            Args:
+                request: The whole job in plain words. Include the world's name
+                    when it exists, the staged reference picture's filename (as
+                    in ComfyUI's input folder) when making one, your description
+                    of the picture, and what the user asked for — the specialist
+                    sees nothing else of this conversation.
+            """
+            from src.agent import create_world_builder_agent
+            if self._world_builder_agent is None:
+                self._world_builder_agent = create_world_builder_agent()
+            _push_progress("🌍 World Builder at work …")
+            return await _run_specialist(self._world_builder_agent, "WORLD", request)
 
         @_tool
         async def run_planner(request: str) -> str:
@@ -2738,7 +2765,7 @@ class Pipeline:
         # so it is no longer exposed. The detect_user_intent agent survives only for
         # the legacy free_agent=False router path.
         tools = [prepare_workflow, run_info,
-                 run_web_search, run_planner, apply_canvas_hooks, stop_hook_run,
+                 run_web_search, run_world_builder, run_planner, apply_canvas_hooks, stop_hook_run,
                  screenshot_canvas,
                  halt_for_review, run_workflow_now, add_canvas_workflow,
                  get_canvas_node, set_canvas_node_params, place_canvas_text,

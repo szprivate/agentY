@@ -133,6 +133,7 @@ _ROLE_TIERS: dict[str, str] = {
     "video_agent": "vision",
     "qa_checker": "qa_judge",
     "coder": "coder",
+    "world_builder": "research_assembly",
 }
 
 # Human labels for the tier selectors (used by the settings UI via /agentY/settings).
@@ -1673,6 +1674,59 @@ def create_ASSEMBLEWORKFLOW_agent(
 # ALLCAPS spelling. Alias so both spellings refer to the same function.
 create_assemble_workflow_agent = create_ASSEMBLEWORKFLOW_agent
 create_search_web_agent = create_SEARCHWEB_agent
+
+
+def create_world_builder_agent(
+    llm: str | None = None,
+    ollama_model: str | None = None,
+    anthropic_model: str | None = None,
+    **kwargs,
+) -> Agent:
+    """Create the World Builder — walkable 3D worlds from reference pictures.
+
+    Drives the ComfyUI-bEpicWorlds pack: builds a world from a picture, puts the
+    picture's own objects (SAM3 + Hunyuan3D) and surfaces (Chord) into it,
+    matches its look to the picture, and works through the notes the user pins
+    while walking it. Its tools are in ``src/tools/worlds.py``.
+
+    Reads ``pipeline.world_builder`` (``'provider,model'``); inherits the
+    research/assembly tier. ``WORLDBUILDER_LLM`` overrides.
+    """
+    from src.tools.worlds import WORLD_TOOLS
+    from src.tools import analyze_image
+
+    if ollama_model and llm is None:
+        llm = "ollama"
+    _raw = str(role_model("world_builder", default="claude,claude-sonnet-5", env_var="WORLDBUILDER_LLM"))
+    _settings_llm, _settings_model = _parse_llm_setting(_raw)
+    resolved_llm = llm or _settings_llm or "claude"
+    system_prompt = _load_system_prompt("world_builder")
+    tools = [*WORLD_TOOLS, analyze_image]
+    if resolved_llm == "ollama":
+        agent = _make_agent(
+            role="world_builder",
+            llm="ollama",
+            system_prompt=system_prompt,
+            tools=tools,
+            ollama_model=ollama_model or _settings_model
+            or str(role_model("llm_functions", default="qwen3.5:9b", env_var="LLM_FUNCTIONS_MODEL")),
+            **kwargs,
+        )
+    else:
+        agent = _make_agent(
+            role="world_builder",
+            llm=resolved_llm,
+            dashscope_model=_settings_model,
+            system_prompt=system_prompt,
+            tools=tools,
+            anthropic_model=anthropic_model or _settings_model
+            or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-sonnet-5")),
+            **kwargs,
+        )
+    # Each call is one job; what persists is the world itself (its versions,
+    # history notes and feedback live in the world store, not in this agent).
+    agent.conversation_manager = SlidingWindowConversationManager(window_size=40)
+    return agent
 
 
 def create_learnings_agent(
