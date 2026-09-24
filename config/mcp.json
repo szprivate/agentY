@@ -1,10 +1,42 @@
 {
   "servers": {
     "magnific": {
-      "auth": "oauth",
       "enabled": true,
       "transport": "http",
-      "url": "https://mcp.magnific.com"
+      "url": "https://mcp.magnific.com",
+      "auth": "oauth"
+    },
+    "blender": {
+      "enabled": true,
+      "transport": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "blender-mcp"
+      ],
+      "auth": "none",
+      "cwd": "D:\\AI\\agentY\\config\\mcp_bundles\\blender",
+      "bundle": {
+        "name": "Blender",
+        "version": "1.0.3",
+        "dir": "config/mcp_bundles/blender",
+        "signed": false
+      }
+    },
+    "bepic_worlds": {
+      "enabled": true,
+      "transport": "stdio",
+      "command": "D:/ai/comfyui/.venv/Scripts/python.exe",
+      "args": [
+        "-s",
+        "-m",
+        "bepic_worlds.mcp_server"
+      ],
+      "cwd": "D:/AI/comfyui/custom_nodes/ComfyUI-bEpicWorlds",
+      "auth": "none",
+      "env": {
+        "COMFYUI_URL": "http://127.0.0.1:8188"
+      }
     }
   }
 }
