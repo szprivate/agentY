@@ -22,6 +22,13 @@ by its node types (its LoadImage nodes, its positive prompt, its save nodes).
 
 ``BEPIC_WORLDS_URL`` points the route calls somewhere other than ComfyUI (a test
 harness); workflows always run on ComfyUI itself.
+
+**It says what it is doing.** A world takes minutes, most of them inside a
+tool, so every tool pushes a plain-words line to the chat panel at each stage
+(`_progress`: what it is finding, making, placing, and what came of it), and
+`_run` reports a ComfyUI job while it waits: its place in the queue, that it
+started, a heartbeat while it runs, and how long it took. The specialist's own
+remarks between steps reach the panel too (NarrationHookProvider, src/agent.py).
 """
 
 from __future__ import annotations
@@ -138,6 +145,7 @@ def _run(prompt: dict, label: str, timeout: float = 1800) -> dict:
     except Exception:  # noqa: BLE001
         pass
     t0 = time.time()
+    watch = _JobWatch(client, pid, label, t0)
     while time.time() - t0 < timeout:
         hist = client.get(f"/history/{pid}")
         if isinstance(hist, dict) and pid in hist:
@@ -145,11 +153,63 @@ def _run(prompt: dict, label: str, timeout: float = 1800) -> dict:
             if status.get("status_str") == "error":
                 msgs = [m[1] for m in status.get("messages") or [] if m and m[0] == "execution_error"]
                 detail = (msgs[0].get("exception_message") if msgs else "") or "execution failed"
+                _progress(f"❌ {label} failed after {_took(t0)}")
                 raise RuntimeError(f"{label}: {detail.strip()[:600]}")
             if status.get("completed", True):
+                _progress(f"✅ {label} — done in {_took(t0)}")
                 return hist[pid].get("outputs") or {}
+        watch.tick()
         time.sleep(1.5)
     raise TimeoutError(f"{label}: no result after {int(timeout)} s (prompt {pid} is still queued or running)")
+
+
+def _took(t0: float) -> str:
+    """Seconds since t0, the way a person says it: 42 s, 3 min 5 s."""
+    sec = int(time.time() - t0)
+    return f"{sec} s" if sec < 60 else f"{sec // 60} min {sec % 60:02d} s"
+
+
+class _JobWatch:
+    """What a ComfyUI job is doing while `_run` waits on it, told to the panel.
+
+    Waiting behind other jobs says how many are ahead (once, and again when that
+    changes); starting says so; running says so again every half minute, so a
+    three-minute mesh doesn't look like a hang. Reads /queue at most every 5 s.
+    """
+
+    HEARTBEAT = 30.0
+
+    def __init__(self, client, pid: str, label: str, t0: float):
+        self.client, self.pid, self.label, self.t0 = client, pid, label, t0
+        self.state, self.ahead = None, None
+        self.last_look = 0.0
+        self.last_said = t0
+
+    def tick(self) -> None:
+        now = time.time()
+        if now - self.last_look < 5.0:
+            return
+        self.last_look = now
+        try:
+            q = self.client.get("/queue") or {}
+        except Exception:  # noqa: BLE001
+            return
+        running = [e[1] for e in q.get("queue_running") or [] if len(e) > 1]
+        pending = [e[1] for e in q.get("queue_pending") or [] if len(e) > 1]
+        if self.pid in running:
+            if self.state != "running":
+                self.state = "running"
+                self.last_said = now
+                _progress(f"▶️ {self.label} — running")
+            elif now - self.last_said >= self.HEARTBEAT:
+                self.last_said = now
+                _progress(f"⏳ {self.label} — still running ({_took(self.t0)})")
+        elif self.pid in pending:
+            ahead = len(running) + pending.index(self.pid)
+            if self.state != "queued" or ahead != self.ahead:
+                self.state, self.ahead = "queued", ahead
+                self.last_said = now
+                _progress(f"🕒 {self.label} — waiting in ComfyUI's queue ({ahead} ahead)")
 
 
 def _slug(text: str) -> str:
@@ -251,13 +311,25 @@ def _bind(wf: dict, inputs: dict, prefix: str) -> tuple[dict, dict]:
     return wf, outputs
 
 
+# What each slot's job is called in the panel ("Depth map (depth_da2_16bit)").
+_SLOT_WORDS = {
+    "depth": "Depth map", "segment": "Segmentation", "image_to_3d": "3D model",
+    "texture_refine": "Texture refinement", "texture_generate": "Texture", "material": "PBR maps",
+    "sky": "Sky panorama", "object_image": "Object picture", "motion": "Motion loop",
+}
+
+
 def _run_slot(slot: str, inputs: dict, prefix: str, override: str = "",
-              timeout: float = 1800) -> tuple[dict, str, dict]:
-    """Run a slot's workflow. Returns ({output name: [ComfyUI refs]}, template name, meta)."""
+              timeout: float = 1800, say: str = "") -> tuple[dict, str, dict]:
+    """Run a slot's workflow. Returns ({output name: [ComfyUI refs]}, template name, meta).
+
+    `say` is the line the panel shows as it starts ("Finding every car in the
+    picture"); the job's own lines (queue, running, done) follow from `_run`."""
     name, wf, meta = _template_for(slot, override)
     wf, outs = _bind(wf, inputs, prefix)
-    _progress(f"⚙️ {slot}: {name} …")
-    res = _run(wf, f"{slot} ({name})", timeout=timeout)
+    what = _SLOT_WORDS.get(slot, slot)
+    _progress(f"⚙️ {say or what} — {name}")
+    res = _run(wf, f"{what} ({name})", timeout=timeout)
     files: dict[str, list] = {}
     for nid, oname in outs.items():
         for key, vals in (res.get(nid) or {}).items():
@@ -362,18 +434,25 @@ def world_create(reference: str, name: str, spec: str = "", fov: float = 50.0,
         ref = _as_ref(reference)
         body: dict = {"reference": ref, "name": name, "spec": spec or None, "fov": float(fov),
                       "world_size": float(world_size) or None, "seed": int(seed) or None, "open_in_viewer": True}
+        _progress(f"🌍 New world '{name}' from {ref.get('filename') if isinstance(ref, dict) else reference}"
+                  + (f" — {spec}" if spec else ""))
         d = str(depth or "").strip()
         if d.lower() in ("", "none", "no", "false"):
-            pass
+            _progress("• No depth map: the picture stands flat")
         elif d.lower() == "auto" or d.startswith("depth_") or not ("." in d or d.startswith("{")):
             files, used, _meta = _run_slot("depth", {"image": ref, "prefix": f"{_slug(name)}_depth"},
-                                           f"worlds/{_slug(name)}/depth", "" if d.lower() == "auto" else d)
+                                           f"worlds/{_slug(name)}/depth", "" if d.lower() == "auto" else d,
+                                           say="Measuring how far away everything in the picture is")
             body["depth"] = files["depth"][0]
             body["note"] = f"created (depth: {used})"
         else:
             body["depth"] = _as_ref(d)
-        _progress("🏗️ Building the world …")
+            _progress("• Using the depth map given")
+        _progress("🏗️ Building the world: reading the picture, laying out ground, sky and light …")
+        t0 = time.time()
         res = _post("/bepic_worlds/create", {k: v for k, v in body.items() if v is not None})
+        _progress(f"✅ World '{res.get('name', name)}' built in {_took(t0)}"
+                  + (f" (version {res['version']})" if res.get("version") else "") + " — open in the viewer")
         return _ok(**res)
     except Exception as exc:  # noqa: BLE001
         return _fail(exc)
@@ -395,7 +474,11 @@ def world_rebuild(name: str, pitch: float | None = None, fov: float | None = Non
     """
     try:
         body = {"name": name, "pitch": pitch, "fov": fov, "spec": spec, "note": note or None}
-        return _ok(**_post("/bepic_worlds/rebuild", {k: v for k, v in body.items() if v is not None}))
+        changed = ", ".join(f"{k} {v}" for k, v in (("tilt", pitch), ("fov", fov), ("spec", spec)) if v is not None)
+        _progress(f"🏗️ Rebuilding '{name}'" + (f" with {changed}" if changed else "") + " …")
+        res = _post("/bepic_worlds/rebuild", {k: v for k, v in body.items() if v is not None})
+        _progress(f"✅ Rebuilt '{name}'" + (f" — version {res['version']}" if res.get("version") else ""))
+        return _ok(**res)
     except Exception as exc:  # noqa: BLE001
         return _fail(exc)
 
@@ -432,7 +515,10 @@ def world_edit(name: str, ops: str, note: str) -> str:
     """
     try:
         parsed = json.loads(ops) if isinstance(ops, str) else ops
-        return _ok(**_post("/bepic_worlds/edit", {"name": name, "ops": parsed, "note": note}))
+        _progress(f"✏️ Editing '{name}': {note}")
+        res = _post("/bepic_worlds/edit", {"name": name, "ops": parsed, "note": note})
+        _progress(f"✅ Saved as version {res.get('version')}" if res.get("version") else "✅ Saved")
+        return _ok(**res)
     except Exception as exc:  # noqa: BLE001
         return _fail(exc)
 
@@ -441,6 +527,7 @@ def world_edit(name: str, ops: str, note: str) -> str:
 def world_revert(name: str, version: int, note: str = "") -> str:
     """Go back to an earlier version (saved as a new version; nothing is lost)."""
     try:
+        _progress(f"↩️ Taking '{name}' back to version {int(version)}")
         return _ok(**_post("/bepic_worlds/revert", {"name": name, "version": int(version), "note": note}))
     except Exception as exc:  # noqa: BLE001
         return _fail(exc)
@@ -458,6 +545,7 @@ def world_feedback(name: str, status: str = "open") -> str:
     """
     try:
         entries = _get("/bepic_worlds/feedback", name=name, status=status or "open").get("feedback") or []
+        _progress(f"📌 {len(entries)} {status or 'open'} note{'s' if len(entries) != 1 else ''} on '{name}'")
         for e in entries:
             ref = e.pop("snapshot_view", None)
             e.pop("snapshot", None)
@@ -482,6 +570,7 @@ def world_resolve_feedback(name: str, ids: list, reply: str) -> str:
         reply: What was done, in a sentence.
     """
     try:
+        _progress(f"☑️ Marking {len(ids or [])} note{'s' if len(ids or []) != 1 else ''} done: {reply}")
         return _ok(**_post("/bepic_worlds/feedback/resolve", {"name": name, "ids": list(ids or []), "reply": reply}))
     except Exception as exc:  # noqa: BLE001
         return _fail(exc)
@@ -503,7 +592,9 @@ def world_calibrate(name: str, wait_seconds: float = 120.0) -> str:
             time.sleep(2.0)
             d = _get("/bepic_worlds/world", name=name, summary=1)
             if int(d.get("version") or 0) > before:
-                return _ok(matched=True, version=d["version"], note=((d.get("history") or [{}])[-1]).get("note"))
+                note = ((d.get("history") or [{}])[-1]).get("note")
+                _progress(f"✅ Look matched — {note}" if note else "✅ Look matched")
+                return _ok(matched=True, version=d["version"], note=note)
         return _ok(matched=False, note="no new version yet — the match runs in the viewer, which must be open "
                                        "in a browser tab that is visible (a background tab doesn't render)")
     except Exception as exc:  # noqa: BLE001
@@ -514,6 +605,7 @@ def world_calibrate(name: str, wait_seconds: float = 120.0) -> str:
 def world_open(name: str, version: int = 0) -> str:
     """Show a world (or one of its versions) in the user's viewer."""
     try:
+        _progress(f"👁️ Opening '{name}'" + (f" version {int(version)}" if version else "") + " in the viewer")
         return _ok(**_post("/bepic_worlds/open", {"name": name, "version": int(version) or None}))
     except Exception as exc:  # noqa: BLE001
         return _fail(exc)
@@ -524,7 +616,8 @@ def world_open(name: str, version: int = 0) -> str:
 def _make_mesh(name: str, label: str, crop: dict, seed: int) -> tuple[dict, str, bool]:
     """image_to_3d on one object crop → (GLB ref, workflow name, textured?)."""
     files, used, meta = _run_slot("image_to_3d", {"image": crop, "seed": int(seed)},
-                                  f"worlds/{_slug(name)}/{label}", timeout=2400)
+                                  f"worlds/{_slug(name)}/{label}", timeout=2400,
+                                  say=f"Turning the {label} into a 3D model (takes a few minutes)")
     glbs = files.get("mesh") or next(iter(files.values()))
     return glbs[0], used, bool(meta.get("textured"))
 
@@ -560,10 +653,13 @@ def world_add_objects(name: str, label: str, max_count: int = 12, known_height_m
         n = max(1, min(32, int(max_count)))
         ref = _stage_reference(name)
         seg, _used, _m = _run_slot("segment", {"image": ref, "prompt": f"{label}:{n}", "individual": True},
-                                   f"worlds/{_slug(name)}/seg_{label}")
+                                   f"worlds/{_slug(name)}/seg_{label}",
+                                   say=f"Finding every {label} in the picture (up to {n})")
         masks = seg.get("masks") or next(iter(seg.values()))
         crops = _post("/bepic_worlds/object_crops", {"name": name, "label": label, "masks": masks, "limit": n, "crops": 1})
         objs = crops.get("objects") or []
+        _progress(f"🔍 Found {len(objs)} {label}{'s' if len(objs) != 1 else ''}"
+                  + (f"; the clearest one becomes the model" if objs else ""))
         camera = None
         if fit_camera and known_height_m > 0:
             clean = [o for o in objs if not o.get("clipped") and o.get("solidity", 0) > 0.6]
@@ -585,7 +681,11 @@ def world_add_objects(name: str, label: str, max_count: int = 12, known_height_m
             return _ok(added=0, found=len(objs), camera=camera,
                        note="found, but none could be placed on the ground (behind the horizon, or clipped by the frame)")
         best = objs[0]
+        if len(placed) < len(objs):
+            _progress(f"• {len(objs) - len(placed)} of them can't stand on the ground (clipped, or past the horizon) — skipped")
         glb, used, textured = _make_mesh(name, label, best["crop"], seed)
+        _progress(f"📍 Standing {len(placed)} {label}{'s' if len(placed) != 1 else ''} where the picture shows them, "
+                  f"textured by {'the model' if textured else 'the picture'}")
         op = {"op": "add_asset", "label": label, "glb": glb, "bboxes": [o["bbox"] for o in placed]}
         if textured:
             op["textured"] = True
@@ -595,6 +695,7 @@ def world_add_objects(name: str, label: str, max_count: int = 12, known_height_m
                                            "note": f"{len(placed)} {label}{'s' if len(placed) != 1 else ''} "
                                                    f"from the picture ({used})"})
         spots = [{"height_m": o["placement"].get("height"), "distance_m": o["placement"].get("distance")} for o in placed]
+        _progress(f"✅ {len(placed)} {label}{'s' if len(placed) != 1 else ''} added — version {res.get('version')}")
         return _ok(added=len(placed), found=len(objs), label=label, version=res.get("version"),
                    ids=res.get("changed"), placements=spots, camera=camera, mesh=glb, workflow=used,
                    textured_by="the model" if textured else "the picture")
@@ -628,11 +729,12 @@ def world_add_props(name: str, description: str, height_m: float, label: str = "
         prompt = (f"{description}. A single object, the whole of it in view, three-quarter front view, "
                   "centred, plain white background, soft even studio light, photorealistic")
         pic, _used, _m = _run_slot("object_image", {"prompt": prompt, "seed": int(seed)},
-                                   f"worlds/{_slug(name)}/prop_{label}")
+                                   f"worlds/{_slug(name)}/prop_{label}", say=f"Picturing {description}")
         image = (pic.get("image") or [None])[0]
         mask = (pic.get("mask") or [None])[0]
         if not image or not mask:
             raise RuntimeError("the object_image workflow must give an 'image' and a 'mask'")
+        _progress("✂️ Cutting it out of its background")
         cut = _post("/bepic_worlds/cutout", {"name": name, "image": image, "mask": mask, "label": label})
         glb, used, textured = _make_mesh(name, label, cut["crop"], seed)
         op: dict = {"op": "add_asset", "label": label, "glb": glb, "height": float(height_m), "seed": int(seed)}
@@ -648,7 +750,11 @@ def world_add_props(name: str, description: str, height_m: float, label: str = "
                 center = [spawn[0], spawn[2]]
             op["scatter"] = {"count": max(1, int(count or 1)), "center": center, "radius": float(radius_m),
                              "spacing": float(height_m), "seed": int(seed)}
+        where = f"at {len(positions)} spot{'s' if len(positions) != 1 else ''}" if positions \
+            else f"scattered {op['scatter']['count']}× within {radius_m:g} m"
+        _progress(f"📍 Placing it {where}, {height_m:g} m tall")
         res = _post("/bepic_worlds/edit", {"name": name, "ops": [op], "note": f"{label}: {description} ({used})"})
+        _progress(f"✅ {label} added — version {res.get('version')}")
         return _ok(added=len(res.get("changed") or []), ids=res.get("changed"), version=res.get("version"),
                    picture=image, mesh=glb, workflow=used)
     except Exception as exc:  # noqa: BLE001
@@ -691,26 +797,33 @@ def world_make_material(name: str, surface: str = "floor", source: str = "pictur
         if source == "prompt":
             if not description:
                 raise ValueError("source='prompt' needs a description of the surface")
-            tex, _u, _m = _run_slot("texture_generate", {"prompt": _texture_prompt(description), "seed": int(seed)}, folder)
+            tex, _u, _m = _run_slot("texture_generate", {"prompt": _texture_prompt(description), "seed": int(seed)},
+                                    folder, say=f"Generating a seamless texture: {description}")
             texture = tex["texture"][0]
         else:
             ref = _stage_reference(name)
             seg, _u, _m = _run_slot("segment", {"image": ref, "prompt": _slug(surface).replace("_", " "),
-                                                "individual": False}, f"{folder}_seg")
+                                                "individual": False}, f"{folder}_seg",
+                                    say=f"Finding the {surface} in the picture")
             masks = seg.get("masks") or next(iter(seg.values()))
             crop = _post("/bepic_worlds/material_crop", {"name": name, "masks": masks, "label": _slug(surface)})
             patch = crop["patch"]
+            _progress(f"✂️ Cut the clearest near patch of {surface}")
             if not description:
+                _progress("👀 Looking at what the surface is made of …")
                 description = _describe(patch, (
                     f"This is a patch of the {surface} in a photo. In one sentence, say only what the surface is made "
                     "of and how it looks (material, colour, wear, pattern, marks) — words for a texture prompt."),
                     _slug(name)) or surface
+                _progress(f"📝 It is: {description}")
             texture = patch
             if refine:
                 tex, _u, _m = _run_slot("texture_refine", {"image": patch, "prompt": _texture_prompt(description),
-                                                           "denoise": float(denoise), "seed": int(seed)}, folder)
+                                                           "denoise": float(denoise), "seed": int(seed)}, folder,
+                                        say="Cleaning it into a sharp, seamless texture")
                 texture = tex["texture"][0]
-        maps, used, _m = _run_slot("material", {"image": texture}, folder)
+        maps, used, _m = _run_slot("material", {"image": texture}, folder,
+                                   say="Making albedo, normal and roughness maps")
         pick = {k: (maps.get(k) or [None])[0] for k in ("albedo", "normal", "roughness")}
         if not pick["albedo"]:
             raise RuntimeError("the material workflow gave no albedo")
@@ -719,6 +832,7 @@ def world_make_material(name: str, surface: str = "floor", source: str = "pictur
               **{k: v for k, v in pick.items() if v}}
         res = _post("/bepic_worlds/edit", {"name": name, "ops": [op],
                                            "note": f"{surface} material: {description} ({source}, {used})"})
+        _progress(f"✅ {surface.capitalize()} material on, {tile_m:g} m per repeat — version {res.get('version')}")
         return _ok(applied=True, version=res.get("version"), description=description, patch=patch,
                    texture=texture, maps=pick)
     except Exception as exc:  # noqa: BLE001
@@ -739,14 +853,18 @@ def world_make_sky(name: str, description: str = "", seed: int = 7) -> str:
     """
     try:
         if not description:
+            _progress("👀 Looking at the picture's sky …")
             description = _describe(_stage_reference(name), (
                 "Describe only the sky in this photo in one sentence for an image prompt: time of day, clouds, "
                 "colours, haze, where the light comes from."), _slug(name)) or "a clear sky"
+            _progress(f"📝 Sky: {description}")
         prompt = (f"equirectangular 360 image, 360 panorama of the open sky: {description}. The horizon runs "
                   "straight across the middle, open land below it, no buildings, no text")
-        pano, used, _m = _run_slot("sky", {"prompt": prompt, "seed": int(seed)}, f"worlds/{_slug(name)}/sky")
+        pano, used, _m = _run_slot("sky", {"prompt": prompt, "seed": int(seed)}, f"worlds/{_slug(name)}/sky",
+                                   say="Painting a 360° sky")
         res = _post("/bepic_worlds/edit", {"name": name, "ops": [{"op": "set_sky", "panorama": pano["panorama"][0]}],
                                            "note": f"sky: {description} ({used})"})
+        _progress(f"✅ Sky set — version {res.get('version')}")
         return _ok(version=res.get("version"), description=description, panorama=pano["panorama"][0], workflow=used)
     except Exception as exc:  # noqa: BLE001
         return _fail(exc)
@@ -778,18 +896,20 @@ def world_add_motion(name: str, what: str, motion: str = "", seconds: float = 5.
         mask = None
         if what.strip().lower() not in ("all", "everything", ""):
             seg, _u, _m = _run_slot("segment", {"image": ref, "prompt": what, "individual": False},
-                                    f"worlds/{_slug(name)}/motion_seg")
+                                    f"worlds/{_slug(name)}/motion_seg", say=f"Finding the {what} in the picture")
             mask = (seg.get("masks") or next(iter(seg.values())))[0]
         prompt = (f"{motion or f'gentle, natural motion of the {what}'}. Locked-off tripod shot, the camera does "
                   f"not move at all. Only the {what} moves; everything else stays perfectly still. A seamless loop.")
         vid, used, _m = _run_slot("motion", {"image": ref, "prompt": prompt, "width": width, "height": height,
                                              "length": length, "seed": int(seed)},
-                                  f"worlds/{_slug(name)}/motion", timeout=3600)
+                                  f"worlds/{_slug(name)}/motion", timeout=3600,
+                                  say=f"Animating the {what}: a {length}-frame seamless loop (takes several minutes)")
         video = (vid.get("video") or next(iter(vid.values())))[0]
         op = {"op": "set_motion", "video": video}
         if mask:
             op["mask"] = mask
         res = _post("/bepic_worlds/edit", {"name": name, "ops": [op], "note": f"motion: {what} ({used})"})
+        _progress(f"✅ The {what} moves now — version {res.get('version')}")
         return _ok(version=res.get("version"), video=video, mask=mask, size=[width, height], frames=length,
                    workflow=used)
     except Exception as exc:  # noqa: BLE001

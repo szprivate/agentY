@@ -667,6 +667,43 @@ class ToolActivityHookProvider:
             pass
 
 
+class NarrationHookProvider:
+    """Forwards what a specialist says between its tool calls to the chat panel.
+
+    A specialist runs inside one of the orchestrator's tool calls, so nothing it
+    writes is streamed — the user sees the tool cards and, at the very end, its
+    answer. Its remarks alongside a tool call ("found 7 cars, now the pillars")
+    are exactly the running commentary missing from that, so each one goes to
+    the progress buffer as it is added. The final message (no tool call in it)
+    is the answer the orchestrator gets back, and is left to it.
+    """
+
+    def __init__(self, prefix: str = "") -> None:
+        self._prefix = prefix
+
+    def register_hooks(self, registry: HookRegistry, **kwargs) -> None:  # noqa: ARG002
+        from strands.hooks.events import MessageAddedEvent
+        registry.add_callback(MessageAddedEvent, self._on_message)
+
+    def _on_message(self, event, **kwargs) -> None:  # noqa: ANN001, ARG002
+        try:
+            msg = getattr(event, "message", None) or {}
+            if msg.get("role") != "assistant":
+                return
+            content = msg.get("content") or []
+            if not any(isinstance(c, dict) and "toolUse" in c for c in content):
+                return
+            text = " ".join(str(c.get("text") or "") for c in content if isinstance(c, dict)).strip()
+            if not text:
+                return
+            if len(text) > 400:
+                text = text[:400].rsplit(" ", 1)[0] + " …"
+            from agenty_core.utils.progress_signal import push
+            push(f"{self._prefix}{text}")
+        except Exception:  # noqa: BLE001
+            pass
+
+
 class ToolPermissionHookProvider:
     """Hold a tool that acts outside this process until a person says yes.
 
@@ -1726,6 +1763,9 @@ def create_world_builder_agent(
     # Each call is one job; what persists is the world itself (its versions,
     # history notes and feedback live in the world store, not in this agent).
     agent.conversation_manager = SlidingWindowConversationManager(window_size=40)
+    # A world takes minutes inside one orchestrator tool call; what the World
+    # Builder says between its steps goes to the chat panel as it says it.
+    agent.hooks.add_hook(NarrationHookProvider(prefix="🌍 "))
     return agent
 
 

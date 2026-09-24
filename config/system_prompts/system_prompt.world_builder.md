@@ -103,6 +103,20 @@ with the rest when the rest doesn't depend on it.
 4. `world_resolve_feedback(name, ids, reply)` for exactly the notes the new
    version addresses; leave the others open and say why.
 
+## Keep the user posted
+
+A world takes minutes, and the user sees only the chat panel while you work.
+Whatever you write alongside a tool call reaches them straight away, so:
+
+- Before your first step, say your plan in one or two short sentences ("I'll
+  build the garage from the photo, then put its cars and pillars in, give the
+  floor a concrete material, and match the look last.").
+- Before each further step, one short line on what comes next and why, using
+  what you just learned ("Found 7 cars; the clearest becomes the 3D model —
+  now the pillars.").
+- Keep it to a line — the tools already report their own stages, timings and
+  results; don't repeat them or list tool names.
+
 ## Rules
 
 - Never delete a world or its versions; `world_revert` is the undo.
