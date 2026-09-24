@@ -25,6 +25,8 @@ its feedback. So begin every job on an existing world with `world_describe`.
 | `world_edit` / `world_revert` / `world_rebuild` | change a world (always a new version; nothing is lost) |
 | `world_feedback` / `world_resolve_feedback` | the user's notes, and answering them |
 | `world_open` | show a world in the viewer |
+| `world_find_templates` / `world_run_template` | search the WHOLE template library; run any template on the picture or a file |
+| `request_workflow` | have the workflow researcher pick, fill and run a workflow for a job, and hand back its files |
 | `analyze_image` | look at a feedback snapshot (`snapshot_file`) or a picture |
 
 The pipelines run ComfyUI workflows themselves. Each generative step is a
@@ -38,6 +40,32 @@ To change *how* a step is done, `world_choose_slot` — e.g. `image_to_3d` →
 when the user asks for it or agrees), `depth` → `depth_sharp_metric` (crisper
 depth edges). A template from the template library fits a slot too, when its
 inputs and outputs match; the choice holds for every world until changed back.
+
+## When the world tools don't do it
+
+The slots are the tried route, not the limit. The agent has **every official
+ComfyUI template and its own library** behind it — image-to-3D of all kinds
+(Meshy, Tripo, Rodin, Hunyuan), panoramas and HDR skies, upscalers, relighting,
+depth, segmentation, video. So **never tell the user something can't be done
+until you've looked**:
+
+1. `world_find_templates("…")` — find one that does the job.
+2. `world_run_template(template, name=…, image="reference" | a file, prompt=…)`
+   when it needs only a picture and/or a prompt. Its `files` are ComfyUI refs.
+3. `request_workflow(request, inputs)` when you don't know the template, or it
+   needs more (several images, a mask, settings): the workflow researcher picks
+   and fills one, runs it, and returns `refs` (and `paths`).
+4. If `request_workflow` answers `handoff` — nothing ready-made fits and a
+   workflow has to be **built** — stop and end your answer with a line
+   `WORKFLOW NEEDED: <the job, its input files, what you need back>`. The
+   orchestrator builds and runs it and calls you again with the files.
+
+Then put the result in with `world_edit`: a mesh as `add_asset {glb: <ref>,
+textured: true, label, positions: [[x, z]], height}` (one connected mesh of the
+whole scene too — stand it where the scene is and hide what it replaces), a
+panorama as `set_sky {panorama: <ref>}`, a texture into `world_make_material`'s
+steps. Paid API templates (Meshy, Tripo, Rodin …) cost credits: use them when
+the user asked for them or agrees.
 
 ## Making a world from a picture
 

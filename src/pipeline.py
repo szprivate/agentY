@@ -1065,7 +1065,14 @@ class Pipeline:
             picture; reading and acting on the notes the user pinned while
             walking it; reverting a world. It runs its own ComfyUI pipelines
             (depth, SAM3, Hunyuan3D, Chord) and opens the world in the bEpic
-            viewer — do NOT prepare or signal workflows for it.
+            viewer — do NOT prepare or signal workflows for it. It searches and
+            runs the whole template library itself, and asks the workflow
+            researcher for jobs no template of its own covers.
+
+            When its answer ends in ``WORKFLOW NEEDED: …`` no ready-made workflow
+            does that job: build it (prepare_workflow, then build/repair as
+            usual), run it with run_workflow_now, and call run_world_builder
+            again with the world's name and the output paths.
 
             Args:
                 request: The whole job in plain words. Include the world's name
@@ -1076,9 +1083,98 @@ class Pipeline:
             """
             from src.agent import create_world_builder_agent
             if self._world_builder_agent is None:
-                self._world_builder_agent = create_world_builder_agent()
+                self._world_builder_agent = create_world_builder_agent(extra_tools=[request_workflow])
             _push_progress("🌍 World Builder at work …")
             return await _run_specialist(self._world_builder_agent, "WORLD", request)
+
+        # The World Builder's way to the whole template library through the same
+        # researcher + assembler prepare_workflow uses — given to it alone (not in
+        # the list the orchestrator gets), and bound here because both live on
+        # this Pipeline. A request that needs a workflow built from scratch goes
+        # back up: the orchestrator has the building tools, the World Builder not.
+        @_tool
+        async def request_workflow(request: str, inputs: list | None = None) -> str:
+            """Have the workflow researcher pick, fill and RUN a ComfyUI workflow for
+            a job the world tools don't cover, and get its files back.
+
+            It searches the whole template library (the agent's own and every
+            official ComfyUI template), writes the prompt, assembles the workflow,
+            runs it, and returns the outputs — as local `paths` and as ComfyUI
+            `refs` the world edit ops take (`glb` of add_asset, `panorama` of
+            set_sky …). Prefer world_run_template when you already know the
+            template and it needs only one picture and/or a prompt.
+
+            Args:
+                request: The job in plain words, complete: what to make, from what,
+                    and the look ("one connected textured 3D mesh of the whole
+                    street in this picture, via Meshy image-to-3D").
+                inputs: The files it works from, in order: each {"file": <ComfyUI
+                    ref JSON, a filename in the input folder, a local path, or
+                    "reference:<world>" for a world's picture>, "role":
+                    "master_image|reference_image|mask|control_image|depth_map"}.
+            """
+            from src.executor import execute_workflow as _execute_workflow
+            from src.tools import worlds as _W
+            try:
+                staged = []
+                for item in inputs or []:
+                    f = item.get("file") if isinstance(item, dict) else item
+                    role = (item.get("role") if isinstance(item, dict) else None) or "master_image"
+                    if isinstance(f, str) and f.startswith("reference:"):
+                        ref = _W._stage_reference(f.split(":", 1)[1])
+                    else:
+                        ref = _W._as_ref(f)
+                    if ref and (ref.get("type") or "input") != "input":
+                        # The researcher stages from the input folder only.
+                        ref = _W._as_ref(_W._download(ref, "request_workflow"))
+                    if ref:
+                        name = "/".join(p for p in (ref.get("subfolder"), ref["filename"]) if p)
+                        staged.append({"filename": name, "role": role})
+            except Exception as exc:  # noqa: BLE001
+                return json.dumps({"status": "error", "error": f"could not stage the inputs: {exc}"})
+
+            _push_progress(f"🔎 Asking the workflow researcher: {request[:160]}")
+            raw_json, error = None, None
+            async with self._researcher_lease() as _researcher:
+                async for _ev in self._arun_researcher(request, staged, researcher=_researcher):
+                    if isinstance(_ev, dict) and "_researcher_done" in _ev:
+                        raw_json, error = _ev.get("raw_json"), _ev.get("error")
+            if error or not raw_json:
+                return json.dumps({"status": "error", "error": error or "the researcher produced no briefing"})
+            try:
+                briefing = BrainBriefing.model_validate(json.loads(raw_json))
+            except (json.JSONDecodeError, ValidationError) as exc:
+                return json.dumps({"status": "error", "error": f"invalid briefing: {exc}"})
+            if briefing.status == "blocked":
+                return json.dumps({"status": "blocked", "blockers": briefing.blockers})
+            result = await self._assemble_deterministic(briefing)
+            if result.get("status") != "ready":
+                # build_new / needs_fix / limit_exceeded: building and repairing are
+                # the orchestrator's tools. Hand the job up with everything it needs.
+                return json.dumps({
+                    "status": "handoff",
+                    "reason": result.get("status"),
+                    "detail": {k: result.get(k) for k in ("problems", "violations", "guidance", "workflow_path")
+                               if result.get(k)},
+                    "instruction": (
+                        "No ready-made workflow does this. Stop here and end your answer with a line "
+                        "'WORKFLOW NEEDED: <the job, the input files, what you need back>'. The orchestrator "
+                        "builds and runs it, then calls you again with the files."),
+                })
+            wf_path = result.get("workflow_path")
+            _push_progress(f"🧩 {Path(wf_path).name} assembled — running it")
+            paths: list[str] = []
+            try:
+                async for _line in _execute_workflow(wf_path, raw_json, user_message="",
+                                                     verbose=self._verbose, collected_paths=paths):
+                    _push_progress(str(_line))
+            except Exception as exc:  # noqa: BLE001
+                return json.dumps({"status": "error", "error": f"execution failed: {exc}",
+                                   "workflow_path": wf_path})
+            refs = [r for r in (_W.comfy_ref_for_path(p) for p in paths) if r]
+            _push_progress(f"📦 {len(paths)} file(s) back: " + ", ".join(Path(p).name for p in paths)[:200])
+            return json.dumps({"status": "done", "workflow_path": wf_path, "template": result.get("template"),
+                               "paths": paths, "refs": refs})
 
         @_tool
         async def run_planner(request: str) -> str:

@@ -169,7 +169,13 @@ these when the specialist's tuned skill helps; otherwise just do it yourself.
   materials, match the look, act on the notes the user pinned while walking
   it). Stage the picture first and pass its filename, your description of it,
   and the world's name. It runs its own pipelines and opens the world in the
-  viewer — no `prepare_workflow` / `signal_workflow_ready` for worlds.
+  viewer — no `prepare_workflow` / `signal_workflow_ready` for worlds. It
+  searches and runs the template library itself (and asks the workflow
+  researcher for jobs it can't place). When its answer ends in
+  `WORKFLOW NEEDED: …`, nothing ready-made does that job: build it
+  (`prepare_workflow` → build or repair as usual), run it with
+  `run_workflow_now`, then call `run_world_builder` again with the same world
+  and the output file paths, saying what they are for.
 - `run_planner(request)` — decomposes a complex multi-step request into ordered
   steps (use for genuinely multi-stage projects).
 - `add_canvas_workflow(name, description="")` — saves the graph the user has

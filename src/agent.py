@@ -1717,6 +1717,7 @@ def create_world_builder_agent(
     llm: str | None = None,
     ollama_model: str | None = None,
     anthropic_model: str | None = None,
+    extra_tools: list | None = None,
     **kwargs,
 ) -> Agent:
     """Create the World Builder — walkable 3D worlds from reference pictures.
@@ -1728,6 +1729,9 @@ def create_world_builder_agent(
 
     Reads ``pipeline.world_builder`` (``'provider,model'``); inherits the
     research/assembly tier. ``WORLDBUILDER_LLM`` overrides.
+
+    ``extra_tools`` are tools bound elsewhere — the pipeline passes its
+    ``request_workflow`` (the workflow researcher, for jobs no world tool does).
     """
     from src.tools.worlds import WORLD_TOOLS
     from src.tools import analyze_image
@@ -1738,7 +1742,7 @@ def create_world_builder_agent(
     _settings_llm, _settings_model = _parse_llm_setting(_raw)
     resolved_llm = llm or _settings_llm or "claude"
     system_prompt = _load_system_prompt("world_builder")
-    tools = [*WORLD_TOOLS, analyze_image]
+    tools = [*WORLD_TOOLS, analyze_image, *(extra_tools or [])]
     if resolved_llm == "ollama":
         agent = _make_agent(
             role="world_builder",

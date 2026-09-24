@@ -23,6 +23,14 @@ by its node types (its LoadImage nodes, its positive prompt, its save nodes).
 ``BEPIC_WORLDS_URL`` points the route calls somewhere other than ComfyUI (a test
 harness); workflows always run on ComfyUI itself.
 
+**Not only its own slots.** The slots are the tried route, not a fence:
+``world_find_templates`` searches the agent's whole template library (its own
+templates and every official ComfyUI one), ``world_run_template`` runs any of
+them on the world's picture or a file and hands back ComfyUI refs that the
+edit ops take (a mesh for ``add_asset``, a panorama for ``set_sky`` …), and
+``request_workflow`` (added by the pipeline, see src/pipeline.py) asks the
+workflow researcher to pick and assemble one from a plain request.
+
 **It says what it is doing.** A world takes minutes, most of them inside a
 tool, so every tool pushes a plain-words line to the chat panel at each stage
 (`_progress`: what it is finding, making, placing, and what came of it), and
@@ -359,6 +367,127 @@ def _describe(ref: dict, question: str, folder: str) -> str:
 def _texture_prompt(description: str) -> str:
     return (f"seamless tileable texture of {description}. Orthographic top-down view, flat even diffuse "
             "lighting, no shadows, no perspective, no objects, sharp fine surface detail, photorealistic")
+
+
+def comfy_ref_for_path(path: str) -> dict | None:
+    """A file on disk as ComfyUI names it: under its output folder it is an
+    output ref; anywhere else it is uploaded into the input folder first."""
+    try:
+        from agenty_core.utils.comfyui_client import comfyui_output_dir
+        out = comfyui_output_dir()
+        rel = Path(path).resolve().relative_to(out.resolve()) if out else None
+    except (ValueError, OSError, Exception):  # noqa: BLE001
+        rel = None
+    if rel is not None:
+        parts = rel.as_posix().rpartition("/")
+        return {"filename": parts[2], "subfolder": parts[0], "type": "output"}
+    return _as_ref(str(path)) if os.path.isfile(str(path)) else None
+
+
+# ── tools: the template library ──────────────────────────────────────────────
+
+@tool
+def world_find_templates(query: str, limit: int = 12) -> str:
+    """Search the WHOLE workflow template library — the agent's own templates
+    and every official ComfyUI template — for one that does a job the world
+    tools don't: Meshy/Tripo/Rodin/Hunyuan image-to-3D of a whole picture,
+    HDR or 360° skies, upscalers, relighting, other depth or segmentation
+    models, video. Run the one you pick with world_run_template.
+
+    Args:
+        query: What it should do, in a few words ("image to 3d meshy",
+            "360 panorama hdr", "upscale 4x").
+        limit: At most this many matches.
+    """
+    try:
+        from agenty_core.tools.comfyui import get_workflow_catalog
+        catalog = json.loads(get_workflow_catalog()) or {}
+        words = [w for w in str(query).lower().replace("-", " ").split() if len(w) > 1]
+        scored = []
+        for name, desc in catalog.items():
+            hay = f"{name} {desc}".lower().replace("_", " ").replace("-", " ")
+            score = sum(3 if w in name.lower() else 1 for w in words if w in hay)
+            if score:
+                scored.append((score, name, desc))
+        scored.sort(key=lambda t: (-t[0], t[1]))
+        hits = [{"template": n, "about": (d or "")[:240]} for _, n, d in scored[:max(1, int(limit))]]
+        _progress(f"🔎 Templates for “{query}”: {len(hits)} match{'es' if len(hits) != 1 else ''}"
+                  + (f" — {', '.join(h['template'] for h in hits[:3])}" if hits else ""))
+        return _ok(query=query, matches=hits, total=len(catalog))
+    except Exception as exc:  # noqa: BLE001
+        return _fail(exc)
+
+
+@tool
+def world_run_template(template: str, name: str = "", image: str = "", prompt: str = "",
+                       seed: int = 0, timeout_s: float = 2400) -> str:
+    """Run ANY template from the library (world_find_templates) — or one of the
+    pack's slot workflows by name — and get its files back as ComfyUI refs.
+
+    Those refs go straight into world edits: a mesh as `glb` of an `add_asset`
+    op, a panorama as `panorama` of `set_sky`, an image as input to the next
+    template. Use it for what the world tools don't do — e.g. Meshy on the
+    whole reference picture for one connected mesh of the entire scene.
+
+    The template's LoadImage node(s) take `image`, its first prompt box takes
+    `prompt`, its seed takes `seed`; its save nodes are the outputs. A template
+    that needs more (two images, a mask, special settings) is a job for
+    request_workflow instead.
+
+    Args:
+        template: The template's exact name.
+        name: The world, when `image` should default to its reference picture.
+        image: The input picture: "reference" (the world's picture, needs
+            `name`), a ComfyUI ref as JSON, a filename in ComfyUI's input
+            folder, or a local path. Empty = none (text-to-X templates).
+        prompt: Text for its prompt box, if it has one.
+        seed: Seed (0 = the template's own).
+        timeout_s: How long to wait for it.
+    """
+    try:
+        wf = _library_template(template)
+        if wf is None:
+            try:
+                wf = _get("/bepic_worlds/slot_template", name=template)
+            except Exception:  # noqa: BLE001
+                wf = None
+        if not wf:
+            raise ValueError(f"no template '{template}' in the library or the pack (see world_find_templates)")
+        inputs: dict = {}
+        img = str(image or "").strip()
+        if img.lower() == "reference" or (not img and name and any(
+                n.get("class_type") == "LoadImage" for n in wf.values())):
+            if not name:
+                raise ValueError("image='reference' needs the world's name")
+            inputs["image"] = _stage_reference(name)
+        elif img:
+            inputs["image"] = _as_ref(img)
+        if prompt:
+            inputs["prompt"] = prompt
+        prefix = f"worlds/{_slug(name or 'library')}/{_slug(template)}"
+        wf, outs = _bind(wf, inputs, prefix)
+        if seed:
+            for n in wf.values():
+                for k in ("seed", "noise_seed"):
+                    if isinstance(n.get("inputs", {}).get(k), int):
+                        n["inputs"][k] = int(seed)
+        _progress(f"⚙️ Running template {template}" + (f" on {name}'s picture" if inputs.get("image") and img.lower() in ("", "reference") else ""))
+        res = _run(wf, f"Template {template}", timeout=float(timeout_s))
+        files: dict[str, list] = {}
+        for nid, node_out in res.items():
+            oname = outs.get(nid, f"out_{nid}")
+            for key, vals in (node_out or {}).items():
+                if isinstance(vals, list):
+                    got = [v for v in vals if isinstance(v, dict) and v.get("filename")]
+                    if got:
+                        files.setdefault(oname if len(node_out) == 1 else f"{oname}_{key}", []).extend(got)
+        if not files:
+            raise RuntimeError(f"template {template} ran but saved no files")
+        _progress(f"📦 {sum(len(v) for v in files.values())} file(s) from {template}: "
+                  + ", ".join(v[0]["filename"] for v in files.values())[:200])
+        return _ok(template=template, files=files)
+    except Exception as exc:  # noqa: BLE001
+        return _fail(exc)
 
 
 # ── tools: slots ─────────────────────────────────────────────────────────────
@@ -920,5 +1049,5 @@ WORLD_TOOLS = [
     world_schema, world_create, world_rebuild, world_list, world_describe, world_edit, world_revert,
     world_feedback, world_resolve_feedback, world_calibrate, world_open,
     world_add_objects, world_add_props, world_make_material, world_make_sky, world_add_motion,
-    world_slots, world_choose_slot,
+    world_slots, world_choose_slot, world_find_templates, world_run_template,
 ]
