@@ -15,17 +15,28 @@ its feedback. So begin every job on an existing world with `world_describe`.
 |---|---|
 | `world_create` | a new world from a picture (with 16-bit depth, estimated for you) |
 | `world_add_objects` | real 3D copies of an object in the picture, where the picture shows them |
-| `world_make_material` | a real PBR material for the ground (or ceiling) from the picture |
+| `world_add_props` | made-up objects from words, standing where you say |
+| `world_make_material` | a tileable PBR material for the ground or ceiling — from the picture, or from words |
+| `world_make_sky` | a generated 360° sky for an outdoor world |
 | `world_calibrate` | match the look (exposure, light, fog) to the picture, by measurement |
+| `world_slots` / `world_choose_slot` | which ComfyUI workflow does each generative step; swap one |
 | `world_describe` / `world_list` / `world_schema` | read a world, list worlds, the format and every edit op |
 | `world_edit` / `world_revert` / `world_rebuild` | change a world (always a new version; nothing is lost) |
 | `world_feedback` / `world_resolve_feedback` | the user's notes, and answering them |
 | `world_open` | show a world in the viewer |
 | `analyze_image` | look at a feedback snapshot (`snapshot_file`) or a picture |
 
-The pipelines (`world_create`, `world_add_objects`, `world_make_material`) run
-ComfyUI workflows themselves — SAM3, Hunyuan3D 2.1, Chord, Depth Anything. You
-never build or submit workflows for them; you give words ("car", "floor").
+The pipelines run ComfyUI workflows themselves. Each generative step is a
+**slot** — depth, segment, image_to_3d, texture_refine, texture_generate,
+material, sky, object_image — filled by a workflow: by default Depth Anything
+(16-bit), SAM3, Hunyuan3D 2.1, Z-Image, Chord. You never build or submit
+workflows for them; you give words ("car", "floor", "a weathered park bench").
+
+To change *how* a step is done, `world_choose_slot` — e.g. `image_to_3d` →
+`i23d_meshy` (Meshy: better, PBR-textured meshes, but paid API credits — only
+when the user asks for it or agrees), `depth` → `depth_sharp_metric` (crisper
+depth edges). A template from the template library fits a slot too, when its
+inputs and outputs match; the choice holds for every world until changed back.
 
 ## Making a world from a picture
 
@@ -49,11 +60,19 @@ never build or submit workflows for them; you give words ("car", "floor").
    - Things that aren't objects on the ground — walls, the floor, the sky,
      ceilings, water — are not for this tool.
 4. **Materials**: `world_make_material(name, surface)` for the main ground
-   ("floor", "asphalt", "grass", "sand"), layer 0. Interiors: optionally the
-   ceiling (`terrain_id="ceiling"`, surface "ceiling").
-5. **Look**: `world_calibrate(name)` last — it measures the finished world
+   ("floor", "asphalt", "grass", "sand"), layer 0. It is described, refined by
+   diffusion and made tileable for you; give `description` yourself when you
+   know the surface better than a glance at a patch would ("worn grey polished
+   concrete with tyre marks"). Interiors: the ceiling too (`terrain_id="ceiling"`,
+   surface "ceiling"). A surface the picture shows too little of: `source="prompt"`
+   with a description.
+5. **Sky** (outdoors only): `world_make_sky(name)` — described from the picture
+   unless you say what it should be.
+6. **Props** only when asked (or when the user's notes ask for them):
+   `world_add_props(name, description, height_m, label, positions | count+center)`.
+7. **Look**: `world_calibrate(name)` last — it measures the finished world
    against the picture. Report its note ("error A → B").
-6. Tell the orchestrator the world's name and version, what is in it, and how
+8. Tell the orchestrator the world's name and version, what is in it, and how
    the user can walk it (Walk in the viewer's previz toolbar; Note to pin feedback).
 
 A step that fails is reported, not retried blindly: say what failed and go on
@@ -71,8 +90,11 @@ with the rest when the rest doesn't depend on it.
      `set` on `env` render/ambient fields.
    - "the cars look wrong" → `world_add_objects` again with another `seed`
      (then `remove` the old ids), or `remove` them.
-   - "floor looks fake" → `world_make_material` (another `tile_m`, or a
-     different surface word).
+   - "floor looks fake" → `world_make_material` (a better `description`,
+     another `tile_m`, `denoise` higher for more invented detail, lower to stay
+     closer to the photo).
+   - "put a bench here" → `world_add_props` at the note's point ([x, z]).
+   - "the sky is dull" → `world_make_sky` with a description.
    - "too many trees here" → `clear_area` at the note's point, or `scale_scatter`.
 4. `world_resolve_feedback(name, ids, reply)` for exactly the notes the new
    version addresses; leave the others open and say why.
