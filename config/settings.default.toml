@@ -248,7 +248,7 @@ coder = "claude,claude-haiku-4-5"
 #   query_templates, assemble_workflow, fix_workflow_assembly,
 #   generate_new_workflow                        -> research_assembly
 #   info, search_web, planner, learnings,
-#   llm_functions, build_skill                   -> fast_utility
+#   llm_functions, build_skill, triage           -> fast_utility
 #   executor_vision_model, vision_agent, video_agent  -> vision
 #   qa_checker          -> qa_judge
 #   coder               -> coder
@@ -276,6 +276,47 @@ vision_max_parallel = 0
 video_max_parallel = 0
 qa_checker = ""
 coder = ""
+
+# TRIAGE — read each message, then decide how much model the TURN deserves.
+#
+# "thanks, that's perfect" and "build a five-shot video from these four references"
+# both go to the orchestrator, and one model answering both is either too expensive
+# for the first or too weak for the second. With this on, each message is read once
+# (one short JSON call on the fast_utility tier, skipped for the obvious cases) and
+# the orchestrator is pointed at the seat below for that weight. It decides the
+# MODEL only — never which tools run or who handles the request.
+#
+# Anything that generates, plans, batches, touches the canvas or carries
+# attachments is complex; an acknowledgement, a question about what happened or a
+# settings change is simple. A short follow-up ("make it brighter") inherits the
+# weight of the turn it follows.
+#
+# Switching seats mid-conversation costs one prompt-cache write on the new model
+# (the history has to be sent to it once), which is why de-escalation is
+# deliberately reluctant. Nothing is lost: the conversation moves with it.
+[llm.triage]
+enabled = true
+# The two seats, as usual 'provider,model'. Blank = whatever [llm.tiers].orchestrator
+# is — so leaving `complex` blank keeps the composer's model picker in charge of the
+# model that answers the hard turns. A seat whose provider has no API key here falls
+# back the same way, so these defaults cannot re-point a DashScope-only install at a
+# model it can't call.
+simple = "claude,claude-haiku-4-5"
+complex = "claude,claude-sonnet-4-5"
+# Who reads the message. Blank = the `triage` role above, which itself inherits the
+# fast_utility tier — so `/switch_model triage <provider,model>` sets it too.
+# Anthropic, DashScope and Ollama only; anything else and triage leaves the model
+# alone rather than call the wrong endpoint.
+classifier = ""
+# Below this confidence the reading is thrown away and the seat stays as it is.
+min_confidence = 0.6
+# Seconds to wait for the classifier before giving up on it (and on this turn's
+# decision — never on the turn). Reading the message DOES add to how long the turn
+# takes to start: a hosted small model answers in 1–5s, so point `classifier` at the
+# fastest one you have (or a local Ollama model) rather than raising this.
+timeout = 10.0
+# Say which seat took the turn in the chat panel when it changes. Off = console only.
+announce = true
 
 [llm.ollama]
 host = "http://localhost:11434"
