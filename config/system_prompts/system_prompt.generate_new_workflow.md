@@ -38,10 +38,15 @@ signal readiness or submit — the pipeline runs the workflow after you finish.
    are relative to `get_comfyui_dirs().output_dir`; multiple savers of one kind
    share a path.
 
-3. **Verify and finish.** Confirm the graph validates (`validate_workflow`). Then
-   **report the final `workflow_path`** (the path `get_workflow_template` returned
-   for your scaffold, which you have been modifying in place) as the last line of
-   your reply, e.g. `workflow_path: <path>`.
+3. **Verify and finish.** Confirm the graph validates (`validate_workflow`) **and
+   that it reports no `dead_nodes`** — a node whose output nothing reads is never
+   executed by ComfyUI (a graph runs backwards from its output nodes), so it fails
+   nothing and silently does not happen. `valid: true` says nothing about it. Wire
+   each one into the branch that reaches an output node, or remove it; if you add a
+   node, wire its output in the same `update_workflow` call. Then **report the final
+   `workflow_path`** (the path `get_workflow_template` returned for your scaffold,
+   which you have been modifying in place) as the last line of your reply, e.g.
+   `workflow_path: <path>`.
 
 ## Look things up in batches, not one at a time
 The recipe tells you every node class the graph needs **before** you inspect any

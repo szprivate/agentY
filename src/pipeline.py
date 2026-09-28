@@ -6854,6 +6854,7 @@ class Pipeline:
         m = re.search(r"workflow_path[\"']?\s*[:=]\s*[\"']?([^\s\"'\n]+)", out)
         wf = (m.group(1).strip() if m else "") or (_latest_output_workflow() or "")
         if wf and os.path.exists(wf):
+            await self._settle_dead_nodes(agent, wf)
             _push_progress("✅ New workflow built.")
             if self._verbose:
                 print(f"pipeline: generate_new_workflow produced — {wf}")
@@ -6861,6 +6862,95 @@ class Pipeline:
         return {"status": "failed",
                 "error": "generate agent did not produce a workflow file",
                 "output": out[:400]}
+
+    # How many times a build is handed back over nodes that will never execute.
+    # One: the list is exact and the fix is mechanical, so a builder that does not
+    # act on it the first time will not act on it the third either.
+    _MAX_DEAD_NODE_ROUNDS = 1
+
+    async def _settle_dead_nodes(self, agent, workflow_path: str) -> dict:
+        """Make sure every node in a freshly built workflow will actually run.
+
+        ComfyUI executes a graph BACKWARDS from its output nodes, so a node whose
+        output nothing reads is skipped entirely — it does not fail, it just never
+        happens, and neither local nor server validation says a word. Measured on
+        three from-scratch builds: two came back with dead nodes and both validated
+        clean. One of them had built a `GetImageSize` to derive the resolution and
+        then left the latent at hardcoded dimensions, so "match the input image"
+        was silently dropped; another carried a whole unused guidance node.
+
+        So the build does not end on the builder's own say-so. The list is exact,
+        it is handed back once, and anything still dead afterwards is REMOVED —
+        safe by definition, since a node ComfyUI never runs cannot affect the
+        result — and said out loud, because a dead node is usually the trace of an
+        intention that went missing, not just clutter.
+        """
+        from agenty_core.tools.comfyui import update_workflow, validate_workflow
+
+        async def _dead() -> list:
+            try:
+                raw = await asyncio.to_thread(validate_workflow, workflow_path)
+                return [d for d in (json.loads(raw).get("dead_nodes") or [])
+                        if isinstance(d, dict)]
+            except Exception as exc:  # noqa: BLE001 — a check must not fail a build
+                if self._verbose:
+                    print(f"pipeline: dead-node check skipped ({exc}).")
+                return []
+
+        dead = await _dead()
+        if not dead:
+            return {"dead": 0, "handed_back": 0, "pruned": []}
+        for _round in range(self._MAX_DEAD_NODE_ROUNDS):
+            names = ", ".join(f"{d['node_id']} ({d['class_type']})" for d in dead)
+            _push_progress(f"🔌 {len(dead)} node(s) would never run — fixing the wiring: {names}")
+            listing = "\n".join(
+                f"- node {d['node_id']} ({d['class_type']}"
+                + (f", titled {d['title']!r}" if d.get("title") else "") + ")"
+                for d in dead)
+            handback = (
+                f"The workflow you just built has {len(dead)} node(s) that ComfyUI "
+                "will NEVER execute. A graph runs backwards from its output nodes, so "
+                "a node whose output nothing reads is skipped entirely — it does not "
+                "fail validation, it simply does not happen:\n\n" + listing + "\n\n"
+                f"The file is {workflow_path}. For EACH of them, decide which it is:\n"
+                "1. It was meant to do something and the wire is missing — that is the "
+                "usual case, and it means the graph is not doing what the briefing "
+                "asked. Wire its output into the branch that reaches the output node "
+                "(e.g. a size-deriving node's width/height belong in the latent's "
+                "width/height; a decoded audio output belongs in the video node's "
+                "`audio` input).\n"
+                "2. It is genuinely redundant — remove it with "
+                "update_workflow(remove_nodes=[...]).\n\n"
+                "Change nothing else, then end your reply with the same "
+                "`workflow_path:` line.")
+            try:
+                async with asyncio.timeout(self._FIX_ASSEMBLY_TIMEOUT):
+                    await agent.invoke_async(handback)
+            except (TimeoutError, asyncio.TimeoutError):
+                if self._verbose:
+                    print("pipeline: dead-node repair timed out.")
+                break
+            except Exception as exc:  # noqa: BLE001
+                if self._verbose:
+                    print(f"pipeline: dead-node repair failed ({exc}).")
+                break
+            dead = await _dead()
+            if not dead:
+                _push_progress("🔌 Wiring fixed — every node in the graph runs.")
+                return {"dead": 0, "handed_back": _round + 1, "pruned": []}
+        # Still dead: take them out, and say which — the graph is now honest about
+        # what it does, and the user can see what the builder failed to wire.
+        ids = [d["node_id"] for d in dead]
+        try:
+            await asyncio.to_thread(update_workflow, workflow_path, "[]", "[]",
+                                    json.dumps(ids))
+        except Exception as exc:  # noqa: BLE001
+            print(f"pipeline: could not remove dead node(s) {ids} ({exc}).")
+            return {"dead": len(dead), "handed_back": 1, "pruned": []}
+        listed = ", ".join(f"{d['node_id']} ({d['class_type']})" for d in dead)
+        _push_progress(f"⚠️ Removed {len(dead)} node(s) the graph never reached: {listed}. "
+                       "If one of them was meant to do something, say so and I will wire it in.")
+        return {"dead": len(dead), "handed_back": 1, "pruned": ids}
 
     @staticmethod
     def _server_unreachable(server_errors) -> bool:

@@ -132,6 +132,7 @@ update_workflow(workflow_path, patches=<patches_json>, add_nodes=<add_nodes_json
 ## Step 6 — Handle errors and retry
 
 - If `update_workflow` returns `status: "error"`: read the message, fix the specific issue (wrong connection index, missing required input, duplicate node ID, removed node still referenced), and call `update_workflow` again immediately. Retry up to 3 times, then report with `task_id` and stop. Do not ask the user.
+- If it returns `dead_nodes` (status may still be `"ok"` — this is a warning, not an error): each listed node will never execute. Wire it into the branch that reaches the output node, or remove it, and call `update_workflow` again. A build that ends with `dead_nodes` is handed straight back to you, so there is nothing to gain by reporting it as finished.
 - If a required node class is not found by `get_node_schema` (does not exist in the ComfyUI instance): report with `task_id` and stop. Do not substitute an incompatible node class.
 
 ---
@@ -159,6 +160,11 @@ If no close match exists, pick the simplest `txt2img` template, then continue fr
 - **Never guess model file names** — model paths come from the brainbriefing (Query Templates-verified). Never look them up here.
 - **Never reuse node IDs** that appear in `remove_nodes` — assign fresh IDs to all added nodes.
 - **Preserve paired nodes** — when the recipe lists a node with `min_instances >= 2`, both/all copies must be present and wired to their distinct roles.
-- **Always wire output nodes** (`SaveImage`, `VHS_VideoCombine`, `CreateVideo`, ...) to the final IMAGE/LATENT/AUDIO output. An unconnected output node fails validation.
+- **Always wire output nodes** (`SaveImage`, `VHS_VideoCombine`, `CreateVideo`, ...) to the final IMAGE/LATENT/AUDIO output. An output node with a required input unwired fails validation.
+- **Every node must lead to an output node.** ComfyUI executes a graph BACKWARDS from its outputs, so a node whose output nothing reads is not run at all — it does not fail, it silently does not happen, and neither local nor server validation says a word about it. `update_workflow` and `validate_workflow` report these as `dead_nodes`: **read that field and fix every entry before you report the workflow_path.** Three real examples, each of which validated clean:
+  - a `GetImageSize` added to derive the resolution while the latent kept hardcoded `width`/`height` — the input image's aspect ratio was silently ignored;
+  - a `VAEDecodeAudio` whose audio never reached the video node, because `CreateVideo.audio` is an *optional* input and was left unwired — a silent video out of an audio model;
+  - a second `VAEDecodeTiled` decoding the same latent as the `VAEDecode` that was wired.
+  If you add a node, wire its output in the same `update_workflow` call that adds it. If it turns out you don't need it, remove it — do not leave it floating.
 - **All connections must be type-safe** — verify input names, output slot indices, and types via `get_node_schema` when unsure (it is the authoritative, always-current source for this ComfyUI instance).
 - **`signal_workflow_ready` is NOT called in this skill** — return `workflow_path` to the Brain, which handles handoff per its step 2 constraints.
