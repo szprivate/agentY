@@ -15,7 +15,7 @@
         "blender-mcp"
       ],
       "auth": "none",
-      "cwd": "D:\\AI\\agentY\\config\\mcp_bundles\\blender",
+      "cwd": "config/mcp_bundles/blender",
       "bundle": {
         "name": "Blender",
         "version": "1.0.3",
@@ -26,16 +26,16 @@
     "bepic_worlds": {
       "enabled": true,
       "transport": "stdio",
-      "command": "D:/ai/comfyui/.venv/Scripts/python.exe",
+      "command": "${PYTHON}",
       "args": [
         "-s",
         "-m",
         "bepic_worlds.mcp_server"
       ],
-      "cwd": "D:/AI/comfyui/custom_nodes/ComfyUI-bEpicWorlds",
+      "cwd": "${BEPIC_WORLDS_DIR}",
       "auth": "none",
       "env": {
-        "COMFYUI_URL": "http://127.0.0.1:8188"
+        "COMFYUI_URL": "${COMFYUI_URL}"
       }
     }
   }

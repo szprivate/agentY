@@ -1,6 +1,7 @@
 """agentY MCP support — expose tools from configured MCP servers to the orchestrator.
 
-Servers are declared in ``config/mcp.json`` (machine-local, gitignored)::
+Servers are declared in ``config/mcp.json`` (tracked, and shared between
+machines — so no machine's paths belong in it)::
 
     {"servers": {
         "magnific": {"enabled": true, "transport": "http",
@@ -16,6 +17,15 @@ Each server picks a ``transport`` (``http`` streamable / ``sse`` / ``stdio``) an
 * ``none``   — no auth.
 * ``header`` — static request headers; ``${ENV_VAR}`` references are expanded from
   the environment (put the secret in ``.env``).
+
+``${VAR}`` expands in a stdio server's ``command``, ``args``, ``cwd`` and ``env`` too.
+When the environment doesn't set one, a few are worked out on this machine
+(``_BUILTINS``): ``${PYTHON}`` (agentY's own interpreter), ``${AGENTY_ROOT}``,
+``${COMFYUI_URL}`` and ``${BEPIC_WORLDS_DIR}`` (the bEpic Worlds pack, found in the
+running ComfyUI's custom_nodes). A relative ``cwd`` is relative to agentY's folder,
+and a bundle whose recorded ``cwd`` isn't on this machine runs from its own
+``bundle.dir``. A server whose folder can't be found is skipped with a note saying
+which variable to set — never a crash, and never another machine's ``D:/…``.
 * ``oauth``  — OAuth 2.0 (e.g. Magnific). Tokens persist under ``config/.mcp_tokens/``
   and are reused silently on every start. The interactive browser sign-in is an
   explicit one-time step: ``authorize_server(name)`` (wired to POST
@@ -42,6 +52,7 @@ import json
 import logging
 import os
 import re
+import sys
 import threading
 import time
 import warnings
@@ -168,9 +179,93 @@ def save_mcp_config(cfg: dict) -> None:
 _ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
+_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def _comfy_custom_nodes() -> list[Path]:
+    """ComfyUI's custom_nodes folders on this machine: $COMFYUI_PATH's, then
+    what the running ComfyUI reports (it knows extra folders, and it is the only
+    one that knows where it was installed)."""
+    found: list[Path] = []
+    for var in ("COMFYUI_PATH", "COMFYUI_DIR"):
+        if os.environ.get(var):
+            found.append(Path(os.environ[var]) / "custom_nodes")
+    try:
+        from agenty_core.utils.comfyui_client import get_client
+        paths = (get_client().get("/internal/folder_paths") or {}).get("custom_nodes") or []
+        found += [Path(p) for p in paths if isinstance(p, str)]
+    except Exception:  # noqa: BLE001 — ComfyUI down or remote: nothing to add
+        pass
+    return [p for p in found if p.is_dir()]
+
+
+def _find_custom_node(marker: str) -> str:
+    """The custom node folder holding *marker* (a file inside it), whatever the
+    folder itself is called on this machine; '' when none does."""
+    for base in _comfy_custom_nodes():
+        try:
+            for child in sorted(base.iterdir()):
+                if (child / marker).is_file():
+                    return str(child)
+        except OSError:
+            continue
+    return ""
+
+
+def _comfy_url() -> str:
+    try:
+        from agenty_core.utils.comfyui_client import get_client
+        return str(get_client().base_url)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+# Variables worked out on this machine when the environment doesn't set them.
+_BUILTINS = {
+    "PYTHON": lambda: sys.executable,
+    "AGENTY_ROOT": lambda: str(_ROOT),
+    "COMFYUI_URL": _comfy_url,
+    "BEPIC_WORLDS_DIR": lambda: _find_custom_node(os.path.join("bepic_worlds", "mcp_server.py")),
+}
+_BUILTIN_CACHE: dict[str, str] = {}
+
+
+def _var(name: str) -> str:
+    if os.environ.get(name):
+        return os.environ[name]
+    if name in _BUILTINS:
+        if not _BUILTIN_CACHE.get(name):
+            _BUILTIN_CACHE[name] = _BUILTINS[name]() or ""
+        return _BUILTIN_CACHE[name]
+    return ""
+
+
 def _expand(value: str) -> str:
-    """Expand ``${VAR}`` references in *value* from the environment (blank if unset)."""
-    return _ENV_REF.sub(lambda m: os.environ.get(m.group(1), ""), str(value))
+    """Expand ``${VAR}`` references in *value* from the environment, else from
+    ``_BUILTINS`` (blank if neither knows it)."""
+    return _ENV_REF.sub(lambda m: _var(m.group(1)), str(value))
+
+
+def _stdio_cwd(sc: dict) -> str | None:
+    """Where a stdio server runs, on THIS machine — or a clear error naming what
+    to set. See the module docstring."""
+    raw = str(sc.get("cwd") or "")
+    if not raw:
+        return None
+    cwd = _expand(raw)
+    if cwd and not os.path.isabs(cwd):
+        cwd = str(_ROOT / cwd)
+    if cwd and os.path.isdir(cwd):
+        return cwd
+    bundle_dir = (sc.get("bundle") or {}).get("dir")
+    if bundle_dir and (_ROOT / bundle_dir).is_dir():
+        return str(_ROOT / bundle_dir)
+    unset = [m.group(1) for m in _ENV_REF.finditer(raw) if not _var(m.group(1))]
+    if unset:
+        hint = (" — the bEpic Worlds pack isn't in this machine's ComfyUI custom_nodes (or ComfyUI isn't "
+                "running); set BEPIC_WORLDS_DIR to its folder" if "BEPIC_WORLDS_DIR" in unset else "")
+        raise FileNotFoundError(f"its folder {raw} needs {', '.join(unset)}{hint}")
+    raise FileNotFoundError(f"its folder {cwd} isn't on this machine")
 
 
 def _expand_map(d) -> dict:
@@ -412,7 +507,7 @@ def _transport_callable(sc: dict, provider):
         params = StdioServerParameters(
             command=_expand(sc["command"]), args=[_expand(a) for a in (sc.get("args") or [])],
             env=_expand_map(sc.get("env")) or None,
-            cwd=_expand(sc["cwd"]) if sc.get("cwd") else None,
+            cwd=_stdio_cwd(sc),
         )
         return lambda: stdio_client(params)
     raise ValueError(f"unknown transport {transport!r}")

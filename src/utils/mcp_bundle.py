@@ -568,7 +568,9 @@ def install(token: str, name: str, values: dict | None = None) -> dict:
              "args": [str(a) for a in resolved["args"]], "auth": "none"}
     if resolved["env"]:
         entry["env"] = {str(k): str(v) for k, v in resolved["env"].items()}
-    entry["cwd"] = str(target)
+    # Relative to agentY's folder: mcp.json is shared between machines, and
+    # this machine's absolute path means nothing on the next one.
+    entry["cwd"] = f"config/mcp_bundles/{name}"
     entry["bundle"] = {"name": manifest.get("name"), "version": str(manifest.get("version")),
                        "dir": f"config/mcp_bundles/{name}", "signed": bool(meta.get("signed"))}
     discard(token)

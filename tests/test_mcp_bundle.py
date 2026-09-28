@@ -146,7 +146,8 @@ class InstallTest(_Root):
                          "a multi-value setting that is a whole argument becomes several")
         self.assertEqual(entry["env"], {"API_KEY": "${MCP_FILE_HELPER_API_KEY}", "HOME_DIR": str(Path.home())})
         self.assertEqual(out["secrets"], {"MCP_FILE_HELPER_API_KEY": "sk-1"}, "the key goes to .env, not the entry")
-        self.assertEqual(entry["cwd"], str(target))
+        self.assertEqual(entry["cwd"], "config/mcp_bundles/file_helper",
+                         "relative: mcp.json is shared between machines")
         self.assertEqual(entry["bundle"], {"name": "file-helper", "version": "1.2.0",
                                            "dir": "config/mcp_bundles/file_helper", "signed": False})
         self.assertEqual((target / "server" / "index.js").read_text(), "console.log('v1')")
@@ -243,13 +244,13 @@ class VersionTest(unittest.TestCase):
 class StdioLaunchTest(unittest.TestCase):
 
     def test_references_in_args_expand_and_the_bundle_folder_is_the_working_directory(self):
-        with mock.patch.dict(os.environ, {"MCP_T_KEY": "v"}), mock.patch("mcp.stdio_client") as client:
+        with tempfile.TemporaryDirectory() as folder,                 mock.patch.dict(os.environ, {"MCP_T_KEY": "v"}), mock.patch("mcp.stdio_client") as client:
             launch = mt._transport_callable({"transport": "stdio", "command": "node",
-                                             "args": ["--key=${MCP_T_KEY}"], "cwd": "/bundle"}, None)
+                                             "args": ["--key=${MCP_T_KEY}"], "cwd": folder}, None)
             launch()
-        params = client.call_args.args[0]
-        self.assertEqual(params.args, ["--key=v"])
-        self.assertEqual(str(params.cwd).replace("\\", "/"), "/bundle")
+            params = client.call_args.args[0]
+            self.assertEqual(params.args, ["--key=v"])
+            self.assertEqual(Path(params.cwd), Path(folder))
 
 
 if __name__ == "__main__":
