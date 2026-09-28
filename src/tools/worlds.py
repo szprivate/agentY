@@ -352,11 +352,13 @@ def _stage_reference(name: str) -> dict:
     return _post("/bepic_worlds/stage_reference", {"name": name})["reference"]
 
 
-def _describe(ref: dict, question: str, folder: str) -> str:
-    """What the vision agent sees in a picture, or '' when it can't look."""
+def _describe(ref: dict | str, question: str, folder: str) -> str:
+    """What the vision agent sees in a picture (a ComfyUI ref, or a file on
+    this machine), or '' when it can't look."""
     try:
         from src.tools.image_handling import analyze_image
-        out = analyze_image(file_path=_download(ref, folder), question=question)
+        path = ref if isinstance(ref, str) else _download(ref, folder)
+        out = analyze_image(file_path=path, question=question)
         if isinstance(out, dict) and out.get("status") == "ok":
             return " ".join(c.get("text", "") for c in out.get("content") or []).strip()
     except Exception:  # noqa: BLE001
@@ -1045,9 +1047,281 @@ def world_add_motion(name: str, what: str, motion: str = "", seconds: float = 5.
         return _fail(exc)
 
 
+# ── tools: the whole picture as one model, and a real sky ─────────────────────
+
+# Library templates that make a mesh from one picture, beyond the pack's own
+# scene_model workflows. Name patterns, then what rules one out.
+_I23D_NAME = ("image_to_model", "image_to_3d", "perspective_to_mesh")
+_I23D_NOT = ("text_to", "multiview", "multi_image", "multi_views", "mv_to", "model2uv", "retopo", "part",
+             "smart_topology", "gaussian_splat")
+# Pack workflows already cover these templates (same engine, set up for a whole picture).
+_I23D_COVERED = ("3d_pixal3d_trellis2_image_to_model", "3d_moge_perspective_to_mesh", "api_meshy_image_to_model",
+                 "api_tripo3_1_image_to_model", "3d_hunyuan3d_image_to_model", "3d_hunyuan3d-v2.1")
+
+
+def _scene_engines() -> dict:
+    """{name: {about, frame, textured, cost, source}} — every way to make one
+    model of the whole picture: the pack's scene_model workflows, then the
+    image-to-3D templates of the library they don't already cover."""
+    engines: dict = {}
+    slot = (_slot_info().get("slots") or {}).get("scene_model") or {}
+    for name, meta in (slot.get("templates") or {}).items():
+        engines[name] = {**meta, "source": "pack", "default": name == slot.get("default")}
+    try:
+        from agenty_core.tools.comfyui import get_workflow_catalog
+        catalog = json.loads(get_workflow_catalog()) or {}
+    except Exception:  # noqa: BLE001
+        catalog = {}
+    for name, desc in sorted(catalog.items()):
+        low = name.lower()
+        if not any(p in low for p in _I23D_NAME) or any(p in low for p in _I23D_NOT) or name in _I23D_COVERED:
+            continue
+        engines[name] = {"about": (desc or "")[:200], "frame": "object", "textured": None,
+                         "cost": "api" if low.startswith("api_") else "local", "source": "library"}
+    return engines
+
+
+@tool
+def world_scene_model_options() -> str:
+    """The ways to build a world around ONE 3D model of the whole picture —
+    the engines to choose from (TRELLIS.2, Pixal3D, Hunyuan3D, SHARP, MoGe,
+    Meshy, Tripo, and every other image-to-3D template in the library), each
+    with what it gives, whether it costs API credits, and how it is placed.
+
+    Let the USER choose: when they haven't named one, list these (briefly:
+    name, what it gives, local or paid) and ask. "object" models are fitted
+    to the picture (size from its buildings, turned and placed by measure);
+    "camera" models (SHARP, MoGe) are built in the picture's own camera, so
+    they line up with it exactly but hold only what the picture shows."""
+    try:
+        eng = _scene_engines()
+        _progress(f"🧭 {len(eng)} ways to model the whole picture: " + ", ".join(list(eng)[:8]))
+        return _ok(engines=eng, note="Ask the user which one unless they said. API engines cost credits.")
+    except Exception as exc:  # noqa: BLE001
+        return _fail(exc)
+
+
+def _world_camera(name: str) -> dict:
+    """The reference camera's vertical fov, picture size, and derived lens."""
+    import math
+    scene = _get("/bepic_worlds/world", name=name)
+    cam = next((i for i in scene.get("items", []) if i.get("id") == "refcam"), {}) or {}
+    w, h = cam.get("resolution") or [1920, 1080]
+    vfov = float(cam.get("fov") or 50.0)
+    hfov = math.degrees(2 * math.atan(math.tan(math.radians(vfov) / 2) * w / max(h, 1)))
+    return {"vfov": vfov, "hfov": hfov, "focal_mm": 18.0 / math.tan(math.radians(hfov) / 2), "size": [w, h]}
+
+
+@tool
+def world_scene_model(name: str, engine: str, height_m: float = 0.0, yaw: float = -1.0,
+                      remove_background: bool = True, seed: int = 7) -> str:
+    """Make ONE 3D model of the whole reference picture and build the world
+    around it: the model stands where the picture is (item `scene`), the
+    terrain is flattened to meet its ground, the flat picture it replaces is
+    hidden, and nothing grows inside it. Takes minutes.
+
+    Args:
+        name: The world (world_create first).
+        engine: One of world_scene_model_options — "s3d_trellis2",
+            "s3d_pixal3d", "s3d_hunyuan21", "s3d_sharp", "s3d_moge", "s3d_meshy",
+            "s3d_tripo", or a library template's name. API engines (Meshy,
+            Tripo, Rodin, api_*) cost credits: only when the user chose them.
+        height_m: The height of the scene's tallest parts in metres (its
+            buildings, trees) when you know it better than the picture's depth
+            does — e.g. three-storey houses ≈ 10-12. 0 = measured from the picture.
+        yaw: A fixed turn in degrees for an object model; -1 = found by fitting.
+        remove_background: TRELLIS.2 / Pixal3D only — cut the background first
+            (keep for one building; turn off for a whole street or landscape).
+        seed: Variant.
+    """
+    try:
+        eng = _scene_engines()
+        meta = eng.get(engine)
+        if meta is None:
+            raise ValueError(f"no engine '{engine}' — see world_scene_model_options: {', '.join(eng)}")
+        ref = _stage_reference(name)
+        cam = _world_camera(name)
+        folder = f"worlds/{_slug(name)}/scene"
+        if meta.get("source") == "pack":
+            files, used, _m = _run_slot(
+                "scene_model",
+                {"image": ref, "seed": int(seed), "remove_background": bool(remove_background),
+                 "focal_length_mm": round(cam["focal_mm"], 2), "fov_x": round(cam["hfov"], 2)},
+                folder, override=engine, timeout=3600,
+                say=f"Modelling the whole picture in 3D with {engine} (takes minutes)")
+            mesh = (files.get("mesh") or next(iter(files.values())))[0]
+            frame = meta.get("frame") or "object"
+        else:
+            _progress(f"⚙️ Modelling the whole picture in 3D with the template {engine} (takes minutes)")
+            wf = _library_template(engine)
+            if wf is None:
+                raise ValueError(f"no template '{engine}'")
+            wf, outs = _bind(wf, {"image": ref}, folder)
+            res = _run(wf, f"3D model ({engine})", timeout=3600)
+            refs = [v for node in res.values() for vals in (node or {}).values() if isinstance(vals, list)
+                    for v in vals if isinstance(v, dict) and str(v.get("filename", "")).lower().endswith((".glb", ".gltf", ".obj", ".ply"))]
+            if not refs:
+                raise RuntimeError(f"{engine} ran but saved no 3D model")
+            mesh, used, frame = refs[0], engine, "object"
+        op: dict = {"op": "set_scene_model", "glb": mesh, "frame": frame, "engine": used}
+        if height_m and height_m > 0:
+            op["height_m"] = float(height_m)
+        if yaw is not None and yaw >= 0:
+            op["yaw"] = float(yaw)
+        _progress("📐 Placing it where the picture is — " + (
+            "the camera it was built in puts it there" if frame != "object"
+            else "sizing it from the picture's buildings, then turning and moving it to fit"))
+        res = _post("/bepic_worlds/edit", {"name": name, "ops": [op], "note": f"scene model: {used}"}, timeout=900)
+        scene = _get("/bepic_worlds/world", name=name)
+        item = next((i for i in scene.get("items", []) if i.get("id") == "scene"), {}) or {}
+        fit = item.get("scene_model") or {}
+        size = fit.get("size_m")
+        said = f"✅ Scene model in — version {res.get('version')}"
+        if size:
+            said += f"; {size[0]:.0f} × {size[1]:.0f} × {size[2]:.0f} m"
+        if fit.get("error_m") is not None:
+            said += f", fits the picture to {fit['error_m']:.2f} m on {fit.get('coverage', 0) * 100:.0f}% of it"
+        _progress(said)
+        return _ok(version=res.get("version"), engine=used, frame=frame, mesh=mesh, fit=fit,
+                   check=("Is the size right? size_m is width × height × depth in metres. A street of houses "
+                          "should be ~8-15 m tall; if not, call again with height_m. A poor fit (error_m over "
+                          "~1.5 m or coverage under ~0.4) means the engine reshaped the scene; say so, or try "
+                          "another engine."))
+    except Exception as exc:  # noqa: BLE001
+        return _fail(exc)
+
+
+def _contact_sheet(reference: str, thumbs: list, out: str) -> str:
+    """The reference on top, numbered panoramas below — one picture for the
+    vision agent to compare."""
+    from PIL import Image, ImageDraw
+    ref = Image.open(reference).convert("RGB")
+    ref.thumbnail((1024, 420))
+    cells = []
+    for i, path in enumerate(thumbs, 1):
+        im = Image.open(path).convert("RGB").resize((500, 250))
+        d = ImageDraw.Draw(im)
+        d.rectangle([0, 0, 44, 36], fill=(0, 0, 0))
+        d.text((12, 8), str(i), fill=(255, 255, 255))
+        cells.append(im)
+    cols = 2
+    rows = (len(cells) + cols - 1) // cols
+    sheet = Image.new("RGB", (1024, ref.height + 12 + rows * 262), (255, 255, 255))
+    sheet.paste(ref, ((1024 - ref.width) // 2, 0))
+    for i, im in enumerate(cells):
+        sheet.paste(im, (6 + (i % cols) * 512, ref.height + 12 + (i // cols) * 262))
+    sheet.save(out)
+    return out
+
+
+def _read_json(text: str) -> dict:
+    import re
+    m = re.search(r"\{.*\}", text or "", re.S)
+    try:
+        return json.loads(m.group(0)) if m else {}
+    except ValueError:
+        return {}
+
+
+@tool
+def world_environment(name: str, description: str = "", resolution: str = "4k", generate: bool = True,
+                      indoor_ok: bool = False) -> str:
+    """Give a world a REAL environment: a photographed HDRI from the web (Poly
+    Haven, CC0) that matches the picture — its sky, its light and its
+    reflections, with the world's sun turned to where the picture's is. Only
+    when none fits is a high-resolution 360° sky generated instead (the sky
+    slot, 8192×4096). Prefer this to world_make_sky.
+
+    Args:
+        name: The world.
+        description: The sky and light in words ("overcast grey noon, soft
+            light, old town street"). Empty = the vision agent reads the picture.
+        resolution: HDRI size: "2k", "4k" (default), "8k" (heavy in a browser).
+        generate: Make a sky when no HDRI fits (default). False = report instead.
+        indoor_ok: Interiors don't show a sky; set true to light one with an
+            indoor HDRI anyway.
+    """
+    try:
+        import tempfile
+        from pathlib import Path
+        ref = _stage_reference(name)
+        want: dict = {}
+        if not description:
+            _progress("👀 Reading the picture's sky and light …")
+            want = _read_json(_describe(ref, (
+                "Look at this photo's sky and light. Answer ONLY with JSON: {\"indoor\": true|false, "
+                "\"time_of_day\": \"sunrise\"|\"midday\"|\"sunset\"|\"night\"|\"morning-afternoon\", "
+                "\"weather\": \"clear\"|\"partly_cloudy\"|\"overcast\"|\"foggy\", \"urban\": true|false, "
+                "\"words\": \"a few words on the sky, light and place\"}"), _slug(name)))
+            description = want.get("words") or ""
+            if want:
+                seen = ["indoors" if want.get("indoor") else "outdoors",
+                        str(want.get("time_of_day") or "").replace("_", " "),
+                        str(want.get("weather") or "").replace("_", " "),
+                        {True: "town", False: "nature"}.get(want.get("urban"), "")]
+                _progress("📝 " + ", ".join(w for w in seen if w) + (f" — {description}" if description else ""))
+        if want.get("indoor") and not indoor_ok:
+            return _ok(applied=False, note="an interior: its sky isn't seen, so no environment was set "
+                                           "(indoor_ok=true lights it with an indoor HDRI)")
+        params = {"query": description, "limit": 6,
+                  "time_of_day": want.get("time_of_day") or None, "weather": want.get("weather") or None,
+                  "environment": "indoor" if want.get("indoor") else "outdoor"}
+        if not want.get("indoor"):
+            # The world brings its own buildings and land; from the panorama it
+            # wants sky and distance, not another town's walls around it.
+            params["open_sky"] = "true"
+        _progress("🔎 Looking for a matching HDRI on Poly Haven …")
+        found = _get("/bepic_worlds/hdri_search", **params).get("matches") or []
+        pick = None
+        if found:
+            tmp = Path(tempfile.gettempdir()) / "agenty_worlds" / _slug(name) / "hdri"
+            tmp.mkdir(parents=True, exist_ok=True)
+            thumbs = []
+            for m in found:
+                try:
+                    r = requests.get(m["thumbnail"], timeout=30)
+                    r.raise_for_status()
+                    p = tmp / f"{m['id']}.png"
+                    p.write_bytes(r.content)
+                    thumbs.append((m, str(p)))
+                except Exception:  # noqa: BLE001
+                    continue
+            if thumbs:
+                sheet = _contact_sheet(_download(ref, _slug(name)), [p for _, p in thumbs], str(tmp / "choices.jpg"))
+                answer = _describe(sheet, (
+                    "The photo at the top is a scene. Below are numbered 360° HDR panoramas. The scene keeps its own "
+                    "buildings and ground; the panorama gives it its sky, light and far distance. Which ONE fits "
+                    "most believably — same time of day, weather, cloud and sun hardness, and nothing close by that "
+                    "would tower over the scene? Answer with just its number, or 0 if none is a reasonable match."),
+                    _slug(name))
+                import re
+                num = re.search(r"\d+", answer or "")
+                if num is None:
+                    pick = thumbs[0][0]                      # no eyes: the best-scored one
+                elif 1 <= int(num.group(0)) <= len(thumbs):
+                    pick = thumbs[int(num.group(0)) - 1][0]
+        if pick:
+            _progress(f"🌅 {pick['name']} fits — downloading it ({resolution}) and lighting the world with it")
+            res = _post("/bepic_worlds/hdri", {"name": name, "id": pick["id"], "resolution": resolution}, timeout=900)
+            sun = res.get("sun") or {}
+            _progress(f"✅ Environment: {pick['name']} — version {res.get('version')}"
+                      + (f", sun at {sun.get('azimuth')}° / {sun.get('elevation')}° up" if sun.get("shadows") else ", no direct sun"))
+            return _ok(applied=True, source="Poly Haven (CC0)", hdri=pick["id"], title=pick["name"],
+                       page=pick["page"], version=res.get("version"), sun=sun)
+        if not generate:
+            return _ok(applied=False, candidates=[m["id"] for m in found],
+                       note="no HDRI on Poly Haven fits the picture")
+        _progress("• No photographed HDRI fits — generating a high-resolution sky instead")
+        made = json.loads(world_make_sky(name=name, description=description))
+        return _ok(applied=made.get("status") == "ok", source="generated", sky=made)
+    except Exception as exc:  # noqa: BLE001
+        return _fail(exc)
+
+
 WORLD_TOOLS = [
     world_schema, world_create, world_rebuild, world_list, world_describe, world_edit, world_revert,
     world_feedback, world_resolve_feedback, world_calibrate, world_open,
+    world_scene_model_options, world_scene_model, world_environment,
     world_add_objects, world_add_props, world_make_material, world_make_sky, world_add_motion,
     world_slots, world_choose_slot, world_find_templates, world_run_template,
 ]

@@ -175,7 +175,10 @@ these when the specialist's tuned skill helps; otherwise just do it yourself.
   `WORKFLOW NEEDED: …`, nothing ready-made does that job: build it
   (`prepare_workflow` → build or repair as usual), run it with
   `run_workflow_now`, then call `run_world_builder` again with the same world
-  and the output file paths, saying what they are for.
+  and the output file paths, saying what they are for. When it ends in
+  `QUESTION FOR THE USER: …` (typically which 3D engine to build the world's
+  model with), ask the user exactly that, then call `run_world_builder` again
+  with the same world and their answer.
 - `run_planner(request)` — decomposes a complex multi-step request into ordered
   steps (use for genuinely multi-stage projects).
 - `add_canvas_workflow(name, description="")` — saves the graph the user has

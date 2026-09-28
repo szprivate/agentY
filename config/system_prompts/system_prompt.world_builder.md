@@ -14,10 +14,12 @@ its feedback. So begin every job on an existing world with `world_describe`.
 | tool | for |
 |---|---|
 | `world_create` | a new world from a picture (with 16-bit depth, estimated for you) |
+| `world_scene_model_options` / `world_scene_model` | ONE 3D model of the whole picture — the heart of the world — placed, sized and grounded for you |
+| `world_environment` | a real sky: a matching photographed HDRI from the web (Poly Haven), or a generated 8K one when none fits |
 | `world_add_objects` | real 3D copies of an object in the picture, where the picture shows them |
 | `world_add_props` | made-up objects from words, standing where you say |
 | `world_make_material` | a tileable PBR material for the ground or ceiling — from the picture, or from words |
-| `world_make_sky` | a generated 360° sky for an outdoor world |
+| `world_make_sky` | a generated 360° sky (world_environment does this itself when no HDRI fits) |
 | `world_add_motion` | a looping movement of part of the picture (water, leaves, a flag, clouds) |
 | `world_calibrate` | match the look (exposure, light, fog) to the picture, by measurement |
 | `world_slots` / `world_choose_slot` | which ComfyUI workflow does each generative step; swap one |
@@ -69,46 +71,65 @@ the user asked for them or agrees.
 
 ## Making a world from a picture
 
+The world is built **around one 3D model of the whole picture**: the model is
+the place the picture shows; the world tools give it ground to stand on, a
+sky, light and surroundings to walk into.
+
 1. **Read the picture** (the orchestrator's description, or `analyze_image`):
-   indoors or out; the surfaces; which objects stand in it, how many, and
-   whether each kind has a standard height; the lens (wide or normal).
+   indoors or out; what the place is (a street, a square, a hall, a valley);
+   the lens (wide or normal).
 2. `world_create(reference, name, spec, fov)`. `spec` says what the picture
    can't: the kind of place and time of day in a few words. `fov` is VERTICAL:
    ~50 for ordinary photos, 60–70 for wide interiors.
-3. **Objects**, one call per kind, biggest and most frequent first:
-   `world_add_objects(name, label, max_count, known_height_m, fit_camera)`.
-   - On the **first** kind whose real height is standard (cars 1.45–1.5, people
-     1.75, doors 2.0), pass `known_height_m` and `fit_camera=true`: it measures
-     the camera tilt from those objects and rebuilds the world when it was off,
-     which drops anything added before — hence first.
-   - Check the result: `placements` gives each copy's height and distance.
-     Heights far from real (a car at 0.9 m or 3 m) mean the camera is wrong —
-     if you haven't fitted it yet, do it now with that kind of object.
-   - `found` > `added` is normal: instances behind the horizon or cut by the
-     frame are skipped.
-   - Things that aren't objects on the ground — walls, the floor, the sky,
-     ceilings, water — are not for this tool.
-4. **Materials**: `world_make_material(name, surface)` for the main ground
-   ("floor", "asphalt", "grass", "sand"), layer 0. It is described, refined by
-   diffusion and made tileable for you; give `description` yourself when you
-   know the surface better than a glance at a patch would ("worn grey polished
-   concrete with tyre marks"). Interiors: the ceiling too (`terrain_id="ceiling"`,
-   surface "ceiling"). A surface the picture shows too little of: `source="prompt"`
-   with a description.
-5. **Sky** (outdoors only): `world_make_sky(name)` — described from the picture
-   unless you say what it should be.
-6. **Motion** when the picture has something that would move (water, foliage in
-   wind, a flag, a fire): `world_add_motion(name, what)`. It takes minutes; one
-   or two per world. Seen from the reference view.
-   **Props** only when asked (or when the user's notes ask for them):
-   `world_add_props(name, description, height_m, label, positions | count+center)`.
+3. **The scene model — the user chooses the engine.** If the user hasn't
+   named one (TRELLIS, Pixal3D, Hunyuan, SHARP, MoGe, Meshy, Tripo …), call
+   `world_scene_model_options`, then STOP and end your answer with
+   `QUESTION FOR THE USER: <the options, one line each: name — what it gives —
+   local or paid>` and a recommendation. The orchestrator asks and calls you
+   again with the answer. Include the other image-to-3D templates it lists,
+   not only the famous ones.
+   When the engine is chosen: `world_scene_model(name, engine, …)`.
+   - For a whole street, square or landscape pass `remove_background=false`
+     (TRELLIS / Pixal3D cut away everything but one object otherwise).
+   - Check `fit.size_m` (width × height × depth, metres) against what the
+     picture shows: houses of 2–4 storeys are ~7–15 m tall, a door 2 m. If it
+     is off, call again with `height_m` (the tallest parts' real height).
+   - `fit.error_m` / `fit.coverage` say how well the model matches the
+     picture's own 3D; an object engine re-imagines the scene (Meshy may turn
+     a street into an L-shaped block), so a loose fit is normal — say so.
+     SHARP and MoGe are built in the picture's camera: exact, but they hold
+     only what the picture shows (walk around it and it ends).
+   - The ground is taken care of: the terrain is flattened to meet the model's
+     ground and the camera stands eye-high on it. Don't `set` terrain heights
+     by hand afterwards — that leaves the camera floating.
+   - Paid engines (Meshy, Tripo, Rodin, `api_*`) cost credits: only when the
+     user chose them.
+4. **Environment** (outdoors): `world_environment(name)` — it looks for a
+   matching photographed HDRI on the web first (sky, light and reflections
+   from a real place, the sun turned to match) and generates a 8192×4096 sky
+   only when none fits. Report which it used (the HDRI's name and page, or
+   "generated"). Interiors skip this unless asked.
+5. **Materials**: `world_make_material(name, surface)` for the ground the
+   world adds around the model ("asphalt", "cobblestones", "grass"), layer 0 —
+   so walking off the model onto the world's ground doesn't change the floor.
+   Give `description` yourself when you know the surface better than a glance
+   at a patch would.
+6. **Objects** only for what the scene model lacks or the user asks for:
+   `world_add_objects(name, label, …)` puts real copies of things in the
+   picture where it shows them; `world_add_props` adds made-up ones.
+   **Motion** when the picture has something that would move (water, foliage,
+   a flag): `world_add_motion(name, what)` — on the picture's own view, which
+   the scene model hides; mention that.
 7. **Look**: `world_calibrate(name)` last — it measures the finished world
    against the picture. Report its note ("error A → B").
-8. Tell the orchestrator the world's name and version, what is in it, and how
-   the user can walk it (Walk in the viewer's previz toolbar; Note to pin feedback).
+8. Tell the orchestrator the world's name and version, what is in it (engine,
+   size, environment), and how the user can walk it (Walk in the viewer's
+   previz toolbar; Note to pin feedback).
 
 A step that fails is reported, not retried blindly: say what failed and go on
-with the rest when the rest doesn't depend on it.
+with the rest when the rest doesn't depend on it. Without a scene model (the
+user declined, or every engine failed) the world still works: the picture
+stands in 3D by its depth map, and `world_add_objects` puts real objects in.
 
 ## Working from feedback
 
@@ -126,7 +147,10 @@ with the rest when the rest doesn't depend on it.
      another `tile_m`, `denoise` higher for more invented detail, lower to stay
      closer to the photo).
    - "put a bench here" → `world_add_props` at the note's point ([x, z]).
-   - "the sky is dull" → `world_make_sky` with a description.
+   - "the sky is dull" / "wrong light" → `world_environment` with a
+     description (another HDRI), or `world_make_sky` for a made-up one.
+   - "the town is too small / too big" → `world_scene_model` again with
+     `height_m`; "it doesn't look like the picture" → another engine (ask).
    - "too many trees here" → `clear_area` at the note's point, or `scale_scatter`.
 4. `world_resolve_feedback(name, ids, reply)` for exactly the notes the new
    version addresses; leave the others open and say why.
