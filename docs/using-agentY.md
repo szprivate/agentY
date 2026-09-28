@@ -50,7 +50,6 @@ node, ready to wire into your next step.*
   - [It fixes the shape rather than re-rolling](#it-fixes-the-shape-rather-than-re-rolling)
 - [The agentY python node & collectors](#the-agenty-python-node--collectors)
 - [Settings & secrets](#settings--secrets)
-  - [Cheap or strong, per message](#cheap-or-strong-per-message)
 - [MCP servers](#mcp-servers)
 - [Token usage & cost](#token-usage--cost)
 - [Memory](#memory)
@@ -371,7 +370,6 @@ Type `/` in the composer for an autocomplete menu.
 | `/costs` | Open the cost overview — token usage and cost per model (also `/usage`) |
 | `/clearhistory` | Delete all conversation history |
 | `/switch_model <target> <provider,model>` | Set a model **tier**, a single role, or `all` (e.g. `/switch_model fast_utility dashscope,qwen3.6-flash`). Saved to `settings.local.json` |
-| `/triage` \| `/triage on` \| `/triage off` | Show or switch [cheap-or-strong per message](#cheap-or-strong-per-message) — which model answers which kind of request |
 | `/add_workflow <path>` \| `/add_workflow canvas <name>` | Register a workflow template (a JSON file, or the open graph) |
 | `/remove_workflow <name>` | Remove a registered template |
 | `/resend` | Resend the first user message |
@@ -1505,52 +1503,6 @@ usually wants a code-specialist model.
 Resolution order is in [Choosing models](#choosing-models). Changes apply on the
 **next agent start**.
 
-### Cheap or strong, per message
-
-"Thanks, that's the one" and "build a five-shot video from these four references,
-one room each" both go to the **Orchestrator**. One model answering both is either
-too expensive for the first or too weak for the second — so agentY reads each
-message before the turn starts and runs it on the seat that fits:
-
-| | |
-|---|---|
-| **simple** | an acknowledgement, a question about what just happened, a question about agentY itself, a setting change |
-| **complex** | anything that generates, edits, plans, batches, touches your canvas or comes with attachments — **and every follow-up to one of those** |
-
-A three-word follow-up counts as whatever it follows: "make it brighter" after a
-generation is a generation. Reading the message costs one short call on the **Fast
-utility** tier, and is skipped entirely where the answer is obvious — an attachment
-or a hook on the canvas is complex without asking, and "thanks" is simple without
-asking.
-
-Set it in **Settings ▸ Models ▸ Cheap or strong, per message**, or with `/triage`:
-
-* **simple** / **complex** — the two seats. Leave one *blank* and it uses the
-  **Orchestrator** tier, so the model picker in the composer still decides that one.
-  A seat whose provider has no API key here is ignored the same way.
-* **classifier** — who reads the message. Blank = the Fast utility tier. Anthropic,
-  DashScope and Ollama only; with anything else agentY leaves the model alone rather
-  than guess.
-* **min_confidence** — below this, the reading is thrown away and the turn runs on
-  whatever is already in the seat. So does a classifier that errors or times out:
-  triage never blocks a turn and never delays one by more than its `timeout`.
-
-Reading the message is a real round-trip, so it does add to how long a turn takes to
-*start* — measured at 4–8 s on a hosted `-flash` model. Point **classifier** at the
-fastest small model you have (a local Ollama one answers in well under a second)
-rather than raising `timeout`; the shortcuts mean it is not asked at all when you
-attach a file, when hooks drive the turn, or when you just say thanks.
-
-It decides the **model**, never the route — which tools run and who handles the
-request is the orchestrator's own business, exactly as before. When the seat
-changes, the panel says so (`🧭 Triage: complex → …`); switch `announce` off to keep
-that on the console only. The change lands immediately — no restart — and your
-conversation moves with it.
-
-One cost worth knowing: swapping seats mid-conversation means the new model has to
-be sent the history once (no prompt-cache hit on that first call). It is why
-follow-ups deliberately stay on the strong seat rather than bouncing back and forth.
-
 ---
 
 ## MCP servers
@@ -1694,9 +1646,6 @@ Any model value is `"provider,model"`. Providers: `claude`, `ollama`,
 
 Which model runs which job is set by **tier**, with per-role overrides for the
 exceptions — see [Choosing models: six tiers](#choosing-models-six-tiers-not-sixteen-dropdowns).
-The Orchestrator tier has one more layer on top: with triage on, each message is
-read first and the turn runs on the cheap or the strong seat — see
-[Cheap or strong, per message](#cheap-or-strong-per-message).
 First match wins: **CLI flag → environment variable → per-role override
 (`llm.pipeline`) → tier (`llm.tiers`) → built-in default**, with
 `config/settings.local.json` layered over `config/settings.default.toml` at each

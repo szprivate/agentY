@@ -88,13 +88,6 @@ _ALLOWED = (
             "each one is a real render", low=1, high=12),
     Setting("llm.history_window", "int",
             "how many past messages each turn carries", low=2, high=50),
-    # The switch, yes; the two seats, no — those are model choices, which is the
-    # one thing this list refuses (see the note above). "Stop switching models on
-    # me" is a sentence; "run the hard turns on qwen-max" belongs in the picker,
-    # where the available models are visible.
-    Setting("llm.triage.enabled", "bool",
-            "read each message first and run the turn on the cheap or the strong "
-            "model depending on what it asks for"),
 )
 
 _BY_KEY = {s.key: s for s in _ALLOWED}

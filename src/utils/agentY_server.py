@@ -197,7 +197,6 @@ SLASH_COMMANDS = [
     {"name": "/costs",           "description": "Open the cost overview (token usage per model)"},
     {"name": "/clearhistory",    "description": "Delete all conversation history (keeps the current thread)"},
     {"name": "/switch_model",    "description": "Switch an agent's LLM — /switch_model <agent|all> <provider,model> (use 'all' for every agent)"},
-    {"name": "/triage",          "description": "Pick the model per message (cheap vs strong) — /triage [on|off]"},
     {"name": "/add_workflow",    "description": "Add a ComfyUI workflow — /add_workflow <path/to/workflow.json> OR /add_workflow canvas <name> for the graph open in the canvas"},
     {"name": "/resend",          "description": "Resend the first user message of the current thread"},
     {"name": "/remove_workflow", "description": "Remove a workflow by name — /remove_workflow <template_name>"},
@@ -758,23 +757,41 @@ def _orchestrator_supports_vision() -> bool:
     sources (env var, then the per-role pin, then the tier), so a model set the
     normal way — ``llm.tiers.orchestrator`` — left this reading an empty string
     and answering about a model nobody was running.
-
-    The spec→can-it-see judgement itself lives in
-    :func:`src.utils.vision_capability.supports_vision`, because triage asks the
-    same question about the seat it is about to choose (see src/utils/triage.py):
-    a turn whose images were embedded here must never be handed to a text-only
-    model, and two copies of this rule would eventually disagree.
     """
     try:
         from src.agent import role_model
-        from src.utils.vision_capability import supports_vision
         # Same default as the factory in agent.py, so an unconfigured install is
         # judged on the model it will actually run, not on an empty string.
         raw = str(role_model("orchestrator", default="claude,claude-haiku-4-5",
                              env_var="ORCHESTRATOR_LLM") or "")
     except Exception:  # noqa: BLE001
         return False
-    return supports_vision(raw)
+    provider, _, model = raw.lower().partition(",")
+    provider = provider.strip()
+    model = (model or provider).strip()
+    # Operator overrides first, in both directions. Model families move faster
+    # than any list kept here, and both mistakes are costly now that this gates
+    # what gets sent: a missed multimodal model silently stops images reaching
+    # something that could read them, and a wrongly-assumed one breaks every
+    # turn of a conversation. Whoever runs the model knows; let them say.
+    try:
+        from src.utils.settings import load_settings
+        _llm = load_settings().get("llm") or {}
+        for pattern in (_llm.get("text_only_models") or []):
+            if str(pattern).lower().strip() and str(pattern).lower().strip() in model:
+                return False
+        for pattern in (_llm.get("vision_models") or []):
+            if str(pattern).lower().strip() and str(pattern).lower().strip() in model:
+                return True
+    except Exception:  # noqa: BLE001 — settings must never break the check
+        pass
+    # Providers whose current models are multimodal across the board.
+    if provider in ("claude", "anthropic", "bedrock", "google", "gemini"):
+        return True
+    # Otherwise require an explicit vision marker in the model id.
+    markers = ("-vl", "vl-", "vl:", "vision", "omni", "4o", "gpt-4.1", "o4-",
+               "llava", "minicpm-v", "gemma3", "gemma-3", "pixtral", "internvl", "moondream")
+    return any(m in model for m in markers)
 
 
 # ── Content builder (text + attached images/videos -> Strands content blocks) ─
@@ -1915,9 +1932,6 @@ def _handle_command(thread_id: str, text: str, canvas_prompt: dict | None = None
     if cmd in ("/switch_model", "switch_model"):
         return _switch_model(parts[1:] )
 
-    if cmd in ("/triage", "triage"):
-        return _triage_command(parts[1].strip().lower() if len(parts) > 1 else "")
-
     if cmd in ("/resend", "resend"):
         return None  # sentinel: handled in the chat route (re-runs first user msg)
 
@@ -2136,53 +2150,6 @@ def _switch_model(args: list[str]) -> list[dict]:
         lines.append("⚠️ Could not rebuild — these keep their previous model:\n"
                      + "\n".join(f"`{r}`: {err}" for r, err in change["failures"].items()))
     return [_sys("\n\n".join(lines))]
-
-
-def _triage_command(arg: str = "") -> list[dict]:
-    """``/triage`` — what the per-message model switch is doing, and turn it off.
-
-    No argument reports; ``on`` / ``off`` writes ``llm.triage.enabled`` to
-    settings.local.json, which the next turn reads (the seat is chosen per turn, so
-    there is nothing to rebuild and nothing to defer).
-    """
-    from src.utils import triage
-    from src.utils.settings import set_local
-
-    if arg in ("on", "off", "enable", "disable", "true", "false"):
-        want = arg in ("on", "enable", "true")
-        try:
-            set_local({"llm": {"triage": {"enabled": want}}})
-        except Exception as exc:  # noqa: BLE001
-            return [_sys(f"❌ Could not save the setting: {exc}")]
-        locked = os.environ.get("AGENTY_TRIAGE")
-        note = ("\n\n⚠️ `AGENTY_TRIAGE` is set in the environment and wins over this "
-                "until the host restarts." if locked is not None else "")
-        return [_sys(f"✅ Per-message model triage is **{'on' if want else 'off'}**."
-                     + ("" if want else " Every turn runs on the orchestrator tier again.")
-                     + note)]
-    if arg:
-        return [_sys("⚠️ Usage: `/triage` to see what it is doing, `/triage on` / "
-                     "`/triage off` to switch it.")]
-
-    on = triage.enabled()
-    simple, hard = triage.seat_for("simple"), triage.seat_for("complex")
-    lines = [f"🧭 **Per-message model triage: {'on' if on else 'off'}**",
-             f"- simple turns → `{simple or 'unset'}`",
-             f"- complex turns → `{hard or 'unset'}`",
-             f"- reads the message with → `{triage.classifier_spec() or 'nothing reachable'}`",
-             f"- ignores a reading below {triage.min_confidence():.2f} confidence"]
-    if simple and simple == hard:
-        lines.append("\nBoth seats are the same model, so nothing is ever switched — "
-                     "set `llm.triage.simple` to something cheaper in Settings ▸ Models.")
-    if not on:
-        lines.append(f"\nEvery turn runs on the orchestrator tier "
-                     f"(`{triage.configured_seat() or 'unset'}`). `/triage on` to change that.")
-    last = triage.last()
-    if last is not None:
-        lines.append(f"\nLast decision: **{last.complexity}** → `{last.seat}`"
-                     + (f" — {last.why}" if last.why else "")
-                     + f" _({last.source})_")
-    return [_sys("\n".join(lines))]
 
 
 # ── Legacy ComfyUI → agent image-review bridge (kept) ─────────────────────────

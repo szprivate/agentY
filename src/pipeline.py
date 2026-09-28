@@ -4335,43 +4335,6 @@ class Pipeline:
         return bool(_re.search(
             r"\b(spawn|spin\s*up|launch|create|use|delegate\s+to)\b[^.?!]{0,30}\bagents?\b", t))
 
-    async def _triage_seat(self, user_input, *, canvas_hooks: list | None = None,
-                           dry_run: bool = False) -> None:
-        """Point the orchestrator at the model this message deserves.
-
-        The decision itself — and every reason not to make one — lives in
-        :mod:`src.utils.triage`; this is the part that only the pipeline knows: what
-        came with the message. Two kinds of "there is media here" are told apart
-        because they mean different things: an image embedded as a content block
-        must go to a model that can read one, while a path mentioned in the text is
-        simply work.
-
-        A message that answers the agent's own question ("yes", "continue") is the
-        shortest text in agentY and the heaviest turn, so the plan gate and a
-        standing review halt are handed over too — a word list would file those as
-        small talk.
-        """
-        from src.utils import triage
-        if self._orchestrator_agent is None or not triage.enabled():
-            return
-        text = self._extract_text(user_input)
-        blocks = user_input if isinstance(user_input, list) else []
-        embedded = any(isinstance(b, dict) and ("image" in b or "video" in b)
-                       for b in blocks)
-        imgs, vids = Pipeline._scan_media_paths(text)
-        session = getattr(self, "_session", None)
-        decision = await triage.decide(
-            text,
-            conversation=str(getattr(session, "session_id", "") or ""),
-            has_media=bool(embedded or imgs or vids),
-            needs_vision=embedded,
-            has_hooks=any(isinstance(h, dict) for h in (canvas_hooks or [])),
-            dry_run=bool(dry_run),
-            pending_approval=bool(getattr(session, "plan_awaiting_reply", False)
-                                  or getattr(session, "review_halt", None)),
-        )
-        triage.apply_to(self._orchestrator_agent, decision)
-
     async def stream_async(self, user_input, *, qa_reply_queue: asyncio.Queue | None = None,
                            canvas_prompt: dict | None = None, canvas_hooks: list | None = None,
                            canvas_selection: list | None = None,
@@ -4401,15 +4364,6 @@ class Pipeline:
             _set_sa(self._user_asked_for_subagent(self._extract_text(user_input)))
         except Exception:  # noqa: BLE001
             pass
-        # Which model answers THIS message. Triage reads it, says simple or complex,
-        # and puts the orchestrator in the seat configured for that weight — here,
-        # between turns, because a model swapped inside a request would leave half a
-        # tool-call round-trip with one model and half with another.
-        try:
-            await self._triage_seat(user_input, canvas_hooks=canvas_hooks, dry_run=dry_run)
-        except Exception as exc:  # noqa: BLE001 — triage never costs a turn
-            if self._verbose:
-                print(f"pipeline: triage skipped ({exc}).")
         self._orch_turn_logged = False  # reset per turn; _log_orchestrator sets it
         try:
             async for event in self._astream_orchestrator(

@@ -37,7 +37,6 @@ An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanony
 - **In-panel Settings & token usage** — auth keys (`.env`), settings (`config/settings.local.json`) and per-model token cost, all from ComfyUI's own Settings panel.
 - **Hugging Face model management** — search, check local availability, download on demand.
 - **Multiple LLM backends** — Claude, Ollama, Alibaba/DashScope (Qwen), OpenAI (GPT) and Google (Gemini). Models are picked by **tier** (six of them) with per-role overrides for the exceptions, and the list is **discovered live** from each provider, so a vendor appears only when its key is set.
-- **Cheap or strong, per message** — each message is read before the turn starts (one short call on the cheap tier, skipped where the answer is obvious) and the turn runs on the seat that fits it: a thank-you or a "what did that cost?" on the small model, anything that generates, plans, batches or touches your canvas — and every follow-up to one of those — on the strong one. `/triage` to see or switch it.
 - **Custom-node creator** (⚠️ *experimental, untested*) — point the agent at a model's GitHub repo and it reads the docs and inference code and writes a self-contained **ComfyUI node pack** into `output/custom_nodes/<name>/`. See [Building a node](docs/using-agentY.md#building-a-node-for-a-new-model).
 
 ---
@@ -369,16 +368,6 @@ Models are chosen by **tier**, not one dropdown per role: set the six `llm.tiers
     "pipeline": {
       // per-role overrides; blank = inherit from the tier. Usually all blank.
       "video_agent": "dashscope,qwen3-vl-plus"
-    },
-    "triage": {
-      // Read each message, then run THIS turn on the cheap or the strong seat.
-      // Generating/planning/batching/canvas/attachments (and follow-ups to any of
-      // them) are complex; a thank-you or a question about what happened is simple.
-      // A blank seat uses llm.tiers.orchestrator.
-      "enabled": true,
-      "simple":  "dashscope,qwen3.6-flash",
-      "complex": "dashscope,qwen3.7-max",
-      "classifier": ""                              // blank = fast_utility tier
     },
     "dashscope": {
       // Public International endpoint; for mainland China use

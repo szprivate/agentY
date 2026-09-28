@@ -134,10 +134,6 @@ _ROLE_TIERS: dict[str, str] = {
     "qa_checker": "qa_judge",
     "coder": "coder",
     "world_builder": "research_assembly",
-    # Reads the user's message and decides how much model the turn deserves
-    # (src/utils/triage.py). One short JSON call, so it belongs with the other
-    # cheap ones — and it must never be the expensive part of a cheap turn.
-    "triage": "fast_utility",
 }
 
 # Human labels for the tier selectors (used by the settings UI via /agentY/settings).
@@ -862,33 +858,31 @@ _SPECIALIST_INTERJECT_ROLES = frozenset({
 })
 
 
-def build_model(
+def _make_agent(
     *,
     role: str,
     llm: str,
     system_prompt: str,
+    tools: list,
     ollama_model: str | None = None,
     anthropic_model: str | None = None,
     dashscope_model: str | None = None,
     max_tokens: int | None = None,
-):
-    """Build the provider client for *role*; returns ``(model, model_id)``.
-
-    Split out of :func:`_make_agent` so a model can be built WITHOUT building an
-    agent around it. Triage re-points the live orchestrator at a different model
-    between turns (see :func:`retarget_agent`), and a second copy of the provider
-    wiring would drift from this one — a model built the short way would quietly
-    lose the Anthropic prompt cache, the Ollama context window, or the DashScope
-    thinking switch.
+    plugins: list | None = None,
+    **kwargs,
+) -> Agent:
+    """Internal helper that builds a model and wraps it in a Strands Agent.
 
     Args:
-        role: Human-readable label used in log output (e.g. 'query_templates').
-        llm: LLM backend — ``'claude'``, ``'ollama'``, or an OpenAI-compatible provider.
-        system_prompt: Full system prompt string (Anthropic caches it in the request).
+        role: Human-readable label used in log output (e.g. 'query_templates', 'assemble_workflow').
+        llm: LLM backend – ``'claude'`` or ``'ollama'``.
+        system_prompt: Full system prompt string.
+        tools: List of @tool-decorated callables to give the agent.
         ollama_model: Override for the Ollama model ID.
         anthropic_model: Override for the Anthropic model ID.
-        dashscope_model: Model ID for the OpenAI-compatible providers.
-        max_tokens: Override for the provider's max_tokens.
+        max_tokens: Override for Anthropic max_tokens.
+        plugins: Optional list of Strands plugins (e.g. AgentSkills).
+        **kwargs: Extra kwargs forwarded to the Strands Agent constructor.
     """
     llm = llm.strip().lower()
     if llm == "ollama":
@@ -1023,42 +1017,6 @@ def build_model(
         )
         print(f"[agentY:{role}] Using Anthropic — {model_id} (thinking={_an_think})")
 
-    return model, model_id
-
-
-def _make_agent(
-    *,
-    role: str,
-    llm: str,
-    system_prompt: str,
-    tools: list,
-    ollama_model: str | None = None,
-    anthropic_model: str | None = None,
-    dashscope_model: str | None = None,
-    max_tokens: int | None = None,
-    plugins: list | None = None,
-    **kwargs,
-) -> Agent:
-    """Internal helper that builds a model and wraps it in a Strands Agent.
-
-    Args:
-        role: Human-readable label used in log output (e.g. 'query_templates', 'assemble_workflow').
-        llm: LLM backend – ``'claude'`` or ``'ollama'``.
-        system_prompt: Full system prompt string.
-        tools: List of @tool-decorated callables to give the agent.
-        ollama_model: Override for the Ollama model ID.
-        anthropic_model: Override for the Anthropic model ID.
-        max_tokens: Override for Anthropic max_tokens.
-        plugins: Optional list of Strands plugins (e.g. AgentSkills).
-        **kwargs: Extra kwargs forwarded to the Strands Agent constructor.
-    """
-    llm = llm.strip().lower()
-    model, model_id = build_model(
-        role=role, llm=llm, system_prompt=system_prompt, ollama_model=ollama_model,
-        anthropic_model=anthropic_model, dashscope_model=dashscope_model,
-        max_tokens=max_tokens,
-    )
-
     window_size = int(_cfg("AGENT_HISTORY_WINDOW", "history_window", default=40))
     agent_kwargs: dict = {
         "model": model,
@@ -1119,57 +1077,6 @@ def _make_agent(
     except Exception:
         pass
     return agent
-
-
-def agent_spec(agent) -> str:
-    """The ``'provider,model'`` an already-built *agent* is running, or ``""``.
-
-    Read off the cost metadata rather than the model client, because that is the
-    one place every provider records it in the same shape.
-    """
-    meta = getattr(agent, "_cost_meta", None)
-    if not isinstance(meta, dict):
-        return ""
-    provider = str(meta.get("provider") or "").strip()
-    model = str(meta.get("model_id") or "").strip()
-    return f"{provider},{model}" if provider and model else ""
-
-
-def retarget_agent(agent, spec: str, *, role: str = "agent") -> str:
-    """Point an already-built *agent* at another model. Returns the new spec.
-
-    Only the model client is replaced: ``Agent.model`` is read per call by the
-    Strands event loop, so the agent keeps its messages, tools, hooks, plugins and
-    (for the orchestrator) its loaded skills and MCP tools — none of which are
-    cheap to rebuild, and the messages of which are the conversation itself.
-
-    Used between turns, never during one: a swap mid-request would leave half a
-    tool-call round-trip with one model and half with another. The caller is
-    responsible for that (see :func:`src.utils.triage.decide`).
-
-    Raises ValueError for a spec that names no model, and whatever the provider
-    raises when its client cannot be built — the caller keeps the old model, which
-    is still working.
-    """
-    provider, _, model = str(spec or "").partition(",")
-    provider, model = provider.strip().lower(), model.strip()
-    if not provider or not model:
-        raise ValueError(f"{spec!r} is not a 'provider,model' spec")
-    system_prompt = str(getattr(agent, "system_prompt", "") or "")
-    built, model_id = build_model(
-        role=role, llm=provider, system_prompt=system_prompt,
-        ollama_model=model, anthropic_model=model, dashscope_model=model,
-    )
-    agent.model = built
-    # Cost accounting and the `model=` field in tokens_usage.log both read this;
-    # leaving it behind would bill the new model's tokens at the old one's rate.
-    try:
-        agent._cost_meta = {"provider": provider, "model_id": model_id,
-                            "is_ollama": (provider == "ollama")}
-        agent._is_claude = (provider != "ollama")
-    except Exception:  # noqa: BLE001
-        pass
-    return f"{provider},{model_id}"
 
 
 # ---------------------------------------------------------------------------

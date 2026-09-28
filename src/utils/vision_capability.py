@@ -67,48 +67,6 @@ def model_name(agent) -> str:
     return name.strip() if isinstance(name, str) else ""
 
 
-def supports_vision(spec: str) -> bool:
-    """Whether a ``'provider,model'`` spec can accept image content blocks.
-
-    Both mistakes hurt, and not symmetrically: a multimodal model wrongly taken
-    for text-only never gets shown an image, while a text-only one wrongly taken
-    for multimodal makes the provider reject EVERY turn of the conversation from
-    then on (DashScope's "Unexpected item type in content."), because the rejected
-    image stays in the history. So this errs toward False unless the model is
-    confidently multimodal.
-
-    The operator's own lists win, in both directions — model families move faster
-    than any list kept in the code, and whoever runs the model knows:
-    ``llm.text_only_models`` is checked first, then ``llm.vision_models``, both
-    plain substrings matched against the model id.
-    """
-    provider, _, model = str(spec or "").lower().partition(",")
-    provider = provider.strip()
-    model = (model or provider).strip()
-    if not provider:
-        return False
-    try:
-        from src.utils.settings import load_settings
-        llm = load_settings().get("llm") or {}
-        for pattern in (llm.get("text_only_models") or []):
-            text = str(pattern).lower().strip()
-            if text and text in model:
-                return False
-        for pattern in (llm.get("vision_models") or []):
-            text = str(pattern).lower().strip()
-            if text and text in model:
-                return True
-    except Exception:  # noqa: BLE001 — settings must never break the check
-        pass
-    # Providers whose current models are multimodal across the board.
-    if provider in ("claude", "anthropic", "bedrock", "google", "gemini"):
-        return True
-    # Otherwise require an explicit vision marker in the model id.
-    markers = ("-vl", "vl-", "vl:", "vision", "omni", "4o", "gpt-4.1", "o4-",
-               "llava", "minicpm-v", "gemma3", "gemma-3", "pixtral", "internvl", "moondream")
-    return any(marker in model for marker in markers)
-
-
 def blind_model_message(role: str, model: str = "", detail: str = "") -> str:
     """What to say when the model on *role* cannot see.
 

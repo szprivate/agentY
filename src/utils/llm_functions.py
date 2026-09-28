@@ -149,20 +149,6 @@ class LLMFunctions:
         return cls._from_spec(spec, default_model="qwen3:0.6b", default_max_tokens=2048)
 
     @classmethod
-    def for_spec(cls, spec: str, *, max_tokens: int = 1024) -> "LLMFunctions":
-        """Text client for an explicit ``provider,model`` spec.
-
-        For callers that resolve their own model through ``role_model`` rather than
-        taking ``llm.pipeline.llm_functions`` — e.g. triage, which reads each
-        message on the fast_utility tier (see src/utils/triage.py). A blank spec
-        falls back to :meth:`from_settings`' model.
-        """
-        if not str(spec or "").strip():
-            return cls.from_settings()
-        return cls._from_spec(str(spec).strip(), default_model="qwen3:0.6b",
-                              default_max_tokens=max_tokens)
-
-    @classmethod
     def for_vision(cls) -> "LLMFunctions":
         """Vision client from ``llm.pipeline.executor_vision_model`` (falls back to ``llm_functions``)."""
         settings = _load_settings()
