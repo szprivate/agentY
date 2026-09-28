@@ -61,16 +61,16 @@ class Builder:
 
 
 class Gate(unittest.TestCase):
-    """_settle_dead_nodes, with validate_workflow and update_workflow stubbed."""
+    """_settle_dead_nodes, with the detector and update_workflow stubbed."""
 
     def run_gate(self, agent, rounds: list, timeout: float = 30.0):
-        """*rounds* is what each successive validate_workflow call reports."""
+        """*rounds* is what each successive dead-node check reports."""
         answers = list(rounds)
         removed: list = []
 
-        def validate(_path):
-            return json.dumps({"valid": True,
-                               "dead_nodes": answers.pop(0) if answers else []})
+        def check(_path):
+            found = answers.pop(0) if answers else []
+            return found, [d["problem"] for d in found]
 
         def update(_path, _patches="[]", _adds="[]", remove_nodes="[]"):
             removed.extend(json.loads(remove_nodes))
@@ -79,7 +79,8 @@ class Gate(unittest.TestCase):
         pipe = Pipeline.__new__(Pipeline)
         pipe._verbose = False
         pipe._FIX_ASSEMBLY_TIMEOUT = timeout
-        with mock.patch("agenty_core.tools.comfyui.validate_workflow", validate), \
+        with mock.patch("agenty_core.tools.assembly_deterministic.dead_nodes_in_file",
+                        check), \
              mock.patch("agenty_core.tools.comfyui.update_workflow", update):
             res = asyncio.run(pipe._settle_dead_nodes(agent, "wf.json"))
         return res, removed
@@ -136,15 +137,15 @@ class Gate(unittest.TestCase):
         pipe._verbose = False
         pipe._FIX_ASSEMBLY_TIMEOUT = 30.0
         agent = Builder()
-        with mock.patch("agenty_core.tools.comfyui.validate_workflow",
+        with mock.patch("agenty_core.tools.assembly_deterministic.dead_nodes_in_file",
                         side_effect=OSError("comfyui is down")):
             res = asyncio.run(pipe._settle_dead_nodes(agent, "wf.json"))
         self.assertEqual(res, {"dead": 0, "handed_back": 0, "pruned": []})
         self.assertEqual(agent.prompts, [])
 
     def test_a_failed_removal_says_so_instead_of_claiming_a_clean_graph(self):
-        def validate(_path):
-            return json.dumps({"valid": True, "dead_nodes": DEAD})
+        def check(_path):
+            return DEAD, [d["problem"] for d in DEAD]
 
         def update(*_a, **_k):
             raise OSError("read-only file")
@@ -152,7 +153,8 @@ class Gate(unittest.TestCase):
         pipe = Pipeline.__new__(Pipeline)
         pipe._verbose = False
         pipe._FIX_ASSEMBLY_TIMEOUT = 30.0
-        with mock.patch("agenty_core.tools.comfyui.validate_workflow", validate), \
+        with mock.patch("agenty_core.tools.assembly_deterministic.dead_nodes_in_file",
+                        check), \
              mock.patch("agenty_core.tools.comfyui.update_workflow", update):
             res = asyncio.run(pipe._settle_dead_nodes(Builder(fixes=False), "wf.json"))
         self.assertEqual(res["dead"], 3)
@@ -169,8 +171,8 @@ class Wiring(unittest.TestCase):
                         src.index('return {"status": "ready"'))
 
     def test_the_detector_agrees_with_the_real_graph(self):
-        # The gate reads dead_nodes off validate_workflow; this is the other half
-        # of that contract — the shared detector on the same graph.
+        # The gate reads dead_nodes off the shared detector; this is the other half
+        # of that contract — the detector on the graph that produced this fixture.
         from agenty_core.tools.assembly_deterministic import dead_nodes
         info = {c: {"output": ["IMAGE"]} for c in
                 ("LoadImage", "CheckpointLoaderSimple", "GetImageSize",

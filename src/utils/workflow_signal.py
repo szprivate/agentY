@@ -14,6 +14,9 @@ import threading
 
 _lock = threading.Lock()
 _pending_paths: list[str] = []
+# Paths already handed back once over nodes that would never execute (see
+# dead_nodes_refused_once). Cleared with the queue.
+_dead_refused: set[str] = set()
 _hold: dict | None = None
 _hold_fired: bool = False
 
@@ -53,6 +56,28 @@ def hold_fired() -> bool:
         return _hold_fired
 
 
+def dead_nodes_refused_once(path: str) -> bool:
+    """Whether this is the FIRST time *path* has been handed back over dead nodes.
+
+    A workflow signalled with nodes ComfyUI would never execute is returned to the
+    agent once, while it still has the turn and can wire or remove them. Once only:
+    a second refusal of the same file would be a loop, and a graph that is merely
+    carrying something useless must never become a run that never happens. So the
+    second signal of the same path goes through, with the note that says what will
+    not run.
+
+    Lives here, next to the queue, because ``signal_workflow_ready`` is a
+    module-level tool shared with the subagents rather than a closure over the
+    pipeline — this mailbox is the one place they can all see. Cleared with the
+    queue, so the memory lasts exactly one handoff.
+    """
+    with _lock:
+        if path in _dead_refused:
+            return False
+        _dead_refused.add(path)
+        return True
+
+
 def append_workflow_path(path: str) -> None:
     """Append *path* to the pending queue (used for batch runs)."""
     global _pending_paths
@@ -83,4 +108,5 @@ def clear_and_get() -> list[str]:
     with _lock:
         paths = list(_pending_paths)
         _pending_paths = []
+        _dead_refused.clear()
         return paths

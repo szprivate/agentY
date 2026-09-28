@@ -6885,13 +6885,15 @@ class Pipeline:
         result — and said out loud, because a dead node is usually the trace of an
         intention that went missing, not just clutter.
         """
-        from agenty_core.tools.comfyui import update_workflow, validate_workflow
+        from agenty_core.tools.assembly_deterministic import dead_nodes_in_file
+        from agenty_core.tools.comfyui import update_workflow
 
         async def _dead() -> list:
+            # The graph plus cached /object_info — no server validation, because
+            # this is asked twice per build and answers the same either way.
             try:
-                raw = await asyncio.to_thread(validate_workflow, workflow_path)
-                return [d for d in (json.loads(raw).get("dead_nodes") or [])
-                        if isinstance(d, dict)]
+                found, _lines = await asyncio.to_thread(dead_nodes_in_file, workflow_path)
+                return [d for d in found if isinstance(d, dict)]
             except Exception as exc:  # noqa: BLE001 — a check must not fail a build
                 if self._verbose:
                     print(f"pipeline: dead-node check skipped ({exc}).")

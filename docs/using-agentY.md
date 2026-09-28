@@ -23,6 +23,7 @@ node, ready to wire into your next step.*
   - [Talking to a turn that is already running](#talking-to-a-turn-that-is-already-running)
   - [Undoing a step](#undoing-a-step)
 - [Generating & editing](#generating--editing)
+  - [Nodes that would never run](#nodes-that-would-never-run)
   - [Finding reference images on the web](#finding-reference-images-on-the-web)
   - [Marking up an image](#marking-up-an-image)
   - [Asking about a video](#asking-about-a-video)
@@ -270,6 +271,39 @@ Each finished image or video appears as a **loader node on your graph** (staged
 into ComfyUI's `input` dir), immediately wireable into your next workflow. The
 chat carries the agent's *text*; the media lands on the canvas. Toggle **🖼
 autograph** off if you'd rather it not place nodes automatically.
+
+### Nodes that would never run
+
+ComfyUI executes a graph **backwards from its output nodes**, so a node whose
+output nothing reads is not slow or misconfigured — it is skipped entirely. It
+fails no validation, and the run reports success while quietly doing less than it
+said. One real example: a decoded audio branch whose output never reached the video
+node's `audio` input, from a model whose whole point is synchronised sound. The
+video came out silent and nothing complained.
+
+Every workflow the agent builds or patches is now checked for this before it runs,
+and the graph is handed back to be fixed — usually by wiring the missing half, not
+by deleting anything. Two lines you may see in the run stream:
+
+```
+🔌 3 node(s) would never run — fixing the wiring: 9 (GetImageSize), 39 (VAEDecodeTiled), 40 (LTXVAddGuide)
+🔌 Wiring fixed — every node in the graph runs.
+```
+
+and, when the agent could not fix it, the honest version:
+
+```
+⚠️ Removed 1 node(s) the graph never reached: 12 (VAEDecodeAudio). If one of them
+   was meant to do something, say so and I will wire it in.
+```
+
+**That second one is worth reading**, because a node left hanging is usually the
+trace of an intention that went missing. A `GetImageSize` that reaches nothing
+means the resolution was hardcoded instead of taken from your image — the graph
+runs, and quietly ignores the aspect ratio you gave it.
+
+Your own canvas is never policed this way: a node you have parked while you work is
+your business, and only workflows the agent hands to the queue are checked.
 
 ### Finding reference images on the web
 
