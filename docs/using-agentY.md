@@ -308,32 +308,36 @@ your business, and only workflows the agent hands to the queue are checked.
 
 ### Refining a prompt round by round
 
-The loop most people actually run: ask for a prompt, **queue it yourself**, look at
-the render, say what to change, go again. The ✍ button in the panel's top bar makes
-that a thing agentY keeps track of instead of something you re-explain every round.
+The loop most people actually run: ask for a prompt, render it, look, say what to
+change, go again. The ✍ button in the panel's top bar makes that a thing agentY keeps
+track of instead of something you re-explain every round.
 
-**Starting it:** click your prompt node on the canvas, then click **✍**. (No
-selection? Turn it on anyway and say which node — or let the agent ask.) From then on:
+**Starting it:** click your prompt node on the canvas, then click **✍** — in any
+conversation, including a brand-new empty one. (No selection? Turn it on anyway and say
+which node — or let the agent ask.) From then on:
 
 1. *"a rainy neon alley, shot on 35mm, puddles catching the signs"* → the agent writes
-   it into that node and **nothing runs**. The prompt is on your canvas as **v1**.
-2. You queue the graph in ComfyUI and look at the render.
-3. *"too dark, and lose the rim light"* → the agent finds the render you just made in
-   ComfyUI's history, **looks at it** against the prompt that made it, and writes **v2**.
+   it into that node as **v1** and the graph is **queued for you** — ComfyUI's own
+   Queue, on your open canvas, exactly as if you had pressed it.
+2. You look at the render.
+3. *"too dark, and lose the rim light"* → the agent finds that render in ComfyUI's
+   history, **looks at it** against the prompt that made it, writes **v2**, and queues it.
 
-Every version appears as a chip above the message box — `v1 v2 v3`, newest
-highlighted, hover to read the whole prompt, and **click one to put it back on the
-canvas** (recorded as a new version, so the trail stays honest). A chip is dimmed
-until a render comes back for it. *"Back to v2 but keep the fog"* works in words too.
+Every prompt the agent writes appears as a chip above the message box — `v1 v2 v3`,
+hover to read the whole prompt. The highlighted chip is the **active** version, the one
+on your canvas now. **Click another to make it active**: its prompt goes straight back
+into the node, and nothing new is added to the list. The agent's next prompt then
+starts from that version. A chip is dimmed until a render comes back for it.
+*"Back to v2 but keep the fog"* works in words too.
 
 The loop belongs to **this conversation**: switch threads and you switch loops, reload
 the tab and it is still there, with its versions. Switching ✍ off keeps them — turn it
 back on to carry on where you were.
 
-**It never queues anything.** That is the point: the agent writes text into a node, you
-decide what is worth rendering. If you want the opposite — state a goal once and have
-the agent run the graph over and over until it holds — that is
-[Loops](#loops-keep-trying-until-its-right).
+**It queues your graph, and only that.** Each new version is rendered once, by the
+normal Queue; picking an older version in the strip does not re-render it. If you want
+the opposite — state a goal once and have the agent run the graph over and over until
+it holds — that is [Loops](#loops-keep-trying-until-its-right).
 
 > The `iterate` hook purpose did a version of this where the agent ran the graph for
 > you, one generation per turn. It is gone; a saved graph that still carries one is
@@ -742,7 +746,7 @@ next stage. See [Review](#review-stop-and-pick-what-continues) below.
 
 > There used to be an `iterate` purpose that turned the graph into a loop the agent
 > ran for you. It was replaced by the panel's
-> [prompt loop](#refining-a-prompt-round-by-round), which leaves the queueing with you.
+> [prompt loop](#refining-a-prompt-round-by-round).
 
 ### Chaining hooks into pipelines
 

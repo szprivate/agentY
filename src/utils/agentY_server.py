@@ -1243,8 +1243,8 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
         from src.utils import prompt_loop as _pl
         if _pl.active(thread_id):
             _live = _pl.current(thread_id) or {}
-            if not _live.get("output"):
-                _shot = _pl.newest_output(since=float(_live.get("at") or 0.0))
+            if _live and not _live.get("output"):
+                _shot = _pl.newest_output(since=_pl.live_since(thread_id))
                 if _shot:
                     _pl.pair_output(thread_id, _shot)
     except Exception as exc:  # noqa: BLE001
@@ -3825,8 +3825,9 @@ def _build_app():
     # Per CONVERSATION, not per install: two threads can be refining two different
     # prompts, and the panel's strip has to show the one you are looking at.
     #
-    # A restore ANSWERS with the text to write instead of pushing it onto the
-    # canvas-patch bus. That bus is drained only while a turn streams, so a patch
+    # Picking a version in the strip makes it ACTIVE — no copy is written as a new
+    # version; only the agent's prompts are versions. The answer carries the text to
+    # write instead of pushing it onto the canvas-patch bus. That bus is drained only while a turn streams, so a patch
     # pushed from a button sits there until the user's next message — the click
     # looked like it did nothing, then the canvas changed minutes later in the
     # middle of something else. The panel is holding app.graph and is the one that
@@ -3843,6 +3844,7 @@ def _build_app():
                    "on": bool(loop.get("on")),
                    "node_id": str(loop.get("node_id") or ""),
                    "input": str(loop.get("input") or ""),
+                   "active": int((pl.current(thread) or {}).get("v") or 0),
                    "versions": [{"v": e.get("v"), "text": e.get("text", ""),
                                  "rendered": bool(e.get("output"))}
                                 for e in (loop.get("versions") or [])]}
@@ -3854,22 +3856,25 @@ def _build_app():
             return jsonify(_payload(str(request.args.get("thread_id") or "")))
         body = request.get_json(silent=True) or {}
         thread = str(body.get("thread_id") or "")
+        if not thread and body.get("on"):
+            # Switched on in an empty conversation: the loop belongs to a thread,
+            # so make the thread now instead of making them type something first.
+            # The panel adopts the id from the answer.
+            thread = cs.create_thread(title="New chat")  # titled by its first message
         if not thread:
             return jsonify({"ok": False, "error": "thread_id is required"}), 400
         try:
             if body.get("restore") is not None:
-                text = pl.version_text(thread, body.get("restore"))
-                if text is None:
-                    return jsonify({"ok": False, "error": f"no version {body['restore']}"}), 404
                 node_id, slot = pl.target(thread)
                 if not node_id:
                     return jsonify({"ok": False,
                                     "error": "this loop has no target node yet"}), 409
-                entry = pl.add_version(thread, text,
-                                       based_on=int(str(body["restore"]).lstrip("vV")))
+                entry = pl.activate(thread, body.get("restore"))
+                if entry is None:
+                    return jsonify({"ok": False, "error": f"no version {body['restore']}"}), 404
                 return jsonify(_payload(thread, write={
-                    "node_id": node_id, "input": slot or "text", "text": text,
-                    "v": entry["v"]}))
+                    "node_id": node_id, "input": slot or "text",
+                    "text": str(entry.get("text") or ""), "v": entry["v"]}))
             if body.get("clear"):
                 pl.clear(thread)
             elif body.get("on"):

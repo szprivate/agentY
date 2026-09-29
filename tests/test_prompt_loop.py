@@ -1,4 +1,4 @@
-"""The panel's prompt loop: the agent writes, the user queues.
+"""The panel's prompt loop: the agent writes, the panel queues, the user looks.
 
 The loop people actually run — ask for a prompt, queue it yourself, look, ask for
 a change — had no state anywhere, so every round re-established which node held the
@@ -7,9 +7,11 @@ conversation and on disk, and these are the parts that would break quietly:
 
 * the numbering and the lineage of a go-back, because "back to v2" has to mean
   something three rounds later;
-* pairing a render with the version that produced it — the user queues the graph
-  themselves, so ComfyUI's history is the only trace of the run;
-* the loop writing a prompt and NOT running anything.
+* which version is ACTIVE — picking one in the strip makes it active and puts it
+  back on the canvas, without writing a copy of it as a new version;
+* pairing a render with the version that produced it — the panel queues the user's
+  own graph, so ComfyUI's history is the only trace of the run;
+* the tool asking the PANEL to queue, and running nothing itself.
 
     python -m unittest discover -s tests
 """
@@ -102,6 +104,57 @@ class Versions(Fixture):
         self.assertEqual(len(pl.versions("t1")), pl._MAX_VERSIONS)
         self.assertEqual(pl.current("t1")["v"], pl._MAX_VERSIONS + 5,
                          "numbers keep counting even when old entries drop")
+
+
+class TheActiveVersion(Fixture):
+    """Picking a version makes it active; it does not become a new version."""
+
+    def setUp(self):
+        super().setUp()
+        pl.start("t1", "6")
+        for text in ("one", "two", "three"):
+            pl.add_version("t1", text)
+
+    def test_the_newest_is_active_until_one_is_picked(self):
+        self.assertEqual(pl.current("t1")["v"], 3)
+
+    def test_picking_makes_it_active_and_adds_nothing(self):
+        entry = pl.activate("t1", "v1")
+        self.assertEqual(entry["text"], "one")
+        self.assertEqual(pl.current("t1")["v"], 1)
+        self.assertEqual([e["v"] for e in pl.versions("t1")], [1, 2, 3])
+
+    def test_an_unknown_version_cannot_be_picked(self):
+        self.assertIsNone(pl.activate("t1", 9))
+        self.assertIsNone(pl.activate("t1", "nonsense"))
+        self.assertEqual(pl.current("t1")["v"], 3)
+
+    def test_the_next_prompt_comes_from_the_active_one(self):
+        pl.activate("t1", 1)
+        entry = pl.add_version("t1", "one, warmer")
+        self.assertEqual((entry["v"], entry.get("from")), (4, 1))
+        self.assertEqual(pl.current("t1")["v"], 4, "a new prompt is active")
+
+    def test_a_prompt_after_the_newest_names_no_parent(self):
+        self.assertNotIn("from", pl.add_version("t1", "four"))
+
+    def test_a_render_after_a_pick_belongs_to_the_picked_one(self):
+        pl.activate("t1", 1)
+        pl.pair_output("t1", "W:/out/a_00009_.png")
+        got = {e["v"]: e["output"] for e in pl.versions("t1")}
+        self.assertEqual(got, {1: "W:/out/a_00009_.png", 2: "", 3: ""})
+
+    def test_the_pairing_floor_is_the_moment_it_was_picked(self):
+        """Otherwise a render of v3, made before the pick, lands on v1."""
+        with mock.patch.object(pl.time, "time", return_value=5_000_000_000.0):
+            pl.activate("t1", 1)
+        self.assertEqual(pl.live_since("t1"), 5_000_000_000.0)
+
+    def test_the_block_marks_the_active_one(self):
+        pl.activate("t1", 1)
+        block = pl.block("t1")
+        self.assertIn("v1 [ACTIVE, on the canvas now]: one", block)
+        self.assertIn("picked v1", block)
 
 
 class PairingARender(Fixture):
@@ -286,15 +339,62 @@ class TheTool(Fixture):
         self.assertIn("CANVAS GRAPH", out["fix"])
         self.assertEqual(pl.versions("t1"), [], "nothing recorded for a refused write")
 
-    def test_from_version_alone_puts_that_prompt_back(self):
+    def test_from_version_alone_makes_it_active_again(self):
         pipe = self._pipe()
         self._call(pipe, text="one", node_id="6")
         self._call(pipe, text="two")
+        self.patches.drain()
         out = self._call(pipe, from_version="1")
-        self.assertEqual(out["version"], 3)
-        self.assertEqual(out["based_on"], 1)
-        write = [e for e in self.patches.drain() if e.get("params")][-1]
+        self.assertEqual((out["status"], out["version"]), ("reactivated", 1))
+        self.assertEqual(len(pl.versions("t1")), 2, "no copy written as v3")
+        self.assertEqual(pl.current("t1")["v"], 1)
+        events = self.patches.drain()
+        write = [e for e in events if e.get("params")][-1]
         self.assertEqual(write["params"], {"text": "one"})
+        strip = next(e for e in events if e.get("op") == "prompt_version")
+        self.assertFalse(strip["new"])
+        self.assertTrue(strip["queue"], "v1 never rendered, so it is queued")
+
+    def test_a_version_that_rendered_is_not_queued_again(self):
+        pipe = self._pipe()
+        self._call(pipe, text="one", node_id="6")
+        pl.pair_output("t1", "W:/out/a_00001_.png")
+        self._call(pipe, text="two")
+        self.patches.drain()
+        out = self._call(pipe, from_version="1")
+        self.assertFalse(out["queued"])
+        strip = next(e for e in self.patches.drain() if e.get("op") == "prompt_version")
+        self.assertFalse(strip["queue"])
+
+    def test_a_new_version_is_queued_after_the_widget_is_written(self):
+        """The panel handles patches in order: text first, then the Queue press."""
+        out = self._call(self._pipe(), text="a neon alley", node_id="6")
+        self.assertTrue(out["queued"])
+        events = self.patches.drain()
+        write_at = next(i for i, e in enumerate(events) if e.get("params"))
+        strip_at = next(i for i, e in enumerate(events) if e.get("op") == "prompt_version")
+        self.assertLess(write_at, strip_at)
+        self.assertTrue(events[strip_at]["queue"])
+        self.assertTrue(events[strip_at]["new"])
+
+    def test_a_direct_write_into_the_target_is_a_version_too(self):
+        """set_canvas_node_params into the loop's node must show in the strip."""
+        pipe = self._pipe()
+        self._call(pipe, text="one", node_id="6")
+        self.patches.drain()
+        import asyncio
+        asyncio.run(tools(pipe)["set_canvas_node_params"]("6", {"text": "two"}))
+        self.assertEqual([e["text"] for e in pl.versions("t1")], ["one", "two"])
+        strip = [e for e in self.patches.drain() if e.get("op") == "prompt_version"]
+        self.assertEqual(len(strip), 1, "recorded once, not twice")
+        self.assertTrue(strip[0]["queue"])
+
+    def test_a_direct_write_elsewhere_is_not_a_version(self):
+        pipe = self._pipe()
+        self._call(pipe, text="one", node_id="6")
+        import asyncio
+        asyncio.run(tools(pipe)["set_canvas_node_params"]("6", {"clip": "x"}))
+        self.assertEqual(len(pl.versions("t1")), 1)
 
     def test_an_unknown_version_is_refused_with_the_ones_that_exist(self):
         pipe = self._pipe()
@@ -312,9 +412,9 @@ class TheTool(Fixture):
         self.assertIn("error", out)
         self.assertEqual(pl.versions("t1"), [])
 
-    def test_it_runs_nothing(self):
-        """The whole point: they queue it. A tool that generates here spends their
-        GPU on a prompt they have not read."""
+    def test_it_runs_nothing_itself(self):
+        """The queue is the panel's: ComfyUI's own Queue on the user's open graph.
+        The tool never submits a workflow of its own."""
         import inspect
         from src.pipeline import Pipeline
         src = inspect.getsource(Pipeline._build_delegation_tools)
@@ -334,6 +434,39 @@ class TheRestoreRoute(Fixture):
     changes minutes later. The route therefore ANSWERS with the text to write and
     the panel, which is holding app.graph, writes it in the same tick.
     """
+
+    def _route(self):
+        import inspect
+
+        import src.utils.agentY_server as server
+        src = inspect.getsource(server)
+        start = src.index('@app.route("/agentY/prompt_loop"')
+        return src[start:src.index('@app.route("/agentY/mcp"', start)]
+
+    def test_a_restore_activates_and_adds_no_version(self):
+        body = self._route()
+        restore = body[body.index('if body.get("restore")'):body.index('if body.get("clear")')]
+        self.assertIn("pl.activate(", restore)
+        self.assertNotIn("add_version", restore)
+
+    def test_switching_on_in_an_empty_conversation_makes_the_thread(self):
+        body = self._route()
+        self.assertIn("create_thread", body[:body.index("if not thread:")])
+
+    def test_the_panel_queues_a_version_that_asks_for_it(self):
+        from pathlib import Path
+        panel = Path("D:/ai/agentY-comfyuiConnect/web/agent_chat.js")
+        if not panel.exists():
+            self.skipTest("the ComfyUI extension checkout is not beside this one")
+        js = panel.read_text(encoding="utf-8")
+        note = js[js.index("  _notePromptVersion(ev) {"):]
+        note = note[:note.index("\n  }")]
+        self.assertIn("ev.queue", note)
+        self.assertIn("loop.active = ev.v", note)
+        self.assertIn("app.queuePrompt(", js[js.index("async _queuePromptVersion("):])
+        toggle = js[js.index("async _togglePromptLoop("):]
+        toggle = toggle[:toggle.index("\n  }")]
+        self.assertIn("j.thread_id", toggle, "an empty conversation adopts the new thread")
 
     def test_the_route_does_not_push_a_widget_patch_for_a_restore(self):
         import inspect

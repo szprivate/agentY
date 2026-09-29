@@ -2016,6 +2016,7 @@ class Pipeline:
                 "params": params,
                 "node_title": node.get("title") or node.get("type") or "",
             })
+            self._note_loop_write(node_id, params)
             result = {
                 "status": "applied",
                 "node_id": str(node_id),
@@ -2033,31 +2034,29 @@ class Pipeline:
                                 from_version: str = "") -> str:
             """Write the next prompt into the canvas node the prompt loop is pointed at.
 
-            The panel's **prompt loop** is the user's own way of working: you write a
-            prompt, THEY queue the graph in ComfyUI, they look at the render, they say
-            what to change. Use this for every prompt you write while the ``[PROMPT
-            LOOP]`` block is in your turn — it writes the widget exactly like
-            ``set_canvas_node_params`` does, and additionally numbers the text as a
-            version, shows it in the panel's strip, and pairs it with the render that
-            comes back, which is what lets the next turn know what was tried.
-
-            It does NOT run anything. No queueing, no generation — that is the user's
-            half of the loop, and taking it from them spends their GPU on a prompt they
-            have not read.
+            The panel's **prompt loop**: you write a prompt, it goes into their prompt
+            node, the graph is queued, they look at the render and say what to change.
+            Use this for every prompt you write while the ``[PROMPT LOOP]`` block is in
+            your turn — it writes the widget exactly like ``set_canvas_node_params``
+            does, numbers the text as a new version in the panel's strip, and queues
+            their graph (ComfyUI's own Queue, in their browser, on their canvas) so
+            the render is on its way when you finish. Do not run anything else.
 
             Args:
-                text: The prompt to write. Leave empty with *from_version* to put an
-                    earlier version back on the canvas unchanged.
+                text: The prompt to write — a new version. Leave empty with
+                    *from_version* to put an earlier version back on the canvas
+                    unchanged (that makes it active again; it is not a new version).
                 node_id: The prompt node. Only needed the first time (or to move the
                     loop to another node) — after that the loop remembers it.
                 from_version: The version this one is based on, e.g. ``"2"`` for "go
-                    back to v2 but warmer". Recorded, so the history says where a
-                    prompt came from; with no *text* it restores that version as-is.
+                    back to v2 but warmer". Without it a new prompt is based on the
+                    ACTIVE version, which is what the block marks.
             """
             from src.utils import prompt_loop as _loop
 
             thread = str(getattr(self._session, "session_id", "") or "")
             base_v = None
+            earlier = None
             if from_version:
                 earlier = _loop.version_text(thread, from_version)
                 if earlier is None:
@@ -2065,8 +2064,9 @@ class Pipeline:
                     return json.dumps({"error": f"there is no version '{from_version}' in "
                                        f"this loop. Versions so far: {have}."})
                 base_v = int(str(from_version).lstrip("vV"))
-                text = str(text or "") or earlier
-            if not str(text or "").strip():
+            going_back = earlier is not None and not str(text or "").strip()
+            text = earlier if going_back else str(text or "")
+            if not text.strip():
                 return json.dumps({"error": "text is empty — write the prompt, or pass "
                                    "from_version to put an earlier one back."})
             stored_node, stored_input = _loop.target(thread)
@@ -2080,31 +2080,45 @@ class Pipeline:
                             "nothing is selected, ask which one before writing."),
                 })
             slot = stored_input or self._prompt_slot_of(node_id)
-            raw = await set_canvas_node_params(node_id, {slot: text})
+            self._loop_writing = True        # set_canvas_node_params: not a stray write
+            try:
+                raw = await set_canvas_node_params(node_id, {slot: text})
+            finally:
+                self._loop_writing = False
             try:
                 applied = json.loads(raw)
             except Exception:  # noqa: BLE001
                 applied = {"status": "unknown"}
             if applied.get("error"):
                 return raw                      # say exactly what it said
-            entry = _loop.add_version(thread, text, node_id=node_id, input_name=slot,
-                                      based_on=base_v)
-            from src.utils.canvas_patch import push as _push_patch
-            _push_patch({"op": "prompt_version", "v": entry["v"], "text": text,
-                         "node_id": node_id, "input": slot,
-                         "from": base_v or 0})
+            if going_back:
+                if str(node_id) != str(stored_node):
+                    _loop.set_target(thread, node_id, slot)
+                entry = _loop.activate(thread, base_v) or {}
+                queued = self._announce_prompt_version(
+                    entry, node_id, slot, text, new=False,
+                    queue=not entry.get("output"))
+            else:
+                entry = _loop.add_version(thread, text, node_id=node_id, input_name=slot,
+                                          based_on=base_v)
+                queued = self._announce_prompt_version(entry, node_id, slot, text,
+                                                       new=True, queue=True)
             return json.dumps({
-                "status": "written",
-                "version": entry["v"],
+                "status": "reactivated" if going_back else "written",
+                "version": entry.get("v"),
                 "node_id": node_id,
                 "input": slot,
                 "node": applied.get("node") or "",
-                "based_on": base_v or None,
+                "based_on": entry.get("from") or None,
+                "queued": queued,
                 "versions": [{"v": e["v"], "text": e["text"][:120],
                               "rendered": bool(e.get("output"))}
                              for e in _loop.versions(thread)],
-                "note": ("It is on their canvas now and nothing has been run — they queue "
-                         "it. Say in a line or two what you changed, then end the turn."),
+                "note": (("It is on their canvas and queued — the render is on its way. "
+                          if queued else
+                          "It is back on their canvas; it already has a render, so it "
+                          "was not queued again. ")
+                         + "Say in a line or two what you changed, then end the turn."),
             })
 
         @_tool
@@ -3568,7 +3582,7 @@ class Pipeline:
             guide = _orch_partial("project_memory")
             pin = pin + (guide + "\n\n" if guide else "") + project_ctx + "\n\n"
 
-        # The panel's prompt loop: they queue, the agent writes. Carries where the
+        # The panel's prompt loop: the agent writes, the panel queues. Carries where the
         # prompt goes, every version so far, and which render came out of which —
         # the facts the conversation used to hold until its window slid past them.
         try:
@@ -5038,6 +5052,48 @@ class Pipeline:
         # often than not, and it is a better guess than a name that isn't there.
         strings = [(len(str(v)), k) for k, v in widgets.items() if isinstance(v, str)]
         return max(strings)[1] if strings else "text"
+
+    def _announce_prompt_version(self, entry: dict, node_id: str, slot: str, text: str,
+                                 *, new: bool, queue: bool) -> bool:
+        """Tell the panel a version is on the canvas, and whether to queue it.
+
+        The queue is the panel's: it presses ComfyUI's own Queue on the graph it just
+        wrote the text into. agentY does not have that graph — the user's open canvas
+        lives in their browser — and the patch bus keeps order, so the widget write
+        pushed just before this lands first. Returns whether a queue was asked for.
+        """
+        from src.utils.canvas_patch import push as _push_patch
+        _push_patch({"op": "prompt_version", "v": entry.get("v"), "text": text,
+                     "node_id": str(node_id), "input": slot,
+                     "from": entry.get("from") or 0, "new": bool(new),
+                     "queue": bool(queue)})
+        return bool(queue)
+
+    def _note_loop_write(self, node_id: str, params: dict) -> None:
+        """A prompt written into the loop's node some other way is still a version.
+
+        The block tells the agent to use ``revise_prompt``; when it reaches for
+        ``set_canvas_node_params`` instead, the text still lands in the node, and a
+        strip that does not show it is a strip that lies about what is on the canvas.
+        """
+        if getattr(self, "_loop_writing", False):
+            return
+        try:
+            from src.utils import prompt_loop as _loop
+            thread = str(getattr(self._session, "session_id", "") or "")
+            if not _loop.active(thread):
+                return
+            target, slot = _loop.target(thread)
+            if not target or str(target) != str(node_id):
+                return
+            slot = slot or self._prompt_slot_of(node_id)
+            text = params.get(slot) if isinstance(params, dict) else None
+            if not isinstance(text, str) or not text.strip():
+                return
+            entry = _loop.add_version(thread, text, node_id=node_id, input_name=slot)
+            self._announce_prompt_version(entry, node_id, slot, text, new=True, queue=True)
+        except Exception:  # noqa: BLE001 — bookkeeping never breaks the write
+            pass
 
     def _review_collector(self) -> dict | None:
         """The halted chain's ballot: the collector wired into the review hook.

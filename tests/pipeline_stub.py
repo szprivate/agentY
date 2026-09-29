@@ -58,6 +58,8 @@ _BOUND = (
     "_review_collector",
     "_canvas_full_graph",
     "_prompt_slot_of",
+    "_announce_prompt_version",
+    "_note_loop_write",
 )
 
 

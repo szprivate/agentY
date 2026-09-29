@@ -3410,7 +3410,7 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
             "\nRETIRED hook purpose — `iterate` no longer exists. It used to run this graph "
             "for the user, one generation per turn. What replaced it is the panel's PROMPT "
             "LOOP: the ✍ button in the agentY panel turns it on, you write each prompt with "
-            "`revise_prompt` into their prompt node, and THEY queue the graph and look at the "
+            "`revise_prompt` into their prompt node, the panel queues their graph, and they look at the "
             "render. Tell them that in one line — that the hook does nothing now and where the "
             "feature went — and treat this turn as whatever they actually asked for. Do not "
             "run a generation to make up for it, and do not ask them to rewire anything."

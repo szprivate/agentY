@@ -12,15 +12,17 @@ So the loop gets state of its own, per conversation and on disk:
 
 * **the target** — the node and input the prompt is written into, so "make it warmer"
   needs no node id and no selection;
-* **the versions** — every prompt this loop has produced, numbered, so an earlier one
-  can be restored and a later one compared against it;
+* **the versions** — every prompt the agent has written in this loop, numbered, and
+  which of them is **active** (on the canvas now: the newest, or the one the user
+  picked in the strip — picking never adds a version);
 * **the pairing** — which render came out of which version, found from ComfyUI's own
-  history, because the user queues the graph themselves and agentY never sees the run.
+  history: the run is queued by the panel, in the user's browser, on the user's own
+  graph, so agentY never sees it go by.
 
-Deliberately *not* here: running anything. The agent writes text into a node. The
-user queues. That division is the whole point — it is what the user was already doing
-by hand, and the reason the `iterate` hook purpose (which ran the graph for them, one
-generation per turn) is gone.
+Deliberately *not* here: running anything. A new version is queued by the panel
+pressing ComfyUI's own Queue on the canvas it just wrote into (the ``queue`` flag on
+the ``prompt_version`` patch) — the same run the user would have started by hand,
+which is what they asked for.
 """
 
 from __future__ import annotations
@@ -118,10 +120,55 @@ def versions(thread_id: str) -> list:
     return list(out) if isinstance(out, list) else []
 
 
-def current(thread_id: str) -> dict | None:
-    """The version in force — the last one written."""
-    got = versions(thread_id)
+def _active_of(loop: dict) -> dict | None:
+    """The version on the canvas: the one picked in the strip, else the newest."""
+    got = loop.get("versions") or []
+    want = loop.get("active")
+    for entry in got:
+        if want and int(entry.get("v") or 0) == int(want):
+            return entry
     return got[-1] if got else None
+
+
+def current(thread_id: str) -> dict | None:
+    """The version in force — the ACTIVE one, which is not always the newest.
+
+    Picking v2 in the strip makes v2 active without writing a copy of it as v5:
+    the list is what the agent has written, and which of those is on the canvas
+    is a separate fact. The agent's next prompt is then based on v2.
+    """
+    loop = state(thread_id)
+    return _active_of(loop) if isinstance(loop, dict) else None
+
+
+def live_since(thread_id: str) -> float:
+    """When the active version went onto the canvas — the floor for pairing a render.
+
+    Its own ``at`` for a fresh version; the moment it was picked for an old one, or
+    a render of whatever was on the canvas before the pick would be paired to it.
+    """
+    loop = state(thread_id) or {}
+    entry = _active_of(loop) or {}
+    return max(float(entry.get("at") or 0.0), float(loop.get("activated_at") or 0.0))
+
+
+def activate(thread_id: str, v) -> dict | None:
+    """Make version *v* the active one. Returns its entry, or None if there is none."""
+    try:
+        want = int(str(v).lstrip("vV"))
+    except (TypeError, ValueError):
+        return None
+    loop = state(thread_id)
+    if not isinstance(loop, dict):
+        return None
+    entry = next((e for e in loop.get("versions") or []
+                  if int(e.get("v") or 0) == want), None)
+    if entry is None:
+        return None
+    loop["active"] = want
+    loop["activated_at"] = time.time()
+    _save(thread_id, loop)
+    return entry
 
 
 def add_version(thread_id: str, text: str, *, node_id: str = "", input_name: str = "",
@@ -139,11 +186,19 @@ def add_version(thread_id: str, text: str, *, node_id: str = "", input_name: str
         "at": time.time(),
         "output": "",
     }
+    if not based_on:
+        # Written while an OLDER version was active (picked in the strip): that is
+        # what this one was made from, and the history should say so.
+        live = _active_of(loop)
+        if live and loop["versions"] and live is not loop["versions"][-1]:
+            based_on = int(live.get("v") or 0)
     if based_on:
         entry["from"] = int(based_on)
     loop["versions"].append(entry)
     if len(loop["versions"]) > _MAX_VERSIONS:
         loop["versions"] = loop["versions"][-_MAX_VERSIONS:]
+    loop["active"] = entry["v"]          # a new prompt is on the canvas: it is active
+    loop.pop("activated_at", None)
     loop["on"] = True
     _save(thread_id, loop)
     return entry
@@ -165,20 +220,20 @@ def pair_output(thread_id: str, path: str) -> dict | None:
     """Attach a render to the version that was live when it was made.
 
     Called at turn setup with whatever ComfyUI produced most recently. The version
-    it belongs to is simply the last one written — the user queued the graph after
-    the agent put that text in the node, which is the only order this loop has.
+    it belongs to is the ACTIVE one — the text that was in the node when the graph
+    was queued (the caller only passes renders newer than ``live_since``).
     Never overwrites: the first render a version gets is the one it is judged on, and
     a second queue of the same prompt is not a new fact about it.
     """
     loop = state(thread_id)
     if not isinstance(loop, dict) or not loop.get("versions") or not path:
         return None
-    last = loop["versions"][-1]
-    if last.get("output"):
+    live = _active_of(loop)
+    if live is None or live.get("output"):
         return None
-    last["output"] = str(path)
+    live["output"] = str(path)
     _save(thread_id, loop)
-    return last
+    return live
 
 
 def newest_output(since: float = 0.0) -> str:
@@ -269,23 +324,31 @@ def block(thread_id: str) -> str:
     if not got:
         lines.append("  No prompt written yet in this loop.")
         return "\n".join(lines) + "\n"
-    for entry in got[-_BLOCK_VERSIONS:]:
+    live = _active_of(loop) or got[-1]
+    shown_versions = got[-_BLOCK_VERSIONS:]
+    if live not in shown_versions:       # the active one is always shown
+        shown_versions = [live] + shown_versions[1:]
+    for entry in shown_versions:
         text = str(entry.get("text") or "")
         shown = text if len(text) <= _TEXT_IN_BLOCK else text[:_TEXT_IN_BLOCK] + " …"
-        mark = "  v{v}{base}: {text}".format(
+        mark = "  v{v}{base}{now}: {text}".format(
             v=entry.get("v"), text=shown,
-            base=f" (from v{entry['from']})" if entry.get("from") else "")
+            base=f" (from v{entry['from']})" if entry.get("from") else "",
+            now=" [ACTIVE, on the canvas now]" if entry is live else "")
         lines.append(mark)
         if entry.get("output"):
             lines.append(f"      rendered: {entry['output']}")
     if len(got) > _BLOCK_VERSIONS:
         lines.insert(1, f"  ({len(got) - _BLOCK_VERSIONS} earlier version(s) not shown; "
                         f"ask for one by number if you need it.)")
-    live = got[-1]
+    if live is not got[-1]:
+        lines.append(f"  They picked v{live['v']} in the strip: it is the prompt on the "
+                     f"canvas, and the one your next revision starts from — not "
+                     f"v{got[-1]['v']}.")
     if live.get("output"):
         lines.append(f"  The render above is what v{live['v']} produced — it is what "
                      "they have just been looking at.")
     else:
-        lines.append(f"  v{live['v']} has no render yet: either they have not queued it, "
-                     "or they queued it and ComfyUI is not reporting it.")
+        lines.append(f"  v{live['v']} has no render yet: it may still be running, or "
+                     "it failed — ComfyUI's history does not show a finished image.")
     return "\n".join(lines) + "\n"
