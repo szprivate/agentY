@@ -68,6 +68,7 @@ PUBLIC_PATHS = frozenset({
     "/agentY/log_viewer",
     "/agentY/memory_viewer",
     "/agentY/project_memory_viewer",
+    "/agentY/rate",
 })
 
 _lock = threading.Lock()

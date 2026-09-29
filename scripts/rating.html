@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agentY — Rate renders</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --panel:#fff; --ink:#1a1d21; --muted:#666; --line:#e2e5ea;
+    --accent:#3b6ef5; --chip:#eef1f6; --ok:#2e7d32; --danger:#d64545;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#15171c; --panel:#1e2128; --ink:#e6e8ec; --muted:#9aa0aa; --line:#2c313b;
+      --accent:#6f97ff; --chip:#262b34; --ok:#7bd88f; --danger:#e5736f;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#15171c; --panel:#1e2128; --ink:#e6e8ec; --muted:#9aa0aa; --line:#2c313b;
+    --accent:#6f97ff; --chip:#262b34; --ok:#7bd88f; --danger:#e5736f;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--ink);display:flex;flex-direction:column;
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  header{background:var(--panel);border-bottom:1px solid var(--line);padding:10px 16px;
+    display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center}
+  h1{font-size:15px;margin:0;font-weight:650}
+  .muted{color:var(--muted)}
+  .stat{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .spacer{flex:1}
+  button{font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);
+    border-radius:7px;padding:6px 12px;cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  kbd{font:11px ui-monospace,Consolas,monospace;background:var(--chip);border:1px solid var(--line);
+    border-radius:4px;padding:0 5px;margin-left:4px}
+  .ask{padding:10px 16px 0;display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}
+  .ask b{font-size:15px}
+  .folder{font:12px ui-monospace,Consolas,monospace;color:var(--muted);word-break:break-all}
+  main{flex:1;min-height:0;padding:12px 16px 16px}
+  .grid{height:100%;display:grid;gap:12px;grid-template-columns:repeat(2,minmax(0,1fr));
+    grid-auto-rows:minmax(0,1fr)}
+  .grid.n3{grid-template-columns:repeat(3,minmax(0,1fr));grid-auto-rows:minmax(0,1fr)}
+  .grid.n2{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tile{position:relative;min-height:0;background:var(--panel);border:1px solid var(--line);
+    border-radius:9px;overflow:hidden;cursor:pointer;display:flex;align-items:center;
+    justify-content:center;transition:border-color .12s, box-shadow .12s}
+  .tile:hover{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+  .tile.won{border-color:var(--ok);box-shadow:0 0 0 3px var(--ok) inset}
+  .tile img{max-width:100%;max-height:100%;object-fit:contain;display:block}
+  .tile .n{position:absolute;top:8px;left:8px;background:rgba(0,0,0,.62);color:#fff;
+    border-radius:6px;padding:1px 8px;font-weight:650;font-variant-numeric:tabular-nums}
+  .tile .name{position:absolute;bottom:0;left:0;right:0;padding:4px 8px;font-size:11px;
+    color:#fff;background:linear-gradient(transparent,rgba(0,0,0,.6));white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis;opacity:0;transition:opacity .12s}
+  .tile:hover .name{opacity:1}
+  .tile .load{color:var(--muted);font-size:12px}
+  .empty{margin:40px auto;max-width:560px;padding:40px 24px;text-align:center;
+    border:2px dashed var(--line);border-radius:14px;background:var(--panel);color:var(--muted)}
+  @media (max-width:700px){
+    .grid,.grid.n3{grid-template-columns:minmax(0,1fr);grid-auto-rows:auto}
+    .tile{min-height:220px}
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Rate renders</h1>
+  <span class="stat" id="stats">…</span>
+  <span class="spacer"></span>
+  <button id="skip" title="Can't decide — show another set, log nothing">Skip<kbd>S</kbd></button>
+  <button id="rescan" title="Look for new renders in the output folders">Rescan</button>
+</header>
+<div class="ask" id="ask" hidden>
+  <b>Which one is best?</b>
+  <span class="muted">Click it, or press its number.</span>
+  <span class="folder" id="folder"></span>
+</div>
+<main id="main"><div class="empty" id="msg">Looking for renders…</div></main>
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  let slate = null, busy = false, sessionSets = 0, sessionPairs = 0, preloaded = null;
+
+  async function json(url, opts) {
+    const r = await fetch(url, Object.assign({ cache: "no-store" }, opts || {}));
+    if (!r.ok) throw new Error(url + " → " + r.status);
+    return r.json();
+  }
+
+  async function blobUrl(id) {
+    const r = await fetch("/agentY/rate/image/" + encodeURIComponent(id), { cache: "no-store" });
+    if (!r.ok) throw new Error("image " + r.status);
+    return URL.createObjectURL(await r.blob());
+  }
+
+  function message(html) {
+    $("ask").hidden = true;
+    $("main").innerHTML = '<div class="empty">' + html + "</div>";
+  }
+
+  async function stats() {
+    try {
+      const s = await json("/agentY/rate/status");
+      $("stats").textContent = (s.scanning ? "scanning… · " : "")
+        + `${s.unrated} of ${s.images} renders unrated in ${s.folders} folders · this session: `
+        + `${sessionSets} set${sessionSets === 1 ? "" : "s"}, ${sessionPairs} pairs · log: ${s.log || "—"}`;
+      return s;
+    } catch (e) {
+      $("stats").textContent = "host not reachable";
+      return null;
+    }
+  }
+
+  async function waitForScan() {
+    for (;;) {
+      const s = await stats();
+      if (!s) { message("The agentY host is not reachable. Start it, then reload this page."); return false; }
+      if (s.error) { message("The scan failed: " + s.error); return false; }
+      if (s.scanned && !s.scanning) {
+        if (!s.images) {
+          message("No folders with at least 3 renders were found in<br><code>"
+                  + (s.roots || []).join("<br>") + "</code>");
+          return false;
+        }
+        return true;
+      }
+      message("Scanning the output folders for renders… (a network share can take a minute)");
+      await new Promise((ok) => setTimeout(ok, 1500));
+    }
+  }
+
+  async function fetchSlate() {
+    const j = await json("/agentY/rate/slate");
+    if (!j.slate) return null;
+    // Start the downloads now; the tiles wait on these promises.
+    j.slate.items.forEach((it) => { it.src = blobUrl(it.id); });
+    return j.slate;
+  }
+
+  async function show(next) {
+    slate = next;
+    if (!slate) {
+      message("Everything has been rated. 🎉 Rescan when there are new renders.");
+      return;
+    }
+    $("ask").hidden = false;
+    $("folder").textContent = slate.label;
+    const grid = document.createElement("div");
+    const n = slate.items.length;
+    grid.className = "grid" + (n === 3 ? " n3" : n === 2 ? " n2" : "");
+    slate.items.forEach((it, i) => {
+      const tile = document.createElement("div");
+      tile.className = "tile";
+      tile.innerHTML = `<span class="load">loading…</span><span class="n">${i + 1}</span>`
+        + `<span class="name"></span>`;
+      tile.querySelector(".name").textContent = it.name;
+      tile.addEventListener("click", () => pick(i));
+      it.src.then((u) => {
+        const img = new Image();
+        img.alt = it.name;
+        img.src = u;
+        tile.querySelector(".load").replaceWith(img);
+      }).catch(() => { tile.querySelector(".load").textContent = "could not load"; });
+      it.tile = tile;
+      grid.appendChild(tile);
+    });
+    $("main").replaceChildren(grid);
+    // Fetch the following set in the background so the next click is instant.
+    preloaded = fetchSlate().catch(() => null);
+  }
+
+  async function advance() {
+    release(slate);
+    const next = preloaded ? await preloaded : await fetchSlate();
+    preloaded = null;
+    await show(next);
+    stats();
+  }
+
+  // A set that has left the screen: free its images (each set owns its own).
+  function release(old) {
+    if (!old) return;
+    old.items.forEach((it) => it.src.then((u) => URL.revokeObjectURL(u)).catch(() => {}));
+  }
+
+  async function pick(i) {
+    if (busy || !slate || !slate.items[i]) return;
+    busy = true;
+    slate.items[i].tile.classList.add("won");
+    try {
+      const r = await json("/agentY/rate/pick", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chosen: slate.items[i].id, folder: slate.folder,
+                               shown: slate.items.map((x) => x.id) }),
+      });
+      if (r.ok) { sessionSets += 1; sessionPairs += r.pairs || 0; }
+      await new Promise((ok) => setTimeout(ok, 180));
+      await advance();
+    } catch (e) {
+      message("Could not save that pick: " + e.message);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function skip() {
+    if (busy || !slate) return;
+    busy = true;
+    try {
+      await json("/agentY/rate/pick", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ skip: true, shown: slate.items.map((x) => x.id) }),
+      });
+      await advance();
+    } finally {
+      busy = false;
+    }
+  }
+
+  document.addEventListener("keydown", (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (/^[1-9]$/.test(e.key)) pick(Number(e.key) - 1);
+    else if (e.key === "s" || e.key === "S") skip();
+  });
+  $("skip").addEventListener("click", skip);
+  $("rescan").addEventListener("click", async () => {
+    await json("/agentY/rate/status?rescan=1");
+    release(slate);
+    if (preloaded) preloaded.then(release);
+    preloaded = null;
+    if (await waitForScan()) await show(await fetchSlate());
+  });
+
+  (async () => {
+    if (await waitForScan()) await show(await fetchSlate());
+  })();
+})();
+</script>
+</body>
+</html>

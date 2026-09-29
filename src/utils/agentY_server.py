@@ -35,6 +35,7 @@ Viewers (self-contained HTML pages served here so they fetch same-origin)
     GET  /agentY/project_memory                 list project facts -> {entries}
     POST /agentY/project_memory/delete          forget selected      {names}
     GET  /agentY/memory_viewer                  long-term-memory viewer page
+    GET  /agentY/rate                           rating page (picks for the fitness fit)
     GET  /agentY/memory                          list stored long-term memories -> {memories}
     POST /agentY/memory/update                   edit one memory      {id,text}
     POST /agentY/memory/delete                   delete selected      {ids}
@@ -193,6 +194,7 @@ SLASH_COMMANDS = [
     {"name": "/undo",            "description": "Undo the agent's last step in this conversation — its reply, its memory of it, and its canvas edits"},
     {"name": "/history",         "description": "Open the message-history log viewer"},
     {"name": "/memory",          "description": "Open the long-term memory viewer"},
+    {"name": "/rate",            "description": "Open the rating page: pick the best of sibling renders"},
     {"name": "/project_memory", "description": "Inspect and forget what is remembered for THIS project"},
     {"name": "/costs",           "description": "Open the cost overview (token usage per model)"},
     {"name": "/clearhistory",    "description": "Delete all conversation history (keeps the current thread)"},
@@ -3711,6 +3713,58 @@ def _build_app():
     # memory feed same-origin; opened from the ComfyUI panel via
     # web/agent_memory_viewer.js. Listing reads the FAISS docstore directly (no
     # Ollama needed); edit/delete/purge go through the mem0 client.
+    # ── Rating page (scripts/rating.html) ────────────────────────────────────
+    # Collects the user's picks between sibling renders for the fitness fit; see
+    # src/utils/rating.py. The page is a navigation (token injected, like the
+    # viewers); its data calls carry the token through the injected fetch shim,
+    # and images come as blobs through that same fetch — an <img src> could not.
+    @app.route("/agentY/rate", methods=["GET"])
+    def rating_page():
+        page = _project_root() / "scripts" / "rating.html"
+        if not page.exists():
+            return "rating.html not found", 404
+        from src.utils import rating
+        rating.start_scan()
+        html = page.read_text(encoding="utf-8", errors="replace")
+        html = _api_guard.inject_token(html, _api_guard.session_token(_project_root()))
+        return Response(html, mimetype="text/html; charset=utf-8")
+
+    @app.route("/agentY/rate/status", methods=["GET"])
+    def rating_status():
+        from src.utils import rating
+        if request.args.get("rescan"):
+            rating.start_scan(force=True)
+        return jsonify(rating.status())
+
+    @app.route("/agentY/rate/slate", methods=["GET"])
+    def rating_slate():
+        from src.utils import rating
+        return jsonify({"slate": rating.next_slate()})
+
+    @app.route("/agentY/rate/image/<ident>", methods=["GET"])
+    def rating_image(ident):
+        from src.utils import rating
+        try:
+            data = rating.preview(ident)
+        except Exception as exc:  # noqa: BLE001
+            return jsonify({"error": f"could not read that image: {exc}"}), 500
+        if data is None:
+            return jsonify({"error": "unknown image"}), 404
+        return Response(data, mimetype="image/jpeg")
+
+    @app.route("/agentY/rate/pick", methods=["POST", "OPTIONS"])
+    def rating_pick():
+        if request.method == "OPTIONS":
+            return "", 204
+        from src.utils import rating
+        body = request.get_json(silent=True) or {}
+        shown = [str(i) for i in (body.get("shown") or [])]
+        if body.get("skip"):
+            rating.skip(shown)
+            return jsonify({"ok": True, "skipped": True})
+        return jsonify(rating.record_pick(str(body.get("chosen") or ""), shown,
+                                          str(body.get("folder") or "")))
+
     @app.route("/agentY/memory_viewer", methods=["GET"])
     def memory_viewer():
         page = _project_root() / "scripts" / "memory_viewer.html"

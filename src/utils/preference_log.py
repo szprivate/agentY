@@ -93,7 +93,7 @@ def _entry(path: str, facts_by_path: dict | None) -> dict | None:
 
 def record_review(kept, dropped, *, hook_node_id: str = "", question: str = "",
                   request: str = "", facts_by_path: dict | None = None,
-                  path: Path | None = None) -> int:
+                  path: Path | None = None, source: str = "review") -> int:
     """Log one answered review. Returns the number of implied pairs, or 0.
 
     Never raises. *facts_by_path* lets a caller that has already measured these
@@ -110,7 +110,8 @@ def record_review(kept, dropped, *, hook_node_id: str = "", question: str = "",
             return 0
         event = {
             "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "source": "review",
+            # "review" (a halt answered mid-chain) or "rating" (the rating page).
+            "source": str(source or "review"),
             "hook_node_id": str(hook_node_id or ""),
             "question": str(question or "")[:400],
             "request": str(request or "")[:400],
