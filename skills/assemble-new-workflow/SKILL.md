@@ -25,9 +25,13 @@ The returned `recipe` gives you:
 |-------|-----|
 | `execution` | `local` (local models), `api` (remote partner-node generation), or `hybrid` (local + a remote helper). See note below. |
 | `member_workflows` | concrete templates that already implement this task+model — your scaffold (Step 2) |
+| `build_nodes` | the COMPLETE node set to create (class + count), taken from `reference_member` |
+| **`reference_wiring`** | **the wiring — `reference_member`'s own edges as `<class>#<instance>:<out slot> -> <class>#<instance>.<input>`. This is what you build from.** |
+| `load_bearing_inputs` | inputs the schema calls optional and this recipe needs wired anyway |
+| `node_defaults` | template-verified widget params (weight_dtype, model-file variant, …) |
 | `required_nodes` | node classes that MUST be present, with `min_instances` (e.g. `UNETLoader` x2 for a high/low-noise model pair) |
 | `node_clusters` | the required structure grouped by function (model loading, conditioning, sampling, decoding, output) |
-| `connection_patterns` | the invariant role-level wiring (e.g. `model_loader -> sampler [MODEL]`) |
+| `connection_patterns` | role-level triples (`model_loader -> sampler [MODEL]`). Orientation only — they cannot say which instance, which input or which output slot, and on a recipe with several members they are usually **empty**. Never build from these when `reference_wiring` is present. |
 | `boundary_ports` | the inputs/outputs the finished workflow must expose |
 
 **Local vs remote (`execution`)** determines what the workflow needs:
@@ -55,7 +59,21 @@ This scaffold is already close to correct — you reshape it in Step 3, not rebu
 Treat the recipe as a build checklist against the scaffold:
 
 - **Required nodes**: every `required_nodes` entry must be present with at least `min_instances` copies. Add any that are missing. Pay attention to paired nodes (`min_instances >= 2`, e.g. two model loaders / two samplers) — both must exist.
-- **Connections**: every `connection_patterns` edge must be wired. Verify exact input names / slot indices with `get_node_schema` when unsure.
+- **Connections**: reproduce **`reference_wiring`**. Each line reads
+  `<class>#<instance>:<output slot> -> <class>#<instance>.<input name>`, e.g.
+  `CheckpointLoaderSimple#0:2 -> VAEDecode#0.vae` — instances are numbered per class
+  in node order, so `#0` is the first `LoadImage` you made, `#1` the second. Map each
+  label to the node id you gave that node and write every line. This is the real
+  wiring of a working graph: the slot on the left and the input name on the right are
+  the two things a role-level pattern cannot tell you, and both are one index away
+  from a graph that validates and does the wrong thing.
+- **Load-bearing inputs**: every entry in `load_bearing_inputs` must end up wired.
+  The schema calls them optional, so nothing will refuse the graph without them and
+  the result will quietly be wrong — an unwired `CreateVideo.audio` is a silent video
+  out of a model whose whole point is synchronised sound.
+- Where the request needs something the reference does not do, deviate — and wire
+  what you add. `connection_patterns` are role-level orientation, not a build spec;
+  verify exact input names / slot indices with `get_node_schema` when unsure.
 - **Boundary ports**: feed each `boundary_ports.inputs` from the brainbriefing inputs; wire each `boundary_ports.outputs` to a save/output node (`SaveImage`, `VHS_VideoCombine`, `CreateVideo`, ...).
 - **Remove** scaffold nodes that are not part of this recipe.
 

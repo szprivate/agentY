@@ -1734,6 +1734,31 @@ building by hand. A custom template with the same name always wins. Turn it off
 with `sync_templates_from_comfyui = false`; run it by hand with
 `python -m agenty_core.templates_sync --from-comfyui http://127.0.0.1:8188`.
 
+### When nothing fits: building from scratch
+
+If no template covers the request, the agent builds the graph itself from the
+**recipe** for that task + model — a record, derived from the whole template corpus,
+of what a workflow of that kind is made of. A recipe carries the complete node set
+(`build_nodes`), the template-verified widget values (`node_defaults`), and, from the
+member workflow those came from, its **actual wiring**:
+
+```
+CheckpointLoaderSimple#0:2 -> VAEDecode#0.vae
+LTXVConditioning#0:1       -> LTXVAddGuide#0.negative
+VAEDecodeAudio#0:0         -> CreateVideo#0.audio
+```
+
+`#0` / `#1` number the instances of a class, the number after the colon is the
+**output slot**, and the name after the dot is the **input**. Those three are what a
+graph is; without them a build can produce every right node and still connect them
+wrongly — which is what happened before this was in the recipe. Alongside it,
+`load_bearing_inputs` names the inputs ComfyUI calls *optional* that this kind of
+workflow needs anyway (`CreateVideo.audio` is the one that cost a silent video).
+
+The agent deviates from that wiring wherever your request needs something the
+reference doesn't do — and whatever it adds gets checked by
+[the dead-node gate](#nodes-that-would-never-run) before anything runs.
+
 ---
 
 ## Building a node for a new model

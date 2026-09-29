@@ -14,8 +14,19 @@ signal readiness or submit — the pipeline runs the workflow after you finish.
    model)` from the briefing, load the closest `member_workflows` entry as a
    scaffold via `get_workflow_template`, then conform that scaffold to the
    recipe — every `required_nodes` present (with `min_instances`), every
-   `connection_patterns` edge wired, every `boundary_ports` fed/saved, and
-   scaffold nodes that aren't part of the recipe removed.
+   `boundary_ports` fed/saved, and scaffold nodes that aren't part of the recipe
+   removed.
+
+   **Wire from `reference_wiring`, not from `connection_patterns`.** Each line is
+   `<class>#<instance>:<output slot> -> <class>#<instance>.<input name>` — the real
+   edges of the recipe's `reference_member`, which is also where `build_nodes` and
+   `node_defaults` came from. Reproduce every line, mapping `#<instance>` to the
+   node you created for that class and position. `connection_patterns` are
+   role-level triples that cannot name an instance, an input or a slot, and on a
+   recipe with several members they are usually empty — they are orientation, never
+   a build spec. Every input listed in `load_bearing_inputs` must end up wired: the
+   schema calls them optional, so nothing will complain and the run will quietly be
+   wrong.
 
 2. **Apply the briefing's own bindings** to the workflow you build:
    - wire the input image(s) from `input_nodes` (filename + node/slot),
