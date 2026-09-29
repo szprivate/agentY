@@ -24,7 +24,7 @@ rewriting it.
 
 import unittest
 
-from src.utils.canvas_hooks import (_is_general, _is_iterate, _is_qa, _is_standin,
+from src.utils.canvas_hooks import (_is_general, _is_qa, _is_retired, _is_standin,
                                     _is_text, _wants_bake)
 from src.utils.hook_cache import remembering
 
@@ -51,7 +51,7 @@ class OneSwitchTest(unittest.TestCase):
 
     def test_baking_is_offered_for_exactly_one_purpose(self):
         """Every other purpose reads the same bit as "memorize", never as "bake"."""
-        for purpose in ("text", "inline_parameter", "general_request", "qa", "iterate"):
+        for purpose in ("text", "inline_parameter", "general_request", "qa", "human_review"):
             with self.subTest(purpose=purpose):
                 self.assertFalse(_wants_bake(hook(purpose, remember=True)),
                                  "there is no workflow here to nest")
@@ -66,15 +66,17 @@ class OneSwitchTest(unittest.TestCase):
                 self.assertFalse(_wants_bake(hook("make_workflow", remember=falsy)))
 
     def test_the_purposes_that_read_the_switch_are_the_ones_the_node_shows_it_for(self):
-        """qa and iterate produce nothing to keep, which is why it is hidden there."""
+        """qa produces nothing to keep, which is why it is hidden there."""
         for purpose in ("inline_parameter", "text", "general_request"):
             with self.subTest(purpose=purpose):
                 h = hook(purpose, remember=True)
                 self.assertFalse(_is_standin(h), "would be baked as a subgraph instead")
-                self.assertFalse(_is_iterate(h))
+                self.assertFalse(_is_retired(h))
                 self.assertFalse(_is_qa(h))
         self.assertTrue(_is_qa(hook("qa")))
-        self.assertTrue(_is_iterate(hook("iterate")))
+        # `iterate` was retired (the panel's prompt loop replaced it); a canvas
+        # saved with one is recognised only to be told where the feature went.
+        self.assertTrue(_is_retired(hook("iterate")))
         self.assertTrue(_is_standin(hook("make_workflow")))
         self.assertTrue(_is_text(hook("text")))
         self.assertTrue(_is_general(hook("general_request")))

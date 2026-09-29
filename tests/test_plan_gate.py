@@ -268,10 +268,6 @@ class ThroughTheToolsTest(unittest.TestCase):
         out = _call(_tools(_pipe())["run_workflow_now"], workflow_path="C:/tmp/stage2.json")
         self.assertIn("not yet", out["error"])
 
-    def test_iterate_step_refuses_before_it_touches_the_graph(self):
-        out = _call(_tools(_pipe())["iterate_step"], prompt="make it warmer")
-        self.assertIn("not yet", out["error"])
-
     def test_signal_workflow_ready_refuses_through_the_mailbox_hold(self):
         from src.tools.workflow_handoff import signal_workflow_ready
         set_execution_hold(execution_refusal(

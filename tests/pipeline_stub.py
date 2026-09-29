@@ -57,6 +57,7 @@ _BOUND = (
     "_review_collector_files",
     "_review_collector",
     "_canvas_full_graph",
+    "_prompt_slot_of",
 )
 
 
@@ -88,9 +89,8 @@ def pipeline_stub(**over):
         _review_armed=None,
         _canvas_selection=[],
         _canvas_graph={},
+        _PROMPT_SLOTS=Pipeline._PROMPT_SLOTS,
         _open_workflows=[],
-        _iterate_history=[],
-        _iterate_targets=None,
         _DRY_GRAPH_CAP=Pipeline._DRY_GRAPH_CAP,
     )
     base.update(over)

@@ -1060,16 +1060,19 @@ def _is_text(hook: dict) -> bool:
     return str(hook.get("purpose", "inline_parameter") or "inline_parameter").strip().lower() in _TEXT_PURPOSES
 
 
-_ITERATE_PURPOSES = {"iterate", "iterative", "refine", "loop",
-                     "iterative_refine", "iterate_loop", "refine_loop"}
+# RETIRED. `iterate` used to turn the graph into a loop the agent ran — one
+# generation per turn, each result fed back into a wired LoadImage. Nobody used it;
+# what people actually do is ask for a prompt, queue it themselves, look, and ask
+# for a change, which is now the panel's prompt loop (src/utils/prompt_loop.py).
+# The words stay recognised for one purpose only: a canvas saved with one of them
+# must be TOLD where the feature went instead of quietly behaving like a general
+# request — the same courtesy `qa` got when it moved to its own node.
+_RETIRED_PURPOSES = {"iterate", "iterative", "iterative_refine", "iterate_loop"}
 
 
-def _is_iterate(hook: dict) -> bool:
-    """True if *hook* declares an interactive iterative-refinement loop — one
-    generation per turn, feeding each result back into the wired LoadImage node.
-    Driven by the ``iterate_step`` tool + the ``iterative-refine`` skill, not by
-    the one-shot producer/standin paths."""
-    return str(hook.get("purpose", "") or "").strip().lower() in _ITERATE_PURPOSES
+def _is_retired(hook: dict) -> bool:
+    """True if *hook* carries a purpose that no longer exists."""
+    return str(hook.get("purpose", "") or "").strip().lower() in _RETIRED_PURPOSES
 
 
 # "review" is deliberately NOT here any more — it is its own purpose now (below).
@@ -3124,14 +3127,14 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
     hook_id_set = _hook_ids(all_hooks)
     text_hooks = [h for h in hooks if _is_text(h)]
     standin_hooks = [h for h in hooks if _is_standin(h)]
-    iterate_hooks = [h for h in hooks if _is_iterate(h)]
+    retired_hooks = [h for h in hooks if _is_retired(h)]
     general_hooks = [h for h in hooks if _is_general(h)]
     qa_hooks = [h for h in hooks if _is_qa(h)]
     review_hooks = [h for h in hooks if _is_review(h)]
     gated_ids = gated_by_review(all_hooks)
     directive_hooks = [h for h in hooks
                        if not _is_standin(h) and not _is_text(h)
-                       and not _is_iterate(h) and not _is_general(h)
+                       and not _is_retired(h) and not _is_general(h)
                        and not _is_qa(h) and not _is_review(h)]
 
     lines = [
@@ -3402,34 +3405,22 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
                      f" ({_chain_note(chain)})" if chain else " (output unwired)")
             lines.append(f'- GENERAL hook {hid}{_t(h)} (context: {ctx}){where} — "{directive}"')
 
-    if iterate_hooks:
+    if retired_hooks:
         lines.append(
-            "\nITERATIVE-REFINE hook(s) — the user wants an INTERACTIVE refinement LOOP on "
-            "this on-canvas graph: ONE generation per turn, feeding each result back in as "
-            "the next input. Activate the `iterative-refine` skill and follow it. Each turn, "
-            "take the user's requested prompt/change and call "
-            'iterate_step(prompt="<their prompt>") — it writes the prompt into the target '
-            "node, feeds the chosen image into the wired LoadImage node, runs THIS graph "
-            "once, stages the result, and returns a numbered generation history. To revisit "
-            'an earlier result, pass from_generation ("original", or a generation number) — '
-            'that is how you honour "go back to the original / to generation N, then apply …". '
-            "After each run, show the result and ASK the user for the next prompt (or a "
-            "go-back); keep looping until they say stop. Do NOT call apply_canvas_hooks, "
-            "signal_workflow_ready, or run_research for these."
+            "\nRETIRED hook purpose — `iterate` no longer exists. It used to run this graph "
+            "for the user, one generation per turn. What replaced it is the panel's PROMPT "
+            "LOOP: the ✍ button in the agentY panel turns it on, you write each prompt with "
+            "`revise_prompt` into their prompt node, and THEY queue the graph and look at the "
+            "render. Tell them that in one line — that the hook does nothing now and where the "
+            "feature went — and treat this turn as whatever they actually asked for. Do not "
+            "run a generation to make up for it, and do not ask them to rewire anything."
         )
-        for h in iterate_hooks:
+        for h in retired_hooks:
             hid = h.get("hook_node_id")
             directive = str(h.get("directive", "") or "").strip()
-            tgt = _target_context(h, hook_id_set, base_prompt)
-            ctx = _input_context(h, base_prompt, hook_id_set, cached_map)
-            prompt_where = (f"prompt → {tgt}" if tgt else
-                            "prompt target UNWIRED — ask the user to wire this hook's OUTPUT "
-                            "into the prompt node's text input")
-            fb_where = (f"feedback image ← {ctx}" if ctx and ctx != "no input wired" else
-                        "feedback node UNWIRED — ask the user to wire the LoadImage node's "
-                        "image output into this hook's anchor")
-            tail = f' — "{directive}"' if directive else ""
-            lines.append(f"- ITERATE hook {hid}{_t(h)}: {prompt_where}; {fb_where}{tail}")
+            tail = f' — its text said "{directive}"' if directive else ""
+            lines.append(f"- RETIRED hook {hid}{_t(h)} "
+                         f"(purpose `{str(h.get('purpose') or '').strip()}`){tail}")
 
     if qa_hooks:
         if not _qa_will_run():

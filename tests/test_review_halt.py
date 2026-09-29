@@ -75,10 +75,12 @@ class PurposeTest(unittest.TestCase):
         self.assertNotIn("review", listed)
         for purpose in listed:
             with self.subTest(purpose=purpose):
-                # Every purpose the node offers must be one agentY recognises.
-                from src.utils.canvas_hooks import _is_iterate, _is_qa as qa
+                # Every purpose the node offers must be one agentY recognises — and
+                # a retired one must not be on offer at all.
+                from src.utils.canvas_hooks import _is_qa as qa, _is_retired
+                self.assertFalse(_is_retired(_hook(1, purpose)),
+                                 f"the node still offers the retired purpose {purpose!r}")
                 known = (_is_review(_hook(1, purpose)) or qa(_hook(1, purpose))
-                         or _is_iterate(_hook(1, purpose))
                          or purpose in ("inline_parameter", "make_workflow", "text",
                                         "general_request"))
                 self.assertTrue(known, f"the node offers {purpose!r} and nothing reads it")

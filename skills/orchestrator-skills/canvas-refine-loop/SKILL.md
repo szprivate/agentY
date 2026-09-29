@@ -1,6 +1,6 @@
 ---
 name: canvas-refine-loop
-description: Run the workflow the user already has open in the ComfyUI canvas over and over, judging each output against a condition they stated and changing one value until it is met — the closed "keep trying until it looks right" loop. Activate when the user asks for a loop / to iterate / to keep trying until an output condition holds, on a graph that is already working. Not for step-by-step refinement they steer turn by turn (that is iterative-refine).
+description: Run the workflow the user already has open in the ComfyUI canvas over and over, judging each output against a condition they stated and changing one value until it is met — the closed "keep trying until it looks right" loop. Activate when the user asks for a loop / to iterate / to keep trying until an output condition holds, on a graph that is already working. Not for step-by-step refinement they steer turn by turn (that is the panel's prompt loop and `revise_prompt`).
 allowed-tools: refine_canvas_until, get_canvas_node, set_canvas_node_params
 ---
 
@@ -22,7 +22,7 @@ varying, and runs again until the condition is met or the budget is spent.
 | The user wants | Tool |
 | --- | --- |
 | "keep trying until *X*" — you judge, they wait | `refine_canvas_until` |
-| "now make it warmer" … "now go back to gen 3" — they judge, one step per turn | `iterate_step` (skill: `iterative-refine`) |
+| "now make it warmer" … "now go back to v3" — they judge, one step per turn, and queue it themselves | the panel's prompt loop (✍) + `revise_prompt` |
 | one run of a graph you assembled | `run_workflow_now` |
 | change a value and stop | `set_canvas_node_params` |
 

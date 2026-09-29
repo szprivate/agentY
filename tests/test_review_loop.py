@@ -67,7 +67,7 @@ class WhatTheRefusalSaysTest(unittest.TestCase):
         self.assertIn("CHANGE", self.out["what_to_do"])
 
     def test_it_names_the_tools_that_still_work(self):
-        for tool in ("run_workflow_now", "run_now=True", "iterate_step"):
+        for tool in ("run_workflow_now", "run_now=True"):
             self.assertIn(tool, self.out["what_to_do"], tool)
 
     def test_it_says_what_is_actually_shut(self):
@@ -100,8 +100,9 @@ class ThroughTheToolsTest(unittest.TestCase):
         out = self._call(pipe, "apply_canvas_hooks", resolutions=[], run_now=True)
         self.assertNotIn("stopped at review hook", json.dumps(out))
 
-    def test_iterate_step_is_open_because_it_IS_the_feedback_loop(self):
-        out = self._call(_halted(), "iterate_step", prompt="warmer")
+    def test_revising_the_prompt_is_open_while_the_halt_stands(self):
+        """Writing a prompt into a node runs nothing, so a stop has nothing to stop."""
+        out = self._call(_halted(), "revise_prompt", text="warmer", node_id="6")
         self.assertNotIn("stopped at review hook", json.dumps(out))
 
     def test_run_workflow_now_is_open(self):
@@ -149,7 +150,7 @@ class ThePromptTeachesItTest(unittest.TestCase):
 
     def test_it_says_which_tools_still_run(self):
         self.assertIn("run_now=True", self.text)
-        self.assertIn("iterate_step", self.text)
+        self.assertIn("run_workflow_now", self.text)
 
     def test_the_existing_workflow_is_preferred_over_a_side_graph(self):
         self.assertIn("Prefer the workflow that is already on the canvas", self.text)

@@ -164,8 +164,8 @@ def execution_refusal(halt: ReviewHalt) -> dict:
         "what_to_do": (
             "If they asked for a CHANGE to what is in the collector — a different "
             "image, a shorter line, a re-cut clip — do it now: run it inline "
-            "(run_workflow_now, apply_canvas_hooks with run_now=True, or "
-            "iterate_step) and put the new result into the collector. That is "
+            "(run_workflow_now, or apply_canvas_hooks with run_now=True) and put "
+            "the new result into the collector. That is "
             "allowed and is what the stop is for. Only QUEUING the stages after "
             "the hook waits."
         ),

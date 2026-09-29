@@ -105,7 +105,7 @@ of these is a **neither**. The halt stays up. Do the work, put the result where
 the user can see it, and ask again.
 
 You may run work **inline** while the halt stands: `run_workflow_now`,
-`apply_canvas_hooks(run_now=True)`, `iterate_step`. What still waits for a
+`apply_canvas_hooks(run_now=True)`. What still waits for a
 continue is **queuing** the stages after the hook — the chain advancing. If a
 tool answers that the chain is stopped, it is telling you not to advance, not to
 stop working.

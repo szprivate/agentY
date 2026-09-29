@@ -708,7 +708,7 @@ async def execute_workflow(
     status update that the pipeline can forward to the UI as a streaming event.
 
     Unlike the batch path this does NOT re-generate on a QA failure: it is used for
-    chained stages (``run_workflow_now``, ``iterate_step``) where the caller is an
+    chained stages (``run_workflow_now``, ``refine_canvas_until``) where the caller is an
     agent that is still in the loop and can decide for itself what to do about a
     verdict. The failing dict is yielded through for it to see.
 

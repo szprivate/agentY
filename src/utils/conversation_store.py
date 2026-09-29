@@ -129,6 +129,11 @@ def init_db() -> None:
                 briefing    TEXT NOT NULL,
                 updated_at  REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS thread_prompt_loop (
+                thread_id   TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+                loop        TEXT NOT NULL,
+                updated_at  REAL NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS thread_checkpoints (
                 id                  INTEGER PRIMARY KEY AUTOINCREMENT,
                 thread_id           TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
@@ -403,6 +408,44 @@ def set_qa_briefing(thread_id: str, briefing: Optional[dict]) -> None:
             """,
             (thread_id, json.dumps(briefing), time.time()),
         )
+
+
+def set_prompt_loop(thread_id: str, loop: Optional[dict]) -> None:
+    """Store (or, with *loop* None, clear) this thread's prompt loop.
+
+    Its own table for the same reason as the QA briefing: ``thread_state`` is the
+    pipeline's snapshot, rewritten every turn, while a loop is something the user
+    switched on and expects to still be there tomorrow — with every prompt version
+    they have been through.
+    """
+    init_db()
+    with _connect() as conn:
+        if loop is None:
+            conn.execute("DELETE FROM thread_prompt_loop WHERE thread_id=?", (thread_id,))
+            return
+        conn.execute(
+            """
+            INSERT INTO thread_prompt_loop(thread_id, loop, updated_at) VALUES (?,?,?)
+            ON CONFLICT(thread_id) DO UPDATE SET
+                loop=excluded.loop, updated_at=excluded.updated_at
+            """,
+            (thread_id, json.dumps(loop), time.time()),
+        )
+
+
+def get_prompt_loop(thread_id: str) -> Optional[dict]:
+    """Return this thread's prompt loop, or None when it has never had one."""
+    init_db()
+    with _connect() as conn:
+        row = conn.execute("SELECT loop FROM thread_prompt_loop WHERE thread_id=?",
+                           (thread_id,)).fetchone()
+    if row is None:
+        return None
+    try:
+        data = json.loads(row["loop"])
+    except Exception:  # noqa: BLE001
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def get_qa_briefing(thread_id: str) -> Optional[dict]:

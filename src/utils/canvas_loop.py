@@ -1,9 +1,9 @@
 """The refine loop: run the graph the user has open, judge it, change one value, run again.
 
-This is the *panel-mode* counterpart to the ``iterate`` hook. The hook version
-(``Pipeline.iterate_step``) is a conversation — one generation per turn, the user
-looking at each result and saying what to change next. This one is a **closed
-loop**: the user states a condition once ("until the woman's position matches the
+This is the **closed** loop, and the one the user does not steer. Its opposite is
+the panel's prompt loop (``src/utils/prompt_loop.py``): there the agent writes a
+prompt, the user queues the graph and looks at the render, and the next turn is
+theirs to start. Here: the user states a condition once ("until the woman's position matches the
 original frame"), and the agent runs the graph, judges the output against that
 condition, rewrites the value it was told to vary, and runs again — until the
 condition is met or the budget is spent.

@@ -190,15 +190,6 @@ class NothingIsSubmittedTest(unittest.TestCase):
         self.assertEqual(out["status"], "dry_run")
         self.assertTrue(dry_run.is_stand_in(out["outputs"][0]))
 
-    def test_an_iterate_step_is_refused_rather_than_faked(self):
-        """Its result is written back into the user's own node and kept across turns."""
-        pipe = pipeline_stub(_dry_run=True, _canvas_hooks=[
-            {"hook_node_id": "9", "purpose": "iterate", "anchors": [],
-             "directive": "refine"}])
-        out = json.loads(asyncio.run(tools(pipe)["iterate_step"]("warmer light")))
-        self.assertIn("DRY RUN", out["error"])
-        self.assertIn("full run", out["error"])
-
     def test_a_signalled_workflow_says_dry_run_instead_of_ready(self):
         import tempfile
         from pathlib import Path

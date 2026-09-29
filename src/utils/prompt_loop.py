@@ -1,0 +1,284 @@
+"""Writing a prompt, looking at the render, writing it again.
+
+This is the loop people actually run: ask the agent for a prompt, queue it in
+ComfyUI yourself, look at what came out, say what to change, go again. Before this
+existed it worked — `set_canvas_node_params` has always been able to write a prompt
+into a node — but every round started from nothing: which node held the prompt, what
+the last prompt said, which render it produced, what had already been tried and
+rejected. All of it lived in the conversation, and the conversation is a window that
+slides.
+
+So the loop gets state of its own, per conversation and on disk:
+
+* **the target** — the node and input the prompt is written into, so "make it warmer"
+  needs no node id and no selection;
+* **the versions** — every prompt this loop has produced, numbered, so an earlier one
+  can be restored and a later one compared against it;
+* **the pairing** — which render came out of which version, found from ComfyUI's own
+  history, because the user queues the graph themselves and agentY never sees the run.
+
+Deliberately *not* here: running anything. The agent writes text into a node. The
+user queues. That division is the whole point — it is what the user was already doing
+by hand, and the reason the `iterate` hook purpose (which ran the graph for them, one
+generation per turn) is gone.
+"""
+
+from __future__ import annotations
+
+import time
+
+# Nothing here is a limit on the user; both caps exist so a loop that runs all
+# afternoon cannot grow the injected block without bound.
+_MAX_VERSIONS = 40
+_BLOCK_VERSIONS = 8        # how many are shown to the agent, newest last
+_TEXT_IN_BLOCK = 400       # characters of an older version's text in the block
+
+
+def _store():
+    from src.utils import conversation_store as cs
+    return cs
+
+
+def state(thread_id: str) -> dict | None:
+    """This thread's loop, or None when it has none. ``{"on": False, …}`` after a stop."""
+    if not thread_id:
+        return None
+    try:
+        return _store().get_prompt_loop(thread_id)
+    except Exception:  # noqa: BLE001 — a missing store is not a broken turn
+        return None
+
+
+def active(thread_id: str) -> dict | None:
+    """The loop only if it is switched ON, so callers cannot forget to check."""
+    loop = state(thread_id)
+    return loop if isinstance(loop, dict) and loop.get("on") else None
+
+
+def _save(thread_id: str, loop: dict | None) -> dict | None:
+    try:
+        _store().set_prompt_loop(thread_id, loop)
+    except Exception:  # noqa: BLE001
+        pass
+    return loop
+
+
+def start(thread_id: str, node_id: str = "", input_name: str = "") -> dict:
+    """Switch the loop on, keeping any versions it already has.
+
+    Re-starting is not a reset: the usual reason to switch it back on is to carry on
+    with the same prompt after doing something else, and throwing away ten versions
+    to spare one line of bookkeeping would be the wrong trade. ``clear`` is the
+    explicit way to start over.
+    """
+    loop = state(thread_id) or {}
+    loop.update({"on": True, "started_at": loop.get("started_at") or time.time()})
+    if node_id:
+        loop["node_id"] = str(node_id)
+    if input_name:
+        loop["input"] = str(input_name)
+    loop.setdefault("node_id", "")
+    loop.setdefault("input", "")
+    loop.setdefault("versions", [])
+    return _save(thread_id, loop) or loop
+
+
+def stop(thread_id: str) -> dict | None:
+    """Switch it off and keep the history — switching back on resumes it."""
+    loop = state(thread_id)
+    if not isinstance(loop, dict):
+        return None
+    loop["on"] = False
+    return _save(thread_id, loop)
+
+
+def clear(thread_id: str) -> None:
+    """Forget the loop entirely (the only way a version list is thrown away)."""
+    _save(thread_id, None)
+
+
+def target(thread_id: str) -> tuple[str, str]:
+    """``(node_id, input_name)`` the prompt goes to — either may be ""."""
+    loop = state(thread_id) or {}
+    return str(loop.get("node_id") or ""), str(loop.get("input") or "")
+
+
+def set_target(thread_id: str, node_id: str, input_name: str = "") -> dict:
+    loop = state(thread_id) or {"on": True, "versions": []}
+    loop["node_id"] = str(node_id or "")
+    if input_name:
+        loop["input"] = str(input_name)
+    return _save(thread_id, loop) or loop
+
+
+def versions(thread_id: str) -> list:
+    loop = state(thread_id) or {}
+    out = loop.get("versions")
+    return list(out) if isinstance(out, list) else []
+
+
+def current(thread_id: str) -> dict | None:
+    """The version in force — the last one written."""
+    got = versions(thread_id)
+    return got[-1] if got else None
+
+
+def add_version(thread_id: str, text: str, *, node_id: str = "", input_name: str = "",
+                based_on: int | None = None) -> dict:
+    """Record *text* as the next version. Returns that version's entry."""
+    loop = state(thread_id) or {"on": True, "versions": []}
+    loop.setdefault("versions", [])
+    if node_id:
+        loop["node_id"] = str(node_id)
+    if input_name:
+        loop["input"] = str(input_name)
+    entry = {
+        "v": (max((int(e.get("v") or 0) for e in loop["versions"]), default=0) + 1),
+        "text": str(text or ""),
+        "at": time.time(),
+        "output": "",
+    }
+    if based_on:
+        entry["from"] = int(based_on)
+    loop["versions"].append(entry)
+    if len(loop["versions"]) > _MAX_VERSIONS:
+        loop["versions"] = loop["versions"][-_MAX_VERSIONS:]
+    loop["on"] = True
+    _save(thread_id, loop)
+    return entry
+
+
+def version_text(thread_id: str, v) -> str | None:
+    """The text of version *v*, or None when there is no such version."""
+    try:
+        want = int(str(v).lstrip("vV"))
+    except (TypeError, ValueError):
+        return None
+    for entry in versions(thread_id):
+        if int(entry.get("v") or 0) == want:
+            return str(entry.get("text") or "")
+    return None
+
+
+def pair_output(thread_id: str, path: str) -> dict | None:
+    """Attach a render to the version that was live when it was made.
+
+    Called at turn setup with whatever ComfyUI produced most recently. The version
+    it belongs to is simply the last one written — the user queued the graph after
+    the agent put that text in the node, which is the only order this loop has.
+    Never overwrites: the first render a version gets is the one it is judged on, and
+    a second queue of the same prompt is not a new fact about it.
+    """
+    loop = state(thread_id)
+    if not isinstance(loop, dict) or not loop.get("versions") or not path:
+        return None
+    last = loop["versions"][-1]
+    if last.get("output"):
+        return None
+    last["output"] = str(path)
+    _save(thread_id, loop)
+    return last
+
+
+def newest_output(since: float = 0.0) -> str:
+    """The newest image ComfyUI has finished writing, as a path, or "".
+
+    The user queues the graph themselves, so nothing in agentY sees that run: its
+    only trace is ComfyUI's own history. Best-effort by construction — a ComfyUI
+    that is down, a history with no images, a file that cannot be resolved all mean
+    "no render to look at", which is a fine thing for a turn to know.
+    """
+    try:
+        from agenty_core.utils.comfyui_client import get_client
+        history = get_client().get("/history", params={"max_items": 6})
+    except Exception:  # noqa: BLE001
+        return ""
+    if not isinstance(history, dict):
+        return ""
+
+    def _stamp(entry) -> float:
+        status = (entry or {}).get("status") or {}
+        for name, payload in reversed(list(status.get("messages") or [])):
+            if isinstance(payload, dict) and payload.get("timestamp"):
+                try:                       # ComfyUI reports milliseconds
+                    return float(payload["timestamp"]) / 1000.0
+                except (TypeError, ValueError):
+                    continue
+        return 0.0
+
+    best: tuple = (0.0, "")
+    for entry in history.values():
+        if not isinstance(entry, dict):
+            continue
+        when = _stamp(entry)
+        if since and when and when < since:
+            continue
+        for node_out in (entry.get("outputs") or {}).values():
+            if not isinstance(node_out, dict):
+                continue
+            for key in ("images", "gifs", "videos"):
+                for rec in (node_out.get(key) or []):
+                    if not isinstance(rec, dict) or rec.get("type") == "temp":
+                        continue
+                    path = _resolve(rec)
+                    if path and when >= best[0]:
+                        best = (when, path)
+    return best[1]
+
+
+def _resolve(record: dict) -> str:
+    """A ComfyUI output record as a path on disk, or "" when it cannot be found."""
+    try:
+        from src.executor import _resolve_output_path
+        path = _resolve_output_path(str(record.get("filename") or ""),
+                                    str(record.get("subfolder") or ""),
+                                    str(record.get("type") or "output"))
+        return str(path) if path and path.exists() else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def block(thread_id: str) -> str:
+    """The loop's facts for the orchestrator's turn input, or "".
+
+    The instructions live in ``config/system_prompts/orchestrator/prompt_loop.md``
+    (a partial, like every other turn-conditional section); this is only what is
+    true right now — where the prompt goes, what it says, and what the last render
+    was. Newest version last, because that is the one being talked about.
+    """
+    loop = active(thread_id)
+    if not loop:
+        return ""
+    node_id, input_name = str(loop.get("node_id") or ""), str(loop.get("input") or "")
+    got = versions(thread_id)
+    lines = []
+    if node_id:
+        lines.append(f"  Prompt target: node {node_id}"
+                     + (f", input `{input_name}`" if input_name else ""))
+    else:
+        lines.append("  Prompt target: NOT SET — the first revise_prompt call must name "
+                     "the node_id (the prompt node on their canvas; ask which one if the "
+                     "graph has several and nothing is selected).")
+    if not got:
+        lines.append("  No prompt written yet in this loop.")
+        return "\n".join(lines) + "\n"
+    for entry in got[-_BLOCK_VERSIONS:]:
+        text = str(entry.get("text") or "")
+        shown = text if len(text) <= _TEXT_IN_BLOCK else text[:_TEXT_IN_BLOCK] + " …"
+        mark = "  v{v}{base}: {text}".format(
+            v=entry.get("v"), text=shown,
+            base=f" (from v{entry['from']})" if entry.get("from") else "")
+        lines.append(mark)
+        if entry.get("output"):
+            lines.append(f"      rendered: {entry['output']}")
+    if len(got) > _BLOCK_VERSIONS:
+        lines.insert(1, f"  ({len(got) - _BLOCK_VERSIONS} earlier version(s) not shown; "
+                        f"ask for one by number if you need it.)")
+    live = got[-1]
+    if live.get("output"):
+        lines.append(f"  The render above is what v{live['v']} produced — it is what "
+                     "they have just been looking at.")
+    else:
+        lines.append(f"  v{live['v']} has no render yet: either they have not queued it, "
+                     "or they queued it and ComfyUI is not reporting it.")
+    return "\n".join(lines) + "\n"

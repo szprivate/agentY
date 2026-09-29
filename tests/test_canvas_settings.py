@@ -239,7 +239,7 @@ class TheTextHookPath(unittest.TestCase):
     def setUpClass(cls):
         cls.src = (ROOT / "src" / "pipeline.py").read_text(encoding="utf-8")
         start = cls.src.index("async def place_canvas_text(")
-        cls.tool = cls.src[start:cls.src.index("async def iterate_step(", start)]
+        cls.tool = cls.src[start:cls.src.index("async def refine_canvas_until(", start)]
 
     def test_the_host_decides_and_stamps_it_on_the_event(self):
         """The panel must not read this setting itself — it is the same argument

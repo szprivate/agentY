@@ -590,14 +590,6 @@ class Pipeline:
         # association at the END of a turn, which is what makes it work NEXT time
         # — this is the within-turn half, and the one a chain actually needs.
         self._hook_products: dict = {}
-        # Interactive iterative-refine loop state (iterate_step). Unlike the canvas
-        # fields above, this PERSISTS across turns — the loop spans many turns — so it
-        # is init-ed here only, never in the per-turn reset. `_iterate_history` is the
-        # numbered generation stack ([{gen, prompt, from, output_path, input_ref}], gen
-        # 0 = the original image); `_iterate_targets` fingerprints the loop's hook/nodes
-        # so a fresh loop (or a different graph) auto-resets it.
-        self._iterate_history: list = []
-        self._iterate_targets: dict | None = None
         # Snapshot of the nodes the user has selected on the canvas this turn
         # (id/type/title/widgets), so the orchestrator can read — and, via
         # set_canvas_node_params, write back — arbitrary node parameters.
@@ -2037,6 +2029,85 @@ class Pipeline:
             return json.dumps(result)
 
         @_tool
+        async def revise_prompt(text: str = "", node_id: str = "",
+                                from_version: str = "") -> str:
+            """Write the next prompt into the canvas node the prompt loop is pointed at.
+
+            The panel's **prompt loop** is the user's own way of working: you write a
+            prompt, THEY queue the graph in ComfyUI, they look at the render, they say
+            what to change. Use this for every prompt you write while the ``[PROMPT
+            LOOP]`` block is in your turn — it writes the widget exactly like
+            ``set_canvas_node_params`` does, and additionally numbers the text as a
+            version, shows it in the panel's strip, and pairs it with the render that
+            comes back, which is what lets the next turn know what was tried.
+
+            It does NOT run anything. No queueing, no generation — that is the user's
+            half of the loop, and taking it from them spends their GPU on a prompt they
+            have not read.
+
+            Args:
+                text: The prompt to write. Leave empty with *from_version* to put an
+                    earlier version back on the canvas unchanged.
+                node_id: The prompt node. Only needed the first time (or to move the
+                    loop to another node) — after that the loop remembers it.
+                from_version: The version this one is based on, e.g. ``"2"`` for "go
+                    back to v2 but warmer". Recorded, so the history says where a
+                    prompt came from; with no *text* it restores that version as-is.
+            """
+            from src.utils import prompt_loop as _loop
+
+            thread = str(getattr(self._session, "session_id", "") or "")
+            base_v = None
+            if from_version:
+                earlier = _loop.version_text(thread, from_version)
+                if earlier is None:
+                    have = ", ".join(f"v{e['v']}" for e in _loop.versions(thread)) or "none yet"
+                    return json.dumps({"error": f"there is no version '{from_version}' in "
+                                       f"this loop. Versions so far: {have}."})
+                base_v = int(str(from_version).lstrip("vV"))
+                text = str(text or "") or earlier
+            if not str(text or "").strip():
+                return json.dumps({"error": "text is empty — write the prompt, or pass "
+                                   "from_version to put an earlier one back."})
+            stored_node, stored_input = _loop.target(thread)
+            node_id = str(node_id or stored_node or "")
+            if not node_id:
+                return json.dumps({
+                    "error": "the prompt loop has no target node yet.",
+                    "fix": ("Name the node holding the prompt — the [CANVAS GRAPH] block "
+                            "lists every node on their canvas, and a selected node is the "
+                            "one they mean. If the graph has several text nodes and "
+                            "nothing is selected, ask which one before writing."),
+                })
+            slot = stored_input or self._prompt_slot_of(node_id)
+            raw = await set_canvas_node_params(node_id, {slot: text})
+            try:
+                applied = json.loads(raw)
+            except Exception:  # noqa: BLE001
+                applied = {"status": "unknown"}
+            if applied.get("error"):
+                return raw                      # say exactly what it said
+            entry = _loop.add_version(thread, text, node_id=node_id, input_name=slot,
+                                      based_on=base_v)
+            from src.utils.canvas_patch import push as _push_patch
+            _push_patch({"op": "prompt_version", "v": entry["v"], "text": text,
+                         "node_id": node_id, "input": slot,
+                         "from": base_v or 0})
+            return json.dumps({
+                "status": "written",
+                "version": entry["v"],
+                "node_id": node_id,
+                "input": slot,
+                "node": applied.get("node") or "",
+                "based_on": base_v or None,
+                "versions": [{"v": e["v"], "text": e["text"][:120],
+                              "rendered": bool(e.get("output"))}
+                             for e in _loop.versions(thread)],
+                "note": ("It is on their canvas now and nothing has been run — they queue "
+                         "it. Say in a line or two what you changed, then end the turn."),
+            })
+
+        @_tool
         async def run_python_node(code: str, inputs: list | None = None,
                                   title: str = "", place: bool = True) -> str:
             """Run Python INSIDE ComfyUI as an ``agentY python`` node on the canvas.
@@ -2234,194 +2305,6 @@ class Pipeline:
             })
 
         @_tool
-        async def iterate_step(prompt: str, from_generation: str = "",
-                               reset: bool = False) -> str:
-            """Run ONE step of an interactive iterative-refine loop on the on-canvas graph.
-
-            For an ``iterate`` canvas hook (see the ``[CANVAS HOOKS]`` block). In one
-            deterministic call it: writes *prompt* into the hook's prompt-target node,
-            feeds the chosen image into the wired LoadImage node, runs the on-canvas
-            graph ONCE (synchronously), stages the result, records it in a numbered
-            generation history, and updates that LoadImage in place so the next step
-            continues from this result. Call it ONCE per user turn; between calls, ask
-            the user for the next prompt (or a go-back) — see the ``iterative-refine``
-            skill.
-
-            Args:
-                prompt: The exact prompt/instruction for THIS generation (from the user).
-                from_generation: Which image to start THIS step from. ``""`` (default) =
-                    the most recent generation (a normal forward step). ``"original"``
-                    (or ``"0"``) = the image the loop started from. A number (``"3"``) =
-                    the output of that generation. This is how you honour "go back to the
-                    original / to generation N, then apply …".
-                reset: Start a NEW loop, discarding the history and re-capturing the
-                    LoadImage's current image as the original. Use when the user begins a
-                    fresh iterative session (or points the loop at a different graph).
-            """
-            import copy as _copy
-            import tempfile as _tempfile
-            from src.utils.canvas_hooks import _is_iterate as _is_iter, _output_targets as _targets
-            from src.tools.image_handling import _upload_one as _upload
-
-            def _view(h):
-                return [{"gen": e["gen"], "prompt": e["prompt"], "from": e["from"],
-                         "output": e["output_path"]} for e in h]
-
-            # Runs here and now, so a review halt does not shut it: this is the
-            # tool a revision during the stop is made of. Advancing the chain is
-            # what waits for a continue (see _review_gate_refusal).
-            gate = self._plan_gate_refusal() or self._review_gate_refusal(inline=True)
-            if gate:
-                return json.dumps(gate)
-            if self._dry_run:
-                # The one tool a stand-in cannot serve. Each step exists to be
-                # LOOKED at, and its result is written back into the user's own
-                # LoadImage node and kept as history across turns — feeding that
-                # loop a path with no image behind it corrupts a real thing.
-                return json.dumps({
-                    "error": "this is a DRY RUN, and an iterate step is a refine loop on "
-                             "real pixels — there is nothing to look at and nothing to "
-                             "feed back. Tell the user the iterate hook was skipped, and "
-                             "that it needs a full run.",
-                })
-            base = getattr(self, "_canvas_base_prompt", None)
-            if not isinstance(base, dict) or not base:
-                return json.dumps({"error": "no on-canvas graph is loaded this turn — open "
-                                   "the graph with the iterate hook in ComfyUI, then retry."})
-            hook = next((h for h in (self._canvas_hooks or []) if _is_iter(h)), None)
-            if hook is None:
-                return json.dumps({"error": "no `iterate` hook on the canvas — add an agentY "
-                                   "hook with purpose 'iterate', wire its output into the "
-                                   "prompt node and a LoadImage node into its anchor."})
-
-            # Resolve the prompt-target node/input (the hook's OUTPUT destination) and
-            # the feedback LoadImage node (a wired anchor, preferring a LoadImage-typed).
-            targets = _targets(hook)
-            if not targets:
-                return json.dumps({"error": "the iterate hook's OUTPUT is unwired — wire it "
-                                   "into the prompt node's text input so I know where the "
-                                   "prompt goes."})
-            prompt_node, _tt, prompt_input, _tit, _ttl = targets[0]
-            prompt_input = prompt_input or "text"
-            anchors = [a for a in (hook.get("anchors") or [])
-                       if isinstance(a, dict) and a.get("node_id") is not None]
-            if not anchors:
-                return json.dumps({"error": "no feedback node wired — wire the LoadImage "
-                                   "node's image output into the iterate hook's anchor."})
-            fb = next((a for a in anchors if "loadimage" in str(a.get("type", "")).lower()),
-                      anchors[0])
-            feedback_node = str(fb["node_id"])
-            feedback_input = "image"
-            if prompt_node not in base:
-                return json.dumps({"error": f"prompt node {prompt_node} is not in the graph."})
-            if feedback_node not in base:
-                return json.dumps({"error": f"LoadImage node {feedback_node} is not in the graph."})
-
-            # (Re)initialize when asked, on the first call, or when the loop's target
-            # nodes changed (a different graph). State 0 records the ORIGINAL image the
-            # LoadImage node currently holds.
-            tgt_key = {"prompt_node": prompt_node, "prompt_input": prompt_input,
-                       "feedback_node": feedback_node, "hook": str(hook.get("hook_node_id"))}
-            if reset or not self._iterate_history or self._iterate_targets != tgt_key:
-                original = (base[feedback_node].get("inputs", {}) or {}).get(feedback_input, "")
-                if isinstance(original, list):  # a wired link, not a filename widget
-                    original = ""
-                self._iterate_history = [{"gen": 0, "prompt": None, "from": None,
-                                          "output_path": None, "input_ref": original}]
-                self._iterate_targets = tgt_key
-            hist = self._iterate_history
-
-            # Pick the source image ref for THIS step.
-            sel = str(from_generation or "").strip().lower()
-            if sel in ("", "prev", "previous", "last", "next"):
-                src = hist[-1]
-            elif sel in ("original", "0", "orig", "source", "start"):
-                src = hist[0]
-            else:
-                try:
-                    g = int(sel)
-                except ValueError:
-                    return json.dumps({"error": f"from_generation '{from_generation}' is not "
-                                       "'original' or a generation number.", "history": _view(hist)})
-                src = next((e for e in hist if e["gen"] == g), None)
-                if src is None:
-                    return json.dumps({"error": f"no generation {g} in history.",
-                                       "history": _view(hist)})
-            source_ref = src.get("input_ref") or ""
-            if not source_ref:
-                return json.dumps({"error": "the starting image is unknown — set an image on "
-                                   "the LoadImage node, or run one forward step first."})
-
-            # Build the patched graph and run it synchronously (as run_workflow_now does).
-            graph = _copy.deepcopy(base)
-            graph[prompt_node].setdefault("inputs", {})[prompt_input] = str(prompt)
-            graph[feedback_node].setdefault("inputs", {})[feedback_input] = source_ref
-            run_dir = Path(_tempfile.mkdtemp(prefix="agenty_iterate_"))
-            wf = run_dir / "iterate.json"
-            wf.write_text(json.dumps(graph), encoding="utf-8")
-
-            from src.executor import execute_workflow as _execute_workflow
-            out_base = self._session.current_output_paths
-            before = len(out_base)
-            brief = self._last_brainbriefing_json or "{}"
-            try:
-                async for _line in _execute_workflow(
-                    str(wf), brief, user_message="", verbose=self._verbose,
-                    collected_paths=out_base, qa_briefing=self._qa_briefing,
-                ):
-                    _push_progress(str(_line))
-                    if self._verbose:
-                        print(f"[iterate_step] {_line}")
-            except Exception as exc:  # noqa: BLE001
-                return json.dumps({"error": f"generation failed: {exc}", "history": _view(hist)})
-            produced = list(out_base[before:])
-            self._chain_output_paths.extend(produced)
-            if not produced:
-                return json.dumps({
-                    "error": "the run produced no fetchable output. If your saver is the "
-                             "bEpic viewer node, turn its `save_to_output` ON — only then "
-                             "are files written to ComfyUI history where the agent can fetch "
-                             "them (temp-mode previews are not fetchable by design).",
-                    "history": _view(hist),
-                })
-
-            result_path = produced[0]
-            # Point the loader node at the result, so the next step continues from
-            # here — and the user sees it update in place. A VHS "(Path)" loader
-            # reads the file where it is, so it gets the path and nothing is
-            # staged; a name loader can only see ComfyUI's input directory, so the
-            # result is copied in there and the copy's name is what it holds.
-            # Writing the wrong one leaves the loop pointing at nothing.
-            if takes_absolute_path((base.get(feedback_node) or {}).get("class_type")):
-                input_ref = result_path
-            else:
-                up = _upload(result_path, image_type="input")
-                input_ref = up.get("name") if isinstance(up, dict) else None
-                if not input_ref:
-                    return json.dumps({"error": f"could not stage the result for feedback: {up}",
-                                       "output": result_path, "history": _view(hist)})
-            from src.utils.canvas_patch import push as _push_patch
-            _push_patch({"node_id": feedback_node, "params": {feedback_input: input_ref},
-                         "node_title": "LoadImage"})
-
-            gen = hist[-1]["gen"] + 1
-            hist.append({"gen": gen, "prompt": str(prompt), "from": src.get("gen"),
-                         "output_path": result_path, "input_ref": input_ref})
-            if self._verbose:
-                print(f"pipeline: iterate_step produced generation {gen} -> {result_path}")
-            origin = "the original" if src.get("gen") == 0 else f"generation {src.get('gen')}"
-            return json.dumps({
-                "status": "done",
-                "generation": gen,
-                "from_generation": src.get("gen"),
-                "output": result_path,
-                "history": _view(hist),
-                "message": (f"Generation {gen} produced from {origin} and staged; the "
-                            "LoadImage node now holds it. Show the user, then ask for the "
-                            "next prompt or a go-back. Do NOT signal_workflow_ready."),
-            })
-
-        @_tool
         async def refine_canvas_until(condition: str, node_id: str = "", param: str = "",
                                       max_runs: int = 0, references: list | None = None,
                                       start_value: str = "", vary_seed: bool = False) -> str:
@@ -2435,9 +2318,11 @@ class Pipeline:
             is assembled, and no second workflow appears on their canvas.
 
             Use it when the user asks for a **loop / "keep trying until" / "iterate
-            until"** on the workflow they already have working. For a step-by-step
-            refinement they steer turn by turn, use ``iterate_step`` instead; for a
-            single run of a graph you built, ``run_workflow_now``.
+            until"** on the workflow they already have working — a loop THEY do not
+            want to steer. When they want to steer it round by round, that is the
+            panel's prompt loop and ``revise_prompt``: you write the prompt, they
+            queue it and look. For a single run of a graph you built,
+            ``run_workflow_now``.
 
             It stops early — and reports why — when the condition is met, when the
             judge cannot be read (it will not claim a match on a broken judge), when
@@ -2865,8 +2750,8 @@ class Pipeline:
                  screenshot_canvas,
                  halt_for_review, run_workflow_now, add_canvas_workflow,
                  get_canvas_node, set_canvas_node_params, place_canvas_text,
-                 run_python_node,
-                 delete_canvas_nodes, iterate_step, refine_canvas_until,
+                 run_python_node, revise_prompt,
+                 delete_canvas_nodes, refine_canvas_until,
                  list_agent_settings, set_agent_setting]
         # Offered only where there is a Slack to send to. Every tool in this list
         # is described to the model on every call, so one nobody can use is a
@@ -3682,6 +3567,18 @@ class Pipeline:
         if project_ctx:
             guide = _orch_partial("project_memory")
             pin = pin + (guide + "\n\n" if guide else "") + project_ctx + "\n\n"
+
+        # The panel's prompt loop: they queue, the agent writes. Carries where the
+        # prompt goes, every version so far, and which render came out of which —
+        # the facts the conversation used to hold until its window slid past them.
+        try:
+            from src.utils import prompt_loop as _loop
+            loop_block = _loop.block(str(getattr(self._session, "session_id", "") or ""))
+        except Exception:  # noqa: BLE001 — never cost a turn
+            loop_block = ""
+        if loop_block:
+            guide = _orch_partial("prompt_loop")
+            pin = pin + (guide + "\n\n" if guide else "") + "[PROMPT LOOP]\n" + loop_block + "\n"
 
         # Plan approval — only where someone actually asked to be asked. Resolved
         # here, once, from the three places such a standing rule can live (the
@@ -5108,6 +5005,39 @@ class Pipeline:
             return read_reply(user_text)
         except Exception:  # noqa: BLE001
             return ""
+
+    # Widget names that hold prompt text, best first. `text` is CLIPTextEncode and
+    # most of its relatives; `prompt` is what the API / partner nodes call it (and
+    # assuming `text` there is a mistake this codebase has made before — see
+    # PromptNode in the brainbriefing); the rest are the primitive string nodes.
+    _PROMPT_SLOTS = ("text", "prompt", "positive_prompt", "string", "value", "text_g")
+
+    def _prompt_slot_of(self, node_id: str) -> str:
+        """Which widget on *node_id* holds the prompt — asked, not assumed.
+
+        Falls back to ``text`` only when the node cannot be read at all: a wrong
+        guess writes the prompt into a widget nobody reads, and the graph runs
+        perfectly well with the old prompt still in place.
+        """
+        widgets: dict = {}
+        for node in (getattr(self, "_canvas_selection", None) or []):
+            if str(node.get("id")) == str(node_id):
+                widgets = dict(node.get("widgets") or {})
+                break
+        if not widgets:
+            try:
+                from src.utils.canvas_view import node_detail
+                found = node_detail(getattr(self, "_canvas_graph", None), node_id)
+                widgets = dict((found or {}).get("values") or {})
+            except Exception:  # noqa: BLE001
+                widgets = {}
+        for name in self._PROMPT_SLOTS:
+            if name in widgets:
+                return name
+        # Nothing recognisable: the longest string widget is the prompt far more
+        # often than not, and it is a better guess than a name that isn't there.
+        strings = [(len(str(v)), k) for k, v in widgets.items() if isinstance(v, str)]
+        return max(strings)[1] if strings else "text"
 
     def _review_collector(self) -> dict | None:
         """The halted chain's ballot: the collector wired into the review hook.

@@ -1234,6 +1234,22 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
     # into a qa hook from mid-graph is already a file by the time we read it.
     qa_briefing = _resolve_qa_briefing(canvas_hooks, thread_id)
 
+    # A prompt loop's render. The user queues the graph themselves, so the run is
+    # invisible to agentY — ComfyUI's own history is the only trace of it, and the
+    # moment to look is now, before the turn is built, so the version the agent is
+    # about to talk about already has its picture attached. Best-effort: no history,
+    # no ComfyUI, no render is a fine thing for a turn to know.
+    try:
+        from src.utils import prompt_loop as _pl
+        if _pl.active(thread_id):
+            _live = _pl.current(thread_id) or {}
+            if not _live.get("output"):
+                _shot = _pl.newest_output(since=float(_live.get("at") or 0.0))
+                if _shot:
+                    _pl.pair_output(thread_id, _shot)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("prompt loop: could not pair a render (%s)", exc)
+
     _restore_state(pipeline, thread_id)
     # Before the turn touches anything: the state an undo of it puts back. The
     # panel is told which checkpoint this is, so it can mark where the step began.
@@ -3803,6 +3819,61 @@ def _build_app():
             return jsonify({"ok": True, "enabled": enabled, "env_locked": env_locked})
         except Exception as exc:  # noqa: BLE001
             logger.error("autograph toggle failed: %s", exc, exc_info=True)
+            return jsonify({"ok": False, "error": str(exc)}), 500
+
+    # ── Prompt loop (the ✍ button; see src/utils/prompt_loop.py) ─────────────
+    # Per CONVERSATION, not per install: two threads can be refining two different
+    # prompts, and the panel's strip has to show the one you are looking at. The
+    # restore path writes through the same canvas-patch bus the agent's own
+    # revise_prompt uses, so clicking v2 and being handed v2 are one mechanism.
+    @app.route("/agentY/prompt_loop", methods=["GET", "POST", "OPTIONS"])
+    def prompt_loop_route():
+        if request.method == "OPTIONS":
+            return "", 204
+        from src.utils import prompt_loop as pl
+
+        def _payload(thread: str) -> dict:
+            loop = pl.state(thread) or {}
+            return {"ok": True, "thread_id": thread,
+                    "on": bool(loop.get("on")),
+                    "node_id": str(loop.get("node_id") or ""),
+                    "input": str(loop.get("input") or ""),
+                    "versions": [{"v": e.get("v"), "text": e.get("text", ""),
+                                  "rendered": bool(e.get("output"))}
+                                 for e in (loop.get("versions") or [])]}
+
+        if request.method == "GET":
+            return jsonify(_payload(str(request.args.get("thread_id") or "")))
+        body = request.get_json(silent=True) or {}
+        thread = str(body.get("thread_id") or "")
+        if not thread:
+            return jsonify({"ok": False, "error": "thread_id is required"}), 400
+        try:
+            if body.get("restore") is not None:
+                text = pl.version_text(thread, body.get("restore"))
+                if text is None:
+                    return jsonify({"ok": False, "error": f"no version {body['restore']}"}), 404
+                node_id, slot = pl.target(thread)
+                if not node_id:
+                    return jsonify({"ok": False,
+                                    "error": "this loop has no target node yet"}), 409
+                from src.utils.canvas_patch import push as push_patch
+                entry = pl.add_version(thread, text, based_on=int(str(body["restore"]).lstrip("vV")))
+                push_patch({"node_id": node_id, "params": {slot or "text": text},
+                            "node_title": "prompt loop"})
+                push_patch({"op": "prompt_version", "v": entry["v"], "text": text,
+                            "node_id": node_id, "input": slot or "text",
+                            "from": entry.get("from", 0)})
+            elif body.get("clear"):
+                pl.clear(thread)
+            elif body.get("on"):
+                pl.start(thread, str(body.get("node_id") or ""),
+                         str(body.get("input") or ""))
+            else:
+                pl.stop(thread)
+            return jsonify(_payload(thread))
+        except Exception as exc:  # noqa: BLE001
+            logger.error("prompt loop update failed: %s", exc, exc_info=True)
             return jsonify({"ok": False, "error": str(exc)}), 500
 
     # ── MCP servers (config/mcp.json + one-time OAuth authorize) ────────────

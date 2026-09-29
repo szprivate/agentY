@@ -24,6 +24,7 @@ node, ready to wire into your next step.*
   - [Undoing a step](#undoing-a-step)
 - [Generating & editing](#generating--editing)
   - [Nodes that would never run](#nodes-that-would-never-run)
+  - [Refining a prompt round by round](#refining-a-prompt-round-by-round)
   - [Finding reference images on the web](#finding-reference-images-on-the-web)
   - [Marking up an image](#marking-up-an-image)
   - [Asking about a video](#asking-about-a-video)
@@ -305,6 +306,41 @@ runs, and quietly ignores the aspect ratio you gave it.
 Your own canvas is never policed this way: a node you have parked while you work is
 your business, and only workflows the agent hands to the queue are checked.
 
+### Refining a prompt round by round
+
+The loop most people actually run: ask for a prompt, **queue it yourself**, look at
+the render, say what to change, go again. The ✍ button in the panel's top bar makes
+that a thing agentY keeps track of instead of something you re-explain every round.
+
+**Starting it:** click your prompt node on the canvas, then click **✍**. (No
+selection? Turn it on anyway and say which node — or let the agent ask.) From then on:
+
+1. *"a rainy neon alley, shot on 35mm, puddles catching the signs"* → the agent writes
+   it into that node and **nothing runs**. The prompt is on your canvas as **v1**.
+2. You queue the graph in ComfyUI and look at the render.
+3. *"too dark, and lose the rim light"* → the agent finds the render you just made in
+   ComfyUI's history, **looks at it** against the prompt that made it, and writes **v2**.
+
+Every version appears as a chip above the message box — `v1 v2 v3`, newest
+highlighted, hover to read the whole prompt, and **click one to put it back on the
+canvas** (recorded as a new version, so the trail stays honest). A chip is dimmed
+until a render comes back for it. *"Back to v2 but keep the fog"* works in words too.
+
+The loop belongs to **this conversation**: switch threads and you switch loops, reload
+the tab and it is still there, with its versions. Switching ✍ off keeps them — turn it
+back on to carry on where you were.
+
+**It never queues anything.** That is the point: the agent writes text into a node, you
+decide what is worth rendering. If you want the opposite — state a goal once and have
+the agent run the graph over and over until it holds — that is
+[Loops](#loops-keep-trying-until-its-right).
+
+> The `iterate` hook purpose did a version of this where the agent ran the graph for
+> you, one generation per turn. It is gone; a saved graph that still carries one is
+> told so and does nothing.
+
+---
+
 ### Finding reference images on the web
 
 References arrive on the canvas the same way generated images do:
@@ -521,7 +557,7 @@ Two things still want the wire:
 
 - **A reference that has to reach a node in your own graph.** A name cannot make
   ComfyUI carry a value between nodes — only a wire does. So the image a sampler
-  branch consumes, or the `LoadImage` an `iterate` hook swaps each turn, stays wired.
+  branch consumes stays wired.
 - **A mid-graph tensor** (a `VAEDecode`, an upscaler, a mask op) carries no file of
   its own, and only a *wired* anchor is rendered to disk for the agent to look at.
   Tag a saved image, or wire the tensor into the hook.
@@ -669,10 +705,10 @@ can be fetched and judged (for the bEpic viewer node, `save_to_output` **ON**).
 Temp-mode previews cannot be read back, and the loop says so.
 
 This is the *closed* loop — you state the goal once and wait. For the *open* one,
-where you look at each result and say what to change next, see
-[Iterative refinement](#iterative-refinement-the-iterate-purpose).
+where you queue each render yourself and say what to change next, see
+[Refining a prompt round by round](#refining-a-prompt-round-by-round).
 
-### The seven purposes
+### The five purposes
 
 **1. `inline_parameter`** (default) — annotate an existing node and let the agent
 expand and run your on-canvas graph. For sweeps and batches: *"sweep the seed 6×"*,
@@ -701,11 +737,12 @@ single produced value goes to the wired target, a plain question is answered in
 chat: *"what would improve this workflow?"*, *"take the wired image and give me
 three different style directions as renders"*.
 
-**5. `iterate`** — turn the graph into an **interactive refinement loop**. See
-[Iterative refinement](#iterative-refinement-the-iterate-purpose) below.
-
-**6. `human_review`** — a deliberate **stop**, so you can choose what goes on to the
+**5. `human_review`** — a deliberate **stop**, so you can choose what goes on to the
 next stage. See [Review](#review-stop-and-pick-what-continues) below.
+
+> There used to be an `iterate` purpose that turned the graph into a loop the agent
+> ran for you. It was replaced by the panel's
+> [prompt loop](#refining-a-prompt-round-by-round), which leaves the queueing with you.
 
 ### Chaining hooks into pipelines
 
@@ -752,9 +789,8 @@ what, and where each graph was filed. Nothing is staged, nothing reaches the
 gallery, and nothing is written to hook memory — not even the journal, since a
 result derived from a stand-in must never be served to a real run later.
 
-It deliberately skips two things: the `iterate` purpose (that loop exists to be
-watched, and writes back into your own `LoadImage`), and QA — there are no pixels
-to judge. It also walks straight **past** a
+It deliberately skips QA — there are no pixels to judge. It also walks straight
+**past** a
 [review hook](#review-stop-and-pick-what-continues), since asking you to choose
 between files that don't exist is no kind of review.
 
@@ -880,8 +916,8 @@ and the `agentY text` node is dropped *unconnected* as a readable reference. The
 hook chain is your graph's statement of what happens; a switch about keeping a
 *result* has no business rewriting it.
 
-It is hidden on `human_review` and `iterate`, which produce nothing to keep —
-presentation only, so flipping `purpose` back brings the value back untouched.
+It is hidden on `human_review`, which produces nothing to keep — presentation only,
+so flipping `purpose` back brings the value back untouched.
 
 ### Memorize: produce once, reuse until something changes
 
@@ -964,30 +1000,6 @@ them: for Kling, `@image1`, `@image2`, … are the 1st, 2nd, … image on that i
 The agent names them that way rather than describing the characters in prose and
 hoping the model matches them up, so which frame is which stays true from the hook
 that made it to the shot that uses it.
-
-### Iterative refinement (the `iterate` purpose)
-
-An **interactive, multi-turn refine loop**: one generation per turn, each result
-fed back in as the next input, so you sculpt an image step by step in chat.
-
-**Wiring:** this hook's **`out` → the prompt node's text input** (each prompt you
-type is written there); the **`LoadImage` node's image output → an `anchor`** (the
-loader the agent updates in place with each result); and a **save node that writes
-to ComfyUI's history** (a `SaveImage`, or a viewer with "save to output" on) so
-each result can be fetched and fed forward.
-
-**Using it:** ask the agent to start. Each turn you give the next change; it writes
-it in, runs the graph once, replaces the `LoadImage` path with the result, shows it
-and asks for the next step. You can **jump back** — *"go back to the original
-image, then make it warmer"*, *"back to generation 3, then add rain"* — and keep
-going until you say **stop**. (Driven by the `iterate_step` tool and the
-`iterative-refine` skill.)
-
-This is the loop **you** steer. To state a goal once and have the agent keep going
-on its own, with no hook node at all, see
-[Loops](#loops-keep-trying-until-its-right).
-
----
 
 ## Slack: a second way in
 
