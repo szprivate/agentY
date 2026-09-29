@@ -691,47 +691,12 @@ def _qa_loop_render(thread_id: str, briefing, v=None, *, out_q=None) -> dict | N
     queues the user's graph — the run never passes through agentY. So the panel
     starts a turn when its job lands (``loop_render`` on /agentY/chat) and the
     render is judged in that turn's setup; a turn the user starts judges any
-    render the panel did not report (a tab closed while it ran).
-
-    With *out_q* the check is shown the way every other agent's work is: a `[qa]`
-    tool card with what it was asked and what it answered. The verdict is stored
-    on the version, so the agent reads it in the loop block and it is never
-    judged twice. Returns the verdict, or None when there was nothing to judge.
+    render the panel did not report (a tab closed while it ran). With *out_q*
+    the QA agent's work is shown as a `[qa]` card on the turn's stream.
     """
     from src.utils import prompt_loop as pl
-    from src.utils.qa import check_output
-    if v is None:
-        entry = pl.current(thread_id) or {}
-    else:
-        entry = next((e for e in pl.versions(thread_id)
-                      if str(e.get("v")) == str(v).lstrip("vV")), {})
-    path = str(entry.get("output") or "")
-    if not path:
-        return None
-    if isinstance(entry.get("qa"), dict):
-        return entry["qa"]
-    card = f"qa-loop-{thread_id[:8]}-v{entry.get('v')}"
-    if out_q is not None:
-        out_q.put({"type": "tool", "phase": "call", "id": card, "agent": "qa",
-                   "name": "[qa] judge_render",
-                   "input": json.dumps({"version": entry.get("v"), "file": path,
-                                        "briefing": briefing.describe()},
-                                       ensure_ascii=False)})
-    res = check_output(path, briefing, request=str(entry.get("text") or ""))
-    verdict = {"passed": bool(res.passed), "summary": res.summary,
-               "missed": res.failed_criteria(),
-               "line": f"🔍 QA v{entry.get('v')} — {res.render()}"}
-    if res.error or res.blind:
-        verdict["error"] = res.error or "the QA model cannot read images"
-    pl.set_qa(thread_id, entry.get("v"), verdict)
-    if out_q is not None:
-        checks = [f"{'✅' if str(c.get('result', '')).lower() in ('pass', 'n/a', 'na') else '❌'} "
-                  f"{c.get('criterion', '')}" + (f" — {c['note']}" if c.get("note") else "")
-                  for c in (res.checks or []) if isinstance(c, dict)]
-        out_q.put({"type": "tool", "phase": "result", "id": card, "agent": "qa",
-                   "name": "[qa] judge_render",
-                   "result": "\n".join([res.render()] + checks)})
-    return verdict
+    emit = (lambda ev: out_q.put({"type": "tool", **ev})) if out_q is not None else None
+    return pl.judge_version(thread_id, briefing, v, emit=emit)
 
 
 def _loop_qa_followup(thread_id: str, v, verdict: dict | None, briefing) -> tuple[str, str]:

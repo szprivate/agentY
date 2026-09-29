@@ -42,6 +42,15 @@ revision starts from it, not from the newest. *"Back to v2, but keep the fog"* i
 `revise_prompt(from_version=2)` — it puts v2 back and makes it active without adding a
 version (and only queues it if v2 never rendered).
 
+### Unsupervised
+
+When they ask for the loop to run on its own — *"keep going until it's right"*,
+*"iterate until QA passes"*, *"run it unsupervised, 8 tries"* — switch to
+`prompt_autoloop` for this turn. agentY runs the graph itself and the QA agent judges
+every render, so you do NOT use `revise_prompt` and nothing waits for them: write a
+version, read the verdict, write the next, until the tool says the loop is over. Then
+report its summary. A normal message later is the supervised loop again.
+
 ### Ending it
 
 They switch the loop off with the ✍ button. Until they do, treat every message about

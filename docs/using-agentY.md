@@ -336,6 +336,24 @@ verdict per criterion. On a fail, the agent gets the QA agent's notes and writes
 version itself, which is queued and checked again. The node's **retries** say how many
 times it may do that before handing back to you; a pass stops it early.
 
+**Letting it run on its own:** with ✍ on, ask for it in words, e.g. *"keep going until QA
+is happy, up to 8 tries"* or *"iterate unsupervised until the screens are lit"*. For
+that turn, agentY runs your graph itself (the browser tab doesn't need to stay open).
+The QA agent judges every render against your QA node plus anything you said "right"
+means, and the agent writes the next version from its notes, each one a new chip. It
+stops at the first pass, when the tries run out, or as soon as you type something.
+Along the way:
+
+- **It keeps the best version, not the last.** If nothing passes, the version with the
+  fewest misses (then the best quality score) goes back on the canvas.
+- **It notices when it's going in circles.** If the same criterion fails twice running,
+  the next round tries the same prompt with a fresh seed, to tell a prompt problem from
+  an unlucky roll. A third miss stops the loop, and it tells you why.
+- **It ends with a summary:** which version won and why, and what the QA agent kept
+  objecting to.
+
+Your next ordinary message is the normal, supervised loop again.
+
 The loop belongs to **this conversation**: switch threads and you switch loops, reload
 the tab and it is still there, with its versions. Switching ✍ off keeps them — turn it
 back on to carry on where you were.

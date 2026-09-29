@@ -2122,6 +2122,193 @@ class Pipeline:
             })
 
         @_tool
+        async def prompt_autoloop(text: str = "", max_runs: int = 0, goal: str = "",
+                                  reroll_seed: bool = False) -> str:
+            """One round of the prompt loop's UNSUPERVISED mode: write, run, judge.
+
+            Use it only when the user asks for the loop to run on its own — "keep
+            going until it's right", "iterate unsupervised", "run it until QA is
+            happy". Otherwise the prompt loop is ``revise_prompt``: they queue it and
+            look. Needs the prompt loop on with a target node.
+
+            Each call: your ``text`` goes into the loop's prompt node as a new version
+            (a chip in their strip), agentY runs their open graph itself, the QA agent
+            judges the render against their canvas QA node plus ``goal``, and the
+            verdict comes back. Keep calling it IN THIS TURN, one version per call,
+            until ``next`` is not ``revise``/``reroll``. Do not analyse the render
+            yourself between rounds — the QA agent already has; write from its notes.
+
+            ``next`` in the answer:
+              * ``revise`` — write the next version from ``missed`` and call again.
+                Change what addresses the notes; keep what already passed.
+              * ``reroll`` — one criterion keeps failing. Call again with
+                ``reroll_seed=True`` and NO text: the same prompt, a fresh seed, to
+                tell a prompt problem from an unlucky roll.
+              * anything else — the loop is over (passed / budget / stalled /
+                unjudged / interrupted). The best version is already back on their
+                canvas. Report ``summary``: which version won and why, and what the
+                judge kept objecting to. Do not call again unasked.
+
+            Args:
+                text: The prompt for this round. Empty only with ``reroll_seed``.
+                max_runs: The run budget — first call of a run only. 0 = the
+                    configured cap (Settings ▸ refine ▸ max_runs), also the ceiling.
+                goal: What "right" means in the user's words, if they said it —
+                    first call only. Added to the canvas QA node's criteria. Needed
+                    when there is no QA node.
+                reroll_seed: Re-run the last version with a fresh seed (after
+                    ``next: reroll``).
+            """
+            import copy as _copy
+            import tempfile as _tempfile
+
+            from src.utils import canvas_loop as _cl
+            from src.utils import prompt_autoloop as _auto
+            from src.utils import prompt_loop as _loop
+
+            thread = str(getattr(self._session, "session_id", "") or "")
+            node_id, stored_slot = _loop.target(thread)
+            if not _loop.active(thread) or not node_id:
+                return json.dumps({"error": "the prompt loop is not on, or has no target "
+                                   "node. The user switches it on with ✍ in the panel; "
+                                   "a first revise_prompt(node_id=…) sets the node."})
+            gate = self._plan_gate_refusal() or self._review_gate_refusal(inline=True)
+            if gate:
+                return json.dumps(gate)
+            if self._dry_run:
+                return json.dumps({"error": "this is a DRY RUN, and the unsupervised loop "
+                                   "is judged on real renders. Tell the user it needs a "
+                                   "full run."})
+            base = getattr(self, "_canvas_base_prompt", None)
+            if not isinstance(base, dict) or str(node_id) not in base:
+                return json.dumps({"error": f"node {node_id} is not in the graph open on "
+                                   "their canvas this turn — open the workflow the loop "
+                                   "writes into, then retry."})
+
+            session = getattr(self, "_autoloop", None)
+            if session is None or session.get("done"):
+                briefing = self._qa_briefing
+                if str(goal or "").strip():
+                    from src.utils.qa import QaBriefing
+                    stated = QaBriefing(criteria=str(goal).strip(), sources=("goal",))
+                    briefing = briefing.merged_with(stated) if briefing else stated
+                if not briefing:
+                    return json.dumps({"error": "there is nothing to judge against: no QA "
+                                       "node on their canvas and no `goal`. Pass what "
+                                       "'right' means as `goal`, or ask them."})
+                runs, _cap = _cl.clamp_runs(max_runs)
+                session = self._autoloop = _auto.new_session(runs, briefing, goal)
+                _push_progress(f"⏩ Unsupervised prompt loop — up to {runs} "
+                               f"run{'' if runs == 1 else 's'}, stops at the first pass.")
+
+            last = session["runs"][-1] if session["runs"] else None
+            text = str(text or "")
+            if reroll_seed and not text.strip():
+                if last is None:
+                    return json.dumps({"error": "nothing to re-roll yet — write the first "
+                                       "version."})
+                text = last["text"]
+            if not text.strip():
+                return json.dumps({"error": "text is empty — write this round's prompt."})
+
+            # On their canvas first, as a numbered version: they can watch it work.
+            slot = stored_slot or self._prompt_slot_of(node_id)
+            self._loop_writing = True
+            try:
+                raw = await set_canvas_node_params(node_id, {slot: text})
+            finally:
+                self._loop_writing = False
+            try:
+                if json.loads(raw).get("error"):
+                    return raw
+            except Exception:  # noqa: BLE001
+                pass
+            entry = _loop.add_version(thread, text, node_id=node_id, input_name=slot,
+                                      based_on=last["v"] if last else None)
+            # agentY runs it below, so the panel must NOT queue it too.
+            self._announce_prompt_version(entry, node_id, slot, text, new=True, queue=False)
+
+            graph = _copy.deepcopy(base)
+            graph[str(node_id)].setdefault("inputs", {})[slot] = text
+            if reroll_seed:
+                self._reroll_seeds(graph)
+            wf = Path(_tempfile.mkdtemp(prefix="agenty_autoloop_")) / f"v{entry['v']}.json"
+            wf.write_text(json.dumps(graph), encoding="utf-8")
+            n = len(session["runs"]) + 1
+            _push_progress(f"⏩ Run {n}/{session['budget']} — v{entry['v']}"
+                           + (" (fresh seed)" if reroll_seed else "") + " …")
+
+            from src.executor import execute_workflow as _execute_workflow
+            collected = self._session.current_output_paths
+            before = len(collected)
+            try:
+                async for _line in _execute_workflow(
+                    str(wf), self._last_brainbriefing_json or "{}", user_message="",
+                    verbose=self._verbose, collected_paths=collected, qa_briefing=None,
+                ):
+                    _push_progress(str(_line))
+            except Exception as exc:  # noqa: BLE001
+                session["done"] = "failed"
+                return json.dumps({"error": f"v{entry['v']} failed to run: {exc}",
+                                   "next": "failed"})
+            produced = list(collected[before:])
+            if not produced:
+                session["done"] = "failed"
+                return json.dumps({"error": "the run produced no fetchable output, so there "
+                                   "is nothing to judge. If the saver is the bEpic viewer "
+                                   "node, turn its `save_to_output` ON.", "next": "failed"})
+            out_path = produced[0]
+            _loop.pair_output(thread, out_path, v=entry["v"])
+
+            from src.utils.tool_activity import push as _card
+            verdict = await asyncio.to_thread(
+                _loop.judge_version, thread, session["briefing"], entry["v"], emit=_card) or {}
+            try:
+                from src.utils.fitness import score_file
+                score = (await asyncio.to_thread(score_file, out_path)).get("score")
+            except Exception:  # noqa: BLE001
+                score = None
+            session["runs"].append({
+                "v": entry["v"], "text": text, "output": out_path,
+                "passed": bool(verdict.get("passed")) and not verdict.get("error"),
+                "missed": list(verdict.get("missed") or []),
+                "summary": verdict.get("summary", ""), "error": verdict.get("error", ""),
+                "score": score, "reroll": bool(reroll_seed)})
+
+            try:
+                from src.utils import interject_bus as _ib
+                interrupted = _ib.pending_count() > 0
+            except Exception:  # noqa: BLE001
+                interrupted = False
+            nxt, why = _auto.decide(session, interrupted=interrupted)
+            _push_progress(f"⏩ v{entry['v']}: " + ("✅ passed" if session["runs"][-1]["passed"]
+                           else f"❌ missed {len(session['runs'][-1]['missed'])}")
+                           + (f", score {score:.2f}" if isinstance(score, float) else ""))
+            if nxt in ("revise", "reroll"):
+                return json.dumps({
+                    "round": n, "of": session["budget"], "version": entry["v"],
+                    "passed": False, "missed": session["runs"][-1]["missed"],
+                    "summary": session["runs"][-1]["summary"], "score": score,
+                    "next": nxt, **({"why": why} if why else {})})
+
+            # Over. Leave the best version on the canvas, not merely the last.
+            session["done"] = nxt
+            report = _auto.summary(session, nxt, why)
+            win = _auto.best(session["runs"])
+            if win and win["v"] != entry["v"]:
+                self._loop_writing = True
+                try:
+                    await set_canvas_node_params(node_id, {slot: win["text"]})
+                finally:
+                    self._loop_writing = False
+                won = _loop.activate(thread, win["v"]) or {}
+                self._announce_prompt_version(won, node_id, slot, win["text"],
+                                              new=False, queue=False)
+            _push_progress(f"⏩ Done — {why}. "
+                           + (f"v{win['v']} is on the canvas." if win else ""))
+            return json.dumps({"next": nxt, "summary": report})
+
+        @_tool
         async def run_python_node(code: str, inputs: list | None = None,
                                   title: str = "", place: bool = True) -> str:
             """Run Python INSIDE ComfyUI as an ``agentY python`` node on the canvas.
@@ -2764,7 +2951,7 @@ class Pipeline:
                  screenshot_canvas,
                  halt_for_review, run_workflow_now, add_canvas_workflow,
                  get_canvas_node, set_canvas_node_params, place_canvas_text,
-                 run_python_node, revise_prompt,
+                 run_python_node, revise_prompt, prompt_autoloop,
                  delete_canvas_nodes, refine_canvas_until,
                  list_agent_settings, set_agent_setting]
         # Offered only where there is a Slack to send to. Every tool in this list
@@ -3768,6 +3955,8 @@ class Pipeline:
         # The QA briefing in force this turn, already resolved by the caller
         # (a canvas qa hook wins over the thread's /qa briefing). None = no QA.
         self._qa_briefing = qa_briefing
+        # The prompt loop's unsupervised run lives for one turn (prompt_autoloop).
+        self._autoloop = None
         # Arbitrary selected nodes (id/type/title/widgets) the orchestrator can
         # read and write back via set_canvas_node_params.
         self._canvas_selection = [n for n in (canvas_selection or []) if isinstance(n, dict)]

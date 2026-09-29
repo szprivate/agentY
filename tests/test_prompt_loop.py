@@ -586,7 +586,7 @@ class TheTool(Fixture):
         from src.pipeline import Pipeline
         src = inspect.getsource(Pipeline._build_delegation_tools)
         start = src.index("async def revise_prompt(")
-        body = src[start:src.index("async def run_python_node(", start)]
+        body = src[start:src.index("async def prompt_autoloop(", start)]
         for forbidden in ("execute_workflow", "submit_prompt", "signal_workflow_ready",
                           "_run_canvas_batch", "run_now=True"):
             self.assertNotIn(forbidden, body, forbidden)

@@ -284,6 +284,51 @@ def reset_qa_retries(thread_id: str) -> None:
         _save(thread_id, loop)
 
 
+def judge_version(thread_id: str, briefing, v=None, *, emit=None) -> dict | None:
+    """Judge version *v*'s render (the active one when None) against *briefing*.
+
+    Once per version: the verdict is stored on it, so the agent reads it in the
+    loop block and a second call returns the stored one. *emit* receives the
+    QA agent's work as a tool card — a call (what it judged) and a result (the
+    verdict per criterion) — so it shows like every other agent's; the caller
+    decides where cards go (the turn's stream, or the tool-activity buffer).
+    Returns the verdict, or None when the version has no render to judge.
+    """
+    import json
+    from src.utils.qa import check_output
+    if v is None:
+        entry = current(thread_id) or {}
+    else:
+        entry = next((e for e in versions(thread_id)
+                      if str(e.get("v")) == str(v).lstrip("vV")), {})
+    path = str(entry.get("output") or "")
+    if not path:
+        return None
+    if isinstance(entry.get("qa"), dict):
+        return entry["qa"]
+    card = f"qa-loop-{str(thread_id)[:8]}-v{entry.get('v')}"
+    describe = getattr(briefing, "describe", None)
+    if emit is not None:
+        emit({"phase": "call", "id": card, "agent": "qa", "name": "[qa] judge_render",
+              "input": json.dumps({"version": entry.get("v"), "file": path,
+                                   "briefing": describe() if callable(describe) else ""},
+                                  ensure_ascii=False)})
+    res = check_output(path, briefing, request=str(entry.get("text") or ""))
+    verdict = {"passed": bool(res.passed), "summary": res.summary,
+               "missed": res.failed_criteria(),
+               "line": f"🔍 QA v{entry.get('v')} — {res.render()}"}
+    if res.error or res.blind:
+        verdict["error"] = res.error or "the QA model cannot read images"
+    set_qa(thread_id, entry.get("v"), verdict)
+    if emit is not None:
+        checks = [f"{'✅' if str(c.get('result', '')).lower() in ('pass', 'n/a', 'na') else '❌'} "
+                  f"{c.get('criterion', '')}" + (f" — {c['note']}" if c.get("note") else "")
+                  for c in (res.checks or []) if isinstance(c, dict)]
+        emit({"phase": "result", "id": card, "agent": "qa", "name": "[qa] judge_render",
+              "result": "\n".join([res.render()] + checks)})
+    return verdict
+
+
 def _qa_line(verdict: dict) -> str:
     """One line of the block for a version's QA verdict."""
     if verdict.get("error"):
