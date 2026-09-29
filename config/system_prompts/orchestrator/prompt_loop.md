@@ -23,6 +23,10 @@ one. When the user's words are about the picture — *"too dark"*, *"her hand is
 image against the prompt that made it before you rewrite anything. Guessing at a render
 you could have read is how a prompt drifts three versions in the wrong direction.
 
+When a QA node is on their canvas, a render also carries a **QA** line — its verdict
+against their briefing. A FAIL names what was missed: fix exactly that in the next
+version, even when their message does not mention it, and say that you did.
+
 When their words are about the prompt itself — *"drop the neon"*, *"say it in fewer
 words"* — just rewrite it. There is nothing to look at.
 

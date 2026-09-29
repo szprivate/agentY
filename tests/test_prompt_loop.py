@@ -186,6 +186,60 @@ class PairingARender(Fixture):
         self.assertIsNone(pl.pair_output("t1", ""))
 
 
+class QaOnALoopRender(Fixture):
+    """The panel queues the graph, so the executor's QA never sees the run; the
+    render is judged where the loop picks it up, at the next turn's setup."""
+
+    def setUp(self):
+        super().setUp()
+        pl.start("t1", "6")
+        pl.add_version("t1", "a stadium, lit screens")
+        pl.pair_output("t1", "W:/out/a_00001_.png")
+        from src.utils import agentY_server as server
+        self.server = server
+        self.calls = []
+
+        def judge(path, briefing, request=""):
+            from src.utils.qa import QaResult
+            self.calls.append((path, request))
+            return QaResult(path=path, passed=False, summary="screens are dark",
+                            checks=[{"criterion": "screens lit", "result": "fail",
+                                     "note": "both dark"}])
+        for target, fn in (("src.utils.qa.check_output", judge),
+                           ("src.utils.agentY_server.status_bus.notify", lambda *a: None)):
+            p = mock.patch(target, side_effect=fn)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_the_render_is_judged_against_the_prompt_that_made_it(self):
+        self.server._qa_loop_render("t1", object())
+        self.assertEqual(self.calls, [("W:/out/a_00001_.png", "a stadium, lit screens")])
+        verdict = pl.current("t1")["qa"]
+        self.assertFalse(verdict["passed"])
+        self.assertEqual(verdict["missed"], ["screens lit — both dark"])
+
+    def test_a_render_is_judged_once(self):
+        self.server._qa_loop_render("t1", object())
+        self.server._qa_loop_render("t1", object())
+        self.assertEqual(len(self.calls), 1)
+
+    def test_no_render_nothing_to_judge(self):
+        pl.add_version("t1", "two")
+        self.server._qa_loop_render("t1", object())
+        self.assertEqual(self.calls, [])
+
+    def test_the_agent_reads_the_verdict_in_the_block(self):
+        self.server._qa_loop_render("t1", object())
+        self.assertIn("QA: FAIL — missed: screens lit — both dark", pl.block("t1"))
+
+    def test_turn_setup_runs_it_when_a_briefing_is_in_force(self):
+        import inspect
+        src = inspect.getsource(self.server)
+        at = src.index("_pl.pair_output(thread_id, _shot)")
+        self.assertIn("_qa_loop_render(thread_id, qa_briefing)", src[at:at + 300])
+        self.assertLess(src.index("qa_briefing = _resolve_qa_briefing("), at)
+
+
 class TheNewestRender(Fixture):
     """ComfyUI's history is the only trace of a run the user queued themselves."""
 

@@ -236,6 +236,35 @@ def pair_output(thread_id: str, path: str) -> dict | None:
     return live
 
 
+def set_qa(thread_id: str, v, verdict: dict) -> dict | None:
+    """Record the QA verdict on version *v*'s render.
+
+    The panel queues the graph, so agentY's executor — where QA normally runs —
+    never sees the run. The render is found at the next turn's setup, and that is
+    where it is judged; the verdict is kept on the version so it is judged once.
+    """
+    loop = state(thread_id)
+    if not isinstance(loop, dict):
+        return None
+    for entry in loop.get("versions") or []:
+        if str(entry.get("v")) == str(v).lstrip("vV"):
+            entry["qa"] = dict(verdict)
+            _save(thread_id, loop)
+            return entry
+    return None
+
+
+def _qa_line(verdict: dict) -> str:
+    """One line of the block for a version's QA verdict."""
+    if verdict.get("error"):
+        return f"      QA: not judged ({verdict['error']})"
+    if verdict.get("passed"):
+        tail = f" — {verdict['summary']}" if verdict.get("summary") else ""
+        return f"      QA: PASS{tail}"
+    missed = "; ".join(verdict.get("missed") or []) or verdict.get("summary") or "?"
+    return f"      QA: FAIL — missed: {missed}"
+
+
 def newest_output(since: float = 0.0) -> str:
     """The newest image ComfyUI has finished writing, as a path, or "".
 
@@ -338,6 +367,8 @@ def block(thread_id: str) -> str:
         lines.append(mark)
         if entry.get("output"):
             lines.append(f"      rendered: {entry['output']}")
+            if isinstance(entry.get("qa"), dict):
+                lines.append(_qa_line(entry["qa"]))
     if len(got) > _BLOCK_VERSIONS:
         lines.insert(1, f"  ({len(got) - _BLOCK_VERSIONS} earlier version(s) not shown; "
                         f"ask for one by number if you need it.)")

@@ -684,6 +684,31 @@ def _resolve_qa_briefing(canvas_hooks: list | None, thread_id: str):
     return None
 
 
+def _qa_loop_render(thread_id: str, briefing) -> None:
+    """Judge the prompt loop's newest render against the QA briefing, once.
+
+    QA normally runs inside agentY's executor, but in the prompt loop the PANEL
+    queues the user's graph — the run never passes through agentY, so a QA node on
+    that canvas was never read. The render surfaces here, at the next turn's setup,
+    and this is the first moment agentY can judge it. The verdict is stored on the
+    version, so the agent reads it in the loop block and it is not judged again.
+    """
+    from src.utils import prompt_loop as pl
+    from src.utils.qa import check_output
+    live = pl.current(thread_id) or {}
+    path = str(live.get("output") or "")
+    if not path or isinstance(live.get("qa"), dict):
+        return
+    status_bus.notify(f"🔍 QA — checking v{live.get('v')}'s render …")
+    res = check_output(path, briefing, request=str(live.get("text") or ""))
+    verdict = {"passed": bool(res.passed), "summary": res.summary,
+               "missed": res.failed_criteria()}
+    if res.error or res.blind:
+        verdict["error"] = res.error or "the QA model cannot read images"
+    pl.set_qa(thread_id, live.get("v"), verdict)
+    status_bus.notify(f"🔍 QA v{live.get('v')} — {res.render()}")
+
+
 def _override_note(canvas_hooks: list | None) -> str:
     """" (a live QA node overrides …)" when the canvas beat a switched-off setting.
 
@@ -1247,6 +1272,8 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
                 _shot = _pl.newest_output(since=_pl.live_since(thread_id))
                 if _shot:
                     _pl.pair_output(thread_id, _shot)
+            if qa_briefing:
+                _qa_loop_render(thread_id, qa_briefing)
     except Exception as exc:  # noqa: BLE001
         logger.debug("prompt loop: could not pair a render (%s)", exc)
 
