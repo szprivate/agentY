@@ -684,29 +684,45 @@ def _resolve_qa_briefing(canvas_hooks: list | None, thread_id: str):
     return None
 
 
-def _qa_loop_render(thread_id: str, briefing) -> None:
-    """Judge the prompt loop's newest render against the QA briefing, once.
+def _qa_loop_render(thread_id: str, briefing, v=None, *, notify: bool = True) -> dict | None:
+    """Judge a prompt-loop render against the QA briefing, once per version.
 
     QA normally runs inside agentY's executor, but in the prompt loop the PANEL
     queues the user's graph — the run never passes through agentY, so a QA node on
-    that canvas was never read. The render surfaces here, at the next turn's setup,
-    and this is the first moment agentY can judge it. The verdict is stored on the
-    version, so the agent reads it in the loop block and it is not judged again.
+    that canvas was never read. The panel reports its job's end (the `rendered`
+    branch of /agentY/prompt_loop) and this judges the render there and then; turn
+    setup calls it too, for a render the panel did not report (a tab closed while
+    it ran). The verdict is stored on the version: the agent reads it in the loop
+    block, and it is never judged twice.
+
+    Returns the verdict with a `line` for the panel, or None when there was
+    nothing to judge. *notify* is off for the route: the status bus is drained
+    only while a turn streams, so the route hands the line back itself.
     """
     from src.utils import prompt_loop as pl
     from src.utils.qa import check_output
-    live = pl.current(thread_id) or {}
-    path = str(live.get("output") or "")
-    if not path or isinstance(live.get("qa"), dict):
-        return
-    status_bus.notify(f"🔍 QA — checking v{live.get('v')}'s render …")
-    res = check_output(path, briefing, request=str(live.get("text") or ""))
+    if v is None:
+        entry = pl.current(thread_id) or {}
+    else:
+        entry = next((e for e in pl.versions(thread_id)
+                      if str(e.get("v")) == str(v).lstrip("vV")), {})
+    path = str(entry.get("output") or "")
+    if not path:
+        return None
+    if isinstance(entry.get("qa"), dict):
+        return entry["qa"]
+    if notify:
+        status_bus.notify(f"🔍 QA — checking v{entry.get('v')}'s render …")
+    res = check_output(path, briefing, request=str(entry.get("text") or ""))
     verdict = {"passed": bool(res.passed), "summary": res.summary,
-               "missed": res.failed_criteria()}
+               "missed": res.failed_criteria(),
+               "line": f"🔍 QA v{entry.get('v')} — {res.render()}"}
     if res.error or res.blind:
         verdict["error"] = res.error or "the QA model cannot read images"
-    pl.set_qa(thread_id, live.get("v"), verdict)
-    status_bus.notify(f"🔍 QA v{live.get('v')} — {res.render()}")
+    pl.set_qa(thread_id, entry.get("v"), verdict)
+    if notify:
+        status_bus.notify(verdict["line"])
+    return verdict
 
 
 def _override_note(canvas_hooks: list | None) -> str:
@@ -3902,6 +3918,23 @@ def _build_app():
                 return jsonify(_payload(thread, write={
                     "node_id": node_id, "input": slot or "text",
                     "text": str(entry.get("text") or ""), "v": entry["v"]}))
+            if body.get("rendered") is not None:
+                # The panel's queued job for version `rendered` just finished.
+                # Pair its file with THAT version and judge it now — this is the
+                # moment the user is looking at it.
+                v = body.get("rendered")
+                path = (pl.output_of(str(body.get("prompt_id") or ""))
+                        or pl.newest_output(since=pl.live_since(thread)))
+                if path:
+                    pl.pair_output(thread, path, v=v)
+                out = _payload(thread)
+                out["output"] = path
+                from src.utils.qa import resolve_briefing
+                briefing = resolve_briefing(hooks=body.get("canvas_hooks") or [],
+                                            thread_id=thread, resolver=_resolve_media_ref)
+                if briefing and path:
+                    out["qa"] = _qa_loop_render(thread, briefing, v, notify=False)
+                return jsonify(out)
             if body.get("clear"):
                 pl.clear(thread)
             elif body.get("on"):

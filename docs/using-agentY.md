@@ -330,10 +330,9 @@ into the node, and nothing new is added to the list. The agent's next prompt the
 starts from that version. A chip is dimmed until a render comes back for it.
 *"Back to v2 but keep the fog"* works in words too.
 
-**QA in the loop:** with a QA node on the canvas, each render is checked against it when
-you send your next message: agentY only learns about a render you queued at that point.
-The verdict shows as a status line, and a failed check tells the agent what to fix in
-the next version.
+**QA in the loop:** with a QA node on the canvas, each render is checked against it as
+soon as it lands. The verdict shows in the panel, and a failed check tells the agent what
+to fix in the next version.
 
 The loop belongs to **this conversation**: switch threads and you switch loops, reload
 the tab and it is still there, with its versions. Switching ✍ off keeps them — turn it

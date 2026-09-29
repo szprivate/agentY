@@ -232,6 +232,43 @@ class QaOnALoopRender(Fixture):
         self.server._qa_loop_render("t1", object())
         self.assertIn("QA: FAIL — missed: screens lit — both dark", pl.block("t1"))
 
+    def test_a_named_version_is_judged_even_after_another_was_picked(self):
+        pl.add_version("t1", "two")
+        pl.activate("t1", 2)
+        self.server._qa_loop_render("t1", object(), 1, notify=False)
+        self.assertEqual(self.calls, [("W:/out/a_00001_.png", "a stadium, lit screens")])
+        self.assertIn("line", pl.versions("t1")[0]["qa"])
+
+    def test_the_render_pairs_with_the_version_that_was_queued(self):
+        pl.add_version("t1", "two")
+        pl.add_version("t1", "three")
+        pl.activate("t1", 3)
+        pl.pair_output("t1", "W:/out/b.png", v=2)
+        self.assertEqual([e["output"] for e in pl.versions("t1")],
+                         ["W:/out/a_00001_.png", "W:/out/b.png", ""])
+
+    def test_the_route_judges_a_render_the_panel_reports(self):
+        import inspect
+        src = inspect.getsource(self.server)
+        route = src[src.index('@app.route("/agentY/prompt_loop"'):]
+        branch = route[route.index('if body.get("rendered")'):route.index('if body.get("clear")')]
+        for needle in ("pl.output_of(", "pair_output(thread, path, v=v)",
+                       "resolve_briefing(", "_qa_loop_render(thread, briefing, v, notify=False)"):
+            self.assertIn(needle, branch)
+
+    def test_the_panel_reports_its_job_finishing(self):
+        from pathlib import Path
+        panel = Path("D:/ai/agentY-comfyuiConnect/web/agent_chat.js")
+        if not panel.exists():
+            self.skipTest("the ComfyUI extension checkout is not beside this one")
+        js = panel.read_text(encoding="utf-8")
+        wait = js[js.index("  _awaitPromptRender("):]
+        wait = wait[:wait.index("\n  }\n")]
+        for needle in ("execution_success", "prompt_id", "rendered: v", "canvas_hooks",
+                       "j.qa.line"):
+            self.assertIn(needle, wait)
+        self.assertIn("this._awaitPromptRender(v, promptId", js)
+
     def test_turn_setup_runs_it_when_a_briefing_is_in_force(self):
         import inspect
         src = inspect.getsource(self.server)

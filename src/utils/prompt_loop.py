@@ -216,19 +216,25 @@ def version_text(thread_id: str, v) -> str | None:
     return None
 
 
-def pair_output(thread_id: str, path: str) -> dict | None:
+def pair_output(thread_id: str, path: str, v=None) -> dict | None:
     """Attach a render to the version that was live when it was made.
 
-    Called at turn setup with whatever ComfyUI produced most recently. The version
-    it belongs to is the ACTIVE one — the text that was in the node when the graph
-    was queued (the caller only passes renders newer than ``live_since``).
+    With *v*: the panel queued that version and is reporting its job finished, so
+    the render is v's even if another chip was clicked while it ran. Without: turn
+    setup, pairing whatever ComfyUI produced most recently with the ACTIVE version
+    — the text that was in the node when the graph was queued (the caller only
+    passes renders newer than ``live_since``).
     Never overwrites: the first render a version gets is the one it is judged on, and
     a second queue of the same prompt is not a new fact about it.
     """
     loop = state(thread_id)
     if not isinstance(loop, dict) or not loop.get("versions") or not path:
         return None
-    live = _active_of(loop)
+    if v is None:
+        live = _active_of(loop)
+    else:
+        want = str(v).lstrip("vV")
+        live = next((e for e in loop["versions"] if str(e.get("v")) == want), None)
     if live is None or live.get("output"):
         return None
     live["output"] = str(path)
@@ -240,8 +246,8 @@ def set_qa(thread_id: str, v, verdict: dict) -> dict | None:
     """Record the QA verdict on version *v*'s render.
 
     The panel queues the graph, so agentY's executor — where QA normally runs —
-    never sees the run. The render is found at the next turn's setup, and that is
-    where it is judged; the verdict is kept on the version so it is judged once.
+    never sees the run. The panel reports when its job finishes and the render is
+    judged then; the verdict is kept on the version so it is judged once.
     """
     loop = state(thread_id)
     if not isinstance(loop, dict):
@@ -298,19 +304,47 @@ def newest_output(since: float = 0.0) -> str:
         when = _stamp(entry)
         if since and when and when < since:
             continue
-        for node_out in (entry.get("outputs") or {}).values():
-            if not isinstance(node_out, dict):
-                continue
-            for key in ("images", "gifs", "videos"):
-                for rec in (node_out.get(key) or []):
-                    if isinstance(rec, dict) and rec.get("type") != "temp":
-                        candidates.append((when, rec))
+        candidates += [(when, rec) for rec in _records(entry)]
     # Sort FIRST, resolve after. Resolving is a filesystem hit on whatever drive
     # ComfyUI writes to — a network share, here — and falls back to downloading the
     # file when it cannot find it, so resolving every record in six history entries
     # to then keep one is a stall on the front of somebody's turn.
     candidates.sort(key=lambda c: c[0], reverse=True)
     for _when, rec in candidates[:_RESOLVE_TRIES]:
+        path = _resolve(rec)
+        if path:
+            return path
+    return ""
+
+
+def _records(entry: dict) -> list:
+    """The saved-file records of one ComfyUI history entry (previews left out)."""
+    out: list = []
+    for node_out in ((entry or {}).get("outputs") or {}).values():
+        if not isinstance(node_out, dict):
+            continue
+        for key in ("images", "gifs", "videos"):
+            for rec in (node_out.get(key) or []):
+                if isinstance(rec, dict) and rec.get("type") != "temp":
+                    out.append(rec)
+    return out
+
+
+def output_of(prompt_id: str) -> str:
+    """The file one ComfyUI job wrote, as a path, or "".
+
+    The panel knows the id of the job it queued, so this is exact where
+    ``newest_output`` has to guess from timestamps.
+    """
+    if not prompt_id:
+        return ""
+    try:
+        from agenty_core.utils.comfyui_client import get_client
+        history = get_client().get(f"/history/{prompt_id}")
+    except Exception:  # noqa: BLE001
+        return ""
+    entry = (history or {}).get(prompt_id) if isinstance(history, dict) else None
+    for rec in _records(entry or {})[:_RESOLVE_TRIES]:
         path = _resolve(rec)
         if path:
             return path
