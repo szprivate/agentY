@@ -260,6 +260,30 @@ def set_qa(thread_id: str, v, verdict: dict) -> dict | None:
     return None
 
 
+def qa_retries(thread_id: str) -> int:
+    """How many automatic QA retries this loop has made since the user last spoke."""
+    loop = state(thread_id) or {}
+    return int(loop.get("qa_retries") or 0)
+
+
+def bump_qa_retries(thread_id: str) -> int:
+    """Count one automatic retry; returns the new count."""
+    loop = state(thread_id)
+    if not isinstance(loop, dict):
+        return 0
+    loop["qa_retries"] = int(loop.get("qa_retries") or 0) + 1
+    _save(thread_id, loop)
+    return loop["qa_retries"]
+
+
+def reset_qa_retries(thread_id: str) -> None:
+    """Start the retry budget over — a pass, a spent budget, or the user steering."""
+    loop = state(thread_id)
+    if isinstance(loop, dict) and loop.get("qa_retries"):
+        loop["qa_retries"] = 0
+        _save(thread_id, loop)
+
+
 def _qa_line(verdict: dict) -> str:
     """One line of the block for a version's QA verdict."""
     if verdict.get("error"):

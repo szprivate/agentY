@@ -331,8 +331,10 @@ starts from that version. A chip is dimmed until a render comes back for it.
 *"Back to v2 but keep the fog"* works in words too.
 
 **QA in the loop:** with a QA node on the canvas, each render is checked against it as
-soon as it lands. The verdict shows in the panel, and a failed check tells the agent what
-to fix in the next version.
+soon as it lands, in a turn of its own: the QA agent's check shows as a card with its
+verdict per criterion. On a fail, the agent gets the QA agent's notes and writes the next
+version itself, which is queued and checked again. The node's **retries** say how many
+times it may do that before handing back to you; a pass stops it early.
 
 The loop belongs to **this conversation**: switch threads and you switch loops, reload
 the tab and it is still there, with its versions. Switching ✍ off keeps them — turn it

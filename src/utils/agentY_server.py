@@ -684,20 +684,19 @@ def _resolve_qa_briefing(canvas_hooks: list | None, thread_id: str):
     return None
 
 
-def _qa_loop_render(thread_id: str, briefing, v=None, *, notify: bool = True) -> dict | None:
+def _qa_loop_render(thread_id: str, briefing, v=None, *, out_q=None) -> dict | None:
     """Judge a prompt-loop render against the QA briefing, once per version.
 
     QA normally runs inside agentY's executor, but in the prompt loop the PANEL
-    queues the user's graph — the run never passes through agentY, so a QA node on
-    that canvas was never read. The panel reports its job's end (the `rendered`
-    branch of /agentY/prompt_loop) and this judges the render there and then; turn
-    setup calls it too, for a render the panel did not report (a tab closed while
-    it ran). The verdict is stored on the version: the agent reads it in the loop
-    block, and it is never judged twice.
+    queues the user's graph — the run never passes through agentY. So the panel
+    starts a turn when its job lands (``loop_render`` on /agentY/chat) and the
+    render is judged in that turn's setup; a turn the user starts judges any
+    render the panel did not report (a tab closed while it ran).
 
-    Returns the verdict with a `line` for the panel, or None when there was
-    nothing to judge. *notify* is off for the route: the status bus is drained
-    only while a turn streams, so the route hands the line back itself.
+    With *out_q* the check is shown the way every other agent's work is: a `[qa]`
+    tool card with what it was asked and what it answered. The verdict is stored
+    on the version, so the agent reads it in the loop block and it is never
+    judged twice. Returns the verdict, or None when there was nothing to judge.
     """
     from src.utils import prompt_loop as pl
     from src.utils.qa import check_output
@@ -711,8 +710,13 @@ def _qa_loop_render(thread_id: str, briefing, v=None, *, notify: bool = True) ->
         return None
     if isinstance(entry.get("qa"), dict):
         return entry["qa"]
-    if notify:
-        status_bus.notify(f"🔍 QA — checking v{entry.get('v')}'s render …")
+    card = f"qa-loop-{thread_id[:8]}-v{entry.get('v')}"
+    if out_q is not None:
+        out_q.put({"type": "tool", "phase": "call", "id": card, "agent": "qa",
+                   "name": "[qa] judge_render",
+                   "input": json.dumps({"version": entry.get("v"), "file": path,
+                                        "briefing": briefing.describe()},
+                                       ensure_ascii=False)})
     res = check_output(path, briefing, request=str(entry.get("text") or ""))
     verdict = {"passed": bool(res.passed), "summary": res.summary,
                "missed": res.failed_criteria(),
@@ -720,9 +724,50 @@ def _qa_loop_render(thread_id: str, briefing, v=None, *, notify: bool = True) ->
     if res.error or res.blind:
         verdict["error"] = res.error or "the QA model cannot read images"
     pl.set_qa(thread_id, entry.get("v"), verdict)
-    if notify:
-        status_bus.notify(verdict["line"])
+    if out_q is not None:
+        checks = [f"{'✅' if str(c.get('result', '')).lower() in ('pass', 'n/a', 'na') else '❌'} "
+                  f"{c.get('criterion', '')}" + (f" — {c['note']}" if c.get("note") else "")
+                  for c in (res.checks or []) if isinstance(c, dict)]
+        out_q.put({"type": "tool", "phase": "result", "id": card, "agent": "qa",
+                   "name": "[qa] judge_render",
+                   "result": "\n".join([res.render()] + checks)})
     return verdict
+
+
+def _loop_qa_followup(thread_id: str, v, verdict: dict | None, briefing) -> tuple[str, str]:
+    """After an automatic render turn's QA: (instruction for the orchestrator, line).
+
+    The instruction is empty when the orchestrator has nothing to do — the render
+    passed, could not be judged, or the retry budget is spent — and the line then
+    says why the loop stopped. A FAIL with budget left hands the QA agent's notes
+    to the orchestrator, which writes the next version; that version is queued
+    and judged when it lands, so this is the loop's only retry counter.
+    """
+    from src.utils import prompt_loop as pl
+    from src.utils.qa import qa_settings
+    if not verdict:
+        return "", f"🔍 v{v}: no render found to judge."
+    if verdict.get("error"):
+        return "", f"🔍 v{v}: QA could not judge it ({verdict['error']})."
+    if verdict.get("passed"):
+        pl.reset_qa_retries(thread_id)
+        return "", verdict.get("line") or f"🔍 QA v{v} — ✅ PASS"
+    budget = getattr(briefing, "retry_budget", None)
+    if budget is None:
+        budget = qa_settings()["max_retries"]
+    used = pl.qa_retries(thread_id)
+    if used >= int(budget or 0):
+        pl.reset_qa_retries(thread_id)
+        return "", (f"{verdict.get('line') or f'🔍 QA v{v} — ❌ FAIL'}\n"
+                    f"No automatic retries left ({budget} used) — over to you.")
+    attempt = pl.bump_qa_retries(thread_id)
+    from src.pipeline import _orch_partial
+    missed = "\n".join(f"- {m}" for m in (verdict.get("missed") or [])) \
+        or f"- {verdict.get('summary') or 'no notes given'}"
+    text = (_orch_partial("prompt_loop_qa_retry")
+            .replace("{v}", str(v)).replace("{missed}", missed)
+            .replace("{attempt}", str(attempt)).replace("{budget}", str(budget)))
+    return text, ""
 
 
 def _override_note(canvas_hooks: list | None) -> str:
@@ -1172,7 +1217,8 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
                          open_workflows: list | None = None,
                          dry_run: bool = False, origin: str = "panel",
                          canvas_graph: dict | None = None, canvas_hash: str = "",
-                         canvas_workflow: str = "") -> None:
+                         canvas_workflow: str = "",
+                         loop_render: dict | None = None) -> None:
     """Run one turn, guaranteeing the SSE queue is always terminated.
 
     The queue's ``None`` sentinel is what ends the stream, and ``done`` is what
@@ -1197,7 +1243,8 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
                            canvas_selection=canvas_selection,
                            open_workflows=open_workflows, dry_run=dry_run,
                            origin=origin, canvas_graph=canvas_graph,
-                           canvas_hash=canvas_hash, canvas_workflow=canvas_workflow)
+                           canvas_hash=canvas_hash, canvas_workflow=canvas_workflow,
+                           loop_render=loop_render)
     except BaseException as exc:  # noqa: BLE001 — the stream must close on ANY failure
         logger.error("turn %s died before completing: %s", req_id, exc, exc_info=True)
         # Also into the turn log with a full traceback: the terminal scrollback is
@@ -1244,7 +1291,8 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
                        open_workflows: list | None = None,
                        dry_run: bool = False, origin: str = "panel",
                        canvas_graph: dict | None = None, canvas_hash: str = "",
-                       canvas_workflow: str = "") -> None:
+                       canvas_workflow: str = "",
+                       loop_render: dict | None = None) -> None:
     """Drive the pipeline for one turn on a private event loop, pushing SSE dicts
     to *out_q*. Interactive asks register on ``_reply_registry`` so POST
     /agentY/reply can feed the answer thread-safely. Terminates *out_q* with None
@@ -1275,23 +1323,45 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
     # into a qa hook from mid-graph is already a file by the time we read it.
     qa_briefing = _resolve_qa_briefing(canvas_hooks, thread_id)
 
-    # A prompt loop's render. The user queues the graph themselves, so the run is
-    # invisible to agentY — ComfyUI's own history is the only trace of it, and the
-    # moment to look is now, before the turn is built, so the version the agent is
-    # about to talk about already has its picture attached. Best-effort: no history,
-    # no ComfyUI, no render is a fine thing for a turn to know.
+    # A prompt loop's render. The panel queues the graph, so the run is invisible
+    # to agentY — ComfyUI's own history is the only trace of it. An automatic turn
+    # (`loop_render`) is the panel saying its job landed: the route already paired
+    # the file with that version, and the render is judged here, in a turn, so the
+    # QA agent's work streams like any other agent's. A turn the user started
+    # pairs and judges anything the panel did not report.
+    _loop_v, _verdict = None, None
     try:
         from src.utils import prompt_loop as _pl
         if _pl.active(thread_id):
-            _live = _pl.current(thread_id) or {}
-            if _live and not _live.get("output"):
-                _shot = _pl.newest_output(since=_pl.live_since(thread_id))
-                if _shot:
-                    _pl.pair_output(thread_id, _shot)
+            if loop_render is not None:
+                _loop_v = loop_render.get("v")
+            else:
+                _pl.reset_qa_retries(thread_id)      # the user is steering again
+                _live = _pl.current(thread_id) or {}
+                if _live and not _live.get("output"):
+                    _shot = _pl.newest_output(since=_pl.live_since(thread_id))
+                    if _shot:
+                        _pl.pair_output(thread_id, _shot)
             if qa_briefing:
-                _qa_loop_render(thread_id, qa_briefing)
+                _verdict = _qa_loop_render(thread_id, qa_briefing, _loop_v, out_q=out_q)
     except Exception as exc:  # noqa: BLE001
-        logger.debug("prompt loop: could not pair a render (%s)", exc)
+        logger.warning("prompt loop: could not pair or judge a render (%s)", exc)
+    if loop_render is not None:
+        message, _line = ("", "🔍 QA is off for this canvas.") if not qa_briefing \
+            else _loop_qa_followup(thread_id, _loop_v, _verdict, qa_briefing)
+        if not message:
+            # Nothing for the orchestrator: say why the loop stopped and end the
+            # turn without spending a model call on it.
+            if _line:
+                out_q.put({"type": "system", "data": _line})
+                try:
+                    cs.add_message(thread_id, "assistant", _line)
+                except Exception:  # noqa: BLE001
+                    pass
+            finished["emitted"] = True
+            out_q.put({"type": "done"})
+            out_q.put(None)
+            return
 
     _restore_state(pipeline, thread_id)
     # Before the turn touches anything: the state an undo of it puts back. The
@@ -3920,8 +3990,10 @@ def _build_app():
                     "text": str(entry.get("text") or ""), "v": entry["v"]}))
             if body.get("rendered") is not None:
                 # The panel's queued job for version `rendered` just finished.
-                # Pair its file with THAT version and judge it now — this is the
-                # moment the user is looking at it.
+                # Pair its file with THAT version (even if another chip was picked
+                # while it ran). Judging it is a turn of its own — `judge` tells the
+                # panel to start one — so the QA agent's work streams like any
+                # other agent's instead of happening silently in here.
                 v = body.get("rendered")
                 path = (pl.output_of(str(body.get("prompt_id") or ""))
                         or pl.newest_output(since=pl.live_since(thread)))
@@ -3930,10 +4002,9 @@ def _build_app():
                 out = _payload(thread)
                 out["output"] = path
                 from src.utils.qa import resolve_briefing
-                briefing = resolve_briefing(hooks=body.get("canvas_hooks") or [],
-                                            thread_id=thread, resolver=_resolve_media_ref)
-                if briefing and path:
-                    out["qa"] = _qa_loop_render(thread, briefing, v, notify=False)
+                out["judge"] = bool(path) and bool(resolve_briefing(
+                    hooks=body.get("canvas_hooks") or [], thread_id=thread,
+                    resolver=_resolve_media_ref))
                 return jsonify(out)
             if body.get("clear"):
                 pl.clear(thread)
@@ -4280,6 +4351,9 @@ def _build_app():
         # Dry run: the panel's "Run agentY hooks ▾ → Dry run". Build every graph,
         # submit none of them (src/utils/dry_run.py).
         dry_run = bool(body.get("dry_run"))
+        # The panel's prompt-loop job landed: a turn nobody typed, which judges
+        # the render and, on a FAIL with retries left, writes the next version.
+        loop_render = body.get("loop_render") if isinstance(body.get("loop_render"), dict) else None
         # The canvas as it stood when this message was sent (the panel's own
         # serialisation), kept with the turn's checkpoint so undo can put it back.
         canvas_graph = body.get("canvas_graph") if isinstance(body.get("canvas_graph"), dict) else None
@@ -4384,7 +4458,8 @@ def _build_app():
                                  "canvas_selection": canvas_selection,
                                  "open_workflows": open_workflows, "dry_run": dry_run,
                                  "canvas_graph": canvas_graph, "canvas_hash": canvas_hash,
-                                 "canvas_workflow": canvas_workflow},
+                                 "canvas_workflow": canvas_workflow,
+                                 "loop_render": loop_render},
                          daemon=True).start()
 
         return _sse_response(_stream_turn(q, rid, thread_id))

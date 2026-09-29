@@ -235,7 +235,7 @@ class QaOnALoopRender(Fixture):
     def test_a_named_version_is_judged_even_after_another_was_picked(self):
         pl.add_version("t1", "two")
         pl.activate("t1", 2)
-        self.server._qa_loop_render("t1", object(), 1, notify=False)
+        self.server._qa_loop_render("t1", object(), 1)
         self.assertEqual(self.calls, [("W:/out/a_00001_.png", "a stadium, lit screens")])
         self.assertIn("line", pl.versions("t1")[0]["qa"])
 
@@ -247,16 +247,29 @@ class QaOnALoopRender(Fixture):
         self.assertEqual([e["output"] for e in pl.versions("t1")],
                          ["W:/out/a_00001_.png", "W:/out/b.png", ""])
 
-    def test_the_route_judges_a_render_the_panel_reports(self):
+    def test_the_check_is_shown_as_a_qa_card(self):
+        import queue
+        from src.utils.qa import QaBriefing
+        q = queue.Queue()
+        self.server._qa_loop_render("t1", QaBriefing(criteria="screens lit"), 1, out_q=q)
+        events = [q.get_nowait() for _ in range(q.qsize())]
+        self.assertEqual([(e["type"], e["phase"], e["agent"]) for e in events],
+                         [("tool", "call", "qa"), ("tool", "result", "qa")])
+        self.assertEqual(events[0]["id"], events[1]["id"])
+        self.assertIn("W:/out/a_00001_.png", events[0]["input"])
+        self.assertIn("❌ screens lit — both dark", events[1]["result"])
+
+    def test_the_route_pairs_and_asks_for_a_judge_turn(self):
         import inspect
         src = inspect.getsource(self.server)
         route = src[src.index('@app.route("/agentY/prompt_loop"'):]
         branch = route[route.index('if body.get("rendered")'):route.index('if body.get("clear")')]
         for needle in ("pl.output_of(", "pair_output(thread, path, v=v)",
-                       "resolve_briefing(", "_qa_loop_render(thread, briefing, v, notify=False)"):
+                       "resolve_briefing(", 'out["judge"]'):
             self.assertIn(needle, branch)
+        self.assertNotIn("_qa_loop_render(", branch, "judging is a turn, not a silent call")
 
-    def test_the_panel_reports_its_job_finishing(self):
+    def test_the_panel_starts_a_judge_turn_when_its_job_lands(self):
         from pathlib import Path
         panel = Path("D:/ai/agentY-comfyuiConnect/web/agent_chat.js")
         if not panel.exists():
@@ -265,16 +278,79 @@ class QaOnALoopRender(Fixture):
         wait = js[js.index("  _awaitPromptRender("):]
         wait = wait[:wait.index("\n  }\n")]
         for needle in ("execution_success", "prompt_id", "rendered: v", "canvas_hooks",
-                       "j.qa.line"):
+                       "j.judge", "_pendingJudge"):
             self.assertIn(needle, wait)
         self.assertIn("this._awaitPromptRender(v, promptId", js)
+        judge = js[js.index("  async _judgeRender("):]
+        self.assertIn("loop_render: { v }", judge[:judge.index("\n  }\n")])
+        dispatch = js[js.index("  _maybeDispatchQueued() {"):]
+        self.assertIn("this._judgeRender(v)", dispatch[:dispatch.index("\n  }\n")])
 
-    def test_turn_setup_runs_it_when_a_briefing_is_in_force(self):
+    def test_turn_setup_judges_with_cards(self):
         import inspect
         src = inspect.getsource(self.server)
         at = src.index("_pl.pair_output(thread_id, _shot)")
-        self.assertIn("_qa_loop_render(thread_id, qa_briefing)", src[at:at + 300])
+        self.assertIn("_qa_loop_render(thread_id, qa_briefing, _loop_v, out_q=out_q)",
+                      src[at:at + 400])
         self.assertLess(src.index("qa_briefing = _resolve_qa_briefing("), at)
+
+
+class TheQaRetry(Fixture):
+    """A FAIL with retries left goes to the orchestrator; anything else ends the turn."""
+
+    def setUp(self):
+        super().setUp()
+        pl.start("t1", "6")
+        pl.add_version("t1", "a stadium")
+        from src.utils import agentY_server as server
+        self.follow = server._loop_qa_followup
+        from types import SimpleNamespace
+        self.brief = SimpleNamespace(retry_budget=2)
+        self.failed = {"passed": False, "summary": "dark", "missed": ["screens lit — both dark"],
+                     "line": "🔍 QA v1 — ❌ FAIL"}
+
+    def test_a_fail_hands_the_notes_to_the_orchestrator(self):
+        text, line = self.follow("t1", 1, self.failed, self.brief)
+        self.assertEqual(line, "")
+        self.assertIn("- screens lit — both dark", text)
+        self.assertIn("1 of 2", text)
+        self.assertIn("from_version=1", text)
+
+    def test_the_budget_is_the_qa_nodes_retries(self):
+        self.follow("t1", 1, self.failed, self.brief)
+        self.follow("t1", 2, self.failed, self.brief)
+        text, line = self.follow("t1", 3, self.failed, self.brief)
+        self.assertEqual(text, "")
+        self.assertIn("No automatic retries left (2 used)", line)
+        self.assertEqual(pl.qa_retries("t1"), 0, "the next round starts with a full budget")
+
+    def test_a_pass_ends_the_loop_and_resets_the_budget(self):
+        self.follow("t1", 1, self.failed, self.brief)
+        text, line = self.follow("t1", 2, {"passed": True, "line": "🔍 QA v2 — ✅ PASS"},
+                                 self.brief)
+        self.assertEqual((text, line), ("", "🔍 QA v2 — ✅ PASS"))
+        self.assertEqual(pl.qa_retries("t1"), 0)
+
+    def test_an_unjudged_render_does_not_retry(self):
+        text, line = self.follow("t1", 1, {"passed": True, "error": "no vision"}, self.brief)
+        self.assertEqual(text, "")
+        self.assertIn("could not judge", line)
+
+    def test_no_budget_on_the_node_falls_back_to_settings(self):
+        from types import SimpleNamespace
+        with mock.patch("src.utils.qa.qa_settings", return_value={"max_retries": 0}):
+            text, line = self.follow("t1", 1, self.failed, SimpleNamespace(retry_budget=None))
+        self.assertEqual(text, "")
+        self.assertIn("(0 used)", line)
+
+    def test_a_render_turn_ends_without_the_orchestrator_when_there_is_nothing_to_do(self):
+        import inspect
+        from src.utils import agentY_server as server
+        src = inspect.getsource(server._run_pipeline_turn)
+        block = src[src.index("if loop_render is not None:\n        message"):]
+        block = block[:block.index("_restore_state(pipeline")]
+        self.assertIn('out_q.put({"type": "done"})', block)
+        self.assertIn("return", block)
 
 
 class TheNewestRender(Fixture):
