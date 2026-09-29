@@ -9,6 +9,15 @@ events; the chat host forwards them over the open SSE stream and
 re-queue (the panel runs in-page and holds an ``app.graph`` reference).
 
 Mirrors ``src.utils.tool_activity``: same push / drain / clear contract.
+
+**This buffer is drained only while a turn is streaming** — by the pipeline's own
+loop and by the chat route's pump, both of which exist for the life of one turn.
+A patch pushed from anywhere else (a panel button hitting a route, a background
+watcher) therefore sits here until the user's next message and lands in the middle
+of it, which reads as an edit that took minutes to arrive. Anything that happens
+outside a turn must reach the canvas another way: a route the panel called can
+simply answer with what to write, since the panel is holding ``app.graph`` and is
+the one that asked.
 """
 
 from __future__ import annotations

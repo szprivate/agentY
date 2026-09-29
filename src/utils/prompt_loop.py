@@ -32,6 +32,7 @@ import time
 _MAX_VERSIONS = 40
 _BLOCK_VERSIONS = 8        # how many are shown to the agent, newest last
 _TEXT_IN_BLOCK = 400       # characters of an older version's text in the block
+_RESOLVE_TRIES = 4         # newest-first file lookups before giving up (see newest_output)
 
 
 def _store():
@@ -206,7 +207,7 @@ def newest_output(since: float = 0.0) -> str:
                     continue
         return 0.0
 
-    best: tuple = (0.0, "")
+    candidates: list = []
     for entry in history.values():
         if not isinstance(entry, dict):
             continue
@@ -218,12 +219,18 @@ def newest_output(since: float = 0.0) -> str:
                 continue
             for key in ("images", "gifs", "videos"):
                 for rec in (node_out.get(key) or []):
-                    if not isinstance(rec, dict) or rec.get("type") == "temp":
-                        continue
-                    path = _resolve(rec)
-                    if path and when >= best[0]:
-                        best = (when, path)
-    return best[1]
+                    if isinstance(rec, dict) and rec.get("type") != "temp":
+                        candidates.append((when, rec))
+    # Sort FIRST, resolve after. Resolving is a filesystem hit on whatever drive
+    # ComfyUI writes to — a network share, here — and falls back to downloading the
+    # file when it cannot find it, so resolving every record in six history entries
+    # to then keep one is a stall on the front of somebody's turn.
+    candidates.sort(key=lambda c: c[0], reverse=True)
+    for _when, rec in candidates[:_RESOLVE_TRIES]:
+        path = _resolve(rec)
+        if path:
+            return path
+    return ""
 
 
 def _resolve(record: dict) -> str:

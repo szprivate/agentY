@@ -3823,24 +3823,32 @@ def _build_app():
 
     # ── Prompt loop (the ✍ button; see src/utils/prompt_loop.py) ─────────────
     # Per CONVERSATION, not per install: two threads can be refining two different
-    # prompts, and the panel's strip has to show the one you are looking at. The
-    # restore path writes through the same canvas-patch bus the agent's own
-    # revise_prompt uses, so clicking v2 and being handed v2 are one mechanism.
+    # prompts, and the panel's strip has to show the one you are looking at.
+    #
+    # A restore ANSWERS with the text to write instead of pushing it onto the
+    # canvas-patch bus. That bus is drained only while a turn streams, so a patch
+    # pushed from a button sits there until the user's next message — the click
+    # looked like it did nothing, then the canvas changed minutes later in the
+    # middle of something else. The panel is holding app.graph and is the one that
+    # asked, so it writes the widget itself, in the same tick as the click.
     @app.route("/agentY/prompt_loop", methods=["GET", "POST", "OPTIONS"])
     def prompt_loop_route():
         if request.method == "OPTIONS":
             return "", 204
         from src.utils import prompt_loop as pl
 
-        def _payload(thread: str) -> dict:
+        def _payload(thread: str, write: dict | None = None) -> dict:
             loop = pl.state(thread) or {}
-            return {"ok": True, "thread_id": thread,
-                    "on": bool(loop.get("on")),
-                    "node_id": str(loop.get("node_id") or ""),
-                    "input": str(loop.get("input") or ""),
-                    "versions": [{"v": e.get("v"), "text": e.get("text", ""),
-                                  "rendered": bool(e.get("output"))}
-                                 for e in (loop.get("versions") or [])]}
+            out = {"ok": True, "thread_id": thread,
+                   "on": bool(loop.get("on")),
+                   "node_id": str(loop.get("node_id") or ""),
+                   "input": str(loop.get("input") or ""),
+                   "versions": [{"v": e.get("v"), "text": e.get("text", ""),
+                                 "rendered": bool(e.get("output"))}
+                                for e in (loop.get("versions") or [])]}
+            if write:
+                out["write"] = write      # the panel puts this on the canvas itself
+            return out
 
         if request.method == "GET":
             return jsonify(_payload(str(request.args.get("thread_id") or "")))
@@ -3857,14 +3865,12 @@ def _build_app():
                 if not node_id:
                     return jsonify({"ok": False,
                                     "error": "this loop has no target node yet"}), 409
-                from src.utils.canvas_patch import push as push_patch
-                entry = pl.add_version(thread, text, based_on=int(str(body["restore"]).lstrip("vV")))
-                push_patch({"node_id": node_id, "params": {slot or "text": text},
-                            "node_title": "prompt loop"})
-                push_patch({"op": "prompt_version", "v": entry["v"], "text": text,
-                            "node_id": node_id, "input": slot or "text",
-                            "from": entry.get("from", 0)})
-            elif body.get("clear"):
+                entry = pl.add_version(thread, text,
+                                       based_on=int(str(body["restore"]).lstrip("vV")))
+                return jsonify(_payload(thread, write={
+                    "node_id": node_id, "input": slot or "text", "text": text,
+                    "v": entry["v"]}))
+            if body.get("clear"):
                 pl.clear(thread)
             elif body.get("on"):
                 pl.start(thread, str(body.get("node_id") or ""),

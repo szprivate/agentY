@@ -164,6 +164,29 @@ class TheNewestRender(Fixture):
              mock.patch.object(pl, "_resolve", side_effect=lambda r: "W:/o/" + r["filename"]):
             self.assertEqual(pl.newest_output(), "")
 
+    def test_only_the_newest_few_are_looked_for_on_disk(self):
+        """Resolving hits the drive ComfyUI writes to — a share, here — and can fall
+        back to downloading. Six history entries resolved to keep one is a stall on
+        the front of a turn."""
+        entries = {f"p{i}": self._entry(f"{i}.png", 1000 * i) for i in range(1, 9)}
+        looked: list = []
+
+        def _look(rec):
+            looked.append(rec["filename"])
+            return "W:/o/" + rec["filename"]
+
+        with self._history(entries), mock.patch.object(pl, "_resolve", _look):
+            self.assertEqual(pl.newest_output(), "W:/o/8.png")
+        self.assertEqual(looked, ["8.png"], "the newest one answered; stop there")
+
+    def test_it_keeps_looking_past_a_file_that_is_not_there(self):
+        entries = {f"p{i}": self._entry(f"{i}.png", 1000 * i) for i in range(1, 4)}
+        with self._history(entries), \
+             mock.patch.object(pl, "_resolve",
+                               side_effect=lambda r: "" if r["filename"] == "3.png"
+                               else "W:/o/" + r["filename"]):
+            self.assertEqual(pl.newest_output(), "W:/o/2.png")
+
     def test_no_comfyui_is_simply_no_render(self):
         client = mock.Mock(get=mock.Mock(side_effect=OSError("connection refused")))
         with mock.patch("agenty_core.utils.comfyui_client.get_client", return_value=client):
@@ -300,6 +323,40 @@ class TheTool(Fixture):
         for forbidden in ("execute_workflow", "submit_prompt", "signal_workflow_ready",
                           "_run_canvas_batch", "run_now=True"):
             self.assertNotIn(forbidden, body, forbidden)
+
+
+class TheRestoreRoute(Fixture):
+    """Clicking a version must reach the canvas NOW.
+
+    The canvas-patch bus is drained only while a turn is streaming, so a patch
+    pushed by a button sits in it until the user's next message and then lands in
+    the middle of that turn — the click reads as doing nothing, and the canvas
+    changes minutes later. The route therefore ANSWERS with the text to write and
+    the panel, which is holding app.graph, writes it in the same tick.
+    """
+
+    def test_the_route_does_not_push_a_widget_patch_for_a_restore(self):
+        import inspect
+
+        import src.utils.agentY_server as server
+        src = inspect.getsource(server)
+        start = src.index('@app.route("/agentY/prompt_loop"')
+        body = src[start:src.index('@app.route("/agentY/mcp"', start)]
+        restore = body[body.index('if body.get("restore")'):body.index('if body.get("clear")')]
+        self.assertNotIn("push_patch", restore)
+        self.assertNotIn("canvas_patch", restore)
+        self.assertIn('write={', restore.replace(" ", ""))
+
+    def test_the_panel_writes_what_the_route_answers(self):
+        from pathlib import Path
+        panel = Path("D:/ai/agentY-comfyuiConnect/web/agent_chat.js")
+        if not panel.exists():
+            self.skipTest("the ComfyUI extension checkout is not beside this one")
+        js = panel.read_text(encoding="utf-8")
+        start = js.index("async _restoreVersion(")
+        body = js[start:js.index("\n  }", start)]
+        self.assertIn("_applyCanvasPatch", body, "the click has to write the widget itself")
+        self.assertIn("j.write", body)
 
 
 class ThePromptSlot(unittest.TestCase):
