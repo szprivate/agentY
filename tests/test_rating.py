@@ -47,6 +47,17 @@ class Fixture(unittest.TestCase):
                                             "scanning": False, "error": ""})
         p.start()
         self.addCleanup(p.stop)
+        # Registered last, so it runs FIRST: a pick is written from a background
+        # thread, and one still running when LOG_PATH is un-patched writes into
+        # the user's real preference log (it did, twice).
+        self.addCleanup(self._join_writers)
+
+    @staticmethod
+    def _join_writers():
+        import threading
+        for t in threading.enumerate():
+            if t.name == "agentY-rating-log":
+                t.join(timeout=10)
 
 
 class TheScan(Fixture):
