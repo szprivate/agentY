@@ -86,6 +86,12 @@ if ($Debug) {
 # which would never match the incoming list.
 function Get-DirtyPaths {
     param([string]$Dir)
+    # git writes warnings to stderr (e.g. "LF will be replaced by CRLF" on a
+    # machine with core.autocrlf). Under the script's "Stop", Windows PowerShell
+    # turns ANY native stderr line into a terminating error - even with 2>$null -
+    # so the update would abort on a harmless warning. Exit codes are checked
+    # instead. Setting it here is local to the function.
+    $ErrorActionPreference = "Continue"
     $out = @()
     $tracked = & git -c core.quotepath=false -C $Dir diff --name-only HEAD 2>$null
     if ($tracked) { $out += $tracked }
@@ -96,6 +102,7 @@ function Get-DirtyPaths {
 
 function Update-Repo {
     param([string]$Name, [string]$Dir)
+    $ErrorActionPreference = "Continue"     # see Get-DirtyPaths
 
     if (-not (Test-Path (Join-Path $Dir ".git"))) { return $null }
 
@@ -249,6 +256,7 @@ if ($skipUpdate) {
         $targets += @{ n = $label; d = $full; ext = $true }
     }
 
+    $ErrorActionPreference = "Continue"         # see Get-DirtyPaths
     $extUpdated = $false
     foreach ($r in $targets) {
         if (-not (Test-Path $r.d)) { continue }
@@ -263,6 +271,7 @@ if ($skipUpdate) {
     if ($extUpdated) {
         Write-Host "[update] The ComfyUI sidebar extension changed - restart ComfyUI (or reload the browser for JS-only changes) to pick it up." -ForegroundColor Yellow
     }
+    $ErrorActionPreference = "Stop"
     Write-Host ""
 }
 
