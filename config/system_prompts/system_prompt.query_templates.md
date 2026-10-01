@@ -55,6 +55,12 @@ Extract subject, style, task type, batch count, variations.
   request, then pick the model: exact name > model the user named > task-type
   match > model-family match. Use the leaf name EXACTLY as listed — never invent
   or reword a name.
+- **Prefer a template whose models are installed.** A local template marked
+  `[models not installed]` needs files this machine does not have; when another
+  template of the same task and model family is NOT marked, pick that one, even
+  if it is an older version ("LTX-2" with only 2.3 installed → the 2.3 template,
+  not 2.5). Missing files get swapped for the nearest installed name, and across
+  versions that builds a graph that crashes when it runs.
 - **When the request has input image(s), pick an image-consuming template**
   (edit / img2img / inpaint / img2video / controlnet) — never a pure
   text-to-X template.

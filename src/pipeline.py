@@ -6291,6 +6291,64 @@ class Pipeline:
         "image_z_image_turbo",        # dup of text_to_image_z_image_turbo
     })
 
+    def _template_models_installed(self, stem: str) -> bool:
+        """Whether *stem*'s models are on this machine, to the version.
+
+        A template declares its model files; installed copies rarely have the
+        exact name (``ltx-2.3-22b-dev-fp8`` vs ``ltx-2.3-22b-dev``), so a declared
+        file counts as present when its folder holds a file sharing its first
+        three name tokens — ``ltx 2 3`` matches, ``ltx 2 5`` does not. LoRAs are
+        add-ons and are not counted. No declared models, or no answer from
+        ComfyUI, counts as installed: this only reorders versions, and must not
+        hide a template on a guess.
+        """
+        cache = self.__dict__.setdefault("_tpl_installed_cache", {})
+        if stem in cache:
+            return cache[stem]
+        ok = True
+        try:
+            from agenty_core.paths import corpus_root
+            from agenty_core.utils.template_models import models_in_workflow
+            root = corpus_root()
+            path = next((p for sub in ("comfyui_workflow_templates_custom", "comfyui_workflow_templates_official")
+                         for p in [root / sub / "templates" / f"{stem}.json"] if p.is_file()), None)
+            declared = models_in_workflow(json.loads(path.read_text(encoding="utf-8"))) if path else {}
+
+            def toks(name: str) -> list[str]:
+                base = str(name).replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+                return re.findall(r"[a-z]+|\d+", base)
+
+            for name, info in declared.items():
+                folder = str(info.get("directory") or "")
+                if not folder or folder == "loras":
+                    continue
+                have = self._installed_models(folder)
+                if have is None:
+                    continue                      # ComfyUI didn't answer: no verdict
+                want = toks(name)
+                n = min(3, len(want))
+                if not any(toks(h)[:n] == want[:n] for h in have):
+                    ok = False
+                    break
+        except Exception:  # noqa: BLE001 — a ranking hint, never a failure
+            ok = True
+        cache[stem] = ok
+        return ok
+
+    def _installed_models(self, folder: str) -> list[str] | None:
+        """ComfyUI's list of model files in *folder* (``GET /models/<folder>``), cached."""
+        cache = self.__dict__.setdefault("_installed_models_cache", {})
+        if folder not in cache:
+            try:
+                import urllib.request
+                from src.utils.settings import load_settings
+                base = str(load_settings().get("comfyui_url", "http://127.0.0.1:8188")).rstrip("/")
+                with urllib.request.urlopen(f"{base}/models/{folder}", timeout=5) as r:
+                    cache[folder] = [str(x) for x in json.loads(r.read() or b"[]")]
+            except Exception:  # noqa: BLE001
+                cache[folder] = None
+        return cache[folder]
+
     @classmethod
     def _capability_key(cls, stem: str) -> tuple[str, tuple]:
         """Split a template stem into ``(capability_key, version_tuple)`` by stripping
@@ -6355,12 +6413,17 @@ class Pipeline:
                 members = [s for s in members if s in live]  # drop stale
                 if not members:
                     continue
-                # Collapse version-variants: keep the latest per capability key.
+                # Collapse version-variants: keep the latest per capability key
+                # whose models are installed, else the latest. "Latest" alone hid
+                # video_ltx2_3_t2v behind video_ltx2_5_t2v on a machine with only
+                # the 2.3 models; the 2.5 graph was then assembled from the
+                # nearest-named files (a Hunyuan VAE among them) and crashed.
                 best: dict[str, tuple[tuple, str]] = {}
                 for s in members:
                     key, ver = self._capability_key(s)
-                    if key not in best or ver > best[key][0]:
-                        best[key] = (ver, s)
+                    rank = (self._template_models_installed(s), ver)
+                    if key not in best or rank > best[key][0]:
+                        best[key] = (rank, s)
                 latest = {v[1] for v in best.values()}
                 hidden.update(s for s in members if s not in latest)  # collapsed older versions
                 # Drop suppressed templates (blueprints / exact dups).
@@ -6369,8 +6432,15 @@ class Pipeline:
                     continue
                 emitted.update(leaves)
                 tag = " [API]" if m.get("uses_api_nodes") else ""
+                # Which local templates this machine can actually run. Asked for
+                # "LTX-2", the researcher took the newest (2.5) of five LTX-2
+                # text-to-video templates with only 2.3 installed; the missing
+                # files were swapped for the nearest names and the graph crashed.
                 leaf_txt = "\n".join(
-                    f"    - {s}: {self._catalog_hint(live.get(s, ''))}" for s in leaves
+                    f"    - {s}: {self._catalog_hint(live.get(s, ''))}"
+                    + ("" if m.get("uses_api_nodes") or self._template_models_installed(s)
+                       else " [models not installed]")
+                    for s in leaves
                 )
                 model_lines.append(f"  {m.get('model') or '?'}{tag}:\n{leaf_txt}")
             if model_lines:
