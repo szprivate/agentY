@@ -1376,6 +1376,12 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
                 _wd.note(req_id, f"released {n} stale agent lock(s) left by an earlier turn")
         except Exception:  # noqa: BLE001 — recovery must never block a turn
             pass
+        # A Stop holds downloads off until the next turn starts.
+        try:
+            from agenty_core.tools.huggingface import clear_download_cancel
+            clear_download_cancel()
+        except Exception:  # noqa: BLE001
+            pass
 
     _restore_state(pipeline, thread_id)
     # Before the turn touches anything: the state an undo of it puts back. The
@@ -4375,9 +4381,19 @@ def _build_app():
         # nothing about the prompts it has ALREADY put in ComfyUI's queue, and
         # those are most of what "stop" means to somebody watching a batch run.
         report = _interrupt_comfy()
+        # A model download runs in a worker thread that cancelling the turn
+        # cannot reach; without this, Stop left it fetching gigabytes and the
+        # turn waiting for it. The partial file stays and resumes next time.
+        downloads = 0
+        try:
+            from agenty_core.tools.huggingface import cancel_downloads
+            downloads = cancel_downloads()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("could not stop downloads: %s", exc)
         return jsonify({"ok": True, "cancelled": found,
                         "queue_removed": len(report.get("deleted") or []),
-                        "queue_kept": report.get("kept", 0)})
+                        "queue_kept": report.get("kept", 0),
+                        "downloads_stopped": downloads})
 
     # ── Chat (SSE) ─────────────────────────────────────────────────────────
     @app.route("/agentY/chat", methods=["POST", "OPTIONS"])

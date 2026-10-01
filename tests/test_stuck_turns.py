@@ -148,6 +148,21 @@ class CloseLoopTest(unittest.TestCase):
             importlib.reload(S)
 
 
+class StopReachesDownloadsTest(unittest.TestCase):
+
+    def test_stop_cancels_downloads(self):
+        """A download runs in a worker thread that cancelling the turn cannot
+        reach; Stop has to tell it directly."""
+        from src.utils import agentY_server as S
+        from route_client import authorised_client
+        client = authorised_client(S._build_app())
+        with mock.patch("agenty_core.tools.huggingface.cancel_downloads", return_value=1) as cancel, \
+                mock.patch.object(S, "_interrupt_comfy", return_value={}):
+            out = client.post("/agentY/stop", json={"thread_id": "nope"}).get_json()
+        cancel.assert_called_once()
+        self.assertEqual(out["downloads_stopped"], 1)
+
+
 class TaskDumpTest(unittest.TestCase):
 
     def test_a_quiet_turn_says_what_it_waits_on(self):
