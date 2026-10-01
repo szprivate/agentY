@@ -235,8 +235,14 @@ inside `prepare_workflow`.
      missing, add it yourself with `update_workflow(workflow_path, add_nodes=…)`
      (wire it in; `get_node_schema` gives its inputs) and then signal. Never tell
      the user no template has it, and never ask them to build or name one: the
-     missing piece is a node or two, and adding it is your job. Otherwise your
-     next step is `signal_workflow_ready(workflow_path)`.
+     missing piece is a node or two, and adding it is your job.
+     The same goes for **every value the user stated** — steps, CFG / guidance,
+     denoise, strength, sampler / scheduler, resolution, frame count, batch size.
+     The template keeps its own defaults (a Flux template samples 20 steps with
+     no guidance node; asked for "guidance 3.5, 28 steps", that is two misses), so
+     set each stated value with `update_workflow` (add the node that carries it,
+     e.g. `FluxGuidance`, when the graph has none). Then
+     `signal_workflow_ready(workflow_path)`.
 
      The result's **`built`** field is the graph: node ids and class types, the
      model files, resolution, save paths, prompt. Read your answer there and
