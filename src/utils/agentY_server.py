@@ -1156,7 +1156,10 @@ def _generate_and_set_title(thread_id: str, user_text: str) -> None:
 
 # ── SSE pipeline runner ───────────────────────────────────────────────────────
 
-def _close_loop(loop) -> None:
+_CLOSE_LOOP_TIMEOUT = float(os.environ.get("AGENTY_CLOSE_LOOP_TIMEOUT", "10") or 10)
+
+
+def _close_loop(loop, req_id: str = "") -> None:
     """Finalize pending async generators, then close *loop*.
 
     Every per-run loop drives async generators (the pipeline stream, the executor,
@@ -1165,10 +1168,42 @@ def _close_loop(loop) -> None:
     loop — so closing it out from under them raises "Task was destroyed but it is
     pending! … async_generator_athrow". Draining shutdown_asyncgens first drives
     those finalizers to completion.
+
+    Bounded. A finalizer that awaits something which never answers (a socket
+    close, a stream the far end abandoned) held this forever — seven turns in
+    the turn log end at ``post:close_loop`` and never END — and whatever that
+    generator had not yet released (an agent's invocation lock, a researcher
+    slot) stayed held, so the NEXT turn waited on it with nothing to show:
+    "stuck after 'Orchestrator finished', Stop sometimes helps, usually a
+    restart". Past the limit the finalizers are cancelled, which runs the rest
+    of their cleanup, and the generators still open are named in the turn log.
     """
+    import asyncio as _asyncio
     try:
-        loop.run_until_complete(loop.shutdown_asyncgens())
-    except Exception:
+        open_gens = [getattr(g, "__qualname__", repr(g)) for g in list(getattr(loop, "_asyncgens", ()))]
+    except Exception:  # noqa: BLE001 — diagnostics only
+        open_gens = []
+    try:
+        loop.run_until_complete(_asyncio.wait_for(loop.shutdown_asyncgens(), _CLOSE_LOOP_TIMEOUT))
+    except _asyncio.TimeoutError:
+        msg = (f"close_loop: async generators did not finish within {_CLOSE_LOOP_TIMEOUT:.0f}s "
+               f"and were cancelled: {', '.join(open_gens) or '?'}")
+        logger.warning(msg)
+        if req_id:
+            _wd.note(req_id, msg)
+    except Exception:  # noqa: BLE001
+        pass
+    # Tasks still pending (a tool task the cancelled stream never awaited) are
+    # cancelled too, so their finally blocks run on this loop instead of never.
+    try:
+        pending = [t for t in _asyncio.all_tasks(loop) if not t.done()]
+        for t in pending:
+            t.cancel()
+        if pending:
+            loop.run_until_complete(_asyncio.wait(pending, timeout=_CLOSE_LOOP_TIMEOUT))
+            if req_id:
+                _wd.note(req_id, f"close_loop: cancelled {len(pending)} task(s) left pending")
+    except Exception:  # noqa: BLE001
         pass
     try:
         loop.close()
@@ -1329,6 +1364,18 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
             out_q.put({"type": "done"})
             out_q.put(None)
             return
+
+    # Nothing else is running (this turn registers further down), so any agent
+    # still marked busy, and any researcher slot still taken, is left over from
+    # a turn that ended without closing its streams. Left alone, this turn would
+    # wait on it with nothing to show — the hang only a restart used to clear.
+    if not _turn_running():
+        try:
+            n = pipeline.release_stale_locks()
+            if n:
+                _wd.note(req_id, f"released {n} stale agent lock(s) left by an earlier turn")
+        except Exception:  # noqa: BLE001 — recovery must never block a turn
+            pass
 
     _restore_state(pipeline, thread_id)
     # Before the turn touches anything: the state an undo of it puts back. The
@@ -1549,6 +1596,7 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    _wd.attach_loop(req_id, loop)   # lets a quiet turn show what it awaits
     qa_queue: asyncio.Queue = asyncio.Queue()
 
     # Flush the tool-activity / canvas-edit buffers to the SSE stream. The
@@ -1670,7 +1718,7 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
         out_q.put({"type": "done"})
         out_q.put(None)
         _wd.phase(req_id, "post:close_loop")
-        _close_loop(loop)
+        _close_loop(loop, req_id)
         # A model switch made while this turn ran was held back so it could not
         # rebuild an agent out from under it. The turn is over: apply it now.
         _apply_pending_model_change()
@@ -3250,6 +3298,10 @@ def _stream_turn(q, rid: str, thread_id: str, poll: float = 15.0):
                 # streaming events or finished, not quiet for minutes.
                 if idle % 8 == 0:
                     _wd.note(rid, f"sse idle — {idle * poll:.0f}s with no event, still keep-alive")
+                    # At ~2 and ~10 minutes of silence, say what the turn is
+                    # waiting on — the thing a hang report is missing.
+                    if idle in (8, 40):
+                        _wd.dump_tasks(rid, f"no event for {idle * poll:.0f}s")
                 yield ": keep-alive\n\n"  # keep the stream warm / defeat idle buffering
                 continue
             if item is None:

@@ -94,6 +94,64 @@ def _watch() -> None:
             _write(_dump_all_threads(
                 f"STALL DUMP req={req_id[:8]} phase={st['phase']} held={held:.1f}s"
             ))
+            dump_tasks(req_id, f"stalled in {st['phase']} for {held:.0f}s")
+
+
+def _await_chain(obj, limit: int = 40) -> list[str]:
+    """``file:line in function`` for each frame of a suspended coroutine / async
+    generator, outermost first, following what each one is awaiting."""
+    out: list[str] = []
+    seen = 0
+    while obj is not None and seen < limit:
+        seen += 1
+        frame = (getattr(obj, "cr_frame", None) or getattr(obj, "ag_frame", None)
+                 or getattr(obj, "gi_frame", None))
+        if frame is not None:
+            out.append(f"{frame.f_code.co_filename}:{frame.f_lineno} in {frame.f_code.co_name}")
+        nxt = (getattr(obj, "cr_await", None) or getattr(obj, "ag_await", None)
+               or getattr(obj, "gi_yieldfrom", None))
+        if nxt is None:
+            if not hasattr(obj, "cr_await") and not hasattr(obj, "ag_await"):
+                out.append(f"awaiting {type(obj).__name__}: {str(obj)[:160]}")
+            break
+        obj = nxt
+    return out
+
+
+def dump_tasks(req_id: str, why: str) -> None:
+    """Where every task on *req_id*'s event loop is waiting.
+
+    A thread dump of a turn that has gone quiet shows its loop thread sitting in
+    ``select()`` — true, and useless: the turn is an await chain, and what it is
+    waiting ON is only visible from the tasks. Read from another thread, so a
+    best-effort snapshot.
+    """
+    with _lock:
+        loop = (_turns.get(req_id) or {}).get("loop")
+    if loop is None:
+        return
+    import asyncio
+    lines = [f"\n{'=' * 78}", f"TASKS req={req_id[:8]} — {why}", "=" * 78]
+    try:
+        tasks = list(asyncio.all_tasks(loop))
+    except Exception as exc:  # noqa: BLE001
+        lines.append(f"(could not list tasks: {exc})")
+        tasks = []
+    for t in tasks:
+        try:
+            lines.append(f"\n--- task {t.get_name()} done={t.done()} ---")
+            lines.extend("   " + f for f in _await_chain(t.get_coro()))
+        except Exception as exc:  # noqa: BLE001
+            lines.append(f"   (unreadable: {exc})")
+    lines.append("=" * 78 + "\n")
+    _write("\n".join(lines))
+
+
+def attach_loop(req_id: str, loop) -> None:
+    """Remember *req_id*'s event loop, so a stall can show what its tasks await."""
+    with _lock:
+        if req_id in _turns:
+            _turns[req_id]["loop"] = loop
 
 
 def _ensure_watchdog() -> None:

@@ -82,6 +82,54 @@ _ORCH_PARTIALS_DIR = Path(__file__).parent.parent / "config" / "system_prompts" 
 _MAX_CANVAS_DELETE = 25
 
 
+def _slot_is_dead(slot: list) -> bool:
+    """Whether a researcher lease slot belongs to a task that can no longer free it."""
+    task = slot[1] if len(slot) > 1 else None
+    if task is None:
+        return False
+    try:
+        return task.done() or task.get_loop().is_closed()
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _reap_dead_slots(busy: list) -> bool:
+    """Drop lease slots whose owner is gone, releasing their agent's lock.
+
+    Returns whether anything was freed. The agent a dead slot held may still be
+    marked as invoking (its stream was never closed either), so its lock is
+    released too — otherwise the freed slot would only move the hang to
+    "Agent is already processing a request".
+    """
+    dead = [s for s in busy if _slot_is_dead(s)]
+    if not dead:
+        return False
+    busy[:] = [s for s in busy if s not in dead]
+    for s in dead:
+        release_stale_invocation_lock(s[0], "researcher slot of a finished turn")
+    print(f"pipeline: freed {len(dead)} researcher slot(s) left by turns that ended mid-lease.")
+    return True
+
+
+def release_stale_invocation_lock(agent, why: str) -> bool:
+    """Release a Strands agent's invocation lock that nothing is using.
+
+    The lock is released in its stream's finally; a stream abandoned without
+    being closed keeps it, and every later call on that agent is refused. Only
+    call this when no invocation of *agent* can be running (no turn in flight,
+    or its owner is known to be over).
+    """
+    lock = getattr(agent, "_invocation_lock", None)
+    try:
+        if lock is not None and lock.locked():
+            lock.release()
+            print(f"pipeline: released a stale invocation lock ({why}).")
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
 class _CanvasSchemas:
     """``/object_info`` as canvas_edit reads it (``.get(class)``), one class at a
     time through preflight's per-class cache — the whole database is seconds to
@@ -960,7 +1008,20 @@ class Pipeline:
         async def _run_specialist(agent, label: str, text: str) -> str:
             snap = self._usage_snapshot(agent)
             try:
-                out = str(await agent.invoke_async(text))
+                # One specialist instance serves one call at a time. The
+                # orchestrator calling it twice in parallel (two run_info) got
+                # "Agent is already processing a request" for the second; the
+                # second now waits its turn instead.
+                waited = 0.0
+                while True:
+                    try:
+                        out = str(await agent.invoke_async(text))
+                        break
+                    except Exception as exc:  # noqa: BLE001
+                        if type(exc).__name__ != "ConcurrencyException" or waited >= 600:
+                            raise
+                        await asyncio.sleep(0.5)
+                        waited += 0.5
             finally:
                 self._record_agent_usage(agent, snap)
                 try:
@@ -5453,6 +5514,30 @@ class Pipeline:
                 return {"node_id": nid, "files": files}
         return found
 
+    def release_stale_locks(self) -> int:
+        """Release every agent invocation lock still held, and empty the researcher
+        lease — for the start of a turn when NO turn is in flight, so nothing
+        can be using them. Returns how many locks were released.
+
+        What a turn abandoned mid-stream leaves behind (see _reap_dead_slots and
+        agentY_server._close_loop) used to stay until the host was restarted.
+        """
+        agents = []
+        for v in list(self.__dict__.values()):
+            if hasattr(v, "_invocation_lock"):
+                agents.append(v)
+            elif isinstance(v, list):
+                for item in v:
+                    a = item[-1] if isinstance(item, tuple) else item
+                    if hasattr(a, "_invocation_lock"):
+                        agents.append(a)
+        n = sum(release_stale_invocation_lock(a, "start of a turn, none in flight") for a in agents)
+        busy = self.__dict__.get("_researchers_busy")
+        if busy:
+            print(f"pipeline: emptied {len(busy)} researcher slot(s) held with no turn in flight.")
+            busy.clear()
+        return n
+
     def _canvas_note_patch(self, patch: dict) -> None:
         """Apply an edit this turn pushed to the turn's own copy of the canvas.
 
@@ -7443,11 +7528,27 @@ class Pipeline:
         """
         busy = self.__dict__.setdefault("_researchers_busy", [])
         spares = self.__dict__.setdefault("_researcher_spares", [])
+        waited = 0.0
         while len(busy) >= self._MAX_PARALLEL_RESEARCH:
+            # A slot is freed in the finally below — which never runs for a turn
+            # abandoned mid-lease (its loop closed under it, a close that hung).
+            # Four of those and every later prepare_workflow waited here forever,
+            # printing nothing: the agent "stuck after 'Orchestrator finished'".
+            # A slot whose owning task is over, or whose loop is gone, is free.
+            if _reap_dead_slots(busy):
+                continue
+            if waited in (10.0, 60.0):
+                _push_progress(f"⏳ Waiting for a free workflow researcher "
+                               f"({len(busy)} busy) …")
             await asyncio.sleep(0.25)
+            waited += 0.25
         # Take the slot before building anything: a build awaits, and the next
         # caller must already count this one.
-        slot: list = [None]
+        try:
+            owner = asyncio.current_task()
+        except RuntimeError:
+            owner = None
+        slot: list = [None, owner]
         busy.append(slot)
         primary = agent = self._researcher
         try:
