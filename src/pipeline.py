@@ -3675,12 +3675,21 @@ class Pipeline:
         self._turn_user_text = user_text or ""
         from src.utils.model_family import named as _named_families
         fams = _named_families(user_text or "")
+        session = getattr(self, "_session", None)
+        if fams and session is not None:
+            session.named_families = list(fams)
+        elif not fams and session is not None and getattr(self, "_canvas_graph", None):
+            # A follow-up about the graph on the canvas ("fix these problems")
+            # is held to the family the request that built it named.
+            fams = list(getattr(session, "named_families", None) or [])
+        self._turn_families = fams
         if fams:
             lines.append(
                 f"The user named the model family: {', '.join(fams)}. The workflow MUST load "
-                f"a {' / '.join(fams)} model — a template built for another family does not "
-                "satisfy this, however well its name or task fits; pass the family on in the "
-                "request you give prepare_workflow.")
+                f"a {' / '.join(fams)} model; say so in the request you give prepare_workflow. "
+                "A template made for another family is fine when its graph fits the job — "
+                "the model file is swapped to the named family after assembly — so do NOT "
+                "treat 'no template carries this family's name' as blocked.")
         matched = self._match_named_templates(user_text)
         if matched:
             phrase, names = matched
@@ -6618,7 +6627,10 @@ class Pipeline:
         if not isinstance(result, dict) or result.get("status") != "ready":
             return result
         from src.utils import model_family as _mf
-        families = _mf.named(" ".join([getattr(self, "_turn_user_text", "") or "", request or ""]))
+        # The turn's own (which carries a follow-up's inherited family), then
+        # anything the orchestrator's request to the researcher names.
+        families = list(getattr(self, "_turn_families", None) or [])
+        families += [f for f in _mf.named(request or "") if f not in families]
         path = result.get("workflow_path")
         if not families or not path:
             return result

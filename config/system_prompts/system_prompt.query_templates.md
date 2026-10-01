@@ -62,6 +62,11 @@ Extract subject, style, task type, batch count, variations.
   prefer the **API/partner** option — the `[API]` models and the
   `API / Partner Nodes - …` task groups. Pick a local template when the user
   asks for local/offline, names a local model, or no API option fits.
+- **A request that describes the graph wants a local template.** Latent, denoise,
+  sampler / KSampler, scheduler, steps, CFG, VAE, checkpoint, LoRA, ControlNet,
+  FreeU, hires fix, upscale model: a partner API has none of these knobs, so an
+  API pick cannot do what was asked — "re-sample at denoise 0.6" on an API edit
+  model ends the turn with nothing built.
 - If no template fits, or the user explicitly asks to build from scratch, set
   `template.name` to `"build_new"`.
 - Never invent template names, and never stop to ask — apply a sensible default.
@@ -87,6 +92,11 @@ Extract subject, style, task type, batch count, variations.
 - `blocked` **only** when no template fits at all, or the request is too unclear
   to pick one — name the reason in `blockers`. Missing model files are detected
   downstream, so do NOT block on models here.
+- **A named model family with no template of its own is not blocked.** "SD 1.5
+  text-to-image" with only an SDXL text-to-image template: pick that template —
+  the graph is the same, and the pipeline swaps the model file to the named
+  family after assembly. Block only when no template has the right SHAPE (task,
+  inputs, stages).
 
 ### 5. Output
 Output ONLY the decision JSON — no markdown fences, no prose before or after.

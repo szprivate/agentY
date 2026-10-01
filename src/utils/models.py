@@ -66,6 +66,11 @@ class AgentSession(BaseModel):
     # at resume: they are expected to edit it while this is up, and a cached list
     # is a list that can be wrong by then.
     review_halt: dict | None = None
+    # The model family the thread's request named ("SD 1.5", "SDXL", …). A
+    # follow-up about the graph that request built — "fix these problems" — does
+    # not repeat it, and was then held to nothing: an SD 1.5 request came back
+    # SDXL on the correction turn. See Pipeline._extract_hard_constraints.
+    named_families: list[str] = Field(default_factory=list)
 
 
 class TriageResult(BaseModel):

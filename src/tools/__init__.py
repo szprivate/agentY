@@ -423,6 +423,11 @@ ORCHESTRATOR_TOOLS: list = [
     #     move to a deterministic pipeline loop in a later phase.
     duplicate_workflow,
     update_workflow,
+    # ...and for adding a stage the request asked for that the template lacks
+    # (FreeU, a LoRA, a second pass): a template covers the core job, and
+    # "no template has FreeU" was ending turns with nothing built. The schema
+    # is how the added node gets wired right.
+    get_node_schema,
     open_workflow_in_canvas,
     # Handoff to the executor (prepare_workflow → signal, never submit directly)
     signal_workflow_ready,
