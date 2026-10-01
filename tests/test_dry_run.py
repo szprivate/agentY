@@ -419,10 +419,21 @@ class TheTurnTest(unittest.TestCase):
         built = Pipeline._build_orchestrator_input(pipe, "run it", "run it")
         self.assertTrue(built.startswith("[DRY RUN"), built[:80])
         self.assertIn("no graph is submitted", built.replace("\n", " "))
+        # No hooks: the plain version, which asks for a BUILT workflow. The hook
+        # version calls the report "the entire product of this turn", and plain
+        # requests answered with a report and no workflow.
+        self.assertIn("built workflow", built)
+        self.assertNotIn("hook by hook", built)
+
+    def test_a_hook_run_gets_the_chain_version(self):
+        from src.pipeline import _orch_partial
+        self.assertIn("hook by hook", _orch_partial("dry_run"))
+        self.assertNotIn("hook by hook", _orch_partial("dry_run_plain"))
 
     def test_the_partial_lives_in_a_file_not_in_the_code(self):
         from src.pipeline import _ORCH_PARTIALS_DIR
         self.assertTrue((_ORCH_PARTIALS_DIR / "dry_run.md").is_file())
+        self.assertTrue((_ORCH_PARTIALS_DIR / "dry_run_plain.md").is_file())
 
     def test_it_travels_from_the_panel_to_the_pipeline(self):
         import inspect

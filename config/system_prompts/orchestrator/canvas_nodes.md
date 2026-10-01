@@ -29,7 +29,10 @@ only seen the opening of silently discards the rest of it.
 no second read.)
 
 Wired inputs are not listed as values — they are links. `set_canvas_node_params`
-writes widget values, not wiring.
+writes widget values; `edit_canvas_graph` changes the wiring.
+
+What `get_canvas_node` returns already includes every edit you made this turn.
+If it shows your value, the edit landed — do not write it again.
 
 ### Editing
 
@@ -45,6 +48,23 @@ for** — "keep trying until …". `refine_canvas_until` queues their own graph,
 judges the output against the condition they stated, changes one value and goes
 again (see the `canvas-refine-loop` skill). Naming a stopping condition is what
 asks for the runs; changing a value never is.
+
+### Adding nodes and rewiring
+
+When the change needs a node that isn't there or a different wire — a hires-fix
+pass, a preview instead of a save, an upscaler before the save, a LoRA between
+loader and sampler — make it with **`edit_canvas_graph(ops, reason)`**: `add` a
+node, `connect` an output to an input, `disconnect` a wire, in one call. Only the
+nodes the change needs; everything else on their graph stays as it was.
+
+This is your job, not theirs. Never answer an edit request with click-by-click
+instructions for the user, a menu of ways they could do it, or a request for a
+file path — the graph is right there and this tool changes it.
+
+A swap is add + rewire + delete: add the new node, connect it, then
+`delete_canvas_nodes` the old one (say what it was). If the result lists
+`still_unwired` inputs, connect them before you finish — a graph that cannot run
+is not a finished edit.
 
 ### Deleting
 

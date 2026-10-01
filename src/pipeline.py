@@ -81,6 +81,19 @@ _ORCH_PARTIALS_DIR = Path(__file__).parent.parent / "config" / "system_prompts" 
 # make themselves.
 _MAX_CANVAS_DELETE = 25
 
+
+class _CanvasSchemas:
+    """``/object_info`` as canvas_edit reads it (``.get(class)``), one class at a
+    time through preflight's per-class cache — the whole database is seconds to
+    fetch, and an edit only touches a handful of classes."""
+
+    def get(self, cls, default=None):
+        try:
+            from src.utils.preflight import _schema
+            return _schema(str(cls or "")) or default
+        except Exception:  # noqa: BLE001
+            return default
+
 # How many files one send_to_slack call may upload. A DM is where someone reads
 # one thing on a phone, not a folder to sync into: past a handful the useful file
 # is the one they have to scroll past ten others to find.
@@ -450,6 +463,22 @@ _ORCH_STOP_TOKENS: frozenset[str] = frozenset({
     "first", "last", "single", "dual", "batch", "run", "versions", "variations",
     "new", "old", "pro", "plus", "mini", "small", "large", "base", "full", "high",
     "low", "res", "quality", "fast", "turbo", "lite", "light", "photo", "picture",
+    # Ordinary words and techniques, not brands. A template name made of these
+    # names a JOB, and a request that mentions the job is not asking for that
+    # template: "Stable Diffusion 1.5" pinned audio_stable_audio_example, "canny"
+    # pinned the Z-Image and SD3.5 canny templates and so forbade an SD 1.5
+    # ControlNet, and "built using both models" pinned upscale_using_model to a
+    # Wan text-to-video request. Benchmarked: 5 of 15 first-attempt failures.
+    "stable", "diffusion", "using", "use", "switch", "film", "grain", "prompt",
+    "prompts", "refiner", "refine", "canny", "depth", "pose", "openpose", "lineart",
+    "scribble", "sketch", "normal", "segment", "segmentation", "mask", "matte",
+    "hires", "fix", "detail", "detailer", "enhance", "enhancer", "restore",
+    "color", "colour", "colorize", "blur", "sharpen", "noise", "denoise", "tile",
+    "tiled", "crop", "resize", "scale", "merge", "blend", "composite", "layer",
+    "layers", "separation", "transfer", "interpolation", "interpolate", "extend",
+    "loop", "animate", "animation", "character", "product", "object", "scene",
+    "room", "interior", "logo", "poster", "anime", "cartoon", "realistic",
+    "cinematic", "mesh", "rotate", "rotation", "relight", "expand",
 })
 
 
@@ -1014,6 +1043,7 @@ class Pipeline:
                 _push_progress("🚧 Blocked — need more information.")
                 return json.dumps({"status": "blocked", "blockers": briefing.blockers})
             result = await self._assemble_deterministic(briefing)
+            result = await self._enforce_model_family(result, request)
             self._attach_built_summary(result)
             return json.dumps(result)
 
@@ -1140,6 +1170,7 @@ class Pipeline:
             if briefing.status == "blocked":
                 return json.dumps({"status": "blocked", "blockers": briefing.blockers})
             result = await self._assemble_deterministic(briefing)
+            result = await self._enforce_model_family(result, request)
             if result.get("status") != "ready":
                 # build_new / needs_fix / limit_exceeded: building and repairing are
                 # the orchestrator's tools. Hand the job up with everything it needs.
@@ -1821,8 +1852,10 @@ class Pipeline:
                     "what_to_do": ("If they want the run abandoned, that is `stop`, "
                                    "not deleting the node."),
                 })
-            _push_patch({"op": "delete_nodes", "node_ids": [n["node_id"] for n in impact["found"]],
-                         "reason": str(reason or "").strip()})
+            _patch = {"op": "delete_nodes", "node_ids": [n["node_id"] for n in impact["found"]],
+                      "reason": str(reason or "").strip()}
+            _push_patch(_patch)
+            self._canvas_note_patch(_patch)
             names = ", ".join(f"#{n['node_id']} {n['class_type']}"
                               + (f' "{n["title"]}"' if n["title"] else "")
                               for n in impact["found"])
@@ -1841,6 +1874,80 @@ class Pipeline:
                     f" {len(impact['orphaned'])} input(s) elsewhere lost their feed "
                     f"and the graph will not run until they are rewired — say which, "
                     f"by node and input name.")
+            return json.dumps(out)
+
+        @_tool
+        async def edit_canvas_graph(ops: list, reason: str = "") -> str:
+            """Change the STRUCTURE of the graph open on the canvas: add nodes and wire them.
+
+            The edit for anything values alone can't do — "add a hires-fix pass",
+            "preview instead of saving", "upscale before the save", "put a LoRA
+            between the loader and the sampler". It lands on the live graph at once
+            (Ctrl+Z undoes it) and does NOT queue it. Do this yourself; never hand
+            the user wiring instructions to carry out by hand.
+
+            ``ops`` is a list applied in order, all or nothing:
+
+            * ``{"op": "add", "class_type": "LatentUpscaleBy", "ref": "up",
+              "params": {"scale_by": 1.5}, "near": "5"}`` — a new node; ``ref`` is
+              a name later ops in this call use for it; ``params`` sets widget
+              values (the rest keep their defaults); ``near`` places it beside a node.
+            * ``{"op": "connect", "from": "5", "output": 0, "to": "up",
+              "input": "samples"}`` — wire an output (slot index, or its name or
+              type, e.g. "LATENT") into a named input. Replaces what that input had.
+            * ``{"op": "disconnect", "node": "6", "input": "samples"}`` — cut a wire.
+
+            Ids are those in `[CANVAS GRAPH]`, or a ``ref`` from this call. Every op
+            is checked against the node's real inputs and outputs first; if any is
+            wrong, nothing changes and the errors say what to fix. Remove nodes with
+            ``delete_canvas_nodes``, set values on existing nodes with
+            ``set_canvas_node_params``.
+
+            The result gives each new node's id and lists any required input still
+            unwired — a graph with one of those will not run, so finish the wiring.
+
+            Args:
+                ops: The operations, as above.
+                reason: One line on what the edit does, shown to the user.
+            """
+            from src.utils import canvas_edit as _ce
+            from src.utils.canvas_patch import push as _push_patch
+
+            graph = getattr(self, "_canvas_graph", None)
+            if not isinstance(graph, dict) or not graph:
+                return json.dumps({"error": "no graph is open on the canvas this turn.",
+                                   "what_to_do": "Build a new workflow with prepare_workflow instead."})
+            if not self._canvas_full_graph():
+                selected = {str(n.get("id")) for n in (self._canvas_selection or [])}
+                refs = {str(o.get("ref")) for o in (ops or []) if isinstance(o, dict) and o.get("ref")}
+                named = {str(o.get(k)) for o in (ops or []) if isinstance(o, dict)
+                         for k in ("from", "to", "node", "near") if o.get(k) is not None}
+                outside = sorted(n for n in named if n in graph and n not in selected and n not in refs)
+                if outside:
+                    return json.dumps({
+                        "error": f"node(s) {', '.join(outside)} are not in the current canvas "
+                                 f"selection, so they cannot be rewired.",
+                        "what_to_do": "Ask the user to select the nodes the edit touches."})
+            schemas = _CanvasSchemas()
+            res = _ce.plan(graph, ops, schemas)
+            if not res["ok"]:
+                return json.dumps({"status": "rejected", "errors": res["errors"],
+                                   "note": "Nothing was changed. Fix these and send the whole list again."})
+            self._canvas_graph = res["graph"]
+            _push_patch({"op": "edit_graph", "ops": res["ops"], "reason": str(reason or "").strip()})
+            unwired = {n: u for n in res["touched"] if n in res["graph"]
+                       for u in [_ce.unwired_required(res["graph"], n, schemas)] if u}
+            n_add = sum(1 for o in res["ops"] if o["op"] == "add")
+            n_wire = sum(1 for o in res["ops"] if o["op"] == "connect")
+            _push_progress(f"🔧 Canvas edited: {n_add} node(s) added, {n_wire} wire(s) set"
+                           + (f" — {reason}" if reason else ""))
+            out = {"status": "applied", "added": res["added"],
+                   "nodes": {n: res["graph"][n]["class_type"] for n in res["touched"] if n in res["graph"]},
+                   "message": "Applied to the live canvas; the user can undo with Ctrl+Z."}
+            if unwired:
+                out["still_unwired"] = unwired
+                out["message"] += (" Some required inputs are still unwired (still_unwired) — "
+                                   "the graph will not run until they are connected.")
             return json.dumps(out)
 
         @_tool
@@ -2011,11 +2118,13 @@ class Pipeline:
             widgets = node.get("widgets", {}) or {}
             unknown = [k for k in params if k not in widgets]
             from src.utils.canvas_patch import push as _push_patch
-            _push_patch({
+            _patch = {
                 "node_id": str(node_id),
                 "params": params,
                 "node_title": node.get("title") or node.get("type") or "",
-            })
+            }
+            _push_patch(_patch)
+            self._canvas_note_patch(_patch)
             self._note_loop_write(node_id, params)
             result = {
                 "status": "applied",
@@ -2952,7 +3061,7 @@ class Pipeline:
                  halt_for_review, run_workflow_now, add_canvas_workflow,
                  get_canvas_node, set_canvas_node_params, place_canvas_text,
                  run_python_node, revise_prompt, prompt_autoloop,
-                 delete_canvas_nodes, refine_canvas_until,
+                 delete_canvas_nodes, edit_canvas_graph, refine_canvas_until,
                  list_agent_settings, set_agent_setting]
         # Offered only where there is a Slack to send to. Every tool in this list
         # is described to the model on every call, so one nobody can use is a
@@ -3509,9 +3618,9 @@ class Pipeline:
             catalog = json.loads(_cat() or "{}")
             if isinstance(catalog, dict):
                 for name in catalog:
-                    toks = _brand_tokens(str(name))
-                    if toks:
-                        idx[name] = set(toks)
+                    # Every name, even one with no brand tokens: those can still
+                    # be named literally (see _match_named_templates).
+                    idx[name] = set(_brand_tokens(str(name)))
         except Exception as exc:  # noqa: BLE001
             if getattr(self, "_verbose", False):
                 print(f"pipeline: brand-index build failed ({exc}); template pinning off.")
@@ -3528,7 +3637,14 @@ class Pipeline:
         index = self._template_brand_index()
         if not index:
             return None
-        msg = set(re.findall(r"[a-z0-9]+", user_text.lower()))
+        # A template written out by name ("build image_sdxl_simple") is the
+        # plainest way to name one, and it no longer depends on its words being
+        # brands — a name made of ordinary words has no brand tokens at all.
+        low = user_text.lower()
+        literal = sorted(n for n in index if len(n) >= 6 and re.search(r"(?<![\w.-])" + re.escape(n.lower()) + r"(?![\w-])", low))
+        if literal:
+            return literal[0], literal
+        msg = set(re.findall(r"[a-z0-9]+", low))
         if not msg:
             return None
         best: list[tuple[str, set[str]]] = []
@@ -3556,6 +3672,15 @@ class Pipeline:
         explicitly-named template, and a provided input image.
         """
         lines: list[str] = []
+        self._turn_user_text = user_text or ""
+        from src.utils.model_family import named as _named_families
+        fams = _named_families(user_text or "")
+        if fams:
+            lines.append(
+                f"The user named the model family: {', '.join(fams)}. The workflow MUST load "
+                f"a {' / '.join(fams)} model — a template built for another family does not "
+                "satisfy this, however well its name or task fits; pass the family on in the "
+                "request you give prepare_workflow.")
         matched = self._match_named_templates(user_text)
         if matched:
             phrase, names = matched
@@ -3839,7 +3964,10 @@ class Pipeline:
         # Ahead of every other block, including the hooks: it does not add a rule,
         # it changes what all of them mean this turn.
         if getattr(self, "_dry_run", False):
-            guide = _orch_partial("dry_run")
+            # The hook version is about walking a chain, and tells the agent its
+            # REPORT is the product — on a plain request (no hooks) that reads as
+            # "describe, don't build", and benchmarked turns did exactly that.
+            guide = _orch_partial("dry_run" if getattr(self, "_canvas_hooks", None) else "dry_run_plain")
             if guide:
                 pin = guide + "\n\n" + pin
 
@@ -5316,6 +5444,25 @@ class Pipeline:
                 return {"node_id": nid, "files": files}
         return found
 
+    def _canvas_note_patch(self, patch: dict) -> None:
+        """Apply an edit this turn pushed to the turn's own copy of the canvas.
+
+        The canvas graph is captured when the turn starts, and the panel applies
+        each patch to the live graph — so without this, ``get_canvas_node`` read
+        the start-of-turn snapshot and the agent saw its own write as reverted.
+        It then retried, and concluded (and remembered) that edits don't stick.
+        """
+        try:
+            from src.utils.canvas_edit import apply_patch
+            if isinstance(getattr(self, "_canvas_graph", None), dict):
+                apply_patch(self._canvas_graph, patch)
+            if patch.get("op") is None and isinstance(patch.get("params"), dict):
+                for n in (getattr(self, "_canvas_selection", None) or []):
+                    if str(n.get("id")) == str(patch.get("node_id")) and isinstance(n.get("widgets"), dict):
+                        n["widgets"].update(patch["params"])
+        except Exception:  # noqa: BLE001 — bookkeeping must never fail an edit
+            pass
+
     def _canvas_full_graph(self) -> bool:
         """Whether this turn shows and edits the whole canvas, or only the selection.
 
@@ -6457,6 +6604,59 @@ class Pipeline:
                   f"server_errors={res.get('server_errors')}")
         return await self._run_fix_workflow_assembly(
             wf, problems=problems, server_errors=res.get("server_errors", {}))
+
+    async def _enforce_model_family(self, result: dict, request: str) -> dict:
+        """Hold a ``ready`` workflow to the model family the user named.
+
+        "SDXL" once came back ready loading an SD 1.5 checkpoint in the SDXL
+        template — valid to ComfyUI, wrong to the user, and the orchestrator
+        that noticed had no tool to change it. A loader whose file is plainly
+        another family is rebound to an installed file of the named one; when
+        none is installed, the repair specialist gets the problem instead of
+        the user getting "ready".
+        """
+        if not isinstance(result, dict) or result.get("status") != "ready":
+            return result
+        from src.utils import model_family as _mf
+        families = _mf.named(" ".join([getattr(self, "_turn_user_text", "") or "", request or ""]))
+        path = result.get("workflow_path")
+        if not families or not path:
+            return result
+        try:
+            wf = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return result
+        graph = wf.get("prompt") if isinstance(wf.get("prompt"), dict) else wf
+        if not graph or not all(isinstance(v, dict) and "class_type" in v for v in graph.values()):
+            return result                     # not an API graph — nothing to read
+        wrong = _mf.check(graph, families)
+        if not wrong:
+            return result
+
+        def _options(cls, name):
+            from src.utils.preflight import _schema
+            spec = ((_schema(str(cls)) or {}).get("input") or {}).get("required", {}).get(name)
+            t = spec[0] if isinstance(spec, list) and spec else None
+            if isinstance(t, list):
+                return t
+            return (spec[1] or {}).get("options") if t == "COMBO" and len(spec) > 1 else []
+
+        swaps, left = _mf.repair(graph, wrong, _options, request or "")
+        if swaps:
+            try:
+                Path(path).write_text(json.dumps(wf, indent=2), encoding="utf-8")
+            except OSError as exc:
+                return {"status": "error", "error": f"could not rebind the model: {exc}"}
+            for s in swaps:
+                _push_progress(f"🔁 #{s['node_id']} loaded {s['file']} ({s['is']}); the request named "
+                               f"{'/'.join(s['wanted'])}, so it now loads {s['now']}.")
+        if left:
+            problems = [f"Node {v['node_id']} ({v['class_type']}) {v['input']} loads {v['file']}, a "
+                        f"{v['is']} model, but the request named {'/'.join(v['wanted'])} and no "
+                        f"{'/'.join(v['wanted'])} file is installed for this loader." for v in left]
+            _push_progress("🩹 The model is the wrong family — running the repair specialist …")
+            return await self._run_fix_workflow_assembly(path, problems=problems, server_errors={})
+        return result
 
     @staticmethod
     def _own_copy(template_path: str) -> str:
