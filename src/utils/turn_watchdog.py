@@ -22,6 +22,7 @@ hang can be diagnosed in the session it happens in rather than reproduced.
 """
 from __future__ import annotations
 
+import itertools
 import os
 import sys
 import threading
@@ -36,6 +37,18 @@ _lock = threading.Lock()
 # req_id -> {"thread_id", "phase", "since", "started", "thread_name", "dumped"}
 _turns: dict[str, dict] = {}
 _watchdog: threading.Thread | None = None
+# Plain HTTP requests, the part of the server no turn covers. A message that
+# hangs before its turn begins (the chat route itself stuck, or a route the panel
+# waits on) left no line anywhere: the panel showed nothing, the console showed
+# nothing, the turn log ended at the previous turn. key -> {"method", "path",
+# "since", "thread_name", "dumped"}
+_requests: dict[int, dict] = {}
+# A request is answered in milliseconds; an SSE route returns its stream at once
+# (the turn behind it is watched as a turn). Thirty seconds is already a hang.
+_request_ids = itertools.count(1)
+_REQUEST_BUDGET = float(os.environ.get("AGENTY_REQUEST_BUDGET", "30") or 30)
+# Polled GETs would bury the log; these are traced only when slow.
+_QUIET_METHODS = ("GET", "HEAD", "OPTIONS")
 
 # How long a phase may run before it counts as stalled. The model-streaming phase
 # legitimately takes minutes (a video render blocks the turn), so it gets a long
@@ -86,6 +99,16 @@ def _watch() -> None:
                 if held > budget:
                     st["dumped"] = True
                     stalled.append((req_id, dict(st), held))
+            slow = []
+            for key, rq in _requests.items():
+                held = now - rq["since"]
+                if not rq["dumped"] and held > _REQUEST_BUDGET:
+                    rq["dumped"] = True
+                    slow.append((dict(rq), held))
+        for rq, held in slow:
+            _write(f"STALL http {rq['method']} {rq['path']} held={held:.1f}s "
+                   f"on {rq['thread_name']} (budget {_REQUEST_BUDGET:.0f}s) — dumping all threads")
+            _write(_dump_all_threads(f"STALL DUMP http {rq['method']} {rq['path']} held={held:.1f}s"))
         for req_id, st, held in stalled:
             _write(
                 f"STALL req={req_id[:8]} phase={st['phase']} held={held:.1f}s "
@@ -162,6 +185,30 @@ def _ensure_watchdog() -> None:
     _watchdog.start()
 
 
+def request_begin(method: str, path: str) -> int:
+    """An HTTP request arrived. Returns the key to hand to ``request_end``."""
+    _ensure_watchdog()
+    key = next(_request_ids)
+    with _lock:
+        _requests[key] = {"method": method, "path": path, "since": time.monotonic(),
+                          "thread_name": threading.current_thread().name, "dumped": False}
+    if method not in _QUIET_METHODS:
+        _write(f"HTTP  {method} {path}")
+    return key
+
+
+def request_end(key: int | None, status: int | str = "") -> None:
+    if key is None:
+        return
+    with _lock:
+        rq = _requests.pop(key, None)
+    if rq is None:
+        return
+    took = time.monotonic() - rq["since"]
+    if rq["method"] not in _QUIET_METHODS or took > 2.0 or rq["dumped"]:
+        _write(f"HTTP  {rq['method']} {rq['path']} -> {status} in {took:.2f}s")
+
+
 def begin(req_id: str, thread_id: str = "") -> None:
     _ensure_watchdog()
     now = time.monotonic()
@@ -229,8 +276,12 @@ def snapshot(include_stacks: bool = True) -> dict:
             }
             for rid, st in _turns.items()
         ]
+        http = [{"method": rq["method"], "path": rq["path"],
+                 "held_s": round(now - rq["since"], 2), "thread": rq["thread_name"]}
+                for rq in _requests.values()]
     data: dict = {
         "in_flight": turns,
+        "http_in_flight": http,
         "threads": sorted(t.name for t in threading.enumerate()),
         "thread_count": threading.active_count(),
     }

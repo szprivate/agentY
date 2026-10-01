@@ -3366,6 +3366,26 @@ def _build_app():
     # made every response readable by any page in any tab — including
     # GET /agentY/settings, which returns .env. See src.utils.api_guard for what
     # replaced it and why each check is there.
+    # Every request is traced (turn_watchdog): POSTs get a line on arrival and on
+    # answer, and any request still running after 30 s dumps every thread. The
+    # part of the server outside a turn had no trace at all.
+    @app.before_request
+    def _trace_request():
+        from flask import g
+        g._wd_key = _wd.request_begin(request.method, request.path)
+
+    @app.after_request
+    def _trace_request_status(resp):
+        from flask import g
+        g._wd_status = resp.status_code
+        return resp
+
+    @app.teardown_request
+    def _trace_request_end(exc):
+        from flask import g
+        status = f"error {type(exc).__name__}" if exc is not None else g.pop("_wd_status", "?")
+        _wd.request_end(g.pop("_wd_key", None), status)
+
     @app.before_request
     def _guard():
         ok, why = _guard_verdict(request)

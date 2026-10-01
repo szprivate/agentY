@@ -187,5 +187,38 @@ class TaskDumpTest(unittest.TestCase):
         self.assertIn("wait_for_comfyui", dump)
 
 
+class RequestTraceTest(unittest.TestCase):
+    """A message that hung before its turn began left no line anywhere: the
+    panel showed nothing, the console nothing, the turn log ended at the turn
+    before. Requests are traced now, and a stuck one dumps every thread."""
+
+    def test_a_post_is_traced_and_a_stuck_request_dumps_its_stack(self):
+        from src.utils import agentY_server as S
+        from src.utils import turn_watchdog as wd
+        from route_client import authorised_client
+        written = []
+        app = S._build_app()
+
+        @app.route("/test/stuck_in_the_route", methods=["POST"])
+        def stuck_in_the_route():
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline and not any("STALL http" in w for w in written):
+                time.sleep(0.05)
+            return "late"
+
+        with mock.patch.object(wd, "_write", written.append), \
+                mock.patch.object(wd, "_REQUEST_BUDGET", 0.3), \
+                mock.patch.object(S, "_interrupt_comfy", return_value={}):
+            client = authorised_client(app)
+            client.post("/agentY/stop", json={"thread_id": "nope"})
+            client.post("/test/stuck_in_the_route", json={})
+        log = "\n".join(written)
+        self.assertIn("HTTP  POST /agentY/stop", log)
+        self.assertRegex(log, r"HTTP  POST /agentY/stop -> 200 in")
+        self.assertIn("STALL http POST /test/stuck_in_the_route", log)
+        self.assertIn("in stuck_in_the_route", log, "the dump names the frame it is stuck in")
+        self.assertRegex(log, r"/test/stuck_in_the_route -> 200 in")
+
+
 if __name__ == "__main__":
     unittest.main()
