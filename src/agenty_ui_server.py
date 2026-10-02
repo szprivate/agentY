@@ -216,6 +216,65 @@ def _sync_official_templates(refresh=None, *, settings=None, sleep=time.sleep,
     return result
 
 
+def _sync_node_pack_examples(refresh=None, *, settings=None, sleep=time.sleep,
+                             clock=time.monotonic) -> dict | None:
+    """Give the agent the example workflows that came with the installed node packs.
+
+    A custom node pack documents itself with example workflows, in a folder named
+    ``example_workflows`` (ComfyUI also accepts ``workflow``, ``workflows``,
+    ``example``, ``examples``). ComfyUI scans its custom_nodes folders for them and
+    serves them; for a pack's nodes they are the only templates that exist, and the
+    agent had none — a request for WanVideoWrapper or SAM3 was built from node
+    schemas alone.
+
+    On start they are mirrored into the custom templates, under
+    ``templates/node_packs/`` (git-ignored: what is installed is this machine's
+    business, and the files are other people's). An example the pack dropped, or a
+    pack that was removed, goes again. The recipe database is rebuilt only when
+    something changed. Waits for a ComfyUI that is still starting; any failure
+    leaves things as they were. Off with ``sync_node_pack_examples = false``.
+    """
+    from src.utils.settings import load_settings
+    cfg = load_settings() if settings is None else settings
+    if not cfg.get("sync_node_pack_examples", True):
+        return None
+    base = str(cfg.get("comfyui_url") or "http://127.0.0.1:8188").rstrip("/")
+    from agenty_core.templates_sync import ComfyUIUnreachable
+    if refresh is None:
+        from agenty_core.templates_sync import refresh_node_pack_examples as refresh
+    deadline = clock() + _TEMPLATE_SYNC_WAIT_S
+    while True:
+        try:
+            result = refresh(base, log=lambda *_a: None)
+            break
+        except ComfyUIUnreachable:
+            if clock() >= deadline:
+                print(f"[agenty-ui] Node pack examples skipped: ComfyUI at {base} did not answer.")
+                return None
+            sleep(_TEMPLATE_SYNC_RETRY_S)
+        except Exception as exc:  # noqa: BLE001 — the templates already there still work
+            print(f"[agenty-ui] WARNING: node pack example sync failed ({exc}); keeping "
+                  f"what was there.", file=sys.stderr)
+            return None
+    counts = [len(result.get(k) or []) for k in ("added", "changed", "removed")]
+    if result.get("status") == "synced" and any(counts):
+        _forget_recipe_tree()
+        recipes = result.get("recipes") or {}
+        tail = (f" - recipe rebuild failed: {recipes['error']}" if "error" in recipes
+                else f" -> {recipes.get('recipe_count', '?')} recipes")
+        # ASCII only: see _refresh_workflow_corpus on consoles that cannot encode more.
+        print(f"[agenty-ui] Example workflows of {result.get('packs', '?')} node pack(s) "
+              f"added to the custom templates: +{counts[0]} ~{counts[1]} -{counts[2]}{tail}")
+    return result
+
+
+def _sync_templates_at_start() -> None:
+    """The background template work of a start, one after the other: both rebuild
+    the same recipe database, so they must not overlap."""
+    _sync_official_templates()
+    _sync_node_pack_examples()
+
+
 def _forget_recipe_tree() -> None:
     """Drop the recipe tree the running pipeline cached; the next turn reads the rebuilt one."""
     try:
@@ -299,10 +358,11 @@ def main() -> None:
         print("[agenty-ui] ERROR: could not start the chat host (is Flask installed?).", file=sys.stderr)
         sys.exit(1)
 
-    # The official templates follow what this ComfyUI ships. In the background:
+    # The official templates follow what this ComfyUI ships, and the example
+    # workflows of its node packs join the custom ones. In the background:
     # ComfyUI is often still starting, and an unchanged version is one request.
     if not args.no_reindex:
-        threading.Thread(target=_sync_official_templates, name="agentY-template-sync",
+        threading.Thread(target=_sync_templates_at_start, name="agentY-template-sync",
                          daemon=True).start()
 
     url = f"http://{args.host}:{args.port}"

@@ -41,6 +41,11 @@ comfyui_custom_templates_dir = "./comfyui_workflow_templates_custom/templates/"
 # mirrors ComfyUI's templates and rebuilds the recipe list - in the background,
 # once ComfyUI answers. A custom template with the same name always wins.
 sync_templates_from_comfyui = true
+# Add the example workflows that came with your installed custom node packs (each
+# pack's example_workflows folder) to the custom templates on start, so the agent
+# can start from them. They go to templates/node_packs/ in agenty_core, which git
+# ignores; a pack you remove takes its examples with it.
+sync_node_pack_examples = true
 output_dir = "./output_images/"
 # Where generated/patched workflow JSON is written. BLANK (the default) means
 # "into ComfyUI": <--user-directory>/default/workflows/agentY/, which is the
