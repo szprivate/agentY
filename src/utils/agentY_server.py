@@ -3070,6 +3070,78 @@ def _last_run_from_ts() -> float | None:
     return ts_all[j]
 
 
+def settings_payload() -> dict:
+    """What Settings shows: the .env keys (masked), the merged settings, the model
+    lists and pricing. Everything in it is read from files and the environment,
+    so it is also what the settings page gets while this host is NOT running
+    (src.utils.settings_offline, started by the ComfyUI extension)."""
+    import copy
+    from src.agent import _load_settings
+    # Deep-copy: _load_settings() returns the shared cached merge, and we
+    # mutate `settings` below (live user dir) — must not poison the cache.
+    settings = copy.deepcopy(_load_settings())
+    env = {k: "" for k in _KNOWN_ENV_KEYS}
+    env.update(_read_env_file())
+    # Show the DashScope endpoint (beneath its API key) even when it's not
+    # overridden in .env — seed it from the merged settings so it's never blank.
+    if not env.get("DASHSCOPE_BASE_URL"):
+        ds_url = ((settings.get("llm") or {}).get("dashscope") or {}).get("base_url", "")
+        if ds_url:
+            env["DASHSCOPE_BASE_URL"] = ds_url
+    # Show ComfyUI's live --user-directory rather than the static fallback.
+    live_user_dir = _effective_comfyui_user_dir()
+    if live_user_dir:
+        settings["comfyui_user_dir"] = live_user_dir
+    # Friendly names for the model tiers, so the mapping lives once in
+    # src/agent.py instead of being duplicated in the settings JS.
+    try:
+        from src.agent import TIER_LABELS as _tier_labels
+    except Exception:  # noqa: BLE001
+        _tier_labels = {}
+    return {
+        # Masked, never the real values. This response used to carry every
+        # API key in plaintext to anyone who asked, which — with the old
+        # `Allow-Origin: *` — meant any website the user had open.
+        "env": _masked_env(env),
+        "env_keys": list(dict.fromkeys(_KNOWN_ENV_KEYS + list(env.keys()))),
+        "env_mask": _SECRET_MASK,
+        # How long each key has been in place, so the panel can show the
+        # same rotation warning the host prints at startup.
+        "key_ages": _note_key_ages(),
+        "key_age_limit": _max_key_age_days(),
+        "settings": settings,
+        "tier_labels": _tier_labels,
+        "model_groups": _available_models(),
+        "pricing": _load_pricing_config(),
+        "pricing_builtin": _builtin_prices(),
+        # Why the committed defaults could not be read, if they could not:
+        # the panel would otherwise show only the local overrides, silently.
+        "settings_problem": _settings_defaults_problem(),
+        # Which host this is, shown in the Settings header.
+        "host": _host_identity(),
+    }
+
+
+def settings_save(body: dict) -> dict:
+    """Write a Settings save to .env, settings.local.json and the pricing file.
+    Returns which parts changed. Files only: reloading the models of a running
+    host is the route's business."""
+    result: dict = {}
+    env_updates = _drop_masked(body.get("env"))
+    if isinstance(env_updates, dict) and env_updates:
+        _update_env_file({str(k): "" if v is None else str(v)
+                          for k, v in env_updates.items()})
+        result["env_updated"] = sorted(env_updates.keys())
+    settings_updates = body.get("settings")
+    if isinstance(settings_updates, dict) and settings_updates:
+        result["settings_updated"] = _update_settings_file(settings_updates)
+    pricing_updates = body.get("pricing")
+    if isinstance(pricing_updates, dict):
+        _save_pricing_config(pricing_updates)
+        result["pricing_updated"] = True
+    return result
+
+
 def _read_env_file() -> dict:
     """Parse the .env file into {KEY: value} (ignores comments / blank lines)."""
     out: dict[str, str] = {}
@@ -3940,51 +4012,7 @@ def _build_app():
         if request.method == "OPTIONS":
             return "", 204
         if request.method == "GET":
-            import copy
-            from src.agent import _load_settings
-            # Deep-copy: _load_settings() returns the shared cached merge, and we
-            # mutate `settings` below (live user dir) — must not poison the cache.
-            settings = copy.deepcopy(_load_settings())
-            env = {k: "" for k in _KNOWN_ENV_KEYS}
-            env.update(_read_env_file())
-            # Show the DashScope endpoint (beneath its API key) even when it's not
-            # overridden in .env — seed it from the merged settings so it's never blank.
-            if not env.get("DASHSCOPE_BASE_URL"):
-                ds_url = ((settings.get("llm") or {}).get("dashscope") or {}).get("base_url", "")
-                if ds_url:
-                    env["DASHSCOPE_BASE_URL"] = ds_url
-            # Show ComfyUI's live --user-directory rather than the static fallback.
-            live_user_dir = _effective_comfyui_user_dir()
-            if live_user_dir:
-                settings["comfyui_user_dir"] = live_user_dir
-            # Friendly names for the model tiers, so the mapping lives once in
-            # src/agent.py instead of being duplicated in the settings JS.
-            try:
-                from src.agent import TIER_LABELS as _tier_labels
-            except Exception:  # noqa: BLE001
-                _tier_labels = {}
-            return jsonify({
-                # Masked, never the real values. This response used to carry every
-                # API key in plaintext to anyone who asked, which — with the old
-                # `Allow-Origin: *` — meant any website the user had open.
-                "env": _masked_env(env),
-                "env_keys": list(dict.fromkeys(_KNOWN_ENV_KEYS + list(env.keys()))),
-                "env_mask": _SECRET_MASK,
-                # How long each key has been in place, so the panel can show the
-                # same rotation warning the host prints at startup.
-                "key_ages": _note_key_ages(),
-                "key_age_limit": _max_key_age_days(),
-                "settings": settings,
-                "tier_labels": _tier_labels,
-                "model_groups": _available_models(),
-                "pricing": _load_pricing_config(),
-                "pricing_builtin": _builtin_prices(),
-                # Why the committed defaults could not be read, if they could not:
-                # the panel would otherwise show only the local overrides, silently.
-                "settings_problem": _settings_defaults_problem(),
-                # Which host this is, shown in the Settings header.
-                "host": _host_identity(),
-            })
+            return jsonify(settings_payload())
         # POST — persist env and/or settings changes (settings → settings.local.json).
         body = request.get_json(silent=True) or {}
         result: dict = {"ok": True}
@@ -3994,18 +4022,7 @@ def _build_app():
         except Exception:  # noqa: BLE001
             _models_before = None
         try:
-            env_updates = _drop_masked(body.get("env"))
-            if isinstance(env_updates, dict) and env_updates:
-                _update_env_file({str(k): "" if v is None else str(v)
-                                  for k, v in env_updates.items()})
-                result["env_updated"] = sorted(env_updates.keys())
-            settings_updates = body.get("settings")
-            if isinstance(settings_updates, dict) and settings_updates:
-                result["settings_updated"] = _update_settings_file(settings_updates)
-            pricing_updates = body.get("pricing")
-            if isinstance(pricing_updates, dict):
-                _save_pricing_config(pricing_updates)
-                result["pricing_updated"] = True
+            result.update(settings_save(body))
         except Exception as exc:  # noqa: BLE001
             logger.error("settings save failed: %s", exc, exc_info=True)
             return jsonify({"ok": False, "error": str(exc)}), 500
