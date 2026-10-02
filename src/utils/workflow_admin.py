@@ -62,22 +62,21 @@ def sanitize_name(name: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Description generation (best-effort; reuses scripts/build_skill.py)
+# Description generation (best-effort)
 # --------------------------------------------------------------------------- #
 def _generate_description(wf_data: dict, name: str) -> str:
-    """Generate a one-line template description, or "" if generation fails.
+    """A model-written one-line template description, or "" when none could be
+    written.
 
-    ``scripts/build_skill.py`` is not an importable package module, so it is
-    loaded by path (cached in ``sys.modules`` under a private key)."""
+    Never filler: the writer this replaced (scripts/build_skill.py) stored
+    "Local generation via ComfyUI Model. … Processes and generates content using
+    ComfyUI workflows." whenever its model call failed — which it did on every
+    machine configured by tier — and that line then stood in the way of the
+    description the catalog derives from the graph for a blank entry.
+    """
     try:
-        mod = sys.modules.get("_agenty_build_skill")
-        if mod is None:
-            bs_path = str(project_root() / "scripts" / "build_skill.py")
-            spec = importlib.util.spec_from_file_location("_agenty_build_skill", bs_path)
-            mod = importlib.util.module_from_spec(spec)
-            sys.modules["_agenty_build_skill"] = mod
-            spec.loader.exec_module(mod)
-        return mod._generate_workflow_template_description(wf_data, name) or ""
+        from src.utils.workflow_describe import describe
+        return describe(wf_data, name)
     except Exception as exc:  # noqa: BLE001 - description is a nice-to-have
         logger.warning("workflow description generation failed for %r: %s", name, exc)
         return ""
@@ -112,7 +111,7 @@ def regenerate_recipes() -> dict:
 # Add
 # --------------------------------------------------------------------------- #
 def register_workflow(wf_data: dict, name: str, *, source_path: Path | None = None,
-                      regenerate: bool = True) -> dict:
+                      regenerate: bool = True, description: str | None = None) -> dict:
     """Register ``wf_data`` as custom template ``name`` and regenerate recipes.
 
     Both a workflow loaded from a JSON file and the graph captured from the
@@ -120,6 +119,10 @@ def register_workflow(wf_data: dict, name: str, *, source_path: Path | None = No
 
     Set ``regenerate=False`` to skip the recipe rebuild (for bulk callers that
     register many workflows and regenerate once at the end).
+
+    *description* is the caller's own line for the catalog — the orchestrator has
+    just seen the graph and what the user wants it for, so its line beats one
+    written from the graph alone. Blank or omitted, one is generated.
 
     Returns a summary dict: ``{name, template_file, index_path, description,
     recipes}``. Raises ``ValueError`` for an empty/invalid name or a non-dict
@@ -143,7 +146,9 @@ def register_workflow(wf_data: dict, name: str, *, source_path: Path | None = No
     # 2. Best-effort one-line description, then register the index.json entry
     #    (name, models, io, description). index.json is the sole catalog now —
     #    re-registration preserves an existing description if this one is blank.
-    description = _generate_description(wf_data, stem)
+    description = " ".join(str(description or "").split())
+    if not description:
+        description = _generate_description(wf_data, stem)
     parse_workflow(wf_data, name=stem, description=description, update_index=True)
 
     # 3. Regenerate the recipe DB so the new workflow is a recipe.

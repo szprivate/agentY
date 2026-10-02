@@ -46,6 +46,11 @@ sync_templates_from_comfyui = true
 # can start from them. They go to templates/node_packs/ in agenty_core, which git
 # ignores; a pack you remove takes its examples with it.
 sync_node_pack_examples = true
+# Have the utility model (llm_functions) write each of those examples a proper
+# catalog description, once per example - it is what a template is found by.
+# One short model call per example on the first start; later starts only do new
+# or changed ones. Off = descriptions read off the graph, no model call.
+describe_node_pack_examples = true
 output_dir = "./output_images/"
 # Where generated/patched workflow JSON is written. BLANK (the default) means
 # "into ComfyUI": <--user-directory>/default/workflows/agentY/, which is the

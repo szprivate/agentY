@@ -61,6 +61,22 @@ def _load_settings() -> dict:
     return load_settings()
 
 
+def _role_spec(role: str) -> str:
+    """The ``provider,model`` a pipeline role resolves to: its own setting, else its
+    tier's.
+
+    A blank role means "inherit from the tier" everywhere else in agentY. This
+    module read the raw setting, took the blank for "no provider", and called a
+    local Ollama model that was never installed — so chat titles, summaries and
+    template descriptions failed quietly on any machine configured by tier.
+    """
+    try:
+        from src.agent import role_model  # noqa: PLC0415 — heavy, and only needed here
+        return str(role_model(role, default="") or "").strip()
+    except Exception:  # noqa: BLE001 — fall back to the raw setting
+        return str(_load_settings().get("llm", {}).get("pipeline", {}).get(role, "") or "").strip()
+
+
 def _parse_spec(spec: str) -> tuple[str, str]:
     """Split a ``provider,model`` spec. A bare tag (no comma) is an Ollama model."""
     spec = (spec or "").strip()
@@ -144,16 +160,13 @@ class LLMFunctions:
     @classmethod
     def from_settings(cls) -> "LLMFunctions":
         """Text client from ``llm.pipeline.llm_functions`` (``provider,model`` or bare Ollama tag)."""
-        settings = _load_settings()
-        spec = settings.get("llm", {}).get("pipeline", {}).get("llm_functions", "qwen3:0.6b")
-        return cls._from_spec(spec, default_model="qwen3:0.6b", default_max_tokens=2048)
+        return cls._from_spec(_role_spec("llm_functions") or "qwen3:0.6b",
+                              default_model="qwen3:0.6b", default_max_tokens=2048)
 
     @classmethod
     def for_vision(cls) -> "LLMFunctions":
         """Vision client from ``llm.pipeline.executor_vision_model`` (falls back to ``llm_functions``)."""
-        settings = _load_settings()
-        pipeline = settings.get("llm", {}).get("pipeline", {})
-        spec = pipeline.get("executor_vision_model") or pipeline.get("llm_functions") or "llava:latest"
+        spec = _role_spec("executor_vision_model") or _role_spec("llm_functions") or "llava:latest"
         return cls._from_spec(spec, default_model="llava:latest", default_max_tokens=1024)
 
     # ── public API ───────────────────────────────────────────────────────

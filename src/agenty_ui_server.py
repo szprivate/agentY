@@ -268,11 +268,51 @@ def _sync_node_pack_examples(refresh=None, *, settings=None, sleep=time.sleep,
     return result
 
 
+def _describe_node_pack_examples(describe=None, *, settings=None) -> dict | None:
+    """Have the utility model write the descriptions of the node pack examples.
+
+    The sync describes each example from its graph. That says which nodes it uses,
+    not what it is for, and the description is what a template is found by. So,
+    once per example (and again only when the file changes), the ``llm_functions``
+    model writes a proper one from the graph's facts and the author's notes.
+    An example it fails on keeps the graph description and is tried next start.
+    Off with ``describe_node_pack_examples = false``.
+    """
+    from src.utils.settings import load_settings
+    cfg = load_settings() if settings is None else settings
+    if not cfg.get("sync_node_pack_examples", True) or not cfg.get("describe_node_pack_examples", True):
+        return None
+    try:
+        if describe is None:
+            from src.utils.workflow_describe import describe_node_pack_examples as describe
+        result = describe()
+    except Exception as exc:  # noqa: BLE001 — the graph descriptions are still there
+        print(f"[agenty-ui] WARNING: node pack examples not described ({exc}).", file=sys.stderr)
+        return None
+    if result.get("written"):
+        tail = ""
+        try:
+            from src.utils.workflow_admin import regenerate_recipes
+            recipes = regenerate_recipes()
+            tail = (f" - recipe rebuild failed: {recipes['error']}" if "error" in recipes
+                    else f" -> {recipes.get('recipe_count', '?')} recipes")
+            from agenty_core.templates_sync import _drop_template_caches
+            _drop_template_caches()
+        except Exception as exc:  # noqa: BLE001
+            tail = f" - recipe rebuild failed: {exc}"
+        _forget_recipe_tree()
+        print(f"[agenty-ui] Described {len(result['written'])} node pack example(s)"
+              + (f", {len(result['failed'])} left for next start" if result.get("failed") else "")
+              + tail)
+    return result
+
+
 def _sync_templates_at_start() -> None:
-    """The background template work of a start, one after the other: both rebuild
-    the same recipe database, so they must not overlap."""
+    """The background template work of a start, one after the other: all of it
+    rebuilds the same recipe database, so the steps must not overlap."""
     _sync_official_templates()
     _sync_node_pack_examples()
+    _describe_node_pack_examples()
 
 
 def _forget_recipe_tree() -> None:

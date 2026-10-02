@@ -1831,7 +1831,13 @@ class Pipeline:
 
             Args:
                 name: A short template name (filename-safe stem, no spaces/slashes).
-                description: Optional one-line description; auto-generated if omitted.
+                description: One line for the template catalog — write it. Only its
+                    first sentence (60 characters) is shown when a template is
+                    picked, so lead with the operation and the model:
+                    ``[Local|API] <operation> via <model or key nodes>. <inputs> ->
+                    <outputs>. <what it is for>.`` e.g. "[Local] Image-to-video via
+                    Wan 2.2 14B. 1 image + prompt -> 1 video. Two-stage high/low
+                    noise sampling with the 4-step LoRA." Auto-generated if omitted.
             """
             base = getattr(self, "_canvas_base_prompt", None)
             if not base:
@@ -1841,12 +1847,15 @@ class Pipeline:
                 })
             try:
                 from src.utils.workflow_admin import register_workflow, format_recipe_counts
-                res = await asyncio.to_thread(register_workflow, dict(base), name)
+                res = await asyncio.to_thread(register_workflow, dict(base), name,
+                                              description=description)
                 return json.dumps({
                     "status": "added",
                     "name": res["name"],
                     "template_file": res["template_file"],
-                    "description": res["description"],
+                    "description": res["description"] or (
+                        "(none could be written — the catalog shows one derived from "
+                        "the graph; call again with `description` to set it)"),
                     "recipes": res["recipes"],
                     "message": (f"Canvas workflow saved as '{res['name']}'. "
                                 f"{format_recipe_counts(res['recipes'])}."),
