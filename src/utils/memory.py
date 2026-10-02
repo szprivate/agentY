@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -100,6 +101,40 @@ def _bounded(fn: Any, default: Any, label: str) -> Any:
     except Exception as exc:  # noqa: BLE001
         print(f"[memory] {label} error: {exc}")
         return default
+
+
+# ---------------------------------------------------------------------------
+# Pausing writes (a benchmark, a test session)
+# ---------------------------------------------------------------------------
+#
+# A benchmark drives real turns, and each turn writes: a "Generated: ..." record,
+# whatever the learnings agent distilled, anything the agent chose to remember.
+# One night of it put 244 entries into the user's memory - and the agent then
+# RECALLED them in later cases: notes about the benchmark's own checks, and a
+# wrong "fix" (the Wan 2.2 VAE for the A14B models) that failed a case four
+# times. So a run can ask for writes to be paused. Reads are untouched: the
+# agent still works with what the user taught it.
+#
+# A pause, not a switch: it expires on its own. A run that crashes, is killed or
+# loses the machine must not leave the user's own work silently unremembered,
+# so the caller renews it for as long as it is running.
+
+_PAUSE_MAX = 6 * 3600.0
+_writes_paused_until = 0.0
+
+
+def pause_writes(seconds: float) -> float:
+    """Pause long-term-memory writes for *seconds* (0 resumes them now).
+    Returns the seconds the pause has left."""
+    global _writes_paused_until
+    seconds = max(0.0, min(float(seconds or 0), _PAUSE_MAX))
+    _writes_paused_until = time.time() + seconds if seconds else 0.0
+    return writes_paused()
+
+
+def writes_paused() -> float:
+    """Seconds the write pause has left; 0 when writes are on."""
+    return max(0.0, _writes_paused_until - time.time())
 
 
 def _is_enabled() -> bool:
@@ -402,6 +437,8 @@ def memory_add(
     """
     if not _is_enabled():
         return None
+    if writes_paused():
+        return None                 # see pause_writes: a benchmark is running
     return _bounded(
         lambda: mem0_client().add(content, user_id=session_id,
                                   metadata=metadata or {}, infer=infer),

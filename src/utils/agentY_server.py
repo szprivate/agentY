@@ -3867,6 +3867,25 @@ def _build_app():
             logger.error("memory list failed: %s", exc, exc_info=True)
             return jsonify({"ok": False, "error": str(exc)}), 500
 
+    # Pause long-term-memory writes for a while (a benchmark run asks for this,
+    # and renews it while it runs; see memory.pause_writes). GET says how long
+    # the pause has left; POST {"pause_seconds": N} sets it, 0 resumes.
+    @app.route("/agentY/memory/writes", methods=["GET", "POST", "OPTIONS"])
+    def memory_writes_route():
+        if request.method == "OPTIONS":
+            return "", 204
+        from src.utils import memory as _mem
+        if request.method == "POST":
+            body = request.get_json(silent=True) or {}
+            try:
+                seconds = float(body.get("pause_seconds") or 0)
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "error": "pause_seconds must be a number"}), 400
+            left = _mem.pause_writes(seconds)
+            logger.info("long-term memory writes %s", f"paused for {left:.0f}s" if left else "resumed")
+        left = _mem.writes_paused()
+        return jsonify({"ok": True, "paused": left > 0, "seconds_left": round(left, 1)})
+
     @app.route("/agentY/memory/update", methods=["POST", "OPTIONS"])
     def memory_update_route():
         if request.method == "OPTIONS":

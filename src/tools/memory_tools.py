@@ -100,6 +100,12 @@ def memory_write(content: str) -> str:
     # Store verbatim (memory_add defaults to infer=False) so the exact sentence
     # persists, and inspect the result rather than assuming success: mem0 returns
     # the rows it created, so we can tell the model the truth about what landed.
+    from src.utils.memory import writes_paused
+    if writes_paused():
+        # Say so, rather than "may be disabled": the agent should not retry, and
+        # should not tell the user something was remembered.
+        return ("Long-term memory writes are paused for this session (a benchmark or "
+                f"test run is in progress). NOT saved: {text}")
     result = memory_add(text, session_id=MEMORY_NAMESPACE, metadata={"source": "user"})
     stored = isinstance(result, dict) and any(
         r.get("event") == "ADD" for r in result.get("results", [])
