@@ -1079,8 +1079,15 @@ class Pipeline:
                                 for you.
               * ``build_new`` → ``briefing``: no template fit — build from scratch,
                                 then ``signal_workflow_ready``.
+              * ``canvas_already_edited`` → you changed the graph on the canvas
+                                this turn, and this call would build a NEW graph
+                                without those changes. Nothing was built. If the
+                                canvas edit was the job, you are done.
               * ``error``     → ``error``: report it.
             """
+            _refusal = self._canvas_rebuild_refusal()
+            if _refusal:
+                return json.dumps(_refusal)
             _push_progress("🔎 Researching template & prompt …")
             raw_json = None
             error = None
@@ -1996,6 +2003,8 @@ class Pipeline:
                                    "note": "Nothing was changed. Fix these and send the whole list again."})
             self._canvas_graph = res["graph"]
             _push_patch({"op": "edit_graph", "ops": res["ops"], "reason": str(reason or "").strip()})
+            self._canvas_edits = (getattr(self, "_canvas_edits", None) or []) + [
+                "rewired / added nodes" + (f" ({str(reason).strip()})" if str(reason or "").strip() else "")]
             unwired = {n: u for n in res["touched"] if n in res["graph"]
                        for u in [_ce.unwired_required(res["graph"], n, schemas)] if u}
             n_add = sum(1 for o in res["ops"] if o["op"] == "add")
@@ -4167,6 +4176,10 @@ class Pipeline:
         # nodes has to go through — scoping to the hooks would otherwise make
         # every node outside the hook's branch invisible and uneditable.
         self._canvas_graph = canvas_prompt if isinstance(canvas_prompt, dict) else {}
+        # What this turn has changed on that canvas, and whether prepare_workflow
+        # has already been told about it (see _canvas_rebuild_refusal).
+        self._canvas_edits = []
+        self._canvas_rebuild_warned = False
         if isinstance(canvas_prompt, dict) and canvas_prompt:
             try:
                 from src.utils.canvas_hooks import (splice_hook_nodes, prune_to_hooks,
@@ -5547,6 +5560,15 @@ class Pipeline:
         It then retried, and concluded (and remembered) that edits don't stick.
         """
         try:
+            if patch.get("op") == "delete_nodes":
+                _what = "deleted node(s) " + ", ".join(str(n) for n in patch.get("node_ids") or [])
+            else:
+                _what = (f"node {patch.get('node_id')}: "
+                         + ", ".join(f"{k}={v!r}"[:80] for k, v in (patch.get("params") or {}).items()))
+            self._canvas_edits = (getattr(self, "_canvas_edits", None) or []) + [_what]
+        except Exception:  # noqa: BLE001
+            pass
+        try:
             from src.utils.canvas_edit import apply_patch
             if isinstance(getattr(self, "_canvas_graph", None), dict):
                 apply_patch(self._canvas_graph, patch)
@@ -5556,6 +5578,38 @@ class Pipeline:
                         n["widgets"].update(patch["params"])
         except Exception:  # noqa: BLE001 — bookkeeping must never fail an edit
             pass
+
+    def _canvas_rebuild_refusal(self) -> dict | None:
+        """Stop prepare_workflow once, when this turn already edited the canvas.
+
+        Asked to correct a workflow that was on the canvas, the orchestrator set
+        the value there — the right fix, two calls — and then called
+        prepare_workflow "to build it again". That builds a new graph from the
+        template: it does not start from the canvas, so the edit was not in it
+        (a 120 s duration corrected to 30 s came back as 120 s, three attempts
+        running), and it cost a research pass each time.
+
+        Said once per turn: a second call goes through, for the turn that really
+        wants a canvas edit *and* a new workflow. Hook and prompt-loop turns write
+        to canvas nodes as part of running them, so they are left alone.
+        """
+        edits = getattr(self, "_canvas_edits", None) or []
+        if not edits or getattr(self, "_canvas_rebuild_warned", False):
+            return None
+        if getattr(self, "_canvas_hooks", None) or getattr(self, "_autoloop", None):
+            return None
+        self._canvas_rebuild_warned = True
+        return {
+            "status": "canvas_already_edited",
+            "canvas_edits": edits[:20],
+            "message": (
+                "Nothing was built. You already changed the graph on the user's canvas this "
+                "turn, and those changes are live. prepare_workflow builds a NEW graph from a "
+                "template — it does not start from the canvas and would not contain them. If "
+                "the canvas edits are what was asked for (a fix or a change to that graph), "
+                "you are done: say what you changed. Call prepare_workflow again only if the "
+                "user ALSO asked for a different, new workflow."),
+        }
 
     def _canvas_full_graph(self) -> bool:
         """Whether this turn shows and edits the whole canvas, or only the selection.

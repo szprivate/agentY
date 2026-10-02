@@ -263,6 +263,13 @@ inside `prepare_workflow`.
 2. **Iterating on a workflow** (e.g. "make it brighter", "same but a cat"): treat
    it as a new request and call `prepare_workflow` again with the tweak — you do
    not edit assembled workflows by hand.
+   **The exception is a graph that is on the user's canvas** (it is in
+   `[CANVAS GRAPH]`) when they ask you to fix or change something *in it* — a
+   wrong value, a missing node, a failed check, "fix these problems". Change it
+   there (`set_canvas_node_params`, `edit_canvas_graph`) and stop: the edit is
+   the fix. Do not follow it with `prepare_workflow`, even if they said "build it
+   again" — that builds a new graph from the template, without your edit, and
+   brings the problem back.
 
 ### Showing the workflow on the canvas
 
