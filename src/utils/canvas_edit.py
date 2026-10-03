@@ -156,9 +156,18 @@ def coerce_value(spec, value):
     if isinstance(value, str) and not isinstance(value, bool) and t in ("INT", "FLOAT"):
         try:
             num = float(value.strip())
-            return (int(num) if t == "INT" and num.is_integer() else num), None
+            value = int(num) if t == "INT" and num.is_integer() else num
         except ValueError:
             return value, f"= {value!r} is not a number"
+    # Out of range is refused at queue time too: ImageBatchMulti's inputcount
+    # set to 1 (its minimum is 2) would have stopped every branch it feeds.
+    if t in ("INT", "FLOAT") and isinstance(value, (int, float)) and not isinstance(value, bool):
+        opts = spec[1] if len(spec) > 1 and isinstance(spec[1], dict) else {}
+        lo, hi = opts.get("min"), opts.get("max")
+        if lo is not None and value < lo:
+            return value, f"= {value!r} is below its minimum of {lo}"
+        if hi is not None and value > hi:
+            return value, f"= {value!r} is above its maximum of {hi}"
     return value, None
 
 

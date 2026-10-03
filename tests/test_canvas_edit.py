@@ -217,6 +217,13 @@ class DynamicComboTest(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(params, {"model": "wan3.0-video", "model.duration": "5", "seed": 7, "model.audio": True})
 
+    def test_a_number_out_of_range_is_an_error(self):
+        batch = {"input": {"required": {"inputcount": ["INT", {"default": 2, "min": 2, "max": 1000}],
+                                        "image_1": ["IMAGE"]}}}
+        _p, errors = ce.coerce_params(batch, {"inputcount": 1})
+        self.assertIn("below its minimum of 2", errors[0])
+        self.assertEqual(ce.coerce_params(batch, {"inputcount": "3"}), ({"inputcount": 3}, []))
+
     def test_a_value_the_option_does_not_have_is_an_error(self):
         _params, errors = ce.coerce_params(self.WAN, {"model.resolution": "4K"})
         self.assertEqual(len(errors), 1)
