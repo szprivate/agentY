@@ -226,6 +226,22 @@ class MirrorTest(unittest.TestCase):
         self._feed({"type": "text", "data": "On it."})
         self.assertTrue(self.client.posted, "nothing was posted at all")
 
+    def test_it_says_it_is_working_before_there_is_an_answer(self):
+        """A message sent from a phone showed nothing until the answer landed:
+        for a long turn, indistinguishable from being ignored."""
+        self._feed({"type": "turn_start"})
+        self.assertEqual(len(self.client.posted), 1)
+        self.assertIn("working on it", self.client.posted[0]["text"])
+        self.assertEqual(self.client.posted[0].get("thread_ts"), "root1")
+
+    def test_the_working_message_becomes_the_answer(self):
+        self._feed({"type": "turn_start"})
+        self._feed({"type": "text", "data": "Here it is."}, {"type": "done"})
+        self.assertEqual(len(self.client.posted), 1, "the answer replaces it, no second message")
+        self.assertEqual(self.client.updated[-1]["ts"], self.client.posted[0] and "ts1")
+        self.assertIn("Here it is.", self.client.updated[-1]["text"])
+        self.assertNotIn("working on it", self.client.updated[-1]["text"])
+
     def test_the_answer_is_one_message_that_gets_rewritten(self):
         self._feed({"type": "text", "data": "Rendered "},
                    {"type": "text", "data": "four frames."},

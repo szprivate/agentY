@@ -110,7 +110,7 @@ def clip(text: str, limit: int) -> str:
 # ── the per-turn renderer ─────────────────────────────────────────────────────
 
 # Nothing to show: panel bookkeeping, or a duplicate of something already said.
-_IGNORED = {"thread", "request", "turn_start", "plan_step"}
+_IGNORED = {"thread", "plan_step"}
 
 
 class TurnRender:
@@ -137,6 +137,7 @@ class TurnRender:
         # put a message-per-event in, and a pile of them would bury the answer.
         self._lines: list = []
         self._refs: dict = {}      # tool id -> which line it wrote
+        self._opened = False
 
     # The message that opens the turn, before there is any answer to show.
     def opening(self) -> str:
@@ -170,6 +171,21 @@ class TurnRender:
         return fn(event) if fn else []
 
     # ── the answer ────────────────────────────────────────────────────────────
+    def _on_request(self, ev) -> list:
+        """The turn has started: say so at once.
+
+        Until the first word of the answer, Slack showed nothing at all — a
+        message sent from a phone looked ignored for as long as the agent worked.
+        This is the answer message's first state; the answer replaces it in place,
+        so it costs no extra message.
+        """
+        if self._opened or self.answer.strip():
+            return []
+        self._opened = True
+        return [Post("answer", self.opening())]
+
+    _on_turn_start = _on_request
+
     def _on_text(self, ev) -> list:
         self.answer += str(ev.get("data") or "")
         return [Post("answer", self.body())]

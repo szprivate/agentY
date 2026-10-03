@@ -125,6 +125,13 @@ class AnswerTest(unittest.TestCase):
         _feed(r, {"type": "text", "data": "Done."})
         self.assertNotIn("panel", r.body())
 
+    def test_the_start_of_a_turn_is_shown_once(self):
+        r = _render(origin="slack", started_by="go")
+        first = _feed(r, {"type": "turn_start"})
+        self.assertEqual([p.where for p in first], ["answer"])
+        self.assertIn("working on it", first[0].text)
+        self.assertEqual(_feed(r, {"type": "request"}), [], "not twice")
+
     def test_nothing_is_rendered_after_done(self):
         r = _render()
         _feed(r, {"type": "done"})
@@ -259,8 +266,10 @@ class StatusTest(unittest.TestCase):
         self.assertIn("clear", [p.kind for p in posts])
 
     def test_panel_bookkeeping_produces_nothing(self):
+        # request / turn_start are not bookkeeping any more: they open the turn
+        # ("working on it…"), see test_the_start_of_a_turn_is_shown_once.
         r = _render()
-        for t in ("thread", "request", "turn_start", "plan_step"):
+        for t in ("thread", "plan_step"):
             self.assertEqual(_feed(r, {"type": t}), [], t)
 
     def test_an_unknown_event_is_ignored_rather_than_crashing(self):
