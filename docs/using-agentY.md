@@ -232,6 +232,32 @@ agent is working on, including one started from Slack.
   conversation and goes out when its turn ends — even if you are looking at
   another one by then.
 
+### A sequence, one conversation per shot
+
+For a sequence, brief one conversation — the **lead** — and ask it to give each
+shot its own agent ("work on these six shots in parallel, one conversation each").
+It plans the sequence with you, writes the notes every shot shares (characters and
+their reference images, look, models, resolution, naming) and starts a conversation
+per shot with its briefing.
+
+- **Shots are ordinary conversations.** They sit indented under their lead in the
+  dropdown (`↳ sh010`), with the 🟢 while they work. Open one to watch it live or to
+  steer it yourself. Viewing the lead shows a strip of its shots — click one to
+  open it.
+- **Shots report back.** When a shot finishes, its report lands in the lead's
+  conversation and the lead gets a short turn to review it: it sends a correction,
+  starts the next shot, or tells you where things stand. Reports that arrive while
+  the lead is busy are delivered together once it is free.
+- **How many at once:** shots share `parallel_chats` with every other
+  conversation; the rest wait for a free agent.
+- **Rendering:** **Settings → agentY → `shots_dry_run`** (off by default). On, shots
+  build and validate their workflows and stop there, for you to review and queue.
+- **The canvas:** shots build workflows of their own and leave the graph open on
+  your canvas alone.
+- **Stop** in the lead stops its shots too. Stop in a shot stops only that shot.
+- **One level:** a shot cannot start shots of its own. "Allow for this session" on
+  a permission prompt covers every conversation, shots included.
+
 ### Talking to a turn that is already running
 
 Just type. A message you send while the agent is working goes **straight into that

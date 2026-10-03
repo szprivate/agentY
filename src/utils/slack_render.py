@@ -155,7 +155,11 @@ class TurnRender:
         so the attribution has to live on the answer or it is lost exactly when
         the turn is fast.
         """
-        return "" if self.origin == "slack" else "_from the ComfyUI panel_\n\n"
+        if self.origin == "slack":
+            return ""
+        return {"lead": "_a shot, briefed by its lead conversation_\n\n",
+                "shots": "_the lead, reviewing what its shots reported_\n\n",
+                }.get(self.origin, "_from the ComfyUI panel_\n\n")
 
     def feed(self, event: dict) -> list:
         """The Slack posts this event produces, in the order they should go out."""

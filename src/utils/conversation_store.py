@@ -17,6 +17,8 @@ messages      (id, thread_id, role, content, created_at)          role: user|ass
 gallery       (id, thread_id, idx, path, caption, created_at)
 thread_state  (thread_id, brain_messages, agent_session,
                last_brainbriefing, last_prior_summary, updated_at)   JSON text columns
+thread_shot   (thread_id, lead_id, name, status, …)    a conversation started by a lead
+thread_sequence (lead_id, notes, updated_at)            the lead's notes every shot is given
 """
 
 from __future__ import annotations
@@ -152,6 +154,20 @@ def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_checkpoints_thread
                 ON thread_checkpoints(thread_id, id);
+            CREATE TABLE IF NOT EXISTS thread_shot (
+                thread_id   TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+                lead_id     TEXT NOT NULL,
+                name        TEXT NOT NULL,
+                status      TEXT NOT NULL DEFAULT 'new',
+                created_at  REAL NOT NULL,
+                updated_at  REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_thread_shot_lead ON thread_shot(lead_id);
+            CREATE TABLE IF NOT EXISTS thread_sequence (
+                lead_id     TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+                notes       TEXT NOT NULL DEFAULT '',
+                updated_at  REAL NOT NULL
+            );
             """
         )
     _INITIALISED = True
@@ -180,8 +196,10 @@ def list_threads(limit: int = 200) -> list[dict[str, Any]]:
         rows = conn.execute(
             """
             SELECT t.id, t.title, t.created_at, t.updated_at,
-                   (SELECT COUNT(*) FROM messages m WHERE m.thread_id = t.id) AS message_count
+                   (SELECT COUNT(*) FROM messages m WHERE m.thread_id = t.id) AS message_count,
+                   s.lead_id AS lead_id, s.name AS shot, s.status AS shot_status
             FROM threads t
+            LEFT JOIN thread_shot s ON s.thread_id = t.id
             ORDER BY t.updated_at DESC
             LIMIT ?
             """,
@@ -382,6 +400,15 @@ def get_panel(thread_id: str) -> Optional[str]:
     with _connect() as conn:
         row = conn.execute("SELECT html FROM thread_panel WHERE thread_id=?", (thread_id,)).fetchone()
     return row["html"] if row is not None else None
+
+
+def get_panel_time(thread_id: str) -> Optional[float]:
+    """When *thread_id*'s rendered panel was last saved, or None."""
+    init_db()
+    with _connect() as conn:
+        row = conn.execute("SELECT updated_at FROM thread_panel WHERE thread_id=?",
+                           (thread_id,)).fetchone()
+    return float(row["updated_at"]) if row is not None else None
 
 
 # ---------------------------------------------------------------------------
@@ -645,3 +672,79 @@ def rewind_thread(thread_id: str, transcript_cut: int, gallery_cut: int) -> tupl
                            (thread_id, int(gallery_cut)))
         conn.execute("UPDATE threads SET updated_at=? WHERE id=?", (time.time(), thread_id))
         return (msgs.rowcount or 0), (gal.rowcount or 0)
+
+
+# ---------------------------------------------------------------------------
+# Shots: conversations a lead conversation started (src/utils/shots.py)
+# ---------------------------------------------------------------------------
+
+def set_shot(thread_id: str, lead_id: str, name: str, status: str = "new") -> None:
+    """Record *thread_id* as shot *name* of the lead conversation *lead_id*."""
+    init_db()
+    now = time.time()
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO thread_shot(thread_id, lead_id, name, status, created_at, updated_at)
+            VALUES (?,?,?,?,?,?)
+            ON CONFLICT(thread_id) DO UPDATE SET
+                lead_id=excluded.lead_id, name=excluded.name,
+                status=excluded.status, updated_at=excluded.updated_at
+            """,
+            (thread_id, lead_id, name, status, now, now),
+        )
+
+
+def set_shot_status(thread_id: str, status: str) -> None:
+    init_db()
+    with _connect() as conn:
+        conn.execute("UPDATE thread_shot SET status=?, updated_at=? WHERE thread_id=?",
+                     (status, time.time(), thread_id))
+
+
+def shot_of(thread_id: str) -> Optional[dict[str, Any]]:
+    """``{thread_id, lead_id, name, status}`` when *thread_id* is a shot, else None."""
+    if not thread_id:
+        return None
+    init_db()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT thread_id, lead_id, name, status, created_at, updated_at "
+            "FROM thread_shot WHERE thread_id=?", (thread_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def shots_of(lead_id: str) -> list[dict[str, Any]]:
+    """The shots *lead_id* started, oldest first (that is, in the order planned)."""
+    if not lead_id:
+        return []
+    init_db()
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT s.thread_id, s.lead_id, s.name, s.status, s.created_at, s.updated_at "
+            "FROM thread_shot s JOIN threads t ON t.id = s.thread_id "
+            "WHERE s.lead_id=? ORDER BY s.created_at, s.rowid", (lead_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def set_sequence_notes(lead_id: str, notes: str) -> None:
+    init_db()
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO thread_sequence(lead_id, notes, updated_at) VALUES (?,?,?)
+            ON CONFLICT(lead_id) DO UPDATE SET
+                notes=excluded.notes, updated_at=excluded.updated_at
+            """,
+            (lead_id, notes or "", time.time()),
+        )
+
+
+def get_sequence_notes(lead_id: str) -> str:
+    if not lead_id:
+        return ""
+    init_db()
+    with _connect() as conn:
+        row = conn.execute("SELECT notes FROM thread_sequence WHERE lead_id=?",
+                           (lead_id,)).fetchone()
+    return str(row["notes"]) if row else ""

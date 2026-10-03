@@ -106,6 +106,14 @@ from src.tools.orchestration import (  # noqa: F401
     create_custom_node,
     list_generated_nodes,
 )
+# A lead conversation starting and steering shot conversations (src/utils/shots.py)
+from src.tools.shots import (  # noqa: F401
+    start_shot,
+    message_shot,
+    shot_status,
+    stop_shot,
+    set_sequence_notes,
+)
 # Headless batch jobs — shared with agentY-mcp via agenty_core
 from src.tools.batch import (  # noqa: F401
     start_batch_job,
@@ -472,6 +480,12 @@ ORCHESTRATOR_TOOLS: list = [
     list_skills,
     remove_skill,
     spawn_subagent,
+    # Sequences: this conversation as the lead of shot conversations
+    start_shot,
+    message_shot,
+    shot_status,
+    stop_shot,
+    set_sequence_notes,
     # coder (custom-node-from-github skill): turn a repo into a ComfyUI custom node
     create_custom_node,
     list_generated_nodes,

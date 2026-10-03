@@ -2193,8 +2193,11 @@ def _subagent_full_tools() -> list:
         spawn_subagent as _sp,
         create_custom_node as _cn,
         list_generated_nodes as _lgn,
+        start_shot as _ss, message_shot as _ms, shot_status as _sst,
+        stop_shot as _sts, set_sequence_notes as _ssn,
     )
-    _meta = {id(_cs), id(_ls), id(_rs), id(_sp), id(_cn), id(_lgn)}
+    _meta = {id(_cs), id(_ls), id(_rs), id(_sp), id(_cn), id(_lgn),
+             id(_ss), id(_ms), id(_sst), id(_sts), id(_ssn)}
     return [t for t in _OT if id(t) not in _meta]
 
 

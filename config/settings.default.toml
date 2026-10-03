@@ -59,6 +59,11 @@ describe_node_pack_examples = true
 # calls at once: watch your providers' rate limits. Takes effect for the next
 # conversation that starts - no restart.
 parallel_chats = 5
+# Sequences: a lead conversation can start a conversation per shot (start_shot),
+# which run in parallel within parallel_chats and report back to the lead.
+# true = shots build and validate their workflows but do not render them; you
+# review and queue them yourself. false = shots render like any conversation.
+shots_dry_run = false
 output_dir = "./output_images/"
 # Where generated/patched workflow JSON is written. BLANK (the default) means
 # "into ComfyUI": <--user-directory>/default/workflows/agentY/, which is the

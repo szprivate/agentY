@@ -3691,7 +3691,57 @@ def _build_app():
             awaiting = set(_reply_registry)
         for r in runs:
             r["awaiting_reply"] = r["request_id"] in awaiting
-        return jsonify({"runs": runs})
+            t = turn_bus.turn(r["request_id"])
+            r["origin"] = t.origin if t is not None else ""
+        # …and those that just ended, for a panel whose poll fell either side of
+        # a short turn it did not start (see turn_bus.recent).
+        recent = [{"request_id": t.request_id, "thread_id": t.thread_id,
+                   "origin": t.origin, "ended": ended}
+                  for t, ended in turn_bus.recent()]
+        return jsonify({"runs": runs, "recent": recent, "now": time.time()})
+
+    # A turn this panel did not start — a shot, a lead woken by its shots, one
+    # from Slack, or its own after a reload — replayed from its start and then
+    # followed live, as the stream of a turn it did start would have been.
+    @app.route("/agentY/runs/<rid>/stream", methods=["GET"])
+    def run_stream(rid):
+        t = turn_bus.turn(rid)
+        thread_id = t.thread_id if t is not None else (request.args.get("thread_id") or "")
+
+        def gen():
+            yield _sse({"type": "thread", "id": thread_id})
+            # With the message that started the turn: a panel that had this
+            # conversation open before it started has not seen it.
+            yield _sse({"type": "request", "request_id": rid, "watching": True,
+                        "text": t.text if t is not None else ""})
+            ended = False
+            for ev in turn_bus.follow(rid):
+                if ev is None:
+                    yield ": keep-alive\n\n"
+                    continue
+                kind = ev.get("type")
+                if kind == "done":
+                    ended = True
+                # Watching is looking: a replayed turn must not put its files or
+                # its edits on the canvas again (the turn did, if it was going to).
+                if kind == "canvas_patch":
+                    continue
+                if kind == "output":
+                    ev = {**ev, "drop": False}
+                yield _sse(ev)
+            if not ended:
+                yield _sse({"type": "done"})
+        return _sse_response(gen())
+
+    # A lead's shots and where each stands (the panel's shot strip).
+    @app.route("/agentY/threads/<tid>/shots", methods=["GET"])
+    def thread_shots(tid):
+        from src.utils import shots as _shots
+        mine = cs.shot_of(tid)
+        lead = mine["lead_id"] if mine else tid
+        lead_t = cs.get_thread(lead) or {}
+        return jsonify({"lead_id": lead, "lead_title": lead_t.get("title", ""),
+                        "is_shot": bool(mine), "shots": _shots.status(lead)})
 
     # ── CLI-side status notices (memory init, model pulls, …) ───────────────
     # The panel drains this on connect (so startup lines that predate it still
@@ -4408,6 +4458,20 @@ def _build_app():
         # The rendered panel HTML (collapsible think/step blocks) restores the
         # exact UI on reopen; the message list is the text-only fallback.
         t["panel_html"] = cs.get_panel(tid)
+        t["server_time"] = time.time()   # what this answer already includes
+        # What was said after that panel was saved — a turn nobody had open (a
+        # shot, a lead woken by its shots, a Slack turn): the panel adds these
+        # below the saved one instead of losing them.
+        saved = cs.get_panel_time(tid) if t["panel_html"] else None
+        # A panel saved during the turn still running holds part of that turn,
+        # which following it (/agentY/runs/<id>/stream) replays from its start:
+        # rebuild from the messages instead, or the part shows twice.
+        live = [x for x in turn_bus.active() if x.thread_id == tid]
+        if saved is not None and live and saved >= min(x.started for x in live):
+            t["panel_html"], saved = None, None
+        t["messages_after_panel"] = ([m for m in t.get("messages", [])
+                                      if float(m.get("created_at") or 0) > saved]
+                                     if saved is not None else [])
         return jsonify(t)
 
     @app.route("/agentY/threads/<tid>/panel", methods=["POST", "OPTIONS"])
@@ -4567,6 +4631,14 @@ def _build_app():
         # those are most of what "stop" means to somebody watching a batch run.
         # Only this conversation's, when it is known: another one may be running.
         report = _interrupt_comfy(owner=thread_id or None)
+        # A lead's Stop stops its shots too: they are its work.
+        shots_stopped: list = []
+        if thread_id:
+            try:
+                from src.utils import shots as _shots
+                shots_stopped = _shots.stop_all(thread_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("could not stop shots: %s", exc)
         # A model download runs in a worker thread that cancelling the turn
         # cannot reach; without this, Stop left it fetching gigabytes and the
         # turn waiting for it. The partial file stays and resumes next time.
@@ -4581,6 +4653,7 @@ def _build_app():
             except Exception as exc:  # noqa: BLE001
                 logger.debug("could not stop downloads: %s", exc)
         return jsonify({"ok": True, "cancelled": found,
+                        "shots_stopped": shots_stopped,
                         "queue_removed": len(report.get("deleted") or []),
                         "queue_kept": report.get("kept", 0),
                         "downloads_stopped": downloads})
@@ -4876,6 +4949,7 @@ def start_agentY_server(agent, host: str = "127.0.0.1", port: int | None = None)
         port = default_agent_port()
     _agent_ref = agent
     _pool = PipelinePool(agent, factory=_new_pipeline, max_size=_parallel_limit)
+    _configure_shots()
     try:
         from src.utils import canvas_lease
         canvas_lease.set_alive_check(running_threads)
@@ -5005,6 +5079,62 @@ def _drain_queue(q: "queue.Queue") -> None:
                 return
         except queue.Empty:
             return
+
+
+# ── Shots: turns a lead conversation starts in other conversations ────────────
+
+def _start_background_turn(thread_id: str, text: str, *, origin: str,
+                           dry_run: bool = False) -> str:
+    """Run a turn nobody is streaming: a shot briefed by its lead, or a lead
+    woken by its shots. The message is already in the conversation. The panel
+    follows it through /agentY/runs/<id>/stream when the conversation is opened,
+    and it shows in the list with its dot meanwhile.
+
+    No canvas: a shot builds its own workflow, and the lead coordinates.
+    """
+    q: queue.Queue = queue.Queue()
+    rid = uuid.uuid4().hex
+    threading.Thread(target=_run_pipeline_stream,
+                     args=(thread_id, text, [], q, rid),
+                     kwargs={"origin": origin, "dry_run": bool(dry_run)},
+                     name=f"agentY-{origin}-turn", daemon=True).start()
+    threading.Thread(target=_drain_queue, args=(q,), daemon=True).start()
+    return rid
+
+
+def _thread_running(thread_id: str) -> bool:
+    """A turn of *thread_id* is registered, waiting for an agent, or holding one."""
+    if _turn_running(thread_id):
+        return True
+    return bool(_pool is not None and _pool.is_running(thread_id))
+
+
+def _interject_thread(thread_id: str, text: str) -> bool:
+    """Hand *text* to *thread_id*'s running turn (False if it has none yet)."""
+    with _reply_lock:
+        rid = next((k for k, v in _run_registry.items()
+                    if v.get("thread_id") == thread_id and v.get("task") is not None), None)
+    return bool(rid and interject_bus.post(rid, text, urgent=False))
+
+
+def _configure_shots() -> None:
+    try:
+        from src.utils import shots
+        shots.configure(start_turn=_start_background_turn, is_running=_thread_running,
+                        stop_thread=_stop_thread, interject=_interject_thread)
+    except Exception:  # noqa: BLE001 — shots must never stop the host from starting
+        logger.warning("shots unavailable", exc_info=True)
+
+
+def _stop_thread(thread_id: str) -> bool:
+    """Stop *thread_id*'s turn the way the panel's Stop does: the agent loop and
+    this conversation's prompts in ComfyUI."""
+    found = _cancel_run_by_thread(thread_id)
+    try:
+        _interrupt_comfy(owner=thread_id)
+    except Exception:  # noqa: BLE001
+        pass
+    return found
 
 
 def _slack_answer(request_id: str, text: str) -> bool:
