@@ -136,6 +136,12 @@ from strands_tools import stop  # noqa: F401
 # ---------------------------------------------------------------------------
 from strands import tool as _strands_tool
 
+# Finding models on Hugging Face, on this machine and in workflow files — what
+# agents used to piece together with run_script (agenty_core.tools.model_research).
+from agenty_core.tools.model_research import (  # noqa: F401,E402
+    hf_search, hf_repo, hf_file, find_local_models, inspect_workflow_file,
+)
+
 _SHARED_CORE_TOOLS = [
     # comfyui
     "interrupt_execution", "free_memory", "queue", "get_history",
@@ -149,6 +155,8 @@ _SHARED_CORE_TOOLS = [
     "validate_workflow", "check_model",
     # huggingface
     "search_huggingface_models", "get_model_info", "find_hf_file", "download_hf_model",
+    # model research
+    "hf_search", "hf_repo", "hf_file", "find_local_models", "inspect_workflow_file",
     # image i/o — moved to the shared layer, so they arrive here as the plain
     # callables every other core tool does and need the same wrapping. They used
     # to be agentY-local @tool functions; missing them here hands Strands a bare
@@ -175,6 +183,11 @@ INFO_TOOLS: list = [
     get_workflow_catalog,
     get_workflow_template,
     check_model,
+    find_local_models,
+    hf_search,
+    hf_repo,
+    hf_file,
+    inspect_workflow_file,
     get_node_schema,
     search_nodes,
     # "What can this system do?" includes the MCP servers the user has set up, and
@@ -339,9 +352,11 @@ FIX_WORKFLOW_ASSEMBLY_TOOLS: list = [
     install_custom_node,
     # Heal missing model files
     check_model,
+    find_local_models,
     search_huggingface_models,
     get_model_info,
     find_hf_file,
+    hf_file,
     download_hf_model,
     # Server dirs (resolve paths when patching)
     get_comfyui_dirs,
@@ -374,9 +389,11 @@ GENERATE_NEW_WORKFLOW_TOOLS: list = [
     validate_workflow,
     # Models
     check_model,
+    find_local_models,
     search_huggingface_models,
     get_model_info,
     find_hf_file,
+    hf_file,
     download_hf_model,
     # Server dirs
     get_comfyui_dirs,
@@ -416,9 +433,16 @@ ORCHESTRATOR_TOOLS: list = [
     # repair specialists, because "download the missing models" is something users
     # ask for directly — and without these it improvised downloads in run_script.
     check_model,
-    search_huggingface_models,
     find_hf_file,
     download_hf_model,
+    # Model research: one call each for what run_script used to do in dozens —
+    # repos with the file you want, a repo's files and access, one file's size /
+    # access / mirrors / destination, what is installed, what a workflow loads.
+    hf_search,
+    hf_repo,
+    hf_file,
+    find_local_models,
+    inspect_workflow_file,
     # Workflow SET-UP is delegated to prepare_workflow (research + deterministic
     # assembly). Workflow REPAIR (assembly + execution errors) and BUILD-FROM-
     # SCRATCH are the fix_workflow_assembly / generate_new_workflow specialists,

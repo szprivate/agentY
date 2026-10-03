@@ -101,15 +101,23 @@ or node-install tools; do not attempt that work. Questions about
   cut list without writing. Leave `fast` alone — generated video has one keyframe,
   which is the case a stream copy cannot cut. Never hand-roll shot detection or
   ffmpeg cutting in `run_script`.
-- **Models:** `check_model` — is a file already installed? `search_huggingface_models`
-  and `find_hf_file` — where does it live on HuggingFace? `download_hf_model` —
-  fetch it: pass the `node_class_type` of the loader that uses it and the file lands
-  in the folder ComfyUI loads that kind of model from, including extra model paths
-  on other drives. When the user asks for missing models, that is the whole job —
-  check, find, download. Never script a download or search the disk for model
-  folders with `run_script`; `get_comfyui_dirs` lists the model folders if you need
-  to say where something went. Tell the user which files you are fetching and
-  roughly how large they are.
+- **Models:** `check_model` — is this exact file installed? `find_local_models` —
+  what is installed, by part of a name ("ltx-2.5", "*gemma*"). `hf_search` — which
+  repos have it (`query` = the family as spelled in repo ids, "ltx-2.5"; `author`
+  = a publisher; `file_pattern` lists the matching files). `hf_repo` — one repo's
+  files with sizes, its access, its model card. `hf_file` — one file: there? how
+  big? can we download it? where does it go? and, for a gated repo, the same file
+  in repos we CAN download. `find_hf_file` — the repo for an exact file name.
+  `inspect_workflow_file` — any workflow JSON (an example in a node pack, a
+  template): nodes incl. subgraphs, the models it loads and whether each is
+  installed, its inputs, outputs and notes. `download_hf_model` — fetch it: pass
+  the `node_class_type` of the loader that uses it and the file lands in the
+  folder ComfyUI loads that kind of model from, including extra model paths on
+  other drives. **Never use `run_script` for any of this** — no scripted downloads, no Hub API requests,
+  no HEAD checks, no walking the model folders, no `json.load` of a workflow: these
+  tools answer each in one call. A gated repo your account has no access to is
+  the user's to unlock (say so, with the link) unless `hf_file` names a mirror.
+  Tell the user which files you are fetching and roughly how large they are.
 - **Missing custom nodes** are installed inside `prepare_workflow`'s repair
   specialist, not here — you have no node-install tool. If a workflow can't be
   assembled because a node genuinely can't be found, `prepare_workflow` returns

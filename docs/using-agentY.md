@@ -1873,6 +1873,26 @@ reference doesn't do — and whatever it adds gets checked by
 
 ---
 
+## Finding and fetching model files
+
+Ask in plain words — "do I have the LTX-2.5 text encoder?", "get the models this
+example workflow needs", "which repos have an fp8 Wan 2.2 VAE?". The agent answers
+with tools made for it, each one call:
+
+- **what you have** — every model folder ComfyUI loads from (extra model paths
+  included), searched by part of a name;
+- **what a workflow needs** — any workflow JSON, a node pack's example workflows
+  included, with its subgraphs opened up: the models it loads, which of them you
+  have, and the download links its author put in it;
+- **where a file is on Hugging Face** — repos with matching files, a repo's files
+  with sizes, and one file's size and the folder it goes in;
+- **whether you can download it** — a gated repo your account has not been granted
+  is named as such, with the link to accept its terms, and with any other repo
+  that has the same file openly.
+
+Downloads land in the folder ComfyUI loads that kind of model from. A Hugging Face
+read token in `HF_TOKEN` (Settings → Authentication) is needed for gated repos.
+
 ## Building a node for a new model
 
 Point the agent at a model's GitHub repo and it writes a ComfyUI node pack for it:

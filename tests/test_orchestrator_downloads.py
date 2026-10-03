@@ -29,8 +29,10 @@ def _names(tools):
 class TheOrchestratorCanDownload(unittest.TestCase):
 
     def test_it_carries_the_model_tools(self):
-        wanted = {"check_model", "search_huggingface_models", "find_hf_file",
-                  "download_hf_model"}
+        wanted = {"check_model", "find_hf_file", "download_hf_model",
+                  # model research (agenty_core.tools.model_research)
+                  "hf_search", "hf_repo", "hf_file", "find_local_models",
+                  "inspect_workflow_file"}
         self.assertEqual(wanted - _names(ORCHESTRATOR_TOOLS), set())
 
     def test_its_prompt_no_longer_says_it_cannot(self):
@@ -40,7 +42,8 @@ class TheOrchestratorCanDownload(unittest.TestCase):
 
     def test_its_prompt_steers_away_from_scripted_downloads(self):
         prompt = PROMPT.read_text(encoding="utf-8")
-        self.assertIn("Never script a download", prompt)
+        self.assertIn("Never use `run_script` for any of this", prompt)
+        self.assertIn("no scripted downloads", prompt)
 
 
 if __name__ == "__main__":
