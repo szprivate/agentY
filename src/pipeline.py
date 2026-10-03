@@ -3753,15 +3753,63 @@ class Pipeline:
                 msg["content"] = kept or [{"text": "(image omitted)"}]
         return dropped
 
+    @staticmethod
+    def _shrink_old_catalogs(messages: list[dict]) -> int:
+        """Replace earlier turns' ``get_workflow_catalog`` results with a note.
+
+        One catalog is ~140k characters (~35k tokens), and a result stays in the
+        history — and so in every model call — for the whole history window. It
+        was read to choose a template in the turn that read it; afterwards it is
+        dead weight, and calling the tool again costs one step. Only call this
+        between turns (setting ``trim_old_workflow_catalog``): the turn that reads
+        a catalog keeps all of it.
+        """
+        try:
+            from src.utils.settings import load_settings
+            if not load_settings().get("trim_old_workflow_catalog", True):
+                return 0
+        except Exception:  # noqa: BLE001
+            pass
+        ids = set()
+        for msg in messages:
+            for b in msg.get("content") or () if isinstance(msg, dict) else ():
+                use = b.get("toolUse") if isinstance(b, dict) else None
+                if isinstance(use, dict) and use.get("name") == "get_workflow_catalog":
+                    ids.add(use.get("toolUseId"))
+        shrunk = 0
+        for msg in messages:
+            for b in msg.get("content") or () if isinstance(msg, dict) else ():
+                res = b.get("toolResult") if isinstance(b, dict) else None
+                if not isinstance(res, dict) or res.get("toolUseId") not in ids:
+                    continue
+                text = "".join(str(c.get("text", "")) for c in res.get("content") or ()
+                               if isinstance(c, dict))
+                if len(text) < 2000:
+                    continue                      # already a note, or an error
+                try:
+                    count = f" ({len(json.loads(text))} templates)"
+                except Exception:  # noqa: BLE001
+                    count = ""
+                res["content"] = [{"text": json.dumps({"note": (
+                    f"The workflow catalog{count} was read in an earlier turn and is "
+                    "not kept in the history. Call get_workflow_catalog again if you "
+                    "need it.")})}]
+                shrunk += 1
+        return shrunk
+
     def _ensure_orch_clean_history(self) -> None:
         """Sanitize the orchestrator's message list (drop orphaned tool blocks,
-        and images the configured model cannot accept)."""
+        and images the configured model cannot accept), and shrink earlier
+        turns' workflow catalogs."""
         agent = self._orchestrator_agent
         if agent is None:
             return
         msgs = getattr(agent, "messages", None)
         if not msgs:
             return
+        shrunk = self._shrink_old_catalogs(msgs)
+        if shrunk and self._verbose:
+            print(f"pipeline: shrank {shrunk} workflow catalog(s) from earlier turns.")
         dropped = self._strip_unreadable_images(msgs)
         if dropped and self._verbose:
             print(f"pipeline: dropped {dropped} image block(s) the orchestrator "

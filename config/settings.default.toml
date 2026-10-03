@@ -75,6 +75,11 @@ shots_max_tool_calls = 80
 # every conversation. false = every server's tools are always in the list.
 # Takes effect when the agent is next built (restart).
 mcp_tools_on_demand = true
+# A workflow catalog read in an earlier turn (get_workflow_catalog, ~35k tokens)
+# is replaced in the history by a short note at the start of the next turn; the
+# turn that reads it keeps all of it, and the agent can read it again. false =
+# it stays in the history for the whole window, as before.
+trim_old_workflow_catalog = true
 output_dir = "./output_images/"
 # Where generated/patched workflow JSON is written. BLANK (the default) means
 # "into ComfyUI": <--user-directory>/default/workflows/agentY/, which is the
