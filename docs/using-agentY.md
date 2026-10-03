@@ -254,7 +254,13 @@ per shot with its briefing.
   build and validate their workflows and stop there, for you to review and queue.
 - **The canvas:** shots build workflows of their own and leave the graph open on
   your canvas alone.
-- **Stop** in the lead stops its shots too. Stop in a shot stops only that shot.
+- **Stopping:** **⏹ Stop shots** on the strip stops every running shot of the
+  sequence, whenever you like. Stop while the lead's own turn runs does the same;
+  Stop inside a shot stops only that shot. A shot's "stop" never stops a render
+  another conversation queued — only its own, or one you queued by hand.
+- **A shot that won't finish:** a shot turn that reaches `shots_max_tool_calls`
+  of its own tool calls (80 by default; 0 = no limit) is told to stop and write
+  its report; a quarter more and it is stopped, and the lead hears why.
 - **One level:** a shot cannot start shots of its own. "Allow for this session" on
   a permission prompt covers every conversation, shots included.
 - **The lead's model:** a lead runs on the **Lead** tier (Settings → Models; blank =

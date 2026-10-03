@@ -40,6 +40,10 @@ MAX_WAKES_WITHOUT_USER = 40
 REPORT_CHARS = 2500
 # How long a wake waits for the lead's own turn to finish before trying again.
 WAKE_WAIT = 600.0
+# Past the setting `shots_max_tool_calls` a shot's turn is told to wrap up and
+# report; this much further on it is stopped. Research has no natural end, and
+# a shot no one is watching can otherwise search for as long as the host runs.
+BUDGET_GRACE = 0.25
 
 _LOCK = threading.Lock()
 _hooks: dict[str, Callable | None] = {
@@ -52,7 +56,8 @@ _hooks: dict[str, Callable | None] = {
 _pending: dict[str, list[dict]] = {}   # lead -> reports not yet delivered
 _waking: set[str] = set()               # leads with a wake on its way
 _wakes: dict[str, int] = {}             # lead -> wakes since the user last wrote
-_turn_state: dict[str, str] = {}        # request_id -> "failed" | "stopped"
+_turn_state: dict[str, str] = {}        # request_id -> "failed" | "stopped" | "over_budget"
+_tool_calls: dict[str, int] = {}        # request_id -> tool calls so far (shot turns)
 _observing = {"on": False}
 
 
@@ -66,6 +71,15 @@ def configure(*, start_turn: Callable, is_running: Callable,
     if not _observing["on"]:
         turn_bus.observe(_on_event)
         _observing["on"] = True
+
+
+def max_tool_calls() -> int:
+    """Setting ``shots_max_tool_calls`` (0 = no limit)."""
+    try:
+        from src.utils.settings import load_settings
+        return max(0, int(load_settings().get("shots_max_tool_calls", 80) or 0))
+    except Exception:  # noqa: BLE001
+        return 80
 
 
 def dry_run_default() -> bool:
@@ -211,12 +225,22 @@ def _last_answer(thread_id: str) -> str:
     return ""
 
 
+def _state(shot: dict, running: bool) -> str:
+    """Where a shot stands: running only while a turn of it really is (a host
+    restart ends one without anything getting to record that)."""
+    if running:
+        return "running"
+    if shot["status"] == "queued" and time.time() - float(shot.get("updated_at") or 0) < 120:
+        return "queued"                  # just started; its turn is on its way
+    return "stopped" if shot["status"] in ("running", "queued") else shot["status"]
+
+
 def status(lead_id: str) -> list[dict]:
     """Every shot of *lead_id*: name, conversation, state, start of its last report."""
     out = []
     for s in cs.shots_of(lead_id):
         running = bool(_hooks["is_running"] and _hooks["is_running"](s["thread_id"]))
-        state = "running" if running else s["status"]
+        state = _state(s, running)
         out.append({"shot": s["name"], "thread_id": s["thread_id"], "status": state,
                     "report": _last_answer(s["thread_id"])[:300]})
     return out
@@ -230,7 +254,7 @@ def read_shot(lead_id: str, name: str) -> dict:
     t = cs.get_thread(shot["thread_id"]) or {}
     running = bool(_hooks["is_running"] and _hooks["is_running"](shot["thread_id"]))
     return {"ok": True, "shot": shot["name"], "thread_id": shot["thread_id"],
-            "status": "running" if running else shot["status"],
+            "status": _state(shot, running),
             "report": _last_answer(shot["thread_id"]),
             "outputs": [g.get("path") for g in (t.get("gallery") or [])][-20:]}
 
@@ -256,6 +280,13 @@ def _on_event(event: dict, turn) -> None:
         shot = cs.shot_of(turn.thread_id)
         if shot:
             cs.set_shot_status(turn.thread_id, "running")
+            _tool_calls[rid] = 0
+        return
+    # The shot's own steps, not those of the specialists it delegates to (an
+    # assembly makes dozens inside one prepare_workflow call).
+    if (kind == "tool" and rid in _tool_calls and event.get("phase") == "call"
+            and event.get("agent", "orchestrator") == "orchestrator"):
+        _count_tool_call(rid, turn.thread_id)
         return
     if kind == "error":
         _turn_state[rid] = "failed"
@@ -265,13 +296,19 @@ def _on_event(event: dict, turn) -> None:
         return
     if kind != "done":
         return
+    _tool_calls.pop(rid, None)
     ended = _turn_state.pop(rid, "done")
+    if ended == "over_budget":
+        ended = "stopped"
     shot = cs.shot_of(turn.thread_id)
     if shot:
         cs.set_shot_status(turn.thread_id, ended)
+        over = _budget_notes.pop(rid, 0)
         with _LOCK:
             _pending.setdefault(shot["lead_id"], []).append(
-                {"shot": shot["name"], "thread_id": turn.thread_id, "status": ended})
+                {"shot": shot["name"], "thread_id": turn.thread_id, "status": ended,
+                 "note": (f"stopped after {over} tool calls without reporting (the shot "
+                          "tool budget, setting shots_max_tool_calls)") if over else ""})
         _wake_soon(shot["lead_id"])
     else:
         # A lead's own turn ended: reports that came in meanwhile can go now.
@@ -279,6 +316,27 @@ def _on_event(event: dict, turn) -> None:
             waiting = bool(_pending.get(turn.thread_id))
         if waiting:
             _wake_soon(turn.thread_id)
+
+
+def _count_tool_call(rid: str, thread_id: str) -> None:
+    limit = max_tool_calls()
+    _tool_calls[rid] = n = _tool_calls.get(rid, 0) + 1
+    if not limit:
+        return
+    if n == limit and _hooks.get("interject"):
+        _hooks["interject"](thread_id, (
+            f"[TOOL BUDGET] This shot has made {limit} tool calls in this turn. Stop "
+            "searching and building now: finish with what you have and write your report "
+            "— what you made, what is missing, and what the lead must decide."))
+    elif n >= limit + max(1, int(limit * BUDGET_GRACE)) and _turn_state.get(rid) != "over_budget":
+        _turn_state[rid] = "over_budget"
+        _budget_notes[rid] = n
+        if _hooks.get("stop_thread"):
+            threading.Thread(target=_hooks["stop_thread"], args=(thread_id,),
+                             name="agentY-shot-budget", daemon=True).start()
+
+
+_budget_notes: dict[str, int] = {}
 
 
 def _wake_soon(lead_id: str) -> None:
@@ -341,6 +399,8 @@ def _wake_message(reports: list[dict]) -> str:
         if len(report) > REPORT_CHARS:
             report = report[:REPORT_CHARS] + " … (read_shot has the rest)"
         lines.append(f"## Shot {r['shot']} {word.get(r['status'], r['status'])}")
+        if r.get("note"):
+            lines.append(f"_{r['note']}._")
         lines.append(report or "(no report)")
         lines.append("")
     return "\n".join(lines).strip()
@@ -352,3 +412,5 @@ def _reset_for_tests() -> None:
         _waking.clear()
         _wakes.clear()
         _turn_state.clear()
+        _tool_calls.clear()
+        _budget_notes.clear()

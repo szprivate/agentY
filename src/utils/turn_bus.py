@@ -51,16 +51,27 @@ LOG_LIMIT = 20000
 LOG_KEEP_AFTER_END = 120.0
 
 
+# Events that mean a turn which asked something has its answer and carried on.
+_MOVED_ON = frozenset({"text", "tool", "think", "step_start", "step_text", "step_end",
+                       "progress", "output", "exec", "plan", "plan_step", "done"})
+
+
 class _Log:
     def __init__(self, turn=None) -> None:
         self.turn = turn
         self.events: list = []
         self.dropped = 0          # events trimmed off the front
         self.ended = 0.0          # time.time() the turn ended, 0 while running
+        self.asking = False       # its last word was a question it waits on
         self.cond = threading.Condition()
 
     def add(self, event: dict) -> None:
         with self.cond:
+            kind = event.get("type")
+            if kind == "ask":
+                self.asking = True
+            elif kind in _MOVED_ON:
+                self.asking = False
             self.events.append(event)
             if len(self.events) > LOG_LIMIT:
                 cut = len(self.events) - LOG_LIMIT
@@ -208,6 +219,13 @@ def turn(request_id: str) -> "Turn | None":
         if t is None and str(request_id) in _logs:
             t = _logs[str(request_id)].turn
         return t
+
+
+def asking(request_id: str) -> bool:
+    """Whether turn *request_id* is waiting on an answer to a question it asked."""
+    with _LOCK:
+        log = _logs.get(str(request_id))
+    return bool(log is not None and log.asking and not log.ended)
 
 
 def follow(request_id: str, *, tick: float = 15.0):

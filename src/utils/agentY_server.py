@@ -3688,9 +3688,13 @@ def _build_app():
         with _reply_lock:
             runs = [{"request_id": rid, "thread_id": v.get("thread_id")}
                     for rid, v in _run_registry.items()]
-            awaiting = set(_reply_registry)
         for r in runs:
-            r["awaiting_reply"] = r["request_id"] in awaiting
+            # A question actually open — not "registered in _reply_registry",
+            # which every turn is from its start (it holds the turn's QA queue).
+            # Reported that way, every running turn looked like one waiting on an
+            # answer: a panel following it showed Send instead of Stop and sent
+            # what was typed as the answer.
+            r["awaiting_reply"] = turn_bus.asking(r["request_id"])
             t = turn_bus.turn(r["request_id"])
             r["origin"] = t.origin if t is not None else ""
         # …and those that just ended, for a panel whose poll fell either side of
@@ -3732,6 +3736,16 @@ def _build_app():
             if not ended:
                 yield _sse({"type": "done"})
         return _sse_response(gen())
+
+    # Stop every running shot of a lead — the lead's own turn may long be over.
+    @app.route("/agentY/threads/<tid>/shots/stop", methods=["POST", "OPTIONS"])
+    def thread_shots_stop(tid):
+        if request.method == "OPTIONS":
+            return "", 204
+        from src.utils import shots as _shots
+        mine = cs.shot_of(tid)
+        lead = mine["lead_id"] if mine else tid
+        return jsonify({"ok": True, "lead_id": lead, "stopped": _shots.stop_all(lead)})
 
     # A lead's shots and where each stands (the panel's shot strip).
     @app.route("/agentY/threads/<tid>/shots", methods=["GET"])

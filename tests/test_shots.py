@@ -220,6 +220,53 @@ class HearingBack(_Host):
         self.assertEqual(rows, {"sh010": "running", "sh020": "queued"})
 
 
+class AToolBudget(_Host):
+
+    def play(self, tid, rid, n, agent="orchestrator"):
+        q = turn_bus.tee(queue.Queue(), request_id=rid, thread_id=tid, origin="lead")
+        for i in range(n):
+            q.put({"type": "tool", "phase": "call", "agent": agent, "name": f"[{agent}] run_script"})
+            q.put({"type": "tool", "phase": "result", "agent": agent})
+        return q
+
+    def test_a_shot_is_told_to_report_then_stopped(self):
+        tid = shots.start_shot(self.lead, "sh010", "brief")["thread_id"]
+        with mock.patch.object(shots, "max_tool_calls", return_value=8):
+            q = self.play(tid, "b1", 8)
+            self.assertEqual(len(self.interjected), 1)
+            self.assertIn("[TOOL BUDGET]", self.interjected[0][1])
+            self.assertEqual(self.stopped, [])
+            for _ in range(2):
+                q.put({"type": "tool", "phase": "call", "agent": "orchestrator"})
+            self.assertTrue(self.wait_for(lambda: self.stopped == [tid]))
+            q.put({"type": "system", "data": "⏹ Stopped."})
+            q.put({"type": "done"})
+            q.put(None)
+        self.assertTrue(self.wait_for(lambda: len(self.started) == 2))
+        self.assertIn("stopped after 10 tool calls", self.started[1]["text"])
+        self.assertEqual(cs.shot_of(tid)["status"], "stopped")
+
+    def test_the_specialists_steps_do_not_count(self):
+        tid = shots.start_shot(self.lead, "sh010", "brief")["thread_id"]
+        with mock.patch.object(shots, "max_tool_calls", return_value=5):
+            self.play(tid, "b2", 40, agent="assemble_workflow")
+        self.assertEqual(self.interjected, [])
+        self.assertEqual(self.stopped, [])
+
+    def test_no_budget_for_an_ordinary_conversation(self):
+        other = cs.create_thread()
+        with mock.patch.object(shots, "max_tool_calls", return_value=3):
+            self.play(other, "b3", 20)
+        self.assertEqual(self.interjected, [])
+
+    def test_a_shot_left_running_by_a_restart_reads_stopped(self):
+        tid = shots.start_shot(self.lead, "sh010", "brief")["thread_id"]
+        cs.set_shot_status(tid, "running")
+        self.assertEqual(shots.status(self.lead)[0]["status"], "stopped")
+        self.running.add(tid)
+        self.assertEqual(shots.status(self.lead)[0]["status"], "running")
+
+
 class FollowingATurn(unittest.TestCase):
 
     def test_a_late_watcher_gets_the_turn_from_its_start_then_live(self):
@@ -293,6 +340,34 @@ class ServerRoutes(_Host):
         recent = {r["request_id"]: r for r in body["recent"]}
         self.assertEqual(recent["w4"]["thread_id"], "lead-x")
         self.assertLessEqual(recent["w4"]["ended"], body["now"])
+
+    def test_a_running_turn_is_not_waiting_on_an_answer_until_it_asks(self):
+        with mock.patch.dict(self.srv._run_registry, {"w5": {"thread_id": "t5"}}):
+            q = turn_bus.tee(queue.Queue(), request_id="w5", thread_id="t5")
+            q.put({"type": "text", "data": "working"})
+            run = lambda: next(r for r in self.get("/agentY/runs").get_json()["runs"]
+                               if r["request_id"] == "w5")
+            self.assertFalse(run()["awaiting_reply"])
+            q.put({"type": "ask", "request_id": "w5", "prompt": "retry?"})
+            self.assertTrue(run()["awaiting_reply"])
+            q.put({"type": "tool", "phase": "call"})
+            self.assertFalse(run()["awaiting_reply"])
+            q.put({"type": "done"})
+            q.put(None)
+
+    def test_stopping_a_leads_shots_from_the_strip(self):
+        a = shots.start_shot(self.lead, "sh010", "brief")["thread_id"]
+        self.running.add(a)
+        client = self.srv._build_app().test_client()
+        try:
+            from src.utils import api_guard
+            tok = api_guard.session_token(None)
+        except Exception:  # noqa: BLE001
+            tok = ""
+        for tid in (self.lead, a):                       # from the lead, or from a shot
+            body = client.post(f"/agentY/threads/{tid}/shots/stop", json={},
+                               headers={"X-AgentY-Token": tok} if tok else {}).get_json()
+            self.assertEqual(body["stopped"], ["sh010"])
 
     def test_the_shot_strip_route(self):
         a = shots.start_shot(self.lead, "sh010", "brief")["thread_id"]
