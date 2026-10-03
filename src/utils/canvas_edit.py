@@ -91,6 +91,73 @@ def _input_spec(specs: dict, name: str):
     return None
 
 
+def _member_spec(specs: dict, name: str, values: dict):
+    """The spec of a dynamic combo's member — ``model.duration`` — for the option
+    in force (``values[head]``, else the first), or None.
+
+    `_input_spec` only knows such a name is allowed; without its own spec a
+    value written there was never checked, and a Wan 3.0 ``model.duration`` of
+    ``5`` went onto the canvas where the menu holds ``"5"`` — which ComfyUI
+    refuses ("Value not in list") when the graph is queued."""
+    head, _, rest = name.partition(".")
+    spec = specs.get(head)
+    if not rest or _spec_type(spec) != "COMFY_DYNAMICCOMBO_V3" or len(spec) < 2:
+        return None
+    options = (spec[1] or {}).get("options") or []
+    key = (values or {}).get(head)
+    opt = next((o for o in options if isinstance(o, dict) and o.get("key") == key), None)
+    if opt is None and options and isinstance(options[0], dict):
+        opt = options[0]
+    sub = (opt or {}).get("inputs") or {}
+    return {**(sub.get("optional") or {}), **(sub.get("required") or {})}.get(rest)
+
+
+def coerce_value(spec, value):
+    """``(value, error)``: *value* as the input takes it, or the reason it can't.
+
+    The usual slip is the type, not the value: a number written into a menu of
+    strings ("5" for 5) or the other way round, which ComfyUI rejects although
+    the option is there. Those are matched by their text. Number inputs take a
+    numeric string as the number."""
+    combo = _combo_options(spec)
+    if combo is not None:
+        if value in combo:
+            return value, None
+        same = next((o for o in combo if str(o) == str(value)), None)
+        if same is not None:
+            return same, None
+        near = [o for o in combo if str(value).lower() in str(o).lower()][:5]
+        return value, (f"= {value!r} is not an option"
+                       + (f"; close: {near}" if near else f"; e.g. {combo[:5]}"))
+    t = _spec_type(spec)
+    if isinstance(value, str) and not isinstance(value, bool) and t in ("INT", "FLOAT"):
+        try:
+            num = float(value.strip())
+            return (int(num) if t == "INT" and num.is_integer() else num), None
+        except ValueError:
+            return value, f"= {value!r} is not a number"
+    return value, None
+
+
+def coerce_params(schema: dict, params: dict, current: dict | None = None) -> tuple[dict, list[str]]:
+    """``(params, errors)``: *params* for a node of *schema*, each value as its
+    input takes it. Names the schema does not know pass through untouched
+    (the frontend has widgets of its own, e.g. ``control_after_generate``)."""
+    specs = _specs(schema)
+    values = {**(current or {}), **params}
+    out, errors = {}, []
+    for name, value in params.items():
+        spec = specs.get(name) if name in specs else _member_spec(specs, name, values)
+        if spec is None or _is_link(value):
+            out[name] = value
+            continue
+        fixed, err = coerce_value(spec, value)
+        if err:
+            errors.append(f"{name} {err}")
+        out[name] = fixed
+    return out, errors
+
+
 def _next_id(graph: dict) -> int:
     nums = [int(k) for k in graph if str(k).isdigit()]
     return (max(nums) if nums else 0) + 1
@@ -161,23 +228,18 @@ def plan(graph: dict, ops: list, object_info: dict) -> dict:
                     if d is not None:
                         inputs[name] = d
             bad = False
-            for name, value in params.items():
-                spec = _input_spec(specs, name)
-                if spec is None:
+            for name in params:
+                if _input_spec(specs, name) is None:
                     errors.append(f"{where}: {cls} has no input '{name}' "
                                   f"(it has: {', '.join(sorted(specs)) or 'none'}).")
                     bad = True
-                    continue
-                combo = _combo_options(spec)
-                if combo is not None and value not in combo:
-                    near = [o for o in combo if str(value).lower() in str(o).lower()][:5]
-                    errors.append(f"{where}: {cls}.{name} = {value!r} is not an option"
-                                  + (f"; close: {near}" if near else f"; e.g. {combo[:5]}") + ".")
-                    bad = True
-                    continue
-                inputs[name] = value
+            params, wrong = coerce_params(schema, params, inputs)
+            for w in wrong:
+                errors.append(f"{where}: {cls}.{w}.")
+                bad = True
             if bad:
                 continue
+            inputs.update(params)
             defaults = {k: v for k, v in inputs.items() if k not in params}
             nid = str(_next_id(g))
             g[nid] = {"class_type": cls, "inputs": inputs}

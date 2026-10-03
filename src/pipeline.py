@@ -2196,6 +2196,16 @@ class Pipeline:
                 return json.dumps({"error": "params must be a non-empty mapping of widget -> value."})
             widgets = node.get("widgets", {}) or {}
             unknown = [k for k in params if k not in widgets]
+            # Each value as its input takes it: 5 into a menu of "5"s is refused
+            # by ComfyUI only when the user queues, long after this turn.
+            from src.utils import canvas_edit as _ce
+            _schema = _CanvasSchemas().get(node.get("type"))
+            if _schema:
+                params, _wrong = _ce.coerce_params(_schema, params, widgets)
+                if _wrong:
+                    return json.dumps({"status": "rejected", "node_id": str(node_id),
+                                       "errors": _wrong,
+                                       "note": "Nothing was changed. Use one of the options."})
             from src.utils.canvas_patch import push as _push_patch
             _patch = {
                 "node_id": str(node_id),

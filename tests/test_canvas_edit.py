@@ -178,14 +178,57 @@ class ToolTest(unittest.TestCase):
     def test_a_value_written_this_turn_reads_back(self):
         """The bug that taught the agent edits don't stick."""
         pipe = self._pipe()
-        self._call(pipe, "set_canvas_node_params", node_id="1", params={"ckpt_name": "b.safetensors"})
-        self.assertEqual(self._call(pipe, "get_canvas_node", node_id="1")["values"]["ckpt_name"],
-                         "b.safetensors")
+        self._call(pipe, "set_canvas_node_params", node_id="5", params={"steps": 30})
+        self.assertEqual(self._call(pipe, "get_canvas_node", node_id="5")["values"]["steps"], 30)
+
+    def test_values_are_written_as_their_inputs_take_them(self):
+        """A Wan 3.0 duration of 5 where the menu holds "5": refused by ComfyUI at queue time."""
+        from src.utils.canvas_patch import drain
+        pipe = self._pipe()
+        out = self._call(pipe, "set_canvas_node_params", node_id="5", params={"steps": "30"})
+        self.assertEqual(out["changed"], {"steps": 30})
+        out = self._call(pipe, "set_canvas_node_params", node_id="5", params={"sampler_name": "ddim"})
+        self.assertEqual(out["status"], "rejected")
+        self.assertIn("is not an option", out["errors"][0])
+        self.assertEqual([e["params"] for e in drain() if e.get("params")], [{"steps": 30}])
 
     def test_a_deleted_node_is_gone_from_the_turns_copy(self):
         pipe = self._pipe()
         self._call(pipe, "delete_canvas_nodes", node_ids=["7"])
         self.assertNotIn("7", pipe._canvas_graph)
+
+
+class DynamicComboTest(unittest.TestCase):
+    """A dynamic combo's members (``model.duration``) are checked against the
+    option in force — before, any value went through unseen."""
+
+    WAN = {"input": {"required": {
+        "model": ["COMFY_DYNAMICCOMBO_V3", {"options": [
+            {"key": "wan3.0-video", "inputs": {"required": {
+                "duration": ["COMBO", {"options": ["auto", "2", "5", "10"]}],
+                "resolution": ["COMBO", {"options": ["720P", "1080P"]}],
+                "audio": ["BOOLEAN", {"default": True}]}}}]}],
+        "first_frame": ["IMAGE"], "seed": ["INT", {"default": 0}]}},
+        "output": ["VIDEO"], "output_name": ["VIDEO"]}
+
+    def test_a_number_for_a_menu_of_strings_is_written_as_the_option(self):
+        params, errors = ce.coerce_params(self.WAN, {"model": "wan3.0-video", "model.duration": 5,
+                                                     "seed": "7", "model.audio": True})
+        self.assertEqual(errors, [])
+        self.assertEqual(params, {"model": "wan3.0-video", "model.duration": "5", "seed": 7, "model.audio": True})
+
+    def test_a_value_the_option_does_not_have_is_an_error(self):
+        _params, errors = ce.coerce_params(self.WAN, {"model.resolution": "4K"})
+        self.assertEqual(len(errors), 1)
+        self.assertIn("model.resolution", errors[0])
+
+    def test_an_added_node_carries_the_coerced_value(self):
+        schemas = dict(SCHEMAS, Wan3ImageToVideoApi=self.WAN)
+        r = ce.plan(_graph(), [{"op": "add", "class_type": "Wan3ImageToVideoApi", "ref": "w",
+                                "params": {"model": "wan3.0-video", "model.duration": 5}}], schemas)
+        self.assertTrue(r["ok"], r["errors"])
+        self.assertEqual(r["ops"][0]["params"]["model.duration"], "5")
+        self.assertEqual(r["graph"][r["added"]["w"]]["inputs"]["model.duration"], "5")
 
 
 if __name__ == "__main__":
