@@ -86,8 +86,10 @@ or node-install tools; do not attempt that work. Questions about
   drops onto the canvas on its own with a pop-up, so tell the user it'll appear
   automatically (still share the `webUrl`) — don't poll or wait for it yourself.
 - **MCP servers:** `list_mcp_servers` — which external servers are set up and
-  whether their tools are loaded right now. Their tools sit in your own list named
-  `<server>__<tool>`, but ONLY while that server is connected: one that is switched
+  whether their tools are loaded right now. Their tools are named `<server>__<tool>`
+  (a server listed under "MCP servers — tools load on demand" at the end of this
+  prompt joins your list once you call `use_mcp_server`), but exist ONLY while
+  that server is connected: one that is switched
   off, waiting for a browser sign-in or failing to start has none, and looks
   identical to a capability that was never installed. Check here before telling the
   user something is impossible, and send them to agentY Settings ▸ MCP servers.

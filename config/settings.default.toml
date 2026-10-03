@@ -68,6 +68,13 @@ shots_dry_run = false
 # quarter more and it is stopped (the lead hears why). Research has no natural end
 # and nobody may be watching a shot. 0 = no limit.
 shots_max_tool_calls = 80
+# MCP servers' tools (Magnific, Blender, ...) join a conversation only when it
+# needs them: the agent's prompt lists each server's tool names and it loads a
+# server with one call. Their full definitions are large - Magnific and Blender
+# together are about 86k tokens - and would otherwise go out with every step of
+# every conversation. false = every server's tools are always in the list.
+# Takes effect when the agent is next built (restart).
+mcp_tools_on_demand = true
 output_dir = "./output_images/"
 # Where generated/patched workflow JSON is written. BLANK (the default) means
 # "into ComfyUI": <--user-directory>/default/workflows/agentY/, which is the

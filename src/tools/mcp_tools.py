@@ -70,6 +70,9 @@ _EXPIRY_SKEW_S = 60
 # name -> live MCPClient (kept alive for the process). name -> status string.
 _CLIENTS: dict = {}
 _STATUS: dict = {}
+# name -> (id of its client, its tool list): listing is a round trip to the
+# server, and mcp_on_demand loads a server into an agent from this list.
+_LISTS: dict = {}
 
 # strands' MCPClient.stop() schedules a coroutine onto the background loop even
 # when start() never got one running, so a failed connect prints a RuntimeWarning
@@ -572,6 +575,7 @@ def load_mcp_tools() -> list:
             try:
                 t = existing.list_tools_sync()
                 tools.extend(t)
+                _LISTS[name] = (id(existing), list(t))
                 _STATUS[name] = f"connected ({len(t)})"
                 continue
             except Exception:  # noqa: BLE001
@@ -580,6 +584,7 @@ def load_mcp_tools() -> list:
             client, server_tools = _connect(name, sc, interactive=False)
             _CLIENTS[name] = client
             _STATUS[name] = f"connected ({len(server_tools)})"
+            _LISTS[name] = (id(client), list(server_tools))
             tools.extend(server_tools)
             logger.info("mcp[%s]: %d tool(s) loaded", name, len(server_tools))
         except _AuthRequired:
@@ -744,8 +749,17 @@ def mcp_server_report() -> str:
         bundle = sc.get("bundle") if isinstance(sc.get("bundle"), dict) else None
         origin = f" [installed bundle {bundle.get('name')} {bundle.get('version')}]" if bundle else ""
         lines.append(f"- {name} — {how}, {sign_in} — {said}{origin}")
-    return ("MCP servers configured on this machine (their tools are the agent's, "
-            "prefixed with the server name):\n" + "\n".join(lines))
+    report = ("MCP servers configured on this machine (their tools are the agent's, "
+              "prefixed with the server name):\n" + "\n".join(lines))
+    try:
+        from src.tools import mcp_on_demand
+        if mcp_on_demand.enabled():
+            report += ("\nTools load on demand: `use_mcp_server(<name>)` puts a server's "
+                       "tools in your list for this conversation — and connects one that "
+                       "is signed in but not loaded yet, without a restart.")
+    except Exception:  # noqa: BLE001
+        pass
+    return report
 
 
 @tool

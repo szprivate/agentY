@@ -2224,10 +2224,21 @@ def create_orchestrator_agent(
     # failure (unreachable/unauthorized server, missing deps) is swallowed so the
     # orchestrator always builds. OAuth servers with no stored token are skipped
     # here (no browser at startup) — authorize once via agentY Settings.
+    # With mcp_tools_on_demand (the default) the servers are connected but their
+    # tools stay out of the list until a conversation loads one: they are most of
+    # what every model call would otherwise send (src/tools/mcp_on_demand.py).
+    mcp_hooks = []
     try:
         from src.tools.mcp_tools import load_mcp_tools as _load_mcp_tools
         _mcp_tools = _load_mcp_tools()
-        if _mcp_tools:
+        from src.tools import mcp_on_demand as _on_demand
+        if _on_demand.enabled():
+            tools.append(_on_demand.use_mcp_server)
+            mcp_hooks.append(_on_demand.MCPOnDemandHook())
+            system_prompt += _on_demand.catalogue()
+            if _mcp_tools:
+                print(f"[agentY:orchestrator] {len(_mcp_tools)} MCP tool(s) load on demand.")
+        elif _mcp_tools:
             tools += _mcp_tools
             print(f"[agentY:orchestrator] Loaded {len(_mcp_tools)} MCP tool(s).")
     except Exception as _mcp_exc:  # noqa: BLE001
@@ -2239,7 +2250,8 @@ def create_orchestrator_agent(
     # calls has no way to hand a course correction back mid-flight anyway.
     from src.utils.interject_hook import InterjectHookProvider
     orch_hooks = [TokenUsageHookProvider(role="orchestrator"), ToolActivityHookProvider(role="orchestrator"),
-                  MagnificWatchHookProvider(), ComfyUIInterruptHook(), InterjectHookProvider(), *extra_hooks]
+                  MagnificWatchHookProvider(), ComfyUIInterruptHook(), InterjectHookProvider(),
+                  *mcp_hooks, *extra_hooks]
 
     agent = _make_agent(
         role="orchestrator",

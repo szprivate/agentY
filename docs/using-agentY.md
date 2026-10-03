@@ -1684,6 +1684,14 @@ They're defined in `config/mcp.json` (holds no secrets) and managed from
    **Sign-in ▸ API key** and paste the key, or **Browser sign-in**.
 4. **Save**. The server loads into the orchestrator on the **next agent start**.
 
+**Tools load on demand.** A server's tool definitions can be large (Magnific's
+alone are ~80k tokens), and every tool in the agent's list is sent with every
+step of every conversation. So the agent starts with a list of each connected
+server's tool names, and loads a server's tools into a conversation the first
+time that conversation needs them (`use_mcp_server`); they stay for that
+conversation. Setting `mcp_tools_on_demand = false` in `config/settings.local.json`
+or the TOML gives every conversation every server's tools from the start, as before.
+
 ### Installing a bundle (.mcpb)
 
 An **MCP Bundle** (`.mcpb`, formerly `.dxt`) is a zip with a local MCP server and
