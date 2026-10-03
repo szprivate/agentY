@@ -228,10 +228,50 @@ def ollama_host() -> str:
 
     env = (os.environ.get("OLLAMA_HOST") or "").strip()
     if env:
-        return env
+        return _ipv4_for_localhost(env)
     cfg = load_settings()
     top = str(cfg.get("ollama_server_url") or "").strip()
     if top:
-        return top
+        return _ipv4_for_localhost(top)
     legacy = str(((cfg.get("llm") or {}).get("ollama") or {}).get("host") or "").strip()
-    return legacy or "http://localhost:11434"
+    return _ipv4_for_localhost(legacy or "http://localhost:11434")
+
+
+# url -> (checked at, answer). Re-checked after a while: Ollama may start later.
+_LOCALHOST_SEEN: dict = {}
+
+
+def _ipv4_for_localhost(url: str) -> str:
+    """``localhost`` → ``127.0.0.1`` when that is where the server listens.
+
+    On Windows "localhost" is tried as IPv6 ``::1`` first, and Ollama listens on
+    IPv4 only: every request waited ~2 s for the refused IPv6 attempt before
+    going through (measured: /api/tags 2.05 s via localhost, 0.01 s via
+    127.0.0.1). The memory embedder is called on every turn, so the agent paid it
+    each time. Anything else — another host, or nothing listening on IPv4 — is
+    left exactly as configured.
+    """
+    import socket
+    import time
+    from urllib.parse import urlparse
+
+    try:
+        u = urlparse(url if "://" in url else "http://" + url)
+    except ValueError:
+        return url
+    if (u.hostname or "").lower() != "localhost":
+        return url
+    now = time.time()
+    seen = _LOCALHOST_SEEN.get(url)
+    if seen is None or now - seen[0] > 60:
+        try:
+            with socket.create_connection(("127.0.0.1", u.port or 80), timeout=0.3):
+                ok = True
+        except OSError:
+            ok = False
+        seen = (now, ok)
+        _LOCALHOST_SEEN[url] = seen
+    if not seen[1]:
+        return url
+    netloc = "127.0.0.1" + (f":{u.port}" if u.port else "")
+    return u._replace(netloc=netloc).geturl()

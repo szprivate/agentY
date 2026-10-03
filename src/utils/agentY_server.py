@@ -2636,18 +2636,74 @@ def _fetch_gemini_models(key: str, base_url: str) -> list[list[str]]:
 def _available_models() -> dict:
     """Return {vendor: [[spec, label], …]} for every vendor currently usable.
 
-    Cloud vendors are enumerated live from their ``/models`` endpoints (cached for
-    ``_MODEL_CACHE_TTL`` seconds); if an endpoint is unreachable the static
-    ``*_FALLBACK`` catalog is used instead. Ollama's installed models are listed
-    live via ``GET {host}/api/tags``. A vendor appears only when reachable /
-    configured.
+    Cloud vendors are enumerated live from their ``/models`` endpoints; if an
+    endpoint is unreachable the static ``*_FALLBACK`` catalog is used instead.
+    Ollama's installed models are listed live via ``GET {host}/api/tags``. A
+    vendor appears only when reachable / configured.
+
+    Never makes the settings page wait once a list exists: a stale one is
+    answered at once and refreshed in the background. Listing takes seconds — the
+    cloud vendors' endpoints, and on Windows a refused connection to an Ollama
+    that isn't running — and with Ollama absent the list was only kept 20 s, so
+    nearly every opening of the settings paid for all of it again.
     """
     now = time.time()
     cached = _MODEL_CACHE.get("groups")
-    ttl = _MODEL_CACHE.get("ttl", _MODEL_CACHE_TTL)
-    if cached is not None and (now - _MODEL_CACHE.get("ts", 0)) < ttl:
+    if cached is not None:
+        ttl = _MODEL_CACHE.get("ttl", _MODEL_CACHE_TTL)
+        if (now - _MODEL_CACHE.get("ts", 0)) >= ttl:
+            _refresh_models_in_background()
         return cached
+    return _list_models_now()
 
+
+_MODEL_REFRESH = threading.Lock()
+
+
+def _refresh_models_in_background() -> None:
+    """One refresh at a time; a caller that finds one running just goes on."""
+    if not _MODEL_REFRESH.acquire(blocking=False):
+        return
+
+    def _run():
+        try:
+            _list_models_now()
+        except Exception as exc:  # noqa: BLE001 — the old list stays
+            logger.debug("model list refresh failed: %s", exc)
+        finally:
+            _MODEL_REFRESH.release()
+
+    threading.Thread(target=_run, name="model-list-refresh", daemon=True).start()
+
+
+def _port_open(url: str, timeout: float = 0.3) -> bool:
+    """Whether anything accepts connections at *url*'s host:port, quickly.
+
+    A local service answers in milliseconds; one that isn't running costs a full
+    second per address on Windows (it retries a refused connection), and
+    "localhost" is two addresses. Only for hosts on this machine — a remote one
+    is left to the real request and its own timeout.
+    """
+    import socket  # noqa: PLC0415
+    from urllib.parse import urlparse  # noqa: PLC0415
+    u = urlparse(url if "://" in url else "http://" + url)
+    host, port = (u.hostname or "").lower(), u.port or 80
+    if host not in ("localhost", "127.0.0.1", "::1"):
+        return True
+    for addr in (("127.0.0.1", socket.AF_INET), ("::1", socket.AF_INET6)):
+        try:
+            with socket.socket(addr[1], socket.SOCK_STREAM) as sock:
+                sock.settimeout(timeout)
+                if sock.connect_ex((addr[0], port)) == 0:
+                    return True
+        except OSError:
+            continue
+    return False
+
+
+def _list_models_now() -> dict:
+    """Ask every vendor now, and keep the answer (see _available_models)."""
+    now = time.time()
     groups: dict[str, list] = {}
 
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -2706,7 +2762,10 @@ def _available_models() -> dict:
     try:
         import requests  # noqa: PLC0415
         from src.agent import _cfg  # noqa: PLC0415
-        host = str(_cfg("OLLAMA_HOST", "ollama", "host", default="http://localhost:11434"))
+        from src.utils.settings import ollama_host as _ollama_host  # noqa: PLC0415
+        host = _ollama_host()
+        if not _port_open(host):
+            raise ConnectionError(f"nothing listening at {host}")
         resp = requests.get(f"{host}/api/tags", timeout=5)
         resp.raise_for_status()
         names = sorted({m.get("name", "") for m in resp.json().get("models", []) if m.get("name")})
@@ -5001,6 +5060,9 @@ def start_agentY_server(agent, host: str = "127.0.0.1", port: int | None = None)
 
     app = _build_app()
     _quiet_poll_logging()
+    # The model lists, fetched while nobody waits: the first settings opening
+    # then finds them ready (see _available_models).
+    _refresh_models_in_background()
 
     def _run():
         try:
