@@ -35,6 +35,17 @@ class TheOrchestratorCanDownload(unittest.TestCase):
                   "inspect_workflow_file"}
         self.assertEqual(wanted - _names(ORCHESTRATOR_TOOLS), set())
 
+    def test_it_carries_the_looking_around_tools(self):
+        # What run_script was mostly used for in the logs (node source, folders,
+        # workflow files, media, frames, web pages) — one tool each.
+        wanted = {"get_node_source", "list_files", "find_workflows", "media_info",
+                  "video_frames", "read_web_page"}
+        self.assertEqual(wanted - _names(ORCHESTRATOR_TOOLS), set())
+        prompt = PROMPT.read_text(encoding="utf-8")
+        for name in wanted:
+            self.assertIn(f"`{name}`", prompt)
+        self.assertIn("not for looking things up", prompt)
+
     def test_its_prompt_no_longer_says_it_cannot(self):
         prompt = PROMPT.read_text(encoding="utf-8")
         self.assertNotIn("model-download tools", prompt)

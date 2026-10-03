@@ -1893,6 +1893,14 @@ with tools made for it, each one call:
 Downloads land in the folder ComfyUI loads that kind of model from. A Hugging Face
 read token in `HF_TOKEN` (Settings → Authentication) is needed for gated repos.
 
+The agent looks the rest up with tools of its own too, rather than scripts you are
+asked to approve: how a node works (its code), what is in a folder (newest first,
+frame sequences as one line — "beauty.####.exr 1001-1120, 2 missing"), which saved
+workflow or template uses a node or model, a video's or image's facts (fps, frame
+count, codec; size, alpha; an EXR's channels), stills and a contact sheet from a
+video or sequence, and the text of a web page or GitHub repo. A script it still
+wants to run is one that does real work — a conversion, a calculation.
+
 ## Building a node for a new model
 
 Point the agent at a model's GitHub repo and it writes a ComfyUI node pack for it:

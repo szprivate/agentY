@@ -141,6 +141,11 @@ from strands import tool as _strands_tool
 from agenty_core.tools.model_research import (  # noqa: F401,E402
     hf_search, hf_repo, hf_file, find_local_models, inspect_workflow_file,
 )
+# Looking around — node source, folders, workflow files, media, frames, web pages
+# (agenty_core.tools.workspace_tools): the rest of what run_script was used for.
+from agenty_core.tools.workspace_tools import (  # noqa: F401,E402
+    get_node_source, list_files, find_workflows, media_info, video_frames, read_web_page,
+)
 
 _SHARED_CORE_TOOLS = [
     # comfyui
@@ -157,6 +162,9 @@ _SHARED_CORE_TOOLS = [
     "search_huggingface_models", "get_model_info", "find_hf_file", "download_hf_model",
     # model research
     "hf_search", "hf_repo", "hf_file", "find_local_models", "inspect_workflow_file",
+    # looking around
+    "get_node_source", "list_files", "find_workflows", "media_info", "video_frames",
+    "read_web_page",
     # image i/o — moved to the shared layer, so they arrive here as the plain
     # callables every other core tool does and need the same wrapping. They used
     # to be agentY-local @tool functions; missing them here hands Strands a bare
@@ -188,6 +196,11 @@ INFO_TOOLS: list = [
     hf_repo,
     hf_file,
     inspect_workflow_file,
+    get_node_source,
+    find_workflows,
+    list_files,
+    media_info,
+    read_web_page,
     get_node_schema,
     search_nodes,
     # "What can this system do?" includes the MCP servers the user has set up, and
@@ -350,6 +363,10 @@ FIX_WORKFLOW_ASSEMBLY_TOOLS: list = [
     # Heal missing node types (execution failures)
     find_custom_node_for,
     install_custom_node,
+    # How a node works, and how other graphs used it
+    get_node_source,
+    find_workflows,
+    inspect_workflow_file,
     # Heal missing model files
     check_model,
     find_local_models,
@@ -387,6 +404,10 @@ GENERATE_NEW_WORKFLOW_TOOLS: list = [
     replace_node,
     save_workflow,
     validate_workflow,
+    # How a node works, and how other graphs used it
+    get_node_source,
+    find_workflows,
+    inspect_workflow_file,
     # Models
     check_model,
     find_local_models,
@@ -443,6 +464,13 @@ ORCHESTRATOR_TOOLS: list = [
     hf_file,
     find_local_models,
     inspect_workflow_file,
+    # Looking around: what run_script was mostly used for, one call each.
+    get_node_source,
+    list_files,
+    find_workflows,
+    media_info,
+    video_frames,
+    read_web_page,
     # Workflow SET-UP is delegated to prepare_workflow (research + deterministic
     # assembly). Workflow REPAIR (assembly + execution errors) and BUILD-FROM-
     # SCRATCH are the fix_workflow_assembly / generate_new_workflow specialists,
