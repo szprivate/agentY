@@ -209,6 +209,12 @@ def _provider_base_url(provider: str) -> str:
 # (_reembed_store), so nothing is lost.
 
 EMBEDDER_PRESETS: dict[str, dict] = {
+    # Runs inside agentY (fastembed, ONNX): no service, no key. The model is
+    # downloaded on first use into models/embeddings/ (gitignored), ~130 MB -
+    # the same nomic-embed-text v1.5 Ollama serves, quantised.
+    "local": {"label": "Local · nomic-embed-text v1.5 (built in, 130 MB download on first use)",
+              "provider": "fastembed", "model": "nomic-ai/nomic-embed-text-v1.5-Q",
+              "dims": 768, "key_env": ""},
     "ollama": {"label": "Ollama · nomic-embed-text (local)", "provider": "ollama",
                "model": "nomic-embed-text", "dims": 768, "key_env": ""},
     "dashscope": {"label": "Alibaba DashScope · text-embedding-v4", "provider": "openai",
@@ -218,6 +224,22 @@ EMBEDDER_PRESETS: dict[str, dict] = {
     "openai": {"label": "OpenAI · text-embedding-3-small", "provider": "openai",
                "model": "text-embedding-3-small", "dims": 1536, "key_env": "OPENAI_API_KEY"},
 }
+
+
+LOCAL_MODELS_DIR = _PROJECT_ROOT / "models" / "embeddings"
+
+
+def _use_local_model_dir() -> None:
+    """Where fastembed keeps its downloads: agentY's own gitignored models/ folder,
+    not the system temp folder (which it would otherwise use, and which gets
+    cleaned - the model would be fetched again)."""
+    LOCAL_MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("FASTEMBED_CACHE_PATH", str(LOCAL_MODELS_DIR))
+
+
+def _fastembed_installed() -> bool:
+    import importlib.util
+    return importlib.util.find_spec("fastembed") is not None
 
 
 def embedder_preset() -> str:
@@ -245,6 +267,9 @@ def embedder_choices() -> list[dict]:
         if name == "ollama":
             ok = _ollama_reachable()
             why = "" if ok else "Ollama is not running on this machine"
+        elif pr["provider"] == "fastembed":
+            ok = _fastembed_installed()
+            why = "" if ok else "needs the fastembed package (re-run the installer)"
         else:
             ok = bool(os.environ.get(pr["key_env"]))
             why = "" if ok else f"needs {pr['key_env']} (API keys above)"
@@ -303,6 +328,10 @@ def _build_config() -> dict:
         if pr["provider"] == "ollama":
             embedder = {"provider": "ollama", "config": {
                 "model": embed_model, "ollama_base_url": ollama_host, "embedding_dims": embed_dims}}
+        elif pr["provider"] == "fastembed":
+            _use_local_model_dir()
+            embedder = {"provider": "fastembed", "config": {
+                "model": embed_model, "embedding_dims": embed_dims}}
         else:
             cfg_e = {"model": embed_model, "embedding_dims": embed_dims,
                      "api_key": os.environ.get(pr["key_env"], "")}
@@ -418,6 +447,8 @@ def mem0_client() -> Any:
                        "Long-term memory > Embedder.", level="warning")
             _ensure_model(cfg["embedder"]["config"]["model"],
                           cfg["embedder"]["config"]["ollama_base_url"])
+        if cfg["embedder"]["provider"] == "fastembed":
+            _note_local_download(cfg["embedder"]["config"]["model"])
         _match_index_to_embedder(cfg)
 
         from mem0 import Memory
@@ -426,6 +457,15 @@ def mem0_client() -> Any:
                f" embed={cfg['embedder']['provider']}:{cfg['embedder']['config']['model']},"
                f" llm={cfg['llm']['provider']}:{cfg['llm']['config']['model']})")
         return _mem0_client
+
+
+def _note_local_download(model: str) -> None:
+    """The local embedder's first use fetches its model: say so, once."""
+    _use_local_model_dir()
+    stem = model.split("/")[-1].lower()
+    if not any(stem in p.name.lower() for p in LOCAL_MODELS_DIR.glob("*")):
+        notify(f"[memory] Downloading the local embedding model {model} (~130 MB, once) "
+               f"into {LOCAL_MODELS_DIR}...")
 
 
 def reset_client() -> None:

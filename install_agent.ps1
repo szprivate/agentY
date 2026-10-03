@@ -17,7 +17,7 @@
 
     Runs on Windows PowerShell 5.1+ and PowerShell 7+.
 
-    On macOS use install_agent.sh instead: same seven stages and the same
+    On macOS use install_agent.sh instead: same eight stages and the same
     switches, but it checks for the Command Line Tools that insightface and
     sam3 need to compile there, and it does not offer a CUDA build of torch
     that macOS has no wheel for.
@@ -332,6 +332,92 @@ function Find-ComfyUI {
     return $null
 }
 
+function Test-LocalPort {
+    param([int]$Port)
+    $c = New-Object System.Net.Sockets.TcpClient
+    try { return ($c.ConnectAsync("127.0.0.1", $Port).Wait(300) -and $c.Connected) }
+    catch { return $false }
+    finally { $c.Close() }
+}
+
+function Get-LocalSettings {
+    param([string]$File)
+    if (Test-Path $File) {
+        try { $o = Get-Content -LiteralPath $File -Raw | ConvertFrom-Json; if ($o) { return $o } } catch { }
+    }
+    return [pscustomobject]@{}
+}
+
+function Get-EmbedderPreset {
+    param([string]$File)
+    $o = Get-LocalSettings $File
+    if (($null -eq $o.PSObject.Properties['memory']) -or -not $o.memory) { return "" }
+    if (($null -eq $o.memory.PSObject.Properties['embedder']) -or -not $o.memory.embedder) { return "" }
+    if (($null -eq $o.memory.embedder.PSObject.Properties['preset'])) { return "" }
+    return [string]$o.memory.embedder.preset
+}
+
+function Set-EmbedderPreset {
+    param([string]$File, [string]$Preset)
+    $o = Get-LocalSettings $File
+    if (($null -eq $o.PSObject.Properties['memory']) -or -not $o.memory) {
+        $o | Add-Member -NotePropertyName memory -NotePropertyValue ([pscustomobject]@{}) -Force
+    }
+    if (($null -eq $o.memory.PSObject.Properties['embedder']) -or -not $o.memory.embedder) {
+        $o.memory | Add-Member -NotePropertyName embedder -NotePropertyValue ([pscustomobject]@{}) -Force
+    }
+    $o.memory.embedder | Add-Member -NotePropertyName preset -NotePropertyValue $Preset -Force
+    Write-TextNoBom $File ($o | ConvertTo-Json -Depth 20)
+}
+
+function Select-Embedder {
+    # Long-term memory needs an embedder: a model that turns text into vectors so
+    # memories can be found by meaning. Asked here because the old default (Ollama)
+    # is not on every machine, and without one memory silently does nothing.
+    param([string]$EnvFile, [string]$LocalSettings)
+    $ollamaUp = Test-LocalPort 11434
+    $choices = @(
+        @{ id = "local";     key = "";                  label = "Local - built into agentY, no service or key (downloads ~130 MB on first use)" },
+        @{ id = "ollama";    key = "";                  label = "Ollama - nomic-embed-text" + $(if ($ollamaUp) { " (running)" } else { " (not running now - start it before agentY)" }) },
+        @{ id = "dashscope"; key = "DASHSCOPE_API_KEY"; label = "Alibaba DashScope - text-embedding-v4" },
+        @{ id = "gemini";    key = "GEMINI_API_KEY";    label = "Google Gemini - gemini-embedding-001" },
+        @{ id = "openai";    key = "OPENAI_API_KEY";    label = "OpenAI - text-embedding-3-small" }
+    )
+    $current = Get-EmbedderPreset $LocalSettings
+    $default = if ($current) { $current } elseif ($ollamaUp) { "ollama" } else { "local" }
+    if ($NonInteractive) {
+        if (-not $current) { Set-EmbedderPreset $LocalSettings $default; Write-Success "Memory embedder: $default" }
+        else { Write-Success "Memory embedder: $current (kept)" }
+        return
+    }
+    Write-Host "  Long-term memory turns what the agent learns into vectors so it can find it" -ForegroundColor DarkGray
+    Write-Host "  again by meaning. Pick the model that does it (changeable later in Settings >" -ForegroundColor DarkGray
+    Write-Host "  Models > Memory embedder; switching re-embeds what is stored)." -ForegroundColor DarkGray
+    for ($i = 0; $i -lt $choices.Count; $i++) {
+        $c = $choices[$i]
+        $note = ""
+        if ($c.key -and (Test-Placeholder (Get-EnvValue $EnvFile $c.key))) { $note = "  [needs $($c.key) - asked next]" }
+        $mark = if ($c.id -eq $default) { "*" } else { " " }
+        Write-Host ("   {0}{1}) {2}{3}" -f $mark, ($i + 1), $c.label, $note) -ForegroundColor White
+    }
+    $defIdx = 1 + [array]::IndexOf(@($choices | ForEach-Object { $_.id }), $default)
+    while ($true) {
+        $ans = (Read-Host "    Memory embedder [1-$($choices.Count), Enter = $defIdx]").Trim()
+        if (-not $ans) { $ans = "$defIdx" }
+        $n = 0
+        if (-not [int]::TryParse($ans, [ref]$n) -or $n -lt 1 -or $n -gt $choices.Count) { Write-Fail "Type a number from the list."; continue }
+        $pick = $choices[$n - 1]
+        if ($pick.key -and (Test-Placeholder (Get-EnvValue $EnvFile $pick.key))) {
+            $val = Read-Secret $EnvFile $pick.key "$($pick.key) for the memory embedder" ""
+            if (-not $val) { Write-Fail "That embedder needs $($pick.key). Pick another, or enter the key."; continue }
+        }
+        Set-EmbedderPreset $LocalSettings $pick.id
+        Write-Success "Memory embedder: $($pick.id) (settings.local.json)"
+        if ($pick.id -eq "local") { Write-Info "Its model downloads into models\embeddings\ the first time memory is used." }
+        return
+    }
+}
+
 # =============================================================================
 Write-Host ""
 Write-Host "  agentY stack installer" -ForegroundColor Cyan
@@ -339,7 +425,7 @@ Write-Host "  repo root: $ProjectRoot" -ForegroundColor DarkGray
 Write-Host "  siblings : $ParentDir" -ForegroundColor DarkGray
 
 # -- 1. Preflight -------------------------------------------------------------
-Write-Header "1 / 7  Preflight"
+Write-Header "1 / 8  Preflight"
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     Exit-WithError "'git' is not on PATH. Install Git and re-run."
 }
@@ -350,7 +436,7 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 Write-Success "uv found: $(uv --version)"
 
 # -- 2. Sibling repos (agenty_core, agentY-mcp) -------------------------------
-Write-Header "2 / 7  Sibling repos"
+Write-Header "2 / 8  Sibling repos"
 $CoreDir = Join-Path $ParentDir "agenty_core"
 Ensure-Repo -Name "agenty_core" -Url "https://github.com/szprivate/agenty_core.git" -Dir $CoreDir -Required
 if (-not (Test-Path (Join-Path $CoreDir "pyproject.toml"))) {
@@ -365,11 +451,11 @@ if (-not $SkipMcp) {
 }
 
 # -- 3. agentY environment ----------------------------------------------------
-Write-Header "3 / 7  agentY environment"
+Write-Header "3 / 8  agentY environment"
 Setup-Venv -Name "agentY" -Dir $ProjectRoot -WithTorch
 
 # -- 4. Secrets (.env) --------------------------------------------------------
-Write-Header "4 / 7  Secrets (.env)"
+Write-Header "4 / 8  Secrets (.env)"
 $EnvFile = Ensure-EnvFile $ProjectRoot
 if ($NonInteractive) {
     Write-Info "Non-interactive: leaving .env values as-is. Edit $EnvFile to set keys."
@@ -382,8 +468,12 @@ $comfyKey = Read-Secret $EnvFile "COMFYUI_API_KEY"   "ComfyUI API key (optional 
 $null     = Read-Secret $EnvFile "DASHSCOPE_API_KEY" "DashScope / Alibaba Model Studio key (optional)"  "For Qwen models: https://bailian.console.alibabacloud.com/"
 Write-Success "agentY .env ready ($EnvFile)"
 
-# -- 5. ComfyUI: locate + install the sidebar node ----------------------------
-Write-Header "5 / 7  ComfyUI sidebar node"
+# -- 5. Long-term memory embedder ----------------------------------------------
+Write-Header "5 / 8  Memory embedder"
+Select-Embedder -EnvFile $EnvFile -LocalSettings (Join-Path $ProjectRoot "config\settings.local.json")
+
+# -- 6. ComfyUI: locate + install the sidebar node ----------------------------
+Write-Header "6 / 8  ComfyUI sidebar node"
 $ResolvedComfy = $null
 if ($SkipComfyNode) {
     Write-Info "Skipping ComfyUI node install (-SkipComfyNode)"
@@ -449,8 +539,8 @@ if ($SkipComfyNode) {
     }
 }
 
-# -- 6. agentY-mcp environment (optional) -------------------------------------
-Write-Header "6 / 7  agentY-mcp environment"
+# -- 7. agentY-mcp environment (optional) -------------------------------------
+Write-Header "7 / 8  agentY-mcp environment"
 if ($SkipMcp -or -not (Test-Path (Join-Path $McpDir "requirements.txt"))) {
     Write-Info "Skipping agentY-mcp environment."
 } else {
@@ -463,8 +553,8 @@ if ($SkipMcp -or -not (Test-Path (Join-Path $McpDir "requirements.txt"))) {
     Write-Success "agentY-mcp ready ($McpDir)"
 }
 
-# -- 7. Verify ----------------------------------------------------------------
-Write-Header "7 / 7  Dependency check"
+# -- 8. Verify ----------------------------------------------------------------
+Write-Header "8 / 8  Dependency check"
 Test-Environment -Dir $ProjectRoot
 
 # -- Done ---------------------------------------------------------------------

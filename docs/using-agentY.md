@@ -1794,10 +1794,30 @@ line names both:
 
 Leave `memory.llm.model` **blank** and it follows the **Fast utility** tier,
 bringing that provider's endpoint and API key with it. Fill it in only to run
-fact extraction somewhere else. Both live under Settings ▸ *Show advanced
-settings* ▸ Memory.
+fact extraction somewhere else. Its raw fields live under Settings ▸ *Show
+advanced settings* ▸ Memory.
 
-> Changing the embedder model or `embedding_dims` invalidates the index on disk.
+### Choosing the embedder
+
+**Settings ▸ Models ▸ Memory embedder** (the installer asks too). A choice that
+cannot work on this machine is greyed out with the reason.
+
+| choice | model | needs |
+|---|---|---|
+| **Local** | `nomic-embed-text` v1.5, quantised, run inside agentY (fastembed) | nothing — the model (~130 MB) downloads into `models/embeddings/` the first time memory is used, never into the repo |
+| **Ollama** | `nomic-embed-text` | Ollama running |
+| **Alibaba DashScope** | `text-embedding-v4` | `DASHSCOPE_API_KEY` (and the same endpoint the agents use) |
+| **Google Gemini** | `gemini-embedding-001` | `GEMINI_API_KEY` |
+| **OpenAI** | `text-embedding-3-small` | `OPENAI_API_KEY` |
+
+Anthropic has no embedding model, so the Anthropic key cannot be used here.
+
+**Switching keeps your memories.** Vectors from two embedders cannot be compared,
+so the index records which embedder built it (`memory/embedder.json`), and a
+different one re-embeds every stored memory — ids, texts, metadata and
+timestamps kept — before memory is used again. It is tried on one memory first;
+if the new embedder fails, nothing is touched. The old index is kept in
+`memory/backup-embedder-<time>/`. A few hundred memories take seconds.
 
 ---
 

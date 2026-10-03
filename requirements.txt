@@ -155,3 +155,8 @@ triton>=3.0.0 ; sys_platform == "linux"
 #
 # NOTE: sam3 constrains numpy<2.4, so installing it downgrades numpy (2.4.4 ->
 # 2.3.5 here). `pip check` stays clean and every agentY module still imports.
+
+# Long-term memory's built-in embedder (Settings > Models > Memory embedder:
+# Local). The package only - its model is downloaded on first use into
+# models/embeddings/, never into this repo.
+fastembed>=0.8

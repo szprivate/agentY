@@ -121,6 +121,23 @@ class Choosing(unittest.TestCase):
         self.assertEqual(e["config"]["api_key"], "k")
         self.assertEqual(cfg["vector_store"]["config"]["embedding_model_dims"], 1024)
 
+    def test_the_local_preset_runs_in_process_and_keeps_its_model_out_of_the_repo(self):
+        with mock.patch.object(mem, "_get", side_effect=lambda env, *path, default="": (
+                "local" if path[-1:] == ("preset",) else default)),              mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("FASTEMBED_CACHE_PATH", None)
+            cfg = mem._build_config()
+            cache = os.environ.get("FASTEMBED_CACHE_PATH", "")
+        e = cfg["embedder"]
+        self.assertEqual(e["provider"], "fastembed")
+        self.assertEqual(e["config"]["model"], "nomic-ai/nomic-embed-text-v1.5-Q")
+        self.assertEqual(e["config"]["embedding_dims"], 768)
+        self.assertEqual(Path(cache), mem.LOCAL_MODELS_DIR)
+        self.assertEqual(mem.LOCAL_MODELS_DIR.relative_to(mem._PROJECT_ROOT).parts[0], "models")
+        import subprocess
+        ignored = subprocess.run(["git", "check-ignore", "-q", str(mem.LOCAL_MODELS_DIR / "x.onnx")],
+                                 cwd=str(mem._PROJECT_ROOT))
+        self.assertEqual(ignored.returncode, 0, "models/embeddings must be gitignored")
+
     def test_choices_say_what_is_missing(self):
         with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "g"}, clear=False), \
              mock.patch.object(mem, "_ollama_reachable", return_value=False):
@@ -130,6 +147,11 @@ class Choosing(unittest.TestCase):
         self.assertFalse(by["ollama"]["available"])
         self.assertIn("not running", by["ollama"]["why"])
         self.assertIn("OPENAI_API_KEY", by["openai"]["why"])
+        self.assertIn("local", by)
+        with mock.patch.object(mem, "_fastembed_installed", return_value=False):
+            local = {c["id"]: c for c in mem.embedder_choices()}["local"]
+        self.assertFalse(local["available"])
+        self.assertIn("fastembed", local["why"])
 
 
 if __name__ == "__main__":

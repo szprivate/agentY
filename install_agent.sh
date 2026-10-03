@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install_agent.sh — One-shot installer / bootstrapper for the full agentY stack.
 #
-# The macOS (and Linux) counterpart of install_agent.ps1: the same seven stages, in
+# The macOS (and Linux) counterpart of install_agent.ps1: the same eight stages, in
 # the same order, with the same switches. Sets up the four repos that make up
 # agentY, prompts for the secrets it needs, and drops the chat UI into your ComfyUI:
 #
@@ -368,8 +368,94 @@ plain "  repo root: $PROJECT_ROOT" "$C_GRAY"
 plain "  siblings : $PARENT_DIR" "$C_GRAY"
 plain "  platform : $(uname -s) $(uname -m)" "$C_GRAY"
 
+embedder_preset() {   # $1 = settings.local.json -> echoes memory.embedder.preset or nothing
+  python3 - "$1" <<'PY' 2>/dev/null
+import json, sys
+try:
+    print(((json.load(open(sys.argv[1], encoding="utf-8")).get("memory") or {}).get("embedder") or {}).get("preset") or "")
+except Exception:
+    print("")
+PY
+}
+
+set_embedder_preset() {   # $1 = settings.local.json  $2 = preset
+  python3 - "$1" "$2" <<'PY'
+import json, os, sys
+path, preset = sys.argv[1], sys.argv[2]
+try:
+    data = json.load(open(path, encoding="utf-8"))
+    if not isinstance(data, dict):
+        data = {}
+except Exception:
+    data = {}
+mem = data["memory"] = data.get("memory") if isinstance(data.get("memory"), dict) else {}
+emb = mem["embedder"] = mem.get("embedder") if isinstance(mem.get("embedder"), dict) else {}
+emb["preset"] = preset
+os.makedirs(os.path.dirname(path), exist_ok=True)
+json.dump(data, open(path, "w", encoding="utf-8"), indent=2)
+PY
+}
+
+ollama_running() {
+  python3 -c "import socket,sys; s=socket.socket(); s.settimeout(0.3); sys.exit(0 if s.connect_ex(('127.0.0.1',11434))==0 else 1)" 2>/dev/null
+}
+
+# Long-term memory needs an embedder: a model that turns text into vectors so
+# memories can be found by meaning. Asked here because the old default (Ollama)
+# is not on every machine, and without one memory silently does nothing.
+select_embedder() {   # $1 = .env  $2 = settings.local.json
+  local env_file="$1" local_settings="$2" ollama_note current default
+  if ollama_running; then ollama_note=" (running)"; else ollama_note=" (not running now - start it before agentY)"; fi
+  local ids="local ollama dashscope gemini openai"
+  local keys=" - - DASHSCOPE_API_KEY GEMINI_API_KEY OPENAI_API_KEY"
+  current="$(embedder_preset "$local_settings")"
+  if [ -n "$current" ]; then default="$current"; elif ollama_running; then default="ollama"; else default="local"; fi
+  if [ "$NON_INTERACTIVE" = "1" ]; then
+    if [ -z "$current" ]; then set_embedder_preset "$local_settings" "$default"; success "Memory embedder: $default"
+    else success "Memory embedder: $current (kept)"; fi
+    return
+  fi
+  plain "  Long-term memory turns what the agent learns into vectors so it can find it" "$C_GRAY"
+  plain "  again by meaning. Pick the model that does it (changeable later in Settings >" "$C_GRAY"
+  plain "  Models > Memory embedder; switching re-embeds what is stored)." "$C_GRAY"
+  local i=1 id key note mark def_idx=1
+  for id in $ids; do
+    key="$(printf '%s' "$keys" | awk -v n="$i" '{print $n}')"
+    case "$id" in
+      local) label="Local - built into agentY, no service or key (downloads ~130 MB on first use)" ;;
+      ollama) label="Ollama - nomic-embed-text$ollama_note" ;;
+      dashscope) label="Alibaba DashScope - text-embedding-v4" ;;
+      gemini) label="Google Gemini - gemini-embedding-001" ;;
+      openai) label="OpenAI - text-embedding-3-small" ;;
+    esac
+    note=""
+    if [ "$key" != "-" ] && is_placeholder "$(get_env_value "$env_file" "$key")"; then note="  [needs $key - asked next]"; fi
+    mark=" "; [ "$id" = "$default" ] && { mark="*"; def_idx=$i; }
+    plain "   $mark$i) $label$note" "$C_WHITE"
+    i=$((i + 1))
+  done
+  local ans pick pick_key val
+  while true; do
+    printf '    Memory embedder [1-5, Enter = %s]: ' "$def_idx"
+    IFS= read -r ans
+    ans="$(printf '%s' "${ans:-}" | sed 's/^ *//;s/ *$//')"
+    [ -n "$ans" ] || ans="$def_idx"
+    case "$ans" in 1|2|3|4|5) ;; *) fail "Type a number from the list."; continue ;; esac
+    pick="$(printf '%s' "$ids" | awk -v n="$ans" '{print $n}')"
+    pick_key="$(printf '%s' "$keys" | awk -v n="$ans" '{print $n}')"
+    if [ "$pick_key" != "-" ] && is_placeholder "$(get_env_value "$env_file" "$pick_key")"; then
+      val="$(read_secret "$env_file" "$pick_key" "$pick_key for the memory embedder" "")"
+      if [ -z "$val" ]; then fail "That embedder needs $pick_key. Pick another, or enter the key."; continue; fi
+    fi
+    set_embedder_preset "$local_settings" "$pick"
+    success "Memory embedder: $pick (settings.local.json)"
+    [ "$pick" = "local" ] && info "Its model downloads into models/embeddings/ the first time memory is used."
+    return
+  done
+}
+
 # -- 1. Preflight -------------------------------------------------------------
-header "1 / 7  Preflight"
+header "1 / 8  Preflight"
 command -v git >/dev/null 2>&1 || die "'git' is not on PATH. Install Git and re-run."
 success "git found"
 if ! command -v uv >/dev/null 2>&1; then
@@ -408,7 +494,7 @@ if [ "$IS_MAC" = "1" ]; then
 fi
 
 # -- 2. Sibling repos (agenty_core, agentY-mcp) -------------------------------
-header "2 / 7  Sibling repos"
+header "2 / 8  Sibling repos"
 CORE_DIR="$PARENT_DIR/agenty_core"
 ensure_repo "agenty_core" "https://github.com/szprivate/agenty_core.git" "$CORE_DIR" required
 [ -f "$CORE_DIR/pyproject.toml" ] || die "agenty_core looks incomplete at $CORE_DIR (no pyproject.toml). agentY's requirements.txt installs it editable via '-e ../agenty_core'."
@@ -421,11 +507,11 @@ else
 fi
 
 # -- 3. agentY environment ----------------------------------------------------
-header "3 / 7  agentY environment"
+header "3 / 8  agentY environment"
 setup_venv "agentY" "$PROJECT_ROOT" with-torch
 
 # -- 4. Secrets (.env) --------------------------------------------------------
-header "4 / 7  Secrets (.env)"
+header "4 / 8  Secrets (.env)"
 ENV_FILE="$(ensure_env_file "$PROJECT_ROOT")" || die "Could not prepare agentY's .env."
 if [ "$NON_INTERACTIVE" = "1" ]; then
   info "Non-interactive: leaving .env values as-is. Edit $ENV_FILE to set keys."
@@ -438,8 +524,12 @@ COMFY_KEY_VAL="$(read_secret "$ENV_FILE" "COMFYUI_API_KEY"  "ComfyUI API key (op
 read_secret "$ENV_FILE" "DASHSCOPE_API_KEY" "DashScope / Alibaba Model Studio key (optional)" "For Qwen models: https://bailian.console.alibabacloud.com/" >/dev/null
 success "agentY .env ready ($ENV_FILE)"
 
-# -- 5. ComfyUI: locate + install the sidebar node ----------------------------
-header "5 / 7  ComfyUI sidebar node"
+# -- 5. Long-term memory embedder ----------------------------------------------
+header "5 / 8  Memory embedder"
+select_embedder "$ENV_FILE" "$PROJECT_ROOT/config/settings.local.json"
+
+# -- 6. ComfyUI: locate + install the sidebar node ----------------------------
+header "6 / 8  ComfyUI sidebar node"
 RESOLVED_COMFY=""
 if [ "$SKIP_COMFY_NODE" = "1" ]; then
   info "Skipping ComfyUI node install (--skip-comfy-node)"
@@ -527,8 +617,8 @@ PY
   fi
 fi
 
-# -- 6. agentY-mcp environment (optional) -------------------------------------
-header "6 / 7  agentY-mcp environment"
+# -- 7. agentY-mcp environment (optional) -------------------------------------
+header "7 / 8  agentY-mcp environment"
 if [ "$SKIP_MCP" = "1" ] || [ ! -f "$MCP_DIR/requirements.txt" ]; then
   info "Skipping agentY-mcp environment."
 else
@@ -545,8 +635,8 @@ else
   success "agentY-mcp ready ($MCP_DIR)"
 fi
 
-# -- 7. Verify ----------------------------------------------------------------
-header "7 / 7  Dependency check"
+# -- 8. Verify ----------------------------------------------------------------
+header "8 / 8  Dependency check"
 chmod +x "$PROJECT_ROOT/run_agent.sh" 2>/dev/null
 test_environment "$PROJECT_ROOT"
 

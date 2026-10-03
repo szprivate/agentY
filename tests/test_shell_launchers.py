@@ -155,13 +155,24 @@ class LauncherParity(unittest.TestCase):
                 self.assertIn(ps_name, ps1)
                 self.assertIn(sh_name, sh)
 
-    def test_both_installers_cover_the_same_seven_stages(self):
+    def test_both_installers_cover_the_same_eight_stages(self):
         ps1 = (ROOT / "install_agent.ps1").read_text(encoding="utf-8", errors="replace")
         sh = (ROOT / "install_agent.sh").read_text(encoding="utf-8")
-        for stage in ("1 / 7", "2 / 7", "3 / 7", "4 / 7", "5 / 7", "6 / 7", "7 / 7"):
+        for stage in ("1 / 8  Preflight", "2 / 8  Sibling repos", "3 / 8  agentY environment",
+                      "4 / 8  Secrets", "5 / 8  Memory embedder", "6 / 8  ComfyUI sidebar node",
+                      "7 / 8  agentY-mcp environment", "8 / 8  Dependency check"):
             with self.subTest(stage=stage):
                 self.assertIn(stage, ps1)
                 self.assertIn(stage, sh)
+
+    def test_both_installers_offer_every_memory_embedder(self):
+        from src.utils.memory import EMBEDDER_PRESETS
+        ps1 = (ROOT / "install_agent.ps1").read_text(encoding="utf-8", errors="replace")
+        sh = (ROOT / "install_agent.sh").read_text(encoding="utf-8")
+        for name in EMBEDDER_PRESETS:
+            with self.subTest(embedder=name):
+                self.assertIn(f'id = "{name}"', ps1)
+                self.assertIn(name, sh.split('local ids="', 1)[1].split('"', 1)[0].split())
 
     def test_both_installers_ask_for_the_same_secrets(self):
         ps1 = (ROOT / "install_agent.ps1").read_text(encoding="utf-8", errors="replace")
