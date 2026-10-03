@@ -107,6 +107,29 @@ def peek() -> list[str]:
         return list(_st().pending_paths)
 
 
+def withdraw(path: str = "") -> list[str]:
+    """Take *path* (every pending path when blank) back off this turn's queue.
+
+    Signalled workflows reach ComfyUI only when the turn ends, so until then
+    ComfyUI's own queue is empty and "nothing is queued" is false. Returns the
+    paths removed.
+    """
+    want = str(path or "").strip()
+    with _lock:
+        st = _st()
+        if not want:
+            gone, st.pending_paths = list(st.pending_paths), []
+            return gone
+        from pathlib import Path as _P
+        try:
+            key = str(_P(want).resolve()).lower()
+        except Exception:  # noqa: BLE001
+            key = want.lower()
+        gone = [p for p in st.pending_paths if p.lower() in (key, want.lower())]
+        st.pending_paths = [p for p in st.pending_paths if p not in gone]
+        return gone
+
+
 def clear_and_get() -> list[str]:
     """Atomically read and clear all pending paths.
 

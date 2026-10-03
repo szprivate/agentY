@@ -150,7 +150,7 @@ from agenty_core.tools.workspace_tools import (  # noqa: F401,E402
 
 _SHARED_CORE_TOOLS = [
     # comfyui
-    "interrupt_execution", "free_memory", "queue", "get_history",
+    "interrupt_execution", "free_memory", "get_history",
     "get_prompt_status_by_id", "clear_history", "get_logs", "get_system_stats",
     "get_comfyui_dirs", "get_agent_output_dirs", "submit_prompt", "duplicate_workflow", "get_node_schema",
     "get_workflow_node_info", "search_nodes", "find_custom_node_for", "install_custom_node",
@@ -183,6 +183,9 @@ _SHARED_CORE_TOOLS = [
 ]
 for _n in _SHARED_CORE_TOOLS:
     globals()[_n] = _strands_tool(globals()[_n])
+# agentY's own: ComfyUI's queue plus the workflows signalled this turn, which
+# reach ComfyUI only when it ends (workflow_handoff.queue).
+from src.tools.workflow_handoff import queue, withdraw_workflow  # noqa: E402,F401
 del _n
 
 # ---------------------------------------------------------------------------
@@ -496,6 +499,8 @@ ORCHESTRATOR_TOOLS: list = [
     open_workflow_in_canvas,
     # Handoff to the executor (prepare_workflow → signal, never submit directly)
     signal_workflow_ready,
+    # ...and taking a signal back before the turn ends and it is submitted
+    withdraw_workflow,
     # Bake a chain of standin workflows into canvas subgraphs (a hook's `bake` switch)
     bake_hooks_to_canvas,
     # Image handling (the orchestrator owns input prep: stage + analyze)

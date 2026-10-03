@@ -142,9 +142,72 @@ def signal_workflow_ready(workflow_path: str) -> str:
         "workflow_path": resolved,
         "message": (
             "Workflow has been added to the execution queue. "
-            "The pipeline will submit it to ComfyUI, run Vision QA, "
-            "and save outputs to ./output automatically. "
+            "The pipeline will submit it to ComfyUI when your turn ends, run Vision "
+            "QA, and save outputs to ./output automatically. Until then it is NOT in "
+            "ComfyUI's queue; if you decide it must not run after all, call "
+            "withdraw_workflow — an empty ComfyUI queue does not mean it won't run. "
             "For batch runs, call signal_workflow_ready for each duplicate workflow; "
             "otherwise your work here is done — no further tool calls are needed."
         ),
     })
+
+
+@tool
+def withdraw_workflow(workflow_path: str = "") -> str:
+    """Take a workflow you signalled this turn back, so it does NOT run.
+
+    ``signal_workflow_ready`` holds a workflow until your turn ends and only then
+    submits it to ComfyUI — so ComfyUI's queue shows nothing in the meantime, and
+    "nothing is queued" is not true. Call this the moment you decide a signalled
+    workflow must not run (a model is missing, the user said not to run it, you
+    signalled the wrong file).
+
+    Args:
+        workflow_path: The path you signalled. Blank withdraws every workflow
+            signalled this turn.
+    """
+    from src.utils.workflow_signal import peek, withdraw
+    gone = withdraw(workflow_path)
+    left = peek()
+    if gone:
+        _note("↩️ Withdrawn — will not run: " + ", ".join(Path(g).name for g in gone))
+    return json.dumps({
+        "ok": bool(gone),
+        "withdrawn": gone,
+        "still_signalled": left,
+        **({} if gone else {"note": "Nothing matching was signalled this turn."}),
+    })
+
+
+def queue(action: str = "status") -> str:
+    """Get or manage the ComfyUI execution queue.
+
+    The answer also lists ``signalled_this_turn``: workflows you passed to
+    ``signal_workflow_ready`` that are submitted only when your turn ends, so
+    they are not in ComfyUI's queue yet. Use ``withdraw_workflow`` to stop one.
+
+    Args:
+        action: 'status' (view queue), 'clear' (clear pending), or 'clear_running' (stop running items).
+    """
+    from agenty_core.tools.comfyui import queue as _core_queue
+    out = _core_queue(action)
+    try:
+        from src.utils.workflow_signal import peek
+        pending = peek()
+    except Exception:  # noqa: BLE001
+        return out
+    if not pending:
+        return out
+    try:
+        data = json.loads(out)
+    except Exception:  # noqa: BLE001
+        data = {"comfyui": out}
+    if not isinstance(data, dict):
+        data = {"comfyui": data}
+    data["signalled_this_turn"] = pending
+    data["note"] = (f"{len(pending)} workflow(s) you signalled will be submitted to ComfyUI "
+                    "when this turn ends — withdraw_workflow stops that.")
+    return json.dumps(data)
+
+
+queue = tool(queue)
