@@ -170,18 +170,87 @@ def _inherited_endpoint(provider: str) -> dict | None:
     Returns None when the provider isn't one we can reach OpenAI-compatibly.
     """
     p = (provider or "").strip().lower()
-    settings = _load_settings()
     if p in ("dashscope", "qwen", "modelstudio", "alibaba"):
-        return {
-            "base_url": str(((settings.get("llm") or {}).get("dashscope") or {}).get("base_url") or "").strip(),
-            "api_key_env": "DASHSCOPE_API_KEY",
-        }
+        return {"base_url": _provider_base_url("dashscope"), "api_key_env": "DASHSCOPE_API_KEY"}
     if p == "openai":
-        return {"base_url": "", "api_key_env": "OPENAI_API_KEY"}
+        return {"base_url": _provider_base_url("openai"), "api_key_env": "OPENAI_API_KEY"}
     if p in ("google", "gemini"):
-        return {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-                "api_key_env": "GEMINI_API_KEY"}
+        return {"base_url": _provider_base_url("gemini"), "api_key_env": "GEMINI_API_KEY"}
     return None
+
+
+def _provider_base_url(provider: str) -> str:
+    """A provider's endpoint, resolved exactly as the agents resolve it.
+
+    The DASHSCOPE_BASE_URL in .env (a workspace endpoint) overrides the settings
+    file's; reading only the settings file sent memory to a different endpoint
+    than the agents, where the same key is refused (401).
+    """
+    defaults = {"dashscope": ("DASHSCOPE_BASE_URL", "dashscope", ""),
+                "openai": ("OPENAI_BASE_URL", "openai", ""),
+                "gemini": ("GEMINI_BASE_URL", "google",
+                           "https://generativelanguage.googleapis.com/v1beta/openai/")}
+    env, section, default = defaults[provider]
+    try:
+        from src.agent import _cfg
+        return str(_cfg(env, section, "base_url", default=default) or default).strip()
+    except Exception:  # noqa: BLE001
+        return (os.environ.get(env) or default).strip()
+
+
+# ---------------------------------------------------------------------------
+# Embedder choice (Settings > Long-term memory > Embedder)
+# ---------------------------------------------------------------------------
+#
+# An embedder is not a chat model: it turns text into vectors, and only vectors
+# from the same embedder can be compared. Each provider agentY talks to has one,
+# reached with the key it already uses. Ollama's is the local default; a machine
+# without Ollama picks another here. Switching re-embeds every stored memory
+# (_reembed_store), so nothing is lost.
+
+EMBEDDER_PRESETS: dict[str, dict] = {
+    "ollama": {"label": "Ollama · nomic-embed-text (local)", "provider": "ollama",
+               "model": "nomic-embed-text", "dims": 768, "key_env": ""},
+    "dashscope": {"label": "Alibaba DashScope · text-embedding-v4", "provider": "openai",
+                  "model": "text-embedding-v4", "dims": 1024, "key_env": "DASHSCOPE_API_KEY"},
+    "gemini": {"label": "Google Gemini · gemini-embedding-001", "provider": "openai",
+               "model": "gemini-embedding-001", "dims": 768, "key_env": "GEMINI_API_KEY"},
+    "openai": {"label": "OpenAI · text-embedding-3-small", "provider": "openai",
+               "model": "text-embedding-3-small", "dims": 1536, "key_env": "OPENAI_API_KEY"},
+}
+
+
+def embedder_preset() -> str:
+    """The chosen preset, or "" for the hand-set fields (memory.embedder.*)."""
+    name = _get("MEMORY_EMBEDDER_PRESET", "memory", "embedder", "preset", default="").strip().lower()
+    return name if name in EMBEDDER_PRESETS else ""
+
+
+def _ollama_reachable() -> bool:
+    import socket
+    from urllib.parse import urlparse
+    from src.utils.settings import ollama_host
+    u = urlparse(ollama_host())
+    try:
+        with socket.create_connection((u.hostname or "127.0.0.1", u.port or 11434), timeout=0.3):
+            return True
+    except OSError:
+        return False
+
+
+def embedder_choices() -> list[dict]:
+    """What the settings page offers: every preset, and whether it can work here."""
+    out = []
+    for name, pr in EMBEDDER_PRESETS.items():
+        if name == "ollama":
+            ok = _ollama_reachable()
+            why = "" if ok else "Ollama is not running on this machine"
+        else:
+            ok = bool(os.environ.get(pr["key_env"]))
+            why = "" if ok else f"needs {pr['key_env']} (API keys above)"
+        out.append({"id": name, "label": pr["label"], "available": ok, "why": why,
+                    "dims": pr["dims"]})
+    return out
 
 
 def _openai_compat_cfg(kind: str, extra: dict, fallback: dict | None = None) -> dict:
@@ -227,7 +296,21 @@ def _build_config() -> dict:
     embed_dims = int(_get("MEMORY_EMBED_DIMS", "memory", "embedder", "embedding_dims",
                           default=_get("__unset__", "memory", "embed_model_dims",
                                        default="768" if embed_provider == "ollama" else "1024")))
-    if embed_provider == "ollama":
+    preset = embedder_preset()
+    if preset:
+        pr = EMBEDDER_PRESETS[preset]
+        embed_model, embed_dims = pr["model"], int(pr["dims"])
+        if pr["provider"] == "ollama":
+            embedder = {"provider": "ollama", "config": {
+                "model": embed_model, "ollama_base_url": ollama_host, "embedding_dims": embed_dims}}
+        else:
+            cfg_e = {"model": embed_model, "embedding_dims": embed_dims,
+                     "api_key": os.environ.get(pr["key_env"], "")}
+            base = _provider_base_url(preset)
+            if base:
+                cfg_e["openai_base_url"] = base
+            embedder = {"provider": "openai", "config": cfg_e}
+    elif embed_provider == "ollama":
         embedder = {"provider": "ollama", "config": {
             "model": embed_model, "ollama_base_url": ollama_host, "embedding_dims": embed_dims}}
     else:
@@ -329,8 +412,13 @@ def mem0_client() -> Any:
         cfg = _build_config()
         # Only Ollama needs a local pull; OpenAI-compatible providers are remote.
         if cfg["embedder"]["provider"] == "ollama":
+            if not _ollama_reachable():
+                notify("[memory] The memory embedder is Ollama, and Ollama is not running. "
+                       "Start it, or choose another embedder in agentY Settings > "
+                       "Long-term memory > Embedder.", level="warning")
             _ensure_model(cfg["embedder"]["config"]["model"],
                           cfg["embedder"]["config"]["ollama_base_url"])
+        _match_index_to_embedder(cfg)
 
         from mem0 import Memory
         _mem0_client = Memory.from_config(config_dict=cfg)
@@ -338,6 +426,137 @@ def mem0_client() -> Any:
                f" embed={cfg['embedder']['provider']}:{cfg['embedder']['config']['model']},"
                f" llm={cfg['llm']['provider']}:{cfg['llm']['config']['model']})")
         return _mem0_client
+
+
+def reset_client() -> None:
+    """Forget the memory client, so the next use builds it from the settings now
+    in force (re-embedding the store first if the embedder changed)."""
+    global _mem0_client
+    with _mem0_lock:
+        _mem0_client = None
+
+
+def rebuild_in_background() -> None:
+    """After the embedder setting changed: build the new client - re-embedding
+    every memory - now, on a thread, rather than inside someone's next turn."""
+    reset_client()
+
+    def _run():
+        try:
+            mem0_client()
+        except Exception as exc:  # noqa: BLE001
+            notify(f"[memory] could not switch the embedder: {exc}", level="warning")
+
+    threading.Thread(target=_run, name="memory-reembed", daemon=True).start()
+
+
+# ---------------------------------------------------------------------------
+# Which embedder built the index - and re-embedding when that changes
+# ---------------------------------------------------------------------------
+
+_COLLECTION = "agenty_memory"
+_FINGERPRINT_FILE = "embedder.json"
+
+
+def _fingerprint(cfg: dict) -> dict:
+    e = cfg["embedder"]
+    c = e.get("config") or {}
+    return {"provider": e.get("provider"), "model": c.get("model"),
+            "dims": int(c.get("embedding_dims") or 0),
+            "endpoint": c.get("openai_base_url") or ("ollama" if e.get("provider") == "ollama" else "")}
+
+
+def _index_dims(store: Path) -> int | None:
+    try:
+        import faiss
+        return int(faiss.read_index(str(store / f"{_COLLECTION}.faiss")).d)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _match_index_to_embedder(cfg: dict) -> None:
+    """Make the stored index one the configured embedder can search.
+
+    Vectors from two embedders cannot be compared - not even two of the same size
+    (nomic-embed-text and gemini-embedding-001 are both 768). So the index
+    records which embedder built it, and a different one re-embeds every memory
+    before anything is searched. The first run with this record assumes the
+    current embedder built the index, unless its size says otherwise.
+    """
+    store = Path(cfg["vector_store"]["config"]["path"])
+    fp_path = store / _FINGERPRINT_FILE
+    want = _fingerprint(cfg)
+    if not (store / f"{_COLLECTION}.json").exists():
+        _write_fp(fp_path, want)
+        return
+    try:
+        have = json.loads(fp_path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        have = None
+    if have is None and _index_dims(store) in (None, want["dims"]):
+        _write_fp(fp_path, want)
+        return
+    if have == want:
+        return
+    _reembed_store(cfg, store)
+    _write_fp(fp_path, want)
+
+
+def _write_fp(path: Path, fp: dict) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(fp, indent=2), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _reembed_store(cfg: dict, store: Path) -> int:
+    """Re-embed every stored memory with the configured embedder.
+
+    Texts, ids, metadata and timestamps are kept: only the vectors change. Works
+    from the docstore alone, so the old embedder need not be reachable (Ollama
+    uninstalled). The new embedder is tried on one memory before anything is
+    touched; the old index is kept under memory/backup-embedder-<time>/.
+    """
+    import shutil
+    import tempfile
+    from concurrent.futures import ThreadPoolExecutor
+
+    from mem0.utils.factory import EmbedderFactory
+    from mem0.vector_stores.faiss import FAISS
+
+    data = json.loads((store / f"{_COLLECTION}.json").read_text(encoding="utf-8"))
+    docstore = data.get("docstore") or {}
+    order = [v for _k, v in sorted((data.get("index_to_id") or {}).items(), key=lambda kv: int(kv[0]))]
+    seen = set(order)
+    order += [i for i in docstore if i not in seen]
+    order = [i for i in order if isinstance(docstore.get(i), dict) and docstore[i].get("data")]
+    e = cfg["embedder"]
+    dims = int(e["config"]["embedding_dims"])
+    embedder = EmbedderFactory.create(e["provider"], e["config"], cfg["vector_store"]["config"])
+    notify(f"[memory] The embedder changed - re-embedding {len(order)} memories with "
+           f"{e['config'].get('model')}...")
+    if order:
+        embedder.embed(docstore[order[0]]["data"], "add")   # fails here, before anything moves
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        vectors = list(pool.map(lambda i: embedder.embed(docstore[i]["data"], "add"), order))
+    tmp = Path(tempfile.mkdtemp(prefix="reembed-", dir=str(store)))
+    try:
+        fresh = FAISS(collection_name=_COLLECTION, path=str(tmp), embedding_model_dims=dims)
+        if order:
+            fresh.insert(vectors=vectors, payloads=[docstore[i] for i in order], ids=order)
+        backup = store / time.strftime("backup-embedder-%Y%m%d-%H%M%S")
+        backup.mkdir(parents=True, exist_ok=True)
+        for f in list(store.glob(f"{_COLLECTION}*")):
+            if f.is_file() and f.suffix in (".faiss", ".json", ".pkl"):
+                shutil.move(str(f), str(backup / f.name))
+        for name in (f"{_COLLECTION}.faiss", f"{_COLLECTION}.json"):
+            if (tmp / name).exists():
+                shutil.move(str(tmp / name), str(store / name))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    notify(f"[memory] Re-embedded {len(order)} memories; the old index is in {backup.name}.")
+    return len(order)
 
 
 # ---------------------------------------------------------------------------

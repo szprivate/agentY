@@ -3294,7 +3294,26 @@ def settings_payload() -> dict:
         "settings_problem": _settings_defaults_problem(),
         # Which host this is, shown in the Settings header.
         "host": _host_identity(),
+        # Long-term memory's embedder choices and whether each can work here.
+        "memory_embedders": _memory_embedders(),
     }
+
+
+def _embedder_setting() -> dict:
+    try:
+        from src.utils.settings import load_settings
+        return dict(((load_settings().get("memory") or {}).get("embedder")) or {})
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _memory_embedders() -> list:
+    try:
+        from src.utils.memory import embedder_choices
+        return embedder_choices()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("embedder choices unavailable: %s", exc)
+        return []
 
 
 def settings_save(body: dict) -> dict:
@@ -4264,11 +4283,21 @@ def _build_app():
             _models_before = _mr.fingerprint()
         except Exception:  # noqa: BLE001
             _models_before = None
+        _embedder_before = _embedder_setting()
         try:
             result.update(settings_save(body))
         except Exception as exc:  # noqa: BLE001
             logger.error("settings save failed: %s", exc, exc_info=True)
             return jsonify({"ok": False, "error": str(exc)}), 500
+        # A different embedder: re-embed the stored memories now, in the
+        # background, rather than inside somebody's next turn.
+        if _embedder_setting() != _embedder_before:
+            try:
+                from src.utils.memory import rebuild_in_background
+                rebuild_in_background()
+                result["memory"] = "re-embedding"
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("memory embedder switch failed to start: %s", exc)
         # Models change without a restart: rebuild whichever agents the save moved.
         # A changed provider key reaches no agent that already holds the old one,
         # so that rebuilds all of them.
