@@ -32,12 +32,29 @@ SIDECAR_SUFFIX = ".agenty.json"
 _MAX_ROLE = 120
 
 _lock = threading.Lock()
-_roles: dict[str, tuple] = {}    # resolved path -> (role, meta), frozen on first read
-_run_role: str = ""              # the role for whatever the run in flight produces
-_run_meta: dict = {}             # extra fields the sidecar should carry (hook, prompt)
-_wf_roles: dict[str, tuple] = {}   # workflow path -> (role, meta) for what IT produces
-_sources: dict[str, str] = {}      # output path -> the workflow that produced it
-_wf_outputs: dict[str, list] = {}  # workflow path -> its outputs, in the order collected
+# resolved path -> (role, meta), frozen on first read. Shared by every turn: it is
+# keyed by the file, and a file has one role whichever conversation looks at it.
+_roles: dict[str, tuple] = {}
+
+
+class _State:
+    """What the run in flight is producing. Per turn
+    (:mod:`agenty_core.utils.turn_scope`): with two conversations running, each
+    run's files get that run's role, and one turn's clear() leaves the other's
+    bookkeeping alone."""
+    __slots__ = ("run_role", "run_meta", "wf_roles", "sources", "wf_outputs")
+
+    def __init__(self) -> None:
+        self.run_role = ""                          # the role for whatever the run produces
+        self.run_meta: dict = {}                    # extra fields for the sidecar (hook, prompt)
+        self.wf_roles: dict[str, tuple] = {}        # workflow path -> (role, meta) it produces
+        self.sources: dict[str, str] = {}           # output path -> the workflow that produced it
+        self.wf_outputs: dict[str, list] = {}       # workflow path -> its outputs, in order
+
+
+def _st() -> _State:
+    from agenty_core.utils import turn_scope
+    return turn_scope.current().slot("output_tags", _State)
 
 
 def _key(path) -> str:
@@ -49,14 +66,13 @@ def _key(path) -> str:
 
 def clear() -> None:
     """Drop the per-turn registry (the sidecars on disk are the durable record)."""
-    global _run_role, _run_meta
+    st = _st()
     with _lock:
-        _roles.clear()
-        _wf_roles.clear()
-        _sources.clear()
-        _wf_outputs.clear()
-        _run_role = ""
-        _run_meta = {}
+        st.wf_roles.clear()
+        st.sources.clear()
+        st.wf_outputs.clear()
+        st.run_role = ""
+        st.run_meta = {}
     reset_dir_cache()
 
 
@@ -68,10 +84,10 @@ def set_run_role(role: str, **meta) -> None:
     run rather than attached to each file afterwards, and each path freezes the
     role in force when it is first seen.
     """
-    global _run_role, _run_meta
+    st = _st()
     with _lock:
-        _run_role = " ".join(str(role or "").split())[:_MAX_ROLE]
-        _run_meta = {k: v for k, v in meta.items() if v not in (None, "", [], {})}
+        st.run_role = " ".join(str(role or "").split())[:_MAX_ROLE]
+        st.run_meta = {k: v for k, v in meta.items() if v not in (None, "", [], {})}
 
 
 def set_workflow_role(workflow_path, role: str, **meta) -> None:
@@ -88,7 +104,7 @@ def set_workflow_role(workflow_path, role: str, **meta) -> None:
     if not r:
         return
     with _lock:
-        _wf_roles[_key(workflow_path)] = (r, {k: v for k, v in meta.items()
+        _st().wf_roles[_key(workflow_path)] = (r, {k: v for k, v in meta.items()
                                               if v not in (None, "", [], {})})
 
 
@@ -103,14 +119,14 @@ def note_source(output_path, workflow_path) -> None:
     if not output_path or not workflow_path:
         return
     with _lock:
-        _sources[_key(output_path)] = _key(workflow_path)
-        _wf_outputs.setdefault(_key(workflow_path), []).append(str(output_path))
+        _st().sources[_key(output_path)] = _key(workflow_path)
+        _st().wf_outputs.setdefault(_key(workflow_path), []).append(str(output_path))
 
 
 def outputs_of(workflow_path) -> list:
     """The outputs that workflow produced, in the order they were collected."""
     with _lock:
-        return list(_wf_outputs.get(_key(workflow_path), ()))
+        return list(_st().wf_outputs.get(_key(workflow_path), ()))
 
 
 def tag(path, role: str, **meta) -> None:
@@ -135,8 +151,8 @@ def _resolve(path) -> tuple[str, dict]:
         if k in _roles:
             return _roles[k]
         # The member that produced it knows better than the run it belonged to.
-        found = _wf_roles.get(_sources.get(k, ""))
-        role, meta = found if found else (_run_role, _run_meta)
+        found = _st().wf_roles.get(_st().sources.get(k, ""))
+        role, meta = found if found else (_st().run_role, _st().run_meta)
         meta = dict(meta or {})
         if role:
             _roles[k] = (role, meta)

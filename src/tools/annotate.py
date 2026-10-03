@@ -29,6 +29,13 @@ from agenty_core.utils.image_annotate import Region, Style, annotate, dedupe_reg
 _output_sink: Optional[Callable[[str], None]] = None
 
 
+def set_turn_output_sink(fn: Optional[Callable[[str], None]]) -> None:
+    """Publish this turn's annotations through *fn* — one sink per conversation
+    when several run at once (the module-wide one is whoever registered last)."""
+    from agenty_core.utils import turn_scope
+    turn_scope.current().set("annotate.output_sink", fn)
+
+
 def set_output_sink(fn: Optional[Callable[[str], None]]) -> None:
     """Register the callable that publishes a produced file as a turn output."""
     global _output_sink
@@ -36,10 +43,12 @@ def set_output_sink(fn: Optional[Callable[[str], None]]) -> None:
 
 
 def _publish(path: str) -> bool:
-    if _output_sink is None:
+    from agenty_core.utils import turn_scope
+    sink = turn_scope.current().get("annotate.output_sink") or _output_sink
+    if sink is None:
         return False
     try:
-        _output_sink(path)
+        sink(path)
         return True
     except Exception as exc:  # noqa: BLE001 — never fail the tool over delivery
         print(f"[annotate_image] could not publish {path}: {exc}")

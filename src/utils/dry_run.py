@@ -38,34 +38,49 @@ MARKER = "DRY-RUN"
 _DIRNAME = "agenty_dry_run"
 
 _lock = threading.Lock()
-_on: bool = False
-_runs: list[dict] = []          # one per workflow that WOULD have been submitted
-_stand_ins: dict[str, str] = {}  # stand-in path -> what it stands for
+
+
+class _State:
+    """One turn's dry run: whether it is one, and what it would have produced.
+    Per turn (:mod:`agenty_core.utils.turn_scope`) — one conversation's dry run
+    must not turn another's real run into stand-ins."""
+    __slots__ = ("on", "runs", "stand_ins")
+
+    def __init__(self) -> None:
+        self.on = False
+        self.runs: list[dict] = []           # one per workflow that WOULD have been submitted
+        self.stand_ins: dict[str, str] = {}  # stand-in path -> what it stands for
+
+
+def _st() -> _State:
+    from agenty_core.utils import turn_scope
+    return turn_scope.current().slot("dry_run", _State)
 
 
 def arm(on: bool = True) -> None:
     """Turn the current turn into a dry run (or back into a real one)."""
-    global _on
+    st = _st()
     with _lock:
-        _on = bool(on)
-        if _on:
-            _runs.clear()
-            _stand_ins.clear()
+        st.on = bool(on)
+        if st.on:
+            st.runs.clear()
+            st.stand_ins.clear()
 
 
 def active() -> bool:
     """Whether this turn is a dry run."""
+    st = _st()
     with _lock:
-        return _on
+        return st.on
 
 
 def reset() -> None:
     """Disarm and forget — called at the end of every turn, dry or not."""
-    global _on
+    st = _st()
     with _lock:
-        _on = False
-        _runs.clear()
-        _stand_ins.clear()
+        st.on = False
+        st.runs.clear()
+        st.stand_ins.clear()
 
 
 # ── what a graph would have produced ─────────────────────────────────────────
@@ -155,7 +170,7 @@ def stand_ins(prompt: dict | None, workflow_path: str, *, label: str = "",
         path = os.path.join(base, fname)
         out.append(path)
         with _lock:
-            _stand_ins[_key(path)] = " ".join(str(label or "").split())[:120]
+            _st().stand_ins[_key(path)] = " ".join(str(label or "").split())[:120]
     return out
 
 
@@ -175,7 +190,7 @@ def is_stand_in(path) -> bool:
     if not p:
         return False
     with _lock:
-        if _key(p) in _stand_ins:
+        if _key(p) in _st().stand_ins:
             return True
     return MARKER in os.path.basename(p)
 
@@ -183,7 +198,7 @@ def is_stand_in(path) -> bool:
 def stands_for(path) -> str:
     """What the stand-in was going to be — the variant's own label, if it had one."""
     with _lock:
-        return _stand_ins.get(_key(path), "")
+        return _st().stand_ins.get(_key(path), "")
 
 
 def record(workflow_path: str, outputs: list, *, label: str = "",
@@ -193,14 +208,14 @@ def record(workflow_path: str, outputs: list, *, label: str = "",
              "label": " ".join(str(label or "").split())[:120],
              "kind": kind or "", "what": what or ""}
     with _lock:
-        _runs.append(entry)
+        _st().runs.append(entry)
     return entry
 
 
 def runs() -> list:
     """Every graph this turn built and did not submit, in the order it built them."""
     with _lock:
-        return [dict(r) for r in _runs]
+        return [dict(r) for r in _st().runs]
 
 
 def summary() -> str:

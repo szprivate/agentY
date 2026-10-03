@@ -1886,6 +1886,9 @@ class Pipeline:
                     otherwise only nodes the user has selected.
                 reason: One line on why, shown to the user with the result.
             """
+            _held = self._canvas_lease_refusal()
+            if _held:
+                return _held
             from src.utils.canvas_patch import push as _push_patch
             from src.utils.canvas_view import deletion_impact
 
@@ -1987,6 +1990,9 @@ class Pipeline:
                 ops: The operations, as above.
                 reason: One line on what the edit does, shown to the user.
             """
+            _held = self._canvas_lease_refusal()
+            if _held:
+                return _held
             from src.utils import canvas_edit as _ce
             from src.utils.canvas_patch import push as _push_patch
 
@@ -2152,6 +2158,9 @@ class Pipeline:
                     Only include the widgets you are changing. Wired inputs are
                     links, not values, and cannot be set here.
             """
+            _held = self._canvas_lease_refusal()
+            if _held:
+                return _held
             sel = getattr(self, "_canvas_selection", []) or []
             node = next((n for n in sel if str(n.get("id")) == str(node_id)), None)
             if node is None and self._canvas_full_graph():
@@ -2537,6 +2546,9 @@ class Pipeline:
                 title: A short title for the node.
                 place: Put the node on the canvas (False: just run it).
             """
+            _held = self._canvas_lease_refusal() if place else ""
+            if _held:
+                return _held
             from src.utils import python_node as _py
 
             if not str(code or "").strip():
@@ -2608,6 +2620,9 @@ class Pipeline:
                 hook_node_id: The id of the TEXT hook from the ``[CANVAS HOOKS]`` block.
                 text: The final written answer to place (plain text / markdown).
             """
+            _held = self._canvas_lease_refusal()
+            if _held:
+                return _held
             if not str(text or "").strip():
                 return json.dumps({"error": "text is empty — write the answer first, then place it."})
             from src.utils.canvas_patch import push as _push_patch
@@ -2756,6 +2771,9 @@ class Pipeline:
                     the goal depends on the roll (composition, pose) rather than on
                     wording.
             """
+            _held = self._canvas_lease_refusal()
+            if _held:
+                return _held
             import copy as _copy
             import tempfile as _tempfile
 
@@ -4695,6 +4713,16 @@ class Pipeline:
         except Exception:  # noqa: BLE001
             pass
         self._orch_turn_logged = False  # reset per turn; _log_orchestrator sets it
+        # This turn's files go to THIS pipeline's session. The module-wide sinks
+        # are whichever pipeline registered last, and with several conversations
+        # running there is one pipeline per conversation.
+        try:
+            from src.tools.annotate import set_turn_output_sink as _turn_annotate_sink
+            from agenty_core.tools.image_io import set_turn_output_sink as _turn_download_sink
+            _turn_annotate_sink(self._register_output_path)
+            _turn_download_sink(self._register_output_path)
+        except Exception:  # noqa: BLE001
+            pass
         try:
             async for event in self._astream_orchestrator(
                 user_input, qa_reply_queue=qa_reply_queue,
@@ -4724,6 +4752,38 @@ class Pipeline:
         _trace("pipeline.stream_async: orchestrator done")
 
     # ── Internal helpers ─────────────────────────────────────────────── #
+
+    def _canvas_lease_refusal(self) -> str:
+        """"" when this turn may change the open canvas, else the tool's answer.
+
+        Several conversations can run at once and they share one canvas; the
+        first to change it holds it until its turn ends (src/utils/canvas_lease.py).
+        """
+        try:
+            from agenty_core.utils import turn_scope
+            from src.utils import canvas_lease
+            mine = turn_scope.current().thread_id
+            other = canvas_lease.claim(mine)
+        except Exception:  # noqa: BLE001 — a broken lease must not stop an edit
+            return ""
+        if not other:
+            return ""
+        title = ""
+        try:
+            from src.utils import conversation_store as _cs
+            title = str((_cs.get_thread(other) or {}).get("title") or "")
+        except Exception:  # noqa: BLE001
+            pass
+        return json.dumps({
+            "status": "canvas_in_use",
+            "error": ("Another conversation" + (f" (\"{title}\")" if title else "")
+                      + " is editing the open canvas right now, so this one must not "
+                        "change it."),
+            "what_to_do": ("Nothing on the canvas was changed. Either build what the user "
+                           "asked for as a separate workflow (prepare_workflow), or tell "
+                           "them it can be done on the canvas once the other conversation "
+                           "finishes. Reading the canvas is fine."),
+        })
 
     @staticmethod
     def _extract_text(user_input: Any) -> str:

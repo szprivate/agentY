@@ -18,36 +18,48 @@ of it, which reads as an edit that took minutes to arrive. Anything that happens
 outside a turn must reach the canvas another way: a route the panel called can
 simply answer with what to write, since the panel is holding ``app.graph`` and is
 the one that asked.
+
+One buffer per turn (:mod:`agenty_core.utils.turn_scope`): with several
+conversations running at once, each turn's stream forwards its own events only.
 """
 
 from __future__ import annotations
 
-import threading
 from collections import deque
 from typing import Any
 
-_lock: threading.Lock = threading.Lock()
+from agenty_core.utils import turn_scope
+
 # Bounded so a run whose consumer stops draining can't grow without limit.
-_events: deque[dict[str, Any]] = deque(maxlen=200)
+_MAX = 200
+
+
+def _events(scope) -> deque:
+    return scope.slot("canvas_patch", lambda: deque(maxlen=_MAX))
 
 
 def push(event: dict[str, Any]) -> None:
-    """Append a canvas-patch event (thread-safe)."""
-    with _lock:
-        _events.append(event)
+    """Append a canvas-patch event to the current turn's buffer (thread-safe)."""
+    scope = turn_scope.current()
+    with scope.lock:
+        _events(scope).append(event)
 
 
-def drain() -> list[dict[str, Any]]:
-    """Atomically read and clear all buffered patches (empty list if none)."""
-    with _lock:
-        if not _events:
+def drain(scope=None) -> list[dict[str, Any]]:
+    """Atomically read and clear the buffered patches of *scope* (default: the
+    current turn's; empty list if none)."""
+    scope = scope or turn_scope.current()
+    with scope.lock:
+        buf = _events(scope)
+        if not buf:
             return []
-        out = list(_events)
-        _events.clear()
+        out = list(buf)
+        buf.clear()
         return out
 
 
-def clear() -> None:
-    """Discard any buffered patches (call at the start of a turn)."""
-    with _lock:
-        _events.clear()
+def clear(scope=None) -> None:
+    """Discard the buffered patches of *scope* (call at the start of a turn)."""
+    scope = scope or turn_scope.current()
+    with scope.lock:
+        _events(scope).clear()

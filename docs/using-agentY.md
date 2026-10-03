@@ -20,6 +20,7 @@ node, ready to wire into your next step.*
 - [Staying up to date](#staying-up-to-date)
 - [On a Mac](#on-a-mac)
 - [The chat panel](#the-chat-panel)
+  - [Several conversations at once](#several-conversations-at-once)
   - [Talking to a turn that is already running](#talking-to-a-turn-that-is-already-running)
   - [Undoing a step](#undoing-a-step)
 - [Generating & editing](#generating--editing)
@@ -190,7 +191,7 @@ obvious spot next to agentY, point `comfyui_dir` at it so the extension is found
 
 | Control | What it does |
 |---|---|
-| **Thread dropdown** | Switch between saved conversations. |
+| **Thread dropdown** | Switch between saved conversations. A 🟢 marks one an agent is working on right now. |
 | **➕ New chat** | Start a fresh thread. |
 | **🗑 Delete** | Delete the current conversation. |
 | **↩ Undo** | Undo the agent's last step in this conversation — see [Undoing a step](#undoing-a-step). |
@@ -205,6 +206,31 @@ obvious spot next to agentY, point `comfyui_dir` at it so the extension is found
   whose API key is set appear), and an **agent scope** selector (*All agents* or
   a specific role) so a model switch can target one stage. This is the in-panel
   equivalent of [`/switch_model`](#slash-commands).
+
+### Several conversations at once
+
+A conversation doesn't have to finish before you start the next. Send something,
+press **➕ New chat**, and send something else: both run at the same time, each
+with an agent of its own. Switch between them in the dropdown whenever you like —
+one you leave keeps working and keeps writing into its own log, so when you come
+back everything it did is there. A 🟢 in the dropdown marks every conversation an
+agent is working on, including one started from Slack.
+
+- **How many:** five by default — **Settings → agentY → `parallel_chats`** (1–20).
+  A conversation started while all are busy waits, says so, and starts when one
+  frees up. A change applies to the next conversation that starts.
+- **What actually runs in parallel:** the agents' thinking, research, building and
+  any API-model generation. Renders on your own GPU still queue one after another
+  in ComfyUI, as they always have.
+- **Stop** stops only the conversation it is pressed in — its turn and the prompts
+  *it* queued in ComfyUI. Another conversation's render keeps going.
+- **The canvas:** both see the same open graph, so the first conversation to
+  *change* it holds it until its turn ends. The other can still read it; asked to
+  edit it, it builds a separate workflow instead, or tells you it can do it once
+  the first one finishes.
+- A message you type while a conversation's turn runs is queued in *that*
+  conversation and goes out when its turn ends — even if you are looking at
+  another one by then.
 
 ### Talking to a turn that is already running
 

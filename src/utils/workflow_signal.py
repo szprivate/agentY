@@ -13,12 +13,25 @@ from __future__ import annotations
 import threading
 
 _lock = threading.Lock()
-_pending_paths: list[str] = []
-# Paths already handed back once over nodes that would never execute (see
-# dead_nodes_refused_once). Cleared with the queue.
-_dead_refused: set[str] = set()
-_hold: dict | None = None
-_hold_fired: bool = False
+
+
+class _State:
+    """One turn's mailbox. Per turn (:mod:`agenty_core.utils.turn_scope`): two
+    conversations running at once must not hand each other their workflows."""
+    __slots__ = ("pending_paths", "dead_refused", "hold", "hold_fired")
+
+    def __init__(self) -> None:
+        self.pending_paths: list[str] = []
+        # Paths already handed back once over nodes that would never execute (see
+        # dead_nodes_refused_once). Cleared with the queue.
+        self.dead_refused: set[str] = set()
+        self.hold: dict | None = None
+        self.hold_fired = False
+
+
+def _st() -> _State:
+    from agenty_core.utils import turn_scope
+    return turn_scope.current().slot("workflow_signal", _State)
 
 
 def set_execution_hold(payload: dict | None) -> None:
@@ -29,20 +42,18 @@ def set_execution_hold(payload: dict | None) -> None:
     the same bus the paths already travel on. Set at the start of a turn whose plan
     the user asked to approve, cleared at the end of it. ``None`` lifts the hold.
     """
-    global _hold, _hold_fired
     with _lock:
-        _hold = dict(payload) if payload else None
-        _hold_fired = False
+        _st().hold = dict(payload) if payload else None
+        _st().hold_fired = False
 
 
 def execution_hold() -> dict | None:
     """The refusal in force, or None when signalling is allowed."""
-    global _hold_fired
     with _lock:
-        if not _hold:
+        if not _st().hold:
             return None
-        _hold_fired = True
-        return dict(_hold)
+        _st().hold_fired = True
+        return dict(_st().hold)
 
 
 def hold_fired() -> bool:
@@ -53,7 +64,7 @@ def hold_fired() -> bool:
     must not open the gate for the next one.
     """
     with _lock:
-        return _hold_fired
+        return _st().hold_fired
 
 
 def dead_nodes_refused_once(path: str) -> bool:
@@ -72,30 +83,28 @@ def dead_nodes_refused_once(path: str) -> bool:
     queue, so the memory lasts exactly one handoff.
     """
     with _lock:
-        if path in _dead_refused:
+        if path in _st().dead_refused:
             return False
-        _dead_refused.add(path)
+        _st().dead_refused.add(path)
         return True
 
 
 def append_workflow_path(path: str) -> None:
     """Append *path* to the pending queue (used for batch runs)."""
-    global _pending_paths
     with _lock:
-        _pending_paths.append(path)
+        _st().pending_paths.append(path)
 
 
 def set_workflow_path(path: str) -> None:
     """Store *path*, replacing any previously queued paths (single-workflow compat)."""
-    global _pending_paths
     with _lock:
-        _pending_paths = [path]
+        _st().pending_paths = [path]
 
 
 def peek() -> list[str]:
     """The pending paths, left in place (for reporting what a stop would discard)."""
     with _lock:
-        return list(_pending_paths)
+        return list(_st().pending_paths)
 
 
 def clear_and_get() -> list[str]:
@@ -104,9 +113,8 @@ def clear_and_get() -> list[str]:
     Returns a list of workflow paths (empty list if none are queued).
     For a normal (non-batch) run the list contains exactly one entry.
     """
-    global _pending_paths
     with _lock:
-        paths = list(_pending_paths)
-        _pending_paths = []
-        _dead_refused.clear()
+        paths = list(_st().pending_paths)
+        _st().pending_paths = []
+        _st().dead_refused.clear()
         return paths

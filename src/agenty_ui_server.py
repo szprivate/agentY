@@ -319,8 +319,7 @@ def _forget_recipe_tree() -> None:
     """Drop the recipe tree the running pipeline cached; the next turn reads the rebuilt one."""
     try:
         from src.utils import agentY_server
-        pipeline = agentY_server._agent_ref
-        if pipeline is not None:
+        for pipeline in agentY_server.pipelines():
             pipeline._recipe_tasks_cache = None
     except Exception:  # noqa: BLE001
         pass

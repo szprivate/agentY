@@ -64,8 +64,13 @@ def _orch_skills_dir() -> Path:
 # Live-orchestrator context (set by the pipeline at wiring time)
 # ---------------------------------------------------------------------------
 
-_ORCH_SKILLS_PLUGIN: Any = None   # the orchestrator's AgentSkills plugin instance
+_ORCH_SKILLS_PLUGIN: Any = None   # the latest orchestrator's AgentSkills plugin instance
 _ORCH_AGENT: Any = None           # the live orchestrator Agent (unused for now)
+# Every live orchestrator's plugin: a host running several conversations has one
+# orchestrator per conversation slot, and a skill authored in one chat must show
+# up in all of them. Weak, so a rebuilt orchestrator's old plugin can go.
+import weakref as _weakref  # noqa: E402
+_ORCH_SKILLS_PLUGINS: "_weakref.WeakSet" = _weakref.WeakSet()
 
 
 def set_orchestrator_context(agent: Any = None, skills_plugin: Any = None) -> None:
@@ -79,6 +84,10 @@ def set_orchestrator_context(agent: Any = None, skills_plugin: Any = None) -> No
         _ORCH_AGENT = agent
     if skills_plugin is not None:
         _ORCH_SKILLS_PLUGIN = skills_plugin
+        try:
+            _ORCH_SKILLS_PLUGINS.add(skills_plugin)
+        except TypeError:  # not weak-referenceable: the latest one still rescans
+            pass
 
 
 def _rescan_skills() -> int:
@@ -86,20 +95,25 @@ def _rescan_skills() -> int:
 
     Returns the number of skills now registered, or -1 when no plugin is wired.
     """
-    plugin = _ORCH_SKILLS_PLUGIN
-    if plugin is None:
+    plugins = list(_ORCH_SKILLS_PLUGINS)
+    if _ORCH_SKILLS_PLUGIN is not None and _ORCH_SKILLS_PLUGIN not in plugins:
+        plugins.append(_ORCH_SKILLS_PLUGIN)
+    if not plugins:
         return -1
-    try:
-        # Reuse the exact scoped sources the orchestrator plugin was built with
-        # (stashed by create_orchestrator_agent) so a re-scan keeps the scoping and
-        # doesn't re-widen to the whole skills/ dir. Fall back to the orchestrator
-        # group + its own folder + scratch if the stash is absent.
-        sources = getattr(plugin, "_agenty_sources", None) or \
-            [str(_orch_skills_dir()), str(_scratch_dir())]
-        plugin.set_available_skills(sources)
-        return len(plugin.get_available_skills())
-    except Exception:  # noqa: BLE001
-        return -1
+    found = -1
+    for plugin in plugins:
+        try:
+            # Reuse the exact scoped sources the orchestrator plugin was built with
+            # (stashed by create_orchestrator_agent) so a re-scan keeps the scoping
+            # and doesn't re-widen to the whole skills/ dir. Fall back to the
+            # orchestrator group + its own folder + scratch if the stash is absent.
+            sources = getattr(plugin, "_agenty_sources", None) or \
+                [str(_orch_skills_dir()), str(_scratch_dir())]
+            plugin.set_available_skills(sources)
+            found = max(found, len(plugin.get_available_skills()))
+        except Exception:  # noqa: BLE001
+            continue
+    return found
 
 
 # ---------------------------------------------------------------------------
@@ -254,9 +268,25 @@ _SUBAGENT_ALLOWED: bool = False
 
 
 def set_subagent_allowed(allowed: bool) -> None:
-    """Arm/disarm ``spawn_subagent`` for the current turn (pipeline-controlled)."""
+    """Arm/disarm ``spawn_subagent`` for the current turn (pipeline-controlled).
+
+    Per turn (agenty_core.utils.turn_scope): one conversation asking for a
+    subagent must not arm it in another running at the same time."""
     global _SUBAGENT_ALLOWED
-    _SUBAGENT_ALLOWED = bool(allowed)
+    from agenty_core.utils import turn_scope
+    scope = turn_scope.current()
+    if scope is turn_scope.DEFAULT:
+        _SUBAGENT_ALLOWED = bool(allowed)
+    else:
+        scope.set("orchestration.subagent_allowed", bool(allowed))
+
+
+def _subagent_allowed() -> bool:
+    from agenty_core.utils import turn_scope
+    scope = turn_scope.current()
+    if scope is turn_scope.DEFAULT:
+        return _SUBAGENT_ALLOWED
+    return bool(scope.get("orchestration.subagent_allowed", False))
 
 
 @tool
@@ -299,7 +329,7 @@ async def spawn_subagent(task: str, toolset: str = "full", model: Optional[str] 
     Returns:
         The subagent's final text output (or a JSON error string).
     """
-    if not _SUBAGENT_ALLOWED:
+    if not _subagent_allowed():
         return json.dumps({
             "error": "spawn_subagent is disabled for this turn. It runs ONLY when the "
                      "user explicitly asks to use or spawn a subagent. Do this yourself "

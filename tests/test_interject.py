@@ -2,7 +2,7 @@
 
 Two halves:
 
-* the mailbox (:mod:`src.utils.interject_bus`): one active run at a time, posts
+* the mailbox (:mod:`src.utils.interject_bus`): one per running turn, posts
   from another thread, and everything undelivered handed back at close so a
   message that arrived a moment too late is queued rather than lost;
 * the delivery hook (:mod:`src.utils.interject_hook`): normal messages ride out
@@ -33,6 +33,11 @@ def _tool_event(name="prepare_workflow", text="{\"status\": \"ok\"}"):
     )
 
 
+def _close_all():
+    for rid in interject_bus.active_runs():
+        interject_bus.close_run(rid)
+
+
 def _before_event(name="run_workflow_now"):
     return SimpleNamespace(tool_use={"name": name, "toolUseId": "tu-2"}, cancel_tool=False)
 
@@ -43,8 +48,8 @@ def _delivered_text(event) -> str:
 
 class MailboxTest(unittest.TestCase):
     def setUp(self):
-        interject_bus.close_run(interject_bus.active_run() or "")
-        self.addCleanup(lambda: interject_bus.close_run(interject_bus.active_run() or ""))
+        _close_all()
+        self.addCleanup(_close_all)
 
     def test_nothing_to_interject_into_when_no_turn_is_running(self):
         self.assertFalse(interject_bus.post("run-1", "hold on"))
@@ -72,11 +77,27 @@ class MailboxTest(unittest.TestCase):
         self.assertEqual(interject_bus.close_run("run-1"), ["too late"])
         self.assertIsNone(interject_bus.active_run())
 
-    def test_opening_a_run_drops_anything_left_from_the_last_one(self):
+    def test_two_running_turns_keep_separate_mailboxes(self):
+        """Two conversations at once: a message for one never reaches the other."""
+        from agenty_core.utils import turn_scope
+        interject_bus.open_run("run-1", "chat-a")
+        interject_bus.open_run("run-2", "chat-b")
+        interject_bus.post("run-1", "for chat a")
+        interject_bus.post("run-2", "for chat b")
+        tok = turn_scope.enter(turn_scope.Scope("run-2", "chat-b"))
+        try:
+            self.assertEqual(interject_bus.thread_id(), "chat-b")
+            self.assertEqual([i["text"] for i in interject_bus.drain()], ["for chat b"])
+        finally:
+            turn_scope.leave(tok)
+        self.assertEqual(interject_bus.pending_count("run-1"), 1)
+        self.assertEqual(interject_bus.close_run("run-1"), ["for chat a"])
+
+    def test_a_reopened_run_starts_empty(self):
         interject_bus.open_run("run-1")
         interject_bus.post("run-1", "stale")
-        interject_bus.open_run("run-2")
-        self.assertEqual(interject_bus.pending_count(), 0)
+        interject_bus.open_run("run-1")
+        self.assertEqual(interject_bus.pending_count("run-1"), 0)
 
     def test_the_thread_rides_along_for_the_delivering_side(self):
         interject_bus.open_run("run-1", "thread-42")
@@ -108,8 +129,8 @@ class MailboxTest(unittest.TestCase):
 
 class DeliveryTest(unittest.TestCase):
     def setUp(self):
-        interject_bus.close_run(interject_bus.active_run() or "")
-        self.addCleanup(lambda: interject_bus.close_run(interject_bus.active_run() or ""))
+        _close_all()
+        self.addCleanup(_close_all)
         self.hook = InterjectHookProvider()
         # Delivery persists into the conversation; the store is not under test.
         patcher = mock.patch("src.utils.conversation_store.add_message")
@@ -237,8 +258,8 @@ class RouteTest(unittest.TestCase):
         cls.client = authorised_client(_build_app())
 
     def setUp(self):
-        interject_bus.close_run(interject_bus.active_run() or "")
-        self.addCleanup(lambda: interject_bus.close_run(interject_bus.active_run() or ""))
+        _close_all()
+        self.addCleanup(_close_all)
 
     def _post(self, **body):
         return self.client.post("/agentY/interject", json=body)

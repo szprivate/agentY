@@ -54,15 +54,18 @@ logger = logging.getLogger("agentY.executor")
 # human-readable error line to the UI, but it ALSO records the structured
 # failure here so the orchestrator can read it after the batch and drive a
 # bounded diagnose-and-fix retry — without every executor consumer having to
-# know about a new yield type. Mirrors the workflow-signal mailbox pattern:
-# single event loop, one turn at a time, so a module-level list is safe.
+# know about a new yield type. Mirrors the workflow-signal mailbox pattern: one
+# mailbox per turn (agenty_core.utils.turn_scope), so a failure in one
+# conversation's run is not read — and "fixed" — by another's.
 # ---------------------------------------------------------------------------
-_exec_errors: list[dict] = []
+def _exec_errors() -> list[dict]:
+    from agenty_core.utils import turn_scope
+    return turn_scope.current().slot("executor.exec_errors", list)
 
 
 def _record_exec_error(details: dict | None, workflow_path: str = "", error: str = "") -> None:
     """Append one structured ComfyUI execution failure to the mailbox."""
-    _exec_errors.append({
+    _exec_errors().append({
         "details": details or {},
         "workflow_path": workflow_path,
         "error": error or "ComfyUI execution failed",
@@ -71,14 +74,15 @@ def _record_exec_error(details: dict | None, workflow_path: str = "", error: str
 
 def get_and_clear_exec_errors() -> list[dict]:
     """Return the recorded execution errors and clear the mailbox."""
-    out = list(_exec_errors)
-    _exec_errors.clear()
+    errors = _exec_errors()
+    out = list(errors)
+    errors.clear()
     return out
 
 
 def clear_exec_errors() -> None:
     """Drop any recorded execution errors (call before a fresh run)."""
-    _exec_errors.clear()
+    _exec_errors().clear()
 
 
 def _project_root() -> Path:

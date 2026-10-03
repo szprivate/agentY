@@ -94,14 +94,30 @@ _current_thread: str = ""
 
 
 def set_log_thread(thread_id: str) -> None:
-    """Set the conversation id stamped into subsequent message-history records."""
+    """Set the conversation id stamped into subsequent message-history records —
+    for this turn (agenty_core.utils.turn_scope), so two conversations running at
+    once each stamp their own; outside a turn, the shared default."""
     global _current_thread
-    _current_thread = str(thread_id or "")
+    from agenty_core.utils import turn_scope
+    scope = turn_scope.current()
+    if scope is turn_scope.DEFAULT:
+        _current_thread = str(thread_id or "")
+    else:
+        scope.set("chat_summary.thread", str(thread_id or ""))
+
+
+def _log_thread() -> str:
+    from agenty_core.utils import turn_scope
+    scope = turn_scope.current()
+    if scope is turn_scope.DEFAULT:
+        return _current_thread
+    return scope.get("chat_summary.thread", "") or ""
 
 
 def _thread_seg() -> str:
     """Header fragment identifying the current conversation, or '' when unset."""
-    return f"{_THREAD_TAG}{_current_thread} — " if _current_thread else ""
+    thread = _log_thread()
+    return f"{_THREAD_TAG}{thread} — " if thread else ""
 
 
 def _log_message_history(messages: list[dict]) -> None:

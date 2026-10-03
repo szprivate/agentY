@@ -51,6 +51,14 @@ sync_node_pack_examples = true
 # One short model call per example on the first start; later starts only do new
 # or changed ones. Off = descriptions read off the graph, no model call.
 describe_node_pack_examples = true
+# How many conversations may run at the same time (1-20). Each running one gets an
+# agent of its own, built when it is first needed (about half a second); a
+# conversation started while all are busy waits for one to free up. Renders on
+# your GPU still queue one after another in ComfyUI - what runs in parallel is the
+# agents' thinking, building and any API-model generations. More means more LLM
+# calls at once: watch your providers' rate limits. Takes effect for the next
+# conversation that starts - no restart.
+parallel_chats = 5
 output_dir = "./output_images/"
 # Where generated/patched workflow JSON is written. BLANK (the default) means
 # "into ComfyUI": <--user-directory>/default/workflows/agentY/, which is the

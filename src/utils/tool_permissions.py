@@ -149,6 +149,21 @@ def _wait_while_watched(event: threading.Event, timeout: float) -> bool:
             return False
 
 
+def _asking_conversation() -> dict:
+    """``{"thread_id", "conversation"}`` of the turn asking — several conversations
+    can run at once, and "allow this?" means little without "for which one"."""
+    try:
+        from agenty_core.utils import turn_scope
+        tid = turn_scope.current().thread_id
+        if not tid:
+            return {}
+        from src.utils import conversation_store as cs
+        title = str((cs.get_thread(tid) or {}).get("title") or "")
+        return {"thread_id": tid, "conversation": title}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def request(tool_name: str, tool_input: dict, *, timeout: float = DEFAULT_TIMEOUT,
             unattended_allows: bool = False) -> Decision:
     """Ask, and block this thread until somebody answers.
@@ -175,7 +190,7 @@ def request(tool_name: str, tool_input: dict, *, timeout: float = DEFAULT_TIMEOU
         "event": event, "reply": None,
         "request": {"permission_id": pid, "tool": name,
                     "summary": describe(name, tool_input),
-                    "asked_at": _now()},
+                    "asked_at": _now(), **_asking_conversation()},
     }
     with _LOCK:
         _PENDING[pid] = entry

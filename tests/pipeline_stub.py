@@ -59,6 +59,7 @@ _BOUND = (
     "_canvas_full_graph",
     "_canvas_note_patch",
     "_canvas_rebuild_refusal",
+    "_canvas_lease_refusal",
     "_prompt_slot_of",
     "_announce_prompt_version",
     "_note_loop_write",

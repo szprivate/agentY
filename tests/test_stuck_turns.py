@@ -106,10 +106,15 @@ class StaleLockTest(unittest.TestCase):
         self.assertFalse(orch._invocation_lock.locked())
         self.assertEqual(pipe._researchers_busy, [])
 
-    def test_the_server_only_does_it_with_no_turn_in_flight(self):
+    def test_the_server_does_it_on_the_pipeline_the_turn_was_given(self):
+        """Each running conversation has a pipeline of its own (pipeline_pool), so
+        a lock still held on the one a turn was just given cannot belong to a
+        turn in flight — it is left over. The release is no longer gated on no
+        other turn running: another conversation runs on another pipeline."""
         from src.utils import agentY_server as S
-        src = open(S.__file__, encoding="utf-8").read()
-        self.assertIn("if not _turn_running():\n        try:\n            n = pipeline.release_stale_locks()", src)
+        src = open(S.__file__, encoding="utf-8").read().replace("\r\n", "\n")
+        self.assertIn("    try:\n        n = pipeline.release_stale_locks()", src)
+        self.assertIn("pipeline = _take_pipeline(thread_id, req_id, out_q, finished)", src)
 
 
 class CloseLoopTest(unittest.TestCase):

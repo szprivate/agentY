@@ -68,6 +68,8 @@ from src.utils import conversation_store as cs
 from src.utils import status_bus
 from src.utils import notify_bus
 from src.utils import interject_bus
+from agenty_core.utils import turn_scope
+from src.utils.pipeline_pool import ConversationBusy, PipelinePool, PoolTimeout
 from src.utils import turn_bus
 from src.utils import turn_watchdog as _wd
 from src.utils.media_loaders import CANDIDATES as _LOADER_CANDIDATES
@@ -80,7 +82,11 @@ logger = logging.getLogger("agentY.server")
 _lock = threading.Lock()
 _pending_previews: dict[str, dict] = {}
 _node_responses: dict[str, str] = {}       # node_id (str) -> accumulated agent text
-_agent_ref = None                          # the pipeline singleton
+_agent_ref = None                          # the pipeline built at start (the pool's first)
+# One pipeline per conversation running at the same time (src/utils/pipeline_pool.py).
+# A turn takes one for its length and gives it back; _agent_ref stays the first,
+# for the callers that only ever meant "the pipeline".
+_pool: PipelinePool | None = None
 
 # Identifies THIS host process, handed out by /agentY/health. The sidebar remembers
 # the last one it saw, so a host that was restarted is recognised as a *different*
@@ -1239,14 +1245,22 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
     out_q = turn_bus.tee(out_q, request_id=req_id, thread_id=thread_id,
                          origin=origin, text=message)
     finished = {"emitted": False}
+    # The turn's own scope: the buffers it fills (canvas patches, tool activity,
+    # progress, the workflows it hands the executor) are its own, so another
+    # conversation running at the same time neither sees nor drains them.
+    _scope_token = turn_scope.enter(turn_scope.Scope(req_id, thread_id))
+    pipeline = None
     try:
+        pipeline = _take_pipeline(thread_id, req_id, out_q, finished)
+        if pipeline is None:
+            return
         _run_pipeline_turn(thread_id, message, image_paths, out_q, req_id, finished,
                            canvas_prompt=canvas_prompt, canvas_hooks=canvas_hooks,
                            canvas_selection=canvas_selection,
                            open_workflows=open_workflows, dry_run=dry_run,
                            origin=origin, canvas_graph=canvas_graph,
                            canvas_hash=canvas_hash, canvas_workflow=canvas_workflow,
-                           loop_render=loop_render)
+                           loop_render=loop_render, pipeline=pipeline)
     except BaseException as exc:  # noqa: BLE001 — the stream must close on ANY failure
         logger.error("turn %s died before completing: %s", req_id, exc, exc_info=True)
         # Also into the turn log with a full traceback: the terminal scrollback is
@@ -1282,7 +1296,59 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
             finished["emitted"] = True
             out_q.put({"type": "done"})
             out_q.put(None)
+        if pipeline is not None and _pool is not None:
+            _pool.release(pipeline)
+        # If this turn edited the open canvas, another conversation may now.
+        try:
+            from src.utils import canvas_lease
+            canvas_lease.release(thread_id)
+        except Exception:  # noqa: BLE001
+            pass
+        turn_scope.leave(_scope_token)
         _wd.end(req_id, "runner exited")
+
+
+def _take_pipeline(thread_id: str, req_id: str, out_q, finished: dict):
+    """A pipeline for this turn, or None when the turn must not start (its
+    conversation is already running, or it was stopped while waiting for one).
+
+    Waiting is visible and stoppable: the turn is registered while it waits, so
+    Stop reaches it and the panel shows the conversation as busy.
+    """
+    if _pool is None:
+        return _agent_ref
+    stop = threading.Event()
+    with _reply_lock:
+        _run_registry[req_id] = {"thread_id": thread_id, "waiting": stop}
+
+    def _end(event: dict | None):
+        if event:
+            out_q.put(event)
+        finished["emitted"] = True
+        out_q.put({"type": "done"})
+        out_q.put(None)
+
+    def _waiting():
+        n = _pool.max_size
+        out_q.put({"type": "system", "data": (
+            f"⏳ All {n} agents are busy with other conversations — this one starts "
+            "as soon as one is free.")})
+
+    told = False
+    while True:
+        try:
+            return _pool.acquire(thread_id, timeout=2.0,
+                                 on_wait=None if told else _waiting)
+        except ConversationBusy:
+            _end({"type": "error", "message": (
+                "This conversation is already running a turn — wait for it to finish, "
+                "or stop it first.")})
+            return None
+        except PoolTimeout:
+            told = True
+            if stop.is_set():
+                _end({"type": "system", "data": "⏹ Stopped before it started."})
+                return None
 
 
 def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
@@ -1294,13 +1360,14 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
                        dry_run: bool = False, origin: str = "panel",
                        canvas_graph: dict | None = None, canvas_hash: str = "",
                        canvas_workflow: str = "",
-                       loop_render: dict | None = None) -> None:
+                       loop_render: dict | None = None, pipeline=None) -> None:
     """Drive the pipeline for one turn on a private event loop, pushing SSE dicts
     to *out_q*. Interactive asks register on ``_reply_registry`` so POST
     /agentY/reply can feed the answer thread-safely. Terminates *out_q* with None
     and sets ``finished["emitted"]`` once it has; the caller enforces both.
     """
-    pipeline = _agent_ref
+    if pipeline is None:
+        pipeline = _agent_ref
     if pipeline is None:
         out_q.put({"type": "error", "message": "pipeline not initialised"})
         finished["emitted"] = True
@@ -1365,18 +1432,20 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
             out_q.put(None)
             return
 
-    # Nothing else is running (this turn registers further down), so any agent
-    # still marked busy, and any researcher slot still taken, is left over from
-    # a turn that ended without closing its streams. Left alone, this turn would
-    # wait on it with nothing to show — the hang only a restart used to clear.
-    if not _turn_running():
-        try:
-            n = pipeline.release_stale_locks()
-            if n:
-                _wd.note(req_id, f"released {n} stale agent lock(s) left by an earlier turn")
-        except Exception:  # noqa: BLE001 — recovery must never block a turn
-            pass
-        # A Stop holds downloads off until the next turn starts.
+    # This turn has the pipeline to itself (the pool hands each running
+    # conversation its own), so any of its agents still marked busy, and any
+    # researcher slot still taken, is left over from a turn that ended without
+    # closing its streams. Left alone, this turn would wait on it with nothing to
+    # show — the hang only a restart used to clear.
+    try:
+        n = pipeline.release_stale_locks()
+        if n:
+            _wd.note(req_id, f"released {n} stale agent lock(s) left by an earlier turn")
+    except Exception:  # noqa: BLE001 — recovery must never block a turn
+        pass
+    if not _turn_running(exclude=req_id):
+        # A Stop holds downloads off until the next turn starts — unless another
+        # conversation is running, whose downloads that Stop did not touch.
         try:
             from agenty_core.tools.huggingface import clear_download_cancel
             clear_download_cancel()
@@ -1726,13 +1795,13 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
         _wd.phase(req_id, "post:close_loop")
         _close_loop(loop, req_id)
         # A model switch made while this turn ran was held back so it could not
-        # rebuild an agent out from under it. The turn is over: apply it now.
-        _apply_pending_model_change()
+        # rebuild an agent out from under it. It is applied as the pool takes the
+        # pipeline back (PipelinePool.release), which is just after this.
 
 
 # ── Stop / interrupt helpers ──────────────────────────────────────────────────
 
-def _interrupt_comfy() -> dict:
+def _interrupt_comfy(owner: str | None = None) -> dict:
     """Stop the agent's work in ComfyUI: the running job AND everything it queued.
 
     Interrupting alone was not stopping. ``POST /interrupt`` ends the job that is
@@ -1749,11 +1818,14 @@ def _interrupt_comfy() -> dict:
     a stop meant for the agent should not end somebody else's render. When the
     queue cannot be read at all we interrupt anyway: the person pressed Stop, and
     a stop that does nothing is the worse failure.
+
+    With *owner* (a conversation id), only that conversation's prompts: with
+    several conversations running, a Stop in one must not end another's render.
     """
     report: dict = {}
     try:
         from agenty_core import queue_ledger
-        report = queue_ledger.cancel_ours()
+        report = queue_ledger.cancel_ours(owner=owner)
     except Exception as exc:  # noqa: BLE001
         logger.debug("could not clear the agent's ComfyUI queue: %s", exc)
 
@@ -1789,6 +1861,9 @@ def _cancel_run(req_id: str) -> bool:
         entry = _run_registry.get(req_id)
     if not entry:
         return False
+    if entry.get("waiting") is not None and entry.get("task") is None:
+        entry["waiting"].set()        # still waiting for a free pipeline
+        return True
     loop, task = entry.get("loop"), entry.get("task")
     if loop is None or task is None:
         return False
@@ -2146,18 +2221,59 @@ def _switch_targets() -> tuple[list[str], list[str]]:
     return tiers, roles
 
 
-# A model switch rebuilds agents, and a running turn is still using them. So while
-# a turn runs, the switch is saved at once and applied the moment the turn ends.
-_pending_model_before: dict | None = None
-_pending_model_force = False
+# A model switch rebuilds agents, and a running turn is still using them. So the
+# switch is saved at once, and a pipeline running a turn is rebuilt the moment the
+# turn gives it back (PipelinePool.defer).
 _model_change_lock = threading.Lock()
 
 
-def _turn_running(thread_id: str | None = None) -> bool:
-    """Is a turn in flight — any turn, or one in *thread_id*?"""
+def _turn_running(thread_id: str | None = None, exclude: str = "") -> bool:
+    """Is a turn in flight — any turn, or one in *thread_id* — other than the
+    request *exclude*?"""
     with _reply_lock:
-        return any(thread_id is None or entry.get("thread_id") == thread_id
-                   for entry in _run_registry.values())
+        return any((thread_id is None or entry.get("thread_id") == thread_id) and rid != exclude
+                   for rid, entry in _run_registry.items())
+
+
+def pipelines() -> list:
+    """Every pipeline this host has built — one per conversation that ran at once."""
+    if _pool is not None:
+        return _pool.pipelines()
+    return [_agent_ref] if _agent_ref is not None else []
+
+
+def running_threads() -> list[str]:
+    """The conversations with a turn running right now (the panel's green dot)."""
+    if _pool is not None:
+        return _pool.running_threads()
+    with _reply_lock:
+        return [e.get("thread_id") for e in _run_registry.values() if e.get("thread_id")]
+
+
+PARALLEL_CHATS_MAX = 20
+
+
+def _parallel_limit() -> int:
+    """How many conversations may run at once (setting `parallel_chats`). Read
+    each time a conversation needs an agent, so a change applies without a restart.
+    Capped at PARALLEL_CHATS_MAX as a guard against a typo, not for any limit of
+    the pool's own."""
+    try:
+        from src.utils.settings import load_settings
+        n = int(load_settings().get("parallel_chats", 5) or 5)
+    except Exception:  # noqa: BLE001
+        n = 5
+    return max(1, min(PARALLEL_CHATS_MAX, n))
+
+
+def _new_pipeline():
+    """Another pipeline for the pool — about half a second: the models' clients,
+    MCP servers and caches are shared, only the agents are new."""
+    from src.pipeline import create_pipeline
+    pipeline = create_pipeline()
+    logger.info("built another pipeline for a parallel conversation (%d in all)",
+                len(pipelines()) + 1)
+    return pipeline
 
 
 def _apply_model_change(before: dict, force: bool = False) -> dict:
@@ -2168,41 +2284,37 @@ def _apply_model_change(before: dict, force: bool = False) -> dict:
     fingerprint of model names can see). Returns ``{"state", "rebuilt",
     "failures"}``, state being ``applied``, ``deferred`` or ``no_pipeline``.
     """
-    global _pending_model_before, _pending_model_force
     from src.utils import model_reload
 
-    if _agent_ref is None:
+    if not pipelines():
         return {"state": "no_pipeline", "rebuilt": [], "failures": {}}
     with _model_change_lock:
-        if _turn_running():
-            # Keep the OLDEST picture: two switches during one turn are one change
-            # from what the agents were actually built with.
-            if _pending_model_before is None:
-                _pending_model_before = before
-            _pending_model_force = _pending_model_force or force
-            return {"state": "deferred", "rebuilt": [], "failures": {}}
         after = model_reload.fingerprint()
         names = (list(model_reload.LIVE_AGENTS) if force
                  else model_reload.changed_agents(before, after))
-        rebuilt, failures = model_reload.reload_live_agents(_agent_ref, names)
+    if not names:
+        return {"state": "applied", "rebuilt": [], "failures": {}}
+
+    def _reload(pipeline):
+        return model_reload.reload_live_agents(pipeline, names)
+
+    # Idle pipelines are rebuilt now; one running a conversation's turn is rebuilt
+    # the moment that turn gives it back, never out from under it.
+    if _pool is not None:
+        res = _pool.defer(_reload)
+    else:
+        res = {"now": [_reload(_agent_ref)], "later": 0}
+    rebuilt: list = []
+    failures: dict = {}
+    for r, f in res["now"]:
+        rebuilt += [x for x in r if x not in rebuilt]
+        failures.update(f or {})
     if rebuilt or failures:
         logger.info("model change applied live: rebuilt %s%s", rebuilt or "nothing",
                     f"; could not rebuild {failures}" if failures else "")
+    if res["later"]:
+        return {"state": "deferred", "rebuilt": rebuilt, "failures": failures}
     return {"state": "applied", "rebuilt": rebuilt, "failures": failures}
-
-
-def _apply_pending_model_change() -> None:
-    """Apply a switch that arrived while a turn was running. Never raises."""
-    global _pending_model_before, _pending_model_force
-    with _model_change_lock:
-        before, force = _pending_model_before, _pending_model_force
-        _pending_model_before, _pending_model_force = None, False
-    if before is None:
-        return
-    try:
-        _apply_model_change(before, force)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("deferred model change failed: %s", exc)
 
 
 def _switch_model(args: list[str]) -> list[dict]:
@@ -2284,8 +2396,8 @@ def _switch_model(args: list[str]) -> list[dict]:
 
     lines = [f"✅ {what} → `{llm_spec}` (saved to `settings.local.json`)."]
     if change["state"] == "deferred":
-        lines.append("A turn is running, so the switch lands the moment it finishes — "
-                     "no restart needed.")
+        lines.append("A conversation is running, so the switch reaches it the moment its "
+                     "turn finishes — no restart needed.")
     elif change["state"] == "no_pipeline":
         lines.append("Takes effect when the agent starts.")
     else:
@@ -2322,9 +2434,11 @@ def _dispatch_to_agent(message: str, image_paths: list[str], node_id: str | None
     def _run():
         content = _build_content(message, image_paths)
 
+        pipeline = _pool.acquire(f"review:{node_id or uuid.uuid4().hex}") if _pool else _agent_ref
+
         async def _stream():
             acc = []
-            async for event in _agent_ref.stream_async(content):
+            async for event in pipeline.stream_async(content):
                 if isinstance(event, dict) and event.get("data"):
                     acc.append(event["data"])
             if node_id and acc:
@@ -2336,6 +2450,8 @@ def _dispatch_to_agent(message: str, image_paths: list[str], node_id: str | None
             loop.run_until_complete(_stream())
         finally:
             _close_loop(loop)
+            if _pool is not None:
+                _pool.release(pipeline)
 
     threading.Thread(target=_run, name="agentY-review-dispatch", daemon=True).start()
 
@@ -3520,6 +3636,10 @@ def _build_app():
         # lives (browser-mediated self-registration), so the "Start server" button
         # can relaunch it later with no env var or manual config.
         return jsonify({"status": "ok", "pipeline": _agent_ref is not None,
+                        # Conversations with a turn running now — the green dot in
+                        # the panel's conversation list — and how many may run.
+                        "running_threads": running_threads(),
+                        "parallel_chats": _pool.max_size if _pool is not None else 1,
                         "project_root": str(_project_root()),
                         # ...and which script restarts it. The panel forwards this
                         # to the extension, which would otherwise have to guess an
@@ -4266,7 +4386,13 @@ def _build_app():
             body = request.get_json(silent=True) or {}
             tid = cs.create_thread(title=body.get("title") or "New chat")
             return jsonify({"id": tid})
-        return jsonify(cs.list_threads())
+        threads_list = cs.list_threads()
+        running = set(running_threads())
+        if isinstance(threads_list, list):
+            for t in threads_list:
+                if isinstance(t, dict):
+                    t["running"] = t.get("id") in running
+        return jsonify(threads_list)
 
     @app.route("/agentY/threads/<tid>", methods=["GET", "DELETE", "OPTIONS"])
     def thread_detail(tid):
@@ -4381,7 +4507,7 @@ def _build_app():
         # Not persisted here: the delivering hook writes it into the thread at the
         # moment the model actually reads it, so the stored conversation keeps that
         # order and a message that misses the turn isn't stored twice.
-        return jsonify({"ok": True, "urgent": urgent, "pending": interject_bus.pending_count()})
+        return jsonify({"ok": True, "urgent": urgent, "pending": interject_bus.pending_count(req_id)})
 
     # ── What a model switch may target (drives the composer's scope picker) ──
     @app.route("/agentY/switch_targets", methods=["GET", "OPTIONS"])
@@ -4428,6 +4554,9 @@ def _build_app():
         body = request.get_json(silent=True) or {}
         req_id = body.get("request_id")
         thread_id = body.get("thread_id")
+        if req_id and not thread_id:
+            with _reply_lock:
+                thread_id = (_run_registry.get(req_id) or {}).get("thread_id")
         found = _cancel_run(req_id) if req_id else False
         # Fallback: if the request_id was unknown (e.g. Stop pressed before it
         # reached the client), cancel by thread.
@@ -4436,16 +4565,21 @@ def _build_app():
         # Unconditionally, and after the cancel: stopping the agent's loop does
         # nothing about the prompts it has ALREADY put in ComfyUI's queue, and
         # those are most of what "stop" means to somebody watching a batch run.
-        report = _interrupt_comfy()
+        # Only this conversation's, when it is known: another one may be running.
+        report = _interrupt_comfy(owner=thread_id or None)
         # A model download runs in a worker thread that cancelling the turn
         # cannot reach; without this, Stop left it fetching gigabytes and the
         # turn waiting for it. The partial file stays and resumes next time.
+        # Downloads are not tagged by conversation, so while another one is
+        # running they are left alone rather than stopped under it.
         downloads = 0
-        try:
-            from agenty_core.tools.huggingface import cancel_downloads
-            downloads = cancel_downloads()
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("could not stop downloads: %s", exc)
+        others = [t for t in running_threads() if t and t != thread_id]
+        if not others:
+            try:
+                from agenty_core.tools.huggingface import cancel_downloads
+                downloads = cancel_downloads()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("could not stop downloads: %s", exc)
         return jsonify({"ok": True, "cancelled": found,
                         "queue_removed": len(report.get("deleted") or []),
                         "queue_kept": report.get("kept", 0),
@@ -4736,11 +4870,17 @@ def start_agentY_server(agent, host: str = "127.0.0.1", port: int | None = None)
     AirPlay holds 5000. Resolved here rather than in the signature so the answer
     is this machine's, not whichever machine imported the module.
     """
-    global _server_thread, _agent_ref
+    global _server_thread, _agent_ref, _pool
     if port is None:
         from src.utils.settings import default_agent_port
         port = default_agent_port()
     _agent_ref = agent
+    _pool = PipelinePool(agent, factory=_new_pipeline, max_size=_parallel_limit)
+    try:
+        from src.utils import canvas_lease
+        canvas_lease.set_alive_check(running_threads)
+    except Exception:  # noqa: BLE001
+        pass
     cs.init_db()
 
     if _server_thread is not None and _server_thread.is_alive():

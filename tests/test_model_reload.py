@@ -5,7 +5,8 @@ nothing until a restart, and /switch_model rebuilt four of them and said the res
 would "apply on the next agent start". Every role resolves its model through
 role_model, so a fingerprint before a change and one after name exactly the agents
 that are now wrong; those are rebuilt in place. A running turn is still using its
-agents, so a switch made mid-turn waits for the turn to end.
+agents, so a switch made mid-turn reaches that conversation's pipeline when its
+turn ends; idle ones are rebuilt at once.
 
     python -m unittest discover -s tests
 """
@@ -173,16 +174,17 @@ class Rebuilding(unittest.TestCase):
 
 
 class DuringATurn(unittest.TestCase):
+    """Each running conversation has a pipeline of its own: a switch rebuilds the
+    idle ones at once and a busy one the moment its turn gives it back."""
 
     BEFORE = fp()
     AFTER = fp(orchestrator="dashscope,qwen3.6-plus")
 
     def setUp(self):
-        self.registry = {}
-        for target, name, value in ((srv, "_run_registry", self.registry),
-                                    (srv, "_agent_ref", SimpleNamespace()),
-                                    (srv, "_pending_model_before", None),
-                                    (srv, "_pending_model_force", False)):
+        from src.utils.pipeline_pool import PipelinePool
+        self.first, self.second = SimpleNamespace(name="first"), SimpleNamespace(name="second")
+        self.pool = PipelinePool(self.first, factory=lambda: self.second, max_size=2)
+        for target, name, value in ((srv, "_agent_ref", self.first), (srv, "_pool", self.pool)):
             patcher = mock.patch.object(target, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -193,34 +195,37 @@ class DuringATurn(unittest.TestCase):
         self.reload = patcher.start()
         self.addCleanup(patcher.stop)
 
+    def rebuilt(self):
+        return [c.args[0].name for c in self.reload.call_args_list]
+
     def test_idle_it_applies_at_once(self):
         self.assertEqual(srv._apply_model_change(self.BEFORE)["state"], "applied")
         self.reload.assert_called_once()
         self.assertEqual(self.reload.call_args.args[1], ["orchestrator"])
 
     def test_during_a_turn_it_waits_for_the_turn_to_end(self):
-        self.registry["r1"] = {"thread_id": "t1"}
+        busy = self.pool.acquire("t1")
         self.assertEqual(srv._apply_model_change(self.BEFORE)["state"], "deferred")
         self.reload.assert_not_called()
-        self.registry.clear()
-        srv._apply_pending_model_change()
+        self.pool.release(busy)
         self.reload.assert_called_once()
         self.assertEqual(self.reload.call_args.args[1], ["orchestrator"])
 
-    def test_two_switches_in_one_turn_are_measured_from_the_first(self):
-        self.registry["r1"] = {"thread_id": "t1"}
+    def test_an_idle_pipeline_is_rebuilt_while_another_runs(self):
+        a = self.pool.acquire("t1")
+        b = self.pool.acquire("t2")           # built: both now busy
+        self.pool.release(b)                  # t2 finished
         srv._apply_model_change(self.BEFORE)
-        srv._apply_model_change(self.AFTER)      # a second switch, same turn
-        self.registry.clear()
-        srv._apply_pending_model_change()
-        self.assertEqual(self.reload.call_args.args[1], ["orchestrator"])
+        self.assertEqual(self.rebuilt(), ["second"])
+        self.pool.release(a)
+        self.assertEqual(self.rebuilt(), ["second", "first"])
 
     def test_a_pending_change_is_applied_once(self):
-        self.registry["r1"] = {"thread_id": "t1"}
+        busy = self.pool.acquire("t1")
         srv._apply_model_change(self.BEFORE)
-        self.registry.clear()
-        srv._apply_pending_model_change()
-        srv._apply_pending_model_change()
+        self.pool.release(busy)
+        again = self.pool.acquire("t1")
+        self.pool.release(again)
         self.reload.assert_called_once()
 
     def test_a_changed_key_rebuilds_every_live_agent(self):
@@ -228,7 +233,7 @@ class DuringATurn(unittest.TestCase):
         self.assertEqual(self.reload.call_args.args[1], list(mr.LIVE_AGENTS))
 
     def test_without_a_pipeline_there_is_nothing_to_rebuild(self):
-        with mock.patch.object(srv, "_agent_ref", None):
+        with mock.patch.object(srv, "_agent_ref", None), mock.patch.object(srv, "_pool", None):
             self.assertEqual(srv._apply_model_change(self.BEFORE)["state"], "no_pipeline")
         self.reload.assert_not_called()
 
@@ -251,7 +256,7 @@ class TheSwitchModelReply(unittest.TestCase):
 
     def test_mid_turn_it_says_when_it_will_land(self):
         said = self.reply({"state": "deferred", "rebuilt": [], "failures": {}})
-        self.assertIn("the moment it finishes", said)
+        self.assertIn("the moment its turn finishes", said)
 
     def test_a_failed_rebuild_is_reported(self):
         said = self.reply({"state": "applied", "rebuilt": [],
