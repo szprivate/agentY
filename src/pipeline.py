@@ -3189,7 +3189,8 @@ class Pipeline:
 
         @_tool
         async def send_to_slack(paths: list, message: str = "") -> str:
-            """Put file(s) in the user's Slack DM, where they can open them.
+            """Put file(s) in the user's Slack DM, where they can open them — in
+            this conversation's Slack thread.
 
             For when the thing worth having is a FILE and the user is not at the
             machine: the JSON you just wrote, one chosen frame out of sixty, a
@@ -3232,7 +3233,9 @@ class Pipeline:
                              "send the ones that answer the question, or tell the "
                              "user where the rest are.",
                 })
-            result = bridge.send_files(wanted, message=message or "")
+            result = bridge.send_files(
+                wanted, message=message or "",
+                thread_id=str(getattr(self._session, "session_id", "") or ""))
             if result.get("error"):
                 return json.dumps(result)
             note = f"Sent {len(result['sent'])} file(s) to the user's Slack DM."

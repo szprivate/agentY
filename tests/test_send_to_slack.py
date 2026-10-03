@@ -26,8 +26,8 @@ class FakeBridge:
         self.calls = []
         self.result = result
 
-    def send_files(self, paths, message=""):
-        self.calls.append({"paths": list(paths), "message": message})
+    def send_files(self, paths, message="", thread_id=""):
+        self.calls.append({"paths": list(paths), "message": message, "thread_id": thread_id})
         if self.result is not None:
             return self.result
         return {"sent": list(paths), "missing": [], "too_large": []}
@@ -57,6 +57,14 @@ class SendTest(unittest.TestCase):
         self.assertEqual(out["status"], "sent")
         self.assertEqual(b.calls[0]["message"], "the shot list")
         self.assertIn("Sent 1 file(s)", out["message"])
+
+    def test_it_names_its_conversation_so_the_files_land_in_its_thread(self):
+        b = FakeBridge()
+        with mock.patch("src.utils.slack_bridge.current", return_value=b),              mock.patch("src.utils.slack_bridge.enabled", return_value=True):
+            pipe = pipeline_stub()
+            pipe._session.session_id = "conv-42"
+            asyncio.run(tools(pipe)["send_to_slack"](paths=[self._file("a.png")]))
+        self.assertEqual(b.calls[0]["thread_id"], "conv-42")
 
     def test_several_files_go_in_one_call(self):
         b = FakeBridge()

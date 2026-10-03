@@ -471,12 +471,16 @@ class SlackBridge:
         st.feed(event)
 
     # ── the agent handing something over on purpose ───────────────────────────
-    def send_files(self, paths: list, message: str = "") -> dict:
+    def send_files(self, paths: list, message: str = "", thread_id: str = "") -> dict:
         """Put files in the DM deliberately, rather than because a run made them.
 
         The mirror uploads what a run *produced*. This is for everything else the
         agent decides is worth having in your hand: the JSON it just wrote, one
         chosen frame out of sixty, a script, a log it wants you to look at.
+
+        Into the Slack thread of the conversation *thread_id* — the one the request
+        came from — like everything else that conversation says. Posted at the top
+        of the DM, a screenshot asked for in a thread opened a thread of its own.
 
         Every file is checked here rather than in the worker, so the agent is told
         what it actually sent while it can still say so in the same breath — a
@@ -498,10 +502,17 @@ class SlackBridge:
                 too_large.append(str(p))
             else:
                 sent.append(p)
+        root = ""
+        if thread_id and (sent or message.strip()):
+            try:
+                root = self.conversation_root(thread_id)
+            except Exception:  # noqa: BLE001 — the DM's top level beats not sending
+                logger.exception("slack: no thread for %s; sending to the DM", thread_id)
         if message.strip():
-            self._call(self.post, self.default_channel, to_mrkdwn(clip(message, 3000)))
+            self._call(self.post, self.default_channel, to_mrkdwn(clip(message, 3000)),
+                       thread_ts=root)
         for p in sent:
-            self._call(self._do_upload, self.default_channel, str(p), "")
+            self._call(self._do_upload, self.default_channel, str(p), "", thread_ts=root)
         return {"sent": [str(p) for p in sent], "missing": missing,
                 "too_large": too_large}
 

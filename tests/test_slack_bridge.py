@@ -470,6 +470,24 @@ class SendFilesTest(unittest.TestCase):
         b = _bridge(default_channel="")
         self.assertIn("nowhere to post", b.send_files([self._file("a.png")])["error"])
 
+    def test_it_goes_into_the_conversations_thread(self):
+        """A screenshot asked for in a thread opened a thread of its own: the
+        files went to the top of the DM instead of the conversation's thread."""
+        with mock.patch("src.utils.slack_bridge.cs.get_slack_thread",
+                        return_value={"channel": self.b.default_channel, "root_ts": "111.222"}),              mock.patch.object(self.b, "_retitle"):
+            self.b.send_files([self._file("shot.png")], message="the canvas", thread_id="conv-1")
+        self.b.flush()
+        self.assertEqual(self.b.client.uploaded[0].get("thread_ts"), "111.222")
+        self.assertEqual(self.b.client.posted[-1].get("thread_ts"), "111.222")
+
+    def test_a_conversation_without_a_thread_gets_one(self):
+        with mock.patch("src.utils.slack_bridge.cs.get_slack_thread", return_value=None),              mock.patch("src.utils.slack_bridge.cs.set_slack_thread") as remember,              mock.patch.object(self.b, "_root_text", return_value="🧵 *Shots*"):
+            self.b.send_files([self._file("shot.png")], thread_id="conv-2")
+        self.b.flush()
+        root = remember.call_args.args[2]
+        self.assertTrue(root)
+        self.assertEqual(self.b.client.uploaded[0].get("thread_ts"), root)
+
     def test_uploading_happens_off_the_calling_thread(self):
         self.b.send_files([self._file("a.png")])
         self.assertEqual(self.b.client.uploaded, [], "it uploaded inline")
