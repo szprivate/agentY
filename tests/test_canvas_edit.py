@@ -230,6 +230,37 @@ class DynamicComboTest(unittest.TestCase):
         self.assertEqual(r["ops"][0]["params"]["model.duration"], "5")
         self.assertEqual(r["graph"][r["added"]["w"]]["inputs"]["model.duration"], "5")
 
+    def test_an_added_node_gets_its_model_option_and_its_settings(self):
+        """Without them the node showed no prompt or resolution, and the agent
+        concluded — and stored — that Wan 3.0 has none."""
+        schemas = dict(SCHEMAS, Wan3ImageToVideoApi=self.WAN)
+        r = ce.plan(_graph(), [{"op": "add", "class_type": "Wan3ImageToVideoApi", "ref": "w"}], schemas)
+        self.assertTrue(r["ok"], r["errors"])
+        ins = r["graph"][r["added"]["w"]]["inputs"]
+        self.assertEqual(ins["model"], "wan3.0-video")
+        self.assertEqual(ins["model.duration"], "auto")
+        self.assertTrue(ins["model.audio"])
+        self.assertEqual(ce.apply_patch(_graph(), {"op": "edit_graph", "ops": r["ops"]}), r["graph"])
+
+
+class ProjectMemoryPauseTest(unittest.TestCase):
+    """A test run pauses long-term memory; project memory used to be written anyway."""
+
+    def test_project_memory_follows_the_pause(self):
+        import src.tools.project_memory as pm
+        from src.utils import memory
+        self.addCleanup(memory.pause_writes, 0)
+        memory.pause_writes(60)
+        with mock.patch.object(pm, "write_entry") as write, mock.patch.object(pm, "delete_entry") as delete:
+            out = pm.project_memory_write.invoke({"name": "x", "content": "y", "type": "technical"}) \
+                if hasattr(pm.project_memory_write, "invoke") else pm.project_memory_write("x", "y", "technical")
+            self.assertIn("NOT saved", out)
+            write.assert_not_called()
+            gone = pm.project_memory_forget.invoke({"name": "x"}) \
+                if hasattr(pm.project_memory_forget, "invoke") else pm.project_memory_forget("x")
+            self.assertIn("NOT removed", gone)
+            delete.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

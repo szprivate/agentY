@@ -112,6 +112,29 @@ def _member_spec(specs: dict, name: str, values: dict):
     return {**(sub.get("optional") or {}), **(sub.get("required") or {})}.get(rest)
 
 
+def _dynamic_defaults(name: str, spec, key=None) -> dict:
+    """A required dynamic combo's value and its option's member defaults —
+    ``{"model": "wan3.0-video", "model.resolution": "1080P", …}``.
+
+    Left out, an added Wan 3.0 node had no `model` at all, so nothing on it
+    showed a prompt, a resolution or a duration: the agent read the node as
+    having none ("animates purely from the first frame") and stored that as a
+    fact. And ComfyUI refuses the graph without the value."""
+    options = [o for o in ((spec[1] or {}).get("options") or []) if isinstance(o, dict)] \
+        if len(spec) > 1 and isinstance(spec[1], dict) else []
+    opt = next((o for o in options if o.get("key") == key), None) or (options[0] if options else None)
+    if opt is None:
+        return {}
+    out = {name: opt.get("key")}
+    for member, mspec in ((opt.get("inputs") or {}).get("required") or {}).items():
+        mt = _spec_type(mspec)
+        if isinstance(mt, list) or mt in _WIDGET_TYPES:
+            d = _default(mspec)
+            if d is not None:
+                out[f"{name}.{member}"] = d
+    return out
+
+
 def coerce_value(spec, value):
     """``(value, error)``: *value* as the input takes it, or the reason it can't.
 
@@ -227,6 +250,8 @@ def plan(graph: dict, ops: list, object_info: dict) -> dict:
                     d = _default(spec)
                     if d is not None:
                         inputs[name] = d
+                elif t == "COMFY_DYNAMICCOMBO_V3":
+                    inputs.update(_dynamic_defaults(name, spec, params.get(name)))
             bad = False
             for name in params:
                 if _input_spec(specs, name) is None:
