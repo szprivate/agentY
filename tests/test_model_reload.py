@@ -36,8 +36,9 @@ class WhatChanged(unittest.TestCase):
         self.assertEqual(mr.changed_agents(fp(), fp()), [])
 
     def test_a_model_change_names_the_agent_it_belongs_to(self):
+        # …and the lead's model, which is the orchestrator's while its tier is blank.
         self.assertEqual(mr.changed_agents(fp(), fp(orchestrator="dashscope,qwen3.6-plus")),
-                         ["orchestrator"])
+                         ["orchestrator", "lead"])
 
     def test_a_fallback_moves_everything_that_leans_on_it(self):
         changed = mr.changed_agents(fp(), fp(llm_functions="ollama,qwen3.5:9b"))
@@ -201,7 +202,7 @@ class DuringATurn(unittest.TestCase):
     def test_idle_it_applies_at_once(self):
         self.assertEqual(srv._apply_model_change(self.BEFORE)["state"], "applied")
         self.reload.assert_called_once()
-        self.assertEqual(self.reload.call_args.args[1], ["orchestrator"])
+        self.assertEqual(self.reload.call_args.args[1], ["orchestrator", "lead"])
 
     def test_during_a_turn_it_waits_for_the_turn_to_end(self):
         busy = self.pool.acquire("t1")
@@ -209,7 +210,7 @@ class DuringATurn(unittest.TestCase):
         self.reload.assert_not_called()
         self.pool.release(busy)
         self.reload.assert_called_once()
-        self.assertEqual(self.reload.call_args.args[1], ["orchestrator"])
+        self.assertEqual(self.reload.call_args.args[1], ["orchestrator", "lead"])
 
     def test_an_idle_pipeline_is_rebuilt_while_another_runs(self):
         a = self.pool.acquire("t1")

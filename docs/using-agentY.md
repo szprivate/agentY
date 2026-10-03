@@ -257,6 +257,10 @@ per shot with its briefing.
 - **Stop** in the lead stops its shots too. Stop in a shot stops only that shot.
 - **One level:** a shot cannot start shots of its own. "Allow for this session" on
   a permission prompt covers every conversation, shots included.
+- **The lead's model:** a lead runs on the **Lead** tier (Settings → Models; blank =
+  the orchestrator's model) with 💭 reasoning on by default. Shots use the ordinary
+  tiers. A conversation becomes a lead when you ask for shot conversations or it
+  starts its first shot.
 
 ### Talking to a turn that is already running
 
@@ -1575,7 +1579,7 @@ or pressing **Escape**; **Save** is the only button.
 
   | section | what is in it |
   |---|---|
-  | **Models** | the six tiers, plus per-role overrides folded underneath |
+  | **Models** | the tiers (each with its 💭 reasoning switch), plus per-role overrides folded underneath |
   | **Connections** | ComfyUI, the agentY host, your Ollama server |
   | **Canvas** | what the agent may see and do on your open graph |
   | **Output checks** | [QA](#checking-outputs-qa) and [refine loops](#loops-keep-trying-until-its-right) |
@@ -1598,13 +1602,14 @@ or pressing **Escape**; **Save** is the only button.
     written to `config/pricing.json`.
   - **MCP servers**: see [MCP servers](#mcp-servers).
 
-### Choosing models: six tiers, not sixteen dropdowns
+### Choosing models: tiers, not sixteen dropdowns
 
-You set six **tiers**, and every role inherits from one:
+You set a handful of **tiers**, and every role inherits from one:
 
 | tier | who uses it |
 |---|---|
 | **Orchestrator** | drives every turn — routing, tool calls, talking to you |
+| **Lead** | the orchestrator of a [lead conversation](#a-sequence-one-conversation-per-shot) — plans a sequence, reviews its shots. Blank = *same as Orchestrator* |
 | **Research & assembly** | template research, workflow assembly, repair, building a graph from scratch |
 | **Fast utility** | info lookups, web search, planner, learnings, small structured-output helpers |
 | **Vision** | reads the images and video *you* provide |
@@ -1615,6 +1620,15 @@ You set six **tiers**, and every role inherits from one:
 *"— inherit from tier —"*. Fill one in only when a single job wants something
 different from the rest of its tier. The group header says whether any are set, so
 an override can't quietly beat a tier without you knowing.
+
+**💭 Reasoning** is switched per tier, on the tier's row (and per role in the
+overrides: *as tier*, *on*, *off*). On, the model thinks before it answers: better
+decisions, slower and more tokens. It pays where few calls decide a lot — the
+**Lead**, which is why it is the one tier with it on by default — and rarely for
+agents that make many quick tool calls. The model must support it (Qwen3, DeepSeek,
+Claude, OpenAI's o-series / GPT-5, Gemini 2.5). The providers' own switches
+(`anthropic.think`, `dashscope.enable_thinking`, `ollama.think`) still turn it on
+for every agent of that provider. A change applies to the next turn, no restart.
 
 Why tiers: the roles differ along only two axes — how much reasoning they need and
 whether they must see images. Sixteen dropdowns asked the same question sixteen
@@ -1771,7 +1785,7 @@ Any model value is `"provider,model"`. Providers: `claude`, `ollama`,
 `alibaba`), `openai`, `google` (alias `gemini`).
 
 Which model runs which job is set by **tier**, with per-role overrides for the
-exceptions — see [Choosing models: six tiers](#choosing-models-six-tiers-not-sixteen-dropdowns).
+exceptions — see [Choosing models: six tiers](#choosing-models-tiers-not-sixteen-dropdowns).
 First match wins: **CLI flag → environment variable → per-role override
 (`llm.pipeline`) → tier (`llm.tiers`) → built-in default**, with
 `config/settings.local.json` layered over `config/settings.default.toml` at each
@@ -1784,7 +1798,7 @@ that role's tier until you clear it:
 /switch_model orchestrator claude,claude-opus-4-8
 ```
 
-The scope dropdown offers **All tiers**, each of the six **tiers**, and each
+The scope dropdown offers **All tiers**, each **tier**, and each
 individual **role** (labelled with its tier). It is built from the agent's own tier
 map at startup, so it always matches Settings ▸ Models. Switching a **tier** is the
 normal move; switching a single **role** writes an override, and the reply says so.

@@ -5121,9 +5121,17 @@ def _configure_shots() -> None:
     try:
         from src.utils import shots
         shots.configure(start_turn=_start_background_turn, is_running=_thread_running,
-                        stop_thread=_stop_thread, interject=_interject_thread)
+                        stop_thread=_stop_thread, interject=_interject_thread,
+                        became_lead=_became_lead)
     except Exception:  # noqa: BLE001 — shots must never stop the host from starting
         logger.warning("shots unavailable", exc_info=True)
+
+
+def _became_lead(thread_id: str) -> None:
+    """*thread_id* just started its first shot: its turn continues on the Lead model."""
+    pipeline = _pool.pipeline_of(thread_id) if _pool is not None else _agent_ref
+    if pipeline is not None and hasattr(pipeline, "use_lead_model"):
+        pipeline.use_lead_model(True)
 
 
 def _stop_thread(thread_id: str) -> bool:

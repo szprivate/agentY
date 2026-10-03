@@ -47,6 +47,7 @@ _hooks: dict[str, Callable | None] = {
     "is_running": None,    # (thread_id) -> bool
     "stop_thread": None,   # (thread_id) -> bool
     "interject": None,     # (thread_id, text) -> bool
+    "became_lead": None,   # (thread_id) -> None: its turn now runs on the Lead model
 }
 _pending: dict[str, list[dict]] = {}   # lead -> reports not yet delivered
 _waking: set[str] = set()               # leads with a wake on its way
@@ -57,10 +58,11 @@ _observing = {"on": False}
 
 def configure(*, start_turn: Callable, is_running: Callable,
               stop_thread: Callable | None = None,
-              interject: Callable | None = None) -> None:
+              interject: Callable | None = None,
+              became_lead: Callable | None = None) -> None:
     """Called once by the host. Also starts listening to turns."""
     _hooks.update(start_turn=start_turn, is_running=is_running,
-                  stop_thread=stop_thread, interject=interject)
+                  stop_thread=stop_thread, interject=interject, became_lead=became_lead)
     if not _observing["on"]:
         turn_bus.observe(_on_event)
         _observing["on"] = True
@@ -149,6 +151,12 @@ def start_shot(lead_id: str, name: str, briefing: str, *,
     except Exception as exc:  # noqa: BLE001
         cs.set_shot_status(tid, "failed")
         return _err(f"Could not start shot '{name}': {exc}", thread_id=tid)
+    # This conversation is a lead from here on, the rest of this turn included.
+    if _hooks.get("became_lead"):
+        try:
+            _hooks["became_lead"](lead_id)
+        except Exception:  # noqa: BLE001
+            logger.debug("could not switch %s to the lead model", lead_id, exc_info=True)
     return {"ok": True, "shot": name, "thread_id": tid, "request_id": rid,
             "dry_run": dry, "status": "started"}
 

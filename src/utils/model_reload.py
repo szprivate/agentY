@@ -30,6 +30,8 @@ import json
 # executor_vision_model), so a change to the fallback moves them too.
 LIVE_AGENTS: dict[str, tuple[str, ...]] = {
     "orchestrator": ("orchestrator",),
+    # The model a lead conversation's orchestrator runs on (Pipeline.use_lead_model).
+    "lead": ("lead", "orchestrator"),
     "query_templates": ("query_templates", "llm_functions"),
     "info": ("info", "llm_functions"),
     "planner": ("planner", "llm_functions"),
@@ -62,15 +64,18 @@ def fingerprint() -> dict[str, str]:
     roles = set(_ROLE_TIERS)
     for deps in LIVE_AGENTS.values():
         roles.update(deps)
+    from src.agent import role_thinking
+
     fp: dict[str, str] = {}
     for role in sorted(roles):
         try:
-            fp[role] = str(role_model(role) or "")
+            # Its reasoning switch too: turning it on rebuilds that agent alone.
+            fp[role] = str(role_model(role) or "") + ("|think" if role_thinking(role) else "")
         except Exception as exc:  # noqa: BLE001
             fp[role] = f"<unresolvable: {exc}>"
     shared = dict((_settings() or {}).get("llm") or {})
-    shared.pop("tiers", None)
-    shared.pop("pipeline", None)
+    for per_role in ("tiers", "pipeline", "thinking", "thinking_roles"):
+        shared.pop(per_role, None)
     encoded = json.dumps(shared, sort_keys=True, default=str).encode("utf-8")
     fp[PROVIDERS] = hashlib.sha1(encoded).hexdigest()
     return fp
@@ -114,6 +119,7 @@ def reload_live_agents(pipeline, names) -> tuple[list[str], dict[str, str]]:
         "vision_agent": lambda: pipeline._init_vision_agent(strict=True),
         "video_agent": lambda: pipeline._init_video_agent(strict=True),
         # Built lazily on first use: dropping the cached one IS the rebuild.
+        "lead": lambda: pipeline.drop_lead_model() if hasattr(pipeline, "drop_lead_model") else None,
         "fix_workflow_assembly": lambda: setattr(pipeline, "_fix_agent", None),
         "generate_new_workflow": lambda: setattr(pipeline, "_generate_agent", None),
     }

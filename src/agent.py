@@ -116,8 +116,12 @@ def _cfg(env_var: str, *settings_path: str, default: str | int = "") -> str | in
 #     triggers a pointless re-render. It is worth more than the input reader.
 #   * coder / orchestrator — one role each; both usually want a specific model
 #     rather than a shared tier.
+#   * lead — the orchestrator of a conversation that runs a sequence of shot
+#     conversations (src/utils/shots.py). Few turns, each deciding a lot. Blank
+#     means the orchestrator's model.
 _ROLE_TIERS: dict[str, str] = {
     "orchestrator": "orchestrator",
+    "lead": "lead",
     "query_templates": "research_assembly",
     "assemble_workflow": "research_assembly",
     "fix_workflow_assembly": "research_assembly",
@@ -139,6 +143,7 @@ _ROLE_TIERS: dict[str, str] = {
 # Human labels for the tier selectors (used by the settings UI via /agentY/settings).
 TIER_LABELS: dict[str, str] = {
     "orchestrator": "Orchestrator — drives every turn",
+    "lead": "Lead — plans a sequence and reviews its shots (blank: as Orchestrator)",
     "research_assembly": "Research & assembly — templates, graph building, repair",
     "fast_utility": "Fast utility — short cheap calls (info, search, planner, …)",
     "vision": "Vision — reads input images and video",
@@ -166,7 +171,56 @@ def role_model(role: str, default: str = "", env_var: str = "") -> str:
         inherited = str(_cfg("", "tiers", tier, default="") or "").strip()
         if inherited:
             return inherited
+    if role == "lead":
+        # No lead model of its own: the lead is the orchestrator, thinking or not.
+        return role_model("orchestrator", default=default, env_var="ORCHESTRATOR_LLM")
     return default
+
+
+# Agents built under a name that is not a role of their own.
+_THINK_ALIASES = {"brain": "assemble_workflow", "subagent": "orchestrator"}
+_ON = ("1", "true", "yes", "on")
+_OFF = ("0", "false", "no", "off")
+
+
+def role_thinking(role: str) -> bool:
+    """Whether *role* reasons before answering: ``[llm.thinking_roles]`` (``""``
+    inherits) → its tier in ``[llm.thinking]`` → off.
+
+    The providers' own switches (``anthropic.think``, ``dashscope.enable_thinking``,
+    ``ollama.think``) still turn it on for every agent of that provider.
+    """
+    role = _THINK_ALIASES.get(role, role)
+    llm = (_settings() or {}).get("llm") or {}
+
+    def _flag(value):
+        if isinstance(value, bool):
+            return value
+        text = str(value if value is not None else "").strip().lower()
+        if text in _ON:
+            return True
+        if text in _OFF:
+            return False
+        return None
+
+    per_role = _flag((llm.get("thinking_roles") or {}).get(role))
+    if per_role is not None:
+        return per_role
+    tiers = llm.get("thinking") or {}
+    tier = _ROLE_TIERS.get(role, role)
+    return bool(_flag(tiers.get(tier)))
+
+
+def _provider_think(env_var: str, *path: str) -> bool:
+    raw = os.environ.get(env_var)
+    if raw is None:
+        node = (_settings() or {}).get("llm") or {}
+        for key in path:
+            node = node.get(key) if isinstance(node, dict) else None
+        raw = node
+    if isinstance(raw, bool):
+        return raw
+    return str(raw if raw is not None else "").strip().lower() in _ON
 
 
 def _parse_llm_setting(value: str) -> tuple[str, str]:
@@ -885,6 +939,20 @@ def _make_agent(
         **kwargs: Extra kwargs forwarded to the Strands Agent constructor.
     """
     llm = llm.strip().lower()
+    model, model_id = _build_model(role=role, llm=llm, system_prompt=system_prompt,
+                                   ollama_model=ollama_model, anthropic_model=anthropic_model,
+                                   dashscope_model=dashscope_model, max_tokens=max_tokens)
+    return _wrap_agent(role=role, llm=llm, model=model, model_id=model_id,
+                       system_prompt=system_prompt, tools=tools, plugins=plugins, **kwargs)
+
+
+def _build_model(*, role: str, llm: str, system_prompt: str,
+                 ollama_model: str | None = None, anthropic_model: str | None = None,
+                 dashscope_model: str | None = None, max_tokens: int | None = None):
+    """The model client for *role* on *llm*, with *role*'s reasoning setting
+    (:func:`role_thinking`). Returns ``(model, model_id)``."""
+    llm = llm.strip().lower()
+    want_think = role_thinking(role)
     if llm == "ollama":
         model_id = ollama_model or str(_cfg("OLLAMA_MODEL", "ollama", "model", default="qwen3-vl:30b"))
         from src.utils.settings import ollama_host as _ollama_host
@@ -903,9 +971,7 @@ def _make_agent(
         # reasoning, so disable thinking. think=False is the root-cause fix; a mild
         # repeat_penalty guards residual repetition without degrading JSON (1.3 did).
         repeat_penalty = float(_cfg("OLLAMA_REPEAT_PENALTY", "ollama", "repeat_penalty", default=1.1))
-        _think_cfg = _cfg("OLLAMA_THINK", "ollama", "think", default=False)
-        think = _think_cfg if isinstance(_think_cfg, bool) else \
-            str(_think_cfg).strip().lower() in ("1", "true", "yes", "on")
+        think = want_think or _provider_think("OLLAMA_THINK", "ollama", "think")
         _ensure_ollama_model(model_id, host)
         # Only pass the `think` flag to models that actually support thinking:
         # a non-thinking model (e.g. qwen3-coder) rejects it with a 400.
@@ -928,14 +994,13 @@ def _make_agent(
         if not api_key:
             print(f"[agentY:{role}] WARNING: DASHSCOPE_API_KEY not set — Model Studio calls will fail.")
         ds_max_tokens = max_tokens or int(_cfg("DASHSCOPE_MAX_TOKENS", "dashscope", "max_tokens", default=8192))
-        # Qwen3 "thinking" models (e.g. qwen3.7-plus) emit reasoning_content, which
-        # the Chat Completions API rejects when echoed back on multi-turn requests
-        # — and the pipeline is a tool-calling loop (multi-turn). The work here is
-        # structured extraction/assembly, not deep reasoning, so disable thinking
-        # by default. Override with DASHSCOPE_ENABLE_THINKING or
-        # dashscope.enable_thinking in settings.json.
-        _ds_think_raw = _cfg("DASHSCOPE_ENABLE_THINKING", "dashscope", "enable_thinking", default="false")
-        _ds_think = str(_ds_think_raw).strip().lower() in ("1", "true", "yes", "on")
+        # Thinking per agent ([llm.thinking]); dashscope.enable_thinking turns it
+        # on for every DashScope agent. Off by default: most of the work here is
+        # structured extraction and assembly. The reasoning a Qwen model returns is
+        # left out of the history it is sent next (Strands drops reasoningContent
+        # for the Chat Completions API), so a tool loop with thinking on works.
+        _ds_think = want_think or _provider_think(
+            "DASHSCOPE_ENABLE_THINKING", "dashscope", "enable_thinking")
         model = OpenAIModel(
             client_args={"api_key": api_key, "base_url": base_url},
             model_id=model_id,
@@ -953,12 +1018,16 @@ def _make_agent(
         if not api_key:
             print(f"[agentY:{role}] WARNING: OPENAI_API_KEY not set — OpenAI calls will fail.")
         oc_max_tokens = max_tokens or int(_cfg("OPENAI_MAX_TOKENS", "openai", "max_tokens", default=8192))
+        oc_params: dict = {"max_tokens": oc_max_tokens}
+        if want_think:
+            # Reasoning models only (o-series, gpt-5…); others refuse the field.
+            oc_params["reasoning_effort"] = "medium"
         model = OpenAIModel(
             client_args={"api_key": api_key, "base_url": base_url},
             model_id=model_id,
-            params={"max_tokens": oc_max_tokens},
+            params=oc_params,
         )
-        print(f"[agentY:{role}] Using OpenAI — {model_id}")
+        print(f"[agentY:{role}] Using OpenAI — {model_id} (thinking={want_think})")
     elif llm in _GEMINI_PROVIDERS:
         # Google Gemini through its OpenAI-compatible endpoint (same client). Key
         # from GEMINI_API_KEY or GOOGLE_API_KEY.
@@ -970,12 +1039,15 @@ def _make_agent(
         if not api_key:
             print(f"[agentY:{role}] WARNING: GEMINI_API_KEY/GOOGLE_API_KEY not set — Gemini calls will fail.")
         oc_max_tokens = max_tokens or int(_cfg("GEMINI_MAX_TOKENS", "google", "max_tokens", default=8192))
+        gm_params: dict = {"max_tokens": oc_max_tokens}
+        if want_think:
+            gm_params["reasoning_effort"] = "medium"   # Gemini's OpenAI-compatible knob
         model = OpenAIModel(
             client_args={"api_key": api_key, "base_url": base_url},
             model_id=model_id,
-            params={"max_tokens": oc_max_tokens},
+            params=gm_params,
         )
-        print(f"[agentY:{role}] Using Google Gemini — {model_id}")
+        print(f"[agentY:{role}] Using Google Gemini — {model_id} (thinking={want_think})")
     else:
         model_id = anthropic_model or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
         tokens = max_tokens or int(_cfg("ANTHROPIC_MAX_TOKENS", "anthropic", "max_tokens", default=4096))
@@ -992,9 +1064,7 @@ def _make_agent(
         # `think` and DashScope `enable_thinking` toggles so the switch is
         # available for every provider. When on, Claude reasons before answering;
         # the budget must be < max_tokens, so bump max_tokens if it's too small.
-        _an_think_raw = _cfg("ANTHROPIC_THINK", "anthropic", "think", default=False)
-        _an_think = _an_think_raw if isinstance(_an_think_raw, bool) else \
-            str(_an_think_raw).strip().lower() in ("1", "true", "yes", "on")
+        _an_think = want_think or _provider_think("ANTHROPIC_THINK", "anthropic", "think")
         if _an_think:
             budget = max(1024, min(4096, tokens - 1024))
             if tokens <= budget:
@@ -1016,7 +1086,12 @@ def _make_agent(
             params=_an_params,
         )
         print(f"[agentY:{role}] Using Anthropic — {model_id} (thinking={_an_think})")
+    return model, model_id
 
+
+def _wrap_agent(*, role: str, llm: str, model, model_id: str, system_prompt: str,
+                tools: list, plugins: list | None = None, **kwargs) -> Agent:
+    """A Strands Agent around *model*, with every agent's hooks."""
     window_size = int(_cfg("AGENT_HISTORY_WINDOW", "history_window", default=40))
     agent_kwargs: dict = {
         "model": model,
@@ -2180,6 +2255,25 @@ def create_orchestrator_agent(
     )
     agent._agentskills_plugin = skills_plugin
     return agent
+
+
+def build_lead_model(system_prompt: str):
+    """The model a lead conversation's orchestrator runs on: the Lead tier (blank
+    = the orchestrator's model) with the lead's reasoning setting.
+
+    A model, not an agent: the pipeline puts it under its orchestrator for a lead's
+    turns (Pipeline.use_lead_model), so the conversation, tools and skills are the
+    orchestrator's own. Returns ``(model, provider, model_id)``.
+    """
+    raw = str(role_model("lead", default="claude,claude-haiku-4-5"))
+    provider, model_name = _parse_llm_setting(raw)
+    provider = (provider or "claude").strip().lower()
+    model, model_id = _build_model(
+        role="lead", llm=provider, system_prompt=system_prompt,
+        ollama_model=model_name or None,
+        anthropic_model=(model_name or None) if provider not in ("ollama",) else None,
+        dashscope_model=model_name or None)
+    return model, provider, model_id
 
 
 # Meta-tool identities to exclude from a subagent's toolset (keeps subagents

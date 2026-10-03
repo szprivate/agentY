@@ -248,6 +248,10 @@ text_only_models = []
 # Drives every turn: routing, tool calls, talking to you. Reasoning quality here
 # is felt in everything.
 orchestrator = "claude,claude-haiku-4-5"
+# The orchestrator of a LEAD conversation: one that plans a sequence and starts
+# a conversation per shot, then reviews what they report. Few turns, each
+# deciding a lot — a stronger model pays off here. Blank = the orchestrator's.
+lead = ""
 # Template research, workflow assembly, repair, and building a graph from scratch.
 # The heaviest reasoning in the system — a stronger model pays off most here.
 research_assembly = "claude,claude-haiku-4-5"
@@ -300,6 +304,35 @@ video_max_parallel = 0
 qa_checker = ""
 coder = ""
 
+# REASONING per agent: the model thinks before it answers. Better decisions,
+# slower and more tokens — worth it where few calls decide a lot (the lead),
+# rarely in long tool loops. Per tier here; per role below ("" = as its tier,
+# "on", "off"). The model must support it (Qwen3, DeepSeek, Claude, o-series…).
+# The providers' own switches below (anthropic.think, dashscope.enable_thinking,
+# ollama.think) still turn it on for EVERY agent of that provider.
+[llm.thinking]
+orchestrator = false
+lead = true
+research_assembly = false
+fast_utility = false
+vision = false
+qa_judge = false
+coder = false
+
+[llm.thinking_roles]
+query_templates = ""
+assemble_workflow = ""
+fix_workflow_assembly = ""
+generate_new_workflow = ""
+world_builder = ""
+info = ""
+search_web = ""
+planner = ""
+learnings = ""
+vision_agent = ""
+video_agent = ""
+qa_checker = ""
+
 [llm.ollama]
 host = "http://localhost:11434"
 num_ctx = 32768
@@ -310,7 +343,8 @@ think = false
 [llm.anthropic]
 model = "claude-haiku-4-5"
 max_tokens = 16384
-# Extended thinking (reasoning). Off by default. Env: ANTHROPIC_THINK (1/0).
+# Reasoning for EVERY Claude agent. Off by default — set it per agent in
+# [llm.thinking] instead. Env: ANTHROPIC_THINK (1/0).
 think = false
 
 [llm.dashscope]
@@ -319,7 +353,8 @@ think = false
 base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 model = "qwen-plus"
 max_tokens = 8192
-# Qwen thinking mode. Off by default. Env: DASHSCOPE_ENABLE_THINKING (1/0).
+# Reasoning for EVERY DashScope agent. Off by default — set it per agent in
+# [llm.thinking] instead. Env: DASHSCOPE_ENABLE_THINKING (1/0).
 enable_thinking = false
 
 # Long-term agent memory (mem0). The vector store is ALWAYS local FAISS (./memory);

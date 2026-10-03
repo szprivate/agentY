@@ -36,7 +36,7 @@ An AI agent that constructs and executes [ComfyUI](https://github.com/comfyanony
 - **Slash commands** — `/restart`, `/stop`, `/unload`, `/clear_vram`, `/images`, `/project_memory`, `/clearhistory`, `/switch_model`, `/add_workflow`, `/remove_workflow`, `/resend`, `/qa` — with an in-panel autocomplete popup.
 - **In-panel Settings & token usage** — auth keys (`.env`), settings (`config/settings.local.json`) and per-model token cost, all from ComfyUI's own Settings panel.
 - **Hugging Face model management** — search, check local availability, download on demand.
-- **Multiple LLM backends** — Claude, Ollama, Alibaba/DashScope (Qwen), OpenAI (GPT) and Google (Gemini). Models are picked by **tier** (six of them) with per-role overrides for the exceptions, and the list is **discovered live** from each provider, so a vendor appears only when its key is set.
+- **Multiple LLM backends** — Claude, Ollama, Alibaba/DashScope (Qwen), OpenAI (GPT) and Google (Gemini). Models are picked by **tier** (with a 💭 reasoning switch each) with per-role overrides for the exceptions, and the list is **discovered live** from each provider, so a vendor appears only when its key is set.
 - **Custom-node creator** (⚠️ *experimental, untested*) — point the agent at a model's GitHub repo and it reads the docs and inference code and writes a self-contained **ComfyUI node pack** into `output/custom_nodes/<name>/`. See [Building a node](docs/using-agentY.md#building-a-node-for-a-new-model).
 
 ---
@@ -350,7 +350,7 @@ neither trips the other's duplicate check.
 
 `config/settings.default.toml` holds the committed defaults; put your machine's values (ComfyUI URL/paths, model choices, private endpoints) in `config/settings.local.json` (gitignored, deep-merged over the defaults).
 
-Models are chosen by **tier**, not one dropdown per role: set the six `llm.tiers` values and every role inherits from one of them. `llm.pipeline` underneath is per-role **overrides** — leave a role blank to inherit, fill one in only when that single job wants something different. Resolution for any role is *env var → override → tier → built-in default*. Any model value is `"provider,model"`:
+Models are chosen by **tier**, not one dropdown per role: set the `llm.tiers` values and every role inherits from one of them. `llm.pipeline` underneath is per-role **overrides** — leave a role blank to inherit, fill one in only when that single job wants something different. Resolution for any role is *env var → override → tier → built-in default*. Any model value is `"provider,model"`:
 
 ```jsonc
 {

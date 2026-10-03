@@ -945,6 +945,11 @@ class Pipeline:
         module so ``create_skill`` re-scans the correct, live plugin instance.
         """
         self._orchestrator_agent = agent
+        # The model it was built with, and the lead's (built when first needed):
+        # use_lead_model puts one or the other under it, per turn.
+        self._orch_model = getattr(agent, "model", None)
+        self._lead_model = None
+        self._lead_active = False
         plugin = getattr(agent, "_agentskills_plugin", None)
         try:
             from src.tools.orchestration import set_orchestrator_context
@@ -952,6 +957,89 @@ class Pipeline:
         except Exception as exc:  # noqa: BLE001
             if getattr(self, "_verbose", False):
                 print(f"pipeline: WARNING: could not wire orchestrator context ({exc}).")
+
+    def use_lead_model(self, on: bool) -> bool:
+        """Run the orchestrator on the Lead tier's model (*on*) or its own.
+
+        A lead conversation — one that plans a sequence and reviews its shot
+        conversations — gets the Lead model and the lead's reasoning setting; every
+        other turn the orchestrator's own. The agent, its conversation, tools and
+        skills stay the same: only the model under it changes, between model calls,
+        so it can be switched mid-turn too (when the turn starts its first shot).
+        Returns whether the lead model is now in place.
+        """
+        agent = getattr(self, "_orchestrator_agent", None)
+        if agent is None:
+            return False
+        if not on:
+            if self._lead_active and self._orch_model is not None:
+                self._swap_orchestrator_model(self._orch_model, getattr(self, "_orch_cost_meta", None))
+            self._lead_active = False
+            return False
+        if self._lead_active:
+            return True
+        try:
+            if self._lead_model is None:
+                from src.agent import build_lead_model
+                model, provider, model_id = build_lead_model(agent.system_prompt or "")
+                self._lead_model = (model, {"provider": provider, "model_id": model_id,
+                                            "is_ollama": provider == "ollama"})
+        except Exception as exc:  # noqa: BLE001 — the orchestrator's own model still works
+            print(f"pipeline: lead model unavailable, the lead runs on the orchestrator's ({exc})")
+            return False
+        self._orch_cost_meta = getattr(agent, "_cost_meta", None)
+        self._swap_orchestrator_model(*self._lead_model)
+        self._lead_active = True
+        return True
+
+    def drop_lead_model(self) -> None:
+        """Forget the lead's model (its settings changed); rebuilt when next needed."""
+        self.use_lead_model(False)
+        self._lead_model = None
+
+    def _swap_orchestrator_model(self, model, cost_meta) -> None:
+        agent = self._orchestrator_agent
+        old = getattr(agent, "model", None)
+        agent.model = model
+        if cost_meta is not None:
+            try:
+                agent._cost_meta = cost_meta
+            except Exception:  # noqa: BLE001
+                pass
+        # Reasoning from one provider means nothing to another, and Anthropic
+        # refuses a thinking block it did not sign: drop it from the history when
+        # the provider changes. The answers themselves stay.
+        if type(old) is not type(model):
+            for msg in getattr(agent, "messages", None) or []:
+                content = msg.get("content") if isinstance(msg, dict) else None
+                if isinstance(content, list) and any("reasoningContent" in c for c in content
+                                                     if isinstance(c, dict)):
+                    msg["content"] = [c for c in content
+                                      if not (isinstance(c, dict) and "reasoningContent" in c)] \
+                        or [{"text": ""}]
+
+    @staticmethod
+    def _is_lead_turn(text: str) -> bool:
+        """This turn belongs to a lead conversation: it has shots, its shots woke
+        it, or the user is asking for a sequence worked on in shot conversations."""
+        try:
+            from agenty_core.utils import turn_scope
+            from src.utils import conversation_store as _cs
+            from src.utils import turn_bus as _tb
+            scope = turn_scope.current()
+            tid = scope.thread_id
+            if not tid or _cs.shot_of(tid):
+                return False                 # no conversation, or a shot
+            turn = _tb.turn(scope.request_id)
+            if turn is not None and turn.origin == "shots":
+                return True
+            if _cs.shots_of(tid):
+                return True
+        except Exception:  # noqa: BLE001
+            return False
+        t = (text or "").lower()
+        return bool(re.search(r"\bshots?\b", t) and re.search(
+            r"\b(parallel|conversations?|agents?|lead|swarm)\b", t))
 
     def _init_vision_agent(self, *, strict: bool = False) -> None:
         """(Re)build the Vision Agent and register it with ``analyze_image``.
@@ -4710,6 +4798,11 @@ class Pipeline:
         try:
             from src.tools.orchestration import set_subagent_allowed as _set_sa
             _set_sa(self._user_asked_for_subagent(self._extract_text(user_input)))
+        except Exception:  # noqa: BLE001
+            pass
+        # A lead conversation runs on the Lead tier's model (src/utils/shots.py).
+        try:
+            self.use_lead_model(self._is_lead_turn(self._extract_text(user_input)))
         except Exception:  # noqa: BLE001
             pass
         self._orch_turn_logged = False  # reset per turn; _log_orchestrator sets it
