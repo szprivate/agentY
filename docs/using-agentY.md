@@ -281,8 +281,17 @@ turn** — you don't wait for it to finish:
 - **While ComfyUI renders**, the agent is woken to read it straight away; the render
   keeps going. Ask it to stop and it interrupts the run; ask for something extra
   and it queues that right after.
+- **While a model downloads**, the agent checks in at least once a minute with the
+  download's progress, reads your message then, answers it, and goes back to
+  waiting — a 26 GB file no longer makes it deaf for half an hour. When the
+  download finishes, the panel says so, even if the turn has moved on.
 - **After its last step**, while it's writing its answer, it reads the message and
   keeps going in the same turn.
+
+Your message shows when it will be read if that is not right away: *"it is
+downloading gemma4-12b… — 15.2 / 26.3 GB, ~15 min left; it reads this at its next
+check, within a minute"*, or *"it reads this when its current step
+(run_workflow_now, running 3 min) ends"*.
 
 **Ctrl + Enter** (⌘ + Enter) sends it **urgently**: the agent drops the step it was
 about to take and reads you first. Nothing already produced is undone. To stop

@@ -61,7 +61,8 @@ from src.tools.comfyui import clear_tool_caches as _clear_tool_caches
 # Deterministic download+rerun: resolve a named missing model on HF and fetch it
 # into ComfyUI's extra model path, then retry the query_templates.
 from agenty_core.tools.huggingface import find_hf_file as _find_hf_file
-from agenty_core.tools.huggingface import download_hf_model as _download_hf_model
+# The whole download: nobody here to answer while it runs (see download_hf_model).
+from agenty_core.tools.huggingface import download_to_completion as _download_hf_model
 from src.utils.learnings import count_tool_calls, maybe_run_learnings
 from src.utils.debug_log import trace as _trace
 

@@ -63,11 +63,20 @@ class _Log:
         self.dropped = 0          # events trimmed off the front
         self.ended = 0.0          # time.time() the turn ended, 0 while running
         self.asking = False       # its last word was a question it waits on
+        self.tools: dict = {}     # tool call id -> {name, agent, since}: still running
         self.cond = threading.Condition()
 
     def add(self, event: dict) -> None:
         with self.cond:
             kind = event.get("type")
+            if kind == "tool":
+                tid = event.get("id") or ""
+                if event.get("phase") == "call":
+                    self.tools[tid] = {"name": str(event.get("name") or "").split("] ", 1)[-1],
+                                       "agent": event.get("agent") or "",
+                                       "since": time.time()}
+                else:
+                    self.tools.pop(tid, None)
             if kind == "ask":
                 self.asking = True
             elif kind in _MOVED_ON:
@@ -219,6 +228,21 @@ def turn(request_id: str) -> "Turn | None":
         if t is None and str(request_id) in _logs:
             t = _logs[str(request_id)].turn
         return t
+
+
+def current_tool(request_id: str) -> dict | None:
+    """The tool call turn *request_id* is in right now (the outermost one, when a
+    specialist is running tools inside it): ``{name, agent, seconds}``, or None."""
+    with _LOCK:
+        log = _logs.get(str(request_id))
+    if log is None or log.ended:
+        return None
+    with log.cond:
+        running = sorted(log.tools.values(), key=lambda t: t["since"])
+    if not running:
+        return None
+    t = running[0]
+    return {"name": t["name"], "agent": t["agent"], "seconds": round(time.time() - t["since"])}
 
 
 def asking(request_id: str) -> bool:

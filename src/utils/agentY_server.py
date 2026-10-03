@@ -4585,7 +4585,8 @@ def _build_app():
         # Not persisted here: the delivering hook writes it into the thread at the
         # moment the model actually reads it, so the stored conversation keeps that
         # order and a message that misses the turn isn't stored twice.
-        return jsonify({"ok": True, "urgent": urgent, "pending": interject_bus.pending_count(req_id)})
+        return jsonify({"ok": True, "urgent": urgent, "pending": interject_bus.pending_count(req_id),
+                        "current_step": _current_step(req_id)})
 
     # ── What a model switch may target (drives the composer's scope picker) ──
     @app.route("/agentY/switch_targets", methods=["GET", "OPTIONS"])
@@ -4965,6 +4966,11 @@ def start_agentY_server(agent, host: str = "127.0.0.1", port: int | None = None)
     _pool = PipelinePool(agent, factory=_new_pipeline, max_size=_parallel_limit)
     _configure_shots()
     try:
+        from agenty_core.tools.huggingface import add_download_listener
+        add_download_listener(_download_finished)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
         from src.utils import canvas_lease
         canvas_lease.set_alive_check(running_threads)
     except Exception:  # noqa: BLE001
@@ -5146,6 +5152,41 @@ def _became_lead(thread_id: str) -> None:
     pipeline = _pool.pipeline_of(thread_id) if _pool is not None else _agent_ref
     if pipeline is not None and hasattr(pipeline, "use_lead_model"):
         pipeline.use_lead_model(True)
+
+
+def _current_step(req_id: str) -> dict | None:
+    """What turn *req_id* is doing right now — so a message sent into it can say
+    when it will be read (at the end of that step)."""
+    step = turn_bus.current_tool(req_id)
+    if not step:
+        return None
+    if step["name"] in ("download_hf_model", "wait_for_download"):
+        try:
+            from agenty_core.tools.huggingface import download_progress
+            jobs = download_progress()
+            if jobs:
+                step["download"] = jobs[0]
+        except Exception:  # noqa: BLE001
+            pass
+    return step
+
+
+def _download_finished(job: dict) -> None:
+    """A download ended — said in the panel even when the turn that started it
+    has moved on or ended."""
+    try:
+        res = json.loads(job.get("result") or "{}")
+    except Exception:  # noqa: BLE001
+        res = {}
+    if res.get("skipped"):
+        return
+    name = job.get("filename", "a model")
+    if res.get("ok"):
+        status_bus.notify(f"⬇️ Download finished: {name} → {res.get('path', '')}")
+    elif res.get("cancelled"):
+        status_bus.notify(f"⬇️ Download stopped: {name} (the partial file is kept and resumes next time)")
+    else:
+        status_bus.notify(f"⬇️ Download failed: {name} — {str(res.get('error', ''))[:200]}")
 
 
 def _stop_thread(thread_id: str) -> bool:

@@ -77,6 +77,7 @@ from src.tools.huggingface import (  # noqa: F401
     get_model_info,
     find_hf_file,
     download_hf_model,
+    wait_for_download,
 )
 from src.tools.file_tools import read_text_file, write_text_file  # noqa: F401
 from src.tools.iterate import iterate  # noqa: F401
@@ -160,6 +161,7 @@ _SHARED_CORE_TOOLS = [
     "validate_workflow", "check_model",
     # huggingface
     "search_huggingface_models", "get_model_info", "find_hf_file", "download_hf_model",
+    "wait_for_download",
     # model research
     "hf_search", "hf_repo", "hf_file", "find_local_models", "inspect_workflow_file",
     # looking around
@@ -375,6 +377,7 @@ FIX_WORKFLOW_ASSEMBLY_TOOLS: list = [
     find_hf_file,
     hf_file,
     download_hf_model,
+    wait_for_download,
     # Server dirs (resolve paths when patching)
     get_comfyui_dirs,
     stop,
@@ -416,6 +419,7 @@ GENERATE_NEW_WORKFLOW_TOOLS: list = [
     find_hf_file,
     hf_file,
     download_hf_model,
+    wait_for_download,
     # Server dirs
     get_comfyui_dirs,
     get_agent_output_dirs,
@@ -456,6 +460,7 @@ ORCHESTRATOR_TOOLS: list = [
     check_model,
     find_hf_file,
     download_hf_model,
+    wait_for_download,
     # Model research: one call each for what run_script used to do in dozens —
     # repos with the file you want, a repo's files and access, one file's size /
     # access / mirrors / destination, what is installed, what a workflow loads.
