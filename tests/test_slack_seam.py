@@ -25,6 +25,7 @@ from src.utils.slack_bridge import SlackBridge
 class FakeClient:
     def __init__(self):
         self.posted, self.updated, self.uploaded = [], [], []
+        self.reactions = []
         self._ts = 0
 
     def chat_postMessage(self, **kw):
@@ -41,6 +42,14 @@ class FakeClient:
 
     def files_upload_v2(self, **kw):
         self.uploaded.append(kw)
+        return {"ok": True}
+
+    def reactions_add(self, **kw):
+        self.reactions.append(("+", kw["name"], kw["timestamp"]))
+        return {"ok": True}
+
+    def reactions_remove(self, **kw):
+        self.reactions.append(("-", kw["name"], kw["timestamp"]))
         return {"ok": True}
 
     def text(self):
@@ -66,10 +75,19 @@ class SeamTest(unittest.TestCase):
         # The pipeline, replaced by something that runs one scripted turn through
         # the REAL bus — which is the piece under test here.
         def fake_stream(thread_id, message, image_paths, q, rid, **kw):
-            self.ran.append({"thread_id": thread_id, "message": message,
-                             "images": list(image_paths), "rid": rid, **kw})
             t = turn_bus.tee(q, request_id=rid, thread_id=thread_id,
                              origin=kw.get("origin", "panel"), text=message)
+            # As the real runner does: the canvas is asked for once the turn has
+            # announced itself, not before.
+            provider = kw.pop("canvas_provider", None)
+            if provider is not None:
+                self.started_before_canvas = bool(turn_bus.turn(rid))
+                snap = provider() or {}
+                kw.update(canvas_prompt=snap.get("prompt"),
+                          canvas_hooks=snap.get("hooks") or [],
+                          canvas_selection=snap.get("selection") or [])
+            self.ran.append({"thread_id": thread_id, "message": message,
+                             "images": list(image_paths), "rid": rid, **kw})
             for ev in self.script:
                 t.put(ev)
             t.put(None)
@@ -238,6 +256,30 @@ class SeamTest(unittest.TestCase):
         self.bridge.route("U_ME", "what is on my canvas?")
         self.assertEqual(self.ran[0]["canvas_prompt"], {"3": {"class_type": "KSampler"}})
         self.assertEqual(self.ran[0]["canvas_hooks"], [{"hook_node_id": "5"}])
+
+    def test_the_turn_has_started_before_the_canvas_is_asked_for(self):
+        """Asking the page for its graph can take seconds; done first, it held
+        up the turn's start and every sign of life in Slack with it."""
+        self.bridge.route("U_ME", "hello")
+        self.assertTrue(self.started_before_canvas)
+
+    def test_a_message_is_marked_seen_at_once_and_done_at_the_end(self):
+        from src.utils.slack_bridge import _route_message
+        _route_message(self.bridge, None, {"type": "message", "channel_type": "im",
+                                           "user": "U_ME", "channel": "D_ME",
+                                           "text": "render it", "ts": "100.1"}, None)
+        self.assertEqual(self.client.reactions[0], ("+", "eyes", "100.1"),
+                         "the first thing that happens is the 👀")
+        self.bridge.flush()
+        self.assertIn(("-", "eyes", "100.1"), self.client.reactions)
+        self.assertEqual(self.client.reactions[-1], ("+", "white_check_mark", "100.1"))
+
+    def test_a_stranger_gets_no_reaction(self):
+        from src.utils.slack_bridge import _route_message
+        _route_message(self.bridge, None, {"type": "message", "channel_type": "im",
+                                           "user": "U_SOMEONE", "channel": "D_ME",
+                                           "text": "render it", "ts": "100.2"}, None)
+        self.assertEqual(self.client.reactions, [])
 
     def test_with_no_panel_answering_it_runs_without_one_rather_than_stalling(self):
         self.bridge.route("U_ME", "hello")

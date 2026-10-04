@@ -181,6 +181,7 @@ class SlackTurn:
             self.bridge._call(self._apply, post)
         if kind == "done":
             self.bridge._call(self._flush_answer, True)
+            self.bridge._call(self.bridge.finish_ack, self.turn.request_id)
             self.ended = time.time()
             self.ask_request_id = ""
 
@@ -272,6 +273,7 @@ class SlackBridge:
                             else _env_list("SLACK_ALLOWED_USERS"))
         self.default_channel = default_channel
         self.turns: dict = {}            # request_id -> SlackTurn
+        self.acks: dict = {}             # request_id -> (channel, ts) of the message it answers
         self._root_text_cache: dict = {}  # thread_id -> its root message text
         self._lock = threading.RLock()
         self._out: "queue.Queue" = queue.Queue()
@@ -469,6 +471,47 @@ class SlackBridge:
                 st = SlackTurn(self, turn, channel)
                 self.turns[turn.request_id] = st
         st.feed(event)
+
+    # ── 👀 / ✅ on the message itself ──────────────────────────────────────────
+    # The fastest sign of life Slack has: one call, made the moment a message
+    # arrives — before attachments are fetched, before the turn starts, before
+    # the canvas is asked for. "working on it" follows once the turn is up.
+    ACK_SEEN = "eyes"
+    ACK_DONE = "white_check_mark"
+
+    def react(self, channel: str, ts: str, name: str, remove: bool = False) -> None:
+        if not self.client or not channel or not ts:
+            return
+        try:
+            if remove:
+                self.client.reactions_remove(channel=channel, timestamp=ts, name=name)
+            else:
+                self.client.reactions_add(channel=channel, timestamp=ts, name=name)
+        except Exception as exc:  # noqa: BLE001 — a missing scope or an old message
+            logger.debug("slack: reaction %s %s failed: %s", name, ts, exc)
+
+    def acknowledge(self, channel: str, ts: str) -> None:
+        """Seen. Synchronous on purpose: it is the whole point to be first."""
+        self.react(channel, ts, self.ACK_SEEN)
+
+    def bind_ack(self, request_id: str, channel: str, ts: str) -> None:
+        """The message *ts* started (or fed) turn *request_id*: tick it when that ends."""
+        if request_id and ts:
+            with self._lock:
+                self.acks[request_id] = (channel, ts)
+
+    def finish_ack(self, request_id: str) -> None:
+        """👀 → ✅ on every message that turn answered. Runs on the worker."""
+        with self._lock:
+            hits = [v for k, v in self.acks.items() if k == request_id]
+            self.acks.pop(request_id, None)
+        for channel, ts in hits:
+            self.react(channel, ts, self.ACK_SEEN, remove=True)
+            self.react(channel, ts, self.ACK_DONE)
+
+    def drop_ack(self, channel: str, ts: str) -> None:
+        """Seen, and nothing will come of it here (busy, refused, ignored)."""
+        self.react(channel, ts, self.ACK_SEEN, remove=True)
 
     # ── the agent handing something over on purpose ───────────────────────────
     def send_files(self, paths: list, message: str = "", thread_id: str = "") -> dict:
@@ -894,6 +937,13 @@ def _route_message(bridge: SlackBridge, web, event: dict, dest) -> None:
     thread_ts = str(event.get("thread_ts") or "")
     if thread_ts == str(event.get("ts") or ""):
         thread_ts = ""          # a thread's own root message is not a reply
+    msg_ts = str(event.get("ts") or "")
+    # Seen — first, before anything that takes time. Only for people the bridge
+    # answers: a stranger's message gets the refusal, not a reaction.
+    acked = bool(user and user in bridge.allowed and user != bridge.bot_user_id
+                 and (text.strip() or event.get("files")))
+    if acked:
+        bridge.acknowledge(channel, msg_ts)
     files, skipped = ([], [])
     if event.get("files"):
         # Downloaded BEFORE the allow-list is consulted only in the sense that
@@ -902,6 +952,11 @@ def _route_message(bridge: SlackBridge, web, event: dict, dest) -> None:
         files, skipped = download_files(web, event, dest)
     result = bridge.route(user, text, files, thread_ts=thread_ts)
     action = result.get("action")
+    if acked:
+        if action in ("turn", "answer", "interject") and result.get("request_id"):
+            bridge.bind_ack(str(result["request_id"]), channel, msg_ts)
+        else:
+            bridge.drop_ack(channel, msg_ts)
     if action == "busy":
         bridge.post(channel, "_Busy with another conversation right now — send "
                              "this again when it finishes, or reply in that "

@@ -1226,8 +1226,13 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
                          dry_run: bool = False, origin: str = "panel",
                          canvas_graph: dict | None = None, canvas_hash: str = "",
                          canvas_workflow: str = "",
-                         loop_render: dict | None = None) -> None:
+                         loop_render: dict | None = None,
+                         canvas_provider=None) -> None:
     """Run one turn, guaranteeing the SSE queue is always terminated.
+
+    *canvas_provider* (Slack) fetches the canvas once the turn has started:
+    asking the open page for its graph can take seconds, and done first it held
+    up everything the turn says — the "working on it" in Slack included.
 
     The queue's ``None`` sentinel is what ends the stream, and ``done`` is what
     releases the panel from its streaming state. If the turn runner dies without
@@ -1251,6 +1256,11 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
     _scope_token = turn_scope.enter(turn_scope.Scope(req_id, thread_id))
     pipeline = None
     try:
+        if canvas_provider is not None:
+            snap = canvas_provider() or {}
+            canvas_prompt = snap.get("prompt")
+            canvas_hooks = snap.get("hooks") or []
+            canvas_selection = snap.get("selection") or []
         pipeline = _take_pipeline(thread_id, req_id, out_q, finished)
         if pipeline is None:
             return
@@ -5167,15 +5177,13 @@ def _slack_start_turn(text: str, image_paths: list, thread_id: str = "") -> str:
     # graph at all and every canvas tool answers "no on-canvas graph is loaded",
     # which reads as the agent refusing to look at a workflow that is open in
     # front of you.
-    snap = request_canvas()
+    # Fetched inside the turn (canvas_provider), not here: waiting for the page
+    # first delayed the turn's start, and with it every sign of life in Slack.
     q: queue.Queue = queue.Queue()
     rid = uuid.uuid4().hex
     threading.Thread(target=_run_pipeline_stream,
                      args=(thread_id, text, list(image_paths or []), q, rid),
-                     kwargs={"origin": "slack",
-                             "canvas_prompt": snap.get("prompt"),
-                             "canvas_hooks": snap.get("hooks") or [],
-                             "canvas_selection": snap.get("selection") or []},
+                     kwargs={"origin": "slack", "canvas_provider": request_canvas},
                      name="agentY-slack-turn", daemon=True).start()
     # Nothing reads this queue: Slack is fed by the bus, not by the stream. Drain
     # it anyway, or the turn blocks on a queue that fills and never empties.
