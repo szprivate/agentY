@@ -305,6 +305,28 @@ Slash commands and dry runs aren't messages to the running turn. They wait as a
 **⏳ chip** above the composer and go out when the turn ends (**↳** on a chip sends
 its text into the turn anyway; **✕** drops it).
 
+### Long conversations stay quick
+
+A conversation's history is what the agent re-reads on every step, and most of it is
+old tool output it will never need again. So after each turn, in the background,
+agentY shrinks it:
+
+- **Old tool output is cut to its first lines.** Recent output, and anything from the
+  turn in progress, is left whole.
+- **If that isn't enough, older turns are summarised** into one "earlier in this
+  conversation" note: the goal, what was decided and rejected, what exists now, what
+  is still open, and your standing rules — with paths, names and numbers kept
+  exactly. The last two turns stay word for word.
+
+Nothing is thrown away: everything a pass changes is first appended, whole, to
+`memory/history_archive/<conversation>.jsonl`. And the compacted history is what
+gets saved, so after a crash or a restart the conversation continues from exactly
+what the agent knew.
+
+It is on by default; **Settings ▸ compaction** has the budgets and the off switch.
+What it can't shrink is the fixed part of every call — the agent's instructions and
+its tool list.
+
 ### Undoing a step
 
 **↩ Undo** in the top bar (or `/undo`) takes the conversation back to before the

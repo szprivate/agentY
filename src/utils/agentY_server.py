@@ -998,6 +998,7 @@ def _halt_pending(thread_id: str) -> bool:
 
 def _restore_state(pipeline, thread_id: str) -> None:
     """Restore pipeline state for *thread_id* from the memory cache + SQLite store."""
+    _await_compaction(thread_id)
     _reset_pipeline_state(pipeline)
     st = cs.load_state(thread_id)
     if st:
@@ -1053,6 +1054,55 @@ def _restore_state(pipeline, thread_id: str) -> None:
                 sess.generated_images = imgs
         except Exception as exc:
             logger.debug("gallery rebuild skipped: %s", exc)
+
+
+# ── History compaction (src/utils/compaction.py) ─────────────────────────────
+# Runs between turns, on the conversation's SAVED history — never on the live
+# agent, which another conversation's turn may be using. The archive it writes
+# first is what makes it safe: nothing a pass removes is gone.
+_compaction_jobs: dict[str, threading.Thread] = {}
+_compaction_lock = threading.Lock()
+
+
+def _compact_thread(thread_id: str) -> None:
+    from src.utils import compaction
+    from src.utils.brain_memory import serialize_messages
+    cfg = compaction.settings()
+    if not cfg["enabled"]:
+        return
+    history = _thread_brain_cache.get(thread_id)
+    if not history:
+        return
+    res = compaction.compact(list(history), cfg)
+    if not res.changed:
+        return
+    compaction.archive(thread_id, res.archived, "between turns")
+    # Only if no turn replaced the history while this ran (a turn waits for this
+    # job before it starts, so this is a belt for the braces).
+    if _thread_brain_cache.get(thread_id) is history:
+        _thread_brain_cache[thread_id] = res.messages
+        cs.update_brain_messages(thread_id, serialize_messages(res.messages))
+        logger.info("conversation %s compacted — %s", thread_id, res.describe())
+
+
+def _schedule_compaction(thread_id: str) -> None:
+    def work():
+        try:
+            _compact_thread(thread_id)
+        except Exception as exc:  # noqa: BLE001 — never cost the conversation
+            logger.warning("compaction failed for %s: %s", thread_id, exc)
+    job = threading.Thread(target=work, name="agentY-compaction", daemon=True)
+    with _compaction_lock:
+        _compaction_jobs[thread_id] = job
+    job.start()
+
+
+def _await_compaction(thread_id: str, timeout: float = 15.0) -> None:
+    """Let a compaction of *thread_id* finish before its next turn reads history."""
+    with _compaction_lock:
+        job = _compaction_jobs.pop(thread_id, None)
+    if job is not None and job.is_alive():
+        job.join(timeout=timeout)
 
 
 def _save_state(pipeline, thread_id: str) -> None:
@@ -1782,11 +1832,6 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
                 pass
         _wd.phase(req_id, "post:save_state")
         _save_state(pipeline, thread_id)
-        _wd.phase(req_id, "post:compression")
-        try:
-            loop.run_until_complete(pipeline._await_pending_compression())  # type: ignore[attr-defined]
-        except Exception:
-            pass
         # Let the background auto-title finish (first turn only) so the thread
         # list shows the short summary when the panel refreshes on `done`.
         _wd.phase(req_id, "post:title_join")
@@ -1802,6 +1847,10 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
         finished["emitted"] = True
         out_q.put({"type": "done"})
         out_q.put(None)
+        # After `done`, so nobody waits for it: shrink this conversation's
+        # history for its NEXT turn (which waits for this, see _restore_state).
+        _wd.phase(req_id, "post:compaction")
+        _schedule_compaction(thread_id)
         _wd.phase(req_id, "post:close_loop")
         _close_loop(loop, req_id)
         # A model switch made while this turn ran was held back so it could not

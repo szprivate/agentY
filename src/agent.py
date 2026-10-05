@@ -1093,6 +1093,15 @@ def _wrap_agent(*, role: str, llm: str, model, model_id: str, system_prompt: str
                 tools: list, plugins: list | None = None, **kwargs) -> Agent:
     """A Strands Agent around *model*, with every agent's hooks."""
     window_size = int(_cfg("AGENT_HISTORY_WINDOW", "history_window", default=40))
+    # With compaction on, history is bounded by tokens and older turns are
+    # SUMMARISED (src/utils/compaction.py). The message-count window used to cut
+    # first — at 12 messages, with no summary — so it is widened into a backstop.
+    try:
+        from src.utils import compaction as _compaction
+        if _compaction.settings()["enabled"]:
+            window_size = max(window_size, 400)
+    except Exception:  # noqa: BLE001
+        _compaction = None
     agent_kwargs: dict = {
         "model": model,
         "system_prompt": system_prompt,
@@ -1119,6 +1128,11 @@ def _wrap_agent(*, role: str, llm: str, model, model_id: str, system_prompt: str
     _hooks = list(agent_kwargs.get("hooks") or [])
     if not any(isinstance(h, ToolActivityHookProvider) for h in _hooks):
         _hooks.append(ToolActivityHookProvider(role=role))
+    # Every agent gets the mid-turn guard: a specialist forty tool calls into one
+    # delegation carries its results exactly like the orchestrator does.
+    if _compaction is not None and not any(
+            isinstance(h, _compaction.CompactionHookProvider) for h in _hooks):
+        _hooks.append(_compaction.CompactionHookProvider(role=role))
     # Approval applies to EVERY agent, not just the one you are talking to. A
     # subagent or a delegate holds the same run_script the orchestrator does, and
     # a gate that only covered the visible agent would be a gate with a documented

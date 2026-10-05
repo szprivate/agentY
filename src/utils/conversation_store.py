@@ -316,6 +316,19 @@ def get_gallery(thread_id: str) -> list[dict[str, Any]]:
 # Per-thread pipeline state (for resume)
 # ---------------------------------------------------------------------------
 
+def update_brain_messages(thread_id: str, brain_messages: Any) -> None:
+    """Replace ONLY the saved conversation history of *thread_id*.
+
+    For the between-turns compaction: it rewrites the history after the turn's
+    state was saved, and must not touch the session or briefing saved with it.
+    A thread with no saved state yet is left alone — there is nothing to compact.
+    """
+    init_db()
+    with _connect() as conn:
+        conn.execute("UPDATE thread_state SET brain_messages=?, updated_at=? WHERE thread_id=?",
+                     (json.dumps(brain_messages), time.time(), thread_id))
+
+
 def save_state(
     thread_id: str,
     *,

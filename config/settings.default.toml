@@ -481,3 +481,21 @@ max_upload_mb = 45
 # sent to the agent. Anything larger is refused with a note in the DM rather
 # than half-downloaded.
 max_download_mb = 250
+
+# History compaction — keeps a long conversation as quick as a new one.
+# Between turns (in the background, never while you wait): tool output that is no
+# longer recent is cut to its start, and if the history is still over the budget,
+# everything before the last `keep_turns` turns becomes one summary. Nothing is
+# destroyed: what a pass changes is appended, whole, to
+# memory/history_archive/<conversation>.jsonl first. The compacted history is what
+# is saved, so a restart resumes from exactly the context the agent had.
+# Token figures are for the HISTORY only — the system prompt and tool list
+# (~60k tokens for the orchestrator) are fixed and not counted.
+[compaction]
+enabled = true
+history_budget_tokens = 20000   # summarise older turns when history is above this
+hard_budget_tokens = 60000      # mid-turn guard: age old tool output past this
+keep_recent_messages = 8        # tool output this recent is never cut
+keep_turns = 2                  # turns kept word for word when older ones are summarised
+tool_result_chars = 1500        # tool output longer than this can be cut …
+tool_result_head = 500          # … down to this much of its start
