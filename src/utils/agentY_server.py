@@ -198,6 +198,7 @@ SLASH_COMMANDS = [
     {"name": "/clear_vram",      "description": "Clear ComfyUI GPU VRAM"},
     {"name": "/images",          "description": "List images generated in this thread (reference them by number)"},
     {"name": "/undo",            "description": "Undo the agent's last step in this conversation — its reply, its memory of it, and its canvas edits"},
+    {"name": "/compact",         "description": "Shrink this conversation's history now: trim old tool output, summarise older turns (originals are archived)"},
     {"name": "/history",         "description": "Open the message-history log viewer"},
     {"name": "/memory",          "description": "Open the long-term memory viewer"},
     {"name": "/rate",            "description": "Open the rating page: pick the best of sibling renders"},
@@ -954,7 +955,8 @@ def _reset_pipeline_state(pipeline) -> None:
 
 # Words that mean a command even without the slash. Convenient, and for most of
 # them harmless — but two of them are also what a person says to a *paused run*.
-_BARE_COMMANDS = {"restart", "stop", "unload", "clearhistory", "images", "resend"}
+_BARE_COMMANDS = {"restart", "stop", "unload", "clearhistory", "images", "resend",
+                  "compact"}
 # The answers to a review halt. `stop` there means "end this run at the hook";
 # `stop` as a command means "shut the agent host down". They are not remotely the
 # same request, and one of them was answering for the other: the panel tells the
@@ -1064,25 +1066,66 @@ _compaction_jobs: dict[str, threading.Thread] = {}
 _compaction_lock = threading.Lock()
 
 
-def _compact_thread(thread_id: str) -> None:
+def _compact_thread(thread_id: str, force: bool = False):
+    """Compact *thread_id*'s saved history. Returns the Result, or None if there
+    was nothing to work on.
+
+    *force* is `/compact`: the user asked, so it runs even with compaction
+    switched off, and summarises older turns whatever the budget says. It also
+    reads the history back from the saved state when this process has no copy —
+    the first thing someone does after a restart may well be to compact.
+    """
     from src.utils import compaction
     from src.utils.brain_memory import serialize_messages
     cfg = compaction.settings()
-    if not cfg["enabled"]:
-        return
+    if force:
+        cfg = dict(cfg, history_budget_tokens=0)
+    elif not cfg["enabled"]:
+        return None
     history = _thread_brain_cache.get(thread_id)
+    if not history and force:
+        history = (cs.load_state(thread_id) or {}).get("brain_messages") or None
+        if history:
+            _thread_brain_cache[thread_id] = history
     if not history:
-        return
+        return None
     res = compaction.compact(list(history), cfg)
     if not res.changed:
-        return
-    compaction.archive(thread_id, res.archived, "between turns")
+        return res
+    compaction.archive(thread_id, res.archived, "/compact" if force else "between turns")
     # Only if no turn replaced the history while this ran (a turn waits for this
     # job before it starts, so this is a belt for the braces).
     if _thread_brain_cache.get(thread_id) is history:
         _thread_brain_cache[thread_id] = res.messages
         cs.update_brain_messages(thread_id, serialize_messages(res.messages))
         logger.info("conversation %s compacted — %s", thread_id, res.describe())
+    else:
+        res.discarded = True
+    return res
+
+
+def _compact_now(thread_id: str) -> list[dict]:
+    """`/compact` — shrink this conversation's history now, and say what it did."""
+    from src.utils import compaction
+    _await_compaction(thread_id)            # a background pass may be mid-way
+    try:
+        res = _compact_thread(thread_id, force=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("/compact failed for %s: %s", thread_id, exc, exc_info=True)
+        return [_sys(f"❌ Could not compact this conversation: {exc}")]
+    if res is None:
+        return [_sys("🗜️ Nothing to compact — this conversation has no history yet.")]
+    if not res.changed:
+        return [_sys(f"🗜️ Already compact — the history is about {res.after:,} tokens, with "
+                     "nothing old enough to trim or summarise.")]
+    if getattr(res, "discarded", False):
+        return [_sys("🗜️ A turn changed this conversation while it was being compacted, so "
+                     "the result was dropped. Try `/compact` again.")]
+    safe = "".join(ch for ch in str(thread_id) if ch.isalnum() or ch in "-_")[:80]
+    return [_sys(f"🗜️ Compacted — {res.describe()}.\n"
+                 f"The original messages are kept in `memory/history_archive/{safe}.jsonl`. "
+                 "This shrinks the history only; the agent's instructions and tool list "
+                 "(the fixed part of every call) are unchanged.")]
 
 
 def _schedule_compaction(thread_id: str) -> None:
@@ -2212,6 +2255,9 @@ def _handle_command(thread_id: str, text: str, canvas_prompt: dict | None = None
 
     if cmd == "/undo":
         return _undo_last_step(thread_id)
+
+    if cmd in ("/compact", "compact"):
+        return _compact_now(thread_id)
 
     if cmd in ("/switch_model", "switch_model"):
         return _switch_model(parts[1:] )
@@ -5204,6 +5250,32 @@ def _slack_undo(thread_id: str) -> str:
     return uuid.uuid4().hex
 
 
+def _slack_compact(thread_id: str) -> str:
+    """`compact` from Slack: shrink the conversation's history, answer in its thread.
+
+    Like undo, it is not a turn — nothing is asked of the agent — so it is
+    answered here rather than started as one.
+    """
+    from src.utils import slack_bridge
+
+    thread_id = str(thread_id or "")
+    bound = None
+    if not thread_id:
+        text = ("_Reply `compact` inside a conversation's thread to shrink its history — "
+                "a message at the top level starts a new conversation, which has none._")
+    else:
+        events = _compact_now(thread_id)
+        text = "\n\n".join(str(e.get("message") or e.get("data") or "")
+                            for e in events).strip()
+        bound = cs.get_slack_thread(thread_id)
+    bridge = slack_bridge.current()
+    if bridge is not None and text:
+        channel = (bound or {}).get("channel") or bridge.default_channel
+        if channel:
+            bridge.post(channel, text, thread_ts=(bound or {}).get("root_ts", ""))
+    return uuid.uuid4().hex
+
+
 def _slack_start_turn(text: str, image_paths: list, thread_id: str = "") -> str:
     """Run a turn asked for from Slack, in the conversation it belongs to.
 
@@ -5217,6 +5289,8 @@ def _slack_start_turn(text: str, image_paths: list, thread_id: str = "") -> str:
     """
     if _is_undo_request(text):
         return _slack_undo(thread_id)
+    if str(text or "").strip().lower() in ("/compact", "compact"):
+        return _slack_compact(thread_id)
     thread_id = str(thread_id or "")
     if not thread_id or cs.get_thread(thread_id) is None:
         thread_id = cs.create_thread(title="New chat")

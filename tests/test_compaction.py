@@ -300,6 +300,73 @@ class BetweenTurns(unittest.TestCase):
                         src.index("_schedule_compaction(thread_id)"))
 
 
+class TheCompactCommand(unittest.TestCase):
+    """`/compact` — the same pass, asked for, and it says what it did."""
+
+    def setUp(self):
+        from src.utils import agentY_server as server
+        self.server = server
+        self.saved, self.state = {}, {}
+        self.cfg = dict(CFG, enabled=False)          # /compact works even when it is off
+        patches = [
+            mock.patch.object(c, "settings", side_effect=lambda: dict(self.cfg)),
+            mock.patch.object(c, "archive"),
+            mock.patch.object(c, "llm_summary", return_value="GOAL — a stadium. " + "s" * 40),
+            mock.patch.object(server.cs, "update_brain_messages",
+                              side_effect=lambda t, m: self.saved.__setitem__(t, m)),
+            mock.patch.object(server.cs, "load_state", side_effect=lambda t: self.state.get(t)),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        self.addCleanup(server._thread_brain_cache.pop, "tc", None)
+
+    def _run(self, text="/compact"):
+        events = self.server._handle_command("tc", text)
+        return " ".join(str(e.get("data") or e.get("message") or "") for e in events)
+
+    def test_it_trims_and_summarises_whatever_the_budget_says(self):
+        self.server._thread_brain_cache["tc"] = turn(1) + turn(2) + turn(3)
+        said_ = self._run()
+        self.assertIn("Compacted", said_)
+        self.assertIn("summarised", said_)
+        self.assertIn("history_archive/tc.jsonl", said_)
+        cached = self.server._thread_brain_cache["tc"]
+        self.assertTrue(cached[0]["content"][0]["text"].startswith(c.SUMMARY_MARK))
+        self.assertEqual(len(self.saved["tc"]), len(cached))
+
+    def test_the_bare_word_works_too(self):
+        """Slack swallows a leading slash."""
+        self.server._thread_brain_cache["tc"] = turn(1) + turn(2)
+        self.assertTrue(self.server._is_command("compact", "tc"))
+        self.assertIn("Compacted", self._run("compact"))
+
+    def test_after_a_restart_it_reads_the_saved_history(self):
+        self.state["tc"] = {"brain_messages": turn(1) + turn(2)}
+        self.assertIn("Compacted", self._run())
+        self.assertIn("tc", self.saved)
+
+    def test_nothing_to_do_is_said_plainly(self):
+        self.assertIn("no history yet", self._run())
+        self.server._thread_brain_cache["tc"] = turn(1, size=10)
+        self.assertIn("Already compact", self._run())
+
+    def test_it_is_offered_in_the_command_list(self):
+        names = [cmd["name"] for cmd in self.server.SLASH_COMMANDS] \
+            if hasattr(self.server, "SLASH_COMMANDS") else None
+        if names is None:
+            import inspect
+            self.assertIn('"/compact"', inspect.getsource(self.server))
+        else:
+            self.assertIn("/compact", names)
+
+    def test_slack_answers_it_without_starting_a_turn(self):
+        import inspect
+        src = inspect.getsource(self.server._slack_start_turn)
+        self.assertLess(src.index("_slack_compact(thread_id)"),
+                        src.index("_run_pipeline_stream"))
+
+
 class Wiring(unittest.TestCase):
 
     def test_the_message_window_no_longer_cuts_first(self):

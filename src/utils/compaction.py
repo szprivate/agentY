@@ -295,6 +295,7 @@ class Result:
     aged: int = 0
     summarised: int = 0
     archived: list = field(default_factory=list)
+    discarded: bool = False        # set by a caller whose history moved on meanwhile
 
     @property
     def changed(self) -> bool:

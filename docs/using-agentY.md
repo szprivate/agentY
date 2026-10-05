@@ -323,6 +323,10 @@ Nothing is thrown away: everything a pass changes is first appended, whole, to
 gets saved, so after a crash or a restart the conversation continues from exactly
 what the agent knew.
 
+To do it on the spot, type **`/compact`** (in Slack: reply `compact` in the
+conversation's thread). That trims old tool output and summarises everything but the
+last two turns right away, whatever the budgets say, and tells you how much it saved.
+
 It is on by default; **Settings ▸ compaction** has the budgets and the off switch.
 What it can't shrink is the fixed part of every call — the agent's instructions and
 its tool list.
