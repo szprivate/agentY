@@ -191,8 +191,10 @@ class MirrorTest(unittest.TestCase):
     def test_a_message_slack_calls_too_long_is_sent_again_shorter(self):
         refused = []
 
+        # Below the size an answer is split at, so the net itself is what is
+        # tested: a piece Slack still refuses is sent again, shorter.
         def update(**kw):
-            if len(kw["text"]) > 3200:
+            if len(kw["text"]) > 2500:
                 refused.append(len(kw["text"]))
                 raise RuntimeError("The server responded with: {'ok': False, 'error': 'msg_too_long'}")
             self.client.updated.append(kw)
@@ -202,7 +204,7 @@ class MirrorTest(unittest.TestCase):
         self._feed({"type": "text", "data": "x" * 3400}, {"type": "text", "data": "y"},
                    {"type": "done"})
         self.assertTrue(refused, "the long edit was never tried")
-        self.assertLessEqual(len(self.client.updated[-1]["text"]), 3200)
+        self.assertLessEqual(len(self.client.updated[-1]["text"]), 2500)
 
     def test_a_failing_edit_does_not_end_the_worker(self):
         """It did once: every Slack message after it was lost until a restart."""

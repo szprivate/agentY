@@ -46,7 +46,7 @@ from pathlib import Path
 
 from src.utils import conversation_store as cs
 from src.utils import turn_bus
-from src.utils.slack_render import Post, TurnRender, clip, to_mrkdwn
+from src.utils.slack_render import Post, TurnRender, clip, split_message, to_mrkdwn
 
 logger = logging.getLogger("agentY.slack")
 
@@ -552,8 +552,9 @@ class SlackBridge:
             except Exception:  # noqa: BLE001 — the DM's top level beats not sending
                 logger.exception("slack: no thread for %s; sending to the DM", thread_id)
         if message.strip():
-            self._call(self.post, self.default_channel, to_mrkdwn(clip(message, 3000)),
-                       thread_ts=root)
+            for piece in split_message(message, 3000):
+                self._call(self.post, self.default_channel, to_mrkdwn(piece),
+                           thread_ts=root)
         for p in sent:
             self._call(self._do_upload, self.default_channel, str(p), "", thread_ts=root)
         return {"sent": [str(p) for p in sent], "missing": missing,

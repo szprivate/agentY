@@ -15,7 +15,8 @@ second channel at all.
 
 import unittest
 
-from src.utils.slack_render import TurnRender, clip, to_mrkdwn
+from src.utils.slack_render import (TurnRender, clip, split_message,
+                                    to_mrkdwn)
 
 
 def _render(**kw):
@@ -70,6 +71,80 @@ class ClipTest(unittest.TestCase):
         got = clip("x" * 100, 10)
         self.assertTrue(got.startswith("x" * 10))
         self.assertIn("+90 more characters", got)
+
+
+class SplitTest(unittest.TestCase):
+    """A long answer continues in further messages; it is never cut."""
+
+    def test_short_text_is_one_piece(self):
+        self.assertEqual(split_message("abc", 100), ["abc"])
+
+    def test_nothing_is_lost(self):
+        text = "\n\n".join(f"Paragraph {i}. " + "word " * 40 for i in range(30))
+        pieces = split_message(text, 500)
+        self.assertGreater(len(pieces), 5)
+        self.assertTrue(all(len(x) <= 500 for x in pieces))
+        self.assertEqual("".join(pieces).split(), text.split())
+
+    def test_it_breaks_between_paragraphs_when_it_can(self):
+        text = "a" * 60 + "\n\n" + "b" * 60
+        self.assertEqual(split_message(text, 100), ["a" * 60, "b" * 60])
+
+    def test_text_with_no_break_is_still_split(self):
+        pieces = split_message("x" * 250, 100)
+        self.assertTrue(all(len(x) <= 100 for x in pieces))
+        self.assertEqual("".join(pieces), "x" * 250)
+
+    def test_a_code_block_is_closed_and_reopened_across_a_break(self):
+        text = "intro\n```python\n" + "\n".join(f"line_{i} = {i}" for i in range(40)) + "\n```\nend"
+        pieces = split_message(text, 200)
+        self.assertGreater(len(pieces), 1)
+        for piece in pieces:
+            self.assertEqual(piece.count("```") % 2, 0, piece)
+        self.assertTrue(pieces[1].startswith("```python\n"))
+
+
+class LongAnswerTest(unittest.TestCase):
+
+    def _long(self):
+        return "\n\n".join(f"Point {i}. " + "detail " * 60 for i in range(20))
+
+    def test_the_whole_answer_reaches_slack(self):
+        r = _render(origin="slack")
+        text = self._long()
+        posts = _feed(r, {"type": "text", "data": text}, {"type": "done"})
+        final = {}
+        for post in posts:
+            if post.where == "answer" or post.key.startswith("answer-"):
+                final[post.key or "answer-1"] = post.text
+        said = " ".join(final[k] for k in sorted(final, key=lambda k: int(k.split("-")[1])))
+        for i in range(20):
+            self.assertIn(f"Point {i}.", said)
+        self.assertNotIn("more characters", said)
+
+    def test_the_first_message_says_it_continues(self):
+        r = _render(origin="slack")
+        _feed(r, {"type": "text", "data": self._long()})
+        self.assertIn("continues below (1/", r.body())
+
+    def test_continuations_are_keyed_replies_in_order(self):
+        r = _render(origin="slack")
+        posts = _feed(r, {"type": "text", "data": self._long()}, {"type": "done"})
+        keys = [post.key for post in posts if post.key.startswith("answer-")]
+        last_round = keys[-(len(set(keys))):]
+        self.assertEqual(last_round, [f"answer-{i}" for i in range(2, len(set(keys)) + 2)])
+
+    def test_a_growing_last_piece_is_not_rewritten_per_word(self):
+        r = _render(origin="slack")
+        _feed(r, {"type": "text", "data": self._long()})
+        more = _feed(r, {"type": "text", "data": " and"}, {"type": "text", "data": " more"})
+        self.assertEqual([post.key for post in more if post.key.startswith("answer-")], [])
+
+    def test_a_short_answer_is_still_one_message(self):
+        r = _render(origin="slack")
+        posts = _feed(r, {"type": "text", "data": "Rendered."}, {"type": "done"})
+        self.assertEqual([post.key for post in posts if post.key.startswith("answer-")], [])
+        self.assertEqual(r.body(), "Rendered.")
 
 
 class AnswerTest(unittest.TestCase):

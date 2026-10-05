@@ -30,9 +30,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-# Slack renders a message body up to 40k characters, but anything past a few
-# thousand is a scroll nobody reads and an edit that costs a full round trip.
-_ANSWER_MAX = 3500
+# How much of the answer ONE Slack message carries. Slack documents 40k
+# characters, but chat.update refused a ~3,500-character answer with
+# msg_too_long (2026-09-15) — so a long answer is not cut, it CONTINUES in
+# further messages of this size (see split_message).
+_ANSWER_MAX = 3000
 _DETAIL_MAX = 2800
 _THINK_MAX = 1500
 # Lines of working-out kept in the turn's detail message.
@@ -107,6 +109,45 @@ def clip(text: str, limit: int) -> str:
     return text[:limit].rstrip() + f"\n… (+{len(text) - limit:,} more characters)"
 
 
+def split_message(text: str, limit: int) -> list:
+    """*text* as consecutive pieces of at most *limit* characters, nothing lost.
+
+    The answer used to be cut at the limit with "(+N more characters)" — the one
+    part of a long answer nobody could read was the conclusion. Pieces break at
+    a paragraph, else a line, else a space, and a code fence open at a break is
+    closed there and reopened in the next piece, so each one renders by itself.
+    """
+    text = str(text or "")
+    pieces: list = []
+    carry = ""                     # "```lang" to reopen at the top of the next piece
+    while text:
+        room = limit - (len(carry) + 1 if carry else 0)
+        if len(text) <= room:
+            pieces.append((carry + NEWLINE if carry else "") + text)
+            break
+        room -= 4                  # for a closing fence, should one be needed
+        window = text[:room]
+        cut = -1
+        for sep in (NEWLINE + NEWLINE, NEWLINE, " "):
+            at = window.rfind(sep)
+            if at > room // 2:
+                cut = at
+                break
+        if cut < 0:
+            cut = room
+        head, text = text[:cut], text[cut:].lstrip(NEWLINE)
+        piece = (carry + NEWLINE if carry else "") + head
+        # An odd number of fence markers means this piece ends inside a block.
+        marks = re.findall(r"^```.*$", piece, flags=re.M)
+        if len(marks) % 2:
+            carry = marks[-1].strip()
+            piece = piece.rstrip() + NEWLINE + "```"
+        else:
+            carry = ""
+        pieces.append(piece)
+    return pieces or [""]
+
+
 # ── the per-turn renderer ─────────────────────────────────────────────────────
 
 # Nothing to show: panel bookkeeping, or a duplicate of something already said.
@@ -129,6 +170,7 @@ class TurnRender:
         self.show_thinking = show_thinking
         self.show_tools = show_tools
         self.answer = ""
+        self._sent_pieces: dict = {}
         self._think = ""
         self._files = 0
         self._done = False
@@ -188,14 +230,44 @@ class TurnRender:
 
     def _on_text(self, ev) -> list:
         self.answer += str(ev.get("data") or "")
-        return [Post("answer", self.body())]
+        return [Post("answer", self.body())] + self._continuations()
+
+    def _pieces(self) -> list:
+        return split_message(self.answer, _ANSWER_MAX)
 
     def body(self) -> str:
-        """The answer message as it currently stands."""
+        """The answer message as it currently stands: the first piece of it.
+
+        A long answer carries on in further messages (:meth:`_continuations`);
+        this one says so, so its end does not read as the end.
+        """
         if not self.answer.strip():
             return self.opening()
-        text = self._header() + to_mrkdwn(clip(self.answer, _ANSWER_MAX))
+        pieces = self._pieces()
+        text = self._header() + to_mrkdwn(pieces[0])
+        if len(pieces) > 1:
+            return text + f"\n\n_continues below (1/{len(pieces)})_"
         return text if self._done else text + "\n\n_…_"
+
+    def _continuations(self) -> list:
+        """The answer past its first message, as keyed replies under it.
+
+        While text streams only FINISHED pieces go out (the last one is still
+        growing, and rewriting it on every delta would be an edit per word);
+        when the turn is done, all of them do. Keyed, so a piece that was sent
+        and then re-split is rewritten in place rather than repeated.
+        """
+        pieces = self._pieces()
+        ready = len(pieces) if self._done else len(pieces) - 1
+        out = []
+        for i in range(1, ready):
+            text = to_mrkdwn(pieces[i])
+            if self._sent_pieces.get(i) == text:
+                continue
+            self._sent_pieces[i] = text
+            out.append(Post("detail", text + f"\n\n_({i + 1}/{len(pieces)})_",
+                            key=f"answer-{i + 1}"))
+        return out
 
     def _on_done(self, ev) -> list:
         self._done = True
@@ -203,6 +275,8 @@ class TurnRender:
         out.append(Post("detail", kind="clear", key="status"))
         if self.answer.strip():
             out.append(Post("answer", self.body()))
+            self._sent_pieces = {}      # the count is final now: number them all
+            out.extend(self._continuations())
         elif not self._files:
             # Nothing said and nothing made. Silence would read as a crash.
             out.append(Post("answer", "_Finished with nothing to report._"))

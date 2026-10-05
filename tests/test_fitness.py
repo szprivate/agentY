@@ -153,10 +153,15 @@ class ScoreTest(unittest.TestCase):
         self.assertGreater(s["score"], 0.8)
 
     def test_a_zeroed_weight_cannot_move_the_score(self):
+        # The hand-set weights, named: a machine with fitted weights installed
+        # (config/fitness_weights.json) gives brightness and contrast a weight,
+        # and this must not depend on which machine runs it.
         a = score(facts(exposure={"mean": 40.0, "contrast": 20.0,
-                                  "clipped_black": 0.0, "clipped_white": 0.0}))
+                                  "clipped_black": 0.0, "clipped_white": 0.0}),
+                  DEFAULT_WEIGHTS)
         b = score(facts(exposure={"mean": 140.0, "contrast": 70.0,
-                                  "clipped_black": 0.0, "clipped_white": 0.0}))
+                                  "clipped_black": 0.0, "clipped_white": 0.0}),
+                  DEFAULT_WEIGHTS)
         self.assertEqual(a["score"], b["score"])
 
     def test_a_negative_learned_weight_still_orders_things(self):
