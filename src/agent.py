@@ -2272,6 +2272,23 @@ def create_orchestrator_agent(
     except Exception as _mcp_exc:  # noqa: BLE001
         print(f"[agentY:orchestrator] MCP tools skipped: {_mcp_exc}")
 
+    # Rarely used tools wait in packs until a conversation loads one
+    # (src/tools/tool_packs.py); tool_packs_on_demand = false keeps them all in.
+    _held_packs: dict = {}
+    try:
+        from src.tools import tool_packs as _packs
+        if _packs.enabled():
+            tools, _held_packs = _packs.split(tools)
+            if _held_packs:
+                tools.append(_packs.load_tools)
+                mcp_hooks.append(_packs.ToolPacksHook())
+                system_prompt += _packs.catalogue(_held_packs)
+                print(f"[agentY:orchestrator] {sum(len(v) for v in _held_packs.values())} "
+                      f"tool(s) in {len(_held_packs)} pack(s) load on demand.")
+    except Exception as _pack_exc:  # noqa: BLE001 — every tool stays in the list
+        _held_packs = {}
+        print(f"[agentY:orchestrator] tool packs skipped: {_pack_exc}")
+
     extra_hooks = kwargs.pop("hooks", [])
     # InterjectHookProvider is the orchestrator's only, deliberately: it is the
     # agent that owns the turn, and a specialist running inside one of its tool
@@ -2294,6 +2311,7 @@ def create_orchestrator_agent(
         **kwargs,
     )
     agent._agentskills_plugin = skills_plugin
+    agent._tool_packs = _held_packs
     return agent
 
 

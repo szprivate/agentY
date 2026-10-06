@@ -85,6 +85,13 @@ trim_old_workflow_catalog = true
 # find_local_models / check_model instead. true = put the table back.
 # Takes effect when the agent is next built (restart).
 models_table_in_prompt = false
+# Tools the agent rarely calls (batch jobs, skill / custom-node authoring,
+# sub-agents, annotate_image, bake_hooks_to_canvas, upload_file_to_url,
+# calculator) wait in packs: the prompt lists them, and the agent loads a pack
+# with one call when a request needs it. Their definitions are about a fifth of
+# what every step would otherwise send. false = they are always in the list.
+# Takes effect when the agent is next built (restart).
+tool_packs_on_demand = true
 output_dir = "./output_images/"
 # Where generated/patched workflow JSON is written. BLANK (the default) means
 # "into ComfyUI": <--user-directory>/default/workflows/agentY/, which is the
