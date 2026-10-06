@@ -107,17 +107,30 @@ cd agentY
 ./install_agent.sh      # macOS
 ```
 
-Same seven stages either way, and a test keeps them in step by comparing the two
+Same eight stages either way, and a test keeps them in step by comparing the two
 scripts' stages, flags and prompts. The installer sets up the **whole stack** in
 one pass:
 
 1. checks for `git` + `uv`;
-2. clones the sibling repos it needs — **agenty_core** (required) and **agentY-mcp** (optional) — next to `agentY` if they aren't there already, and fast-forwards them if they are;
-3. creates agentY's `.venv` (via `uv`), sorts out **torch** — on Windows it offers the CUDA build when it sees an NVIDIA GPU, because the wheel on PyPI is CPU-only and that makes SAM3 grounding take about a minute a call; on a Mac the PyPI wheel already carries Metal, so it just reports whether MPS was found — and installs `requirements.txt` (which pulls in `agenty_core` editable);
+2. **updates agentY itself** to the remote's newest commit, then clones the sibling repos it needs — **agenty_core** (required) and **agentY-mcp** (optional) — next to `agentY` if they aren't there already, and fast-forwards them if they are;
+3. creates agentY's `.venv` (via `uv`, on Python 3.12), sorts out **torch** — on Windows it offers the CUDA build when it sees an NVIDIA GPU, because the wheel on PyPI is CPU-only and that makes SAM3 grounding take about a minute a call; on a Mac the PyPI wheel already carries Metal, so it just reports whether MPS was found — and installs `requirements.txt` (which pulls in `agenty_core` editable);
 4. copies `.env_example` → `.env` and **prompts** you for `HF_TOKEN`, `ANTHROPIC_API_KEY`, and the optional `COMFYUI_API_KEY` / `DASHSCOPE_API_KEY` (Enter keeps an existing value);
-5. **finds your ComfyUI** (auto-detects common paths, otherwise asks) and clones **agentY-comfyuiConnect** into its `custom_nodes/`, optionally pointing `settings.local.json` at your ComfyUI URL;
-6. sets up **agentY-mcp**'s own venv + `.env` and reuses the tokens you just entered;
-7. **checks the result** — every dependency agentY names is import-tested in the venv that will run it, and anything missing is listed with what it costs.
+5. asks which **memory embedder** long-term memory should use (a built-in local one, Ollama, or a provider you have a key for);
+6. **finds your ComfyUI** (auto-detects common paths, otherwise asks) and clones **agentY-comfyuiConnect** into its `custom_nodes/`, optionally pointing `settings.local.json` at your ComfyUI URL;
+7. sets up **agentY-mcp**'s own venv + `.env` and reuses the tokens you just entered;
+8. **checks the result** — every dependency agentY names is import-tested in the venv that will run it, and anything missing is listed with what it costs.
+
+**Updating an existing install** is the same command: run the installer again.
+It brings all the checkouts — agentY, agenty_core, the sidebar extension — to the
+remote's newest commit first, and when that update replaced the installer itself,
+the new one takes over. Files the agent rewrites in its own checkouts
+(`config/models.json`, saved templates) do not block it: the ones the update also
+changes are parked in a `git stash`, never discarded. A checkout it could **not**
+update is reported in red as `NOT updated`, with the reason — it is never called
+up to date. On Windows the agent has to be stopped while its environment changes
+(Windows cannot replace a file a running process has open); the installer finds a
+running one and offers to stop it. An install older than this behaviour needs one
+`git pull` in the `agentY` folder first, so that it has this installer.
 
 Useful flags:
 
@@ -128,6 +141,7 @@ Useful flags:
 .\install_agent.ps1 -NonInteractive                 # no prompts (CI / re-runs)
 .\install_agent.ps1 -SkipTorch                      # don't offer the CUDA torch build
 .\install_agent.ps1 -TorchIndexUrl "https://download.pytorch.org/whl/cu126"
+.\install_agent.ps1 -PythonVersion 3.13             # the Python a NEW .venv is made with (default 3.12)
 .\install_agent.ps1 -Help
 ```
 ```bash

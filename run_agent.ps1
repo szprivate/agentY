@@ -213,11 +213,15 @@ if (-not $skipUpdate) {
     $settingsLocal = Join-Path $ProjectRoot "config\settings.local.json"
     if (Test-Path $settingsLocal) {
         try {
+            # Each key is looked up by name: under StrictMode reading a property
+            # the object does not have throws, and the catch below then skipped
+            # everything after it - comfyui_dir was only ever read on a machine
+            # that also set auto_update.
             $sj = Get-Content $settingsLocal -Raw | ConvertFrom-Json
-            if ($null -ne $sj.auto_update -and -not $sj.auto_update) { $skipUpdate = $true }
-            if ($sj.PSObject.Properties.Name -contains "comfyui_dir" -and $sj.comfyui_dir) {
-                $Script:ComfyUIDir = [string]$sj.comfyui_dir
-            }
+            $au = $sj.PSObject.Properties['auto_update']
+            if (($null -ne $au) -and ($null -ne $au.Value) -and -not $au.Value) { $skipUpdate = $true }
+            $cd = $sj.PSObject.Properties['comfyui_dir']
+            if (($null -ne $cd) -and $cd.Value) { $Script:ComfyUIDir = [string]$cd.Value }
         } catch { }
     }
 }

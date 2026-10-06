@@ -59,6 +59,10 @@ Options:
 EOF
 }
 
+ORIGINAL_ARGS=("$@")     # handed to the new installer when an update replaces this one
+# The Python a NEW .venv is made with; an existing .venv keeps its interpreter.
+PYTHON_VERSION="${AGENTY_PYTHON_VERSION:-3.12}"
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --comfyui-path)    COMFYUI_PATH="${2:-}"; shift 2 ;;
@@ -151,13 +155,72 @@ read_secret() {   # $1 = file  $2 = key  $3 = label  $4 = help
   is_placeholder "$cur" || printf '%s' "$cur"
 }
 
-# Clone $2 into $3 if missing; otherwise best-effort fast-forward pull.
+# Fast-forward the checkout at $2 to its upstream, and say what happened.
+#
+# The same rules as run_agent.sh's update_repo, for the same reason: the agent
+# rewrites tracked files in its own checkouts (config/models.json on every start,
+# saved templates in agenty_core), so a plain `git pull` refuses as soon as the
+# remote touches one of them - and an installer that then says "up to date"
+# leaves an old agentY next to a new agenty_core. Only the local files the
+# incoming commits also change are parked in a stash; nothing is discarded.
+update_checkout() {   # $1 = name  $2 = dir
+  local name="$1" dir="$2" upstream behind ahead f stashed=0
+  local -a collisions=()
+  upstream="$(git -C "$dir" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)" || upstream=""
+  if [ -z "$upstream" ]; then info "$name has no upstream branch - left as it is"; return 0; fi
+  if ! git -C "$dir" fetch --quiet 2>/dev/null; then
+    fail "$name - could not reach the remote. NOT updated; continuing with the local copy."
+    return 0
+  fi
+  behind="$(git -C "$dir" rev-list --count 'HEAD..@{u}' 2>/dev/null || echo 0)"
+  ahead="$(git -C "$dir" rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)"
+  if [ "${behind:-0}" = "0" ]; then success "$name up to date"; return 0; fi
+  if [ "${ahead:-0}" != "0" ]; then
+    fail "$name has $ahead local commit(s) and is $behind behind $upstream. NOT updated - merge it yourself."
+    return 0
+  fi
+
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    if git -c core.quotepath=false -C "$dir" diff --name-only 'HEAD..@{u}' 2>/dev/null | grep -Fxq -- "$f"; then
+      collisions+=("$f")
+    fi
+  done < <( { git -c core.quotepath=false -C "$dir" diff --name-only HEAD 2>/dev/null
+              git -c core.quotepath=false -C "$dir" ls-files --others --exclude-standard 2>/dev/null; } | sort -u )
+
+  if [ "${#collisions[@]}" -gt 0 ]; then
+    info "$name - ${#collisions[@]} locally changed file(s) also changed upstream; parking them in a stash:"
+    for f in "${collisions[@]}"; do plain "         $f" "$C_GRAY"; done
+    if ! git -C "$dir" stash push --include-untracked -m "agentY installer $(date '+%Y-%m-%d %H:%M:%S')" -- "${collisions[@]}"; then
+      fail "$name - could not stash those files. NOT updated."
+      return 0
+    fi
+    stashed=1
+  fi
+
+  info "$name is $behind commit(s) behind $upstream - fast-forwarding"
+  if ! git -C "$dir" merge --ff-only '@{u}'; then
+    [ "$stashed" = "1" ] && git -C "$dir" stash pop
+    fail "$name could not be fast-forwarded. NOT updated - see git's message above."
+    return 0
+  fi
+  if [ "$stashed" = "1" ] && ! git -C "$dir" stash pop; then
+    # The restore conflicts with what just arrived. Conflict markers in generated
+    # JSON the app parses at startup would stop it starting, so those paths go
+    # back to the new HEAD and the stash entry is kept.
+    git -C "$dir" reset -q -- "${collisions[@]}" 2>/dev/null
+    git -C "$dir" checkout -q --force -- "${collisions[@]}" 2>/dev/null
+    info "$name - your version of those file(s) conflicts with the update. It is SAVED in"
+    info "the stash (git -C \"$dir\" stash list); the working tree now matches the remote."
+  fi
+  success "$name updated -> $(git -C "$dir" rev-parse --short HEAD 2>/dev/null)"
+}
+
+# Clone $2 into $3 if missing; otherwise fast-forward it (update_checkout).
 ensure_repo() {   # $1 = name  $2 = url  $3 = dir  $4 = "required"|""
   local name="$1" url="$2" dir="$3" required="${4:-}"
   if [ -d "$dir/.git" ]; then
-    info "$name present at $dir - updating (git pull --ff-only)"
-    git -C "$dir" pull --ff-only || info "git pull ($name) did not fast-forward (continuing)."
-    success "$name up to date"
+    update_checkout "$name" "$dir"
     return 0
   fi
   if [ -d "$dir" ] && [ -n "$(ls -A "$dir" 2>/dev/null)" ]; then
@@ -167,11 +230,16 @@ ensure_repo() {   # $1 = name  $2 = url  $3 = dir  $4 = "required"|""
   info "Cloning $name -> $dir"
   if git clone "$url" "$dir"; then
     success "$name cloned"
-  elif [ "$required" = "required" ]; then
-    die "Could not clone required repo $name from $url."
-  else
-    info "git clone ($name) failed (continuing)."
+    return 0
   fi
+  # A clone that failed at checkout leaves a .git behind; the next run would take
+  # that for an install and report it up to date. The folder was missing or empty
+  # before this call, so removing it loses nothing.
+  [ -d "$dir/.git" ] && rm -rf "$dir"
+  if [ "$required" = "required" ]; then
+    die "Could not clone required repo $name from $url - see git's message above."
+  fi
+  fail "$name could not be cloned - see git's message above. Continuing without it."
 }
 
 venv_python() { printf '%s/.venv/bin/python' "$1"; }
@@ -279,8 +347,13 @@ setup_venv() {   # $1 = name  $2 = dir  $3 = "with-torch"|""
   venv="$dir/.venv"; py="$(venv_python "$dir")"
   if [ ! -d "$venv" ] || [ ! -x "$py" ]; then
     if [ -d "$venv" ]; then info "$name .venv incomplete - recreating"; rm -rf "$venv"; fi
-    info "Creating $name .venv (uv venv)"
-    ( cd "$dir" && uv venv .venv ) || die "uv venv ($name) failed."
+    # Named, not whatever `python` uv meets first on this machine: 3.12 is what
+    # agentY is developed and tested on. uv downloads it when it is not installed.
+    info "Creating $name .venv (uv venv, Python $PYTHON_VERSION)"
+    if ! ( cd "$dir" && uv venv .venv --python "$PYTHON_VERSION" ); then
+      info "Python $PYTHON_VERSION is not available - using uv's default interpreter"
+      ( cd "$dir" && uv venv .venv ) || die "uv venv ($name) failed."
+    fi
   else
     info "$name .venv already exists"
   fi
@@ -378,12 +451,29 @@ except Exception:
 PY
 }
 
+# Exit 0 when settings.local.json can be written to: absent, empty, or a JSON
+# object. A file that is there but unreadable must be left alone, not replaced by
+# a fresh one - it is the user's settings.
+settings_writable() {   # $1 = settings.local.json
+  python3 - "$1" <<'PY'
+import json, os, sys
+path = sys.argv[1]
+if not os.path.exists(path):
+    sys.exit(0)
+try:
+    raw = open(path, encoding="utf-8-sig").read()
+    sys.exit(0 if not raw.strip() or isinstance(json.loads(raw), dict) else 1)
+except Exception:
+    sys.exit(1)
+PY
+}
+
 set_embedder_preset() {   # $1 = settings.local.json  $2 = preset
   python3 - "$1" "$2" <<'PY'
 import json, os, sys
 path, preset = sys.argv[1], sys.argv[2]
 try:
-    data = json.load(open(path, encoding="utf-8"))
+    data = json.load(open(path, encoding="utf-8-sig"))
     if not isinstance(data, dict):
         data = {}
 except Exception:
@@ -408,6 +498,11 @@ select_embedder() {   # $1 = .env  $2 = settings.local.json
   if ollama_running; then ollama_note=" (running)"; else ollama_note=" (not running now - start it before agentY)"; fi
   local ids="local ollama dashscope gemini openai"
   local keys=" - - DASHSCOPE_API_KEY GEMINI_API_KEY OPENAI_API_KEY"
+  if ! settings_writable "$local_settings"; then
+    fail "$local_settings is not valid JSON - left untouched, so no embedder was chosen."
+    info "Fix or delete that file, then pick one in Settings > Models > Memory embedder."
+    return
+  fi
   current="$(embedder_preset "$local_settings")"
   if [ -n "$current" ]; then default="$current"; elif ollama_running; then default="ollama"; else default="local"; fi
   if [ "$NON_INTERACTIVE" = "1" ]; then
@@ -495,6 +590,21 @@ fi
 
 # -- 2. Sibling repos (agenty_core, agentY-mcp) -------------------------------
 header "2 / 8  Sibling repos"
+# agentY itself first: the siblings below are brought to the remote's newest
+# commit, and a new agenty_core under an old agentY is an agent that does not
+# start. When the pull replaced this very script, the new one takes over - the
+# rest of an old installer would install what the old agentY needed.
+if [ -d "$PROJECT_ROOT/.git" ]; then
+  SELF="$PROJECT_ROOT/install_agent.sh"
+  SELF_BEFORE="$(cksum < "$SELF")"
+  update_checkout "agentY" "$PROJECT_ROOT"
+  if [ "$SELF_BEFORE" != "$(cksum < "$SELF")" ] && [ -z "${AGENTY_INSTALLER_RESTARTED:-}" ]; then
+    info "The installer itself was updated - starting the new one."
+    AGENTY_INSTALLER_RESTARTED=1 exec bash "$SELF" ${ORIGINAL_ARGS[@]+"${ORIGINAL_ARGS[@]}"}
+  fi
+else
+  info "agentY at $PROJECT_ROOT is not a git checkout - it cannot be updated from here"
+fi
 CORE_DIR="$PARENT_DIR/agenty_core"
 ensure_repo "agenty_core" "https://github.com/szprivate/agenty_core.git" "$CORE_DIR" required
 [ -f "$CORE_DIR/pyproject.toml" ] || die "agenty_core looks incomplete at $CORE_DIR (no pyproject.toml). agentY's requirements.txt installs it editable via '-e ../agenty_core'."
@@ -580,8 +690,10 @@ PY
     # Offer to set this ComfyUI's URL as a local override (settings.local.json).
     # Committed defaults live in config/settings.default.toml (localhost); the local
     # JSON is deep-merged over them and is gitignored.
-    if [ "$NON_INTERACTIVE" = "0" ]; then
-      LOCAL_SETTINGS="$PROJECT_ROOT/config/settings.local.json"
+    LOCAL_SETTINGS="$PROJECT_ROOT/config/settings.local.json"
+    if ! settings_writable "$LOCAL_SETTINGS"; then
+      fail "$LOCAL_SETTINGS is not valid JSON - left untouched (the ComfyUI URL was not asked)."
+    elif [ "$NON_INTERACTIVE" = "0" ]; then
       CUR_URL="$(python3 - "$LOCAL_SETTINGS" <<'PY' 2>/dev/null
 import json, sys
 try:

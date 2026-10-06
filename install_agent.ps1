@@ -47,6 +47,10 @@
     Wheel index the CUDA build of torch comes from. Defaults to cu128; pick the
     one matching your driver from https://pytorch.org/get-started/locally/.
 
+.PARAMETER PythonVersion
+    The Python a NEW .venv is made with (default 3.12, what agentY is tested on;
+    uv downloads it if needed). An existing .venv keeps its interpreter.
+
 .EXAMPLE
     .\install_agent.ps1
 .EXAMPLE
@@ -62,7 +66,8 @@ param(
     [switch]$SkipComfyNode,
     [switch]$NonInteractive,
     [switch]$SkipTorch,
-    [string]$TorchIndexUrl = "https://download.pytorch.org/whl/cu128"
+    [string]$TorchIndexUrl = "https://download.pytorch.org/whl/cu128",
+    [string]$PythonVersion = "3.12"
 )
 
 Set-StrictMode -Version 3.0
@@ -93,6 +98,8 @@ if (-not $ParentDir)   { $ParentDir = Split-Path -Parent $ProjectRoot }
 function Write-TextNoBom {
     # Write UTF-8 without a BOM - python-dotenv / json readers dislike a leading BOM.
     param([string]$Path, [string]$Text)
+    $parent = Split-Path -Parent $Path
+    if ($parent -and -not (Test-Path $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
     $enc = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText($Path, $Text, $enc)
 }
@@ -149,7 +156,7 @@ function Read-Secret {
     Write-Host "  $Label" -ForegroundColor White
     if ($HelpText) { Write-Host "    $HelpText" -ForegroundColor DarkGray }
     $suffix = if ($isSet) { " [Enter = keep $(Format-Masked $cur)]" } else { " [Enter = skip]" }
-    $entered = Read-Host "    $Key$suffix"
+    $entered = Read-Answer "    $Key$suffix"
     if ($entered.Trim() -ne "") {
         Set-EnvValue $File $Key $entered.Trim()
         Write-Success "$Key set"
@@ -157,6 +164,16 @@ function Read-Secret {
     }
     if ($isSet) { return $cur }
     return ""
+}
+
+function Read-Answer {
+    # Read-Host, but never $null: with input redirected and used up (a piped
+    # install, a closed console) it returns nothing, and .Trim() on that is a
+    # terminating error halfway through an install.
+    param([string]$Prompt)
+    $v = Read-Host $Prompt
+    if ($null -eq $v) { return "" }
+    return [string]$v
 }
 
 function Invoke-Native {
@@ -174,13 +191,122 @@ function Invoke-Native {
     return $true
 }
 
+function Update-Checkout {
+    # Fast-forward the checkout at $Dir to its upstream, and say what happened.
+    # Returns $true when it is now at the remote's commit.
+    #
+    # The same rules as run_agent.ps1's Update-Repo, for the same reason: the agent
+    # rewrites tracked files in its own checkouts (config/models.json on every
+    # start, saved templates in agenty_core), so a plain `git pull` refuses as soon
+    # as the remote touches one of them - and an installer that then says "up to
+    # date" leaves an old agentY next to a new agenty_core. Only the local files
+    # the incoming commits also change are parked in a stash; nothing is discarded.
+    param([string]$Name, [string]$Dir)
+    # git writes warnings to stderr; under "Stop" Windows PowerShell turns any such
+    # line into a terminating error, even with 2>$null. Exit codes are checked.
+    $ErrorActionPreference = "Continue"
+
+    $upstream = & git -C $Dir rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $upstream) {
+        Write-Info "$Name has no upstream branch - left as it is"
+        return $false
+    }
+    & git -C $Dir fetch --quiet 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Fail "$Name - could not reach the remote. NOT updated; continuing with the local copy."
+        return $false
+    }
+    $behind = 0; $ahead = 0
+    [void][int]::TryParse([string](& git -C $Dir rev-list --count "HEAD..@{u}" 2>$null), [ref]$behind)
+    [void][int]::TryParse([string](& git -C $Dir rev-list --count "@{u}..HEAD" 2>$null), [ref]$ahead)
+    if ($behind -eq 0) { Write-Success "$Name up to date"; return $true }
+    if ($ahead -gt 0) {
+        Write-Fail "$Name has $ahead local commit(s) and is $behind behind $upstream. NOT updated - merge it yourself."
+        return $false
+    }
+
+    $incoming = @(& git -c core.quotepath=false -C $Dir diff --name-only "HEAD..@{u}" 2>$null)
+    $dirty  = @(& git -c core.quotepath=false -C $Dir diff --name-only HEAD 2>$null)
+    $dirty += @(& git -c core.quotepath=false -C $Dir ls-files --others --exclude-standard 2>$null)
+    $inc = @{}
+    foreach ($f in $incoming) { if ($f) { $inc[$f] = $true } }
+    $collisions = @($dirty | Where-Object { $_ -and $inc.ContainsKey($_) } | Select-Object -Unique)
+
+    $stashed = $false
+    if ($collisions.Count -gt 0) {
+        Write-Info "$Name - $($collisions.Count) locally changed file(s) also changed upstream; parking them in a stash:"
+        foreach ($c in $collisions) { Write-Host "         $c" -ForegroundColor DarkYellow }
+        $stamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        & git -C $Dir stash push --include-untracked -m "agentY installer $stamp" -- $collisions | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            Write-Fail "$Name - could not stash those files. NOT updated."
+            return $false
+        }
+        $stashed = $true
+    }
+
+    Write-Info "$Name is $behind commit(s) behind $upstream - fast-forwarding"
+    & git -C $Dir merge --ff-only "@{u}" | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        if ($stashed) { & git -C $Dir stash pop | Out-Host }
+        Write-Fail "$Name could not be fast-forwarded. NOT updated - see git's message above."
+        return $false
+    }
+    if ($stashed) {
+        & git -C $Dir stash pop | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            # The restore conflicts with what just arrived. Conflict markers in
+            # generated JSON the app parses at startup would stop it starting, so
+            # those paths go back to the new HEAD and the stash entry is kept.
+            & git -C $Dir reset -q -- $collisions 2>$null | Out-Null
+            & git -C $Dir checkout -q --force -- $collisions 2>$null | Out-Null
+            Write-Info "$Name - your version of those file(s) conflicts with the update. It is SAVED in"
+            Write-Info "the stash (git -C `"$Dir`" stash list); the working tree now matches the remote."
+        }
+    }
+    $now = (& git -C $Dir rev-parse --short HEAD 2>$null)
+    Write-Success "$Name updated -> $now"
+    return $true
+}
+
+function Stop-RunningHost {
+    # Windows cannot replace a file a running process has open. With the agent
+    # host up, `uv pip install` fails halfway through a package ("Access is
+    # denied") and leaves the environment between two versions - an agent that no
+    # longer starts. So nothing may be running from this venv while it changes.
+    param([string]$Dir)
+    if (-not $Script:OnWindows) { return }
+    $venv = Join-Path $Dir ".venv"
+    if (-not (Test-Path $venv)) { return }
+    $root = (Resolve-Path $venv).Path.TrimEnd('\') + '\'
+    $procs = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+        $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)
+    })
+    if ($procs.Count -eq 0) { return }
+    $ids = ($procs | ForEach-Object { $_.ProcessId }) -join ", "
+    Write-Info "agentY is running from this environment (PID $ids)."
+    Write-Info "Windows cannot replace files it has open, so it has to stop for the install."
+    if ($NonInteractive) {
+        Exit-WithError "Stop the agent (close its window, or 'Stop server' in the sidebar) and run the installer again."
+    }
+    $ans = Read-Answer "    Stop it now? [Y/n]"
+    if ($ans.Trim() -match '^(n|no)$') {
+        Exit-WithError "Stop the agent (close its window, or 'Stop server' in the sidebar) and run the installer again."
+    }
+    foreach ($p in $procs) {
+        # /T: the venv's python.exe is a launcher; the interpreter holding the
+        # files is its child.
+        & taskkill /PID $p.ProcessId /T /F 2>$null | Out-Null
+    }
+    Start-Sleep -Milliseconds 800
+    Write-Success "agentY stopped - start it again with .\run_agent.ps1 when the installer is done"
+}
+
 function Ensure-Repo {
-    # Clone $Url into $Dir if missing; otherwise best-effort fast-forward pull.
+    # Clone $Url into $Dir if missing; otherwise fast-forward it (Update-Checkout).
     param([string]$Name, [string]$Url, [string]$Dir, [switch]$Required)
     if (Test-Path (Join-Path $Dir ".git")) {
-        Write-Info "$Name present at $Dir - updating (git pull --ff-only)"
-        Invoke-Native "git pull ($Name)" { git -C $Dir pull --ff-only } -AllowFail | Out-Null
-        Write-Success "$Name up to date"
+        Update-Checkout -Name $Name -Dir $Dir | Out-Null
         return
     }
     if ((Test-Path $Dir) -and (Get-ChildItem -LiteralPath $Dir -Force -ErrorAction SilentlyContinue)) {
@@ -188,9 +314,19 @@ function Ensure-Repo {
         return
     }
     Write-Info "Cloning $Name -> $Dir"
-    $ok = Invoke-Native "git clone ($Name)" { git clone $Url $Dir } -AllowFail:(-not $Required)
-    if ($ok) { Write-Success "$Name cloned" }
-    elseif ($Required) { Exit-WithError "Could not clone required repo $Name from $Url." }
+    # core.longpaths: git for Windows stops at 260 characters by itself, and the
+    # template corpus in agenty_core has file names long enough to cross that in
+    # a deep install folder. Set at clone, it stays in the checkout's own config.
+    $ok = Invoke-Native "git clone ($Name)" { git clone -c core.longpaths=true $Url $Dir } -AllowFail
+    if ($ok) { Write-Success "$Name cloned"; return }
+    # A clone that failed at checkout leaves a .git behind; the next run would
+    # take that for an install and report it up to date. The folder was missing
+    # or empty before this call, so removing it loses nothing.
+    if (Test-Path (Join-Path $Dir ".git")) {
+        Remove-Item -LiteralPath $Dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if ($Required) { Exit-WithError "Could not clone required repo $Name from $Url - see git's message above." }
+    Write-Fail "$Name could not be cloned - see git's message above. Continuing without it."
 }
 
 function Get-VenvPython {
@@ -231,7 +367,7 @@ function Install-Torch {
     Write-Host "    SAM3 grounding (locating what to circle) wants the CUDA build of torch;" -ForegroundColor DarkGray
     Write-Host "    the wheel on PyPI is CPU-only and makes a call take about a minute." -ForegroundColor DarkGray
     Write-Host "    About 3 GB from $TorchIndexUrl." -ForegroundColor DarkGray
-    $ans = Read-Host "    Install the CUDA build now? [Y/n]"
+    $ans = Read-Answer "    Install the CUDA build now? [Y/n]"
     if ($ans.Trim() -match '^(n|no)$') {
         Write-Info "Skipped - requirements.txt will pull the CPU build"
         return
@@ -248,10 +384,18 @@ function Setup-Venv {
     try {
         if (-not ((Test-Path $venv) -and (Test-Path $py))) {
             if (Test-Path $venv) { Write-Info "$Name .venv incomplete - recreating"; Remove-Item -Recurse -Force $venv }
-            Write-Info "Creating $Name .venv (uv venv)"
-            Invoke-Native "uv venv ($Name)" { uv venv .venv } | Out-Null
+            # Named, not whatever `python` uv meets first on this machine (a
+            # system 3.9, conda's base): 3.12 is what agentY is developed and
+            # tested on. uv downloads it when it is not installed.
+            Write-Info "Creating $Name .venv (uv venv, Python $PythonVersion)"
+            $made = Invoke-Native "uv venv ($Name)" { uv venv .venv --python $PythonVersion } -AllowFail
+            if (-not $made) {
+                Write-Info "Python $PythonVersion is not available - using uv's default interpreter"
+                Invoke-Native "uv venv ($Name)" { uv venv .venv } | Out-Null
+            }
         } else {
             Write-Info "$Name .venv already exists"
+            Stop-RunningHost -Dir $Dir
         }
         if ($WithTorch) { Install-Torch -Dir $Dir }
         $req = Join-Path $Dir "requirements.txt"
@@ -341,16 +485,32 @@ function Test-LocalPort {
 }
 
 function Get-LocalSettings {
+    # The settings object; an empty one when there is no file yet. $null when the
+    # file is there but cannot be read as JSON - a caller must then leave it alone
+    # instead of writing a fresh one over the user's settings.
     param([string]$File)
-    if (Test-Path $File) {
-        try { $o = Get-Content -LiteralPath $File -Raw | ConvertFrom-Json; if ($o) { return $o } } catch { }
-    }
-    return [pscustomobject]@{}
+    if (-not (Test-Path $File)) { return [pscustomobject]@{} }
+    $raw = Get-Content -LiteralPath $File -Raw
+    if (-not $raw -or -not $raw.Trim()) { return [pscustomobject]@{} }
+    try { $o = $raw | ConvertFrom-Json } catch { return $null }
+    if ($o -is [System.Management.Automation.PSCustomObject]) { return $o }
+    return $null
+}
+
+function Get-SettingValue {
+    # One top-level value, or "" - asked for by name, because under StrictMode
+    # reading a property the object does not have is a terminating error.
+    param($Settings, [string]$Name)
+    if ($null -eq $Settings) { return "" }
+    $p = $Settings.PSObject.Properties[$Name]
+    if (($null -eq $p) -or ($null -eq $p.Value)) { return "" }
+    return [string]$p.Value
 }
 
 function Get-EmbedderPreset {
     param([string]$File)
     $o = Get-LocalSettings $File
+    if ($null -eq $o) { return "" }
     if (($null -eq $o.PSObject.Properties['memory']) -or -not $o.memory) { return "" }
     if (($null -eq $o.memory.PSObject.Properties['embedder']) -or -not $o.memory.embedder) { return "" }
     if (($null -eq $o.memory.embedder.PSObject.Properties['preset'])) { return "" }
@@ -360,6 +520,7 @@ function Get-EmbedderPreset {
 function Set-EmbedderPreset {
     param([string]$File, [string]$Preset)
     $o = Get-LocalSettings $File
+    if ($null -eq $o) { return $false }
     if (($null -eq $o.PSObject.Properties['memory']) -or -not $o.memory) {
         $o | Add-Member -NotePropertyName memory -NotePropertyValue ([pscustomobject]@{}) -Force
     }
@@ -368,6 +529,7 @@ function Set-EmbedderPreset {
     }
     $o.memory.embedder | Add-Member -NotePropertyName preset -NotePropertyValue $Preset -Force
     Write-TextNoBom $File ($o | ConvertTo-Json -Depth 20)
+    return $true
 }
 
 function Select-Embedder {
@@ -383,10 +545,15 @@ function Select-Embedder {
         @{ id = "gemini";    key = "GEMINI_API_KEY";    label = "Google Gemini - gemini-embedding-001" },
         @{ id = "openai";    key = "OPENAI_API_KEY";    label = "OpenAI - text-embedding-3-small" }
     )
+    if ($null -eq (Get-LocalSettings $LocalSettings)) {
+        Write-Fail "$LocalSettings is not valid JSON - left untouched, so no embedder was chosen."
+        Write-Info "Fix or delete that file, then pick one in Settings > Models > Memory embedder."
+        return
+    }
     $current = Get-EmbedderPreset $LocalSettings
     $default = if ($current) { $current } elseif ($ollamaUp) { "ollama" } else { "local" }
     if ($NonInteractive) {
-        if (-not $current) { Set-EmbedderPreset $LocalSettings $default; Write-Success "Memory embedder: $default" }
+        if (-not $current) { Set-EmbedderPreset $LocalSettings $default | Out-Null; Write-Success "Memory embedder: $default" }
         else { Write-Success "Memory embedder: $current (kept)" }
         return
     }
@@ -401,8 +568,14 @@ function Select-Embedder {
         Write-Host ("   {0}{1}) {2}{3}" -f $mark, ($i + 1), $c.label, $note) -ForegroundColor White
     }
     $defIdx = 1 + [array]::IndexOf(@($choices | ForEach-Object { $_.id }), $default)
+    $tries = 0
     while ($true) {
-        $ans = (Read-Host "    Memory embedder [1-$($choices.Count), Enter = $defIdx]").Trim()
+        $tries++
+        if ($tries -gt 5) {
+            Write-Info "No embedder chosen - pick one later in Settings > Models > Memory embedder."
+            return
+        }
+        $ans = (Read-Answer "    Memory embedder [1-$($choices.Count), Enter = $defIdx]").Trim()
         if (-not $ans) { $ans = "$defIdx" }
         $n = 0
         if (-not [int]::TryParse($ans, [ref]$n) -or $n -lt 1 -or $n -gt $choices.Count) { Write-Fail "Type a number from the list."; continue }
@@ -411,7 +584,7 @@ function Select-Embedder {
             $val = Read-Secret $EnvFile $pick.key "$($pick.key) for the memory embedder" ""
             if (-not $val) { Write-Fail "That embedder needs $($pick.key). Pick another, or enter the key."; continue }
         }
-        Set-EmbedderPreset $LocalSettings $pick.id
+        Set-EmbedderPreset $LocalSettings $pick.id | Out-Null
         Write-Success "Memory embedder: $($pick.id) (settings.local.json)"
         if ($pick.id -eq "local") { Write-Info "Its model downloads into models\embeddings\ the first time memory is used." }
         return
@@ -437,6 +610,23 @@ Write-Success "uv found: $(uv --version)"
 
 # -- 2. Sibling repos (agenty_core, agentY-mcp) -------------------------------
 Write-Header "2 / 8  Sibling repos"
+# agentY itself first: the siblings below are brought to the remote's newest
+# commit, and a new agenty_core under an old agentY is an agent that does not
+# start. When the pull replaced this very script, the new one takes over - the
+# rest of an old installer would install what the old agentY needed.
+if (Test-Path (Join-Path $ProjectRoot ".git")) {
+    $selfBefore = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash
+    Update-Checkout -Name "agentY" -Dir $ProjectRoot | Out-Null
+    $selfAfter = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash
+    if (($selfBefore -ne $selfAfter) -and -not $env:AGENTY_INSTALLER_RESTARTED) {
+        Write-Info "The installer itself was updated - starting the new one."
+        $env:AGENTY_INSTALLER_RESTARTED = "1"
+        try { & $PSCommandPath @PSBoundParameters } finally { $env:AGENTY_INSTALLER_RESTARTED = $null }
+        exit $LASTEXITCODE
+    }
+} else {
+    Write-Info "agentY at $ProjectRoot is not a git checkout - it cannot be updated from here"
+}
 $CoreDir = Join-Path $ParentDir "agenty_core"
 Ensure-Repo -Name "agenty_core" -Url "https://github.com/szprivate/agenty_core.git" -Dir $CoreDir -Required
 if (-not (Test-Path (Join-Path $CoreDir "pyproject.toml"))) {
@@ -483,7 +673,7 @@ if ($SkipComfyNode) {
     if ($ResolvedComfy) {
         Write-Success "Found ComfyUI: $ResolvedComfy"
         if (-not $NonInteractive) {
-            $ans = Read-Host "    Use this ComfyUI? [Y/n] (or type another path)"
+            $ans = Read-Answer "    Use this ComfyUI? [Y/n] (or type another path)"
             if ($ans.Trim() -and $ans.Trim() -notmatch '^(y|yes)$') {
                 if ($ans.Trim() -match '^(n|no)$') { $ResolvedComfy = $null }
                 else { $ResolvedComfy = Test-ComfyUIDir $ans.Trim() }
@@ -491,7 +681,7 @@ if ($SkipComfyNode) {
         }
     }
     if (-not $ResolvedComfy -and -not $NonInteractive) {
-        $entered = Read-Host "    ComfyUI folder (contains custom_nodes\), or Enter to skip"
+        $entered = Read-Answer "    ComfyUI folder (contains custom_nodes\), or Enter to skip"
         if ($entered.Trim()) {
             $ResolvedComfy = Test-ComfyUIDir $entered.Trim()
             if (-not $ResolvedComfy) { Write-Fail "That folder doesn't look like a ComfyUI install - skipping." }
@@ -518,18 +708,16 @@ if ($SkipComfyNode) {
         # Committed defaults live in config/settings.default.toml (localhost); the
         # local JSON is deep-merged over them and is gitignored.
         $localSettings = Join-Path $ProjectRoot "config\settings.local.json"
-        if (-not $NonInteractive) {
-            $curUrl = "http://127.0.0.1:8188"
-            $obj = $null
-            if (Test-Path $localSettings) {
-                try { $obj = Get-Content -LiteralPath $localSettings -Raw | ConvertFrom-Json } catch { $obj = $null }
-                if ($obj -and $obj.comfyui_url) { $curUrl = [string]$obj.comfyui_url }
-            }
-            $newUrl = Read-Host "    ComfyUI URL for settings.local.json [Enter = keep $curUrl]"
+        $obj = Get-LocalSettings $localSettings
+        if ($null -eq $obj) {
+            Write-Fail "$localSettings is not valid JSON - left untouched (the ComfyUI URL was not asked)."
+        } elseif (-not $NonInteractive) {
+            $curUrl = Get-SettingValue $obj "comfyui_url"
+            if (-not $curUrl) { $curUrl = "http://127.0.0.1:8188" }
+            $newUrl = Read-Answer "    ComfyUI URL for settings.local.json [Enter = keep $curUrl]"
             if ($newUrl.Trim() -and $newUrl.Trim() -ne $curUrl) {
-                if (-not $obj) { $obj = [pscustomobject]@{} }
                 $obj | Add-Member -NotePropertyName comfyui_url -NotePropertyValue $newUrl.Trim() -Force
-                Write-TextNoBom $localSettings ($obj | ConvertTo-Json -Depth 10)
+                Write-TextNoBom $localSettings ($obj | ConvertTo-Json -Depth 20)
                 Write-Success "settings.local.json comfyui_url -> $($newUrl.Trim())"
             }
         }
@@ -585,3 +773,4 @@ Write-Host ""
 Write-Host "  Review secrets/paths anytime in:  $EnvFile" -ForegroundColor DarkGray
 Write-Host "  Defaults: $ProjectRoot\config\settings.default.toml  (overrides: settings.local.json)" -ForegroundColor DarkGray
 Write-Host ""
+exit 0
