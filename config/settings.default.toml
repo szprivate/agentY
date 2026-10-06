@@ -80,6 +80,11 @@ mcp_tools_on_demand = true
 # turn that reads it keeps all of it, and the agent can read it again. false =
 # it stays in the history for the whole window, as before.
 trim_old_workflow_catalog = true
+# The orchestrator's prompt no longer carries a table of every installed model
+# (~10.7k tokens with ~400 models, sent with every step): it looks models up with
+# find_local_models / check_model instead. true = put the table back.
+# Takes effect when the agent is next built (restart).
+models_table_in_prompt = false
 output_dir = "./output_images/"
 # Where generated/patched workflow JSON is written. BLANK (the default) means
 # "into ComfyUI": <--user-directory>/default/workflows/agentY/, which is the

@@ -374,6 +374,15 @@ def _build_model_table() -> str:
     return "\n".join(lines)
 
 
+_MODELS_POINTER = """## Models
+
+The installed models are not listed here — look them up: `find_local_models`
+lists what is installed by part of a name (`"*wan2.2*"`, `"ltx-2.5"`), with the
+path a loader node takes; `check_model` says whether an exact file is installed
+and returns that path. Use the paths they return verbatim. Never write a model
+path from memory: a name that is nearly right loads nothing."""
+
+
 # Map from resolved llm name → system-prompt markdown filename stem.
 _SYSTEM_PROMPT_FILE: dict[str, str] = {
     "query_templates": "system_prompt.query_templates",
@@ -418,7 +427,12 @@ def _load_system_prompt(llm: str) -> str:
     print(f"[agentY] System prompt: {path.resolve()}")
     text = path.read_text(encoding="utf-8")
     if "{{MODEL_TABLE}}" in text:
-        text = text.replace("{{MODEL_TABLE}}", _build_model_table())
+        # Every installed model, as a table, was ~10.7k tokens — more than half of
+        # the orchestrator's prompt, sent with every step — for something it looks
+        # up with a tool anyway (check_model / find_local_models). Setting
+        # models_table_in_prompt = true puts the table back.
+        table = _build_model_table() if _settings().get("models_table_in_prompt", False)             else _MODELS_POINTER
+        text = text.replace("{{MODEL_TABLE}}", table)
     if "{{EXTERNAL_MODEL_DIR}}" in text:
         ext_dir = _models().get("external_model_dir", "")
         text = text.replace("{{EXTERNAL_MODEL_DIR}}", ext_dir)
