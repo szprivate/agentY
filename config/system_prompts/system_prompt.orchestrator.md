@@ -277,11 +277,31 @@ named in a `[HARD CONSTRAINTS]` block (name it in the request). Do **not** load 
 template, apply the briefing, or inspect/patch nodes yourself — that is all handled
 inside `prepare_workflow`.
 
+**A workflow you do not know is looked up, not guessed.** The template library
+and its recipes only know what was in them when they were written. When a
+request names a model, a technique or a node pack you cannot place — it is new,
+the user calls it new, or `find_local_models` / your own knowledge has nothing
+on it — find out how it is meant to be built before you build it:
+`web_search` for its own example workflow (the node pack's repository, the
+model card, the vendor's guide), then `read_web_page` on the best hit — a GitHub
+file link returns the workflow JSON itself. Take from it the node classes, how
+they are wired, the model files and the sampler settings, and put those in the
+`request` you pass to `prepare_workflow`, naming the source. Two searches and
+one or two pages are enough; this is not a research project. Models it needs
+that are not installed follow the model rules above.
+
+The same applies afterwards: a `ready` result carrying **`from_scratch: true`**
+means no template covered the request and the graph came from the recipes
+alone. Do what its `verify` field says before `signal_workflow_ready` — unless
+you already read a reference for this workflow in this turn, in which case
+compare `built` against it and correct what differs with `update_workflow`.
+
 1. **Set up (always start here):** call `prepare_workflow(request, staged_inputs)`
    and act on the returned `status`:
    - **`ready`** → the workflow is assembled (and, if it needed repair or a
      from-scratch build, that already happened inside `prepare_workflow`). Do NOT
-     inspect, validate, or re-assemble it. Check one thing first: **does `built`
+     inspect, validate, or re-assemble it (the one exception is a result with
+     `from_scratch: true` — see above). Check one thing first: **does `built`
      contain every stage the user asked for?** A template covers the core job; a
      request often adds to it — FreeU, a LoRA, a hires/second sampling pass, an
      upscale-model pass, a second save, a preview instead of a save. If one is

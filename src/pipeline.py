@@ -82,6 +82,34 @@ _ORCH_PARTIALS_DIR = Path(__file__).parent.parent / "config" / "system_prompts" 
 # make themselves.
 _MAX_CANVAS_DELETE = 25
 
+# Rides back on a workflow that no template covered. A from-scratch build is made
+# from the recipe database, and that knows only the workflows already in the
+# library - for a model or technique newer than the library it produces a graph
+# that validates and is still not how the thing is meant to be wired. The agent
+# has the web tools to find out and used them only when it thought of it; said in
+# the prompt alone it is one more paragraph. So the build result says it, at the
+# moment it matters.
+_FROM_SCRATCH_NOTE = (
+    "No template covers this request: the graph was built from the recipe database alone, which "
+    "only knows the workflows already in the library. Unless you already read a reference for this "
+    "workflow in this turn, look it up BEFORE you signal: web_search for the model's or node pack's "
+    "own example workflow, then read_web_page on what you find (a GitHub file link returns the "
+    "workflow JSON itself; a model card names the files and the settings). Compare it with `built` "
+    "and correct what differs with update_workflow - missing nodes, wiring, model files, sampler "
+    "settings. If the search finds nothing usable, signal the workflow as it is and tell the user it "
+    "was built from the recipe alone, with no reference to check it against."
+)
+
+
+def _mark_from_scratch(result, briefing) -> None:
+    """Flag a READY result whose graph was built without a template."""
+    if not isinstance(result, dict) or result.get("status") != "ready":
+        return
+    name = str(getattr(getattr(briefing, "template", None), "name", "") or "").strip().lower()
+    if name in ("", "build_new", "none"):
+        result["from_scratch"] = True
+        result["verify"] = _FROM_SCRATCH_NOTE
+
 
 def _slot_is_dead(slot: list) -> bool:
     """Whether a researcher lease slot belongs to a task that can no longer free it."""
@@ -1201,6 +1229,7 @@ class Pipeline:
                 return json.dumps({"status": "blocked", "blockers": briefing.blockers})
             result = await self._assemble_deterministic(briefing)
             result = await self._enforce_model_family(result, request)
+            _mark_from_scratch(result, briefing)
             self._attach_built_summary(result)
             return json.dumps(result)
 
