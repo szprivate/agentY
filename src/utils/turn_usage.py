@@ -76,5 +76,9 @@ def take_changed(scope=None) -> dict | None:
         s = _state(scope)
         if s["_rev"] == 0 or s["_sent"] == s["_rev"]:
             return None
+        if not (s["input"] or s["output"]):
+            # The first model call has started and nothing is counted yet: a line
+            # reading "0 in, 0 out" says nothing. Wait for the first numbers.
+            return None
         s["_sent"] = s["_rev"]
         return snapshot(scope)

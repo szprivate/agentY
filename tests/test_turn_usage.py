@@ -29,6 +29,12 @@ class Counting(_InTurn):
     def test_nothing_is_sent_before_anything_was_used(self):
         self.assertIsNone(turn_usage.take_changed())
 
+    def test_a_call_that_has_only_started_is_not_shown_as_zero_tokens(self):
+        turn_usage.add(calls=1)
+        self.assertIsNone(turn_usage.take_changed())
+        turn_usage.add(900, 30)
+        self.assertEqual(turn_usage.take_changed()["calls"], 2)
+
     def test_it_adds_up_and_is_sent_once_per_change(self):
         turn_usage.add(1000, 50, 600, 0, 0.01)
         turn_usage.add(2000, 150, 1400, 100, 0.02)
