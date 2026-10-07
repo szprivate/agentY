@@ -383,6 +383,51 @@ Each output node is titled with the role, gets an `agentY add tag` node, and a
 small `.agenty.json` file is written next to the media so the agent knows later
 what it is. In a batch, each variant is named after the value that made it.
 
+### Where a pipeline's workflows go
+
+A hook run puts every workflow it builds **into the graph you have open**, in a
+group of its own (`agent_1`, `agent_2`, …), instead of a tab per workflow.
+
+- A workflow of 12 nodes or more is folded into one **subgraph** node when the run
+  ends (`hook_subgraph_min_nodes`; 0 never folds).
+- `hooks_into_canvas` off: workflows open in tabs as before.
+- The keep switch still **bakes** a `make_workflow` stage into a re-runnable
+  subgraph wired to mirror the chain.
+
+### Loops: repeat stages until a condition holds
+
+Two nodes under **agentY ▸ flow** mark a loop. Every hook wired between them is
+the loop's body:
+
+```
+agentY loop start → make_workflow → make_workflow → agentY loop break → next stage
+```
+
+On the **`agentY loop break`**:
+
+- **`finished when`** — the condition in your own words, one statement per line:
+  *"the dancer's pose matches the reference"*. It must be visible in the result.
+- **`max rounds`** (default 3, at most 10) — the loop ends here whatever happened.
+- **`forward`** — what goes on to the next stage: the **best** result, **all that
+  pass**, or **all** of the last round.
+
+One round runs every stage of the body. A separate QA agent then judges the
+result against the condition **and** any `agentY qa` node covering those stages.
+On a miss the agent changes what was objected to and runs the body again. If the
+rounds run out, the best attempt of any round goes on, and the report says the
+condition was not met. The break node shows where its loop stands.
+
+Outside a loop, the agent says which outputs it passes to the next stage and why
+(`➡ Forwarded from …`).
+
+### Branches run at the same time
+
+Hook chains that share no wire are separate branches. A run with two or more gives
+each branch [its own conversation](#a-sequence-one-conversation-per-shot): the
+conversation you started becomes the lead, the branches work in parallel, and the
+lead puts their workflows into your graph as they report. Renders on your own GPU
+still queue in ComfyUI.
+
 ---
 
 ## Working on your canvas

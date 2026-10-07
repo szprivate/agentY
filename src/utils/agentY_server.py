@@ -5361,13 +5361,18 @@ def _start_background_turn(thread_id: str, text: str, *, origin: str,
     follows it through /agentY/runs/<id>/stream when the conversation is opened,
     and it shows in the list with its dot meanwhile.
 
-    No canvas: a shot builds its own workflow, and the lead coordinates.
+    A shot has no canvas: it builds its own workflow. The lead, woken by its
+    shots, is given the open graph (asked of the panel, as a Slack turn is), so
+    it can put the workflows its shots report into it.
     """
     q: queue.Queue = queue.Queue()
     rid = uuid.uuid4().hex
+    kwargs = {"origin": origin, "dry_run": bool(dry_run)}
+    if origin == "shots":
+        kwargs["canvas_provider"] = request_canvas
     threading.Thread(target=_run_pipeline_stream,
                      args=(thread_id, text, [], q, rid),
-                     kwargs={"origin": origin, "dry_run": bool(dry_run)},
+                     kwargs=kwargs,
                      name=f"agentY-{origin}-turn", daemon=True).start()
     threading.Thread(target=_drain_queue, args=(q,), daemon=True).start()
     return rid

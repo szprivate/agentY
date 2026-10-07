@@ -25,6 +25,9 @@ from src.utils.media_loaders import image_loader_node
 from src.utils.media_loaders import value_for as loader_value
 
 _HOOK_CLASS = "AgentYHook"
+# The flow nodes (src/utils/hook_flow.py) are hooks as far as the graph goes:
+# inert on a plain Queue, taken out of it before the agent runs anything.
+_HOOK_CLASSES = {_HOOK_CLASS, "AgentYLoopStart", "AgentYLoopBreak"}
 
 IMG_EXTS = {"png", "jpg", "jpeg", "webp", "bmp", "gif", "tiff"}
 # Kept in step with _COLLECT_VID_EXTS in the extension's __init__.py: one
@@ -126,7 +129,7 @@ def splice_hook_nodes(prompt: dict, hooks: list | None = None) -> tuple[dict, li
         return prompt, []
     clean = copy.deepcopy(prompt)
     hook_ids = [nid for nid, node in clean.items()
-                if isinstance(node, dict) and node.get("class_type") == _HOOK_CLASS]
+                if isinstance(node, dict) and node.get("class_type") in _HOOK_CLASSES]
     if not hook_ids:
         return clean, []
     target_types = _target_input_types(hooks)
@@ -267,7 +270,7 @@ def hook_scope_ids(prompt: dict, hook_ids=None) -> set | None:
     the run — the user named a reference, not a second job.
     """
     hooks_in_prompt = {str(nid) for nid, node in prompt.items()
-                       if isinstance(node, dict) and node.get("class_type") == _HOOK_CLASS}
+                       if isinstance(node, dict) and node.get("class_type") in _HOOK_CLASSES}
     if not hooks_in_prompt:
         return None
     chosen_hooks = set(hooks_in_prompt)
@@ -3086,7 +3089,8 @@ def _target_context(hook: dict, hook_ids: set | None = None,
     return "; ".join(parts)
 
 
-def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
+def describe_hooks(hooks: list, base_prompt: dict | None = None, flow=None,
+                   into_canvas: bool = False) -> str:
     """Render the ``[CANVAS HOOKS]`` block injected into the orchestrator input.
 
     Hooks are **upstream producers**: each consumes its wired anchor inputs as
@@ -3619,6 +3623,25 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None) -> str:
                     f'  - bake hook {hid}: "{str(h.get("directive", "") or "").strip()}" '
                     f'({_input_desc(h)}; exports {_export_count(h)} output(s))'
                 )
+
+    if standin_hooks and into_canvas:
+        lines.append(
+            "\nON THE CANVAS — every workflow a make_workflow hook stands for goes INTO "
+            "the user's open graph, where they can see what the pipeline built. This "
+            "replaces what is said above about signal_workflow_ready: for each stage, "
+            "build its workflow (prepare_workflow), then "
+            "insert_workflow_into_canvas(workflow_path, hook_node_id=\"<the hook's "
+            "id>\"), then run_workflow_now(workflow_path). The nodes land in a group "
+            "of their own next to the pipeline; a large workflow is folded into one "
+            "subgraph node automatically - you do nothing for that. Re-running a stage "
+            "(a loop round, a QA retry) changes values on the nodes already there "
+            "(set_canvas_node_params) and runs again; it never inserts the workflow a "
+            "second time. A stage done by a script has no workflow to insert.")
+    if flow is not None:
+        from src.utils import hook_flow as _hf
+        lines += _hf.loop_lines(flow)
+        lines += _hf.parallel_lines(
+            flow, is_work=lambda h: _is_standin(h) or _is_general(h))
 
     lines.append("")
     return "\n".join(lines)

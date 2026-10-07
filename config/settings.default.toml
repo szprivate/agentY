@@ -126,6 +126,12 @@ show_outputs_in_panel = true
 # added to it and changes are made on the canvas. Either way a conversation
 # keeps the mode it is in until you ask it to change.
 work_in_open_graph = false
+# A hook run puts every workflow it builds into the open graph, in a group of
+# its own beside the hook, instead of opening a tab per workflow.
+hooks_into_canvas = true
+# From this many nodes on, such a workflow is folded into one subgraph node
+# (0 = never fold).
+hook_subgraph_min_nodes = 12
 # Place the agent's written answer to a TEXT canvas hook (purpose = "text") onto
 # the canvas as an "agentY text" node. The node is a readable reference only: the
 # hook stays wired exactly as you drew it, and the answer is injected into the

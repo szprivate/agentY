@@ -66,6 +66,8 @@ _BOUND = (
     "_prompt_slot_of",
     "_announce_prompt_version",
     "_note_loop_write",
+    "_hooks_into_canvas",
+    "_subgraph_min_nodes",
 )
 
 
@@ -105,6 +107,9 @@ def pipeline_stub(**over):
         _autoloop=None,
         _PROMPT_SLOTS=Pipeline._PROMPT_SLOTS,
         _open_workflows=[],
+        _canvas_flow=None,
+        _loop_states={},
+        _forwarded={},
         _DRY_GRAPH_CAP=Pipeline._DRY_GRAPH_CAP,
     )
     base.update(over)

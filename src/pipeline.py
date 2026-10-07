@@ -713,6 +713,12 @@ class Pipeline:
         # Tracked so they survive the end-of-turn current_output_paths reset and
         # still get staged onto the canvas. Empty on every non-chain turn.
         self._chain_output_paths: list = []
+        # Loops and parallel branches of the hook pipeline (src/utils/hook_flow.py),
+        # the rounds each loop has run this turn, and hook id -> the outputs chosen
+        # to go on to the next stage.
+        self._canvas_flow = None
+        self._loop_states: dict = {}
+        self._forwarded: dict = {}
         # hook id -> the files that hook's stage produced THIS TURN.
         #
         # A hook's wire carries the value it authors; nothing carried what that
@@ -2209,7 +2215,8 @@ class Pipeline:
             return json.dumps({"outputs": self._shown_outputs(), "shown_in_panel": visible})
 
         @_tool
-        async def insert_workflow_into_canvas(workflow_path: str, reason: str = "") -> str:
+        async def insert_workflow_into_canvas(workflow_path: str, reason: str = "",
+                                              hook_node_id: str = "") -> str:
             """Put a workflow you built INTO the graph the user has open - every node
             and every wire of it, beside what is already there.
 
@@ -2229,6 +2236,9 @@ class Pipeline:
             Args:
                 workflow_path: A workflow file from ``prepare_workflow``.
                 reason: One line on what is being added, shown to the user.
+                hook_node_id: In a hook run, the make_workflow hook this workflow
+                    was built for. It is then placed beside that hook, and a
+                    large workflow is folded into one subgraph node.
             """
             _held = self._canvas_lease_refusal()
             if _held:
@@ -2255,8 +2265,22 @@ class Pipeline:
             self._canvas_graph = res["graph"]
             # `block`: lay it out the way the agent's own workflows are laid out,
             # below what is on the canvas, in a group of its own (agent_1, agent_2…).
+            _block = _ce.block_layout(_built, res["added"])
+            _hid = str(hook_node_id or "").strip()
+            _hook = next((h for h in (self._canvas_hooks or [])
+                          if str(h.get("hook_node_id")) == _hid), None) if _hid else None
+            _n_nodes = sum(1 for o in res["ops"] if o["op"] == "add")
+            _fold = bool(_hook) and 0 < self._subgraph_min_nodes() <= _n_nodes
+            if _hook is not None:
+                from src.utils.subgraph_bake import short_name as _short
+                _name = _short(reason or _hook.get("title") or _hook.get("directive"),
+                               fallback=f"Stage {_hid}")
+                # `stage`: which hook this block belongs to (the panel puts it
+                # beside that hook) and, for a large one, the subgraph to fold it into.
+                _block = {**(_block or {}), "stage": {"hook_node_id": _hid, "name": _name,
+                                                      "collapse": _fold}}
             _push_patch({"op": "edit_graph", "ops": res["ops"], "reason": str(reason or "").strip(),
-                         "block": _ce.block_layout(_built, res["added"])})
+                         "block": _block})
             # From here on this conversation works in the open graph (see
             # AgentSession.open_graph_mode) until the user asks otherwise.
             try:
@@ -2291,6 +2315,118 @@ class Pipeline:
                            "conversation now keeps working in that graph: later additions go in the "
                            "same way and changes are made on the canvas, until the user asks for "
                            "separate workflows again (work_in_open_graph(on=false))."})
+
+        @_tool
+        async def loop_check(break_node_id: str, outputs: list) -> str:
+            """Close one round of a canvas loop: have its outputs judged, and learn
+            whether the loop goes on.
+
+            Call it after every round of a LOOP listed in the ``[CANVAS HOOKS]``
+            block, with the files the last stage of the loop's body produced in
+            that round. A separate QA agent judges each file against the loop's
+            condition and the QA briefings on its stages; you do not judge it
+            yourself and you do not decide when the loop ends.
+
+            Returns ``finished``. When false: ``missed`` (the objections) and
+            ``closest`` (the best attempt so far) - change something and run the
+            body again. When true: ``forward`` names the file(s) the stage after
+            the loop receives; start no further round.
+
+            Args:
+                break_node_id: The loop's break node id, from the LOOPS list.
+                outputs: Absolute paths of this round's results.
+            """
+            from src.utils import hook_flow as _hf
+            from src.utils import loop_judge as _lj
+            flow = getattr(self, "_canvas_flow", None)
+            loop = flow.loop(break_node_id) if flow else None
+            if loop is None:
+                known = [lp.break_id for lp in (flow.loops if flow else [])]
+                return json.dumps({"error": f"no loop with break node {break_node_id}.",
+                                   "loops": known})
+            state = self._loop_states.setdefault(loop.break_id, _hf.new_state(loop))
+            if state["finished"]:
+                return json.dumps({"finished": True, "round": state["round"],
+                                   "note": "This loop already ended - do not run another round."})
+            files = [str(p) for p in (outputs or []) if p and Path(str(p)).exists()]
+            if not files:
+                return json.dumps({"error": "none of these files exist - pass the paths "
+                                            "run_workflow_now returned for this round.",
+                                   "given": [str(p) for p in (outputs or [])][:8]})
+            n = state["round"] + 1
+            _push_progress(f"🔁 {loop.name()} — judging round {n} of {loop.max_rounds} "
+                           f"({len(files)} output{'' if len(files) == 1 else 's'})")
+            briefings = [self._briefing_for(hid) for hid in loop.members]
+            seen, scoped = set(), []
+            for b in briefings:          # the turn briefing comes back once per stage
+                if b and id(b) not in seen:
+                    seen.add(id(b))
+                    scoped.append(b)
+            results = await asyncio.to_thread(
+                _lj.judge, files, loop, scoped, request=str(loop.condition or ""))
+            verdict = _hf.record_round(state, results, loop)
+            verdict["judged"] = [{"file": Path(r["path"]).name, "passed": r["passed"],
+                                  "missed": r["missed"][:4], "summary": r["summary"][:300]}
+                                 for r in results]
+            if verdict["finished"]:
+                how = "condition met" if verdict["condition_met"] else \
+                    f"not met after {verdict['round']} round(s) — best attempt goes on"
+                _push_progress(f"🔁 {loop.name()} — finished, {how}")
+                chosen = verdict.get("forward") or []
+                self._forwarded[loop.break_id] = chosen
+                for hid in loop.members[-1:]:
+                    self._forwarded[hid] = chosen
+                try:
+                    from src.utils.canvas_patch import push as _push_patch
+                    _push_patch({"op": "flow_state", "node_id": loop.break_id,
+                                 "state": "met" if verdict["condition_met"] else "out_of_rounds",
+                                 "round": verdict["round"], "max_rounds": loop.max_rounds,
+                                 "forward": [Path(p).name for p in chosen]})
+                except Exception:  # noqa: BLE001
+                    pass
+            else:
+                _push_progress(f"🔁 {loop.name()} — round {verdict['round']} not there yet: "
+                               + "; ".join(verdict.get("missed") or ["no objection given"])[:300])
+                try:
+                    from src.utils.canvas_patch import push as _push_patch
+                    _push_patch({"op": "flow_state", "node_id": loop.break_id, "state": "running",
+                                 "round": verdict["round"], "max_rounds": loop.max_rounds})
+                except Exception:  # noqa: BLE001
+                    pass
+            return json.dumps(verdict)
+
+        @_tool
+        async def forward_outputs(hook_node_id: str, outputs: list, reason: str = "") -> str:
+            """Say which of a stage's outputs go on to the next stage.
+
+            A stage often makes several candidates and the next one should work
+            on the right one, not on all of them. Call this when you choose:
+            the stage wired after ``hook_node_id`` then receives exactly these
+            files, and the user is shown what was chosen and why. Without a call
+            everything the stage produced goes on. A loop chooses for itself
+            (``loop_check`` returns ``forward``) - do not call this for a loop.
+
+            Args:
+                hook_node_id: The stage whose outputs you are choosing from.
+                outputs: The absolute paths that go on.
+                reason: One line on why these, shown to the user.
+            """
+            hid = str(hook_node_id or "").strip()
+            made = [str(p) for p in (self._hook_products.get(hid) or [])]
+            chosen = [str(p) for p in (outputs or []) if p]
+            if not chosen:
+                return json.dumps({"error": "name at least one file."})
+            unknown = [p for p in chosen if made and p not in made]
+            if unknown:
+                return json.dumps({"error": "not produced by that stage this turn: "
+                                            + ", ".join(Path(p).name for p in unknown),
+                                   "produced": made})
+            self._forwarded[hid] = chosen
+            names = ", ".join(Path(p).name for p in chosen)
+            _push_progress(f"➡ Forwarded from hook {hid}: {names}"
+                           + (f" — {reason.strip()}" if str(reason or "").strip() else ""))
+            return json.dumps({"status": "ok", "forwarded": chosen,
+                               "note": "The next stage's input is exactly these files."})
 
         @_tool
         async def run_canvas(node_ids: list | None = None) -> str:
@@ -3559,6 +3695,7 @@ class Pipeline:
                  run_python_node, revise_prompt, prompt_autoloop,
                  delete_canvas_nodes, edit_canvas_graph, insert_workflow_into_canvas, refine_canvas_until,
                  list_outputs, work_in_open_graph, set_canvas_node_mode, run_canvas,
+                 loop_check, forward_outputs,
                  list_agent_settings, set_agent_setting]
         # Offered only where there is a Slack to send to. Every tool in this list
         # is described to the model on every call, so one nobody can use is a
@@ -4353,7 +4490,9 @@ class Pipeline:
         # the on-canvas graph via apply_canvas_hooks (above the hard constraints).
         if self._canvas_base_prompt is not None and self._canvas_hooks:
             from src.utils.canvas_hooks import describe_hooks
-            hooks_block = describe_hooks(self._canvas_hooks, self._canvas_base_prompt)
+            hooks_block = describe_hooks(self._canvas_hooks, self._canvas_base_prompt,
+                                         flow=self._canvas_flow,
+                                         into_canvas=self._hooks_into_canvas())
             if hooks_block:
                 # Attach the how-to-run-hooks guidance only now that hooks exist
                 # (it's absent from the base system prompt to keep every non-hook
@@ -4594,7 +4733,13 @@ class Pipeline:
         # hook nodes out of the captured API prompt and stash the clean base for
         # apply_canvas_hooks; describe the hooks in the orchestrator input.
         self._canvas_base_prompt = None
-        self._canvas_hooks = [h for h in (canvas_hooks or []) if isinstance(h, dict)]
+        # Loop start / loop break nodes do no work: they are read here and taken
+        # out of the wiring, so everything below sees ordinary hook chains.
+        from src.utils import hook_flow as _hook_flow
+        self._canvas_flow = _hook_flow.plan(canvas_hooks)
+        self._canvas_hooks = self._canvas_flow.hooks
+        self._loop_states = {}
+        self._forwarded = {}
         self._canvas_keeplive_run = False
         self._hook_run_stopped = None
         # Set when the canvas is scoped to the hooks at turn setup; pushed only if
@@ -6217,6 +6362,24 @@ class Pipeline:
             if getattr(self, "_verbose", False):
                 print(f"pipeline: could not take {workflow_path} from the canvas: {exc}")
             return workflow_path, False
+
+    def _hooks_into_canvas(self) -> bool:
+        """Setting ``hooks_into_canvas``: a hook run's workflows go into the open graph."""
+        try:
+            from src.agent import _load_settings  # noqa: PLC0415
+            return bool((_load_settings() or {}).get("hooks_into_canvas", True))
+        except Exception:  # noqa: BLE001
+            return True
+
+    @staticmethod
+    def _subgraph_min_nodes() -> int:
+        """Setting ``hook_subgraph_min_nodes``: from this many nodes an inserted
+        workflow is folded into one subgraph node (0 = never)."""
+        try:
+            from src.agent import _load_settings  # noqa: PLC0415
+            return max(0, int((_load_settings() or {}).get("hook_subgraph_min_nodes", 12) or 0))
+        except Exception:  # noqa: BLE001
+            return 12
 
     def _open_graph_mode(self) -> bool:
         """Whether this conversation works in the user's open graph (see
