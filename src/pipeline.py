@@ -82,6 +82,14 @@ _ORCH_PARTIALS_DIR = Path(__file__).parent.parent / "config" / "system_prompts" 
 # make themselves.
 _MAX_CANVAS_DELETE = 25
 
+# Pinned at the top of every turn of a conversation that works in the user's open
+# graph. Said each turn, not once: the first time is turns ago by the time the
+# user says "now add an upscaler", and the default - build a workflow, open it in
+# a tab - is what the rest of the prompt teaches.
+_OPEN_GRAPH_NOTE = (
+    "[OPEN GRAPH MODE] This conversation works IN the user's open graph. Keep working there for the rest of the conversation: anything new you build goes in with insert_workflow_into_canvas(workflow_path) (never a workflow in a tab of its own), and changes to what is on the canvas are made on the canvas - set_canvas_node_params (values), edit_canvas_graph (add nodes, wire, unwire), set_canvas_node_mode (bypass / mute / re-enable), delete_canvas_nodes (remove). You see and may edit the whole graph without a selection while this is on. Leave this mode only when the user asks for separate workflows or tabs again: then call work_in_open_graph(on=false)."
+)
+
 # Rides back on a workflow that no template covered. A from-scratch build is made
 # from the recipe database, and that knows only the workflows already in the
 # library - for a model or technique newer than the library it produces a graph
@@ -2218,6 +2226,12 @@ class Pipeline:
                                    "note": "Nothing was changed on the canvas."})
             self._canvas_graph = res["graph"]
             _push_patch({"op": "edit_graph", "ops": res["ops"], "reason": str(reason or "").strip()})
+            # From here on this conversation works in the open graph (see
+            # AgentSession.open_graph_mode) until the user asks otherwise.
+            try:
+                self._session.open_graph_mode = True
+            except Exception:  # noqa: BLE001
+                pass
             # The workflow is on the canvas now: running it must not open it again
             # in a tab of its own (see executor's auto-graph step).
             try:
@@ -2233,7 +2247,85 @@ class Pipeline:
                 "status": "applied", "nodes_added": n_add, "wires_set": n_wire,
                 "node_ids": {n: res["graph"][n]["class_type"] for n in res["touched"] if n in res["graph"]},
                 "message": "The workflow is in the user's open graph, fully wired; Ctrl+Z undoes it. "
-                           "To generate its result, call run_workflow_now(workflow_path)."})
+                           "To generate its result, call run_workflow_now(workflow_path). This "
+                           "conversation now keeps working in that graph: later additions go in the "
+                           "same way and changes are made on the canvas, until the user asks for "
+                           "separate workflows again (work_in_open_graph(on=false))."})
+
+        @_tool
+        async def work_in_open_graph(on: bool) -> str:
+            """Switch whether this conversation works IN the user's open graph.
+
+            It switches itself on the first time you use
+            ``insert_workflow_into_canvas``, and stays on for the conversation: new
+            workflows are inserted into the open graph and changes are made on the
+            canvas. Call this with ``on=false`` when the user asks to go back to
+            separate workflows / tabs, and with ``on=true`` when they ask you to
+            work in their open graph from now on.
+
+            Args:
+                on: True to work in the open graph, False to build separate workflows.
+            """
+            try:
+                self._session.open_graph_mode = bool(on)
+            except Exception as exc:  # noqa: BLE001
+                return json.dumps({"error": f"could not switch: {exc}"})
+            return json.dumps({"open_graph_mode": bool(on), "message": (
+                "Working in the user's open graph from now on: insert new workflows with "
+                "insert_workflow_into_canvas and change things on the canvas." if on else
+                "Back to separate workflows: build and show them as usual.")})
+
+        @_tool
+        async def set_canvas_node_mode(node_ids: list, mode: str, reason: str = "") -> str:
+            """Bypass, mute or re-enable node(s) on the user's canvas.
+
+            ``mode`` is ``"bypass"`` (the node is skipped and its input passes
+            straight through - "bypass the upscaler"), ``"mute"`` (the node and
+            everything that needs it do not run - "switch the Seedream branch
+            off"), or ``"active"`` (back to normal). Nothing is deleted and nothing
+            is queued; the user can undo it with Ctrl+Z.
+
+            A bypassed or muted node is not part of what would run, so it is absent
+            from ``[CANVAS GRAPH]`` on later turns - keep its id from when you
+            switched it off if you may need to switch it back on.
+
+            Args:
+                node_ids: The node ids, as in `[CANVAS GRAPH]`.
+                mode: "bypass", "mute" or "active".
+                reason: One line on why, shown to the user.
+            """
+            _held = self._canvas_lease_refusal()
+            if _held:
+                return _held
+            from src.utils.canvas_patch import push as _push_patch
+            mode = str(mode or "").strip().lower()
+            if mode not in ("bypass", "mute", "active"):
+                return json.dumps({"error": f"unknown mode {mode!r}", "what_to_do": 'Use "bypass", "mute" or "active".'})
+            ids = [str(n).strip().lstrip("#") for n in (node_ids or []) if str(n).strip()]
+            if not ids:
+                return json.dumps({"error": "no node ids given."})
+            graph = getattr(self, "_canvas_graph", None) or {}
+            if mode != "active":
+                # Switching a node OFF is checked like any other edit. Switching one
+                # back on cannot be: it is not in the graph that would run.
+                unknown = [n for n in ids if n not in graph]
+                if unknown:
+                    return json.dumps({"error": f"no node {', '.join(unknown)} on the canvas.",
+                                       "what_to_do": "Use the ids from [CANVAS GRAPH]."})
+                if not self._canvas_full_graph():
+                    selected = {str(n.get("id")) for n in (self._canvas_selection or [])}
+                    outside = [n for n in ids if n not in selected]
+                    if outside:
+                        return json.dumps({
+                            "error": f"node(s) {', '.join(outside)} are not in the current canvas "
+                                     f"selection, so they cannot be switched off.",
+                            "what_to_do": "Ask the user to select the nodes the change touches."})
+            _push_patch({"op": "set_mode", "node_ids": ids, "mode": mode, "reason": str(reason or "").strip()})
+            self._canvas_edits = (getattr(self, "_canvas_edits", None) or []) + [
+                f"{mode}: node(s) {', '.join(ids)}" + (f" ({str(reason).strip()})" if str(reason or "").strip() else "")]
+            _push_progress(f"🔧 Canvas: {len(ids)} node(s) set to {mode}" + (f" — {reason}" if reason else ""))
+            return json.dumps({"status": "applied", "mode": mode, "node_ids": ids,
+                               "message": "Applied to the live canvas; the user can undo with Ctrl+Z."})
 
         @_tool
         async def list_agent_settings() -> str:
@@ -3372,7 +3464,7 @@ class Pipeline:
                  get_canvas_node, set_canvas_node_params, place_canvas_text,
                  run_python_node, revise_prompt, prompt_autoloop,
                  delete_canvas_nodes, edit_canvas_graph, insert_workflow_into_canvas, refine_canvas_until,
-                 list_outputs,
+                 list_outputs, work_in_open_graph, set_canvas_node_mode,
                  list_agent_settings, set_agent_setting]
         # Offered only where there is a Slack to send to. Every tool in this list
         # is described to the model on every call, so one nobody can use is a
@@ -4151,8 +4243,10 @@ class Pipeline:
         """
         constraints = self._extract_hard_constraints(user_text)
         pin = ""
+        if self._open_graph_mode():
+            pin = _OPEN_GRAPH_NOTE + "\n\n"
         if constraints:
-            pin = (
+            pin += (
                 "[HARD CONSTRAINTS — the user was explicit; honor these exactly and do "
                 "NOT substitute or omit them:]\n"
                 + "\n".join(f"- {c}" for c in constraints)
@@ -5982,10 +6076,27 @@ class Pipeline:
         Resolved once per call site rather than cached, so flipping the setting
         takes effect on the next turn without a restart.
         """
+        # A conversation working in the open graph has to see and change what it
+        # put there in earlier turns, none of which the user will have selected.
+        if self._open_graph_mode():
+            return True
         try:
             from src.utils.canvas_view import full_graph_visible
             return full_graph_visible()
         except Exception:  # noqa: BLE001 — never let settings break a turn
+            return False
+
+    def _open_graph_mode(self) -> bool:
+        """Whether this conversation works in the user's open graph (see
+        ``AgentSession.open_graph_mode``)."""
+        chosen = getattr(getattr(self, "_session", None), "open_graph_mode", None)
+        if chosen is not None:
+            return bool(chosen)
+        # Not decided in this conversation: the setting says how one starts.
+        try:
+            from src.agent import _load_settings  # noqa: PLC0415
+            return bool((_load_settings() or {}).get("work_in_open_graph", False))
+        except Exception:  # noqa: BLE001
             return False
 
     def _output_roles(self, paths) -> dict:

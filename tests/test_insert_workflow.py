@@ -162,6 +162,129 @@ class TheTool(unittest.TestCase):
         self.assertEqual(pipe._canvas_graph, _graph())
 
 
+class StayingInTheGraph(unittest.TestCase):
+    """Once a workflow has been inserted, the conversation keeps working there."""
+
+    def setUp(self):
+        self.enterContext(mock.patch("src.utils.canvas_view.full_graph_visible", return_value=False))
+        self.enterContext(mock.patch("src.utils.preflight._schema", side_effect=lambda c: SCHEMAS.get(c, {})))
+        from src.utils.canvas_patch import clear
+        clear()
+        self.addCleanup(clear)
+        token = turn_scope.enter(turn_scope.Scope("req", "thread"))
+        self.addCleanup(turn_scope.leave, token)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.path = Path(tmp.name) / "built.json"
+        self.path.write_text(json.dumps(BUILT), encoding="utf-8")
+
+    def _pipe(self, **over):
+        from src.utils.models import AgentSession
+        return pipeline_stub(_canvas_graph=_graph(), _canvas_selection=[],
+                             _session=AgentSession(session_id="thread"), **over)
+
+    def _call(self, pipe, name, **kw):
+        return json.loads(asyncio.run(tools(pipe)[name](**kw)))
+
+    def test_inserting_switches_the_conversation_over_and_it_is_saved_with_it(self):
+        from src.utils.models import AgentSession
+        pipe = self._pipe()
+        self.assertFalse(pipe._open_graph_mode())
+        self._call(pipe, "insert_workflow_into_canvas", workflow_path=str(self.path))
+        self.assertTrue(pipe._open_graph_mode())
+        restored = AgentSession(**pipe._session.model_dump())      # what a restart reads back
+        self.assertTrue(restored.open_graph_mode)
+
+    def test_in_that_mode_it_may_change_nodes_nobody_selected(self):
+        """What it inserted two turns ago is not selected now."""
+        pipe = self._pipe()
+        refused = self._call(pipe, "delete_canvas_nodes", node_ids=["7"])
+        self.assertIn("not in the current", refused.get("error", ""))
+        pipe._session.open_graph_mode = True
+        self.assertTrue(pipe._canvas_full_graph())
+
+    def test_the_user_can_switch_it_off_and_on(self):
+        pipe = self._pipe()
+        pipe._session.open_graph_mode = True
+        self.assertFalse(self._call(pipe, "work_in_open_graph", on=False)["open_graph_mode"])
+        self.assertFalse(pipe._open_graph_mode())
+        self.assertTrue(self._call(pipe, "work_in_open_graph", on=True)["open_graph_mode"])
+        self.assertTrue(pipe._open_graph_mode())
+
+    def test_every_turn_of_such_a_conversation_is_told(self):
+        import inspect
+        from src import pipeline
+        src = inspect.getsource(pipeline)
+        told = src.split("if self._open_graph_mode():", 1)[1][:80]
+        self.assertIn("pin = _OPEN_GRAPH_NOTE", told)
+        for word in ("insert_workflow_into_canvas", "set_canvas_node_mode", "delete_canvas_nodes",
+                     "edit_canvas_graph", "set_canvas_node_params", "work_in_open_graph(on=false)"):
+            self.assertIn(word, pipeline._OPEN_GRAPH_NOTE)
+
+    def test_a_new_conversation_starts_the_way_the_setting_says(self):
+        from src.utils.models import AgentSession
+        self.assertIsNone(AgentSession(session_id="x").open_graph_mode, "not decided yet")
+        pipe = self._pipe()
+        with mock.patch("src.agent._load_settings", return_value={}):
+            self.assertFalse(pipe._open_graph_mode())
+        with mock.patch("src.agent._load_settings", return_value={"work_in_open_graph": True}):
+            self.assertTrue(pipe._open_graph_mode())
+
+    def test_what_the_conversation_decided_beats_the_setting(self):
+        pipe = self._pipe()
+        with mock.patch("src.agent._load_settings", return_value={"work_in_open_graph": True}):
+            self._call(pipe, "work_in_open_graph", on=False)
+            self.assertFalse(pipe._open_graph_mode())
+        pipe2 = self._pipe()
+        pipe2._session.open_graph_mode = True
+        with mock.patch("src.agent._load_settings", return_value={"work_in_open_graph": False}):
+            self.assertTrue(pipe2._open_graph_mode())
+
+    def test_the_setting_ships_off_and_is_in_the_defaults(self):
+        text = (Path(__file__).resolve().parents[1] / "config" / "settings.default.toml").read_text(encoding="utf-8")
+        self.assertIn("work_in_open_graph = false", text)
+
+
+class BypassAndMute(unittest.TestCase):
+
+    def setUp(self):
+        self.enterContext(mock.patch("src.utils.canvas_view.full_graph_visible", return_value=True))
+        from src.utils.canvas_patch import clear
+        clear()
+        self.addCleanup(clear)
+
+    def _call(self, pipe, **kw):
+        return json.loads(asyncio.run(tools(pipe)["set_canvas_node_mode"](**kw)))
+
+    def test_it_reaches_the_canvas(self):
+        from src.utils.canvas_patch import drain
+        pipe = pipeline_stub(_canvas_graph=_graph(), _canvas_selection=[], _canvas_edits=[])
+        out = self._call(pipe, node_ids=["6", "#7"], mode="bypass", reason="skip the decode")
+        self.assertEqual(out["status"], "applied")
+        patch = next(e for e in drain() if e.get("op") == "set_mode")
+        self.assertEqual((patch["node_ids"], patch["mode"]), (["6", "7"], "bypass"))
+
+    def test_a_node_that_is_not_there_cannot_be_switched_off(self):
+        pipe = pipeline_stub(_canvas_graph=_graph(), _canvas_selection=[], _canvas_edits=[])
+        self.assertIn("no node 99", self._call(pipe, node_ids=["99"], mode="mute")["error"])
+
+    def test_one_that_was_switched_off_can_be_switched_back_on(self):
+        """A bypassed node is not in the graph that would run, so it is not in
+        the turn's copy either - re-enabling it must not be refused for that."""
+        pipe = pipeline_stub(_canvas_graph=_graph(), _canvas_selection=[], _canvas_edits=[])
+        self.assertEqual(self._call(pipe, node_ids=["99"], mode="active")["status"], "applied")
+
+    def test_an_unknown_mode_is_refused(self):
+        pipe = pipeline_stub(_canvas_graph=_graph(), _canvas_selection=[], _canvas_edits=[])
+        self.assertIn("unknown mode", self._call(pipe, node_ids=["6"], mode="off")["error"])
+
+    def test_selection_only_still_applies_outside_the_mode(self):
+        with mock.patch("src.utils.canvas_view.full_graph_visible", return_value=False):
+            pipe = pipeline_stub(_canvas_graph=_graph(), _canvas_selection=[], _canvas_edits=[])
+            self.assertIn("not in the current canvas selection",
+                          self._call(pipe, node_ids=["6"], mode="bypass")["error"])
+
+
 class TheRule(unittest.TestCase):
 
     def test_the_orchestrator_is_told_and_has_the_tool(self):

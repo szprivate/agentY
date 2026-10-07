@@ -364,6 +364,17 @@ not a tab per workflow:
    and every wire of that workflow beside what is already on the canvas;
 3. if they also asked for the result, `run_workflow_now(workflow_path)` for each.
 
+**Once you have inserted a workflow, the conversation stays in that graph.** Later
+requests in the same conversation — another model, a change, an extra step — are
+done there too: insert what is new, and change what is on the canvas with
+`set_canvas_node_params` (values), `edit_canvas_graph` (add, wire, unwire),
+`set_canvas_node_mode` (bypass, mute, re-enable) and `delete_canvas_nodes`. An
+`[OPEN GRAPH MODE]` note at the top of the turn says when this applies. It ends
+only when the user asks for separate workflows again: `work_in_open_graph(on=false)`.
+If the user asks you to work in their open graph from the start, without having
+inserted anything yet, call `work_in_open_graph(on=true)`. A setting can make this
+the way every conversation starts; the note at the top of the turn is what counts.
+
 Do not use `open_workflow_in_canvas` for this (it opens a tab per workflow), and
 do not re-create a built workflow node by node with `edit_canvas_graph`. Several
 models asked for at once is several workflows inserted into the **same** graph.
