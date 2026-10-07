@@ -11,6 +11,7 @@ An AI agent that builds and runs [ComfyUI](https://github.com/comfyanonymous/Com
 ## Features
 
 - **Text → workflow → result** — describe it; the agent picks a template, builds the graph, runs it and puts the output on your canvas.
+- **Learns workflows from the web** — for something it doesn't know yet, it searches the web and builds the workflow from what it finds.
 - **Works with every LLM** — Claude, GPT, Gemini, Qwen (DashScope) or local Ollama models, mixed per role.
 - **Image & video** — Flux, WAN, Qwen, HunyuanVideo and more: generate, edit, inpaint, upscale.
 - **Hook nodes** — put instructions on the canvas ("sweep the seed 6×"), chain them into pipelines, bake a chain into plain ComfyUI subgraphs.
