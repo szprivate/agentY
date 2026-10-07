@@ -336,6 +336,60 @@ class RunningWhatIsOnTheCanvas(unittest.TestCase):
         self.assertLess(body.index("_canvas_version_of"), body.index("_execute_workflow("))
 
 
+class LaidOutAndGrouped(unittest.TestCase):
+    """An inserted workflow is laid out the way the agent's own workflows are,
+    and the panel is told which slot each node takes (it draws the group)."""
+
+    HINT = {"extra": {"agentY_layout": {
+        "slots": {"10": [0, 0, 0], "11": [0, 1, 0], "12": [0, 1, 1], "13": [0, 2, 0],
+                  "14": [0, 3, 0], "15": [0, 4, 0]},
+        "gaps": {"column": 60, "node": 30, "band": 60, "pad": 24, "group_title": 32, "title_bar": 30}}}}
+
+    def test_slots_are_keyed_by_the_ids_the_nodes_have_on_the_canvas(self):
+        res = ce.plan(_graph(), ce.ops_for_workflow(BUILT), SCHEMAS)
+        with mock.patch("agenty_core.tools.comfyui._api_to_graph", return_value=self.HINT):
+            block = ce.block_layout(BUILT, res["added"])
+        self.assertEqual(sorted(block["slots"]), sorted(res["added"].values()))
+        self.assertTrue(set(block["slots"]).isdisjoint(_graph()), "never one of the user's own nodes")
+        self.assertEqual(block["slots"][res["added"]["wf13"]], [0, 2, 0])
+        self.assertEqual(block["gaps"]["column"], 60)
+        self.assertEqual(block["prefix"], "agent")
+
+    def test_no_layout_is_no_block_and_the_insert_still_happens(self):
+        res = ce.plan(_graph(), ce.ops_for_workflow(BUILT), SCHEMAS)
+        with mock.patch("agenty_core.tools.comfyui._api_to_graph", side_effect=RuntimeError("offline")):
+            self.assertEqual(ce.block_layout(BUILT, res["added"]), {})
+        with mock.patch("agenty_core.tools.comfyui._api_to_graph", return_value={"extra": {}}):
+            self.assertEqual(ce.block_layout(BUILT, res["added"]), {})
+
+    def test_the_tool_sends_the_block_with_the_edit(self):
+        from src.utils.canvas_patch import clear, drain
+        from src.utils.models import AgentSession
+        self.enterContext(mock.patch("src.utils.canvas_view.full_graph_visible", return_value=False))
+        self.enterContext(mock.patch("src.agent._load_settings", return_value={}))
+        self.enterContext(mock.patch("src.utils.preflight._schema", side_effect=lambda c: SCHEMAS.get(c, {})))
+        self.enterContext(mock.patch("agenty_core.tools.comfyui._api_to_graph", return_value=self.HINT))
+        clear()
+        self.addCleanup(clear)
+        token = turn_scope.enter(turn_scope.Scope("req", "thread"))
+        self.addCleanup(turn_scope.leave, token)
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "built.json"
+            path.write_text(json.dumps(BUILT), encoding="utf-8")
+            pipe = pipeline_stub(_canvas_graph=_graph(), _canvas_selection=[],
+                                 _session=AgentSession(session_id="thread"))
+            out = json.loads(asyncio.run(tools(pipe)["insert_workflow_into_canvas"](workflow_path=str(path))))
+        self.assertEqual(out["status"], "applied")
+        patch = next(e for e in drain() if e.get("op") == "edit_graph")
+        self.assertEqual(sorted(patch["block"]["slots"]), sorted(out["node_ids"]))
+
+    def test_an_ordinary_edit_carries_no_block(self):
+        import inspect
+        from src import pipeline
+        body = inspect.getsource(pipeline).split("async def edit_canvas_graph(", 1)[1].split("@_tool", 1)[0]
+        self.assertNotIn('"block"', body)
+
+
 class Subgraph(unittest.TestCase):
 
     def test_the_named_nodes_and_everything_upstream(self):

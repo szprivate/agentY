@@ -2244,7 +2244,8 @@ class Pipeline:
                                    "what_to_do": "Show the workflow with open_workflow_in_canvas instead, "
                                                  "and tell the user it opened in a tab of its own."})
             try:
-                ops = _ce.ops_for_workflow(_lw(workflow_path))
+                _built = _lw(workflow_path)
+                ops = _ce.ops_for_workflow(_built)
             except (OSError, ValueError) as exc:
                 return json.dumps({"error": f"cannot insert {workflow_path}: {exc}"})
             res = _ce.plan(graph, ops, _CanvasSchemas())
@@ -2252,7 +2253,10 @@ class Pipeline:
                 return json.dumps({"status": "rejected", "errors": res["errors"][:12],
                                    "note": "Nothing was changed on the canvas."})
             self._canvas_graph = res["graph"]
-            _push_patch({"op": "edit_graph", "ops": res["ops"], "reason": str(reason or "").strip()})
+            # `block`: lay it out the way the agent's own workflows are laid out,
+            # below what is on the canvas, in a group of its own (agent_1, agent_2…).
+            _push_patch({"op": "edit_graph", "ops": res["ops"], "reason": str(reason or "").strip(),
+                         "block": _ce.block_layout(_built, res["added"])})
             # From here on this conversation works in the open graph (see
             # AgentSession.open_graph_mode) until the user asks otherwise.
             try:
@@ -2277,7 +2281,8 @@ class Pipeline:
             return json.dumps({
                 "status": "applied", "nodes_added": n_add, "wires_set": n_wire,
                 "node_ids": {n: res["graph"][n]["class_type"] for n in res["touched"] if n in res["graph"]},
-                "message": "The workflow is in the user's open graph, fully wired; Ctrl+Z undoes it. "
+                "message": "The workflow is in the user's open graph, fully wired, laid out below what "
+                           "was there in a group of its own (agent_1, agent_2, …); Ctrl+Z undoes it. "
                            "To generate its result, call run_workflow_now(workflow_path): it runs "
                            "these nodes as they are ON THE CANVAS at that moment, so change values "
                            "there (set_canvas_node_params) and run again - never rebuild for a "

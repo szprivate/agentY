@@ -347,6 +347,34 @@ def plan(graph: dict, ops: list, object_info: dict) -> dict:
             "touched": list(dict.fromkeys(touched))}
 
 
+def block_layout(workflow: dict, added: dict, prefix: str = "wf") -> dict:
+    """How an inserted workflow should be laid out on the canvas, or ``{}``.
+
+    The same arrangement the agent's own workflows open with (agenty_core's
+    graph_groups: a column per step, a row per node), as slots - band, column,
+    row - for each node, keyed by the id the node has ON THE CANVAS. The panel
+    turns slots into positions, because only the canvas knows how big its nodes
+    really are; it also puts the block below what is already there and draws a
+    group around it.
+
+    *added* is :func:`plan`'s ``added``: the ref each node was added under
+    (``wf<file id>``) to its canvas id.
+    """
+    try:
+        from agenty_core.tools.comfyui import _api_to_graph  # noqa: PLC0415
+        hint = (_api_to_graph(workflow).get("extra") or {}).get("agentY_layout") or {}
+    except Exception:  # noqa: BLE001 - without a layout the nodes still land, just plainly
+        return {}
+    slots = {}
+    for file_id, slot in (hint.get("slots") or {}).items():
+        canvas_id = (added or {}).get(f"{prefix}{file_id}")
+        if canvas_id is not None and isinstance(slot, (list, tuple)) and len(slot) >= 3:
+            slots[str(canvas_id)] = [int(slot[0]), int(slot[1]), int(slot[2])]
+    if not slots:
+        return {}
+    return {"slots": slots, "gaps": dict(hint.get("gaps") or {}), "prefix": "agent"}
+
+
 def subgraph(graph: dict, node_ids) -> dict:
     """The nodes *node_ids* of an API-format graph and everything upstream of
     them - what has to run for those nodes to run. Ids not in the graph (deleted,
