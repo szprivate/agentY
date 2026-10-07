@@ -94,9 +94,10 @@ class InstallerRun(unittest.TestCase):
         if settings is not None:
             (self.agent / "config" / "settings.local.json").write_text(settings, encoding="utf-8")
 
-    def run_installer(self, *args, answers="\n" * 14):
+    def run_installer(self, *args, answers="\n" * 14, channel="dev"):
         env = dict(os.environ, PATH=str(self.tmp / "bin") + os.pathsep + os.environ["PATH"])
         env.pop("AGENTY_INSTALLER_RESTARTED", None)
+        env["AGENTY_UPDATE_CHANNEL"] = channel
         return subprocess.run(
             [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
              str(self.agent / "install_agent.ps1"), "-SkipMcp", "-SkipTorch", *args],
@@ -200,6 +201,47 @@ class InstallerRun(unittest.TestCase):
         self.assertEqual((self.core / "saved_template.json").read_text(), "mine")
         self.assertEqual((legacy / "saved_template.json").read_text(), "mine", "the old path still resolves")
         self.assertNotEqual(os.path.realpath(legacy), os.path.abspath(legacy), "…through a link")
+
+    def _three_commits(self):
+        """agentY cloned at A; the remote's `stable` is at B, its main at C."""
+        seed = self.tmp / "seed"
+        seed.mkdir()
+        _git(seed, "init", "-q", "-b", "main", ".")
+        self.seed(seed)
+        (seed / "version.txt").write_text("A\n")
+        _git(seed, "add", "-A"); _git(seed, "commit", "-qm", "A")
+        _git(self.tmp, "clone", "-q", "--bare", str(seed), "agentY.git")
+        _git(self.tmp, "clone", "-q", str(self.tmp / "agentY.git"), "agentY")
+        (seed / "version.txt").write_text("B\n")
+        _git(seed, "commit", "-qam", "B")
+        _git(seed, "push", "-q", str(self.tmp / "agentY.git"), "main", "main:stable")
+        (seed / "version.txt").write_text("C\n")
+        _git(seed, "commit", "-qam", "C")
+        _git(seed, "push", "-q", str(self.tmp / "agentY.git"), "main")
+        (self.core / ".git").mkdir(parents=True)
+        (self.core / "pyproject.toml").write_text("[project]\n")
+
+    def test_the_stable_channel_stops_at_the_release(self):
+        self._three_commits()
+        out = self.run_installer("-NonInteractive", "-SkipComfyNode", channel="stable")
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn("Release channel: stable", out.stdout)
+        self.assertEqual((self.agent / "version.txt").read_text().strip(), "B")
+        self.assertEqual(_git(self.agent, "rev-parse", "--abbrev-ref", "@{u}"), "origin/stable")
+
+    def test_the_dev_channel_takes_every_commit(self):
+        self._three_commits()
+        out = self.run_installer("-NonInteractive", "-SkipComfyNode", channel="dev")
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertEqual((self.agent / "version.txt").read_text().strip(), "C")
+
+    def test_a_checkout_past_the_release_is_left_where_it_is(self):
+        self._three_commits()
+        _git(self.agent, "pull", "-q", "--ff-only")                    # at C, ahead of stable
+        out = self.run_installer("-NonInteractive", "-SkipComfyNode", channel="stable")
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn("ahead of the stable release", out.stdout)
+        self.assertEqual((self.agent / "version.txt").read_text().strip(), "C")
 
     def test_a_pull_that_cannot_happen_is_not_called_up_to_date(self):
         """Local commits the remote does not have: nothing to fast-forward to."""

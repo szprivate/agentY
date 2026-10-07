@@ -191,6 +191,53 @@ function Invoke-Native {
     return $true
 }
 
+# -- Release channel ----------------------------------------------------------
+# "stable" (the default) follows each repository's `stable` branch, which only
+# moves when a release is made - all four repositories together, so what runs is
+# always a set that was tested together. "dev" follows the repository's own
+# branch, commit by commit. Set update_channel in config/settings.local.json, or
+# AGENTY_UPDATE_CHANNEL.
+#
+# Following is done by pointing the checked-out branch's upstream at
+# origin/stable (or back at the default branch). Nothing is checked out and no
+# file changes here; the fast-forward below then simply has a different target.
+function Get-UpdateChannel {
+    $c = $env:AGENTY_UPDATE_CHANNEL
+    if (-not $c) {
+        $f = Join-Path $ProjectRoot "config\settings.local.json"
+        if (Test-Path $f) {
+            try {
+                $p = (Get-Content -LiteralPath $f -Raw | ConvertFrom-Json).PSObject.Properties['update_channel']
+                if (($null -ne $p) -and $p.Value) { $c = [string]$p.Value }
+            } catch { }
+        }
+    }
+    if ($c -and ($c.Trim().ToLower() -eq "dev")) { return "dev" }
+    return "stable"
+}
+
+function Set-ChannelUpstream {
+    # Call after a fetch. Leaves a detached HEAD and a repository without a
+    # `stable` branch exactly as they are.
+    param([string]$Dir, [string]$Channel)
+    $ErrorActionPreference = "Continue"
+    $branch = (& git -C $Dir branch --show-current 2>$null)
+    if (-not $branch) { return }
+    $up = (& git -C $Dir rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>$null)
+    if ($Channel -eq "stable") {
+        & git -C $Dir rev-parse -q --verify "refs/remotes/origin/stable" 2>$null | Out-Null
+        if (($LASTEXITCODE -eq 0) -and ($up -ne "origin/stable")) {
+            & git -C $Dir branch -q --set-upstream-to=origin/stable 2>$null | Out-Null
+        }
+    } elseif ($up -eq "origin/stable") {
+        $head = (& git -C $Dir symbolic-ref -q --short "refs/remotes/origin/HEAD" 2>$null)
+        if ($head -and ($head -ne "origin/stable")) {
+            & git -C $Dir branch -q --set-upstream-to=$head 2>$null | Out-Null
+        }
+    }
+    $global:LASTEXITCODE = 0
+}
+
 function Update-Checkout {
     # Fast-forward the checkout at $Dir to its upstream, and say what happened.
     # Returns $true when it is now at the remote's commit.
@@ -216,10 +263,19 @@ function Update-Checkout {
         Write-Fail "$Name - could not reach the remote. NOT updated; continuing with the local copy."
         return $false
     }
+    Set-ChannelUpstream -Dir $Dir -Channel $Script:Channel
+    $upstream = & git -C $Dir rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>$null
     $behind = 0; $ahead = 0
     [void][int]::TryParse([string](& git -C $Dir rev-list --count "HEAD..@{u}" 2>$null), [ref]$behind)
     [void][int]::TryParse([string](& git -C $Dir rev-list --count "@{u}..HEAD" 2>$null), [ref]$ahead)
-    if ($behind -eq 0) { Write-Success "$Name up to date"; return $true }
+    if ($behind -eq 0) {
+        if (($ahead -gt 0) -and ($upstream -eq "origin/stable")) {
+            Write-Info "$Name is $ahead commit(s) ahead of the stable release - left as it is"
+        } else {
+            Write-Success "$Name up to date"
+        }
+        return $true
+    }
     if ($ahead -gt 0) {
         Write-Fail "$Name has $ahead local commit(s) and is $behind behind $upstream. NOT updated - merge it yourself."
         return $false
@@ -317,7 +373,22 @@ function Ensure-Repo {
     # core.longpaths: git for Windows stops at 260 characters by itself, and the
     # template corpus in agentY-core has file names long enough to cross that in
     # a deep install folder. Set at clone, it stays in the checkout's own config.
-    $ok = Invoke-Native "git clone ($Name)" { git clone -c core.longpaths=true $Url $Dir } -AllowFail
+    # On the stable channel a new clone starts on the release, not on whatever
+    # the default branch has reached since. A repository without a `stable`
+    # branch is cloned as it is.
+    $ok = $false
+    if ($Script:Channel -eq "stable") {
+        $ErrorActionPreference = "Continue"
+        & git clone -q -c core.longpaths=true --branch stable $Url $Dir 2>$null | Out-Null
+        $ok = ($LASTEXITCODE -eq 0)
+        $ErrorActionPreference = "Stop"
+        if ((-not $ok) -and (Test-Path (Join-Path $Dir ".git"))) {
+            Remove-Item -LiteralPath $Dir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    if (-not $ok) {
+        $ok = Invoke-Native "git clone ($Name)" { git clone -c core.longpaths=true $Url $Dir } -AllowFail
+    }
     if ($ok) { Write-Success "$Name cloned"; return }
     # A clone that failed at checkout leaves a .git behind; the next run would
     # take that for an install and report it up to date. The folder was missing
@@ -333,6 +404,18 @@ function Get-VenvPython {
     param([string]$Dir)
     $pyRel = if ($Script:OnWindows) { "Scripts\python.exe" } else { "bin/python" }
     return (Join-Path (Join-Path $Dir ".venv") $pyRel)
+}
+
+function Get-LockedSpec {
+    # "torch==2.11.0" when requirements.lock pins it, else just "torch".
+    param([string]$Dir, [string]$Package)
+    $lock = Join-Path $Dir "requirements.lock"
+    if (Test-Path $lock) {
+        foreach ($line in (Get-Content -LiteralPath $lock)) {
+            if ($line -match "^$([regex]::Escape($Package))==([0-9][^\s;]*)") { return "$Package==$($Matches[1])" }
+        }
+    }
+    return $Package
 }
 
 function Install-Torch {
@@ -372,7 +455,12 @@ function Install-Torch {
         Write-Info "Skipped - requirements.txt will pull the CPU build"
         return
     }
-    Invoke-Native "uv pip install (torch)" { uv pip install --python $py torch torchvision --index-url $TorchIndexUrl } -AllowFail | Out-Null
+    # The CUDA build of the version the release pins: left to itself this
+    # installs the newest torch, and the requirements install that follows would
+    # then replace it with the pinned one - from PyPI, which is the CPU build.
+    $torchSpec = Get-LockedSpec -Dir $Dir -Package "torch"
+    $visionSpec = Get-LockedSpec -Dir $Dir -Package "torchvision"
+    Invoke-Native "uv pip install (torch)" { uv pip install --python $py $torchSpec $visionSpec --index-url $TorchIndexUrl } -AllowFail | Out-Null
 }
 
 function Move-CoreDir {
@@ -418,7 +506,14 @@ function Setup-Venv {
         # (miniconda auto-activates `base`), uv installs into THAT rather than the
         # .venv we just made, and the whole dependency set lands somewhere agentY
         # never looks - an install that reports success and imports nothing.
-        Invoke-Native "uv pip install ($Name)" { uv pip install --python $py -r requirements.txt } | Out-Null
+        # requirements.lock: the versions the release was tested with, as
+        # constraints. requirements.txt alone only sets minimums.
+        if (Test-Path (Join-Path $Dir "requirements.lock")) {
+            Write-Info "Using the versions pinned in requirements.lock"
+            Invoke-Native "uv pip install ($Name)" { uv pip install --python $py -r requirements.txt -c requirements.lock } | Out-Null
+        } else {
+            Invoke-Native "uv pip install ($Name)" { uv pip install --python $py -r requirements.txt } | Out-Null
+        }
     } finally { Pop-Location }
     Write-Success "$Name environment ready"
 }
@@ -623,6 +718,8 @@ Write-Success "uv found: $(uv --version)"
 
 # -- 2. Sibling repos (agentY-core, agentY-mcp) -------------------------------
 Write-Header "2 / 8  Sibling repos"
+$Script:Channel = Get-UpdateChannel
+Write-Info "Release channel: $($Script:Channel)"
 # agentY itself first: the siblings below are brought to the remote's newest
 # commit, and a new agentY-core under an old agentY is an agent that does not
 # start. When the pull replaced this very script, the new one takes over - the

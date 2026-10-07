@@ -36,6 +36,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 STAMP_NAME = ".agenty-deps"
+# The versions a release was tested with, as pip constraints. requirements.txt
+# only sets minimums, so without this two machines installed a week apart run
+# different versions of everything. Written by scripts/make_release.py.
+LOCK_NAME = "requirements.lock"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import check_env  # noqa: E402  (a sibling script, not a package)
@@ -46,7 +50,7 @@ def dep_files() -> tuple:
     """The files an install is made from. Looked up when asked, not at import:
     the tool layer's folder may only just have been moved to its new name."""
     core = core_dir.find() or (ROOT.parent / core_dir.NAME)
-    return (ROOT / "requirements.txt", Path(core) / "pyproject.toml")
+    return (ROOT / "requirements.txt", Path(core) / "pyproject.toml", ROOT / LOCK_NAME)
 
 
 def fingerprint(files=None) -> str:
@@ -109,9 +113,22 @@ def reasons(stamp, current: str, missing: list, changed: str) -> list:
 def install_command(python: str) -> list:
     """uv when it is there, pip otherwise; always naming this venv's interpreter
     (with a conda env active, an unnamed target is conda's, not this venv)."""
+    lock = ["-c", LOCK_NAME] if (ROOT / LOCK_NAME).is_file() else []
     if shutil.which("uv"):
-        return ["uv", "pip", "install", "--python", python, "-r", "requirements.txt"]
-    return [python, "-m", "pip", "install", "-r", "requirements.txt"]
+        return ["uv", "pip", "install", "--python", python, "-r", "requirements.txt", *lock]
+    return [python, "-m", "pip", "install", "-r", "requirements.txt", *lock]
+
+
+def _release_note() -> None:
+    """On the stable channel, say so when the repositories are not the set the
+    release was made with (scripts/make_release.py). One line, never an error."""
+    try:
+        import make_release  # noqa: PLC0415
+        note = make_release.drift_note()
+        if note:
+            print(note, flush=True)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def main(argv: list) -> int:
@@ -140,6 +157,7 @@ def main(argv: list) -> int:
             write_stamp(current)   # first sight and nothing missing: remember it
         if not quiet:
             print("[deps] The environment is in line with requirements.txt.")
+        _release_note()
         return check_env.main(["--quiet"])
 
     print("[deps] Installing from requirements.txt - " + "; ".join(why), flush=True)
@@ -156,6 +174,7 @@ def main(argv: list) -> int:
         print(f"[deps] The install returned {code} - see the output above. agentY will "
               "still start, but may be missing features until it succeeds.")
     importlib.invalidate_caches()   # so the check below sees what was just installed
+    _release_note()
     return check_env.main(["--quiet"])
 
 

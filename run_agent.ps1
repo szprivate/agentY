@@ -100,6 +100,53 @@ function Get-DirtyPaths {
     return @($out | Where-Object { $_ } | Select-Object -Unique)
 }
 
+# ── Release channel ─────────────────────────────────────────────────────────
+# "stable" (the default) follows each repository's `stable` branch, which only
+# moves when a release is made - all four repositories together, so what runs is
+# always a set that was tested together. "dev" follows the repository's own
+# branch, commit by commit. Set update_channel in config/settings.local.json, or
+# AGENTY_UPDATE_CHANNEL.
+#
+# Following is done by pointing the checked-out branch's upstream at
+# origin/stable (or back at the default branch). Nothing is checked out and no
+# file changes here; the fast-forward below then simply has a different target.
+function Get-UpdateChannel {
+    $c = $env:AGENTY_UPDATE_CHANNEL
+    if (-not $c) {
+        $f = Join-Path $ProjectRoot "config\settings.local.json"
+        if (Test-Path $f) {
+            try {
+                $p = (Get-Content -LiteralPath $f -Raw | ConvertFrom-Json).PSObject.Properties['update_channel']
+                if (($null -ne $p) -and $p.Value) { $c = [string]$p.Value }
+            } catch { }
+        }
+    }
+    if ($c -and ($c.Trim().ToLower() -eq "dev")) { return "dev" }
+    return "stable"
+}
+
+function Set-ChannelUpstream {
+    # Call after a fetch. Leaves a detached HEAD and a repository without a
+    # `stable` branch exactly as they are.
+    param([string]$Dir, [string]$Channel)
+    $ErrorActionPreference = "Continue"
+    $branch = (& git -C $Dir branch --show-current 2>$null)
+    if (-not $branch) { return }
+    $up = (& git -C $Dir rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>$null)
+    if ($Channel -eq "stable") {
+        & git -C $Dir rev-parse -q --verify "refs/remotes/origin/stable" 2>$null | Out-Null
+        if (($LASTEXITCODE -eq 0) -and ($up -ne "origin/stable")) {
+            & git -C $Dir branch -q --set-upstream-to=origin/stable 2>$null | Out-Null
+        }
+    } elseif ($up -eq "origin/stable") {
+        $head = (& git -C $Dir symbolic-ref -q --short "refs/remotes/origin/HEAD" 2>$null)
+        if ($head -and ($head -ne "origin/stable")) {
+            & git -C $Dir branch -q --set-upstream-to=$head 2>$null | Out-Null
+        }
+    }
+    $global:LASTEXITCODE = 0
+}
+
 function Update-Repo {
     param([string]$Name, [string]$Dir)
     $ErrorActionPreference = "Continue"     # see Get-DirtyPaths
@@ -117,6 +164,8 @@ function Update-Repo {
         Write-Host "[update] $Name - could not reach the remote; continuing with the local copy." -ForegroundColor DarkYellow
         return $null
     }
+    Set-ChannelUpstream -Dir $Dir -Channel $Script:Channel
+    $upstream = & git -C $Dir rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>$null
 
     $behind = (& git -C $Dir rev-list --count "HEAD..@{u}" 2>$null)
     $ahead  = (& git -C $Dir rev-list --count "@{u}..HEAD" 2>$null)
@@ -124,7 +173,11 @@ function Update-Repo {
     $behind = [int]$behind; $ahead = [int]$ahead
 
     if ($behind -eq 0) {
-        Write-Host "[update] $Name is up to date." -ForegroundColor DarkGray
+        if (($ahead -gt 0) -and ($upstream -eq "origin/stable")) {
+            Write-Host "[update] $Name is $ahead commit(s) ahead of the stable release - left as it is." -ForegroundColor DarkGray
+        } else {
+            Write-Host "[update] $Name is up to date." -ForegroundColor DarkGray
+        }
         return $null
     }
     if ($ahead -gt 0) {
@@ -225,9 +278,11 @@ if (-not $skipUpdate) {
         } catch { }
     }
 }
+$Script:Channel = Get-UpdateChannel
 if ($skipUpdate) {
     Write-Host "[update] Update check skipped." -ForegroundColor DarkGray
 } else {
+    Write-Host "[update] Channel: $($Script:Channel)" -ForegroundColor DarkGray
     $parent = Split-Path -Parent $ProjectRoot
     # The tool layer's checkout is agentY-core; agenty_core is its folder name from
     # before the repository was renamed (scripts/sync_deps.py moves it over below).

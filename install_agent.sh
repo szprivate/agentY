@@ -155,6 +155,51 @@ read_secret() {   # $1 = file  $2 = key  $3 = label  $4 = help
   is_placeholder "$cur" || printf '%s' "$cur"
 }
 
+# -- Release channel ----------------------------------------------------------
+# "stable" (the default) follows each repository's `stable` branch, which only
+# moves when a release is made - all four repositories together, so what runs is
+# always a set that was tested together. "dev" follows the repository's own
+# branch, commit by commit. Set update_channel in config/settings.local.json, or
+# AGENTY_UPDATE_CHANNEL.
+#
+# Following is done by pointing the checked-out branch's upstream at
+# origin/stable (or back at the default branch). Nothing is checked out and no
+# file changes here; the fast-forward below then simply has a different target.
+update_channel() {
+  local c="${AGENTY_UPDATE_CHANNEL:-}" f="$PROJECT_ROOT/config/settings.local.json"
+  if [ -z "$c" ] && [ -f "$f" ]; then
+    c="$(python3 - "$f" <<'PY' 2>/dev/null
+import json, sys
+try:
+    print(json.load(open(sys.argv[1], encoding="utf-8-sig")).get("update_channel") or "")
+except Exception:
+    print("")
+PY
+)"
+  fi
+  case "$(printf '%s' "$c" | tr '[:upper:]' '[:lower:]' | tr -d ' \r\n')" in dev) echo dev ;; *) echo stable ;; esac
+}
+
+# Call after a fetch. Leaves a detached HEAD and a repository without a `stable`
+# branch exactly as they are.
+set_channel_upstream() {   # $1 = dir  $2 = channel
+  local dir="$1" channel="$2" branch up head
+  branch="$(git -C "$dir" branch --show-current 2>/dev/null)"
+  [ -n "$branch" ] || return 0
+  up="$(git -C "$dir" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)" || up=""
+  if [ "$channel" = "stable" ]; then
+    if git -C "$dir" rev-parse -q --verify refs/remotes/origin/stable >/dev/null 2>&1 && [ "$up" != "origin/stable" ]; then
+      git -C "$dir" branch -q --set-upstream-to=origin/stable >/dev/null 2>&1
+    fi
+  elif [ "$up" = "origin/stable" ]; then
+    head="$(git -C "$dir" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)" || head=""
+    if [ -n "$head" ] && [ "$head" != "origin/stable" ]; then
+      git -C "$dir" branch -q --set-upstream-to="$head" >/dev/null 2>&1
+    fi
+  fi
+  return 0
+}
+
 # Fast-forward the checkout at $2 to its upstream, and say what happened.
 #
 # The same rules as run_agent.sh's update_repo, for the same reason: the agent
@@ -172,9 +217,18 @@ update_checkout() {   # $1 = name  $2 = dir
     fail "$name - could not reach the remote. NOT updated; continuing with the local copy."
     return 0
   fi
+  set_channel_upstream "$dir" "$CHANNEL"
+  upstream="$(git -C "$dir" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)" || upstream=""
   behind="$(git -C "$dir" rev-list --count 'HEAD..@{u}' 2>/dev/null || echo 0)"
   ahead="$(git -C "$dir" rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)"
-  if [ "${behind:-0}" = "0" ]; then success "$name up to date"; return 0; fi
+  if [ "${behind:-0}" = "0" ]; then
+    if [ "${ahead:-0}" != "0" ] && [ "$upstream" = "origin/stable" ]; then
+      info "$name is $ahead commit(s) ahead of the stable release - left as it is"
+    else
+      success "$name up to date"
+    fi
+    return 0
+  fi
   if [ "${ahead:-0}" != "0" ]; then
     fail "$name has $ahead local commit(s) and is $behind behind $upstream. NOT updated - merge it yourself."
     return 0
@@ -228,6 +282,14 @@ ensure_repo() {   # $1 = name  $2 = url  $3 = dir  $4 = "required"|""
     return 0
   fi
   info "Cloning $name -> $dir"
+  # On the stable channel a new clone starts on the release, not on whatever the
+  # default branch has reached since. A repository without a `stable` branch is
+  # cloned as it is.
+  if [ "$CHANNEL" = "stable" ] && git clone -q --branch stable "$url" "$dir" 2>/dev/null; then
+    success "$name cloned"
+    return 0
+  fi
+  [ -d "$dir/.git" ] && rm -rf "$dir"
   if git clone "$url" "$dir"; then
     success "$name cloned"
     return 0
@@ -368,7 +430,15 @@ setup_venv() {   # $1 = name  $2 = dir  $3 = "with-torch"|""
   # (miniconda auto-activates `base`), uv installs into THAT rather than the .venv
   # we just made, and the whole dependency set lands somewhere agentY never looks —
   # an install that reports success and imports nothing.
-  ( cd "$dir" && uv pip install --python "$py" -r requirements.txt ) \
+  # requirements.lock: the versions the release was tested with, as constraints.
+  # requirements.txt alone only sets minimums.
+  local lock_args=""
+  if [ -f "$dir/requirements.lock" ]; then
+    info "Using the versions pinned in requirements.lock"
+    lock_args="-c requirements.lock"
+  fi
+  # shellcheck disable=SC2086  (two words on purpose)
+  ( cd "$dir" && uv pip install --python "$py" -r requirements.txt $lock_args ) \
     || die "uv pip install ($name) failed."
   unhide_pth "$venv"
   dedupe_openmp "$venv"
@@ -595,6 +665,8 @@ fi
 
 # -- 2. Sibling repos (agentY-core, agentY-mcp) -------------------------------
 header "2 / 8  Sibling repos"
+CHANNEL="$(update_channel)"
+info "Release channel: $CHANNEL"
 # agentY itself first: the siblings below are brought to the remote's newest
 # commit, and a new agentY-core under an old agentY is an agent that does not
 # start. When the pull replaced this very script, the new one takes over - the

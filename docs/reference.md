@@ -32,6 +32,49 @@ agents (template research, workflow building, vision, QA, coder, web search). A
 finished workflow goes to ComfyUI; outputs are checked against your QA briefing
 and staged onto the graph as loader nodes.
 
+## Releases
+
+agentY is four repositories that only work as a set. A release pins that set:
+
+- every repository gets the tag `v<version>` and a GitHub release;
+- each repository's **`stable`** branch is moved to that commit;
+- `release.toml` in agentY records the version and each sibling's commit;
+- `requirements.lock` records the Python package versions it was tested with.
+  The installers and the launcher install with it as constraints.
+
+**Channels.** `update_channel` (Settings ▸ Updates, or `AGENTY_UPDATE_CHANNEL`):
+
+| channel | follows | for |
+|---|---|---|
+| `stable` (default) | each repository's `stable` branch | everyone using agentY |
+| `dev` | each repository's own branch, every commit | working on agentY itself |
+
+A stable machine never goes backwards: a checkout that is already past the
+release is left where it is, and says so. If the repositories are not the
+released set, the launcher prints one `[release]` line naming which.
+
+**Rolling back.** `git checkout v1.0.0` in each repository, and start with
+`-NoUpdate` / `--no-update`.
+
+**Making a release** (from a `dev` machine, with everything pushed and the tests
+run):
+
+```powershell
+.venv\Scripts\python.exe scripts\make_release.py 1.1.0 --dry-run   # what it would do
+.venv\Scripts\python.exe scripts\make_release.py 1.1.0             # do it
+.venv\Scripts\python.exe scripts\make_release.py --show            # the current release
+.venv\Scripts\python.exe scripts\make_release.py --check           # is this machine on it?
+```
+
+It releases each repository at the commit it has checked out, writes
+`release.toml` and `requirements.lock`, tags, moves `stable`, and creates the
+GitHub releases (needs the `gh` CLI).
+
+**The tool layer's name.** The repository and folder are `agentY-core`; the
+Python package inside is `agenty_core`. An install from before the rename is
+moved over on its next start: the folder is renamed and a link is left under the
+old name.
+
 ## Ports
 
 The host listens on **5000**, and on **5001 on macOS**, where AirPlay Receiver

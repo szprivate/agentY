@@ -161,6 +161,10 @@ comfyui_console_lines = true
 # or reset), and being offline is not an error. Set false to never check.
 # Also: run_agent.ps1 -NoUpdate, or AGENTY_NO_UPDATE=1.
 auto_update = true
+# Which commits an update brings. "stable": each repository's `stable` branch,
+# which moves only when a release is made - all four repositories together.
+# "dev": every commit, as it lands. AGENTY_UPDATE_CHANNEL overrides it.
+update_channel = "stable"
 message_history_log = "./.logs/message_history.log"
 tokens_usage_log = "./.logs/tokens_usage.log"
 

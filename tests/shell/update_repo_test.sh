@@ -12,10 +12,13 @@ C_CYAN=""; C_GREEN=""; C_YELLOW=""; C_RED=""; C_GRAY=""; C_OFF=""
 say() { printf '%s\n' "$1"; }
 
 FNS="$(mktemp)"
-awk '/^dirty_paths\(\)/,/^  return 0$/' "$ROOT/run_agent.sh" > "$FNS"
+awk '/^update_channel\(\)/,/^  return 0$/' "$ROOT/run_agent.sh" > "$FNS"
 echo "}" >> "$FNS"          # the awk range stops before update_repo's closing brace
 # shellcheck disable=SC1090
 . "$FNS"
+
+CHANNEL=dev          # what the cases below were written for; the channel cases set it
+PROJECT_ROOT="$ROOT"
 
 ok=0; bad=0
 check(){ if [ "$2" = "$3" ]; then ok=$((ok+1)); else bad=$((bad+1)); echo "FAIL $1: got [$2] want [$3]"; fi; }
@@ -133,6 +136,49 @@ mkdir -p "$T/r7"
 update_repo r6 "$T/r6" > /dev/null 2>&1
 update_repo r7 "$T/r7" > "$T/out10c" 2>&1      # not a repo at all
 check "non-repo clears"  "$REPO_MOVED" "0"
+
+# ── 11. The stable channel follows origin/stable, not the branch's own head ──
+new_pair r8
+git -C "$T/r8" push -q origin HEAD:refs/heads/stable 2>/dev/null     # the release, at "one"
+push_upstream r8 a.txt dev-only                                        # master moves on
+CHANNEL=stable
+update_repo r8 "$T/r8" > "$T/out11" 2>&1
+check "stable ignores dev"   "$(cat "$T/r8/a.txt")" "one"
+check "stable not moved"     "$REPO_MOVED" "0"
+check "follows origin/stable" "$(git -C "$T/r8" rev-parse --abbrev-ref '@{u}')" "origin/stable"
+
+# a release is made: stable moves up to master
+git -C "$T/r8.git" update-ref refs/heads/stable refs/heads/master
+update_repo r8 "$T/r8" > "$T/out11b" 2>&1
+check "release arrives"      "$(cat "$T/r8/a.txt")" "dev-only"
+check "release moved it"     "$REPO_MOVED" "1"
+
+# ── 12. A checkout that is past the release is left alone, and says so ────────
+push_upstream r8 a.txt newer
+git -C "$T/r8" fetch -q; git -C "$T/r8" merge -q --ff-only origin/master
+update_repo r8 "$T/r8" > "$T/out12" 2>&1
+check "ahead is kept"        "$(cat "$T/r8/a.txt")" "newer"
+check "and it says so"       "$(grep -c 'ahead of the stable release' "$T/out12")" "1"
+
+# ── 13. Back on dev, it follows its own branch again ────────────────────────
+git -C "$T/r8" remote set-head origin master >/dev/null 2>&1
+push_upstream r8 a.txt newest
+CHANNEL=dev
+update_repo r8 "$T/r8" > "$T/out13" 2>&1
+check "dev follows the branch" "$(cat "$T/r8/a.txt")" "newest"
+check "upstream is the branch" "$(git -C "$T/r8" rev-parse --abbrev-ref '@{u}')" "origin/master"
+
+# ── 14. A repository with no stable branch is followed as before ─────────────
+new_pair r9
+push_upstream r9 a.txt two
+CHANNEL=stable
+update_repo r9 "$T/r9" > "$T/out14" 2>&1
+check "no stable branch: ff" "$(cat "$T/r9/a.txt")" "two"
+
+# ── 15. The channel is read from the environment, then the settings, else stable
+check "default channel"  "$(AGENTY_UPDATE_CHANNEL='' PROJECT_ROOT="$T" update_channel)" "stable"
+check "env says dev"     "$(AGENTY_UPDATE_CHANNEL=dev PROJECT_ROOT="$T" update_channel)" "dev"
+check "nonsense is stable" "$(AGENTY_UPDATE_CHANNEL=nightly PROJECT_ROOT="$T" update_channel)" "stable"
 
 cd /; rm -rf "$T" "$FNS"
 echo "update_repo: $ok passed, $bad failed"

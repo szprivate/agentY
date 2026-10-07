@@ -75,7 +75,7 @@ The same app, with these differences:
 
 ### Staying up to date
 
-Every start fast-forwards agentY, `agenty_core` and the sidebar extension:
+Every start fast-forwards agentY, `agentY-core` and the sidebar extension:
 
 - Local files the update doesn't touch are left alone. Files it does touch are
   parked in a `git stash` first, never discarded.
@@ -85,7 +85,10 @@ Every start fast-forwards agentY, `agenty_core` and the sidebar extension:
 - If dependencies changed, they are reinstalled before the app starts. If the
   extension changed, you are told to restart ComfyUI.
 
-Turn it off with `auto_update = false`, `-NoUpdate` / `--no-update`, or
+By default updates follow **releases** (`update_channel = "stable"`); set it to
+`dev` to follow every commit. See [Releases](reference.md#releases).
+
+Turn updating off with `auto_update = false`, `-NoUpdate` / `--no-update`, or
 `AGENTY_NO_UPDATE=1`. Set `comfyui_dir` if your ComfyUI isn't next to agentY.
 
 ---

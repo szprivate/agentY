@@ -46,9 +46,11 @@ An AI agent that builds and runs [ComfyUI](https://github.com/comfyanonymous/Com
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/szprivate/agentY.git
+git clone -b stable https://github.com/szprivate/agentY.git
 cd agentY
 ```
+
+`-b stable` gets the latest release. Leave it out to get the development branch.
 
 ### 2. Run the installer (recommended)
 
@@ -83,6 +85,11 @@ up to date. On Windows the agent has to be stopped while its environment changes
 (Windows cannot replace a file a running process has open); the installer finds a
 running one and offers to stop it. An install older than this behaviour needs one
 `git pull` in the `agentY` folder first, so that it has this installer.
+
+**Releases.** By default an install follows the `stable` channel: it only moves
+from one release to the next, and all four repositories move together. Set
+`update_channel` to `dev` (Settings ▸ Updates) to get every commit as it lands.
+See [Releases](docs/reference.md#releases).
 
 Useful flags:
 

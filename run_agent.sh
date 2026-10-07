@@ -101,6 +101,51 @@ DEPS_CHANGED=""
 COMFYUI_DIR=""
 REPO_MOVED=0        # set by update_repo: did HEAD actually move?
 
+# -- Release channel ----------------------------------------------------------
+# "stable" (the default) follows each repository's `stable` branch, which only
+# moves when a release is made - all four repositories together, so what runs is
+# always a set that was tested together. "dev" follows the repository's own
+# branch, commit by commit. Set update_channel in config/settings.local.json, or
+# AGENTY_UPDATE_CHANNEL.
+#
+# Following is done by pointing the checked-out branch's upstream at
+# origin/stable (or back at the default branch). Nothing is checked out and no
+# file changes here; the fast-forward below then simply has a different target.
+update_channel() {
+  local c="${AGENTY_UPDATE_CHANNEL:-}" f="$PROJECT_ROOT/config/settings.local.json"
+  if [ -z "$c" ] && [ -f "$f" ]; then
+    c="$(python3 - "$f" <<'PY' 2>/dev/null
+import json, sys
+try:
+    print(json.load(open(sys.argv[1], encoding="utf-8-sig")).get("update_channel") or "")
+except Exception:
+    print("")
+PY
+)"
+  fi
+  case "$(printf '%s' "$c" | tr '[:upper:]' '[:lower:]' | tr -d ' \r\n')" in dev) echo dev ;; *) echo stable ;; esac
+}
+
+# Call after a fetch. Leaves a detached HEAD and a repository without a `stable`
+# branch exactly as they are.
+set_channel_upstream() {   # $1 = dir  $2 = channel
+  local dir="$1" channel="$2" branch up head
+  branch="$(git -C "$dir" branch --show-current 2>/dev/null)"
+  [ -n "$branch" ] || return 0
+  up="$(git -C "$dir" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)" || up=""
+  if [ "$channel" = "stable" ]; then
+    if git -C "$dir" rev-parse -q --verify refs/remotes/origin/stable >/dev/null 2>&1 && [ "$up" != "origin/stable" ]; then
+      git -C "$dir" branch -q --set-upstream-to=origin/stable >/dev/null 2>&1
+    fi
+  elif [ "$up" = "origin/stable" ]; then
+    head="$(git -C "$dir" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)" || head=""
+    if [ -n "$head" ] && [ "$head" != "origin/stable" ]; then
+      git -C "$dir" branch -q --set-upstream-to="$head" >/dev/null 2>&1
+    fi
+  fi
+  true
+}
+
 # Repo-relative paths: modified tracked + untracked. core.quotepath=false stops git
 # escaping non-ASCII names into "\303\244" forms, which would never match the
 # incoming list.
@@ -128,13 +173,20 @@ update_repo() {
     say "[update] $name - could not reach the remote; continuing with the local copy." "$C_GRAY"
     return 0
   fi
+  set_channel_upstream "$dir" "$CHANNEL"
+  upstream="$(git -C "$dir" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)"
 
   behind="$(git -C "$dir" rev-list --count 'HEAD..@{u}' 2>/dev/null)"
   ahead="$(git -C "$dir" rev-list --count '@{u}..HEAD' 2>/dev/null)"
   [ -n "$behind" ] && [ -n "$ahead" ] || return 0
 
   if [ "$behind" -eq 0 ]; then
-    say "[update] $name is up to date." "$C_GRAY"; return 0
+    if [ "$ahead" -gt 0 ] && [ "$upstream" = "origin/stable" ]; then
+      say "[update] $name is $ahead commit(s) ahead of the stable release - left as it is." "$C_GRAY"
+    else
+      say "[update] $name is up to date." "$C_GRAY"
+    fi
+    return 0
   fi
   if [ "$ahead" -gt 0 ]; then
     say "[update] $name has diverged ($ahead local, $behind remote) - skipping. Merge it yourself." "$C_YELLOW"
@@ -235,9 +287,11 @@ PY
   fi
 fi
 
+CHANNEL="$(update_channel)"
 if [ "$SKIP_UPDATE" = "1" ]; then
   say "[update] Update check skipped." "$C_GRAY"
 else
+  say "[update] Channel: $CHANNEL" "$C_GRAY"
   PARENT="$(dirname "$PROJECT_ROOT")"
   update_repo 'agentY'      "$PROJECT_ROOT"
   # The tool layer's checkout is agentY-core; agenty_core is its folder name from
