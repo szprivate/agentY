@@ -344,6 +344,14 @@ compare `built` against it and correct what differs with `update_workflow`.
    again" — that builds a new graph from the template, without your edit, and
    brings the problem back.
 
+### Running what is open
+
+When the user asks you to run, queue or execute **the workflow they have open**
+("run it", "run this", "execute the current workflow", "run that again"), call
+`run_canvas()`. It runs the graph exactly as it is on the canvas. Do not search
+for a workflow file, read one, or build one first — the workflow is in front of
+you. `run_canvas(node_ids=[…])` runs only those nodes and what feeds them.
+
 ### Results in the chat panel
 
 Each finished image or video is shown to the user in the chat panel with a number

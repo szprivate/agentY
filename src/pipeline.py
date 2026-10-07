@@ -87,7 +87,7 @@ _MAX_CANVAS_DELETE = 25
 # user says "now add an upscaler", and the default - build a workflow, open it in
 # a tab - is what the rest of the prompt teaches.
 _OPEN_GRAPH_NOTE = (
-    "[OPEN GRAPH MODE] This conversation works IN the user's open graph. Keep working there for the rest of the conversation: anything new you build goes in with insert_workflow_into_canvas(workflow_path) (never a workflow in a tab of its own), and changes to what is on the canvas are made on the canvas, never by rebuilding. run_workflow_now(workflow_path) on a workflow you inserted runs it as it is on the canvas at that moment, so: change the value on the canvas, then run again. Tools - set_canvas_node_params (values), edit_canvas_graph (add nodes, wire, unwire), set_canvas_node_mode (bypass / mute / re-enable), delete_canvas_nodes (remove). You see and may edit the whole graph without a selection while this is on. Leave this mode only when the user asks for separate workflows or tabs again: then call work_in_open_graph(on=false)."
+    "[OPEN GRAPH MODE] This conversation works IN the user's open graph. Keep working there for the rest of the conversation: anything new you build goes in with insert_workflow_into_canvas(workflow_path) (never a workflow in a tab of its own), and changes to what is on the canvas are made on the canvas, never by rebuilding. run_workflow_now(workflow_path) on a workflow you inserted runs it as it is on the canvas at that moment, so: change the value on the canvas, then run again. Tools - set_canvas_node_params (values), edit_canvas_graph (add nodes, wire, unwire), set_canvas_node_mode (bypass / mute / re-enable), delete_canvas_nodes (remove). You see and may edit the whole graph without a selection while this is on. What you insert is already on the canvas: never offer to graph, load or show it. To run what is on the canvas as it is, call run_canvas() - do not look for, read or rebuild a workflow file first. Leave this mode only when the user asks for separate workflows or tabs again: thencall work_in_open_graph(on=false)."
 )
 
 # Rides back on a workflow that no template covered. A from-scratch build is made
@@ -2286,10 +2286,65 @@ class Pipeline:
                            "To generate its result, call run_workflow_now(workflow_path): it runs "
                            "these nodes as they are ON THE CANVAS at that moment, so change values "
                            "there (set_canvas_node_params) and run again - never rebuild for a "
-                           "changed setting. This "
+                           "changed setting. It is on the canvas already: do NOT offer to graph "
+                           "or load it for the user. This "
                            "conversation now keeps working in that graph: later additions go in the "
                            "same way and changes are made on the canvas, until the user asks for "
                            "separate workflows again (work_in_open_graph(on=false))."})
+
+        @_tool
+        async def run_canvas(node_ids: list | None = None) -> str:
+            """Run the graph the user has OPEN on the canvas, exactly as it is, now.
+
+            This is "run it", "queue it", "execute the workflow", "run that again"
+            when the workflow is the one on the canvas - including after you changed
+            values or wiring there. Nothing is built, looked up or loaded first: do
+            NOT search for, read or rebuild a workflow file, and do not call
+            ``prepare_workflow``. The graph that runs is what is on the canvas this
+            turn, with the edits you made in this turn already in it.
+
+            Give ``node_ids`` to run only part of it - those nodes and everything
+            they need ("run just the Seedream branch": its save node's id). Without
+            it, everything on the canvas runs. Bypassed and muted nodes do not run.
+
+            Returns the output file paths, as ``run_workflow_now`` does. A canvas
+            with agentY hook nodes on it is run with ``apply_canvas_hooks`` instead.
+
+            Args:
+                node_ids: Optional node ids (from `[CANVAS GRAPH]`) to run with
+                    their inputs; leave empty to run the whole graph.
+            """
+            from src.utils import canvas_edit as _ce
+            graph = getattr(self, "_canvas_graph", None)
+            if not isinstance(graph, dict) or not graph:
+                return json.dumps({"error": "no graph is open on the canvas this turn, or it is empty.",
+                                   "what_to_do": "Ask the user to open the workflow in ComfyUI, or build one "
+                                                 "with prepare_workflow."})
+            if node_ids:
+                wanted = [str(n).strip().lstrip("#") for n in node_ids if str(n).strip()]
+                unknown = [n for n in wanted if n not in graph]
+                if unknown:
+                    return json.dumps({"error": f"no node {', '.join(unknown)} in the graph that would run "
+                                                "(deleted, bypassed or muted?).",
+                                       "what_to_do": "Use ids from [CANVAS GRAPH]."})
+                to_run = _ce.subgraph(graph, wanted)
+            else:
+                to_run = {k: v for k, v in graph.items() if isinstance(v, dict) and v.get("class_type")}
+            try:
+                import hashlib as _hashlib
+                import tempfile as _tempfile
+                folder = Path(_tempfile.gettempdir()) / "agentY_canvas_runs"
+                folder.mkdir(parents=True, exist_ok=True)
+                body = json.dumps(to_run, indent=2, sort_keys=True)
+                out = folder / f"canvas_{_hashlib.sha1(body.encode('utf-8')).hexdigest()[:10]}.json"
+                out.write_text(body, encoding="utf-8")
+                # It IS the canvas: running it must not open it again in a tab.
+                from agenty_core.utils import turn_scope as _ts
+                _ts.current().slot("canvas.inserted_workflows", set).add(str(out.resolve()))
+            except Exception as exc:  # noqa: BLE001
+                return json.dumps({"error": f"could not take the graph from the canvas: {exc}"})
+            _push_progress(f"▶ Running the open graph as it is ({len(to_run)} node(s)).")
+            return await run_workflow_now(workflow_path=str(out))
 
         @_tool
         async def work_in_open_graph(on: bool) -> str:
@@ -3503,7 +3558,7 @@ class Pipeline:
                  get_canvas_node, set_canvas_node_params, place_canvas_text,
                  run_python_node, revise_prompt, prompt_autoloop,
                  delete_canvas_nodes, edit_canvas_graph, insert_workflow_into_canvas, refine_canvas_until,
-                 list_outputs, work_in_open_graph, set_canvas_node_mode,
+                 list_outputs, work_in_open_graph, set_canvas_node_mode, run_canvas,
                  list_agent_settings, set_agent_setting]
         # Offered only where there is a Slack to send to. Every tool in this list
         # is described to the model on every call, so one nobody can use is a
@@ -4356,7 +4411,10 @@ class Pipeline:
         # to offer it instead of doing it silently.
         try:
             from src.executor import _autoload_workflows_into_canvas as _autoload
-            if not _autoload():
+            # Not in a conversation that works in the open graph: what it builds is
+            # put on the canvas by the insert itself, and offering to "graph" a
+            # workflow the user is looking at is noise.
+            if not _autoload() and not self._open_graph_mode():
                 pin = pin + (
                     "[CANVAS DISPLAY] Auto-graphing of generated workflows onto the "
                     "ComfyUI canvas is OFF. Build and run workflows as usual, but do NOT "
