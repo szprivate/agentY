@@ -539,9 +539,51 @@ class TokenUsageHookProvider:
         self._prev_out = 0
         self._prev_cache_read = 0
         self._prev_cache_write = 0
+        # What has been reported to the turn's live usage line (src/utils/
+        # turn_usage.py) - kept apart from the per-tool deltas above, which are
+        # only taken after tool calls.
+        self._live = {"in": 0, "out": 0, "cr": 0, "cw": 0, "cost": 0.0}
 
     def register_hooks(self, registry: HookRegistry, **kwargs) -> None:  # noqa: ARG002
         registry.add_callback(AfterToolCallEvent, self._on_after_tool_call)
+        # The live line moves at every point the totals can have changed: after a
+        # tool call, before the next model call (the library adds a call's usage
+        # only after its own after-model hook has run), and when the agent is done
+        # - which is what catches the final answer, a call no tool follows.
+        try:
+            from strands.hooks.events import AfterInvocationEvent, BeforeModelCallEvent  # noqa: PLC0415
+            registry.add_callback(AfterToolCallEvent, lambda e, **k: self._report_live(e.agent))
+            registry.add_callback(BeforeModelCallEvent, lambda e, **k: self._report_live(e.agent, calls=1))
+            registry.add_callback(AfterInvocationEvent, lambda e, **k: self._report_live(e.agent))
+        except Exception:  # noqa: BLE001 - an older library: no live line, nothing else lost
+            pass
+
+    def _report_live(self, agent, calls: int = 0) -> None:
+        """Hand the turn what this agent used since it last did."""
+        try:
+            from src.utils import turn_usage  # noqa: PLC0415
+            usage = agent.event_loop_metrics.accumulated_usage
+            now = {"in": int(usage.get("inputTokens", 0) or 0),
+                   "out": int(usage.get("outputTokens", 0) or 0),
+                   "cr": int(usage.get("cacheReadInputTokens", 0) or 0),
+                   "cw": int(usage.get("cacheWriteInputTokens", 0) or 0)}
+            cost = None
+            try:
+                cost = float(compute_cost_from_usage(usage, agent)[0])
+            except Exception:  # noqa: BLE001 - no price known for this model
+                cost = None
+            last = self._live
+            if now["in"] < last["in"] or now["out"] < last["out"]:
+                # The agent's own counter started over (a new turn): what it shows
+                # now is all new.
+                last = {"in": 0, "out": 0, "cr": 0, "cw": 0, "cost": 0.0}
+            d = {k: now[k] - last[k] for k in ("in", "out", "cr", "cw")}
+            d_cost = None if cost is None else max(0.0, cost - float(last.get("cost") or 0.0))
+            self._live = {**now, "cost": cost if cost is not None else float(last.get("cost") or 0.0)}
+            if calls or any(d.values()):
+                turn_usage.add(d["in"], d["out"], d["cr"], d["cw"], d_cost, calls=calls)
+        except Exception:  # noqa: BLE001 - never break the agent loop for a status line
+            pass
 
     def _on_after_tool_call(self, event: AfterToolCallEvent, **kwargs) -> None:  # noqa: ARG002
         try:

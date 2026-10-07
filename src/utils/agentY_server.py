@@ -1787,6 +1787,7 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
     from src.utils.tool_activity import drain as _drain_tool_activity
     from src.utils.canvas_patch import drain as _drain_canvas_activity
     from src.utils.progress_lines import drain_chunks as _drain_progress_chunks
+    from src.utils import turn_usage as _turn_usage
 
     def _flush_activity() -> None:
         # Executor progress emitted from inside a tool call (e.g. run_workflow_now,
@@ -1800,6 +1801,11 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
             _translate({"tool_activity": _ta})
         for _cp in _drain_canvas_activity():
             _translate({"canvas_patch": _cp})
+        # What the turn has spent so far, whenever it moved (the panel's live
+        # usage line). Straight onto the queue: there is nothing to translate.
+        _used = _turn_usage.take_changed()
+        if _used is not None:
+            out_q.put({"type": "usage", **_used})
 
     async def _pump() -> None:
         while True:
