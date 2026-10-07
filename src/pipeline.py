@@ -109,6 +109,25 @@ _FROM_SCRATCH_NOTE = (
 )
 
 
+_RATIO_IN_TEXT = re.compile(r"(?<![\d.:])(\d{1,2}(?:\.\d{1,2})?)\s*[:x×]\s*(\d{1,2})(?![\d:])")
+
+
+def _ratio_named_in(text: str) -> str:
+    """The aspect ratio a request states, as one of the known labels ("16:9"),
+    or "". A clock time or a pixel size is not a ratio: only a label the QA
+    table knows counts, and two different ones in one request count as none."""
+    try:
+        from src.utils.qa_checks import RATIOS  # noqa: PLC0415
+    except Exception:  # noqa: BLE001
+        return ""
+    found = []
+    for a, b in _RATIO_IN_TEXT.findall(str(text or "")):
+        label = f"{a}:{b}"
+        if label in RATIOS and label not in found:
+            found.append(label)
+    return found[0] if len(found) == 1 else ""
+
+
 def _mark_from_scratch(result, briefing) -> None:
     """Flag a READY result whose graph was built without a template."""
     if not isinstance(result, dict) or result.get("status") != "ready":
@@ -1238,6 +1257,7 @@ class Pipeline:
             result = await self._assemble_deterministic(briefing)
             result = await self._enforce_model_family(result, request)
             _mark_from_scratch(result, briefing)
+            self._fit_requested_shape(result, request)
             self._attach_built_summary(result)
             return json.dumps(result)
 
@@ -7423,6 +7443,52 @@ class Pipeline:
             return str(dst)
         except OSError:
             return template_path
+
+    def _fit_requested_shape(self, result: dict, request: str) -> None:
+        """Set the aspect ratio the request names on the node that decides it.
+
+        The briefing's resolution is written into ``width`` / ``height`` inputs,
+        and that is all it reaches: a node that sets its shape from a menu
+        (``model.aspect_ratio``, ``model.size_preset``, ``model.size`` on the API
+        nodes) kept the template's default, so "16:9" built a square - with the
+        ratio stated in the request, the briefing and the workflow's own title.
+        The same search the QA briefing uses (src/utils/qa_repair.py) finds the
+        governing parameter and picks the option; a graph that is already right,
+        or has nothing that sets its shape, is left exactly as it is.
+
+        Adds ``shape`` to *result* saying what was set, or why it could not be.
+        """
+        if not isinstance(result, dict) or result.get("status") != "ready":
+            return
+        ratio = _ratio_named_in(request)
+        path = result.get("workflow_path")
+        if not ratio or not path:
+            return
+        try:
+            from agenty_core.tools.comfyui import _load_workflow as _lw  # noqa: PLC0415
+            from src.utils.qa_repair import apply_fix, describe_fix, plan_fixes  # noqa: PLC0415
+            graph = _lw(path)
+            if not isinstance(graph, dict) or isinstance(graph.get("nodes"), list):
+                return
+            fixes, problems = plan_fixes(graph, {"aspect_ratio": ratio})
+            done = []
+            for fix in fixes:
+                fix = {**fix, "why": f"aspect ratio {ratio}"}
+                if apply_fix(graph, fix):
+                    done.append(describe_fix(fix).replace("your briefing asks for", "the request asks for"))
+            if done:
+                Path(path).write_text(json.dumps(graph, indent=2), encoding="utf-8")
+                result["shape"] = {"aspect_ratio": ratio, "set": done}
+                for line in done:
+                    _push_progress(f"📐 {ratio}: {line}")
+            elif problems:
+                result["shape"] = {"aspect_ratio": ratio, "not_set": [p.get("why", "") for p in problems],
+                                   "note": f"The request asks for {ratio} and this workflow was NOT set to "
+                                           "it. Set it yourself with update_workflow, or tell the user why "
+                                           "it cannot be."}
+        except Exception as exc:  # noqa: BLE001 - a courtesy on a workflow that is otherwise ready
+            if self._verbose:
+                print(f"pipeline: could not fit {path} to {ratio}: {exc}")
 
     def _attach_built_summary(self, result: dict) -> None:
         """Add ``built`` — what the graph actually contains — to an assembly result.

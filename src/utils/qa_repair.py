@@ -122,6 +122,47 @@ def _is_int(spec) -> bool:
     return isinstance(spec, list) and spec and spec[0] == "INT"
 
 
+def _leaf(name: str) -> str:
+    """``model.size_preset`` -> ``size_preset``."""
+    return str(name).rsplit(".", 1)[-1]
+
+
+def _with_members(declared: dict, values: dict) -> dict:
+    """*declared* plus the members of every dynamic combo, for the option chosen.
+
+    The newer API nodes (Seedream, Nano Banana, GPT Image, Wan, Kling…) declare
+    one input, ``model``, whose choice brings its own set of widgets with it:
+    ``model.size_preset``, ``model.aspect_ratio``, ``model.size``. Those are
+    where the picture's shape is set, and none of them is a top-level input - so
+    a walk over the top level concluded that "nothing in this graph sets it" for
+    exactly the nodes most requests are made with.
+    """
+    out = dict(declared)
+    for head, spec in declared.items():
+        if not (isinstance(spec, list) and spec and spec[0] == "COMFY_DYNAMICCOMBO_V3"
+                and len(spec) > 1 and isinstance(spec[1], dict)):
+            continue
+        options = [o for o in (spec[1].get("options") or []) if isinstance(o, dict)]
+        chosen = (values or {}).get(head)
+        opt = next((o for o in options if o.get("key") == chosen), None) or (options[0] if options else None)
+        members = (opt or {}).get("inputs") or {}
+        for member, mspec in {**(members.get("optional") or {}), **(members.get("required") or {})}.items():
+            out.setdefault(f"{head}.{member}", mspec)
+    return out
+
+
+def _named(declared: dict, names: tuple) -> str:
+    """The declared input called one of *names* - by its own name, or as a
+    dynamic combo's member (``model.aspect_ratio``). In *names*' order."""
+    for want in names:
+        if want in declared:
+            return want
+        for key in declared:
+            if "." in key and _leaf(key) == want:
+                return key
+    return ""
+
+
 def ratio_of(text: str) -> float | None:
     """The numeric ratio a label means: ``"16:9"`` → 1.778, ``"1024x576"`` → 1.778."""
     m = _RATIO_TEXT.match(str(text or ""))
@@ -202,9 +243,10 @@ def governing_params(prompt: dict, schema_of=None) -> list:
         if not declared:
             continue
         values = node.get("inputs") or {}
+        declared = _with_members(declared, values)
         row = {"node_id": str(nid), "class_type": cls, "depth": depth.get(str(nid), 0)}
 
-        name = next((n for n in RATIO_NAMES if n in declared), "")
+        name = _named(declared, RATIO_NAMES)
         if name and not isinstance(values.get(name), list):
             opts = _combo_options(declared[name])
             if opts:
@@ -212,7 +254,7 @@ def governing_params(prompt: dict, schema_of=None) -> list:
                               "options": opts, "value": values.get(name)})
                 continue
 
-        name = next((n for n in SIZE_NAMES if n in declared), "")
+        name = _named(declared, SIZE_NAMES)
         if name and not isinstance(values.get(name), list):
             opts = _combo_options(declared[name])
             if opts:
