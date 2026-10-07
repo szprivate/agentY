@@ -747,13 +747,19 @@ class ToolActivityHookProvider:
         try:
             from src.utils.tool_activity import push
             tu = getattr(event, "tool_use", None) or {}
-            push({
+            card = {
                 "phase": "call",
                 "id": tu.get("toolUseId", ""),
                 "agent": self._role,
                 "name": tu.get("name", "tool"),
                 "input": _truncate_activity(tu.get("input", {})),
-            })
+            }
+            # analyze_image is answered by the vision agent, not by the caller.
+            from src.utils.tool_delegate import delegate_for
+            via = delegate_for(card["name"], tu.get("input"))
+            if via:
+                card["via"] = via
+            push(card)
         except Exception:  # noqa: BLE001
             pass
 
