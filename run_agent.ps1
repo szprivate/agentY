@@ -103,9 +103,9 @@ function Get-DirtyPaths {
 # ── Release channel ─────────────────────────────────────────────────────────
 # "stable" (the default) follows each repository's `stable` branch, which only
 # moves when a release is made - all four repositories together, so what runs is
-# always a set that was tested together. "dev" follows the repository's own
-# branch, commit by commit. Set update_channel in config/settings.local.json, or
-# AGENTY_UPDATE_CHANNEL.
+# always a set that was tested together. "dev" follows the repository's `dev`
+# branch, where new work lands first, commit by commit. Set update_channel in
+# config/settings.local.json, or AGENTY_UPDATE_CHANNEL.
 #
 # Following is done by pointing the checked-out branch's upstream at
 # origin/stable (or back at the default branch). Nothing is checked out and no
@@ -138,10 +138,16 @@ function Set-ChannelUpstream {
         if (($LASTEXITCODE -eq 0) -and ($up -ne "origin/stable")) {
             & git -C $Dir branch -q --set-upstream-to=origin/stable 2>$null | Out-Null
         }
-    } elseif ($up -eq "origin/stable") {
+    } else {
+        # dev: the repository's `dev` branch, where new work lands first. Only a
+        # branch that was following a release line (stable, or the default
+        # branch) is re-pointed - a feature branch keeps its own upstream.
         $head = (& git -C $Dir symbolic-ref -q --short "refs/remotes/origin/HEAD" 2>$null)
-        if ($head -and ($head -ne "origin/stable")) {
-            & git -C $Dir branch -q --set-upstream-to=$head 2>$null | Out-Null
+        $target = $head
+        & git -C $Dir rev-parse -q --verify "refs/remotes/origin/dev" 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) { $target = "origin/dev" }
+        if ($target -and ($up -ne $target) -and (($up -eq "origin/stable") -or ($up -eq $head))) {
+            & git -C $Dir branch -q --set-upstream-to=$target 2>$null | Out-Null
         }
     }
     $global:LASTEXITCODE = 0

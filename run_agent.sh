@@ -104,9 +104,9 @@ REPO_MOVED=0        # set by update_repo: did HEAD actually move?
 # -- Release channel ----------------------------------------------------------
 # "stable" (the default) follows each repository's `stable` branch, which only
 # moves when a release is made - all four repositories together, so what runs is
-# always a set that was tested together. "dev" follows the repository's own
-# branch, commit by commit. Set update_channel in config/settings.local.json, or
-# AGENTY_UPDATE_CHANNEL.
+# always a set that was tested together. "dev" follows the repository's `dev`
+# branch, where new work lands first, commit by commit. Set update_channel in
+# config/settings.local.json, or AGENTY_UPDATE_CHANNEL.
 #
 # Following is done by pointing the checked-out branch's upstream at
 # origin/stable (or back at the default branch). Nothing is checked out and no
@@ -129,7 +129,7 @@ PY
 # Call after a fetch. Leaves a detached HEAD and a repository without a `stable`
 # branch exactly as they are.
 set_channel_upstream() {   # $1 = dir  $2 = channel
-  local dir="$1" channel="$2" branch up head
+  local dir="$1" channel="$2" branch up head target
   branch="$(git -C "$dir" branch --show-current 2>/dev/null)"
   [ -n "$branch" ] || return 0
   up="$(git -C "$dir" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)" || up=""
@@ -137,10 +137,15 @@ set_channel_upstream() {   # $1 = dir  $2 = channel
     if git -C "$dir" rev-parse -q --verify refs/remotes/origin/stable >/dev/null 2>&1 && [ "$up" != "origin/stable" ]; then
       git -C "$dir" branch -q --set-upstream-to=origin/stable >/dev/null 2>&1
     fi
-  elif [ "$up" = "origin/stable" ]; then
+  else
+    # dev: the repository's `dev` branch, where new work lands first. Only a
+    # branch that was following a release line (stable, or the default branch)
+    # is re-pointed - a feature branch keeps its own upstream.
     head="$(git -C "$dir" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)" || head=""
-    if [ -n "$head" ] && [ "$head" != "origin/stable" ]; then
-      git -C "$dir" branch -q --set-upstream-to="$head" >/dev/null 2>&1
+    target="$head"
+    git -C "$dir" rev-parse -q --verify refs/remotes/origin/dev >/dev/null 2>&1 && target="origin/dev"
+    if [ -n "$target" ] && [ "$up" != "$target" ] && { [ "$up" = "origin/stable" ] || [ "$up" = "$head" ]; }; then
+      git -C "$dir" branch -q --set-upstream-to="$target" >/dev/null 2>&1
     fi
   fi
   true

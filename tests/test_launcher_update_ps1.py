@@ -99,6 +99,27 @@ class LauncherChannels(unittest.TestCase):
         self.assertEqual(self.version(), "C")
         self.assertEqual(_git(self.repo, "rev-parse", "--abbrev-ref", "@{u}"), "origin/main")
 
+    def test_dev_follows_the_dev_branch_where_there_is_one(self):
+        """New work lands on `dev` first; main only moves at a release."""
+        seed = self.tmp / "seed"
+        (seed / "version.txt").write_text("D\n")
+        _git(seed, "commit", "-qam", "D")
+        _git(seed, "push", "-q", str(self.tmp / "remote.git"), "main:dev")      # dev at D, main still C
+        self.update("dev")
+        self.assertEqual(self.version(), "D")
+        self.assertEqual(_git(self.repo, "rev-parse", "--abbrev-ref", "@{u}"), "origin/dev")
+        self.update("stable")
+        self.assertEqual(self.version(), "D", "never backwards")
+        self.assertEqual(_git(self.repo, "rev-parse", "--abbrev-ref", "@{u}"), "origin/stable")
+
+    def test_a_feature_branch_keeps_its_own_upstream_on_dev(self):
+        seed = self.tmp / "seed"
+        _git(seed, "push", "-q", str(self.tmp / "remote.git"), "main:dev", "main:feature")
+        _git(self.repo, "fetch", "-q")
+        _git(self.repo, "checkout", "-q", "-b", "feature", "origin/feature")
+        self.update("dev")
+        self.assertEqual(_git(self.repo, "rev-parse", "--abbrev-ref", "@{u}"), "origin/feature")
+
     def test_anything_but_dev_is_stable(self):
         self.assertIn("channel=stable", self.update("nightly"))
 

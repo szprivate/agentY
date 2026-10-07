@@ -168,6 +168,14 @@ update_repo r8 "$T/r8" > "$T/out13" 2>&1
 check "dev follows the branch" "$(cat "$T/r8/a.txt")" "newest"
 check "upstream is the branch" "$(git -C "$T/r8" rev-parse --abbrev-ref '@{u}')" "origin/master"
 
+# ── 13b. With a dev branch, the dev channel follows that, not the default branch
+git -C "$T/r8.git" update-ref refs/heads/dev refs/heads/master
+rm -rf "$T/push"; git clone -q "$T/r8.git" "$T/push"; ( cd "$T/push" && git checkout -q dev && echo on-dev > a.txt \
+  && git commit -qam "dev work" && git push -q origin dev )
+update_repo r8 "$T/r8" > "$T/out13b" 2>&1
+check "dev branch followed"  "$(cat "$T/r8/a.txt")" "on-dev"
+check "upstream is dev"      "$(git -C "$T/r8" rev-parse --abbrev-ref '@{u}')" "origin/dev"
+
 # ── 14. A repository with no stable branch is followed as before ─────────────
 new_pair r9
 push_upstream r9 a.txt two

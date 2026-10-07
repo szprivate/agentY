@@ -19,8 +19,11 @@ half-updated mix. ``update_channel = "dev"`` follows every commit instead.
     .venv/Scripts/python.exe scripts/make_release.py --show            # the current release
     .venv/Scripts/python.exe scripts/make_release.py --check           # is this machine on it?
 
-Every repository is released at the commit it has checked out, which must
-already be pushed. Run the tests first; this does not.
+New work goes to each repository's `dev` branch first. A release takes the
+tested `dev` commits and moves the default branch (`main`; `master` in
+agentY-core) and `stable` to them, in all four repositories under one version
+number. Every repository is released at the commit it has checked out, which
+must already be pushed. Run the tests first; this does not.
 """
 from __future__ import annotations
 
@@ -124,6 +127,12 @@ def _git(cwd, *args, check=True) -> str:
     if check and done.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} in {cwd}: {done.stderr.strip() or done.stdout.strip()}")
     return done.stdout.strip()
+
+
+def default_branch(path) -> str:
+    """The repository's default branch on the remote: main, or master."""
+    head = _git(path, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD", check=False)
+    return head.split("/", 1)[1] if "/" in head else "main"
 
 
 def drift(manifest: dict | None = None, dirs: dict | None = None) -> list:
@@ -234,20 +243,24 @@ def release(version: str, dry_run: bool = False, lock: bool = True, notes: str =
     branch = _git(agent, "branch", "--show-current")
     _git(agent, "push", "-q", "origin", f"HEAD:refs/heads/{branch}")
     print(f"  agentY                   {_git(agent, 'rev-parse', 'HEAD')[:7]}  ({branch})")
+    if branch != "dev":
+        print(f"  note: agentY is on '{branch}', not 'dev' - releases are meant to be cut from dev.")
 
     body = notes or f"agentY {version}."
     for name, path in dirs.items():
         _git(path, "tag", "-a", tag, "-m", f"agentY {version}")
         _git(path, "push", "-q", "origin", tag)
-        # The stable branch only ever moves forward; a push that would rewind it
-        # is refused by git, and that is the right answer.
-        moved = subprocess.run(["git", "-C", str(path), "push", "-q", "origin", f"{tag}^{{commit}}:refs/heads/{STABLE}"],
-                               capture_output=True, text=True)
-        if moved.returncode != 0:
-            print(f"  ! {name}: could not move `{STABLE}` to {tag}: {moved.stderr.strip()}")
+        # The default branch and `stable` both become the release. They only ever
+        # move forward; a push that would rewind one is refused by git, and that
+        # is the right answer.
+        for line in dict.fromkeys((default_branch(path), STABLE)):
+            moved = subprocess.run(["git", "-C", str(path), "push", "-q", "origin",
+                                    f"{tag}^{{commit}}:refs/heads/{line}"], capture_output=True, text=True)
+            if moved.returncode != 0:
+                print(f"  ! {name}: could not move `{line}` to {tag}: {moved.stderr.strip()}")
         made = subprocess.run(["gh", "release", "create", tag, "--title", f"agentY {version}", "--notes", body,
                                "--verify-tag"], cwd=str(path), capture_output=True, text=True)
-        print(f"  {name}: tagged, stable moved" + (", GitHub release made" if made.returncode == 0
+        print(f"  {name}: tagged, {default_branch(path)} and stable moved" + (", GitHub release made" if made.returncode == 0
                                                     else f" - GitHub release FAILED: {made.stderr.strip()}"))
     return 0
 

@@ -52,6 +52,21 @@ class TheManifest(unittest.TestCase):
             self.assertEqual(mr.release(bad, dry_run=True), 2)
 
 
+class WhereAReleaseGoes(unittest.TestCase):
+    """dev first; a release moves the default branch and stable to the tested commit."""
+
+    def test_the_release_moves_the_default_branch_and_stable(self):
+        text = (ROOT / "scripts" / "make_release.py").read_text(encoding="utf-8")
+        self.assertIn("(default_branch(path), STABLE)", text)
+        self.assertIn("releases are meant to be cut from dev", text)
+
+    def test_every_repository_carries_the_rule_for_coding_agents(self):
+        rule = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        for phrase in ("`dev`", "`stable`", "make_release.py", "one version number"):
+            self.assertIn(phrase, rule)
+        self.assertIn("AGENTS.md", (ROOT / "CLAUDE.md").read_text(encoding="utf-8"))
+
+
 class TheChannel(unittest.TestCase):
 
     def _settings(self, data):

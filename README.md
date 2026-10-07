@@ -50,7 +50,7 @@ git clone -b stable https://github.com/szprivate/agentY.git
 cd agentY
 ```
 
-`-b stable` gets the latest release. Leave it out to get the development branch.
+`-b stable` gets the latest release (`main` is the same commit). Development happens on `dev`.
 
 ### 2. Run the installer (recommended)
 
