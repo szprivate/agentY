@@ -347,6 +347,63 @@ def plan(graph: dict, ops: list, object_info: dict) -> dict:
             "touched": list(dict.fromkeys(touched))}
 
 
+def ops_for_workflow(workflow: dict, prefix: str = "wf") -> list:
+    """A built workflow (API format) as the ops that put it on a canvas, wired.
+
+    One ``add`` per node - its values as ``params`` - and one ``connect`` per
+    link, in an order :func:`plan` can apply: every node before the wires, and
+    each node after the one it is placed beside. Nothing is decided here that
+    the workflow does not already say: the model is not asked to restate a
+    workflow it has just built, node by node and wire by wire.
+
+    Raises ``ValueError`` for anything that is not an API-format workflow.
+    """
+    if not isinstance(workflow, dict) or isinstance(workflow.get("nodes"), list):
+        raise ValueError("not an API-format workflow (a saved canvas graph cannot be inserted this way)")
+    nodes = {str(k): v for k, v in workflow.items()
+             if isinstance(v, dict) and v.get("class_type")}
+    if not nodes:
+        raise ValueError("the workflow has no nodes")
+
+    def sources(nid: str) -> list:
+        return [str(v[0]) for v in (nodes[nid].get("inputs") or {}).values()
+                if _is_link(v) and str(v[0]) in nodes]
+
+    # Upstream first, so a node can be placed beside the one that feeds it.
+    order, seen = [], set()
+
+    def visit(nid: str, trail: tuple = ()) -> None:
+        if nid in seen or nid in trail:
+            return
+        for src in sources(nid):
+            visit(src, trail + (nid,))
+        seen.add(nid)
+        order.append(nid)
+
+    def key(n: str):
+        return (0, int(n)) if n.isdigit() else (1, n)
+
+    for nid in sorted(nodes, key=key):
+        visit(nid)
+
+    ref = {nid: f"{prefix}{nid}" for nid in nodes}
+    ops: list = []
+    for nid in order:
+        node = nodes[nid]
+        params = {k: v for k, v in (node.get("inputs") or {}).items() if not _is_link(v)}
+        op = {"op": "add", "class_type": node["class_type"], "ref": ref[nid], "params": params}
+        feeds = sources(nid)
+        if feeds:
+            op["near"] = ref[feeds[0]]
+        ops.append(op)
+    for nid in order:
+        for name, value in (nodes[nid].get("inputs") or {}).items():
+            if _is_link(value) and str(value[0]) in nodes:
+                ops.append({"op": "connect", "from": ref[str(value[0])], "output": int(value[1]),
+                            "to": ref[nid], "input": name})
+    return ops
+
+
 def apply_patch(graph: dict, patch: dict) -> dict:
     """Replay a pushed canvas patch on an API-format graph (in place; returned).
 

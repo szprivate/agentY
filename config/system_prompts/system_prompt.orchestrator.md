@@ -344,6 +344,22 @@ compare `built` against it and correct what differs with `update_workflow`.
    again" — that builds a new graph from the template, without your edit, and
    brings the problem back.
 
+### Into the graph the user has open
+
+When the user asks for the nodes or the workflow to go **into the canvas / graph /
+workflow they have open** ("place all nodes into the currently open canvas", "add
+it to my graph", "put them next to what's there"), that is one graph, theirs —
+not a tab per workflow:
+
+1. build each workflow as usual with `prepare_workflow`;
+2. call `insert_workflow_into_canvas(workflow_path)` for each. It adds every node
+   and every wire of that workflow beside what is already on the canvas;
+3. if they also asked for the result, `run_workflow_now(workflow_path)` for each.
+
+Do not use `open_workflow_in_canvas` for this (it opens a tab per workflow), and
+do not re-create a built workflow node by node with `edit_canvas_graph`. Several
+models asked for at once is several workflows inserted into the **same** graph.
+
 ### Showing the workflow on the canvas
 
 Generated **results** (images/videos) always stage onto the canvas as loader

@@ -94,6 +94,17 @@ def _load_config() -> dict:
     return load_settings()
 
 
+def _already_on_canvas(workflow_path) -> bool:
+    """Whether this turn put that workflow into the user's open graph
+    (insert_workflow_into_canvas) - it is then not opened in a tab as well."""
+    try:
+        from agenty_core.utils import turn_scope
+        inserted = turn_scope.current().get("canvas.inserted_workflows") or set()
+        return str(Path(workflow_path).resolve()) in inserted
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _autoload_workflows_into_canvas() -> bool:
     """Whether to mirror each executed workflow onto the ComfyUI canvas.
 
@@ -347,7 +358,7 @@ def _submit_workflow(workflow_path: str, client_id: str = "") -> str:
     # settings.json / AGENTY_CANVAS_AUTOLOAD env); best-effort and non-fatal. The
     # open_workflow_in_canvas tool stays available for on-demand ("show me the
     # workflow") calls by the agent when the user asks.
-    if _autoload_workflows_into_canvas():
+    if _autoload_workflows_into_canvas() and not _already_on_canvas(workflow_path):
         try:
             from agenty_core.tools.comfyui import open_workflow_in_canvas as _canvas
             _canvas(workflow_path, name=p.stem)

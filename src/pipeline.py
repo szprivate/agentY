@@ -2154,6 +2154,68 @@ class Pipeline:
             return json.dumps(out)
 
         @_tool
+        async def insert_workflow_into_canvas(workflow_path: str, reason: str = "") -> str:
+            """Put a workflow you built INTO the graph the user has open - every node
+            and every wire of it, beside what is already there.
+
+            This is what "place the nodes into the open canvas / into my current
+            graph / into this workflow" asks for. Build each workflow as usual
+            (``prepare_workflow``), then call this once per workflow with its
+            ``workflow_path``. Do NOT use ``open_workflow_in_canvas`` for such a
+            request (that opens a separate tab), and do not rebuild the workflow
+            node by node with ``edit_canvas_graph`` - the wiring is taken from the
+            workflow itself here, so nothing is left unconnected.
+
+            Nothing on the user's graph is changed or removed, and nothing is
+            queued. To also generate the result, call
+            ``run_workflow_now(workflow_path)`` afterwards: the output lands on
+            the canvas as usual, and the workflow is not opened in a tab again.
+
+            Args:
+                workflow_path: A workflow file from ``prepare_workflow``.
+                reason: One line on what is being added, shown to the user.
+            """
+            _held = self._canvas_lease_refusal()
+            if _held:
+                return _held
+            from src.utils import canvas_edit as _ce
+            from src.utils.canvas_patch import push as _push_patch
+            from agenty_core.tools.comfyui import _load_workflow as _lw
+
+            graph = getattr(self, "_canvas_graph", None)
+            has_canvas = isinstance(graph, dict) and (bool(graph) or bool(getattr(self, "_open_workflows", None)))
+            if not has_canvas:
+                return json.dumps({"error": "no graph is open on the canvas this turn.",
+                                   "what_to_do": "Show the workflow with open_workflow_in_canvas instead, "
+                                                 "and tell the user it opened in a tab of its own."})
+            try:
+                ops = _ce.ops_for_workflow(_lw(workflow_path))
+            except (OSError, ValueError) as exc:
+                return json.dumps({"error": f"cannot insert {workflow_path}: {exc}"})
+            res = _ce.plan(graph, ops, _CanvasSchemas())
+            if not res["ok"]:
+                return json.dumps({"status": "rejected", "errors": res["errors"][:12],
+                                   "note": "Nothing was changed on the canvas."})
+            self._canvas_graph = res["graph"]
+            _push_patch({"op": "edit_graph", "ops": res["ops"], "reason": str(reason or "").strip()})
+            # The workflow is on the canvas now: running it must not open it again
+            # in a tab of its own (see executor's auto-graph step).
+            try:
+                from agenty_core.utils import turn_scope as _ts
+                _ts.current().slot("canvas.inserted_workflows", set).add(str(Path(workflow_path).resolve()))
+            except Exception:  # noqa: BLE001
+                pass
+            n_add = sum(1 for o in res["ops"] if o["op"] == "add")
+            n_wire = sum(1 for o in res["ops"] if o["op"] == "connect")
+            _push_progress(f"🔧 Added to the canvas: {n_add} node(s), {n_wire} wire(s)"
+                           + (f" — {reason}" if reason else ""))
+            return json.dumps({
+                "status": "applied", "nodes_added": n_add, "wires_set": n_wire,
+                "node_ids": {n: res["graph"][n]["class_type"] for n in res["touched"] if n in res["graph"]},
+                "message": "The workflow is in the user's open graph, fully wired; Ctrl+Z undoes it. "
+                           "To generate its result, call run_workflow_now(workflow_path)."})
+
+        @_tool
         async def list_agent_settings() -> str:
             """The agentY settings you can change for the user, and their values now.
 
@@ -3289,7 +3351,7 @@ class Pipeline:
                  halt_for_review, run_workflow_now, add_canvas_workflow,
                  get_canvas_node, set_canvas_node_params, place_canvas_text,
                  run_python_node, revise_prompt, prompt_autoloop,
-                 delete_canvas_nodes, edit_canvas_graph, refine_canvas_until,
+                 delete_canvas_nodes, edit_canvas_graph, insert_workflow_into_canvas, refine_canvas_until,
                  list_agent_settings, set_agent_setting]
         # Offered only where there is a Slack to send to. Every tool in this list
         # is described to the model on every call, so one nobody can use is a
