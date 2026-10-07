@@ -114,6 +114,11 @@ autoload_workflows_into_canvas = false
 # files are written exactly the same, and the chat names each one with its path.
 # Env: AGENTY_CANVAS_DROP (1/0).
 drop_outputs_into_canvas = true
+# Show each finished image or video in the chat panel as well, with its number in
+# the conversation printed on it. That number is how the agent knows the file, so
+# "upscale 3" means the picture with a 3 on it. Off, results still land on the
+# canvas and the chat names each file. Env: AGENTY_PANEL_OUTPUTS (1/0).
+show_outputs_in_panel = true
 # Place the agent's written answer to a TEXT canvas hook (purpose = "text") onto
 # the canvas as an "agentY text" node. The node is a readable reference only: the
 # hook stays wired exactly as you drew it, and the answer is injected into the

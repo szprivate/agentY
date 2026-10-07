@@ -2154,6 +2154,26 @@ class Pipeline:
             return json.dumps(out)
 
         @_tool
+        async def list_outputs() -> str:
+            """The images and videos of this conversation, with the number shown on
+            each in the user's chat panel.
+
+            The list at the top of the turn is from when the turn started; call this
+            when you need it as it is NOW - after you have generated something in
+            this turn and the user's request names a picture by number ("upscale
+            3"), or to tell the user which number a result got.
+
+            Returns JSON: ``{"outputs": [{"number", "kind", "path", "caption"}],
+            "shown_in_panel": bool}``.
+            """
+            try:
+                from src.utils.agentY_server import _show_outputs_in_panel as _shown
+                visible = bool(_shown())
+            except Exception:  # noqa: BLE001
+                visible = True
+            return json.dumps({"outputs": self._shown_outputs(), "shown_in_panel": visible})
+
+        @_tool
         async def insert_workflow_into_canvas(workflow_path: str, reason: str = "") -> str:
             """Put a workflow you built INTO the graph the user has open - every node
             and every wire of it, beside what is already there.
@@ -3352,6 +3372,7 @@ class Pipeline:
                  get_canvas_node, set_canvas_node_params, place_canvas_text,
                  run_python_node, revise_prompt, prompt_autoloop,
                  delete_canvas_nodes, edit_canvas_graph, insert_workflow_into_canvas, refine_canvas_until,
+                 list_outputs,
                  list_agent_settings, set_agent_setting]
         # Offered only where there is a Slack to send to. Every tool in this list
         # is described to the model on every call, so one nobody can use is a
@@ -5315,24 +5336,53 @@ class Pipeline:
         block is injected into agent prompts so the model can resolve a user
         reference ("image 2", "the last one", a description) to the real path.
         """
-        gallery = self._session.generated_images
-        if not gallery:
+        shown = self._shown_outputs()
+        if not shown:
             return ""
         lines = [
-            f"  {gi.index}. {gi.path}" + (f"  — {gi.caption}" if gi.caption else "")
-            for gi in gallery
+            f"  {o['number']}. {o['path']}" + (f"  — {o['caption']}" if o["caption"] else "")
+            for o in shown
         ]
         return (
             "[GENERATED IN THIS THREAD] — the user may reference these by number "
             "(\"image 2\"), recency (\"the last one\"), or description (\"the lighthouse "
-            "one\"). Numbers are 1-based and ordered oldest→newest; the text after the "
-            "dash is what each one was made FOR, so prefer it over looking again:\n"
+            "one\"). The numbers are the ones printed on each picture in the user's chat "
+            "panel, oldest→newest (a number may be missing where a file is gone); the "
+            "text after the dash is what each one was made FOR, so prefer it over looking "
+            "again:\n"
             + "\n".join(lines)
             + "\n[When the user refers to one of these, use the matching path above as "
             "the file to act on — to analyse/describe it call analyze_image(path) (or "
             "analyze_video for a video); to use it as a workflow input upload it via "
             "upload_image(path). These are real files; never claim none is available.]"
         )
+
+    def _shown_outputs(self) -> list:
+        """This conversation's images and videos, numbered as the panel shows them.
+
+        The conversation's stored output list is the one numbering there is: the
+        panel prints that number on each picture, ``/images`` lists by it, and
+        this is what the agent is told. The session's own list (built at the end
+        of a turn) only lends its captions, and stands in when there is no stored
+        list - a turn run outside the chat host.
+        """
+        captions = {gi.path: gi.caption for gi in self._session.generated_images}
+        rows = []
+        try:
+            from src.utils import conversation_store as _cs  # noqa: PLC0415
+            thread_id = str(getattr(self._session, "session_id", "") or "")
+            rows = _cs.get_gallery(thread_id) if thread_id else []
+        except Exception:  # noqa: BLE001
+            rows = []
+        shown = [{"number": int(r["idx"]), "path": r["path"],
+                  "caption": (r.get("caption") or captions.get(r["path"], "") or ""),
+                  "kind": "video" if _is_video_file(r["path"]) else "image"}
+                 for r in rows if os.path.isfile(r["path"])]
+        if shown:
+            return shown
+        return [{"number": gi.index, "path": gi.path, "caption": gi.caption or "",
+                 "kind": "video" if _is_video_file(gi.path) else "image"}
+                for gi in self._session.generated_images]
 
     def _prepend_gallery(self, text: str) -> str:
         """Prefix *text* with the generated-image gallery block when non-empty."""

@@ -344,6 +344,14 @@ compare `built` against it and correct what differs with `update_workflow`.
    again" — that builds a new graph from the template, without your edit, and
    brings the problem back.
 
+### Results in the chat panel
+
+Each finished image or video is shown to the user in the chat panel with a number
+on it (#1, #2, … per conversation). Those are the numbers in
+`[GENERATED IN THIS THREAD]`, so "image 3" or "#3" is that entry. `list_outputs`
+gives the list as it is now, including what this turn has produced. When you
+mention a result, name it by its number.
+
 ### Into the graph the user has open
 
 When the user asks for the nodes or the workflow to go **into the canvas / graph /

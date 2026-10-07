@@ -359,6 +359,17 @@ def _drop_outputs_into_canvas() -> bool:
     return _canvas_switch("AGENTY_CANVAS_DROP", "drop_outputs_into_canvas")
 
 
+def _show_outputs_in_panel() -> bool:
+    """Should a finished image/video also be shown in the chat panel, numbered?
+
+    The number is the one the agent knows the file by (the conversation's output
+    list, src/utils/conversation_store.py), so "use image 3" means the picture
+    with a 3 on it. Decided by the host for the same reason as the canvas drop:
+    one answer for every route a result arrives by.
+    """
+    return _canvas_switch("AGENTY_PANEL_OUTPUTS", "show_outputs_in_panel")
+
+
 def _place_text_nodes_on_canvas() -> bool:
     """Should a TEXT hook's answer also be placed as an "agentY text" node?
 
@@ -528,9 +539,10 @@ def _handle_magnific_complete(identifier: str, asset_url: str, kind: str,
     real_kind = "video" if _is_video_path(p) else "image" if _is_image_path(p) else (kind or "image")
     staged = _stage_into_comfy_input(p) if real_kind in ("image", "video") else None
     tid = (meta or {}).get("thread_id") or ""
+    index = None
     if tid and real_kind in ("image", "video"):
         try:
-            cs.add_gallery_image(tid, p, "")
+            index = cs.add_gallery_image(tid, p, "")
         except Exception:  # noqa: BLE001
             pass
     return {
@@ -545,6 +557,7 @@ def _handle_magnific_complete(identifier: str, asset_url: str, kind: str,
         # trusted from the turn that started it: this lands minutes later, and the
         # setting may have been changed in between.
         "drop": _drop_outputs_into_canvas(),
+        "index": index, "show": _show_outputs_in_panel(),
     }
 
 
@@ -1049,7 +1062,10 @@ def _restore_state(pipeline, thread_id: str) -> None:
             from src.utils.models import GeneratedImage
             gal = cs.get_gallery(thread_id)
             imgs = [
-                GeneratedImage(index=i + 1, path=g["path"], caption=g.get("caption", "") or "", turn=0)
+                # Its stored number, not its position among the files that are
+                # still on disk: that is the number printed on it in the panel.
+                GeneratedImage(index=int(g.get("idx") or i + 1), path=g["path"],
+                               caption=g.get("caption", "") or "", turn=0)
                 for i, g in enumerate(gal) if os.path.isfile(g["path"])
             ]
             if imgs:
@@ -1603,9 +1619,12 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
             staged = _stage_into_comfy_input(p) if kind in ("image", "video") else None
             if staged and role:
                 _copy_sidecar(p, staged)
+            # Its number in this conversation - what the panel prints on it and
+            # what the agent is told it is called.
+            index = None
             if kind in ("image", "video"):
                 try:
-                    cs.add_gallery_image(thread_id, p, role)
+                    index = cs.add_gallery_image(thread_id, p, role)
                 except Exception:
                     pass
             out_q.put({
@@ -1614,6 +1633,7 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
                 "role": role, "role_declared": declared,
                 "node_candidates": _NODE_CANDIDATES.get(kind, []),
                 "drop": _drop_outputs_into_canvas(),
+                "index": index, "show": _show_outputs_in_panel(),
             })
 
     def _emit_paths(paths: list[str], caption: str = "") -> None:
@@ -1628,6 +1648,9 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
                 "name": os.path.basename(p), "caption": caption,
                 "node_candidates": _NODE_CANDIDATES.get(kind, []),
                 "drop": _drop_outputs_into_canvas(),
+                # Shown, but not numbered: a web reference is not one of the
+                # conversation's outputs.
+                "index": None, "show": _show_outputs_in_panel(),
             })
 
     def _translate(event: dict) -> None:
