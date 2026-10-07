@@ -75,6 +75,11 @@ class MainTest(unittest.TestCase):
         self.enterContext(mock.patch.object(sd, "stamp_path", lambda: self.stamp))
         self.enterContext(mock.patch.object(sd, "fingerprint", lambda files=None: "fp-now"))
         self.enterContext(mock.patch.object(sd.check_env, "main", lambda argv: 0))
+        # main() moves an old agenty_core folder to its new name first. Not here:
+        # a test must not rearrange the machine it runs on.
+        self.moves = []
+        self.enterContext(mock.patch.object(sd.core_dir, "migrate",
+                                            lambda: self.moves.append(1) or "current"))
         self.enterContext(mock.patch.object(sd.shutil, "which", lambda name: "C:/uv.exe"))
 
     def _run(self, missing, *, code=0, argv=("--quiet",)):
@@ -96,9 +101,13 @@ class MainTest(unittest.TestCase):
         cmd, cwd = calls[0]
         self.assertEqual(cmd, ["uv", "pip", "install", "--python", sys.executable,
                                "-r", "requirements.txt"])
-        self.assertEqual(cwd, str(sd.ROOT), "-e ../agenty_core is relative to agentY")
+        self.assertEqual(cwd, str(sd.ROOT), "-e ../agentY-core is relative to agentY")
         self.assertIn("missing: cv2", out)
         self.assertEqual(self.stamp.read_text().strip(), "fp-now")
+
+    def test_the_tool_layer_folder_is_checked_on_every_run(self):
+        self._run([])
+        self.assertEqual(self.moves, [1])
 
     def test_a_hand_pulled_version_bump_is_installed(self):
         self.stamp.write_text("fp-before\n")

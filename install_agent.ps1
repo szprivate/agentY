@@ -6,7 +6,7 @@
     and drops the chat UI into your ComfyUI:
 
       * agentY                (this repo)  - the Strands chat host / pipeline
-      * agenty_core           (sibling)    - shared ComfyUI/HF/web/file tool layer
+      * agentY-core           (sibling)    - shared ComfyUI/HF/web/file tool layer
                                              (installed editable; required)
       * agentY-mcp            (sibling)    - the MCP-server / Claude-Desktop variant
                                              (optional; skip with -SkipMcp)
@@ -27,7 +27,7 @@
     the script auto-detects common locations and otherwise asks.
 
 .PARAMETER ParentDir
-    Where the sibling repos (agenty_core, agentY-mcp) live / will be cloned.
+    Where the sibling repos (agentY-core, agentY-mcp) live / will be cloned.
     Defaults to this repo's parent directory.
 
 .PARAMETER SkipMcp
@@ -197,9 +197,9 @@ function Update-Checkout {
     #
     # The same rules as run_agent.ps1's Update-Repo, for the same reason: the agent
     # rewrites tracked files in its own checkouts (config/models.json on every
-    # start, saved templates in agenty_core), so a plain `git pull` refuses as soon
+    # start, saved templates in agentY-core), so a plain `git pull` refuses as soon
     # as the remote touches one of them - and an installer that then says "up to
-    # date" leaves an old agentY next to a new agenty_core. Only the local files
+    # date" leaves an old agentY next to a new agentY-core. Only the local files
     # the incoming commits also change are parked in a stash; nothing is discarded.
     param([string]$Name, [string]$Dir)
     # git writes warnings to stderr; under "Stop" Windows PowerShell turns any such
@@ -315,7 +315,7 @@ function Ensure-Repo {
     }
     Write-Info "Cloning $Name -> $Dir"
     # core.longpaths: git for Windows stops at 260 characters by itself, and the
-    # template corpus in agenty_core has file names long enough to cross that in
+    # template corpus in agentY-core has file names long enough to cross that in
     # a deep install folder. Set at clone, it stays in the checkout's own config.
     $ok = Invoke-Native "git clone ($Name)" { git clone -c core.longpaths=true $Url $Dir } -AllowFail
     if ($ok) { Write-Success "$Name cloned"; return }
@@ -375,6 +375,18 @@ function Install-Torch {
     Invoke-Native "uv pip install (torch)" { uv pip install --python $py torch torchvision --index-url $TorchIndexUrl } -AllowFail | Out-Null
 }
 
+function Move-CoreDir {
+    # requirements.txt names `-e ../agentY-core`. Where the folder still has its
+    # old name (agenty_core), scripts/core_dir.py renames it and leaves a link
+    # behind - or links the new name to it when Windows will not let go of it.
+    param([string]$Dir)
+    $py     = Get-VenvPython $Dir
+    $script = Join-Path (Join-Path $ProjectRoot "scripts") "core_dir.py"
+    if (-not ((Test-Path $py) -and (Test-Path $script))) { return }
+    & $py $script | Out-Host
+    $Script:CoreDir = Join-Path $ParentDir "agentY-core"
+}
+
 function Setup-Venv {
     # Create (if missing) a uv venv in $Dir and install its requirements.txt.
     param([string]$Name, [string]$Dir, [switch]$WithTorch)
@@ -398,6 +410,7 @@ function Setup-Venv {
             Stop-RunningHost -Dir $Dir
         }
         if ($WithTorch) { Install-Torch -Dir $Dir }
+        Move-CoreDir -Dir $Dir
         $req = Join-Path $Dir "requirements.txt"
         if (-not (Test-Path $req)) { Exit-WithError "requirements.txt not found in $Dir." }
         Write-Info "Installing $Name dependencies (uv pip install -r requirements.txt)"
@@ -608,10 +621,10 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 }
 Write-Success "uv found: $(uv --version)"
 
-# -- 2. Sibling repos (agenty_core, agentY-mcp) -------------------------------
+# -- 2. Sibling repos (agentY-core, agentY-mcp) -------------------------------
 Write-Header "2 / 8  Sibling repos"
 # agentY itself first: the siblings below are brought to the remote's newest
-# commit, and a new agenty_core under an old agentY is an agent that does not
+# commit, and a new agentY-core under an old agentY is an agent that does not
 # start. When the pull replaced this very script, the new one takes over - the
 # rest of an old installer would install what the old agentY needed.
 if (Test-Path (Join-Path $ProjectRoot ".git")) {
@@ -627,10 +640,16 @@ if (Test-Path (Join-Path $ProjectRoot ".git")) {
 } else {
     Write-Info "agentY at $ProjectRoot is not a git checkout - it cannot be updated from here"
 }
-$CoreDir = Join-Path $ParentDir "agenty_core"
-Ensure-Repo -Name "agenty_core" -Url "https://github.com/szprivate/agenty_core.git" -Dir $CoreDir -Required
+# The tool layer's repository is agentY-core. An install from before it was
+# renamed has the folder as agenty_core: it is updated where it is here, and
+# moved to the new name in stage 3 (scripts/core_dir.py), once there is a Python
+# to run that with.
+$CoreDir = Join-Path $ParentDir "agentY-core"
+$LegacyCoreDir = Join-Path $ParentDir "agenty_core"
+if ((-not (Test-Path $CoreDir)) -and (Test-Path (Join-Path $LegacyCoreDir ".git"))) { $CoreDir = $LegacyCoreDir }
+Ensure-Repo -Name "agentY-core" -Url "https://github.com/szprivate/agentY-core.git" -Dir $CoreDir -Required
 if (-not (Test-Path (Join-Path $CoreDir "pyproject.toml"))) {
-    Exit-WithError "agenty_core looks incomplete at $CoreDir (no pyproject.toml). agentY's requirements.txt installs it editable via '-e ../agenty_core'."
+    Exit-WithError "agentY-core looks incomplete at $CoreDir (no pyproject.toml). agentY's requirements.txt installs it editable via '-e ../agentY-core'."
 }
 
 $McpDir = Join-Path $ParentDir "agentY-mcp"
@@ -750,7 +769,7 @@ Write-Header "Setup complete"
 Write-Host ""
 Write-Host "  Installed:" -ForegroundColor Cyan
 Write-Host "    - agentY        $ProjectRoot" -ForegroundColor White
-Write-Host "    - agenty_core   $CoreDir  (editable dependency)" -ForegroundColor White
+Write-Host "    - agentY-core   $(Join-Path $ParentDir 'agentY-core')  (editable dependency)" -ForegroundColor White
 if (-not $SkipMcp -and (Test-Path (Join-Path $McpDir 'requirements.txt'))) {
     Write-Host "    - agentY-mcp    $McpDir" -ForegroundColor White
 }

@@ -84,7 +84,7 @@ fi
 
 # ── Startup update check ────────────────────────────────────────────────────
 # Fast-forwards the repos that make up the RUNNING agent (this one, plus the
-# agenty_core tool layer it installs editable) to whatever the remote has.
+# agentY-core tool layer it installs editable) to whatever the remote has.
 #
 # Deliberately conservative, because this runs unattended on every start and the
 # working copy is the user's:
@@ -240,7 +240,11 @@ if [ "$SKIP_UPDATE" = "1" ]; then
 else
   PARENT="$(dirname "$PROJECT_ROOT")"
   update_repo 'agentY'      "$PROJECT_ROOT"
-  update_repo 'agenty_core' "$PARENT/agenty_core"
+  # The tool layer's checkout is agentY-core; agenty_core is its folder name from
+  # before the repository was renamed (scripts/sync_deps.py moves it over below).
+  CORE_DIR="$PARENT/agentY-core"
+  [ -e "$CORE_DIR" ] || CORE_DIR="$PARENT/agenty_core"
+  update_repo 'agentY-core' "$CORE_DIR"
 
   # The sidebar extension is a THIRD checkout, and often two: the clone ComfyUI
   # actually loads (<ComfyUI>/custom_nodes/agentY-comfyuiConnect) and, for anyone

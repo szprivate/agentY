@@ -35,16 +35,24 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DEP_FILES = (ROOT / "requirements.txt", ROOT.parent / "agenty_core" / "pyproject.toml")
 STAMP_NAME = ".agenty-deps"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import check_env  # noqa: E402  (a sibling script, not a package)
+import core_dir   # noqa: E402
 
 
-def fingerprint(files=DEP_FILES) -> str:
+def dep_files() -> tuple:
+    """The files an install is made from. Looked up when asked, not at import:
+    the tool layer's folder may only just have been moved to its new name."""
+    core = core_dir.find() or (ROOT.parent / core_dir.NAME)
+    return (ROOT / "requirements.txt", Path(core) / "pyproject.toml")
+
+
+def fingerprint(files=None) -> str:
     """One hash over the dependency files. Line endings are normalised, so a
     checkout that flips between LF and CRLF is not a reason to reinstall."""
+    files = dep_files() if files is None else files
     digest = hashlib.sha256()
     for path in files:
         path = Path(path)
@@ -113,6 +121,16 @@ def main(argv: list) -> int:
         if arg.startswith("--changed="):
             changed = arg.split("=", 1)[1].strip(" ,")
 
+    # requirements.txt names `-e ../agentY-core`. A machine installed before the
+    # repository was renamed still has the folder under its old name; move it
+    # over (or link it) before anything is installed from that path.
+    try:
+        moved = core_dir.migrate()
+        if moved in core_dir.MESSAGES:
+            print(core_dir.MESSAGES[moved], flush=True)
+    except Exception as exc:  # noqa: BLE001 - never the reason a start fails
+        print(f"[core] Could not check the tool layer's folder name: {exc}", flush=True)
+
     current = fingerprint()
     stamp = read_stamp()
     why = reasons(stamp, current, missing_required(), changed)
@@ -127,7 +145,7 @@ def main(argv: list) -> int:
     print("[deps] Installing from requirements.txt - " + "; ".join(why), flush=True)
     command = install_command(sys.executable)
     try:
-        # requirements.txt names agenty_core as `-e ../agenty_core`, relative to here.
+        # requirements.txt names the tool layer as `-e ../agentY-core`, relative to here.
         code = subprocess.run(command, cwd=str(ROOT)).returncode
     except OSError as exc:
         print(f"[deps] Could not run {command[0]}: {exc}")

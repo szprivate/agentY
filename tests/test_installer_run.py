@@ -61,13 +61,21 @@ class InstallerRun(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="agy-inst-"))
         self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.addCleanup(self._drop_links)      # runs first: never delete through a link
         (self.tmp / "bin").mkdir()
         (self.tmp / "bin" / "uv.cmd").write_text(FAKE_UV.format(python=sys.executable))
         (self.tmp / "bin" / "git.cmd").write_text(FAKE_GIT.format(git=GIT))
         self.agent = self.tmp / "agentY"
-        self.core = self.tmp / "agenty_core"
+        self.core = self.tmp / "agentY-core"
         self.comfy = self.tmp / "comfy"
         (self.comfy / "custom_nodes").mkdir(parents=True)
+
+    def _drop_links(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import core_dir
+        for name in ("agenty_core", "agentY-core"):
+            if core_dir.is_link(self.tmp / name):
+                core_dir.remove_link(self.tmp / name)
 
     def seed(self, folder):
         """What the installer needs of an agentY checkout."""
@@ -75,6 +83,7 @@ class InstallerRun(unittest.TestCase):
         (folder / "scripts").mkdir(exist_ok=True)
         for name in ("install_agent.ps1", ".env_example"):
             shutil.copy(ROOT / name, folder / name)
+        shutil.copy(ROOT / "scripts" / "core_dir.py", folder / "scripts" / "core_dir.py")
         (folder / "requirements.txt").write_text("requests\n")
         (folder / "scripts" / "check_env.py").write_text("print('check_env stub ok')\n")
 
@@ -151,7 +160,7 @@ class InstallerRun(unittest.TestCase):
         (coreseed / "pyproject.toml").write_text("[project]\n")
         _git(coreseed, "add", "-A"); _git(coreseed, "commit", "-qm", "c1")
         _git(self.tmp, "clone", "-q", "--bare", str(coreseed), "core.git")
-        _git(self.tmp, "clone", "-q", str(self.tmp / "core.git"), "agenty_core")
+        _git(self.tmp, "clone", "-q", str(self.tmp / "core.git"), "agentY-core")
         (coreseed / "new.txt").write_text("x\n")
         _git(coreseed, "add", "-A"); _git(coreseed, "commit", "-qm", "c2")
         _git(coreseed, "push", "-q", str(self.tmp / "core.git"), "main")
@@ -171,6 +180,26 @@ class InstallerRun(unittest.TestCase):
         self.assertEqual((self.agent / "notes.txt").read_text(), "mine\n")
         self.assertEqual((self.agent / "untracked.txt").read_text(), "scratch\n")
         self.assertIn("agentY installer", _git(self.agent, "stash", "list"), "the local version is kept")
+
+    def test_an_install_from_before_the_rename_is_moved_to_the_new_folder_name(self):
+        """agenty_core next to agentY, from when the repository had that name:
+        the checkout ends up as agentY-core, and the old path still resolves."""
+        self.seed(self.agent)
+        legacy = self.tmp / "agenty_core"
+        (legacy / ".git").mkdir(parents=True)
+        (legacy / "pyproject.toml").write_text("[project]" + chr(10))
+        (legacy / "agenty_core").mkdir()
+        (legacy / "agenty_core" / "__init__.py").write_text("")
+        (legacy / "saved_template.json").write_text("mine")
+
+        out = self.run_installer("-NonInteractive", "-SkipComfyNode")
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn("is now agentY-core", out.stdout)
+        self.assertNotIn("[fake git] clone", out.stdout, "the existing checkout is used, not cloned again")
+        self.assertTrue((self.core / "agenty_core" / "__init__.py").is_file())
+        self.assertEqual((self.core / "saved_template.json").read_text(), "mine")
+        self.assertEqual((legacy / "saved_template.json").read_text(), "mine", "the old path still resolves")
+        self.assertNotEqual(os.path.realpath(legacy), os.path.abspath(legacy), "…through a link")
 
     def test_a_pull_that_cannot_happen_is_not_called_up_to_date(self):
         """Local commits the remote does not have: nothing to fast-forward to."""
@@ -205,7 +234,7 @@ class InstallerText(unittest.TestCase):
             text = (ROOT / name).read_text(encoding="utf-8", errors="replace")
             with self.subTest(installer=name):
                 self.assertIn(call, text)
-                self.assertLess(text.index(call), text.index("github.com/szprivate/agenty_core.git"))
+                self.assertLess(text.index(call), text.index("github.com/szprivate/agentY-core.git"))
 
     def test_neither_installer_pulls_blind(self):
         for name in ("install_agent.ps1", "install_agent.sh"):

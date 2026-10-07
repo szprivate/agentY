@@ -669,9 +669,11 @@ class AgentyCoreSurvivesAHiddenPth(unittest.TestCase):
                         src.index("from agenty_core import set_project_root"))
 
     def test_the_sibling_checkout_is_where_the_fallback_looks(self):
-        """The editable finder maps agenty_core to <parent>/agenty_core/agenty_core.
+        """The editable finder maps agenty_core to <parent>/agentY-core/agenty_core.
         The fallback adds the checkout above it, so the two resolve identically."""
-        self.assertTrue((ROOT.parent / "agenty_core" / "agenty_core" / "__init__.py").is_file(),
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import core_dir
+        self.assertTrue((core_dir.find() / "agenty_core" / "__init__.py").is_file(),
                         "the sibling checkout moved - the fallback needs the new path")
 
     def test_the_package_imports_with_the_pth_unreadable(self):

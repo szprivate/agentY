@@ -25,7 +25,7 @@ import sys
 
 # (module, distribution, what stops working without it)
 REQUIRED: list[tuple[str, str, str]] = [
-    ("agenty_core", "-e ../agenty_core", "the shared ComfyUI/HF/web/file tool layer - nothing runs"),
+    ("agenty_core", "-e ../agentY-core", "the shared ComfyUI/HF/web/file tool layer - nothing runs"),
     ("strands", "strands-agents", "the agent runtime"),
     ("strands_tools", "strands-agents-tools", "the built-in tool set"),
     ("requests", "requests", "every HTTP call to ComfyUI and the model APIs"),
@@ -86,7 +86,9 @@ def _bootstrap_agenty_core() -> bool:
     import os.path  # noqa: PLC0415
 
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # The checkout is agentY-core; agenty_core is its name from before the rename.
     for cand in (os.environ.get("AGENTY_CORE_DIR", "").strip() or None,
+                 os.path.join(os.path.dirname(here), "agentY-core"),
                  os.path.join(os.path.dirname(here), "agenty_core")):
         if cand and os.path.isfile(os.path.join(cand, "agenty_core", "__init__.py")):
             sys.path.insert(0, cand)

@@ -8,9 +8,9 @@ use see [Using agentY](using-agentY.md).
 | Repo | Location | Role |
 |---|---|---|
 | **agentY** | your working copy | The agent host and pipeline (`run_agent.ps1` / `run_agent.sh`). |
-| **[agenty_core](https://github.com/szprivate/agenty_core)** | next to `agentY` | Shared tool layer (ComfyUI, Hugging Face, web, files) and the workflow template corpus. Required. |
+| **[agentY-core](https://github.com/szprivate/agentY-core)** | next to `agentY` | Shared tool layer (ComfyUI, Hugging Face, web, files) and the workflow template corpus. Required. |
 | **[agentY-comfyuiConnect](https://github.com/szprivate/agentY-comfyuiConnect)** | `<ComfyUI>/custom_nodes/` | The sidebar chat tab and the canvas nodes. |
-| **[agentY-mcp](https://github.com/szprivate/agentY-mcp)** | next to `agentY` | Optional MCP server for Claude Desktop, built on `agenty_core`. |
+| **[agentY-mcp](https://github.com/szprivate/agentY-mcp)** | next to `agentY` | Optional MCP server for Claude Desktop, built on `agentY-core`. |
 
 ## Architecture
 
@@ -22,7 +22,7 @@ ComfyUI  (your browser)
         ▼
   agentY host
         │  Orchestrator agent + specialist agents
-        │  tools ── ../agenty_core
+        │  tools ── ../agentY-core
         ├──HTTP/WS──►  ComfyUI  (run workflows, check outputs, stage results)
         └──►  memory/conversations.sqlite
 ```

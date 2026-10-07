@@ -65,7 +65,7 @@ if ($Debug) {
 
 # ── Startup update check ────────────────────────────────────────────────────
 # Fast-forwards the repos that make up the RUNNING agent (this one, plus the
-# agenty_core tool layer it installs editable) to whatever the remote has.
+# agentY-core tool layer it installs editable) to whatever the remote has.
 #
 # Deliberately conservative, because this runs unattended on every start and the
 # working copy is the user's:
@@ -229,9 +229,13 @@ if ($skipUpdate) {
     Write-Host "[update] Update check skipped." -ForegroundColor DarkGray
 } else {
     $parent = Split-Path -Parent $ProjectRoot
+    # The tool layer's checkout is agentY-core; agenty_core is its folder name from
+    # before the repository was renamed (scripts/sync_deps.py moves it over below).
+    $coreDir = Join-Path $parent "agentY-core"
+    if (-not (Test-Path $coreDir)) { $coreDir = Join-Path $parent "agenty_core" }
     $targets = @(
         @{ n = "agentY";      d = $ProjectRoot }
-        @{ n = "agenty_core"; d = (Join-Path $parent "agenty_core") }
+        @{ n = "agentY-core"; d = $coreDir }
     )
 
     # The sidebar extension is a THIRD checkout, and often two: the clone ComfyUI

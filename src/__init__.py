@@ -28,7 +28,7 @@ def _ensure_agenty_core_importable() -> None:
     can close it, because the flag is not ours to keep clear.
 
     So stop depending on the .pth. The editable finder maps ``agenty_core`` to
-    ``<parent>/agenty_core/agenty_core``, an ordinary package directory — adding
+    ``<parent>/agentY-core/agenty_core``, an ordinary package directory — adding
     its parent to ``sys.path`` resolves to exactly the same code by exactly the
     same rules, and needs no file flag to survive.
 
@@ -49,10 +49,13 @@ def _ensure_agenty_core_importable() -> None:
     env = os.environ.get("AGENTY_CORE_DIR", "").strip()
     if env:
         candidates.append(_Path(env).expanduser())
+    # The checkout is agentY-core; agenty_core is its folder name from before the
+    # repository was renamed (scripts/core_dir.py moves an old one over).
+    candidates.append(_PROJECT_ROOT.parent / "agentY-core")
     candidates.append(_PROJECT_ROOT.parent / "agenty_core")
     for cand in candidates:
         # The checkout, not the package inside it: requirements.txt installs
-        # `-e ../agenty_core`, so the importable package is one level down.
+        # `-e ../agentY-core`, so the importable package is one level down.
         if (cand / "agenty_core" / "__init__.py").is_file():
             sys.path.insert(0, str(cand))
             return

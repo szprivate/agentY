@@ -64,8 +64,8 @@ scripts' stages, flags and prompts. The installer sets up the **whole stack** in
 one pass:
 
 1. checks for `git` + `uv`;
-2. **updates agentY itself** to the remote's newest commit, then clones the sibling repos it needs — **agenty_core** (required) and **agentY-mcp** (optional) — next to `agentY` if they aren't there already, and fast-forwards them if they are;
-3. creates agentY's `.venv` (via `uv`, on Python 3.12), sorts out **torch** — on Windows it offers the CUDA build when it sees an NVIDIA GPU, because the wheel on PyPI is CPU-only and that makes SAM3 grounding take about a minute a call; on a Mac the PyPI wheel already carries Metal, so it just reports whether MPS was found — and installs `requirements.txt` (which pulls in `agenty_core` editable);
+2. **updates agentY itself** to the remote's newest commit, then clones the sibling repos it needs — **agentY-core** (required) and **agentY-mcp** (optional) — next to `agentY` if they aren't there already, and fast-forwards them if they are;
+3. creates agentY's `.venv` (via `uv`, on Python 3.12), sorts out **torch** — on Windows it offers the CUDA build when it sees an NVIDIA GPU, because the wheel on PyPI is CPU-only and that makes SAM3 grounding take about a minute a call; on a Mac the PyPI wheel already carries Metal, so it just reports whether MPS was found — and installs `requirements.txt` (which pulls in `agentY-core` editable);
 4. copies `.env_example` → `.env` and **prompts** you for `HF_TOKEN`, `ANTHROPIC_API_KEY`, and the optional `COMFYUI_API_KEY` / `DASHSCOPE_API_KEY` (Enter keeps an existing value);
 5. asks which **memory embedder** long-term memory should use (a built-in local one, Ollama, or a provider you have a key for);
 6. **finds your ComfyUI** (auto-detects common paths, otherwise asks) and clones **agentY-comfyuiConnect** into its `custom_nodes/`, optionally pointing `settings.local.json` at your ComfyUI URL;
@@ -129,8 +129,8 @@ missing and nothing changed, it says nothing.
 <summary><b>Manual setup</b> (instead of the installer)</summary>
 
 ```powershell
-# agenty_core must sit next to agentY (requirements.txt installs it editable)
-git clone https://github.com/szprivate/agenty_core.git ..\agenty_core
+# agentY-core must sit next to agentY (requirements.txt installs it editable)
+git clone https://github.com/szprivate/agentY-core.git ..\agentY-core
 
 # agentY itself. --python names the interpreter on purpose: with a conda env
 # active (miniconda auto-activates `base`), uv installs into that one instead.

@@ -6,7 +6,7 @@
 # agentY, prompts for the secrets it needs, and drops the chat UI into your ComfyUI:
 #
 #   * agentY                (this repo)  - the Strands chat host / pipeline
-#   * agenty_core           (sibling)    - shared ComfyUI/HF/web/file tool layer
+#   * agentY-core           (sibling)    - shared ComfyUI/HF/web/file tool layer
 #                                          (installed editable; required)
 #   * agentY-mcp            (sibling)    - the MCP-server / Claude-Desktop variant
 #                                          (optional; skip with --skip-mcp)
@@ -48,7 +48,7 @@ Usage: ./install_agent.sh [OPTIONS]
 Options:
   --comfyui-path <dir>   Path to your ComfyUI install (the folder containing
                          custom_nodes/). Auto-detected when omitted.
-  --parent-dir <dir>     Where the sibling repos (agenty_core, agentY-mcp) live or
+  --parent-dir <dir>     Where the sibling repos (agentY-core, agentY-mcp) live or
                          will be cloned. Defaults to this repo's parent directory.
   --skip-mcp             Do not clone / set up the agentY-mcp sibling repo.
   --skip-comfy-node      Do not touch ComfyUI (skip locating it and installing the
@@ -159,9 +159,9 @@ read_secret() {   # $1 = file  $2 = key  $3 = label  $4 = help
 #
 # The same rules as run_agent.sh's update_repo, for the same reason: the agent
 # rewrites tracked files in its own checkouts (config/models.json on every start,
-# saved templates in agenty_core), so a plain `git pull` refuses as soon as the
+# saved templates in agentY-core), so a plain `git pull` refuses as soon as the
 # remote touches one of them - and an installer that then says "up to date"
-# leaves an old agentY next to a new agenty_core. Only the local files the
+# leaves an old agentY next to a new agentY-core. Only the local files the
 # incoming commits also change are parked in a stash; nothing is discarded.
 update_checkout() {   # $1 = name  $2 = dir
   local name="$1" dir="$2" upstream behind ahead f stashed=0
@@ -356,6 +356,11 @@ setup_venv() {   # $1 = name  $2 = dir  $3 = "with-torch"|""
     fi
   else
     info "$name .venv already exists"
+  fi
+  # requirements.txt names `-e ../agentY-core`. Where the folder still has its old
+  # name (agenty_core), scripts/core_dir.py renames it and leaves a link behind.
+  if [ -x "$py" ] && [ -f "$PROJECT_ROOT/scripts/core_dir.py" ]; then
+    "$py" "$PROJECT_ROOT/scripts/core_dir.py" || true
   fi
   [ -f "$dir/requirements.txt" ] || die "requirements.txt not found in $dir."
   info "Installing $name dependencies (uv pip install -r requirements.txt)"
@@ -588,10 +593,10 @@ if [ "$IS_MAC" = "1" ]; then
   fi
 fi
 
-# -- 2. Sibling repos (agenty_core, agentY-mcp) -------------------------------
+# -- 2. Sibling repos (agentY-core, agentY-mcp) -------------------------------
 header "2 / 8  Sibling repos"
 # agentY itself first: the siblings below are brought to the remote's newest
-# commit, and a new agenty_core under an old agentY is an agent that does not
+# commit, and a new agentY-core under an old agentY is an agent that does not
 # start. When the pull replaced this very script, the new one takes over - the
 # rest of an old installer would install what the old agentY needed.
 if [ -d "$PROJECT_ROOT/.git" ]; then
@@ -605,9 +610,14 @@ if [ -d "$PROJECT_ROOT/.git" ]; then
 else
   info "agentY at $PROJECT_ROOT is not a git checkout - it cannot be updated from here"
 fi
-CORE_DIR="$PARENT_DIR/agenty_core"
-ensure_repo "agenty_core" "https://github.com/szprivate/agenty_core.git" "$CORE_DIR" required
-[ -f "$CORE_DIR/pyproject.toml" ] || die "agenty_core looks incomplete at $CORE_DIR (no pyproject.toml). agentY's requirements.txt installs it editable via '-e ../agenty_core'."
+# The tool layer's repository is agentY-core. An install from before it was
+# renamed has the folder as agenty_core: it is updated where it is here, and moved
+# to the new name in stage 3 (scripts/core_dir.py), once there is a Python to run
+# that with.
+CORE_DIR="$PARENT_DIR/agentY-core"
+if [ ! -e "$CORE_DIR" ] && [ -d "$PARENT_DIR/agenty_core/.git" ]; then CORE_DIR="$PARENT_DIR/agenty_core"; fi
+ensure_repo "agentY-core" "https://github.com/szprivate/agentY-core.git" "$CORE_DIR" required
+[ -f "$CORE_DIR/pyproject.toml" ] || die "agentY-core looks incomplete at $CORE_DIR (no pyproject.toml). agentY's requirements.txt installs it editable via '-e ../agentY-core'."
 
 MCP_DIR="$PARENT_DIR/agentY-mcp"
 if [ "$SKIP_MCP" = "0" ]; then
@@ -757,7 +767,7 @@ header "Setup complete"
 echo
 plain "  Installed:" "$C_CYAN"
 plain "    - agentY        $PROJECT_ROOT"
-plain "    - agenty_core   $CORE_DIR  (editable dependency)"
+plain "    - agentY-core   $PARENT_DIR/agentY-core  (editable dependency)"
 [ "$SKIP_MCP" = "0" ] && [ -f "$MCP_DIR/requirements.txt" ] && plain "    - agentY-mcp    $MCP_DIR"
 [ -n "$RESOLVED_COMFY" ] && plain "    - sidebar node  $RESOLVED_COMFY/custom_nodes/agentY-comfyuiConnect"
 echo
