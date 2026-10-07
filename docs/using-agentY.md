@@ -40,9 +40,6 @@ Two ways to drive it:
 2. **Canvas hooks** — put **`agentY hook`** nodes on the graph and ask the agent to
    run it. See [The hook system](#the-hook-system).
 
-Everything is local: chat history is a SQLite file, results are staged into
-ComfyUI's `input` folder.
-
 ---
 
 ## Starting a session
@@ -644,7 +641,7 @@ false` loads everything up front.
 
 ## Token usage & cost
 
-**Viewers ▸ Token usage…** (or 📊 in the chat panel) shows tokens, cache hits and
+**Viewers ▸ Token usage…** (or `/costs`) shows tokens, cache hits and
 estimated cost per model, filterable by time and model. Prices come from the
 built-in table, overridden by the ones you enter under **Model pricing**.
 
