@@ -87,7 +87,7 @@ _MAX_CANVAS_DELETE = 25
 # user says "now add an upscaler", and the default - build a workflow, open it in
 # a tab - is what the rest of the prompt teaches.
 _OPEN_GRAPH_NOTE = (
-    "[OPEN GRAPH MODE] This conversation works IN the user's open graph. Keep working there for the rest of the conversation: anything new you build goes in with insert_workflow_into_canvas(workflow_path) (never a workflow in a tab of its own), and changes to what is on the canvas are made on the canvas - set_canvas_node_params (values), edit_canvas_graph (add nodes, wire, unwire), set_canvas_node_mode (bypass / mute / re-enable), delete_canvas_nodes (remove). You see and may edit the whole graph without a selection while this is on. Leave this mode only when the user asks for separate workflows or tabs again: then call work_in_open_graph(on=false)."
+    "[OPEN GRAPH MODE] This conversation works IN the user's open graph. Keep working there for the rest of the conversation: anything new you build goes in with insert_workflow_into_canvas(workflow_path) (never a workflow in a tab of its own), and changes to what is on the canvas are made on the canvas, never by rebuilding. run_workflow_now(workflow_path) on a workflow you inserted runs it as it is on the canvas at that moment, so: change the value on the canvas, then run again. Tools - set_canvas_node_params (values), edit_canvas_graph (add nodes, wire, unwire), set_canvas_node_mode (bypass / mute / re-enable), delete_canvas_nodes (remove). You see and may edit the whole graph without a selection while this is on. Leave this mode only when the user asks for separate workflows or tabs again: then call work_in_open_graph(on=false)."
 )
 
 # Rides back on a workflow that no template covered. A from-scratch build is made
@@ -1904,6 +1904,13 @@ class Pipeline:
             self._tag_run_outputs(_only)
             if self._dry_run:
                 return self._dry_run_one(workflow_path, _only)
+            # A workflow this conversation put into the open graph is run as it is
+            # on the canvas now. The file is what was inserted; every change since
+            # (a new size, another prompt) was made on the canvas, and running the
+            # file would render the old settings while the canvas shows the new.
+            workflow_path, _from_canvas = self._canvas_version_of(workflow_path)
+            if _from_canvas:
+                _push_progress("▶ Running it as it is on the canvas now (not the file it was built from).")
             base = self._session.current_output_paths
             before = len(base)
             brief = self._last_brainbriefing_json or "{}"
@@ -2230,6 +2237,10 @@ class Pipeline:
             # AgentSession.open_graph_mode) until the user asks otherwise.
             try:
                 self._session.open_graph_mode = True
+                # Which canvas nodes this file became: running the file later
+                # runs THOSE, as they then are (see _canvas_version_of).
+                self._session.inserted_workflows[str(Path(workflow_path).resolve())] = [
+                    str(n) for n in res["touched"] if n in res["graph"]]
             except Exception:  # noqa: BLE001
                 pass
             # The workflow is on the canvas now: running it must not open it again
@@ -2247,7 +2258,10 @@ class Pipeline:
                 "status": "applied", "nodes_added": n_add, "wires_set": n_wire,
                 "node_ids": {n: res["graph"][n]["class_type"] for n in res["touched"] if n in res["graph"]},
                 "message": "The workflow is in the user's open graph, fully wired; Ctrl+Z undoes it. "
-                           "To generate its result, call run_workflow_now(workflow_path). This "
+                           "To generate its result, call run_workflow_now(workflow_path): it runs "
+                           "these nodes as they are ON THE CANVAS at that moment, so change values "
+                           "there (set_canvas_node_params) and run again - never rebuild for a "
+                           "changed setting. This "
                            "conversation now keeps working in that graph: later additions go in the "
                            "same way and changes are made on the canvas, until the user asks for "
                            "separate workflows again (work_in_open_graph(on=false))."})
@@ -6085,6 +6099,41 @@ class Pipeline:
             return full_graph_visible()
         except Exception:  # noqa: BLE001 — never let settings break a turn
             return False
+
+    def _canvas_version_of(self, workflow_path: str) -> tuple:
+        """``(path to run, came_from_canvas)`` for *workflow_path*.
+
+        A workflow that was inserted into the user's open graph is written out
+        again from the canvas as it is in this turn - the nodes it became, plus
+        whatever now feeds them - and that file is what runs. Anything else, a
+        turn without a canvas, or a workflow whose nodes are all gone from the
+        graph that would run (deleted, bypassed, muted) is returned unchanged.
+        """
+        try:
+            key = str(Path(workflow_path).resolve())
+            ids = (getattr(self._session, "inserted_workflows", None) or {}).get(key)
+            graph = getattr(self, "_canvas_graph", None)
+            if not ids or not isinstance(graph, dict) or not graph:
+                return workflow_path, False
+            from src.utils import canvas_edit as _ce
+            now = _ce.subgraph(graph, ids)
+            if not now:
+                return workflow_path, False
+            src = Path(workflow_path)
+            out = src.with_name(src.stem + "_canvas.json")
+            out.write_text(json.dumps(now, indent=2), encoding="utf-8")
+            # Still the same workflow as far as the canvas is concerned: it is
+            # already there, so running it must not open it in a tab.
+            try:
+                from agenty_core.utils import turn_scope as _ts
+                _ts.current().slot("canvas.inserted_workflows", set).add(str(out.resolve()))
+            except Exception:  # noqa: BLE001
+                pass
+            return str(out), True
+        except Exception as exc:  # noqa: BLE001 - never worse than running the file
+            if getattr(self, "_verbose", False):
+                print(f"pipeline: could not take {workflow_path} from the canvas: {exc}")
+            return workflow_path, False
 
     def _open_graph_mode(self) -> bool:
         """Whether this conversation works in the user's open graph (see

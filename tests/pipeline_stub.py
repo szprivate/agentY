@@ -61,6 +61,7 @@ _BOUND = (
     "_canvas_rebuild_refusal",
     "_canvas_lease_refusal",
     "_open_graph_mode",
+    "_canvas_version_of",
     "_shown_outputs",
     "_prompt_slot_of",
     "_announce_prompt_version",
@@ -77,7 +78,10 @@ def pipeline_stub(**over):
         _canvas_base_prompt={"1": {"class_type": "KSampler", "inputs": {"seed": 1}}},
         _canvas_hooks=[],
         _verbose=False,
-        _session=SimpleNamespace(current_output_paths=[]),
+        # open_graph_mode decided (off), so a stub never reads this machine's own
+        # work_in_open_graph setting.
+        _session=SimpleNamespace(current_output_paths=[], open_graph_mode=False,
+                                 inserted_workflows={}, generated_images=[]),
         _last_brainbriefing_json="{}",
         _chain_output_paths=[],
         _hook_products={},

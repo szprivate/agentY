@@ -347,6 +347,24 @@ def plan(graph: dict, ops: list, object_info: dict) -> dict:
             "touched": list(dict.fromkeys(touched))}
 
 
+def subgraph(graph: dict, node_ids) -> dict:
+    """The nodes *node_ids* of an API-format graph and everything upstream of
+    them - what has to run for those nodes to run. Ids not in the graph (deleted,
+    bypassed or muted since) are left out; an empty dict when none remain."""
+    graph = graph if isinstance(graph, dict) else {}
+    keep: dict = {}
+    todo = [str(n) for n in (node_ids or []) if str(n) in graph]
+    while todo:
+        nid = todo.pop()
+        if nid in keep:
+            continue
+        keep[nid] = copy.deepcopy(graph[nid])
+        for value in (graph[nid].get("inputs") or {}).values():
+            if _is_link(value) and str(value[0]) in graph and str(value[0]) not in keep:
+                todo.append(str(value[0]))
+    return keep
+
+
 def ops_for_workflow(workflow: dict, prefix: str = "wf") -> list:
     """A built workflow (API format) as the ops that put it on a canvas, wired.
 

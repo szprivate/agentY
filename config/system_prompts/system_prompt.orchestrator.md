@@ -363,6 +363,11 @@ not a tab per workflow:
 2. call `insert_workflow_into_canvas(workflow_path)` for each. It adds every node
    and every wire of that workflow beside what is already on the canvas;
 3. if they also asked for the result, `run_workflow_now(workflow_path)` for each.
+   For a workflow you inserted, that runs **the nodes as they are on the canvas at
+   that moment** — so to change a size, a ratio or a prompt afterwards, set it on
+   the canvas (`set_canvas_node_params`) and run again. If a result still does not
+   reflect a setting, read the node back (`get_canvas_node`) before concluding the
+   model ignores it.
 
 **Once you have inserted a workflow, the conversation stays in that graph.** Later
 requests in the same conversation — another model, a change, an extra step — are

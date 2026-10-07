@@ -65,6 +65,11 @@ class AgentSession(BaseModel):
     # and the summarising of old turns. None = not decided in this conversation
     # yet: the `work_in_open_graph` setting says how a conversation starts.
     open_graph_mode: bool | None = None
+    # Workflows this conversation put into the user's open graph, as
+    # {workflow file: [the canvas node ids it became]}. Running such a workflow
+    # runs those nodes AS THEY ARE ON THE CANVAS NOW, not the file: after the
+    # insert the canvas is where it is changed, and the file knows nothing of it.
+    inserted_workflows: dict[str, list[str]] = Field(default_factory=dict)
     plan_awaiting_reply: bool = False  # a plan was put to the user for approval and they haven't answered yet; their next message opens the execution gate for one turn
     # A hook chain stopped at a `review` hook so the user can choose what goes on
     # to the next stage. Only the FLAG lives here — which hook, which collector

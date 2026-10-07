@@ -107,6 +107,8 @@ class TheTool(unittest.TestCase):
 
     def setUp(self):
         self.enterContext(mock.patch("src.utils.canvas_view.full_graph_visible", return_value=False))
+        # whatever this machine's own settings say about working in the open graph
+        self.enterContext(mock.patch("src.agent._load_settings", return_value={}))
         self.enterContext(mock.patch("src.utils.preflight._schema", side_effect=lambda c: SCHEMAS.get(c, {})))
         from src.utils.canvas_patch import clear
         clear()
@@ -167,6 +169,8 @@ class StayingInTheGraph(unittest.TestCase):
 
     def setUp(self):
         self.enterContext(mock.patch("src.utils.canvas_view.full_graph_visible", return_value=False))
+        # whatever this machine's own settings say about working in the open graph
+        self.enterContext(mock.patch("src.agent._load_settings", return_value={}))
         self.enterContext(mock.patch("src.utils.preflight._schema", side_effect=lambda c: SCHEMAS.get(c, {})))
         from src.utils.canvas_patch import clear
         clear()
@@ -245,10 +249,116 @@ class StayingInTheGraph(unittest.TestCase):
         self.assertIn("work_in_open_graph = false", text)
 
 
+class RunningWhatIsOnTheCanvas(unittest.TestCase):
+    """An inserted workflow runs as it is on the canvas NOW, not as the file was.
+
+    The run this is for: three models inserted, all rendered square; the agent set
+    16:9 on the canvas nodes, re-ran the three workflow FILES, got square again,
+    and concluded the models ignore the setting. The files had never been told.
+    """
+
+    def setUp(self):
+        self.enterContext(mock.patch("src.utils.canvas_view.full_graph_visible", return_value=False))
+        # whatever this machine's own settings say about working in the open graph
+        self.enterContext(mock.patch("src.agent._load_settings", return_value={}))
+        self.enterContext(mock.patch("src.utils.preflight._schema", side_effect=lambda c: SCHEMAS.get(c, {})))
+        from src.utils.canvas_patch import clear
+        clear()
+        self.addCleanup(clear)
+        token = turn_scope.enter(turn_scope.Scope("req", "thread"))
+        self.addCleanup(turn_scope.leave, token)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.path = Path(tmp.name) / "built.json"
+        self.path.write_text(json.dumps(BUILT), encoding="utf-8")
+        from src.utils.models import AgentSession
+        self.pipe = pipeline_stub(_canvas_graph=_graph(), _canvas_selection=[],
+                                  _session=AgentSession(session_id="thread"))
+        out = json.loads(asyncio.run(tools(self.pipe)["insert_workflow_into_canvas"](
+            workflow_path=str(self.path))))
+        self.ids = out["node_ids"]
+        self.sampler = next(i for i, c in self.ids.items() if c == "KSampler")
+
+    def _version(self):
+        path, from_canvas = self.pipe._canvas_version_of(str(self.path))
+        return json.loads(Path(path).read_text(encoding="utf-8")), from_canvas, path
+
+    def test_a_value_changed_on_the_canvas_is_what_runs(self):
+        self.pipe._canvas_graph[self.sampler]["inputs"]["steps"] = 33        # set on the canvas
+        graph, from_canvas, path = self._version()
+        self.assertTrue(from_canvas)
+        self.assertNotEqual(path, str(self.path), "the built file itself is left as it was")
+        self.assertEqual(graph[self.sampler]["inputs"]["steps"], 33)
+        self.assertEqual(json.loads(self.path.read_text(encoding="utf-8"))["13"]["inputs"]["steps"], 20)
+
+    def test_only_that_workflow_runs_not_the_users_own_nodes(self):
+        graph, _from_canvas, _path = self._version()
+        self.assertEqual(sorted(graph), sorted(self.ids))
+        self.assertTrue(set(graph).isdisjoint(_graph()))
+
+    def test_what_was_wired_in_front_of_it_since_comes_along(self):
+        """A node the user (or the agent) put upstream is part of what runs."""
+        loader = next(i for i, c in self.ids.items() if c == "CheckpointLoaderSimple")
+        self.pipe._canvas_graph[self.sampler]["inputs"]["model"] = ["1", 0]   # the user's own loader
+        graph, _from_canvas, _path = self._version()
+        self.assertIn("1", graph)
+        self.assertIn(loader, graph, "still feeds the text encoder and the decode")
+
+    def test_running_it_does_not_open_a_tab_for_the_canvas_version_either(self):
+        from src import executor
+        _graph_, _from_canvas, path = self._version()
+        self.assertTrue(executor._already_on_canvas(path))
+
+    def test_it_is_remembered_with_the_conversation(self):
+        from src.utils.models import AgentSession
+        restored = AgentSession(**self.pipe._session.model_dump())
+        self.assertEqual(sorted(restored.inserted_workflows[str(self.path.resolve())]), sorted(self.ids))
+
+    def test_a_workflow_that_was_never_inserted_runs_as_its_file(self):
+        other = self.path.with_name("other.json")
+        other.write_text(json.dumps(BUILT), encoding="utf-8")
+        self.assertEqual(self.pipe._canvas_version_of(str(other)), (str(other), False))
+
+    def test_without_a_canvas_this_turn_the_file_runs(self):
+        self.pipe._canvas_graph = {}
+        self.assertEqual(self.pipe._canvas_version_of(str(self.path)), (str(self.path), False))
+
+    def test_nodes_that_are_gone_from_the_graph_fall_back_to_the_file(self):
+        for nid in self.ids:
+            self.pipe._canvas_graph.pop(nid, None)
+        self.assertEqual(self.pipe._canvas_version_of(str(self.path)), (str(self.path), False))
+
+    def test_run_workflow_now_goes_through_it(self):
+        import inspect
+        from src import pipeline
+        body = inspect.getsource(pipeline).split("async def run_workflow_now(", 1)[1].split("@_tool", 1)[0]
+        self.assertIn("workflow_path, _from_canvas = self._canvas_version_of(workflow_path)", body)
+        self.assertLess(body.index("_canvas_version_of"), body.index("_execute_workflow("))
+
+
+class Subgraph(unittest.TestCase):
+
+    def test_the_named_nodes_and_everything_upstream(self):
+        got = ce.subgraph(_graph(), ["6"])
+        self.assertEqual(sorted(got), ["1", "2", "4", "5", "6"])
+        self.assertNotIn("7", got, "downstream of it is not needed for it to run")
+
+    def test_unknown_ids_are_left_out_and_nothing_is_an_empty_graph(self):
+        self.assertEqual(sorted(ce.subgraph(_graph(), ["4", "99"])), ["4"])
+        self.assertEqual(ce.subgraph(_graph(), ["99"]), {})
+        self.assertEqual(ce.subgraph(None, ["1"]), {})
+
+    def test_it_is_a_copy(self):
+        graph = _graph()
+        ce.subgraph(graph, ["5"])["5"]["inputs"]["steps"] = 1
+        self.assertEqual(graph["5"]["inputs"]["steps"], 20)
+
+
 class BypassAndMute(unittest.TestCase):
 
     def setUp(self):
         self.enterContext(mock.patch("src.utils.canvas_view.full_graph_visible", return_value=True))
+        self.enterContext(mock.patch("src.agent._load_settings", return_value={}))
         from src.utils.canvas_patch import clear
         clear()
         self.addCleanup(clear)
