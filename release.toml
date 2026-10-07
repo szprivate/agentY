@@ -1,0 +1,19 @@
+# The set of versions that make up this release of agentY. Written by
+# scripts/make_release.py - do not edit by hand.
+#
+# Each sibling repository carries the same tag, and its `stable` branch points
+# at the commit named here.
+version = "1.0.0"
+date = "2026-10-07"
+
+[repos."agentY-core"]
+tag = "v1.0.0"
+commit = "dbb93233c70dbb0766159ac64fa9a6cc87880ae5"
+
+[repos."agentY-comfyuiConnect"]
+tag = "v1.0.0"
+commit = "b3df78a97e85f004f7257d7bb15447ec26f64db6"
+
+[repos."agentY-mcp"]
+tag = "v1.0.0"
+commit = "224db7351de2a42679d7a74e0f3232a24908d180"
