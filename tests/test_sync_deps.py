@@ -99,8 +99,10 @@ class MainTest(unittest.TestCase):
         _, calls, out = self._run(["cv2"])
         self.assertEqual(len(calls), 1)
         cmd, cwd = calls[0]
+        # ...against the release's pinned versions, when this checkout has them
+        lock = ["-c", sd.LOCK_NAME] if (sd.ROOT / sd.LOCK_NAME).is_file() else []
         self.assertEqual(cmd, ["uv", "pip", "install", "--python", sys.executable,
-                               "-r", "requirements.txt"])
+                               "-r", "requirements.txt", *lock])
         self.assertEqual(cwd, str(sd.ROOT), "-e ../agentY-core is relative to agentY")
         self.assertIn("missing: cv2", out)
         self.assertEqual(self.stamp.read_text().strip(), "fp-now")
