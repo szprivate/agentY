@@ -6,6 +6,8 @@ the one a workflow was built with when it can take the same connection; a chosen
 loader is what results are dropped onto the canvas with.
 """
 
+import asyncio
+import json
 import tomllib
 import unittest
 from pathlib import Path
@@ -31,8 +33,13 @@ INFO = {
                              {"audio": ["AUDIO", {}]}, output_node=True),
     "bEpicSendToViewer": _node({"input": ["*", {}], "tab_name": ["STRING", {"default": "viewer"}],
                                 "save_to_output": ["BOOLEAN", {"default": False}],
-                                "file_format": [["png", "jpg", "mp4", "exr"], {"default": "png"}],
-                                "filename_prefix": ["STRING", {"default": "viewer"}]},
+                                "file_format": [["png", "jpg", "mp4", "mov", "exr", "glb"], {"default": "png"}],
+                                "fps": ["FLOAT", {"default": 24.0, "bepic_video_formats": ["mp4", "mov"],
+                                                  "bepic_model_formats": ["glb"]}],
+                                "filename_prefix": ["STRING", {"default": "viewer"}],
+                                "is_sequence": ["BOOLEAN", {"default": False}],
+                                "first_frame_number": ["INT", {"default": 1001}],
+                                "padding": ["INT", {"default": 4}]},
                                output=["*"], output_node=True, display_name="Send to Image Viewer"),
     "SaveVideo": _node({"video": ["VIDEO", {}], "filename_prefix": ["STRING", {"default": "video/ComfyUI"}]},
                        output_node=True),
@@ -268,6 +275,164 @@ class ThreeD(unittest.TestCase):
                 self.assertEqual(srv._stage_into_comfy_input(str(src)), "chair.glb")
 
 
+class HowAClipIsSaved(unittest.TestCase):
+    """A video file or an image sequence: the setting decides, the workflow's
+    frame rate travels, and what the agent sets for one run is not undone."""
+
+    def setUp(self):
+        self.enterContext(mock.patch.object(mn, "_default_inputs", _defaults))
+
+    def _frames(self, **inputs):
+        return _graph("VHS_VideoCombine", frame_rate=16, **inputs)
+
+    def _video(self):
+        return {"8": {"class_type": "VideoGen", "inputs": {}},
+                "9": {"class_type": "SaveVideo", "inputs": {"video": ["8", 0], "filename_prefix": "agent/videos/clip"}}}
+
+    def test_which_formats_a_node_can_write_a_sequence_in(self):
+        self.assertEqual(mn.sequence_formats(INFO["bEpicSendToViewer"]), ["png", "jpg", "exr"])
+        self.assertEqual(mn.sequence_formats(INFO["SaveVideo"]), [])
+        self.assertEqual(mn.choices(INFO)["video"]["sequence_formats"],
+                         {"bEpicSendToViewer": ["png", "jpg", "exr"]})
+
+    def test_the_workflows_frame_rate_goes_with_it(self):
+        graph = self._frames()
+        with _settings(video_save="bEpicSendToViewer"):
+            _apply(graph)
+        self.assertEqual(graph["9"]["inputs"]["fps"], 16.0)
+
+    def test_a_video_file_by_default_whichever_wire_it_came_on(self):
+        frames, video = self._frames(), self._video()
+        with _settings(video_save="bEpicSendToViewer"):
+            _apply(frames), _apply(video)
+        for graph in (frames, video):
+            self.assertEqual(graph["9"]["inputs"]["file_format"], "mp4")
+            self.assertIs(graph["9"]["inputs"]["is_sequence"], False)
+        self.assertEqual(video["9"]["inputs"]["input"], ["8", 0])
+
+    def test_an_image_sequence_when_that_is_the_setting(self):
+        frames, video = self._frames(), self._video()
+        with _settings(video_save="bEpicSendToViewer", video_as="sequence", sequence_format="exr"):
+            _apply(frames), _apply(video)
+        for graph in (frames, video):
+            node = graph["9"]["inputs"]
+            self.assertEqual((node["file_format"], node["is_sequence"]), ("exr", True))
+            self.assertEqual((node["first_frame_number"], node["padding"]), (1001, 4))
+
+    def test_a_format_the_node_cannot_write_falls_back_to_png(self):
+        graph = self._frames()
+        with _settings(video_save="bEpicSendToViewer", video_as="sequence", sequence_format="dpx"):
+            _apply(graph)
+        self.assertEqual(graph["9"]["inputs"]["file_format"], "png")
+
+    def test_a_node_that_cannot_write_a_sequence_is_left_writing_video(self):
+        graph = self._video()
+        with _settings(video_save="SaveVideo", video_as="sequence"):
+            self.assertEqual(_apply(graph), {})
+        self.assertNotIn("is_sequence", graph["9"]["inputs"])
+
+    def test_an_image_saver_is_not_touched_by_the_video_setting(self):
+        graph = _graph()
+        with _settings(image_save="bEpicSendToViewer", video_as="sequence", sequence_format="exr"):
+            _apply(graph)
+        self.assertEqual(graph["9"]["inputs"]["file_format"], "png")
+        self.assertIs(graph["9"]["inputs"]["is_sequence"], False)
+
+    def test_what_the_agent_set_for_one_run_survives_the_run(self):
+        """Built with the chosen node, changed by the agent, then submitted."""
+        graph = self._frames()
+        with _settings(video_save="bEpicSendToViewer"):
+            _apply(graph)                                   # at build
+            graph["9"]["inputs"].update(file_format="exr", is_sequence=True, first_frame_number=1)
+            self.assertEqual(_apply(graph), {})             # at submission
+        self.assertEqual(graph["9"]["inputs"]["file_format"], "exr")
+        self.assertEqual(graph["9"]["inputs"]["first_frame_number"], 1)
+
+    def test_the_agent_is_told_what_it_can_set(self):
+        graph = self._frames()
+        with _settings(video_save="bEpicSendToViewer"):
+            _apply(graph)
+            (saver,) = mn.describe_savers(graph, schema_of=lambda c: INFO.get(c, {}))
+        self.assertEqual((saver["node_id"], saver["node"]), ("9", "bEpicSendToViewer"))
+        self.assertEqual(saver["values"]["fps"], 16.0)
+        self.assertEqual(saver["options"]["file_format"], ["png", "jpg", "mp4", "mov", "exr", "glb"])
+        self.assertNotIn("input", saver["values"], "a wire is not a value")
+        with _settings():
+            self.assertEqual(mn.describe_savers(graph, schema_of=lambda c: INFO.get(c, {})), [])
+
+
+class TheAgentsOwnTools(unittest.TestCase):
+    """The node tools the agent already has, pointed at a built workflow."""
+
+    def setUp(self):
+        import tempfile
+        from agenty_core.utils import turn_scope
+        token = turn_scope.enter(turn_scope.Scope("req", "thread"))
+        self.addCleanup(turn_scope.leave, token)
+        self.enterContext(mock.patch.object(mn, "_default_inputs", _defaults))
+        self.enterContext(mock.patch.object(mn, "_schema", lambda c: INFO.get(c, {})))
+        self.enterContext(mock.patch("src.utils.preflight._schema", side_effect=lambda c: INFO.get(c, {})))
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.path = Path(tmp.name) / "clip.json"
+        self.path.write_text(json.dumps(_graph("VHS_VideoCombine", frame_rate=16)), encoding="utf-8")
+
+    def _tool(self, name, **kw):
+        from pipeline_stub import pipeline_stub, tools
+        return json.loads(asyncio.run(tools(pipeline_stub())[name](**kw)))
+
+    def _saved(self):
+        return json.loads(self.path.read_text(encoding="utf-8"))["9"]
+
+    def test_a_built_workflow_comes_back_with_the_chosen_saver_and_its_values(self):
+        from pipeline_stub import pipeline_stub
+        result = {"status": "ready", "workflow_path": str(self.path)}
+        with _settings(video_save="bEpicSendToViewer"):
+            pipeline_stub()._apply_chosen_savers(result)
+        self.assertEqual(self._saved()["class_type"], "bEpicSendToViewer")
+        (saver,) = result["save_nodes"]
+        self.assertEqual((saver["node_id"], saver["values"]["file_format"]), ("9", "mp4"))
+        self.assertIn("set_canvas_node_params(node_id, {...}, workflow_path=", result["save_note"])
+
+    def test_nothing_chosen_nothing_added(self):
+        from pipeline_stub import pipeline_stub
+        result = {"status": "ready", "workflow_path": str(self.path)}
+        with _settings():
+            pipeline_stub()._apply_chosen_savers(result)
+        self.assertNotIn("save_nodes", result)
+        self.assertEqual(self._saved()["class_type"], "VHS_VideoCombine")
+
+    def test_save_this_one_as_an_exr_sequence_from_frame_1(self):
+        with _settings(video_save="bEpicSendToViewer"):
+            from pipeline_stub import pipeline_stub
+            pipeline_stub()._apply_chosen_savers({"workflow_path": str(self.path)})
+            seen = self._tool("get_canvas_node", node_id="9", workflow_path=str(self.path))
+            self.assertEqual(seen["values"]["file_format"], "mp4")
+            out = self._tool("set_canvas_node_params", node_id="9", workflow_path=str(self.path),
+                             params={"file_format": "exr", "is_sequence": True, "first_frame_number": 1})
+        self.assertEqual(out["status"], "applied", out)
+        node = self._saved()["inputs"]
+        self.assertEqual((node["file_format"], node["is_sequence"], node["first_frame_number"]), ("exr", True, 1))
+        self.assertEqual(node["fps"], 16.0, "what it did not name stays")
+
+    def test_a_value_the_node_does_not_take_is_refused_and_nothing_is_written(self):
+        before = self.path.read_text(encoding="utf-8")
+        out = self._tool("set_canvas_node_params", node_id="9", workflow_path=str(self.path),
+                         params={"file_format": "exr"})
+        self.assertEqual(out["status"], "rejected", out)
+        out = self._tool("set_canvas_node_params", node_id="9", workflow_path=str(self.path),
+                         params={"images": "x.png"})
+        self.assertIn("wired from another node", out["errors"][0])
+        self.assertEqual(self.path.read_text(encoding="utf-8"), before)
+
+    def test_a_node_or_a_file_that_is_not_there_is_said(self):
+        out = self._tool("get_canvas_node", node_id="77", workflow_path=str(self.path))
+        self.assertIn("no node '77'", out["error"])
+        out = self._tool("set_canvas_node_params", node_id="9", params={"fps": 12},
+                         workflow_path=str(self.path) + ".missing")
+        self.assertIn("cannot read", out["error"])
+
+
 class TheLoader(unittest.TestCase):
 
     def test_the_chosen_loader_is_tried_first_and_the_rest_stay_as_fallback(self):
@@ -291,7 +456,9 @@ class WhereItIsWired(unittest.TestCase):
 
     def test_the_settings_start_on_automatic(self):
         defaults = tomllib.loads((ROOT / "config" / "settings.default.toml").read_text(encoding="utf-8"))
-        self.assertEqual(defaults["media_nodes"], {f"{k}_{r}": "" for k in mn.KINDS for r in ("load", "save")})
+        want = {f"{k}_{r}": "" for k in mn.KINDS for r in ("load", "save")}
+        want.update(video_as="video", sequence_format="png")
+        self.assertEqual(defaults["media_nodes"], want)
         self.assertIn("update_channel", defaults, "the table must not swallow the settings after it")
 
     def test_every_submission_and_every_canvas_insert_passes_through(self):

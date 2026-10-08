@@ -675,6 +675,13 @@ including bEpic's **Send to Image Viewer**.
   first loader installed (the path loaders of Video Helper Suite first).
 - **Audio and 3D results** are only placed on the canvas once you choose a loader
   for them; on Automatic they are named in the chat.
+- **Videos — save as** (with *Send to Image Viewer* as the video save node): a
+  video file, or an **image sequence** in the format you pick, named
+  `prefix.1001.exr`. The workflow's frame rate is carried over.
+- **For one request, just say it:** *"save this one as an EXR sequence starting at
+  frame 1"*, *"write it at 16 fps"*. The agent sees the save node and its options
+  in the workflow it built and sets them before running; what you ask for beats
+  the setting.
 - **3D:** a save node that takes files only (*Save 3D (Advanced)*) is not put where
   a mesh was being saved; *Save 3D Model* and *Send to Image Viewer* take both.
 

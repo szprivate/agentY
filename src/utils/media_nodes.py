@@ -146,12 +146,16 @@ def choices(object_info: dict | None = None) -> dict:
             logger.debug("media nodes: ComfyUI could not be asked (%s)", exc)
             return {}
     out = {k: {"load": [], "save": []} for k in KINDS}
+    # save node -> the still formats it can write a clip's frames in
+    out["video"]["sequence_formats"] = {}
     for cls, schema in sorted((object_info or {}).items()):
         if not isinstance(schema, dict):
             continue
         entry = {"id": cls, "label": _label(cls, schema)}
         for kind in saver_kinds(cls, schema):
             out[kind]["save"].append(entry)
+            if kind == "video" and sequence_formats(schema):
+                out["video"]["sequence_formats"][cls] = sequence_formats(schema)
         for kind in loader_kinds(cls, schema):
             out[kind]["load"].append(entry)
     if object_info and any(v["load"] or v["save"] for v in out.values()):
@@ -243,7 +247,6 @@ def _swap(node: dict, kind: str, new_class: str, old_schema: dict, new_schema: d
         target = next((n for n, t in new_types.items() if _accepts(t) & _WILD), None)
     if target is None:
         return None                    # the chosen node cannot take this wire
-    wire_type = next(iter(need)) if len(need) == 1 else ""
     new_inputs = _default_inputs(new_class)
     new_inputs[target] = list(inputs[wire_name])
     # Same file name, under whatever the new node calls it.
@@ -259,10 +262,15 @@ def _swap(node: dict, kind: str, new_class: str, old_schema: dict, new_schema: d
     # A node that only shows unless told to save must be told to save.
     if new_types.get("save_to_output") in ("BOOLEAN", "BOOL"):
         new_inputs["save_to_output"] = True
-    if kind == "video" and wire_type == "IMAGE" and new_types.get("file_format") == "COMBO":
-        options = (_required(new_schema).get("file_format") or [[]])[0]
-        if isinstance(options, (list, tuple)) and "mp4" in options:
-            new_inputs["file_format"] = "mp4"
+    # The frame rate the workflow was saving at, where the new node has one to set
+    # (a VIDEO wire carries its own).
+    if new_types.get("fps") in ("FLOAT", "INT"):
+        rate = next((inputs[n] for n in ("frame_rate", "fps")
+                     if isinstance(inputs.get(n), (int, float)) and not isinstance(inputs.get(n), bool)), None)
+        if rate is not None:
+            new_inputs["fps"] = float(rate)
+    if kind == "video":
+        new_inputs.update(video_format_inputs(new_schema))
     swapped = {**node, "class_type": new_class, "inputs": new_inputs}
     meta = dict(swapped.get("_meta") or {})
     meta.pop("title", None)            # the old node's name would now be a lie
@@ -271,6 +279,74 @@ def _swap(node: dict, kind: str, new_class: str, old_schema: dict, new_schema: d
     else:
         swapped.pop("_meta", None)
     return swapped
+
+
+_VIDEO_FORMATS = {"mp4", "mov", "webm", "mkv", "avi", "gif", "m4v"}
+VIDEO_AS = ("video", "sequence")
+
+
+def _format_options(schema: dict) -> list:
+    options = (_required(schema).get("file_format") or [[]])[0]
+    return [str(o) for o in options] if isinstance(options, (list, tuple)) else []
+
+
+def sequence_formats(schema: dict) -> list:
+    """The still formats a saver can write a clip's frames in, or ``[]`` when it
+    cannot write an image sequence at all (it needs a format menu and a
+    ``is_sequence`` switch - bEpicSendToViewer has both)."""
+    types = _types(schema)
+    if types.get("file_format") != "COMBO" or types.get("is_sequence") not in ("BOOLEAN", "BOOL"):
+        return []
+    meta = (_required(schema).get("fps") or [None, {}])
+    meta = meta[1] if len(meta) > 1 and isinstance(meta[1], dict) else {}
+    not_still = {str(f).lower() for f in (meta.get("bepic_video_formats") or [])} | _VIDEO_FORMATS \
+        | {str(f).lower() for f in (meta.get("bepic_model_formats") or [])} \
+        | {"glb", "gltf", "obj", "ply", "stl", "usd", "usda", "usdc", "usdz", "fbx"}
+    return [f for f in _format_options(schema) if f.lower() not in not_still]
+
+
+def video_as() -> tuple[str, str]:
+    """Settings ``media_nodes.video_as`` and ``.sequence_format``: whether a clip
+    is saved as a video file or as an image sequence, and in which format."""
+    try:
+        from src.agent import _load_settings
+        chosen = (_load_settings() or {}).get("media_nodes") or {}
+    except Exception:  # noqa: BLE001
+        chosen = {}
+    mode = str(chosen.get("video_as") or "video").strip().lower()
+    return (mode if mode in VIDEO_AS else "video"), str(chosen.get("sequence_format") or "").strip().lower()
+
+
+def video_format_inputs(schema: dict) -> dict:
+    """What to set on a saver with a format menu so a clip is saved as chosen."""
+    options = _format_options(schema)
+    if not options:
+        return {}
+    mode, fmt = video_as()
+    stills = sequence_formats(schema)
+    if mode == "sequence" and stills:
+        return {"file_format": fmt if fmt in stills else ("png" if "png" in stills else stills[0]),
+                "is_sequence": True}
+    return {"file_format": "mp4"} if "mp4" in options else {}
+
+
+def describe_savers(graph: dict, schema_of=None) -> list:
+    """The chosen save nodes in *graph* and what can be set on them, for the
+    agent: ``[{node_id, node, kind, values, options}]``."""
+    out = []
+    wanted = {preferred(k, "save"): k for k in KINDS if preferred(k, "save")}
+    schema_of = schema_of or _schema
+    for nid, node in (graph or {}).items():
+        cls = str((node or {}).get("class_type") or "") if isinstance(node, dict) else ""
+        if cls not in wanted:
+            continue
+        schema = schema_of(cls) or {}
+        values = {k: v for k, v in (node.get("inputs") or {}).items() if not isinstance(v, list)}
+        options = {name: [str(o) for o in spec[0]] for name, spec in _required(schema).items()
+                   if isinstance(spec, (list, tuple)) and spec and isinstance(spec[0], (list, tuple))
+                   and name in values}
+        out.append({"node_id": str(nid), "node": cls, "values": values, "options": options})
+    return out
 
 
 def apply_savers(graph: dict, schema_of=None) -> dict:

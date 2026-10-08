@@ -67,6 +67,9 @@ _BOUND = (
     "_announce_prompt_version",
     "_note_loop_write",
     "_hooks_into_canvas",
+    "_apply_chosen_savers",
+    "_built_workflow",
+    "_set_built_node_params",
     "_subgraph_min_nodes",
 )
 

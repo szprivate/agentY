@@ -1264,6 +1264,7 @@ class Pipeline:
             result = await self._enforce_model_family(result, request)
             _mark_from_scratch(result, briefing)
             self._fit_requested_shape(result, request)
+            self._apply_chosen_savers(result)
             self._attach_built_summary(result)
             return json.dumps(result)
 
@@ -2709,8 +2710,12 @@ class Pipeline:
             return json.dumps(out)
 
         @_tool
-        async def get_canvas_node(node_id: str) -> str:
+        async def get_canvas_node(node_id: str, workflow_path: str = "") -> str:
             """Read one node on the open canvas EXACTLY, with nothing truncated.
+
+            With ``workflow_path`` it reads a node of a workflow you built
+            instead (a file from ``prepare_workflow``) - e.g. its save node,
+            listed under ``save_nodes`` in that result.
 
             The ``[CANVAS GRAPH]`` block lists every node with its values
             shortened to fit on a line; anything ending in `…` is cut. Call this
@@ -2723,8 +2728,17 @@ class Pipeline:
             Args:
                 node_id: The id of any node on the canvas, from the
                     ``[CANVAS GRAPH]`` or ``[CANVAS SELECTION]`` block.
+                workflow_path: A built workflow file to read the node from,
+                    instead of the canvas.
             """
             from src.utils.canvas_view import node_detail
+            if str(workflow_path or "").strip():
+                graph, err = self._built_workflow(workflow_path)
+                found = node_detail(graph, node_id) if graph is not None else None
+                if found is None:
+                    return json.dumps({"error": err or f"that workflow has no node '{node_id}'.",
+                                       "node_ids": sorted(graph or {})[:60]})
+                return json.dumps(found)
             found = None
             if self._canvas_full_graph():
                 found = node_detail(getattr(self, "_canvas_graph", None), node_id)
@@ -2752,8 +2766,16 @@ class Pipeline:
             return json.dumps(found)
 
         @_tool
-        async def set_canvas_node_params(node_id: str, params: dict) -> str:
+        async def set_canvas_node_params(node_id: str, params: dict,
+                                         workflow_path: str = "") -> str:
             """Write parameter values onto ANY node on the open ComfyUI canvas.
+
+            With ``workflow_path`` the values are written into a workflow you
+            built instead (a file from ``prepare_workflow``), before you run it.
+            This is how a request about HOW a result is saved is honoured -
+            "as an EXR sequence starting at 1001", "at 16 fps": set them on the
+            workflow's save node (``save_nodes`` in the prepare_workflow result
+            lists it, with its current values and the options of its menus).
 
             Use when the user asks you to change a value — "rewrite this prompt",
             "set steps to 30", "bump the CFG". The node does **not** have to be
@@ -2773,7 +2795,11 @@ class Pipeline:
                     ``{"text": "a rainy neon street"}`` or ``{"steps": 30, "cfg": 6.5}``.
                     Only include the widgets you are changing. Wired inputs are
                     links, not values, and cannot be set here.
+                workflow_path: A built workflow file to change the node in,
+                    instead of the canvas.
             """
+            if str(workflow_path or "").strip():
+                return self._set_built_node_params(workflow_path, node_id, params)
             _held = self._canvas_lease_refusal()
             if _held:
                 return _held
@@ -6473,6 +6499,89 @@ class Pipeline:
             if getattr(self, "_verbose", False):
                 print(f"pipeline: could not take {workflow_path} from the canvas: {exc}")
             return workflow_path, False
+
+    def _apply_chosen_savers(self, result: dict) -> None:
+        """Put the save nodes chosen in Settings into a freshly built workflow,
+        and tell the caller what can be set on them (``save_nodes``).
+
+        Done at build time so the workflow the agent sees is the one that runs:
+        values it then sets on the save node stay, because the executor's own
+        swap finds the chosen node already there and leaves it alone.
+        """
+        try:
+            path = str((result or {}).get("workflow_path") or "")
+            if not path or not Path(path).exists():
+                return
+            from src.utils import media_nodes as _mn
+            graph = json.loads(Path(path).read_text(encoding="utf-8"))
+            if _mn.apply_savers(graph):
+                Path(path).write_text(json.dumps(graph, indent=2), encoding="utf-8")
+            savers = _mn.describe_savers(graph)
+            if savers:
+                result["save_nodes"] = savers
+                result["save_note"] = (
+                    "The save node chosen in Settings is in this workflow. Its values above are "
+                    "how the result will be saved. When the request says how to save it (an "
+                    "image sequence, a format, a frame rate, a start frame), set that on the "
+                    "save node before running: set_canvas_node_params(node_id, {...}, "
+                    "workflow_path=<this workflow>). Otherwise leave it as it is.")
+        except Exception as exc:  # noqa: BLE001 - a preference must never cost a build
+            if self._verbose:
+                print(f"pipeline: could not apply the chosen save nodes ({exc})")
+
+    @staticmethod
+    def _built_workflow(workflow_path: str) -> tuple:
+        """``(graph, error)`` for a built workflow file in API format."""
+        try:
+            path = Path(str(workflow_path).strip())
+            graph = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            return None, f"cannot read {workflow_path}: {exc}"
+        if not isinstance(graph, dict) or "nodes" in graph:
+            return None, "that file is not a built workflow (API format)."
+        return graph, ""
+
+    def _set_built_node_params(self, workflow_path: str, node_id: str, params: dict) -> str:
+        """set_canvas_node_params for a node of a built workflow file."""
+        graph, err = self._built_workflow(workflow_path)
+        if graph is None:
+            return json.dumps({"error": err})
+        node = graph.get(str(node_id))
+        if not isinstance(node, dict):
+            return json.dumps({"error": f"that workflow has no node '{node_id}'.",
+                               "node_ids": sorted(graph)[:60]})
+        if not isinstance(params, dict) or not params:
+            return json.dumps({"error": "params must be a non-empty mapping of widget -> value."})
+        inputs = node.setdefault("inputs", {})
+        wired = [k for k in params if isinstance(inputs.get(k), list)]
+        if wired:
+            return json.dumps({"status": "rejected", "errors": [
+                f"{k} is wired from another node and cannot be set as a value" for k in wired]})
+        from src.utils import canvas_edit as _ce
+        schema = _CanvasSchemas().get(node.get("class_type"))
+        unknown = []
+        if schema:
+            declared = {**((schema.get("input") or {}).get("required") or {}),
+                        **((schema.get("input") or {}).get("optional") or {})}
+            unknown = [k for k in params if k not in declared and k not in inputs]
+            if unknown:
+                return json.dumps({"status": "rejected", "errors": [
+                    f"{node.get('class_type')} has no input '{k}'" for k in unknown],
+                    "inputs": sorted(declared)})
+            widgets = {k: v for k, v in inputs.items() if not isinstance(v, list)}
+            params, wrong = _ce.coerce_params(schema, params, widgets)
+            if wrong:
+                return json.dumps({"status": "rejected", "node_id": str(node_id), "errors": wrong,
+                                   "note": "Nothing was changed. Use one of the options."})
+        inputs.update(params)
+        Path(str(workflow_path).strip()).write_text(json.dumps(graph, indent=2), encoding="utf-8")
+        on_canvas = bool(self._session.inserted_workflows.get(str(Path(str(workflow_path).strip()).resolve())))
+        out = {"status": "applied", "node_id": str(node_id), "node": node.get("class_type"),
+               "changed": params, "in": "the workflow file"}
+        if on_canvas:
+            out["warning"] = ("This workflow is already on the canvas, and run_workflow_now runs the "
+                              "canvas nodes: set the same values there too (without workflow_path).")
+        return json.dumps(out)
 
     def _hooks_into_canvas(self) -> bool:
         """Setting ``hooks_into_canvas``: a hook run's workflows go into the open graph."""

@@ -200,6 +200,11 @@ audio_load = ""
 audio_save = ""
 model_load = ""
 model_save = ""
+# How a clip is saved when the chosen video save node can do both (bEpic's Send
+# to Image Viewer): "video" = a video file (mp4), "sequence" = one image per
+# frame, named prefix.1001.<ext>, in sequence_format.
+video_as = "video"
+sequence_format = "png"
 
 # Who may talk to the agent host, and how long an API key may sit unrotated.
 #
