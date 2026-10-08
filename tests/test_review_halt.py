@@ -215,17 +215,21 @@ class NoPromptTest(unittest.TestCase):
         block = self._one(directive="which two read best as a wide?")
         self.assertIn('put to the user: "which two read best as a wide?"', block)
 
-    def test_the_title_beats_a_leftover_in_the_hidden_box(self):
-        """Otherwise retitling the node to fix the question would do nothing.
+    def test_the_notes_box_is_the_question_ahead_of_the_title(self):
+        """The review node shows its `notes` box, and that is where the question goes.
 
-        The box cannot be opened on a review hook any more, so text still in it
-        is text the user cannot edit. If that outranked the title, the only
-        gesture left to them would silently have no effect.
+        It used to be hidden on a review hook, so the title had to win over
+        whatever was left in it. Now it is the visible, editable place for the
+        question, and the title only names the node.
         """
-        block = self._one(directive="upscale 2x and add film grain",
-                          title="pick two for the video")
+        block = self._one(directive="which two read best as a wide?",
+                          title="Reference pick")
+        self.assertIn('put to the user: "which two read best as a wide?"', block)
+        self.assertNotIn("its title is the question", block)
+
+    def test_with_nothing_in_the_box_the_title_still_asks(self):
+        block = self._one(title="pick two for the video")
         self.assertIn("its title is the question", block)
-        self.assertNotIn("upscale 2x", block)
 
     def test_the_question_is_not_printed_twice(self):
         block = self._one(title="pick two for the video")

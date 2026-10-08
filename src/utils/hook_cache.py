@@ -212,7 +212,7 @@ def _hook_identity(hook: dict) -> dict:
     ]
     return {
         "directive": str(hook.get("directive") or "").strip(),
-        "purpose": str(hook.get("purpose") or "inline_parameter"),
+        "purpose": str(hook.get("purpose") or "set_parameter"),
         "anchors": sorted(anchors, key=lambda a: (a["node_id"], str(a["to_input"]))),
         "targets": sorted(targets, key=lambda t: (t["node_id"], str(t["to_input"]))),
         "prev_hook_ids": sorted(str(p) for p in (hook.get("prev_hook_ids") or [])),

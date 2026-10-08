@@ -27,7 +27,26 @@ from src.utils.media_loaders import value_for as loader_value
 _HOOK_CLASS = "AgentYHook"
 # The flow nodes (src/utils/hook_flow.py) are hooks as far as the graph goes:
 # inert on a plain Queue, taken out of it before the agent runs anything.
-_HOOK_CLASSES = {_HOOK_CLASS, "AgentYLoopStart", "AgentYLoopBreak"}
+_REVIEW_CLASS = "AgentYReview"
+_HOOK_CLASSES = {_HOOK_CLASS, _REVIEW_CLASS, "AgentYLoopStart", "AgentYLoopBreak"}
+
+
+def strip_exec_links(prompt: dict | None) -> dict | None:
+    """Take the execution wire out of a captured graph, in place.
+
+    The wire (an ``exec`` input on a hook, review or loop node) is ORDER, and the
+    frontend reports it as such with the stages. In the graph it would be read as
+    data: everything here that asks "what does this stage touch" follows a node's
+    inputs and consumers, and an exec wire joins every stage of a chain to every
+    other - so a run of one stage would drag the rest of the canvas along. The
+    panel already removes it; this is for a graph that arrives by another road.
+    """
+    if not isinstance(prompt, dict):
+        return prompt
+    for node in prompt.values():
+        if isinstance(node, dict) and node.get("class_type") in _HOOK_CLASSES:
+            (node.get("inputs") or {}).pop("exec", None)
+    return prompt
 
 IMG_EXTS = {"png", "jpg", "jpeg", "webp", "bmp", "gif", "tiff"}
 # Kept in step with _COLLECT_VID_EXTS in the extension's __init__.py: one
@@ -249,7 +268,7 @@ def hook_scope_ids(prompt: dict, hook_ids=None) -> set | None:
     ``None`` means "no hooks to scope to" — the caller keeps the whole graph.
 
     Seeded from each hook AND from the node(s) its anchors read: a hook whose own
-    output is unwired (an ``inline_parameter`` sweeping a widget on its anchor)
+    output is unwired (a ``set_parameter`` sweeping a widget on its anchor)
     still governs everything downstream of that anchor, and seeding only from the
     hook would prune the very branch it mutates.
 
@@ -1063,17 +1082,20 @@ def build_batch(base_prompt: dict, resolutions: list, cap: int = 25,
 # spellings are kept so canvases saved before the rename still resolve correctly.
 _STANDIN_PURPOSES = {"make_workflow", "make-workflow", "workflow-standin",
                      "workflow_standin", "standin", "workflow"}
-_TEXT_PURPOSES = {"text", "text-output", "text_output", "answer"}
+# `text_only` is what the node offers; `text` is what it was called before the
+# hook was split into its purposes, and what the tools and the prose still say.
+_TEXT_PURPOSES = {"text_only", "text-only", "text only", "text", "text-output", "text_output",
+                  "answer"}
 
 
 def _is_standin(hook: dict) -> bool:
-    """True if *hook* is a make_workflow hook (vs. an inline_parameter annotation)."""
-    return str(hook.get("purpose", "inline_parameter") or "inline_parameter").strip().lower() in _STANDIN_PURPOSES
+    """True if *hook* is a make_workflow hook (vs. a set_parameter producer)."""
+    return str(hook.get("purpose", "set_parameter") or "set_parameter").strip().lower() in _STANDIN_PURPOSES
 
 
 def _is_text(hook: dict) -> bool:
     """True if *hook* asks for a written text answer (no media, no workflow)."""
-    return str(hook.get("purpose", "inline_parameter") or "inline_parameter").strip().lower() in _TEXT_PURPOSES
+    return str(hook.get("purpose", "set_parameter") or "set_parameter").strip().lower() in _TEXT_PURPOSES
 
 
 # RETIRED. `iterate` used to turn the graph into a loop the agent ran — one
@@ -1125,7 +1147,8 @@ def _qa_will_run() -> bool:
         return True
 
 
-# `human_review` is what the node's combo offers. The rest are tolerated because
+# `human_review` is what an `agentY review` node set to a human reviewer is sent
+# as (the same node set to the agent arrives as `qa`). The rest are tolerated because
 # the agent and the user both refer to this hook loosely in prose ("the halt",
 # "the check-in") and a purpose that only matched one spelling would silently
 # treat a mis-said one as an ordinary hook — i.e. run the expensive stage the
@@ -1199,7 +1222,9 @@ def _is_general(hook: dict) -> bool:
 
 # Titles the node gives itself. A hook nobody renamed is called "agentY hook",
 # which is true of every one of them and therefore tells the user nothing.
-_DEFAULT_HOOK_TITLES = {"", "agenty hook", "agentyhook", "agenty_hook"}
+_DEFAULT_HOOK_TITLES = {"", "agenty hook", "agentyhook", "agenty_hook",
+                        "agenty review", "agentyreview", "agenty loop start",
+                        "agenty loop break"}
 
 
 def hook_title(hook: dict) -> str:
@@ -2359,107 +2384,11 @@ def link_through_nodes(hooks: list | None, graph: dict | None) -> list:
     hooks = [h for h in (hooks or []) if isinstance(h, dict)]
     if not isinstance(graph, dict) or not graph:
         return hooks
-    ids = _hook_ids(hooks)
-    writers = _writers_by_node(hooks)
-
-    def upstream(node_id: str) -> set:
-        found: set = set()
-        stack, seen = [node_id], set()
-        while stack:
-            nid = stack.pop()
-            if nid in seen:
-                continue
-            seen.add(nid)
-            if nid in ids:
-                found.add(nid)
-                continue
-            if nid in writers:
-                found |= set(writers[nid])
-                continue
-            for val in ((graph.get(nid) or {}).get("inputs") or {}).values():
-                if isinstance(val, (list, tuple)) and len(val) == 2 and not isinstance(val[0], (list, dict)):
-                    stack.append(str(val[0]))
-        return found
-
-    for h in hooks:
-        hid = str(h.get("hook_node_id"))
-        direct = _hook_predecessors({**h, "via_hook_ids": []}, ids, writers)
-        via: set = set()
-        for a in (h.get("anchors") or []):
-            if isinstance(a, dict) and str(a.get("node_id")) not in ids:
-                via |= upstream(str(a.get("node_id")))
-        via -= direct | {hid}
-        if via:
-            h["via_hook_ids"] = sorted(via, key=str)
-    return hooks
-
-
-def reviews_before(hooks: list | None) -> dict:
-    """hook id -> the review hooks upstream of it, nearest last.
-
-    The other reading of :func:`gated_by_review`: that one says WHICH hooks stand
-    behind a stop, this one says which stop each of them is waiting on - so a
-    chain with several reviews can open one at a time.
-    """
-    hooks = [h for h in (hooks or []) if isinstance(h, dict)]
-    ids = _hook_ids(hooks)
-    writers = _writers_by_node(hooks)
-    by_id = {str(h.get("hook_node_id")): h for h in hooks}
-    order = [str(h.get("hook_node_id")) for h in hooks]
-    out: dict = {}
-
-    def walk(hid: str, seen: set) -> list:
-        found: list = []
-        for pid in sorted(_hook_predecessors(by_id.get(hid) or {}, ids, writers),
-                          key=lambda i: order.index(i) if i in order else 0):
-            if pid in seen:
-                continue
-            seen.add(pid)
-            for rid in walk(pid, seen):
-                if rid not in found:
-                    found.append(rid)
-            if _is_review(by_id.get(pid) or {}) and pid not in found:
-                found.append(pid)
-        return found
-
-    for hid in by_id:
-        before = walk(hid, {hid})
-        if before:
-            out[hid] = before
-    return out
-
-
-def stage_before_review(hooks: list | None, review_id) -> list:
-    """The hooks whose work a review hook stops on: its producers, nearest first."""
-    hooks = [h for h in (hooks or []) if isinstance(h, dict)]
-    ids = _hook_ids(hooks)
-    hook = next((h for h in hooks if str(h.get("hook_node_id")) == str(review_id)), None)
-    if hook is None:
-        return []
-    return sorted(_hook_predecessors(hook, ids, _writers_by_node(hooks)), key=str)
-
-
-def link_through_nodes(hooks: list | None, graph: dict | None) -> list:
-    """Record, on each hook, the hooks it follows by way of REAL nodes.
-
-    A pipeline is rarely hook-to-hook. The usual stage is a hook that writes a
-    prompt into a generator, the generator feeding a save node, and the next hook
-    anchored on that save node: `hook 8 -> GPT Image -> Send to Viewer -> review
-    hook 9`. No wire joins 8 and 9, so nothing that read the hooks alone knew the
-    review stood behind the image stage - it was planned as a loop of one, with
-    no start, and the stop was never tied to what it reviews.
-
-    *graph* is the captured API prompt. From every anchor that is a real node the
-    wires are walked upstream, and the first hook met on each path - a hook node
-    itself, or a node a hook's output is wired into - is one this hook follows.
-    The walk stops there: what lies behind that hook is its own business.
-
-    The ids go into ``via_hook_ids``, beside the direct ``prev_hook_ids`` rather
-    than into them, because the direct list also says "this hook reads that
-    hook's VALUE", which is not true of a stage two nodes away.
-    """
-    hooks = [h for h in (hooks or []) if isinstance(h, dict)]
-    if not isinstance(graph, dict) or not graph:
+    # A canvas with an execution wire has SAID its order (`via_hook_ids` is that
+    # wire, as the panel read it). Guessing a second order from the data wires
+    # beside it is how a stage ends up after something the user never put it
+    # after - so the guess is only for a canvas drawn with no exec wire at all.
+    if any(h.get("exec_wired") for h in hooks):
         return hooks
     ids = _hook_ids(hooks)
     writers = _writers_by_node(hooks)
@@ -3313,7 +3242,7 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None, flow=None,
 
     Hooks are **upstream producers**: each consumes its wired anchor inputs as
     context and produces value(s) for its ``out``, which the user wires into a real
-    node input. Three purposes: an *inline_parameter* (producer) hook fills (or
+    node input. Three purposes: a *set_parameter* (producer) hook fills (or
     sweeps) the input its output is wired to; a *text* hook writes a single string
     the agent bakes there as an ``agentY text`` node; a *make_workflow* hook stands
     in for a workflow/script the agent generates. Hooks the user bypassed or muted on
@@ -3518,11 +3447,13 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None, flow=None,
             # survive the load-time promotion (agent_hook.js) is read only when
             # the hook is untitled, which is the one case nothing else says.
             ask = _trim(h.get("directive"), 200)
-            if hook_title(h):
+            if ask:
+                # The review node's `notes` box: the question, written where a
+                # question goes. It outranks the title, which names the node.
+                lines.append(f'- review hook {hid}{_t(h)} → put to the user: "{ask}"')
+            elif hook_title(h):
                 lines.append(f"- review hook {hid}{_t(h)} → its title is the question; "
                              "put that to the user")
-            elif ask:
-                lines.append(f'- review hook {hid} → put to the user: "{ask}"')
             else:
                 lines.append(f"- review hook {hid} → untitled, so no question was "
                              "written: ask which of the outputs should go on")

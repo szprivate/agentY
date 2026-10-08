@@ -121,7 +121,7 @@ class QaBriefing:
     # :mod:`src.utils.qa_checks`. They are settled by measuring the file, so they
     # never reach the model as something to judge.
     technical: dict = field(default_factory=dict)
-    # Files named directly by an `agentY qa` node's `judge` input — a collector's
+    # Files named directly by an agent `agentY review` node's `anchor` input — a collector's
     # list, a loader's image, a path. Judged IN ADDITION to what the run produced,
     # never instead of it: `judge` says which outputs a briefing is about, and
     # reading it as "only these" would let a mis-wire quietly excuse everything
@@ -272,7 +272,7 @@ def briefing_from_hooks(hooks: list, resolver=None) -> QaBriefing | None:
         text = str(hook.get("directive") or "").strip()
         if text:
             criteria.append(text)
-        # The `agentY qa briefing` node's dropdowns and switches. It arrives here
+        # The agent `agentY review` node's dropdowns and switches. It arrives here
         # as a qa hook because that is what it is; what is different is that these
         # are settled by measuring the file rather than read by the model.
         spec = hook.get("technical")
@@ -286,7 +286,7 @@ def briefing_from_hooks(hooks: list, resolver=None) -> QaBriefing | None:
                 for path in anchor_media_paths(anchor, resolver):
                     if path not in refs:
                         refs.append(path)
-        # `judged` are the nodes wired into an `agentY qa` node's `judge` input
+        # `judged` are the nodes wired into an agent `agentY review` node's `anchor` input
         # that name files rather than a stage — a collector, a loader, a path.
         # Resolved through the same code as a reference, because the question
         # ("which files does this node mean?") is identical; what differs is which

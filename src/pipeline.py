@@ -3410,7 +3410,7 @@ class Pipeline:
         async def place_canvas_text(hook_node_id: str, text: str) -> str:
             """Place a written answer onto the canvas as a wireable string node.
 
-            Use this ONLY to fulfil a **TEXT canvas hook** (purpose='text') listed
+            Use this ONLY to fulfil a **TEXT canvas hook** (purpose 'text_only') listed
             in the ``[CANVAS HOOKS]`` block. After you have written the answer,
             call this with the hook's node id and the final text. It drops an
             ``agentY text`` node on the live canvas carrying *text* and wires its
@@ -3461,7 +3461,7 @@ class Pipeline:
             injected: list[str] = []
             if keep_live and hook is not None and isinstance(self._canvas_base_prompt, dict):
                 injected = _inject(self._canvas_base_prompt, hook, str(text))
-                # A PRODUCER (inline_parameter) hook whose output feeds a real node needs the
+                # A PRODUCER (set_parameter) hook whose output feeds a real node needs the
                 # canvas run once so the injected value renders; a TEXT hook only
                 # delivers a string for a later/other run, so it must not auto-generate.
                 if injected and not _is_text(hook) and not self._hook_run_stopped:
@@ -5048,6 +5048,8 @@ class Pipeline:
         # the hooks that happen to be wired to each other directly.
         try:
             from src.utils.canvas_hooks import link_through_nodes as _link
+            from src.utils.canvas_hooks import strip_exec_links as _no_exec
+            canvas_prompt = _no_exec(canvas_prompt)
             canvas_hooks = _link(canvas_hooks, canvas_prompt)
         except Exception as exc:  # noqa: BLE001
             if self._verbose:

@@ -1,6 +1,7 @@
 ## Review hooks — stopping so the user can choose
 
-A hook with `purpose: review` is a deliberate **break in the chain**. It exists
+An `agentY review` node set to a **human** reviewer (listed as a review hook) is
+a deliberate **break in the chain**. It exists
 because the stage after it is the expensive one — a video, a batch of upscales —
 and the user wants to see what came out of the stage before it, and pick, before
 paying for that.

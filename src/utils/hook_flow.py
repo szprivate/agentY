@@ -1,9 +1,16 @@
-"""Flow control on the canvas: loops and parallel branches of a hook pipeline.
+"""Flow control on the canvas: order, loops and parallel branches of a hook pipeline.
+
+**Order is the execution wire.** Every hook, loop and review node has an ``exec``
+input and output; the panel reports, for each stage, the stage(s) it runs after
+(``via_hook_ids``). That is the only statement of order a wired canvas makes -
+``prev_hook_ids`` says whose VALUE a stage reads, which is a different thing and
+is checked against the order rather than used to make it.
 
 Two nodes mark a loop — ``agentY loop start`` and ``agentY loop break`` — and
-every hook wired between them is its body. The break carries the condition in
-the user's own words ("the dancer's pose matches the reference"), a cap on the
-rounds, and which outputs go on to whatever follows.
+every stage on the wire between them is its body. The break carries the
+condition in the user's own words ("the dancer's pose matches the reference"), a
+cap on the rounds, and which outputs go on to whatever follows. A review node in
+the body is who judges it.
 
 Neither node does work, so the rest of the system never sees them:
 :func:`plan` takes the hooks as the canvas reports them and hands back the work
@@ -52,15 +59,12 @@ def is_flow(hook: dict) -> bool:
 
 _REVIEW = {"human_review", "human review", "review", "halt", "pause",
            "check_in", "check-in", "checkin"}
+_QA = {"qa", "quality", "check", "qa_check", "qa-check"}
 
 
-def _is_review(hook: dict) -> bool:
-    """A stop for the person to choose at (canvas_hooks._is_review, kept in step)."""
-    return _purpose(hook) in _REVIEW
-
-
-_REVIEW = {"human_review", "human review", "review", "halt", "pause",
-           "check_in", "check-in", "checkin"}
+def _is_qa(hook: dict) -> bool:
+    """An agent review (canvas_hooks._is_qa, kept in step): judges, produces nothing."""
+    return _purpose(hook) in _QA
 
 
 def _is_review(hook: dict) -> bool:
@@ -85,6 +89,17 @@ def _prev_ids(hook: dict, direct_only: bool = False) -> list[str]:
     if one is not None and str(one) not in ids:
         ids.insert(0, str(one))
     return ids
+
+
+def _order_ids(hook: dict) -> list[str]:
+    """The stages *hook* runs after.
+
+    On the execution wire that is the wire and nothing else: what a stage READS
+    is not where it sits. (A stage in a loop that reads a value made before the
+    loop would otherwise pull that earlier stage into the loop's body.) A stage
+    drawn with no wire falls back to the data wires, which is all it has.
+    """
+    return _via_ids(hook) if hook.get("exec_wired") else _prev_ids(hook)
 
 
 def clamp_rounds(value) -> int:
@@ -112,8 +127,8 @@ class Loop:
     title: str = ""
     # A review hook in the body: the PERSON judges this loop, not the QA agent.
     review_id: str = ""
-    # A review hook in the body: the PERSON judges this loop, not the QA agent.
-    review_id: str = ""
+    # An agent review in the body: its notes and checks are part of the judging.
+    qa_id: str = ""
 
     def name(self) -> str:
         return self.title or f"loop {self.break_id}"
@@ -171,7 +186,7 @@ def _ancestors(hook_id: str, by_id: dict, stop_at_start: bool = True) -> tuple[l
     """Hooks upstream of *hook_id* up to the nearest loop start: (ids, start_id)."""
     found: list[str] = []
     start = ""
-    stack = list(_prev_ids(by_id.get(hook_id) or {}))
+    stack = list(_order_ids(by_id.get(hook_id) or {}))
     seen: set = set()
     while stack:
         pid = stack.pop()
@@ -183,7 +198,7 @@ def _ancestors(hook_id: str, by_id: dict, stop_at_start: bool = True) -> tuple[l
             start = start or pid
             continue
         found.append(pid)
-        stack.extend(_prev_ids(hook))
+        stack.extend(_order_ids(hook))
     return found, start
 
 
@@ -200,7 +215,10 @@ def plan(hooks: list | None) -> Flow:
     for brk in (h for h in raw if is_loop_break(h)):
         bid = _hid(brk)
         upstream, start = _ancestors(bid, by_id)
-        members = [i for i in order if i in set(upstream) and not is_flow(by_id[i])]
+        inside = [i for i in order if i in set(upstream) and not is_flow(by_id[i])]
+        # An agent review sits on the wire but is not a stage that is run: it is
+        # how the round is judged.
+        members = [i for i in inside if not _is_qa(by_id[i])]
         loop = Loop(break_id=bid, start_id=start, members=members,
                     condition=" ".join(str(brk.get("condition") or brk.get("directive") or "").split()),
                     max_rounds=clamp_rounds(brk.get("max_rounds")),
@@ -209,23 +227,40 @@ def plan(hooks: list | None) -> Flow:
         if loop.title.lower() in ("", "agenty loop break"):
             loop.title = ""
         loop.review_id = next((i for i in reversed(members) if _is_review(by_id[i])), "")
-        loop.review_id = next((i for i in reversed(members) if _is_review(by_id[i])), "")
+        loop.qa_id = next((i for i in reversed(inside) if _is_qa(by_id[i])), "")
         if not members:
             flow.problems.append(f"{loop.name()}: nothing is wired between the loop start and the "
                                  "loop break, so there is nothing to repeat.")
             continue
         if not start:
-            flow.problems.append(f"{loop.name()}: no loop start is wired upstream of it, so the "
-                                 "loop takes every stage that leads into the break.")
-        if not loop.condition:
-            flow.problems.append(f"{loop.name()}: the break has no condition, so it ends when the "
-                                 "QA briefings on its stages pass.")
+            flow.problems.append(f"{loop.name()}: no loop start is on the execution wire before "
+                                 "it, so the loop takes every stage that leads into the break.")
+        if not loop.condition and not loop.review_id and not loop.qa_id:
+            flow.problems.append(f"{loop.name()}: the break has no condition and there is no "
+                                 "review node in the loop, so nothing says when it is finished.")
         flow.loops.append(loop)
     used_starts = {lp.start_id for lp in flow.loops}
     for h in raw:
         if is_loop_start(h) and _hid(h) not in used_starts:
-            flow.problems.append(f"loop start {_hid(h)} has no loop break downstream of it — "
-                                 "it does nothing.")
+            flow.problems.append(f"loop start {_hid(h)} has no loop break after it on the "
+                                 "execution wire — it does nothing.")
+    # A stage that reads another stage's value has to run after it. When the
+    # execution wire says otherwise the value does not exist yet, and nothing at
+    # run time would report that - the stage would simply read nothing.
+    for h in raw:
+        if is_flow(h) or not h.get("exec_wired"):
+            continue
+        before, _ = _ancestors(_hid(h), by_id, stop_at_start=False)
+        for pid in _prev_ids(h, direct_only=True):
+            src = by_id.get(pid)
+            if src is None or is_flow(src) or not src.get("exec_wired") or pid in before:
+                continue
+            later, _ = _ancestors(pid, by_id, stop_at_start=False)
+            if _hid(h) in later:
+                flow.problems.append(
+                    f"hook {_hid(h)} reads the value of hook {pid}, but the execution wire "
+                    f"runs {_hid(h)} first — swap them on the wire, or the value will not "
+                    "exist yet.")
 
     for h in raw:
         if is_flow(h):
@@ -423,7 +458,10 @@ def loop_lines(flow: Flow) -> list[str]:
                 lines.append(f"- LOOP (break node {lp.break_id}"
                              + (f', "{lp.title}"' if lp.title else "")
                              + f") — {cond}; at most {lp.max_rounds} round(s); "
-                               f"forwards: {lp.forward}.")
+                               f"forwards: {lp.forward}."
+                             + (f" The agent review (node {lp.qa_id}) in this loop is "
+                                "part of the judging: loop_check applies its notes and "
+                                "checks." if lp.qa_id else ""))
             for i, hid in enumerate(lp.members, 1):
                 lines.append(f"    body stage {i}: {_label(by_id.get(hid, {'hook_node_id': hid}))}")
     for problem in flow.problems:

@@ -12,6 +12,18 @@ line; handle producers before their consumers. (Hooks the user bypassed or muted
 are filtered out, so every hook listed is active.) The graph is **already captured**
 server-side — do **not** call `prepare_workflow` or `run_research` for these.
 
+**Three kinds of wire, three meanings.** `exec` is the **execution wire**: it
+runs through hook, loop and review nodes and is the ORDER the stages run in — a
+wire that splits starts branches that run side by side. An `anchor` input is what
+a stage READS; `out` is what it PRODUCES and where that goes. Order comes from
+the exec wire and from nothing else, and the PROCESS ORDER line is that wire
+read out for you. When you add or rewire stages for the user
+(`edit_canvas_graph`), connect `exec` → `exec` in the order they should run, as
+well as the data wires. On the node, the three hook purposes are called
+`set / sweep parameter` (a PRODUCER hook), `make_workflow` and `text_only` (a
+TEXT hook); reviewing is the `agentY review` node — a human reviewer is a
+REVIEW HOOK (a stop), an agent reviewer is a QA briefing.
+
 **A PRE-FLIGHT block means the graph itself is wrong.** It is computed from the
 wiring and ComfyUI's own node schemas before anything runs. A **BLOCKER** will
 fail or produce nothing (a required input with nothing feeding it, a graph that

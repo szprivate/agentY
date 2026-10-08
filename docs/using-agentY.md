@@ -200,7 +200,7 @@ Click your prompt node, then **✍** in the top bar. From then on:
 Each version is a chip above the message box. Click a chip to put that version
 back in the node; the next prompt starts from it.
 
-- **With a QA node on the canvas**, each render is checked as it lands. On a fail,
+- **With an agent review on the canvas**, each render is checked as it lands. On a fail,
   the agent writes the next version itself, up to the node's `retries`.
 - **Unsupervised:** ask in words — *"keep going until QA is happy, up to 8 tries"*.
   It stops at the first pass, when the tries run out, or when you type. It keeps
@@ -269,30 +269,54 @@ Hooks are instructions attached to the graph. Add an **`agentY hook`** node
 graph (the **agentY hooks** button next to Run). On a normal **Queue Prompt** a
 hook does nothing.
 
-![Two make_workflow hooks wired into a pipeline](images/hook-chain.png)
+![Two make workflow hooks wired into a pipeline](images/hook-chain.png)
 
-- **`anchor`** inputs — context for the hook. A new empty slot appears each time
-  you wire one. Any type.
-- **`out`** — what the hook produces. Wire it into the input it should fill, or
-  into the next hook.
-- **`directive`** — the instruction.
-- **`purpose`** — what kind of hook it is (below).
-- **`remember`** — [keep the result](#the-keep-switch-should-this-outlive-the-run).
+A hook is one stage of work. It has three kinds of socket, and they mean three
+different things:
 
-Bypass (`Ctrl+B`) or mute a hook to disable it.
+- **`exec`** (in and out) — **when**. The execution wire, as in Unreal's node
+  editor: stages run in the order it is drawn. It is its own socket type (white),
+  carries no data, and runs through hooks, [review](#review-a-person-or-the-qa-agent)
+  nodes and [loop](#loops-repeat-stages-until-a-condition-holds) nodes.
+- **`anchor`** inputs — **what it reads**. Context and material, any type. A new
+  empty slot appears each time you wire one.
+- **`out`** — **what it produces**. Wire it into the input it should fill, or into
+  the `anchor` of a stage that reads it.
 
-### The five purposes
+And the settings: **`directive`** (the instruction), **`purpose`** (below) and
+**`remember`** ([keep the result](#the-keep-switch-should-this-outlive-the-run)).
+
+Bypass (`Ctrl+B`) or mute a hook to take it out of the run. The execution wire
+passes through it, so the stages either side are simply next to each other.
+
+### The execution wire
+
+```
+hook → hook → agentY review → hook
+```
+
+- **Order is the wire, and only the wire.** What a stage reads does not move it.
+- **A wire that splits** starts [branches that run at the same
+  time](#branches-run-at-the-same-time).
+- **A stage that goes through real nodes** is one stage: a hook writing prompts
+  into an image node, a save node behind it, then a review. Wire `exec` from the
+  hook to the review; wire the save node into the review's `anchor` if you want
+  to say exactly what is reviewed.
+- **A stage that reads a value made later** on the wire is reported before the
+  run, since that value would not exist yet.
+- **No wire at all** still works for a simple chain: stages that read each
+  other's `out` are ordered by that. Draw the wire as soon as there is a loop, a
+  review, or a stage running through real nodes.
+
+### The three purposes
 
 | purpose | what it does | example |
 |---|---|---|
-| `inline_parameter` (default) | Produces the value(s) for the input its `out` is wired to. Several values run as a batch (max 25). | *"sweep the seed 6×"*, *"every file in this folder"* |
-| `make_workflow` | Generates and runs a whole workflow from the directive, using wired anchors as input. | *"upscale 2× and add film grain"* |
-| `text` | Writes a string and drops an `agentY text` node carrying it. | *"write a caption for this image"* |
-| `general_request` | Free-form: the agent decides what to do. | *"what would improve this workflow?"* |
-| `human_review` | Stops the chain so you pick what continues. | see [Review](#review-stop-and-pick-what-continues) |
+| `set / sweep parameter` (default) | Produces the value of the input its `out` is wired to. One value sets it; several sweep it, one run each (max 25). | *"three prompts per character"*, *"sweep the seed 6×"*, *"every file in this folder"* |
+| `make workflow` | Generates and runs a whole workflow from the directive, using wired anchors as input. | *"upscale 2× and add film grain"* |
+| `text only` | Writes a string, for the input `out` is wired to and for the chat. | *"write a caption for this image"* |
 
-**Chaining:** wire one hook's `out` into another's `anchor`. Stages run in order,
-each feeding its real outputs to the next.
+Reviewing is its own node, [`agentY review`](#review-a-person-or-the-qa-agent).
 
 ### What the agent sees on an anchor
 
@@ -328,18 +352,26 @@ workflow built and saved under `agent/dryrun_…` — but submits **nothing** to
 ComfyUI. Later stages receive stand-in paths, so a whole chain can be checked for
 free. QA and review stops are skipped. You get a summary of what would have run.
 
-### Review: stop and pick what continues
+### Review: a person or the QA agent
 
-A `human_review` hook stops the chain between the stage that makes candidates and
-the stage that uses them:
+An **`agentY review`** node sits on the execution wire after the stage it
+reviews. Its **`reviewer`** setting decides who looks:
+
+| reviewer | what happens | settings shown |
+|---|---|---|
+| **human** (default) | The run **stops** and waits for you. | `notes` — the question you are asked |
+| **agent** | The [QA agent](#checking-outputs-qa) judges the outputs and the run carries on. | `notes` plus every measured check |
 
 ```
-make_workflow  →  human_review  →  make_workflow
-"one reference                     "animate the
- per character"                     chosen refs"
+make workflow  →  agentY review  →  make workflow
+"one reference     (human)          "animate the
+ per character"                      chosen refs"
 ```
 
-The candidates are gathered into an **`agentY image collector`** next to the hook.
+**With a human reviewer:**
+
+The candidates are gathered into an **`agentY image collector`** next to the node
+(wired into its `anchor`).
 Whatever is in that collector when you continue is what the next stage gets:
 delete rows, add your own files, reorder. Then say **continue** (or press
 **Continue with these**), or **stop**.
@@ -351,19 +383,19 @@ delete rows, add your own files, reorder. Then say **continue** (or press
 - Candidates are listed best first by a [quality score](#which-of-these-is-best).
 - Deleting a row renumbers the references after it (`@image3` becomes `@image2`).
   The agent is told and updates the next stage's prompt.
-- **The stop is enforced.** Until you answer, every stage behind the hook is
-  refused, whatever the agent planned. With several review hooks in a chain they
-  open one at a time.
-- **A stage in between can be real nodes.** A hook that writes prompts into an
-  image node, whose save node is wired into the review hook, is the stage that
-  hook reviews; no hook-to-hook wire is needed.
-- **Reviewing text.** After a `text` hook there are no files, so nothing is
+- **The stop is enforced.** Until you answer, every stage after the node on the
+  execution wire is refused, whatever the agent planned. With several reviews in
+  a chain they open one at a time.
+- **Reviewing text.** After a `text only` hook there are no files, so nothing is
   collected: the agent prints the text in the chat and stops. Say what to change
   and it rewrites and asks again.
-- **In a loop.** A loop with a review hook in its body is yours to end: each
+- **In a loop.** A loop with a human review in its body is yours to end: each
   change you ask for is a round, and **continue** ends the loop. The quality
   checker does not judge it.
 - **Stopping a run** still shows the images and videos that had finished.
+
+**With the agent reviewer** the node is a [QA briefing](#the-agenty-review-node-as-a-qa-briefing)
+for the stage before it: nothing stops, a failing output is reported or retried.
 
 ### The keep switch: should this outlive the run?
 
@@ -372,7 +404,7 @@ is kept.
 
 | purpose | the switch reads | ON keeps |
 |---|---|---|
-| `make_workflow` | **bake into subgraph** | the generated workflow as a ComfyUI **subgraph** next to the hook, wired to mirror the chain, plus that run's files |
+| `make workflow` | **bake into subgraph** | the generated workflow as a ComfyUI **subgraph** next to the hook, wired to mirror the chain, plus that run's files |
 | the others | **memorize result** | what the hook produced (values, prompts, file paths), in `agent/memory/` |
 
 A baked chain is a native workflow you can re-run **without the agent**. Nothing is
@@ -434,16 +466,16 @@ group of its own (`agent_1`, `agent_2`, …), instead of a tab per workflow.
 - A workflow of 12 nodes or more is folded into one **subgraph** node when the run
   ends (`hook_subgraph_min_nodes`; 0 never folds).
 - `hooks_into_canvas` off: workflows open in tabs as before.
-- The keep switch still **bakes** a `make_workflow` stage into a re-runnable
+- The keep switch still **bakes** a `make workflow` stage into a re-runnable
   subgraph wired to mirror the chain.
 
 ### Loops: repeat stages until a condition holds
 
-Two nodes under **agentY ▸ flow** mark a loop. Every hook wired between them is
-the loop's body:
+Two nodes under **agentY ▸ flow** mark a loop. Every stage on the execution wire
+between them is the loop's body:
 
 ```
-agentY loop start → make_workflow → make_workflow → agentY loop break → next stage
+agentY loop start → make workflow → agentY review → agentY loop break → next stage
 ```
 
 On the **`agentY loop break`**:
@@ -454,18 +486,24 @@ On the **`agentY loop break`**:
 - **`forward`** — what goes on to the next stage: the **best** result, **all that
   pass**, or **all** of the last round.
 
-One round runs every stage of the body. A separate QA agent then judges the
-result against the condition **and** any `agentY qa` node covering those stages.
-On a miss the agent changes what was objected to and runs the body again. If the
-rounds run out, the best attempt of any round goes on, and the report says the
-condition was not met. The break node shows where its loop stands.
+One round runs every stage of the body. Who judges it is the review node in the
+body:
+
+- **a human review** — every change you ask for is a round, and your
+  **continue** ends the loop;
+- **an agent review, or none** — a separate QA agent judges the result against
+  the condition and the review's own notes and checks. On a miss the agent
+  changes what was objected to and runs the body again.
+
+If the rounds run out, the best attempt of any round goes on, and the report says
+the condition was not met. The break node shows where its loop stands.
 
 Outside a loop, the agent says which outputs it passes to the next stage and why
 (`➡ Forwarded from …`).
 
 ### Branches run at the same time
 
-Hook chains that share no wire are separate branches. A run with two or more gives
+An execution wire that splits, or chains that share no wire, are separate branches. A run with two or more gives
 each branch [its own conversation](#a-sequence-one-conversation-per-shot): the
 conversation you started becomes the lead, the branches work in parallel, and the
 lead puts their workflows into your graph as they report. Renders on your own GPU
@@ -527,13 +565,19 @@ pass / fail / n/a per criterion. Measurable things (dimensions, ratio, duration,
 fps, sharpness, grain, exposure) are **computed from the file**, not judged by the
 model. Give it a strong vision model (the **QA judge** tier).
 
-### The `agentY qa` node
+### The `agentY review` node as a QA briefing
 
-![The agentY qa node, with a reference wired in](images/qa-briefing-node.png)
+Set an [`agentY review`](#review-a-person-or-the-qa-agent) node's **`reviewer`**
+to **agent** and it is the QA briefing for the stage before it on the execution
+wire. The measured checks appear on the node (they are hidden for a human
+reviewer, where nothing would enforce them).
+
+![The agentY review node as a QA briefing, with a reference wired in](images/qa-briefing-node.png)
 
 | input | means | wire in |
 |---|---|---|
-| **`judge`** | what to assess | a hook's `out`, an IMAGE, a collector, a path. Unwired = everything the run produces |
+| **`exec`** | which stage it judges | the stage before it. Off the wire and with nothing in `anchor`, it judges everything the run produces |
+| **`anchor`** | what to assess, when it is not simply that stage | a hook's `out`, an IMAGE, a collector, a path |
 | **`reference`** | what to compare against | mood boards, grade stills, character sheets |
 
 | control | what it does |
@@ -548,7 +592,7 @@ model. Give it a strong vision model (the **QA judge** tier).
 | `retries` | this briefing's retry budget |
 
 `notes` holds the criteria that need judgement. A control left on `any` is not
-checked. Several QA nodes on one graph combine.
+checked. Several agent reviews on one graph combine.
 
 ### Does it match the reference?
 
@@ -572,12 +616,13 @@ installs the result if it beats the defaults.
 
 ### One briefing per stage
 
-Wire a stage into a QA node's `judge` and that node checks only what that stage
-produces. Anything from the stage works: the hook's `out`, an IMAGE, its save node.
+Put an agent review after a stage on the execution wire, or wire the stage into
+its `anchor`, and it checks only what that stage produces. Anything from the
+stage works as an anchor: the hook's `out`, an IMAGE, its save node.
 
-- An unwired QA node applies to every stage — use it for house rules.
+- An agent review on no wire applies to every stage — use it for house rules.
 - Where two disagree, the one naming the stage wins.
-- A stage no QA node covers is not checked.
+- A stage no agent review covers is not checked.
 - A collector, `LoadImage` or path in `judge` adds those files to what is checked.
 
 ### Other ways to write a briefing
@@ -592,7 +637,7 @@ produces. Anything from the stage works: the hook's `out`, an IMAGE, its save no
   /qa off                                  clear it
   ```
 
-A canvas QA node wins over the thread's `/qa`. Either can cite a file with `@name`.
+A canvas agent review wins over the thread's `/qa`. Either can cite a file with `@name`.
 
 ### It fixes the shape rather than re-rolling
 
