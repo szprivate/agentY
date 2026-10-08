@@ -998,6 +998,19 @@ def build_batch(base_prompt: dict, resolutions: list, cap: int = 25,
     for rows in group_rows:
         combos = [c + [r] for c in combos for r in rows]
     total = len(combos)
+    if total > cap and len(group_rows) > 1:
+        # Several lists CROSS: 12 prompts and a 12-long list for another input are
+        # 144 runs. Cutting that to the cap runs the first value of one list
+        # against the head of the other - the same picture over and over, paid
+        # for 25 times - so it is refused and said why, which is the one moment
+        # the mistake costs nothing.
+        sizes = " x ".join(str(len(rows)) for rows in group_rows)
+        return [], notes + [
+            f"NOT RUN: these resolutions cross into {sizes} = {total} runs (cap {cap}). "
+            "Lists without a shared zip_group multiply. If value i of one belongs "
+            "with value i of another, give both the same zip_group. If an input is "
+            "the same for every run - a reference already wired on the canvas, one "
+            "file for all - do not list it at all, or give it ONE value."]
     if total > cap:
         notes.append(f"batch of {total} exceeded the cap of {cap}; truncated to {cap}")
         combos = combos[:cap]
