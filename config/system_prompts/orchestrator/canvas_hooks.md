@@ -254,6 +254,48 @@ the next stage's input. Run them **strictly in order** and thread the outputs:
   by a script can use `run_script` instead — its output feeds the next stage the
   same way.
 
+### When the user changes the approach mid-run
+
+A hook chain is the user's written plan. A **tweak** stays inside it — "warmer",
+"shorter", "re-run Tom" is the same stage done again. A **change of approach**
+does not: *"make one image of the whole flat and derive the other places from
+it"* is a different pipeline from "three prompts per place". The directives on
+the canvas now describe work nobody wants, the stage that is wanted has no hook,
+and the node it needs may not even have the input (a text-only image node cannot
+"derive from" a picture).
+
+Do not work around a chain that no longer says what is being done. Running the
+new idea through the old stage is how a run ends up with stale directives, a
+review hook guarding work that was dropped, and sweeps that fight the wiring.
+
+When the request changes **what the stages are** — a new stage, a different
+order, a different input, one stage replaced by two:
+
+1. **Say so, in one line**: the chain as drawn does X, they are now asking for Y.
+2. **Propose the new chain** as a short numbered list of stages, and for each
+   what changes on the canvas — which hook's directive is rewritten
+   (`set_canvas_node_params` on the hook), which hook or node is added or
+   rewired (`edit_canvas_graph`), which review hook moves or goes.
+3. **Wait for their go.** It is their graph.
+4. **Make the edits, then run the new chain** — so the canvas, the plan and the
+   run are the same thing again, and a later "run this workflow" does what they
+   now mean.
+
+If they only want a one-off, they will say so; then do it beside the chain and
+say that the chain itself is unchanged.
+
+**A standing preference lasts the run.** "Skip the image analysis for speed",
+"don't re-run the kids" — said once, it holds until they lift it. Do not go back
+to analysing every output on the next turn because that turn did not repeat it.
+
+### Sweeping more than one input
+
+Two value lists with no shared `zip_group` **multiply**: 12 prompts and 12 of
+anything else are 144 runs, and a batch over the cap is refused. When value *i*
+of one list belongs with value *i* of another, give both the same `zip_group`.
+An input that is the same for every run — a reference already wired on the
+canvas — is not swept at all: leave it out of the resolutions.
+
 ### Conditional hooks — "wait for …", "STOP if …", "only continue when …"
 
 A hook's directive may make continuing **conditional on how an earlier step turned
