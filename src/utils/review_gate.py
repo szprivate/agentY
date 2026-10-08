@@ -169,6 +169,11 @@ def release_check(halt, raised_this_turn: bool, quote: str, user_text: str) -> s
             return ("this stop was raised in this very turn, so the user has not seen "
                     "it or answered it. End the turn and ask them.")
         return "no review stop is standing, so there is nothing to lift."
+    return quote_check(quote, user_text)
+
+
+def quote_check(quote: str, user_text: str) -> str:
+    """ "" when *quote* is the user's own words in this turn's message, else why not."""
     said = " ".join(str(quote or "").split()).strip(" \"'“”‘’.!")
     if len(said) < 2:
         return ("quote the user's own words of approval in `user_said` - the part of "
@@ -281,9 +286,12 @@ def ahead_refusal(hook_ids, review_id: str, stage: list | None = None) -> dict:
             + f", then call halt_for_review(\"{review_id}\") and end the turn with the "
               "question put to the user."),
         "after": ("Their `continue` opens the stages behind it; anything else they "
-                  "say is a change to make before asking again. If this turn's "
-                  "message from the user IS their go-ahead for a stop already put to "
-                  "them, lift it with release_review(hook_node_id, user_said) first."),
+                  "say is a change to make before asking again."),
+        "if_they_already_approved": (
+            "If the user's message THIS turn approves that work in so many words "
+            f"(\"the screenplay is approved\"), call release_review(\"{review_id}\", "
+            "user_said=\"<their words>\") and carry on - no stop needs to be standing "
+            "for that."),
         "do_not": "Do not report this as a failure — nothing failed. It is the stop.",
     }
 

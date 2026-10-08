@@ -212,8 +212,79 @@ class LiftingTheStop(unittest.TestCase):
         self.assertIn("nothing to lift", rg.release_check(None, False, "approved", "approved"))
 
     def test_the_refusals_say_how_a_go_ahead_is_reported(self):
-        self.assertIn("release_review", rg.ahead_refusal(["18"], "12")["after"])
+        self.assertIn("release_review", rg.ahead_refusal(["18"], "12")["if_they_already_approved"])
         self.assertIn("release_review", rg.execution_refusal(self.HALT)["if_they_said_yes"])
+
+
+class AnsweredStaysAnswered(unittest.TestCase):
+    """A review is of the work it saw: it asks again only when that work is redone."""
+
+    def me(self, passed, halt=None, reply=""):
+        import types
+        return types.SimpleNamespace(
+            _canvas_hooks=planned().hooks, _review_halt=halt, _review_reply=reply,
+            _session=types.SimpleNamespace(reviews_passed=list(passed)))
+
+    def reopen(self, me, hooks):
+        from src.pipeline import Pipeline
+        Pipeline._reopen_reviews_after(me, hooks)
+        return me._session.reviews_passed
+
+    def test_work_behind_an_answered_review_leaves_it_answered(self):
+        self.assertEqual(self.reopen(self.me(["12", "9"]), ["27"]), ["12", "9"])
+        self.assertEqual(self.reopen(self.me(["12"]), ["18"]), ["12"])
+
+    def test_redoing_the_work_it_saw_asks_again(self):
+        self.assertEqual(self.reopen(self.me(["12", "9"]), ["4"]), ["9"])
+        self.assertEqual(self.reopen(self.me(["12", "9"]), ["8"]), ["12"])
+
+    def test_revising_at_a_standing_stop_does_not_touch_the_others(self):
+        halt = rg.ReviewHalt(hook_node_id="9", produced=("a.png",))
+        self.assertEqual(self.reopen(self.me(["12"], halt=halt), ["8"]), ["12"])
+
+    def test_the_turn_setup_no_longer_empties_the_list(self):
+        src = (__import__("pathlib").Path(__file__).resolve().parent.parent / "src" / "pipeline.py"
+               ).read_text(encoding="utf-8")
+        block = src.split("# Which review hooks are behind us.", 1)[1].split("self._session.reviews_passed =", 1)[0]
+        self.assertNotIn("if self._review_halt is None:", block)
+
+
+class AnApprovalWithNoStopStanding(unittest.TestCase):
+    def test_the_quote_must_be_the_users(self):
+        self.assertEqual(rg.quote_check("Screenplay is approved", "Screenplay is approved, continue"), "")
+        self.assertIn("not in the user's message", rg.quote_check("approved", "run the workflows again"))
+
+    def test_the_gate_says_how_to_report_it(self):
+        out = rg.ahead_refusal(["27"], "12", ["4"])
+        self.assertIn('release_review("12"', out["if_they_already_approved"])
+
+
+class ACrossedSweep(unittest.TestCase):
+    GRAPH = {"26": {"class_type": "X", "inputs": {"prompt": "", "seed": 0}}}
+
+    def test_two_lists_that_multiply_past_the_cap_are_not_run(self):
+        res = [{"target_node_id": "26", "param": "prompt", "values": [f"p{i}" for i in range(12)]},
+               {"target_node_id": "26", "param": "seed", "values": list(range(12))}]
+        prompts, notes = ch.build_batch(self.GRAPH, res, cap=25)
+        self.assertEqual(prompts, [])
+        self.assertTrue(any("12 x 12 = 144" in n and "zip_group" in n for n in notes), notes)
+
+    def test_the_same_lists_zipped_run_once_each(self):
+        res = [{"target_node_id": "26", "param": "prompt", "values": [f"p{i}" for i in range(12)], "zip_group": "a"},
+               {"target_node_id": "26", "param": "seed", "values": list(range(12)), "zip_group": "a"}]
+        prompts, _ = ch.build_batch(self.GRAPH, res, cap=25)
+        self.assertEqual(len(prompts), 12)
+
+    def test_a_small_grid_still_crosses(self):
+        res = [{"target_node_id": "26", "param": "prompt", "values": ["a", "b", "c"]},
+               {"target_node_id": "26", "param": "seed", "values": [1, 2]}]
+        prompts, _ = ch.build_batch(self.GRAPH, res, cap=25)
+        self.assertEqual(len(prompts), 6)
+
+    def test_one_long_list_is_still_cut_to_the_cap(self):
+        res = [{"target_node_id": "26", "param": "prompt", "values": [f"p{i}" for i in range(40)]}]
+        prompts, notes = ch.build_batch(self.GRAPH, res, cap=25)
+        self.assertEqual(len(prompts), 25)
 
 
 if __name__ == "__main__":

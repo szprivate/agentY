@@ -1560,10 +1560,12 @@ class Pipeline:
                     or self._review_gate_refusal(inline=bool(run_now)))
             if gate:
                 return json.dumps(gate)
-            ahead = self._review_ahead_refusal(self._hooks_feeding(
-                [r.get("target_node_id") for r in (resolutions or []) if isinstance(r, dict)]))
+            _worked = self._hooks_feeding(
+                [r.get("target_node_id") for r in (resolutions or []) if isinstance(r, dict)])
+            ahead = self._review_ahead_refusal(_worked)
             if ahead:
                 return json.dumps(ahead)
+            self._reopen_reviews_after(_worked)
             # NOW the scoping is worth reporting: something is actually about to
             # run on it. Once per turn.
             if getattr(self, "_hook_scope_note", ""):
@@ -1957,6 +1959,11 @@ class Pipeline:
             their go-ahead - "Approved - proceed", "ja, weiter", "that one, go" -
             call this with their own words and the stages behind the hook open.
 
+            It also opens a review hook that is merely IN THE WAY with no stop
+            standing - a tool refused because a stage stands behind an unanswered
+            review, and the user's message approves that work outright ("the
+            screenplay is approved, continue").
+
             Only ever on the user's say-so in THIS turn's message. Not because the
             work looks good to you, not on an approval from an earlier message, and
             never for a stop you raised in this same turn. A message that asks for
@@ -1977,6 +1984,33 @@ class Pipeline:
             if halt is not None and self._review_reply == "continue":
                 return json.dumps({"status": "already_lifted", "hook_node_id": halt.hook_node_id,
                                    "message": "The stop is already lifted - carry on."})
+            if halt is None and self._review_armed is None:
+                # No stop is standing, but a review hook can still be in the way:
+                # the user approves the work outright ("the screenplay is approved,
+                # continue") without a stop ever having been put to them this run.
+                # Their words open it just the same - held to the same quote.
+                from src.utils.canvas_hooks import _is_review as _rev
+                from src.utils.review_gate import ReviewHalt as _RH
+                from src.utils.review_gate import quote_check
+                hook = next((h for h in (self._canvas_hooks or [])
+                             if str(h.get("hook_node_id")) == hid), None)
+                passed = [str(i) for i in (getattr(self._session, "reviews_passed", None) or [])]
+                if hook is None or not _rev(hook):
+                    return json.dumps({"error": f"not lifted - hook {hid} is not a review "
+                                                "hook on this canvas."})
+                if hid in passed:
+                    return json.dumps({"status": "already_lifted", "hook_node_id": hid,
+                                       "message": "That review is already answered - carry on."})
+                why = quote_check(user_said, getattr(self, "_review_user_text", ""))
+                if why:
+                    return json.dumps({"error": "not lifted - " + why})
+                self._session.reviews_passed = list(dict.fromkeys(passed + [hid]))
+                return json.dumps({
+                    "status": "lifted", "hook_node_id": hid,
+                    "message": (f"Review hook {hid} is answered on the user's words. "
+                                "Carry on with the stages behind it, up to the next "
+                                "review hook."),
+                })
             why = release_check(halt, self._review_armed is not None, user_said,
                                 getattr(self, "_review_user_text", ""))
             if not why and hid and hid != str(halt.hook_node_id):
@@ -3399,6 +3433,7 @@ class Pipeline:
             if ahead:
                 return json.dumps(ahead)
             self._texts_placed[str(hook_node_id)] = str(text)
+            self._reopen_reviews_after([hook_node_id])
             from src.utils.canvas_patch import push as _push_patch
             from src.utils.canvas_hooks import inject_produced_value as _inject, _is_text
 
@@ -5062,14 +5097,16 @@ class Pipeline:
         self._review_user_text = user_text if isinstance(user_text, str) else ""
         self._review_armed = None
         self._session.review_halt = None
-        # Which review hooks are behind us. A continue adds the one it answers; a
-        # turn that starts with no stop standing is a new run, and starts with none.
+        # Which review hooks are behind us. A continue adds the one it answers,
+        # and it STAYS answered across the turns that follow - a review is of the
+        # work it was shown, and is asked again only when that work is redone
+        # (see _reopen_reviews_after) or the run is stopped. Emptying this on any
+        # turn that began with no stop standing shut a long-approved screenplay
+        # review again in the middle of a run, with no stop for anyone to answer.
         passed = list(getattr(self._session, "reviews_passed", None) or [])
-        if self._review_halt is None:
-            passed = []
-        elif self._review_reply == "continue":
+        if self._review_halt is not None and self._review_reply == "continue":
             passed.append(str(self._review_halt.hook_node_id))
-        elif self._review_reply == "stop":
+        elif self._review_halt is not None and self._review_reply == "stop":
             passed = []
         self._session.reviews_passed = list(dict.fromkeys(passed))
         # How many times each workflow has been re-run after a provider refused it
@@ -6444,6 +6481,28 @@ class Pipeline:
             if self._verbose:
                 print(f"pipeline: review gate could not be checked ({exc})")
         return None
+
+    def _reopen_reviews_after(self, hook_ids) -> None:
+        """Work on *hook_ids* was just redone: the reviews that saw it ask again.
+
+        Only reviews the user had already answered, and never the one a stop is
+        standing at - revising the work in front of a standing stop is the review
+        itself, and is answered by the continue that follows.
+        """
+        try:
+            from src.utils.canvas_hooks import stage_before_review
+            passed = [str(i) for i in (getattr(self._session, "reviews_passed", None) or [])]
+            if not passed:
+                return
+            done = {str(i) for i in (hook_ids or [])}
+            standing = str(getattr(getattr(self, "_review_halt", None), "hook_node_id", "") or "")
+            keep = [r for r in passed
+                    if r == standing and self._review_reply != "continue"
+                    or not (done & set(stage_before_review(self._canvas_hooks or [], r)))]
+            if len(keep) != len(passed):
+                self._session.reviews_passed = keep
+        except Exception:  # noqa: BLE001
+            pass
 
     def _hooks_feeding(self, node_ids) -> list:
         """The hooks whose output is wired into any of *node_ids*."""

@@ -55,6 +55,7 @@ _BOUND = (
     "_review_gate_refusal",
     "_review_ahead_refusal",
     "_hooks_feeding",
+    "_reopen_reviews_after",
     "_arm_review_halt",
     "_review_collector_files",
     "_review_collector",
