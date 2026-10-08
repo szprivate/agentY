@@ -3868,6 +3868,9 @@ def _build_app():
         resp.headers["Access-Control-Max-Age"] = "600"
         return resp
 
+    # Seconds a finished stream's connection may still take to wind down.
+    _STREAM_END_TIMEOUT = 2.0
+
     def _sse_response(generator):
         """Wrap an SSE generator in a Response with buffering defeated.
 
@@ -3881,13 +3884,39 @@ def _build_app():
         generators yield ``str`` (``_sse`` frames, keep-alive comments), so
         encode each chunk to UTF-8 here — the single boundary every SSE stream
         passes through."""
+        # After the body, Werkzeug reads whatever else arrives on the socket and
+        # waits for ten megabytes or the client hanging up. A client that sends
+        # anything and then holds the connection parks that thread for good, so
+        # the read is given a bound once the stream is over: it then ends as a
+        # dropped connection, which is what it is.
+        sock = request.environ.get("werkzeug.socket")
+
         def _encoded():
-            for chunk in generator:
-                yield chunk.encode("utf-8") if isinstance(chunk, str) else chunk
+            try:
+                for chunk in generator:
+                    yield chunk.encode("utf-8") if isinstance(chunk, str) else chunk
+            finally:
+                try:
+                    if sock is not None:
+                        sock.settimeout(_STREAM_END_TIMEOUT)
+                except Exception:  # noqa: BLE001
+                    pass
         resp = Response(stream_with_context(_encoded()), mimetype="text/event-stream")
         resp.headers["Cache-Control"] = "no-cache, no-transform"
         resp.headers["X-Accel-Buffering"] = "no"
-        resp.headers["Connection"] = "keep-alive"
+        # "close", and it matters. This server (Werkzeug's) does not do keep-alive:
+        # it answers one request per connection and adds this header itself unless
+        # one is already set. For a long time one was - "keep-alive" - so the
+        # browser kept every finished turn's connection as reusable and sent its
+        # NEXT request to the host down it. Werkzeug, done with the response, was
+        # draining whatever arrived on that socket (serving.py, after the body),
+        # so the request was swallowed and never answered. One turn, one request
+        # lost: a long poll that never came back, a panel save, or the next
+        # message - and with six connections per host the panel went silent for
+        # good after a handful of turns. That was "hangs after 'Orchestrator
+        # finished'": the turn had ended and said so; the page could no longer
+        # reach the host to hear anything else.
+        resp.headers["Connection"] = "close"
         resp.direct_passthrough = True
         return resp
 
