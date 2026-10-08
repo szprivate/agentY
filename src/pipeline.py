@@ -707,6 +707,13 @@ class Pipeline:
         self._review_halt = None
         self._review_reply: str = ""
         self._review_armed = None
+        # Parallel branches can each be waiting on a review at once. The first
+        # stop stays in `_review_halt` / `_review_armed`, as every reader of those
+        # expects; the rest stand beside it.
+        self._review_others: list = []          # standing, restored this turn
+        self._review_armed_more: list = []      # raised this turn, beyond the first
+        self._review_released: set = set()      # lifted one by one this turn
+        self._review_reply_initial: str = ""    # how the user's message itself read
         # workflow path -> re-runs spent on a provider content refusal (per turn).
         self._policy_retries: dict = {}
         # Outputs produced mid-turn by run_workflow_now (chained hook stages).
@@ -1797,6 +1804,25 @@ class Pipeline:
             from src.utils.review_gate import ReviewHalt
 
             hid = str(hook_node_id or "").strip()
+            branch = self._branch_info()
+            if branch:
+                # Nobody is reading a branch conversation: the person reviews in
+                # the lead's, where every branch's outputs are gathered.
+                listed = [str(p) for p in (outputs or []) if str(p or "").strip()] \
+                    or [p for p in (self._chain_output_paths
+                                    or self._session.current_output_paths or []) if p]
+                return json.dumps({
+                    "status": "report_to_lead", "hook_node_id": hid, "files": listed,
+                    "message": (
+                        f"You are branch '{branch.get('name')}' of a pipeline: the user "
+                        "reviews in the lead conversation, not here, so there is nothing "
+                        "to stop on. END YOUR TURN NOW with a report whose first line is "
+                        f"`REVIEW {hid}` and which lists every output of the stage as an "
+                        "absolute path (for a written stage: the full text), which round "
+                        "this is, and what you changed since the last one. Call no more "
+                        "tools. The lead puts it to the user and messages you their "
+                        "answer; the stages behind this review stay shut until then."),
+                })
             hook = next((h for h in (self._canvas_hooks or [])
                          if str(h.get("hook_node_id")) == hid), None)
             if hook is None:
@@ -1843,9 +1869,9 @@ class Pipeline:
                                    ).reviews_before(self._canvas_hooks or [])
                 remaining = sorted((i for i, revs in waits.items() if hid in revs
                                     and not _rev(by_id.get(i) or {})), key=str)
-                self._review_armed = ReviewHalt(
+                self._arm_review(ReviewHalt(
                     hook_node_id=hid, question=question, remaining=tuple(remaining),
-                    text_hooks=tuple(written))
+                    text_hooks=tuple(written)))
                 _push_patch({"op": "review_text", "hook_node_id": hid,
                              "text_hooks": written, "question": question})
                 _push_progress(f"⏸️ Stopped at review hook {hid} — the text is waiting "
@@ -1888,10 +1914,10 @@ class Pipeline:
             remaining = sorted((i for i, revs in _waits_on(self._canvas_hooks or []).items()
                                 if hid in revs and not _rev(by_id.get(i) or {})), key=str)
             collector_key = f"agentY_review_{hid}"
-            self._review_armed = ReviewHalt(
+            self._arm_review(ReviewHalt(
                 hook_node_id=hid, collector_key=collector_key,
                 produced=tuple(files), question=question, remaining=tuple(remaining),
-            )
+            ))
             _push_patch({
                 "op": "review_collector",
                 "hook_node_id": hid,
@@ -1980,7 +2006,39 @@ class Pipeline:
             from src.utils.review_gate import release_check
 
             hid = str(hook_node_id or "").strip()
+            if self._turn_origin() == "shots":
+                # This turn was started by branches reporting back. What they wrote
+                # is not the user's decision, however much it reads like one.
+                return json.dumps({
+                    "error": "not lifted - this turn was started by a branch report, not "
+                             "by the user. Only the user's own message can answer a "
+                             "review: put the outputs to them (halt_for_review) and end "
+                             "the turn."})
             halt = getattr(self, "_review_halt", None)
+            other = next((h for h in getattr(self, "_review_others", [])
+                          if str(h.hook_node_id) == hid), None)
+            if other is not None and hid not in self._review_released \
+                    and self._review_reply_initial != "continue":
+                # One of several stops standing: this one is answered, the rest stay.
+                from src.utils.review_gate import quote_check as _quote
+                why = _quote(user_said, getattr(self, "_review_user_text", ""))
+                if why:
+                    return json.dumps({"error": "not lifted - " + why})
+                self._review_released.add(hid)
+                passed = list(getattr(self._session, "reviews_passed", None) or [])
+                self._session.reviews_passed = list(dict.fromkeys(passed + [hid]))
+                files = [] if other.is_text() else self._review_collector_files(other)
+                return json.dumps({
+                    "status": "lifted", "hook_node_id": hid,
+                    "still_standing": self._standing_review_ids(),
+                    "files": files,
+                    "message": (f"Review hook {hid} is answered. "
+                                + ("The text stands as it is now." if other.is_text() else
+                                   f"Its collector holds {len(files)} file(s) as it "
+                                   "stands now - those, in that order, are what goes on.")
+                                + " The other stops listed in `still_standing` are "
+                                  "untouched."),
+                })
             if halt is not None and self._review_reply == "continue":
                 return json.dumps({"status": "already_lifted", "hook_node_id": halt.hook_node_id,
                                    "message": "The stop is already lifted - carry on."})
@@ -2014,16 +2072,20 @@ class Pipeline:
             why = release_check(halt, self._review_armed is not None, user_said,
                                 getattr(self, "_review_user_text", ""))
             if not why and hid and hid != str(halt.hook_node_id):
-                why = (f"the chain is stopped at review hook {halt.hook_node_id}, "
-                       f"not {hid}.")
+                why = (f"the chain is stopped at review hook(s) "
+                       f"{', '.join(self._standing_review_ids())}, not {hid}.")
             if why:
                 return json.dumps({"error": "not lifted - " + why})
             self._review_reply = "continue"
+            self._review_released.add(str(halt.hook_node_id))
             passed = list(getattr(self._session, "reviews_passed", None) or [])
             passed.append(str(halt.hook_node_id))
             self._session.reviews_passed = list(dict.fromkeys(passed))
-            _push_patch({"op": "review_released", "answer": "continue",
-                         "hook_node_id": halt.hook_node_id, "text": halt.is_text()})
+            if not self._standing_review_ids():
+                # Only when nothing is left standing: the panel reads this as
+                # "the run is no longer waiting on you".
+                _push_patch({"op": "review_released", "answer": "continue",
+                             "hook_node_id": halt.hook_node_id, "text": halt.is_text()})
             try:
                 self._record_review_preference(getattr(self, "_review_user_text", ""))
             except Exception:  # noqa: BLE001
@@ -2311,10 +2373,18 @@ class Pipeline:
             from src.utils.canvas_patch import push as _push_patch
 
             graph = getattr(self, "_canvas_graph", None)
-            if not isinstance(graph, dict) or not graph:
+            # An empty canvas is a canvas: a hook pipeline is built from nothing,
+            # out of agentY's own nodes. Anything else needs a graph to edit.
+            _pipeline_nodes = {"AgentYHook", "AgentYReview", "AgentYLoopStart",
+                               "AgentYLoopBreak", "AgentYJoin"}
+            _from_nothing = bool(ops) and all(
+                isinstance(o, dict) and (
+                    (o.get("op") == "add" and str(o.get("class_type")) in _pipeline_nodes)
+                    or o.get("op") == "connect") for o in ops)
+            if not isinstance(graph, dict) or (not graph and not _from_nothing):
                 return json.dumps({"error": "no graph is open on the canvas this turn.",
                                    "what_to_do": "Build a new workflow with prepare_workflow instead."})
-            if not self._canvas_full_graph():
+            if graph and not self._canvas_full_graph():
                 selected = {str(n.get("id")) for n in (self._canvas_selection or [])}
                 refs = {str(o.get("ref")) for o in (ops or []) if isinstance(o, dict) and o.get("ref")}
                 named = {str(o.get(k)) for o in (ops or []) if isinstance(o, dict)
@@ -4964,6 +5034,26 @@ class Pipeline:
                             "is their go-ahead in other words, call release_review("
                             f"\"{halt.hook_node_id}\", user_said=\"<their words>\") and "
                             "carry on; if it asks for a change, make it and ask again.\n")
+                for other in getattr(self, "_review_others", []):
+                    # The other branches' stops, standing beside the first.
+                    o_ballot = ({} if other.is_text() else self._review_collector(other) or {})
+                    pin += halt_state(other, str(o_ballot.get("node_id") or ""))
+                    if self._review_reply == "continue":
+                        o_now = [] if other.is_text() else self._review_collector_files(other)
+                        pin += ("  The user's continue answers this one too."
+                                + (f" Its collector holds {len(o_now)} file(s) now:\n"
+                                   + binding_table(o_now, self._output_roles(o_now)) + "\n"
+                                   if o_now else "\n"))
+                    elif self._review_reply != "stop":
+                        pin += ("  STILL UP. It is answered on its own: release_review("
+                                f"\"{other.hook_node_id}\", user_said=\"<their words>\") "
+                                "when their message approves THIS one.\n")
+                if getattr(self, "_review_others", []):
+                    pin += ("  Several stops are standing at once - one per branch. A "
+                            "plain `continue` answers all of them; a message that "
+                            "approves some and changes others is answered one by one "
+                            "with release_review, and each answer is relayed to its own "
+                            "branch with message_shot.\n")
                 pin += "\n"
 
         # Ahead of every other block, including the hooks: it does not add a rule,
@@ -5094,7 +5184,11 @@ class Pipeline:
         # answered is spent, and one that has NOT is re-armed at the end of this
         # turn — so an unrelated message in between can never silently drop it.
         self._review_halt = self._restore_review_halt()
+        self._review_others = self._restore_other_halts()
+        self._review_armed_more = []
+        self._review_released = set()
         self._review_reply = self._read_review_reply(user_text)
+        self._review_reply_initial = self._review_reply
         # The user's own words this turn: what release_review is held to.
         self._review_user_text = user_text if isinstance(user_text, str) else ""
         self._review_armed = None
@@ -5107,10 +5201,13 @@ class Pipeline:
         # review again in the middle of a run, with no stop for anyone to answer.
         passed = list(getattr(self._session, "reviews_passed", None) or [])
         if self._review_halt is not None and self._review_reply == "continue":
+            # A plain continue answers every stop that is standing.
             passed.append(str(self._review_halt.hook_node_id))
+            passed += [str(h.hook_node_id) for h in self._review_others]
         elif self._review_halt is not None and self._review_reply == "stop":
             passed = []
         self._session.reviews_passed = list(dict.fromkeys(passed))
+        self._session.review_halts_more = []
         # How many times each workflow has been re-run after a provider refused it
         # on content grounds. Per-turn: a refusal that ran out of retries is not
         # held against the next request.
@@ -6513,6 +6610,45 @@ class Pipeline:
         return [str(h.get("hook_node_id")) for h in (self._canvas_hooks or [])
                 if isinstance(h, dict) and any(str(t[0]) in want for t in _output_targets(h))]
 
+    def _restore_other_halts(self) -> list:
+        """The stops standing beside the first one (parallel branches), or []."""
+        out = []
+        try:
+            from src.utils.review_gate import ReviewHalt
+            for raw in (getattr(self._session, "review_halts_more", None) or []):
+                if isinstance(raw, dict) and raw.get("hook_node_id"):
+                    out.append(ReviewHalt(
+                        hook_node_id=str(raw.get("hook_node_id") or ""),
+                        collector_key=str(raw.get("collector_key") or ""),
+                        produced=tuple(str(p) for p in (raw.get("produced") or [])),
+                        question=str(raw.get("question") or ""),
+                        remaining=tuple(str(h) for h in (raw.get("remaining") or [])),
+                        text_hooks=tuple(str(h) for h in (raw.get("text_hooks") or []))))
+        except Exception:  # noqa: BLE001
+            return []
+        return out if self._session.review_halt else []
+
+    def _turn_origin(self) -> str:
+        """Who started this turn: "panel", "slack", "lead" (a branch, briefed by
+        its lead), "shots" (a lead, woken by its branches) - or "" if unknown."""
+        try:
+            from agenty_core.utils import turn_scope
+            from src.utils import turn_bus as _tb
+            turn = _tb.turn(turn_scope.current().request_id)
+            return str(getattr(turn, "origin", "") or "")
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _branch_info(self) -> dict | None:
+        """This conversation as a branch of a pipeline ({name, lead_id}), or None."""
+        try:
+            from agenty_core.utils import turn_scope
+            from src.utils import conversation_store as _cs
+            tid = turn_scope.current().thread_id
+            return _cs.shot_of(tid) if tid else None
+        except Exception:  # noqa: BLE001
+            return None
+
     def _read_review_reply(self, user_text: str) -> str:
         """How this message answers a live halt: "continue", "stop", or "" (neither)."""
         if self._review_halt is None:
@@ -6598,8 +6734,10 @@ class Pipeline:
         except Exception:  # noqa: BLE001 — bookkeeping never breaks the write
             pass
 
-    def _review_collector(self) -> dict | None:
+    def _review_collector(self, halt=None) -> dict | None:
         """The halted chain's ballot: the collector wired into the review hook.
+
+        *halt* names which stop, when several stand at once; the first otherwise.
 
         Resolved through the hook's ANCHORS rather than through an id remembered
         at halt time, because there is no id to remember — the node is created in
@@ -6609,7 +6747,7 @@ class Pipeline:
 
         Returns ``{"node_id", "files"}``, or None when nothing is wired.
         """
-        halt = getattr(self, "_review_halt", None)
+        halt = halt if halt is not None else getattr(self, "_review_halt", None)
         if halt is None:
             return None
         from src.utils.canvas_hooks import review_collector
@@ -6902,7 +7040,7 @@ class Pipeline:
                 out[p] = role
         return out
 
-    def _review_collector_files(self) -> list:
+    def _review_collector_files(self, halt=None) -> list:
         """What the halted collector holds **right now**, off the live canvas.
 
         This is the answer to "which ones proceed?", and it is deliberately read
@@ -6912,7 +7050,7 @@ class Pipeline:
         means the node is gone or was emptied, which the caller reports rather
         than papering over with the list from the halt.
         """
-        return list((self._review_collector() or {}).get("files") or [])
+        return list((self._review_collector(halt) or {}).get("files") or [])
 
     def _record_review_preference(self, request: str = "") -> None:
         """A review the user has just answered, written down as a label.
@@ -6982,37 +7120,64 @@ class Pipeline:
                            "waiting for continue or stop.")
         return execution_refusal(halt)
 
-    def _arm_review_halt(self) -> None:
-        """At the end of a turn, decide whether the next one is still halted.
+    def _arm_review(self, halt) -> None:
+        """A stop raised this turn. The first is the primary; the rest stand beside it.
 
-        Three ways to leave here. A halt raised this turn is written to the
-        session. A halt the user answered — either way — is spent and stays gone.
-        A halt they neither continued nor stopped is put back untouched: they
-        asked something else in the middle of a review, which is ordinary, and
-        losing the stop because of it would run the stage they never approved.
+        Raising one for a hook that already has one replaces it - a branch that
+        was sent back and reports again is the same stop with new outputs.
+        """
+        hid = str(halt.hook_node_id)
+        if self._review_armed is None or str(self._review_armed.hook_node_id) == hid:
+            self._review_armed = halt
+            return
+        self._review_armed_more = [h for h in self._review_armed_more
+                                   if str(h.hook_node_id) != hid] + [halt]
+
+    def _standing_review_ids(self) -> list:
+        """Review hooks a stop is standing at right now, lifted ones left out."""
+        if self._review_reply_initial in ("continue", "stop"):
+            return []
+        ids = []
+        if self._review_halt is not None:
+            ids.append(str(self._review_halt.hook_node_id))
+        ids += [str(h.hook_node_id) for h in getattr(self, "_review_others", [])]
+        return [i for i in ids if i not in self._review_released]
+
+    @staticmethod
+    def _halt_record(h) -> dict:
+        return {"hook_node_id": h.hook_node_id, "collector_key": h.collector_key,
+                "produced": list(h.produced), "question": h.question,
+                "remaining": list(h.remaining), "text_hooks": list(h.text_hooks)}
+
+    def _arm_review_halt(self) -> None:
+        """At the end of a turn, decide which stops the next one begins with.
+
+        A stop raised this turn stands. One the user answered - a plain continue
+        or stop answers them all, release_review answers one - is spent. One they
+        neither continued nor stopped is put back untouched: they asked something
+        else in the middle of a review, which is ordinary, and losing the stop
+        because of it would run the stage they never approved.
         """
         try:
-            if self._review_armed is not None:
-                h = self._review_armed
-                self._session.review_halt = {
-                    "hook_node_id": h.hook_node_id,
-                    "collector_key": h.collector_key,
-                    "produced": list(h.produced),
-                    "question": h.question,
-                    "remaining": list(h.remaining),
-                    "text_hooks": list(h.text_hooks),
-                }
-                return
-            if self._review_halt is not None and not self._review_reply:
-                h = self._review_halt
-                self._session.review_halt = {
-                    "hook_node_id": h.hook_node_id,
-                    "collector_key": h.collector_key,
-                    "produced": list(h.produced),
-                    "question": h.question,
-                    "remaining": list(h.remaining),
-                    "text_hooks": list(h.text_hooks),
-                }
+            standing: dict = {}
+            released = getattr(self, "_review_released", set())
+            # The first stop: answered by any reply to it (release_review sets one).
+            if self._review_halt is not None and not self._review_reply \
+                    and str(self._review_halt.hook_node_id) not in released:
+                standing[str(self._review_halt.hook_node_id)] = self._review_halt
+            # The others: answered together by a plain continue or stop in the
+            # user's own message, or one at a time by release_review.
+            if getattr(self, "_review_reply_initial", "") not in ("continue", "stop"):
+                for h in getattr(self, "_review_others", []):
+                    if str(h.hook_node_id) not in released:
+                        standing[str(h.hook_node_id)] = h
+            raised = ([self._review_armed] if self._review_armed is not None else []) \
+                + list(getattr(self, "_review_armed_more", []))
+            for h in raised:
+                standing[str(h.hook_node_id)] = h
+            records = [self._halt_record(h) for h in standing.values()]
+            self._session.review_halt = records[0] if records else None
+            self._session.review_halts_more = records[1:]
         except Exception:  # noqa: BLE001
             pass
 

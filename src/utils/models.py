@@ -81,6 +81,9 @@ class AgentSession(BaseModel):
     # Review hooks the user has answered with a continue, for as long as the run
     # they belong to is still being walked from stop to stop.
     reviews_passed: list[str] = Field(default_factory=list)
+    # Further stops standing beside `review_halt`: a pipeline with parallel
+    # branches can be waiting on a review per branch at the same moment.
+    review_halts_more: list[dict] = Field(default_factory=list)
     # The model family the thread's request named ("SD 1.5", "SDXL", …). A
     # follow-up about the graph that request built — "fix these problems" — does
     # not repeat it, and was then held to nothing: an SD 1.5 request came back

@@ -54,36 +54,40 @@ class PurposeTest(unittest.TestCase):
         self.assertTrue(_is_review(h))
         self.assertFalse(_is_qa(h), "a human_review hook is not a QA briefing")
 
-    def test_the_node_offers_human_review_and_not_review(self):
-        """The combo's own list, read from the node, so the canonical spelling and
-        the matcher cannot drift. A purpose the node offers but nothing matches is
-        a stop that never stops — and the expensive stage it was placed to gate
-        runs unguarded, which is the one failure this hook exists to prevent."""
+    def test_what_the_panel_sends_is_what_the_host_reads(self):
+        """Read from the extension, so the two cannot drift. A purpose the panel
+        sends but nothing matches is a stop that never stops - and the expensive
+        stage it was placed to gate runs unguarded, which is the one failure a
+        review exists to prevent."""
         import re
         from pathlib import Path
         src = Path(__file__).resolve().parents[1] / "src"
-        node = None
-        for base in (src.parent.parent / "ComfyUI" / "custom_nodes" / "agentY-comfyuiConnect",):
-            if (base / "__init__.py").exists():
-                node = (base / "__init__.py").read_text(encoding="utf-8")
-        if node is None:
-            self.skipTest("the ComfyUI extension is not installed beside this checkout")
-        options = re.search(r'"purpose",\s*\n\s*options=\[(.*?)\]', node, re.S)
-        self.assertIsNotNone(options, "could not find the purpose combo")
-        listed = re.findall(r'"([a-z_]+)"', options.group(1))
-        self.assertIn("human_review", listed)
-        self.assertNotIn("review", listed)
-        for purpose in listed:
-            with self.subTest(purpose=purpose):
-                # Every purpose the node offers must be one agentY recognises — and
-                # a retired one must not be on offer at all.
-                from src.utils.canvas_hooks import _is_qa as qa, _is_retired
-                self.assertFalse(_is_retired(_hook(1, purpose)),
-                                 f"the node still offers the retired purpose {purpose!r}")
-                known = (_is_review(_hook(1, purpose)) or qa(_hook(1, purpose))
-                         or purpose in ("inline_parameter", "make_workflow", "text",
-                                        "general_request"))
-                self.assertTrue(known, f"the node offers {purpose!r} and nothing reads it")
+        web = None
+        for base in (src.parent.parent / "agentY-comfyuiConnect",
+                     src.parent.parent / "ComfyUI" / "custom_nodes" / "agentY-comfyuiConnect"):
+            if (base / "web" / "agent_chat.js").exists():
+                web = base / "web"
+                break
+        if web is None:
+            self.skipTest("the ComfyUI extension is not checked out beside this one")
+        chat = (web / "agent_chat.js").read_text(encoding="utf-8")
+        hook = (web / "agent_hook.js").read_text(encoding="utf-8")
+        from src.utils.canvas_hooks import _is_qa as qa, _is_retired, _is_standin, _is_text
+        # the review node: a person is the stop, the agent is the QA briefing
+        self.assertIn('purpose: "human_review"', chat)
+        self.assertIn('purpose: "qa"', chat)
+        self.assertTrue(_is_review(_hook(1, "human_review")))
+        self.assertTrue(qa(_hook(1, "qa")))
+        # the hook: three purposes, each read as what it is
+        names = re.search(r"const HOST_NAME = \{(.*?)\};", hook, re.S)
+        self.assertIsNotNone(names, "could not find the purposes the panel sends")
+        sent = re.findall(r':\s*"([a-z_]+)"', names.group(1))
+        self.assertEqual(sent, ["set_parameter", "make_workflow", "text_only"])
+        self.assertTrue(_is_standin(_hook(1, "make_workflow")))
+        self.assertTrue(_is_text(_hook(1, "text_only")))
+        for purpose in sent:
+            self.assertFalse(_is_retired(_hook(1, purpose)))
+            self.assertFalse(_is_review(_hook(1, purpose)) or qa(_hook(1, purpose)))
 
     def test_qa_keeps_its_own_spellings(self):
         for p in ("qa", "quality", "check", "qa_check"):

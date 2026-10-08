@@ -287,5 +287,100 @@ class ACrossedSweep(unittest.TestCase):
         self.assertEqual(len(prompts), 25)
 
 
+class SeveralStopsAtOnce(unittest.TestCase):
+    """Parallel branches each wait on a review; the lead holds them all."""
+
+    def me(self, standing=(), reply="", initial=None):
+        import types
+        halts = [rg.ReviewHalt(hook_node_id=i, produced=(f"{i}.png",)) for i in standing]
+        return types.SimpleNamespace(
+            _review_halt=halts[0] if halts else None, _review_others=halts[1:],
+            _review_armed=None, _review_armed_more=[], _review_released=set(),
+            _review_reply=reply, _review_reply_initial=reply if initial is None else initial,
+            _session=types.SimpleNamespace(review_halt=None, review_halts_more=[]))
+
+    def end_turn(self, me):
+        from src.pipeline import Pipeline
+        me._halt_record = Pipeline._halt_record
+        Pipeline._arm_review_halt(me)
+        first = me._session.review_halt
+        return ([first["hook_node_id"]] if first else []) + \
+            [r["hook_node_id"] for r in me._session.review_halts_more]
+
+    def arm(self, me, hid):
+        from src.pipeline import Pipeline
+        Pipeline._arm_review(me, rg.ReviewHalt(hook_node_id=hid, produced=(f"{hid}-new.png",)))
+
+    def test_two_branches_reporting_in_one_turn_leave_two_stops(self):
+        me = self.me()
+        self.arm(me, "9"); self.arm(me, "28")
+        self.assertEqual(self.end_turn(me), ["9", "28"])
+
+    def test_a_branch_reporting_again_replaces_its_own_stop_only(self):
+        me = self.me(standing=["9", "28"])
+        self.arm(me, "28")
+        self.assertEqual(self.end_turn(me), ["9", "28"])
+        self.assertEqual(me._session.review_halts_more[0]["produced"], ["28-new.png"])
+
+    def test_a_question_in_between_keeps_them_all(self):
+        self.assertEqual(self.end_turn(self.me(standing=["9", "28"])), ["9", "28"])
+
+    def test_a_plain_continue_answers_them_all(self):
+        self.assertEqual(self.end_turn(self.me(standing=["9", "28"], reply="continue")), [])
+        self.assertEqual(self.end_turn(self.me(standing=["9", "28"], reply="stop")), [])
+
+    def test_lifting_one_leaves_the_other_standing(self):
+        me = self.me(standing=["9", "28"])
+        me._review_released.add("28")
+        self.assertEqual(self.end_turn(me), ["9"])
+
+    def test_lifting_the_first_leaves_the_others_standing(self):
+        # release_review on the first sets the reply; that must not sweep the rest away.
+        me = self.me(standing=["9", "28"], reply="continue", initial="")
+        me._review_released.add("9")
+        self.assertEqual(self.end_turn(me), ["28"])
+
+    def test_which_are_standing_right_now(self):
+        from src.pipeline import Pipeline
+        me = self.me(standing=["9", "28"])
+        self.assertEqual(Pipeline._standing_review_ids(me), ["9", "28"])
+        me._review_released.add("9")
+        self.assertEqual(Pipeline._standing_review_ids(me), ["28"])
+        self.assertEqual(Pipeline._standing_review_ids(self.me(standing=["9"], reply="continue")), [])
+
+    def test_a_second_branch_reporting_a_turn_later_does_not_lose_the_first(self):
+        # Branch A stopped at 9 last turn and is still unanswered; branch B
+        # reports now. Both stand - the first is not replaced by the second.
+        me = self.me(standing=["9"])
+        self.arm(me, "28")
+        self.assertEqual(self.end_turn(me), ["9", "28"])
+
+    def test_one_stop_raised_again_is_still_one_stop(self):
+        me = self.me(standing=["9"])
+        self.arm(me, "9")
+        self.assertEqual(self.end_turn(me), ["9"])
+        self.assertEqual(me._session.review_halt["produced"], ["9-new.png"])
+
+
+class ABranchReportsInsteadOfStopping(unittest.TestCase):
+    def setUp(self):
+        self.src = (__import__("pathlib").Path(__file__).resolve().parent.parent / "src" / "pipeline.py"
+                    ).read_text(encoding="utf-8")
+
+    def test_a_branch_is_told_to_report_and_arms_nothing(self):
+        halt = self.src.split("        async def halt_for_review(", 1)[1].split("        @_tool", 1)[0]
+        branch = halt.split("            if branch:", 1)[1].split("            hook = next(", 1)[0]
+        self.assertIn('"status": "report_to_lead"', branch)
+        self.assertIn("`REVIEW {hid}`", branch)
+        self.assertNotIn("_arm_review", branch)
+        self.assertNotIn("_push_patch", branch)
+
+    def test_a_turn_started_by_branch_reports_cannot_answer_a_review(self):
+        rel = self.src.split("        async def release_review(", 1)[1].split("        @_tool", 1)[0]
+        self.assertLess(rel.index('if self._turn_origin() == "shots":'),
+                        rel.index("quote_check"))
+        self.assertIn("started by a branch report, not", rel)
+
+
 if __name__ == "__main__":
     unittest.main()

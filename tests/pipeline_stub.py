@@ -56,6 +56,12 @@ _BOUND = (
     "_review_ahead_refusal",
     "_hooks_feeding",
     "_reopen_reviews_after",
+    "_arm_review",
+    "_standing_review_ids",
+    "_halt_record",
+    "_restore_other_halts",
+    "_turn_origin",
+    "_branch_info",
     "_arm_review_halt",
     "_review_collector_files",
     "_review_collector",
@@ -117,6 +123,10 @@ def pipeline_stub(**over):
         _loop_states={},
         _forwarded={},
         _texts_placed={},
+        _review_others=[],
+        _review_armed_more=[],
+        _review_released=set(),
+        _review_reply_initial="",
         _DRY_GRAPH_CAP=Pipeline._DRY_GRAPH_CAP,
     )
     base.update(over)
