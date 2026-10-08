@@ -39,8 +39,16 @@ class ChoiceTest(unittest.TestCase):
         self.assertTrue(candidates("image"))
 
     def test_the_server_sends_the_frontend_this_same_list(self):
+        from unittest import mock
         from src.utils.agentY_server import _NODE_CANDIDATES
-        self.assertIs(_NODE_CANDIDATES, CANDIDATES)
+        with mock.patch("src.agent._load_settings", return_value={}):
+            for kind in CANDIDATES:
+                self.assertEqual(_NODE_CANDIDATES.get(kind, []), candidates(kind))
+            self.assertEqual(_NODE_CANDIDATES.get("image", []), CANDIDATES["image"])
+        # ... read when asked, so a loader chosen in Settings counts at once.
+        with mock.patch("src.agent._load_settings",
+                        return_value={"media_nodes": {"image_load": "bepic_imageLoad"}}):
+            self.assertEqual(_NODE_CANDIDATES.get("image", [])[0], "bepic_imageLoad")
 
 
 class ShapeTest(unittest.TestCase):

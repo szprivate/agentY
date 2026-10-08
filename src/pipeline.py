@@ -2255,6 +2255,15 @@ class Pipeline:
                                                  "and tell the user it opened in a tab of its own."})
             try:
                 _built = _lw(workflow_path)
+                # The save nodes chosen in Settings go onto the canvas, not the
+                # ones the workflow was built with (the executor would swap them
+                # at submission anyway; this way the canvas shows what runs).
+                try:
+                    from src.utils import media_nodes as _mn
+                    if _mn.apply_savers(_built):
+                        Path(workflow_path).write_text(json.dumps(_built, indent=2), encoding="utf-8")
+                except Exception:  # noqa: BLE001
+                    pass
                 ops = _ce.ops_for_workflow(_built)
             except (OSError, ValueError) as exc:
                 return json.dumps({"error": f"cannot insert {workflow_path}: {exc}"})

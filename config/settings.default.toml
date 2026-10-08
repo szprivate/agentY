@@ -132,6 +132,7 @@ hooks_into_canvas = true
 # From this many nodes on, such a workflow is folded into one subgraph node
 # (0 = never fold).
 hook_subgraph_min_nodes = 12
+
 # Place the agent's written answer to a TEXT canvas hook (purpose = "text") onto
 # the canvas as an "agentY text" node. The node is a readable reference only: the
 # hook stays wired exactly as you drew it, and the answer is injected into the
@@ -186,6 +187,17 @@ auto_update = true
 update_channel = "stable"
 message_history_log = "./.logs/message_history.log"
 tokens_usage_log = "./.logs/tokens_usage.log"
+
+# Which node loads and which node saves each kind of file ("" = automatic: the
+# save node a workflow was built with, and the first loader this ComfyUI has).
+# A node class name, e.g. image_save = "bEpicSendToViewer". Chosen in Settings.
+[media_nodes]
+image_load = ""
+image_save = ""
+video_load = ""
+video_save = ""
+audio_load = ""
+audio_save = ""
 
 # Who may talk to the agent host, and how long an API key may sit unrotated.
 #

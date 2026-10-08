@@ -72,7 +72,7 @@ from agenty_core.utils import turn_scope
 from src.utils.pipeline_pool import ConversationBusy, PipelinePool, PoolTimeout
 from src.utils import turn_bus
 from src.utils import turn_watchdog as _wd
-from src.utils.media_loaders import CANDIDATES as _LOADER_CANDIDATES
+from src.utils.media_loaders import candidates as _loader_candidates
 from src.utils.models import AgentSession
 
 logger = logging.getLogger("agentY.server")
@@ -224,7 +224,18 @@ _VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".mpg", ".mp
 # of `path`/`filename` belongs in it, are one decision — hence media_loaders. The
 # staging copy still happens either way: it is the fallback when VHS is not
 # installed, and other lookups lean on it.
-_NODE_CANDIDATES = _LOADER_CANDIDATES
+
+
+class _NodeCandidates:
+    """``.get(kind, [])`` over media_loaders.candidates: read when asked, so a
+    loader chosen in Settings counts from the next result on."""
+
+    @staticmethod
+    def get(kind, default=None):
+        return _loader_candidates(kind) or (default if default is not None else [])
+
+
+_NODE_CANDIDATES = _NodeCandidates()
 
 
 def _is_image_path(path: str) -> bool:
@@ -3430,7 +3441,18 @@ def settings_payload() -> dict:
         "host": _host_identity(),
         # Long-term memory's embedder choices and whether each can work here.
         "memory_embedders": _memory_embedders(),
+        # The loader and saver nodes this ComfyUI offers per kind of file.
+        "media_node_choices": _media_node_choices(),
     }
+
+
+def _media_node_choices() -> dict:
+    try:
+        from src.utils.media_nodes import choices
+        return choices()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("media node choices unavailable: %s", exc)
+        return {}
 
 
 def _embedder_setting() -> dict:

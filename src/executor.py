@@ -346,6 +346,14 @@ def _submit_workflow(workflow_path: str, client_id: str = "") -> str:
             p.write_text(json.dumps(workflow, indent=2), encoding="utf-8")
     except Exception:  # noqa: BLE001 — a safety net must never block a submission
         pass
+    # The save nodes chosen in Settings (Load & save nodes) replace the graph's
+    # own, before the output-name rule below names them.
+    try:
+        from src.utils import media_nodes
+        if media_nodes.apply_savers(workflow):
+            p.write_text(json.dumps(workflow, indent=2), encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("executor: could not apply the chosen save nodes (%s)", exc)
     # With a context (sequence / shot) in force, the savers are named by rule
     # before the run - folders, version and suffix; nothing is renamed after.
     # See src/utils/output_context.py.

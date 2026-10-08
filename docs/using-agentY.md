@@ -660,6 +660,20 @@ ComfyUI **Settings → agentY → Open agentY Settings…**
 Changed values are saved to `config/settings.local.json`; the defaults in
 `config/settings.default.toml` are never edited.
 
+### Load & save nodes
+
+**Settings ▸ Load & save nodes** picks, for images, videos and audio, which node
+loads a file and which node saves one. Each dropdown lists what this ComfyUI has,
+including bEpic's **Send to Image Viewer**.
+
+- **save with** — replaces the save node a workflow was built with, keeping its
+  input and file name. Only when the chosen node can take the same connection:
+  a saver for `VIDEO` is not put where frames (`IMAGE`) were being saved.
+- **load with** — the node results are dropped onto the canvas with, and the one
+  the agent builds when it wires a file in. The built-in loaders stay as fallback.
+- **Automatic** leaves things as they were: the workflow's own save node, and the
+  first loader installed (the path loaders of Video Helper Suite first).
+
 ### Choosing models
 
 A model value is `"provider,model"`. Providers: `claude`, `ollama`, `dashscope`

@@ -32,8 +32,17 @@ CANDIDATES: dict[str, list[str]] = {
 
 
 def candidates(kind: str) -> list[str]:
-    """Loader classes to try for ``"image"`` / ``"video"``, best first."""
-    return list(CANDIDATES.get(str(kind or ""), []))
+    """Loader classes to try for ``"image"`` / ``"video"``, best first.
+
+    The loader chosen in Settings (Load & save nodes) goes in front; the built-in
+    ones stay behind it as the fallback for a ComfyUI that does not have it.
+    """
+    defaults = list(CANDIDATES.get(str(kind or ""), []))
+    try:
+        from src.utils.media_nodes import loader_candidates
+        return loader_candidates(str(kind or ""), defaults)
+    except Exception:  # noqa: BLE001
+        return defaults
 
 
 def installed(kind: str) -> str:
@@ -146,4 +155,14 @@ def takes_absolute_path(class_type: str) -> bool:
     staged into the input directory either way, so the value written is one that
     at least exists.
     """
-    return str(class_type or "").strip().endswith("Path")
+    cls = str(class_type or "").strip()
+    if cls.endswith("Path"):
+        return True
+    if any(cls in group for group in CANDIDATES.values()):
+        return False                    # the built-in name loaders
+    # A loader chosen in Settings: its own schema says which shape it is.
+    try:
+        from src.utils.media_nodes import _schema, file_widget
+        return file_widget(_schema(cls))[1]
+    except Exception:  # noqa: BLE001
+        return False
