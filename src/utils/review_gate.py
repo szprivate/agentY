@@ -100,6 +100,14 @@ _STOP = re.compile(
 
 # A longer message still answers if it opens with one of the two and then only
 # qualifies it — "continue with these three", "stop, they're all wrong".
+# Between the parts of an answer said twice, and the politeness around one.
+_SEPARATOR = re.compile(r"\s*(?:[-–—,.;:!/]+|\band\b|\bthen\b)\s*", re.I)
+_FILLER = re.compile(r"\b(?:please|pls|thanks|thank\s+you|thx|now)\b", re.I)
+# Words that agree but are too loose to stand alone as the whole message
+# ("good" by itself may be about anything); beside a plain yes they are part of it.
+_AGREE = re.compile(r"^\s*(?:good|great|perfect|fine|nice|looks?\s+good|all\s+good|"
+                    r"that\s+works|works(?:\s+for\s+me)?|i\s+approve|approve\s+it)\s*$", re.I)
+
 _CONTINUE_OPENER = re.compile(
     r"^\s*(?:continue|proceed|carry\s*on|go\s*ahead|resume|keep\s*going)\b", re.I)
 _STOP_OPENER = re.compile(r"^\s*(?:stop|abort|cancel|discard|forget\s*it)\b", re.I)
@@ -121,6 +129,18 @@ def read_reply(text: str) -> str:
         return "stop"
     if _CONTINUE.match(body):
         return "continue"
+    # An answer said twice over is still one answer: "Approved - proceed",
+    # "yes, go ahead", "ok. continue" - and two messages sent before the agent
+    # replied arrive joined into one. Every part has to be a plain yes (or every
+    # part a plain no); one part that is anything else makes it an instruction.
+    lines = " / ".join(ln.strip() for ln in str(text).splitlines() if ln.strip())
+    parts = [s for s in (_FILLER.sub("", seg).strip() for seg in _SEPARATOR.split(lines)) if s]
+    if 1 <= len(parts) <= 4:
+        if all(_STOP.match(s) for s in parts):
+            return "stop"
+        yes = [bool(_CONTINUE.match(s)) for s in parts]
+        if any(yes) and all(y or _AGREE.match(s) for y, s in zip(yes, parts)):
+            return "continue"
     if len(body) <= _OPENER_MAX:
         if _STOP_OPENER.match(body):
             return "stop"

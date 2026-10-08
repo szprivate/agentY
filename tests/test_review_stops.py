@@ -160,5 +160,30 @@ class TheRefusal(unittest.TestCase):
         self.assertIn("1 output", halt.describe())
 
 
+
+class AnAnswerSaidTwice(unittest.TestCase):
+    """"Approved - proceed" did not lift the stop: only one-phrase answers did."""
+
+    def test_two_plain_yeses_are_a_continue(self):
+        for text in ("Approved - proceed", "yes, go ahead", "ok. continue please",
+                     "looks good, proceed", "perfect - go", "yes please",
+                     "Approved - proceed\n\ncontinue"):
+            with self.subTest(text=text):
+                self.assertEqual(rg.read_reply(text), "continue")
+
+    def test_two_plain_noes_are_a_stop(self):
+        self.assertEqual(rg.read_reply("no - stop"), "stop")
+
+    def test_a_yes_with_an_instruction_is_still_an_instruction(self):
+        for text in ("approved, but make the third one warmer",
+                     "approved and then make it blue", "yes and no", "no, make it shorter"):
+            with self.subTest(text=text):
+                self.assertEqual(rg.read_reply(text), "")
+
+    def test_a_loose_word_alone_is_not_an_answer(self):
+        for text in ("good", "great", "make it shorter"):
+            with self.subTest(text=text):
+                self.assertEqual(rg.read_reply(text), "")
+
 if __name__ == "__main__":
     unittest.main()
