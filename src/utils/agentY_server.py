@@ -246,6 +246,24 @@ def _is_video_path(path: str) -> bool:
     return Path(path).suffix.lower() in _VIDEO_SUFFIXES
 
 
+_AUDIO_SUFFIXES = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".opus"}
+_MODEL_SUFFIXES = {".glb", ".gltf", ".obj", ".fbx", ".stl", ".usdz", ".ply", ".splat", ".spz", ".ksplat"}
+
+
+def _drop_kind(path: str) -> str:
+    """What a result is to the canvas: ``image`` / ``video``, which always have
+    a loader, or ``audio`` / ``model`` when a loader was chosen for them in
+    Settings (Load & save nodes). Anything else is a ``file``: named in the
+    chat, not placed on the graph."""
+    if _is_image_path(path):
+        return "image"
+    if _is_video_path(path):
+        return "video"
+    suffix = Path(path).suffix.lower()
+    kind = "audio" if suffix in _AUDIO_SUFFIXES else "model" if suffix in _MODEL_SUFFIXES else ""
+    return kind if kind and _NODE_CANDIDATES.get(kind, []) else "file"
+
+
 # The canvas selection feeds the agent's inputs ONLY when the user asks for it
 # (or on the very first turn). This keeps a selection that drifts over the course
 # of a conversation from silently rebinding — or losing — the image input(s).
@@ -469,26 +487,29 @@ def _copy_sidecar(src: str, staged_name: str) -> None:
         logger.debug("sidecar copy failed for %s: %s", staged_name, exc)
 
 
-def _stage_into_comfy_input(path: str) -> str | None:
+def _stage_into_comfy_input(path: str, subfolder: str = "") -> str | None:
     """Copy *path* into ComfyUI's input dir so a loader node can reference it.
 
-    Returns the input-relative filename (basename) the node's widget should use,
-    or None when the input dir can't be resolved (frontend then falls back to the
-    absolute path for path-based loaders).
+    Returns the input-relative filename the node's widget should use, or None
+    when the input dir can't be resolved (frontend then falls back to the
+    absolute path for path-based loaders). *subfolder*: core's Load 3D lists
+    ``input/3d``, so a model goes there and is named ``3d/<file>``.
     """
     in_dir = _comfy_input_dir()
     if in_dir is None:
         return None
     try:
+        in_dir = in_dir / subfolder if subfolder else in_dir
+        prefix = f"{subfolder}/" if subfolder else ""
         in_dir.mkdir(parents=True, exist_ok=True)
         src = Path(path)
         dest = in_dir / src.name
         if dest.resolve() == src.resolve():
-            return src.name
+            return prefix + src.name
         if dest.exists():
             dest = in_dir / f"{src.stem}_{uuid.uuid4().hex[:6]}{src.suffix}"
         shutil.copy2(src, dest)
-        return dest.name
+        return prefix + dest.name
     except Exception as exc:
         logger.warning("could not stage %s into ComfyUI input: %s", path, exc)
         return None
@@ -1622,12 +1643,13 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
             if p in sent_paths or not os.path.isfile(p):
                 continue
             sent_paths.add(p)
-            kind = "image" if _is_image_path(p) else "video" if _is_video_path(p) else "file"
+            kind = _drop_kind(p)
             # What this file is FOR, recorded by whoever started the run. Resolving
             # it here also writes the sidecar beside the original, and the copy in
             # the input dir gets its own — that one is what a canvas node names.
             role, declared = _output_role(p)
-            staged = _stage_into_comfy_input(p) if kind in ("image", "video") else None
+            staged = (_stage_into_comfy_input(p, "3d" if kind == "model" else "")
+                      if kind != "file" else None)
             if staged and role:
                 _copy_sidecar(p, staged)
             # Its number in this conversation - what the panel prints on it and

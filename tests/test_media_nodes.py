@@ -53,6 +53,21 @@ INFO = {
     "LoadImageMask": _node({"image": [["a.png"], {}]}, output=["MASK"]),
     "ImageScale": _node({"image": ["IMAGE", {}], "width": ["INT", {}]}, output=["IMAGE"]),
     "KSampler": _node({"model": ["MODEL", {}]}, output=["LATENT"]),
+    # 3D: an input lists every type it takes, comma-separated.
+    "SaveGLB": _node({"mesh": ["MESH,FILE_3D_GLB,FILE_3D_OBJ,FILE_3D", {}],
+                      "filename_prefix": ["STRING", {"default": "mesh/ComfyUI"}]},
+                     output_node=True, display_name="Save 3D Model"),
+    "Save3DAdvanced": _node({"model_3d": ["FILE_3D_GLB,FILE_3D_OBJ,FILE_3D", {}],
+                             "filename_prefix": ["STRING", {"default": "3d/ComfyUI"}]},
+                            {"camera_info": ["LOAD3D_CAMERA", {}]}, output_node=True),
+    "SaveGaussianSplat": _node({"model_3d": ["FILE_3D_SPLAT_ANY,FILE_3D_PLY", {}],
+                                "filename_prefix": ["STRING", {"default": "3d/ComfyUI"}]},
+                               output_node=True, display_name="Save Splat"),
+    "Load3D": _node({"model_file": [["3d/a.glb"], {}], "image": ["LOAD_3D", {}], "width": ["INT", {}]},
+                    output=["IMAGE", "MASK", "STRING", "FILE_3D"], display_name="Load 3D & Animation"),
+    "AYON Load 3D Model": _node({"ayon_container_info": ["STRING", {}]}, output=["FILE_3D"]),
+    "MeshGen": _node({"image": ["IMAGE", {}]}, output=["MESH"]),
+    "Glb3DGen": _node({"image": ["IMAGE", {}]}, output=["FILE_3D_GLB"]),
 }
 
 
@@ -177,6 +192,80 @@ class SwappingTheSaver(unittest.TestCase):
         with _settings(image_save="bEpic_imageSave"):
             _apply(graph)
         self.assertEqual(graph["9"]["inputs"]["filename_prefix"], ["4", 0])
+
+
+class ThreeD(unittest.TestCase):
+    """3D inputs take several wire types; which one is on the wire decides."""
+
+    def setUp(self):
+        self.enterContext(mock.patch.object(mn, "_default_inputs", _defaults))
+        self.c = mn.choices(INFO)
+
+    def _graph(self, source, saver="SaveGLB", wire="mesh"):
+        return {"8": {"class_type": source, "inputs": {}},
+                "9": {"class_type": saver, "inputs": {wire: ["8", 0], "filename_prefix": "agent/models/chair"}}}
+
+    def test_savers_are_found_by_what_they_take(self):
+        self.assertEqual(_ids(self.c["model"]["save"]),
+                         ["Save3DAdvanced", "SaveGLB", "SaveGaussianSplat", "bEpicSendToViewer"])
+        self.assertNotIn("SaveGaussianSplat", _ids(self.c["image"]["save"]))
+
+    def test_the_loader_is_the_one_with_a_model_file_and_a_viewport_widget(self):
+        self.assertEqual(_ids(self.c["model"]["load"]), ["Load3D"])
+        self.assertEqual(mn.file_widget(INFO["Load3D"]), ("model_file", False))
+        self.assertNotIn("Load3D", _ids(self.c["image"]["load"]), "it hands out images too")
+
+    def test_the_viewer_takes_a_mesh(self):
+        graph = self._graph("MeshGen")
+        with _settings(model_save="bEpicSendToViewer"):
+            self.assertEqual(_apply(graph), {"9": ("SaveGLB", "bEpicSendToViewer")})
+        node = graph["9"]["inputs"]
+        self.assertEqual((node["input"], node["filename_prefix"], node["save_to_output"]),
+                         (["8", 0], "agent/models/chair", True))
+        self.assertEqual(node["file_format"], "png", "left alone: the viewer keeps a model's own format")
+
+    def test_a_file_saver_is_not_put_where_a_mesh_was_being_saved(self):
+        """SaveGLB takes a MESH or a file; Save 3D (Advanced) only a file."""
+        graph = self._graph("MeshGen")
+        with _settings(model_save="Save3DAdvanced"):
+            self.assertEqual(_apply(graph), {})
+        self.assertEqual(graph["9"]["class_type"], "SaveGLB")
+
+    def test_it_is_when_the_wire_carries_a_file(self):
+        graph = self._graph("Glb3DGen")
+        with _settings(model_save="Save3DAdvanced"):
+            self.assertEqual(_apply(graph), {"9": ("SaveGLB", "Save3DAdvanced")})
+        self.assertEqual(graph["9"]["inputs"]["model_3d"], ["8", 0])
+
+    def test_a_wire_nobody_can_name_needs_a_saver_that_takes_all_the_old_one_did(self):
+        graph = self._graph("NodeFromAnUnknownPack")
+        with _settings(model_save="Save3DAdvanced"):
+            self.assertEqual(_apply(graph), {})
+        with _settings(model_save="bEpicSendToViewer"):
+            self.assertEqual(list(_apply(graph)), ["9"])
+
+    def test_a_3d_result_is_placed_on_the_canvas_only_with_a_chosen_loader(self):
+        from src.utils import agentY_server as srv
+        with _settings():
+            self.assertEqual(srv._drop_kind("W:/out/chair.glb"), "file")
+            self.assertEqual(srv._drop_kind("W:/out/voice.wav"), "file")
+            self.assertEqual(srv._drop_kind("W:/out/a.png"), "image")
+        with _settings(model_load="Load3D", audio_load="LoadAudio"):
+            self.assertEqual(srv._drop_kind("W:/out/chair.glb"), "model")
+            self.assertEqual(srv._drop_kind("W:/out/voice.wav"), "audio")
+            self.assertEqual(srv._NODE_CANDIDATES.get("model", []), ["Load3D"])
+
+    def test_a_staged_model_goes_where_load_3d_looks(self):
+        import tempfile
+        from src.utils import agentY_server as srv
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "out" / "chair.glb"
+            src.parent.mkdir()
+            src.write_text("x", encoding="utf-8")
+            with mock.patch.object(srv, "_comfy_input_dir", lambda: Path(tmp) / "input"):
+                self.assertEqual(srv._stage_into_comfy_input(str(src), "3d"), "3d/chair.glb")
+                self.assertTrue((Path(tmp) / "input" / "3d" / "chair.glb").exists())
+                self.assertEqual(srv._stage_into_comfy_input(str(src)), "chair.glb")
 
 
 class TheLoader(unittest.TestCase):

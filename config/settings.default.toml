@@ -198,6 +198,8 @@ video_load = ""
 video_save = ""
 audio_load = ""
 audio_save = ""
+model_load = ""
+model_save = ""
 
 # Who may talk to the agent host, and how long an API key may sit unrotated.
 #

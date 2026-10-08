@@ -662,8 +662,8 @@ Changed values are saved to `config/settings.local.json`; the defaults in
 
 ### Load & save nodes
 
-**Settings ▸ Load & save nodes** picks, for images, videos and audio, which node
-loads a file and which node saves one. Each dropdown lists what this ComfyUI has,
+**Settings ▸ Load & save nodes** picks, for images, videos, audio and 3D models,
+which node loads a file and which node saves one. Each dropdown lists what this ComfyUI has,
 including bEpic's **Send to Image Viewer**.
 
 - **save with** — replaces the save node a workflow was built with, keeping its
@@ -673,6 +673,10 @@ including bEpic's **Send to Image Viewer**.
   the agent builds when it wires a file in. The built-in loaders stay as fallback.
 - **Automatic** leaves things as they were: the workflow's own save node, and the
   first loader installed (the path loaders of Video Helper Suite first).
+- **Audio and 3D results** are only placed on the canvas once you choose a loader
+  for them; on Automatic they are named in the chat.
+- **3D:** a save node that takes files only (*Save 3D (Advanced)*) is not put where
+  a mesh was being saved; *Save 3D Model* and *Send to Image Viewer* take both.
 
 ### Choosing models
 

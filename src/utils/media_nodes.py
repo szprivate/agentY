@@ -23,17 +23,21 @@ import logging
 
 logger = logging.getLogger("agentY.media_nodes")
 
-KINDS = ("image", "video", "audio")
+KINDS = ("image", "video", "audio", "model")
 _WIRE = {"image": ("IMAGE",), "video": ("VIDEO", "IMAGE"), "audio": ("AUDIO",)}
-_BUCKET = {"images": "image", "videos": "video", "audio": "audio"}
+_BUCKET = {"images": "image", "videos": "video", "audio": "audio", "models": "model"}
 _WILD = {"*", "COMFY_MATCHTYPE_V3", "ANY"}
 _SCALARS = {"STRING", "INT", "FLOAT", "BOOLEAN", "BOOL", "COMBO", "NUMBER",
-            "COMFY_DYNAMICCOMBO_V3", "COMFY_AUTOGROW_V3"}
+            "COMFY_DYNAMICCOMBO_V3", "COMFY_AUTOGROW_V3",
+            "LOAD_3D"}                 # the 3D viewport widget of Load 3D, not a wire
 # The input a saver names its file with, best first.
 _NAME_INPUTS = ("filename_prefix", "filename", "prefix", "output_path", "file_name")
 # The widget a loader keeps its file in.
-FILE_WIDGETS = ("image", "video", "audio", "file", "path", "image_path", "video_path",
-                "audio_path", "file_path", "filepath", "filename")
+FILE_WIDGETS = ("image", "video", "audio", "model_file", "file", "path", "image_path",
+                "video_path", "audio_path", "file_path", "filepath", "filename")
+# What a loader of each kind is called.
+_LOADER_WORDS = {"model": ("3d", "mesh", "splat", "point cloud"), "video": ("video",),
+                 "audio": ("audio",), "image": ("image",)}
 
 _choices_cache: dict = {}
 
@@ -54,6 +58,23 @@ def _required(schema: dict) -> dict:
 
 def _is_wire(type_name: str) -> bool:
     return type_name not in _SCALARS
+
+
+def _accepts(type_name: str) -> set:
+    """The wire types one input takes: 3D inputs list several ("MESH,FILE_3D_GLB,…")."""
+    return {t.strip() for t in str(type_name or "").split(",") if t.strip()}
+
+
+def _is_model_type(type_name: str) -> bool:
+    return type_name == "MESH" or type_name.startswith("FILE_3D")
+
+
+def _of_kind(type_name: str, kind: str) -> set:
+    """The types of *kind* among what an input of *type_name* takes."""
+    got = _accepts(type_name)
+    if kind == "model":
+        return {t for t in got if _is_model_type(t)}
+    return got & set(_WIRE[kind])
 
 
 def _bucket(class_type: str) -> str:
@@ -79,13 +100,15 @@ def saver_kinds(class_type: str, schema: dict) -> list[str]:
     types = _types(schema)
     if not any(n in types for n in _NAME_INPUTS):
         return []                      # a preview: it shows, it does not save
-    wires = {t for t in types.values() if _is_wire(t)}
+    wires = set().union(*[_accepts(t) for t in types.values() if _is_wire(t)])
     if wires & _WILD:
         # Takes anything, e.g. bEpicSendToViewer. Stricter about the name input:
         # debug nodes ("show any") take anything too and save nothing.
         return list(KINDS) if "filename_prefix" in types else []
+    if any(_is_model_type(t) for t in wires):
+        return ["model"]               # by what it takes: "Save Splat" has no 3D in its name
     mine = _bucket(class_type)
-    return [k for k in KINDS if k == mine and wires & set(_WIRE[k])]
+    return [k for k in _WIRE if k == mine and wires & set(_WIRE[k])]
 
 
 def loader_kinds(class_type: str, schema: dict) -> list[str]:
@@ -94,14 +117,15 @@ def loader_kinds(class_type: str, schema: dict) -> list[str]:
     types = _types(schema)
     if any(_is_wire(types.get(n, "")) for n in _required(schema)):
         return []
-    if not any(n in types for n in FILE_WIDGETS):
+    if not file_widget(schema)[0]:
         return []
     text = (class_type + " " + str((schema or {}).get("display_name") or "")).lower()
     if "load" not in text:
         return []
     outs = [str(o) for o in ((schema or {}).get("output") or [])]
-    for kind in ("video", "audio", "image"):      # "Load Video (Path)" is not an image loader
-        if kind in text and set(outs) & set(_WIRE[kind]):
+    # In this order: "Load 3D" also hands out images, "Load Video (Path)" frames.
+    for kind in ("model", "video", "audio", "image"):
+        if any(w in text for w in _LOADER_WORDS[kind]) and any(_of_kind(o, kind) for o in outs):
             return [kind]
     return []
 
@@ -161,7 +185,8 @@ def file_widget(schema: dict) -> tuple[str, bool]:
     names a copy in ComfyUI's input folder."""
     types = _types(schema)
     for name in FILE_WIDGETS:
-        if name in types:
+        # A text box or a list. Load 3D calls its viewport widget "image" too.
+        if types.get(name) in ("STRING", "COMBO"):
             return name, types[name] == "STRING"
     return "", False
 
@@ -181,20 +206,44 @@ def _default_inputs(class_type: str) -> dict:
         return {}
 
 
-def _swap(node: dict, kind: str, new_class: str, old_schema: dict, new_schema: dict) -> dict | None:
+def _wire_type(graph: dict, link, schema_of) -> str:
+    """What actually travels on *link*: the source node's output at that slot."""
+    try:
+        src = (graph or {}).get(str(link[0])) or {}
+        outs = (schema_of(str(src.get("class_type") or "")) or {}).get("output") or []
+        return str(outs[int(link[1])])
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _swap(node: dict, kind: str, new_class: str, old_schema: dict, new_schema: dict,
+          graph: dict | None = None, schema_of=None) -> dict | None:
     """*node* rebuilt as *new_class*, or None when that is not the same job."""
     old_types, new_types = _types(old_schema), _types(new_schema)
     inputs = node.get("inputs") or {}
     # The wire being saved: the old node's linked input of this kind's type.
-    source = next(((name, old_types.get(name)) for name, value in inputs.items()
-                   if isinstance(value, list) and old_types.get(name) in _WIRE[kind]), None)
+    source = next(((name, old_types.get(name, "")) for name, value in inputs.items()
+                   if isinstance(value, list) and _of_kind(old_types.get(name, ""), kind)), None)
     if source is None:
         return None
-    wire_name, wire_type = source
-    target = next((n for n, t in new_types.items() if t == wire_type), None) \
-        or next((n for n, t in new_types.items() if t in _WILD), None)
+    wire_name, declared = source
+    # An input that takes one type says what the wire is. One that takes several
+    # (3D: a mesh or any of the file types) does not: ask the node feeding it,
+    # and without an answer require the new input to take everything the old did.
+    took = _of_kind(declared, kind)
+    actual = _wire_type(graph, inputs[wire_name], schema_of) if (graph and schema_of) else ""
+    if len(took) == 1:
+        need = took
+    elif actual and actual in _accepts(declared):
+        need = {actual}
+    else:
+        need = took
+    target = next((n for n, t in new_types.items() if need <= _accepts(t)), None)
+    if target is None:
+        target = next((n for n, t in new_types.items() if _accepts(t) & _WILD), None)
     if target is None:
         return None                    # the chosen node cannot take this wire
+    wire_type = next(iter(need)) if len(need) == 1 else ""
     new_inputs = _default_inputs(new_class)
     new_inputs[target] = list(inputs[wire_name])
     # Same file name, under whatever the new node calls it.
@@ -254,7 +303,7 @@ def apply_savers(graph: dict, schema_of=None) -> dict:
             new_schema = schema_of(new)
             if not new_schema or kind not in saver_kinds(new, new_schema):
                 continue               # not installed here, or not a saver of this kind
-            swapped = _swap(node, kind, new, old_schema, new_schema)
+            swapped = _swap(node, kind, new, old_schema, new_schema, graph, schema_of)
         except Exception as exc:  # noqa: BLE001 - a preference must never cost a run
             logger.warning("media nodes: left node %s (%s) as it is: %s", nid, old, exc)
             continue
