@@ -71,6 +71,22 @@ def _format(items: list[dict], urgent: bool, kind: str | None = None) -> str:
     return text
 
 
+# What the user said INTO each conversation's running turn, since it began. A
+# review is answered by the user's own words; when they answer while a turn is
+# already running (the lead, woken by a branch report, is talking as they type),
+# those words arrive here and nowhere else.
+_spoken: dict[str, list[str]] = {}
+
+
+def spoken(thread_id: str) -> list[str]:
+    """The user's messages delivered into this conversation's current turn."""
+    return list(_spoken.get(str(thread_id or ""), []))
+
+
+def clear_spoken(thread_id: str) -> None:
+    _spoken.pop(str(thread_id or ""), None)
+
+
 def _persist(items: list[dict]) -> None:
     """Write the delivered message(s) into the conversation, in the position the
     model read them. The POST that accepted them deliberately does not: one that
@@ -79,6 +95,10 @@ def _persist(items: list[dict]) -> None:
     tid = interject_bus.thread_id()
     if not tid:
         return
+    for item in items:
+        said = str(item.get("text", "")).strip()
+        if said:
+            _spoken.setdefault(str(tid), []).append(said)
     try:
         from src.utils import conversation_store as cs
         for item in items:

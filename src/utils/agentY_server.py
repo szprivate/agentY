@@ -4010,16 +4010,25 @@ def _build_app():
             yield _sse({"type": "request", "request_id": rid, "watching": True,
                         "text": t.text if t is not None else ""})
             ended = False
+            index = -1
             for ev in turn_bus.follow(rid):
                 if ev is None:
                     yield ": keep-alive\n\n"
                     continue
+                index += 1
                 kind = ev.get("type")
                 if kind == "done":
                     ended = True
                 # Watching is looking: a replayed turn must not put its files or
                 # its edits on the canvas again (the turn did, if it was going to).
-                if kind == "canvas_patch":
+                #
+                # Except what only a watcher CAN deliver. A turn nobody started
+                # from the panel - a lead woken by its branches - has no page of
+                # its own, so a review it raises would never reach the canvas:
+                # the collector stayed as an earlier run left it, and the agent
+                # was then told it held the approved set. Those few patches go to
+                # the first page watching, once.
+                if kind == "canvas_patch" and not _watch_delivers(rid, index, ev):
                     continue
                 if kind == "output":
                     ev = {**ev, "drop": False}
@@ -5465,6 +5474,29 @@ def _start_background_turn(thread_id: str, text: str, *, origin: str,
                      name=f"agentY-{origin}-turn", daemon=True).start()
     threading.Thread(target=_drain_queue, args=(q,), daemon=True).start()
     return rid
+
+
+# Canvas patches a WATCHING page applies: the review ones, which say where a run
+# is waiting and gather what is being reviewed. Each is handed out once per run,
+# to whichever page watches first, so opening the conversation again later does
+# not put a collector back to what it held before the user edited it.
+_WATCH_PATCHES = {"review_collector", "review_text", "review_released", "flow_state"}
+_watch_sent: set = set()
+_watch_lock = threading.Lock()
+
+
+def _watch_delivers(rid: str, index: int, event: dict) -> bool:
+    """Should this canvas patch of a watched turn go to the page asking for it?"""
+    if str(event.get("op") or "") not in _WATCH_PATCHES:
+        return False
+    key = (str(rid), int(index))
+    with _watch_lock:
+        if key in _watch_sent:
+            return False
+        if len(_watch_sent) > 5000:           # a long-lived host: start over
+            _watch_sent.clear()
+        _watch_sent.add(key)
+    return True
 
 
 def _branch_canvas(hook_ids: list):

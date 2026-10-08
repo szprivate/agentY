@@ -2020,14 +2020,16 @@ class Pipeline:
             from src.utils.review_gate import release_check
 
             hid = str(hook_node_id or "").strip()
-            if self._turn_origin() == "shots":
-                # This turn was started by branches reporting back. What they wrote
-                # is not the user's decision, however much it reads like one.
+            heard = self._users_words()
+            if not heard.strip():
+                # This turn was started by branches reporting back, and the user
+                # has said nothing in it. What a branch wrote is not their
+                # decision, however much it reads like one.
                 return json.dumps({
                     "error": "not lifted - this turn was started by a branch report, not "
-                             "by the user. Only the user's own message can answer a "
-                             "review: put the outputs to them (halt_for_review) and end "
-                             "the turn."})
+                             "by the user, and they have said nothing in it. Only the "
+                             "user's own message can answer a review: put the outputs to "
+                             "them (halt_for_review) and end the turn."})
             halt = getattr(self, "_review_halt", None)
             other = next((h for h in getattr(self, "_review_others", [])
                           if str(h.hook_node_id) == hid), None)
@@ -2035,21 +2037,21 @@ class Pipeline:
                     and self._review_reply_initial != "continue":
                 # One of several stops standing: this one is answered, the rest stay.
                 from src.utils.review_gate import quote_check as _quote
-                why = _quote(user_said, getattr(self, "_review_user_text", ""))
+                why = _quote(user_said, heard)
                 if why:
                     return json.dumps({"error": "not lifted - " + why})
                 self._review_released.add(hid)
                 passed = list(getattr(self._session, "reviews_passed", None) or [])
                 self._session.reviews_passed = list(dict.fromkeys(passed + [hid]))
-                files = [] if other.is_text() else self._review_collector_files(other)
+                files, where = self._review_goes_on(other)
                 return json.dumps({
                     "status": "lifted", "hook_node_id": hid,
                     "still_standing": self._standing_review_ids(),
                     "files": files,
                     "message": (f"Review hook {hid} is answered. "
                                 + ("The text stands as it is now." if other.is_text() else
-                                   f"Its collector holds {len(files)} file(s) as it "
-                                   "stands now - those, in that order, are what goes on.")
+                                   f"What goes on is {where}: the {len(files)} file(s) in "
+                                   "`files`, in that order. That is settled.")
                                 + " The other stops listed in `still_standing` are "
                                   "untouched."),
                 })
@@ -2073,7 +2075,7 @@ class Pipeline:
                 if hid in passed:
                     return json.dumps({"status": "already_lifted", "hook_node_id": hid,
                                        "message": "That review is already answered - carry on."})
-                why = quote_check(user_said, getattr(self, "_review_user_text", ""))
+                why = quote_check(user_said, heard)
                 if why:
                     return json.dumps({"error": "not lifted - " + why})
                 self._session.reviews_passed = list(dict.fromkeys(passed + [hid]))
@@ -2083,8 +2085,7 @@ class Pipeline:
                                 "Carry on with the stages behind it, up to the next "
                                 "review hook."),
                 })
-            why = release_check(halt, self._review_armed is not None, user_said,
-                                getattr(self, "_review_user_text", ""))
+            why = release_check(halt, self._review_armed is not None, user_said, heard)
             if not why and hid and hid != str(halt.hook_node_id):
                 why = (f"the chain is stopped at review hook(s) "
                        f"{', '.join(self._standing_review_ids())}, not {hid}.")
@@ -2108,11 +2109,9 @@ class Pipeline:
                 now = ("The text stands as it is now; the stages behind the hook read "
                        "it from there.")
             else:
-                files = self._review_collector_files()
-                now = (f"The collector holds {len(files)} file(s) as it stands now - "
-                       "those, in that order, are what goes on: "
-                       + json.dumps(files) if files else
-                       "The collector is empty or gone - say so and ask what to run.")
+                files, where = self._review_goes_on(halt)
+                now = (f"What goes on is {where}: {len(files)} file(s), in this order, "
+                       "and that is settled: " + json.dumps(files))
             return json.dumps({
                 "status": "lifted", "hook_node_id": halt.hook_node_id,
                 "open_now": list(halt.remaining),
@@ -5038,18 +5037,14 @@ class Pipeline:
                             "the text as it stands now. If their message also asks for "
                             "a change, make it first.\n")
                 elif self._review_reply == "continue":
-                    now = self._review_collector_files()
-                    pin += "  " + resumed_note(len(now),
-                                               max(0, halt.count() - len(now))) + "\n"
-                    if now:
-                        pin += ("  The collector holds, in order — these ARE the "
-                                "numbered slots the next stage will receive:\n"
-                                + binding_table(now, self._output_roles(now)) + "\n"
-                                + renumber_note())
-                    else:
-                        pin += ("  The collector is EMPTY or gone — say so and ask what "
-                                "they want to run, rather than guessing at the files the "
-                                "stage produced.\n")
+                    now, where = self._review_goes_on(halt)
+                    pin += (f"  The user CONTINUED. What goes on from review hook "
+                            f"{halt.hook_node_id} is {where} — {len(now)} file(s), in "
+                            "order; these ARE the numbered slots the next stage will "
+                            "receive, and this is settled: do not weigh it against "
+                            "other lists, folders or earlier rounds.\n"
+                            + binding_table(now, self._output_roles(now)) + "\n"
+                            + (renumber_note() if now else ""))
                 elif self._review_reply == "stop":
                     pin += ("  They said STOP. Run nothing further, confirm what was "
                             "produced and where it is, and end the turn.\n")
@@ -5064,9 +5059,10 @@ class Pipeline:
                     o_ballot = ({} if other.is_text() else self._review_collector(other) or {})
                     pin += halt_state(other, str(o_ballot.get("node_id") or ""))
                     if self._review_reply == "continue":
-                        o_now = [] if other.is_text() else self._review_collector_files(other)
+                        o_now, o_where = self._review_goes_on(other)
                         pin += ("  The user's continue answers this one too."
-                                + (f" Its collector holds {len(o_now)} file(s) now:\n"
+                                + (f" What goes on from it is {o_where} — "
+                                   f"{len(o_now)} file(s), settled:\n"
                                    + binding_table(o_now, self._output_roles(o_now)) + "\n"
                                    if o_now else "\n"))
                     elif self._review_reply != "stop":
@@ -5216,6 +5212,11 @@ class Pipeline:
         self._review_reply_initial = self._review_reply
         # The user's own words this turn: what release_review is held to.
         self._review_user_text = user_text if isinstance(user_text, str) else ""
+        try:
+            from src.utils.interject_hook import clear_spoken as _clear_spoken
+            _clear_spoken(self._thread_id_now())
+        except Exception:  # noqa: BLE001
+            pass
         self._review_armed = None
         self._session.review_halt = None
         # Which review hooks are behind us. A continue adds the one it answers,
@@ -6652,6 +6653,64 @@ class Pipeline:
         except Exception:  # noqa: BLE001
             return []
         return out if self._session.review_halt else []
+
+    def _thread_id_now(self) -> str:
+        try:
+            from agenty_core.utils import turn_scope
+            return str(turn_scope.current().thread_id or "")
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _users_words(self) -> str:
+        """Everything the USER has said in this turn, and nothing anyone else has.
+
+        The message that opened the turn counts unless the turn was opened by
+        branches reporting back - that text is theirs. What the user sends into a
+        running turn always counts: answering a review while the lead is still
+        talking is the natural moment to do it, and it used to be the one moment
+        their approval was thrown away.
+        """
+        said = []
+        if self._turn_origin() != "shots":
+            said.append(str(getattr(self, "_review_user_text", "") or ""))
+        try:
+            from src.utils.interject_hook import spoken
+            said += spoken(self._thread_id_now())
+        except Exception:  # noqa: BLE001
+            pass
+        return "\n".join(s for s in said if s.strip())
+
+    def _review_goes_on(self, halt) -> tuple:
+        """What leaves a review once it is answered: ``(files, note)``.
+
+        The collector on the canvas is the answer when it holds this review's
+        files - the user edits it, and what is left is their choice. It is NOT
+        the answer when it is missing, empty, or full of files this stage never
+        made: a collector left over from an earlier run, never updated because
+        the stop was raised while no page was there to place it. Reporting that
+        as "the approved set" set a list of yesterday's pictures against the
+        ones the user had just approved, and left the agent to work out which
+        was meant. So there is one list, and a line saying where it came from.
+        """
+        produced = [str(p) for p in (getattr(halt, "produced", None) or []) if p]
+        if halt is None or halt.is_text():
+            return [], ""
+        held = [str(p) for p in self._review_collector_files(halt) if p]
+        names = lambda paths: {Path(p).name for p in paths}  # noqa: E731
+        if held and (names(held) & names(produced) or not produced):
+            dropped = max(0, len(produced) - len([p for p in held if Path(p).name in names(produced)]))
+            return held, ("the collector as it stands now"
+                          + (f" ({dropped} of this round's output(s) removed by the user)"
+                             if dropped else ""))
+        if held:
+            return produced, ("what the stage produced. The collector on the canvas holds "
+                              f"{len(held)} file(s) from an earlier run and was not updated "
+                              "for this review, so it is NOT the answer - do not use its "
+                              "files. Say in one line that you are going on with this "
+                              "round's outputs")
+        return produced, ("what the stage produced. No collector for this review is on the "
+                          "canvas, so there was nothing for the user to edit: go on with "
+                          "this round's outputs and say so in one line")
 
     def _turn_origin(self) -> str:
         """Who started this turn: "panel", "slack", "lead" (a branch, briefed by

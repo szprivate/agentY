@@ -376,9 +376,10 @@ class ABranchReportsInsteadOfStopping(unittest.TestCase):
         self.assertNotIn("_push_patch", branch)
 
     def test_a_turn_started_by_branch_reports_cannot_answer_a_review(self):
+        # ... unless the user themselves spoke in it (tests/test_review_answer.py).
         rel = self.src.split("        async def release_review(", 1)[1].split("        @_tool", 1)[0]
-        self.assertLess(rel.index('if self._turn_origin() == "shots":'),
-                        rel.index("quote_check"))
+        self.assertLess(rel.index("heard = self._users_words()"), rel.index("quote_check"))
+        self.assertLess(rel.index("if not heard.strip():"), rel.index("quote_check"))
         self.assertIn("started by a branch report, not", rel)
 
 
