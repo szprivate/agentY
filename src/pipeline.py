@@ -1572,6 +1572,20 @@ class Pipeline:
             ahead = self._review_ahead_refusal(_worked)
             if ahead:
                 return json.dumps(ahead)
+            if len(set(_worked)) > 1:
+                # Two stages in one call are not two runs side by side: their value
+                # lists MULTIPLY, and every variant runs both stages' generators.
+                # Four characters and four locations came out as sixteen runs of
+                # everything, most of them a prompt paired with the wrong partner.
+                return json.dumps({
+                    "error": "not run — these resolutions belong to "
+                             f"{len(set(_worked))} different stages (hooks "
+                             f"{', '.join(sorted(set(_worked), key=str))}). One call "
+                             "runs ONE stage.",
+                    "what_to_do": "Call apply_canvas_hooks once per stage, each with only "
+                                  "that stage's resolutions. Issue the calls in the same "
+                                  "step and they run at the same time.",
+                })
             self._reopen_reviews_after(_worked)
             # NOW the scoping is worth reporting: something is actually about to
             # run on it. Once per turn.
@@ -4275,7 +4289,8 @@ class Pipeline:
         if not prompts:
             return prompts, notes
         try:
-            from src.utils.canvas_hooks import prune_dead_nodes, scope_to_hook
+            from src.utils.canvas_hooks import (prune_dead_nodes, scope_to_hook,
+                                                scope_to_nodes)
         except Exception:  # noqa: BLE001 — never cost the run
             return prompts, notes
         wanted = {str(r.get("target_node_id", r.get("node_id", "")) or "")
@@ -4285,8 +4300,16 @@ class Pipeline:
         for p in prompts:
             kept = p
             try:
-                if hook is not None:
-                    cand, dropped = scope_to_hook(kept, hook)
+                cand, dropped = (scope_to_hook(kept, hook) if hook is not None
+                                 else (kept, []))
+                if dropped and not (wanted - set(cand)):
+                    kept, scoped_n = cand, max(scoped_n, len(dropped))
+                elif wanted:
+                    # No single hook owns this call, or its stage does not hold
+                    # every node the call names: cut to what those nodes drive.
+                    # Leaving the variant whole runs every generator on the
+                    # canvas, once per variant.
+                    cand, dropped = scope_to_nodes(kept, wanted)
                     if dropped and not (wanted - set(cand)):
                         kept, scoped_n = cand, max(scoped_n, len(dropped))
                 cand, dropped = prune_dead_nodes(kept)
@@ -4298,7 +4321,9 @@ class Pipeline:
                 kept = p
             out.append(kept)
         if scoped_n:
-            note = (f"scoped to hook {hook.get('hook_node_id')}'s own stage — left out "
+            whose = (f"hook {hook.get('hook_node_id')}'s own stage" if hook is not None
+                     else "the stage(s) this call names")
+            note = (f"scoped to {whose} — left out "
                     f"{scoped_n} node(s) belonging to the rest of the canvas")
             notes.append(note)
             _push_progress(f"🎯 {note}.")

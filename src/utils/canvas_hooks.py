@@ -162,9 +162,22 @@ def splice_hook_nodes(prompt: dict, hooks: list | None = None) -> tuple[dict, li
     # node it wraps. Without this the anchor's type is unknown at exactly the
     # moment it decides which wire replaces the hook.
     _roles, wrapped = ref_notes(clean)
+    # Read off the graph BEFORE anything is rewired: which of each hook's anchors
+    # come from a real node. An anchor wired from another stage - a hook's `out`,
+    # a review's `out` - is "what that stage made", which the agent delivers when
+    # the stage has run. Passing it through as a wire instead joined the stages
+    # in the graph that is queued: a review reads a save node, the next hook
+    # reads the review and feeds a generator's image input, and that generator
+    # ended up wired to the FIRST stage's save node - so running the first stage
+    # ran the later generator too, on whatever happened to be in its prompt.
+    stage_ids = {str(h) for h in hook_ids}
+    real_links = {
+        str(hid): [link for link in _anchor_links((clean.get(hid) or {}).get("inputs") or {})
+                   if str(link[0]) not in stage_ids]
+        for hid in hook_ids}
     for hid in hook_ids:
         node = clean.get(hid, {}) or {}
-        links = _anchor_links(node.get("inputs") or {})
+        links = real_links.get(str(hid), [])
         by_node = anchor_types.get(str(hid), {})
 
         def _anchor_type(nid, _by=by_node) -> str:
@@ -196,8 +209,9 @@ def splice_hook_nodes(prompt: dict, hooks: list | None = None) -> tuple[dict, li
             return links[0]
 
         # Rewire any consumer of this hook's output back to the hook's source.
-        for other in clean.values():
-            if not isinstance(other, dict):
+        for other_id, other in clean.items():
+            # Another stage reading this one is not a wire to mend: it goes too.
+            if not isinstance(other, dict) or str(other_id) in stage_ids:
                 continue
             for k, v in list((other.get("inputs") or {}).items()):
                 if not (isinstance(v, list) and len(v) == 2 and str(v[0]) == str(hid)):
@@ -441,6 +455,28 @@ def scope_to_hook(prompt: dict, hook: dict | None) -> tuple[dict, list]:
     scoped = {nid: node for nid, node in prompt.items() if str(nid) in keep}
     # Never hand back a graph with nothing to render — that is not a tighter
     # scope, it is a run that produces no files.
+    if not any(is_terminal((n or {}).get("class_type")) for n in scoped.values()):
+        return prompt, []
+    return scoped, dropped
+
+
+def scope_to_nodes(prompt: dict, node_ids) -> tuple[dict, list]:
+    """Trim *prompt* to the branch(es) the given nodes drive.
+
+    The same cut as :func:`scope_to_hook`, seeded from nodes rather than from one
+    hook: for a call that names nodes no single hook owns. Without it such a call
+    was left whole - every generator on the canvas, once per variant.
+    """
+    if not isinstance(prompt, dict) or not prompt:
+        return prompt, []
+    seeds = [str(n) for n in (node_ids or []) if str(n) in prompt]
+    if not seeds:
+        return prompt, []
+    keep = _ancestors(prompt, _descendants(prompt, seeds))
+    dropped = [str(nid) for nid in prompt if str(nid) not in keep]
+    if not dropped:
+        return prompt, []
+    scoped = {nid: node for nid, node in prompt.items() if str(nid) in keep}
     if not any(is_terminal((n or {}).get("class_type")) for n in scoped.values()):
         return prompt, []
     return scoped, dropped
@@ -3816,8 +3852,14 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None, flow=None,
     if flow is not None:
         from src.utils import hook_flow as _hf
         lines += _hf.loop_lines(flow)
+        # Any stage that makes something counts: a branch conversation runs its
+        # own stages of the canvas, so a sweep of an on-canvas generator is work
+        # for it just as a built workflow is. (Only built workflows counted while
+        # a branch had no canvas - which left a pipeline of sweeps with no
+        # parallel instructions at all.)
         lines += _hf.parallel_lines(
-            flow, is_work=lambda h: _is_standin(h) or _is_general(h))
+            flow, is_work=lambda h: not (_is_text(h) or _is_review(h) or _is_qa(h)
+                                         or _is_retired(h)))
 
     lines.append("")
     return "\n".join(lines)

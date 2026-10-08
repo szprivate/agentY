@@ -95,14 +95,17 @@ class ReadingTheCanvas(unittest.TestCase):
         self.assertEqual([hf.forward_mode(v) for v in ("ALL", "nonsense", "")], ["all", "best", "best"])
 
     def test_the_loop_nodes_come_out_of_the_graph_like_hooks(self):
+        # They carry only the execution wire now, so there is nothing of theirs to
+        # pass through: they go, and what is left is the graph that renders.
         prompt = {
             "3": {"class_type": "LoadImage", "inputs": {"image": "ref.png"}},
-            "10": {"class_type": "AgentYLoopStart", "inputs": {"anchors.anchor0": ["3", 0]}},
-            "13": {"class_type": "AgentYLoopBreak", "inputs": {"anchors.anchor0": ["10", 0], "condition": "x"}},
-            "20": {"class_type": "PreviewImage", "inputs": {"images": ["13", 0]}},
+            "10": {"class_type": "AgentYLoopStart", "inputs": {}},
+            "13": {"class_type": "AgentYLoopBreak", "inputs": {"exec": ["10", 0], "condition": "x"}},
+            "20": {"class_type": "PreviewImage", "inputs": {"images": ["3", 0]}},
         }
         clean, removed = splice_hook_nodes(prompt)
         self.assertEqual(sorted(removed), ["10", "13"])
+        self.assertEqual(sorted(clean), ["20", "3"])
         self.assertEqual(clean["20"]["inputs"]["images"], ["3", 0])
 
 
