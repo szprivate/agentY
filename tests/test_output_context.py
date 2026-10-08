@@ -61,6 +61,26 @@ class ReadingTheCanvas(unittest.TestCase):
         self.assertEqual((ctx["sequence"], ctx["shot"]), ("spec", "spec_0210"))
         self.assertEqual(ctx["source"], "AYON context node")
 
+    def test_the_node_the_ayon_addon_writes(self):
+        """ayon_comfyui imprints {"context", "instances", "containers"} into the
+        `ayon_context_info` widget of an "AYON Context" node; the folder is on
+        the instances, as camelCase `folderPath`."""
+        info = {"context": {"publish_attributes": {}},
+                "instances": [{"productType": "image", "folderPath": "/03_sequences/spec/spec_0210",
+                               "task": "comp", "active": True, "instance_id": "abc"}],
+                "containers": []}
+        graph = {"12": {"class_type": "AYON Context", "inputs": {"ayon_context_info": json.dumps(info)}},
+                 "9": {"class_type": "SaveImage", "inputs": {"filename_prefix": "ComfyUI"}}}
+        self.assertEqual(oc.from_canvas(graph),
+                         {"sequence": "spec", "shot": "spec_0210", "source": "AYON context node"})
+
+    def test_an_ayon_node_with_nothing_set_yet_falls_back_to_the_agenty_one(self):
+        empty = {"class_type": "AYON Context", "inputs": {"ayon_context_info": ""}}
+        bare = {"class_type": "AYON Context", "inputs": {"ayon_context_info": json.dumps(
+            {"context": {}, "instances": [], "containers": []})}}
+        for node in (empty, bare):
+            self.assertEqual(oc.from_canvas({"12": node, "5": OURS})["source"], "agentY context node 5")
+
     def test_the_publish_shape_takes_the_active_instance(self):
         publish = {"instances": [{"folderPath": "/seq/a/a_010"}, {"folderPath": "/seq/b/b_020", "active": True}]}
         self.assertEqual(oc.ayon_folder_path(publish), "/seq/b/b_020")
