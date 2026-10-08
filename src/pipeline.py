@@ -1949,6 +1949,68 @@ class Pipeline:
             })
 
         @_tool
+        async def release_review(hook_node_id: str, user_said: str) -> str:
+            """Lift a review stop because the user has said to go on.
+
+            A `[REVIEW HALT]` block that does not already say the user continued
+            means their message was not recognised as a plain "continue". If it IS
+            their go-ahead - "Approved - proceed", "ja, weiter", "that one, go" -
+            call this with their own words and the stages behind the hook open.
+
+            Only ever on the user's say-so in THIS turn's message. Not because the
+            work looks good to you, not on an approval from an earlier message, and
+            never for a stop you raised in this same turn. A message that asks for
+            a change is not a go-ahead, even if it sounds pleased: make the change
+            and ask again. If they approve AND ask for a change, lift the stop and
+            apply the change to what goes on.
+
+            Args:
+                hook_node_id: The review hook the chain is stopped at.
+                user_said: The user's words of approval, quoted exactly from their
+                    message this turn.
+            """
+            from src.utils.canvas_patch import push as _push_patch
+            from src.utils.review_gate import release_check
+
+            hid = str(hook_node_id or "").strip()
+            halt = getattr(self, "_review_halt", None)
+            if halt is not None and self._review_reply == "continue":
+                return json.dumps({"status": "already_lifted", "hook_node_id": halt.hook_node_id,
+                                   "message": "The stop is already lifted - carry on."})
+            why = release_check(halt, self._review_armed is not None, user_said,
+                                getattr(self, "_review_user_text", ""))
+            if not why and hid and hid != str(halt.hook_node_id):
+                why = (f"the chain is stopped at review hook {halt.hook_node_id}, "
+                       f"not {hid}.")
+            if why:
+                return json.dumps({"error": "not lifted - " + why})
+            self._review_reply = "continue"
+            passed = list(getattr(self._session, "reviews_passed", None) or [])
+            passed.append(str(halt.hook_node_id))
+            self._session.reviews_passed = list(dict.fromkeys(passed))
+            _push_patch({"op": "review_released", "answer": "continue",
+                         "hook_node_id": halt.hook_node_id, "text": halt.is_text()})
+            try:
+                self._record_review_preference(getattr(self, "_review_user_text", ""))
+            except Exception:  # noqa: BLE001
+                pass
+            if halt.is_text():
+                now = ("The text stands as it is now; the stages behind the hook read "
+                       "it from there.")
+            else:
+                files = self._review_collector_files()
+                now = (f"The collector holds {len(files)} file(s) as it stands now - "
+                       "those, in that order, are what goes on: "
+                       + json.dumps(files) if files else
+                       "The collector is empty or gone - say so and ask what to run.")
+            return json.dumps({
+                "status": "lifted", "hook_node_id": halt.hook_node_id,
+                "open_now": list(halt.remaining),
+                "message": (f"Review hook {halt.hook_node_id} is answered. {now} Carry "
+                            "on with the stages behind it, up to the next review hook."),
+            })
+
+        @_tool
         async def run_workflow_now(workflow_path: str) -> str:
             """Run a validated workflow NOW (synchronously) and return its output paths.
 
@@ -3880,7 +3942,7 @@ class Pipeline:
         tools = [prepare_workflow, run_info,
                  run_web_search, run_world_builder, run_planner, apply_canvas_hooks, stop_hook_run,
                  screenshot_canvas,
-                 halt_for_review, run_workflow_now, add_canvas_workflow,
+                 halt_for_review, release_review, run_workflow_now, add_canvas_workflow,
                  get_canvas_node, set_canvas_node_params, place_canvas_text,
                  run_python_node, revise_prompt, prompt_autoloop,
                  delete_canvas_nodes, edit_canvas_graph, insert_workflow_into_canvas, refine_canvas_until,
@@ -4861,6 +4923,12 @@ class Pipeline:
                 elif self._review_reply == "stop":
                     pin += ("  They said STOP. Run nothing further, confirm what was "
                             "produced and where it is, and end the turn.\n")
+                else:
+                    pin += ("  Their message this turn was not recognised as a plain "
+                            "continue or stop, so the stop is STILL UP. Read it: if it "
+                            "is their go-ahead in other words, call release_review("
+                            f"\"{halt.hook_node_id}\", user_said=\"<their words>\") and "
+                            "carry on; if it asks for a change, make it and ask again.\n")
                 pin += "\n"
 
         # Ahead of every other block, including the hooks: it does not add a rule,
@@ -4990,6 +5058,8 @@ class Pipeline:
         # turn — so an unrelated message in between can never silently drop it.
         self._review_halt = self._restore_review_halt()
         self._review_reply = self._read_review_reply(user_text)
+        # The user's own words this turn: what release_review is held to.
+        self._review_user_text = user_text if isinstance(user_text, str) else ""
         self._review_armed = None
         self._session.review_halt = None
         # Which review hooks are behind us. A continue adds the one it answers; a

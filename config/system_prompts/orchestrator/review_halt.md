@@ -88,6 +88,14 @@ anyone to play it.
 
 **stop** — run nothing further. Confirm what was produced and where it is.
 
+**A go-ahead in other words** — *"Approved - proceed"*, *"ja, weiter"*, *"that
+one, go"*. The `[REVIEW HALT]` block says when their message was not recognised
+as a plain continue. If it is one, call
+**`release_review(hook_node_id, user_said="<their words, quoted>")`** and carry
+on as for a continue. It works only on words that are in their message this
+turn, and never on a stop you raised in this same turn — it is how you report
+their decision, not how you make it.
+
 **Neither** — they asked something else, which is ordinary and is usually a
 *change* to what was made. That is the loop below: do it, show it, ask again. The
 stop stays up, and the stages behind it stay shut, until they actually say

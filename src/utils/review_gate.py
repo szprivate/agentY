@@ -149,6 +149,38 @@ def read_reply(text: str) -> str:
     return ""
 
 
+def release_check(halt, raised_this_turn: bool, quote: str, user_text: str) -> str:
+    """Why the agent may NOT lift a stop on the words it quotes, or "" if it may.
+
+    :func:`read_reply` only knows a list of phrases, and people approve in more
+    ways than a list holds ("Approved - proceed", "ja, weiter", "that's the one").
+    The agent can read those - so it is given the means to lift the stop, and
+    these three conditions are what keep that from being its own decision:
+
+    * a stop must be standing, and must have been raised in an EARLIER turn - one
+      raised in this turn has not been seen by anyone yet;
+    * the words it lifts on must be the user's, in the message that opened this
+      turn - quoted, and found there, so an approval cannot be paraphrased into
+      existence or carried over from an earlier message;
+    * the quote has to be something: a few characters, not an empty string.
+    """
+    if halt is None:
+        if raised_this_turn:
+            return ("this stop was raised in this very turn, so the user has not seen "
+                    "it or answered it. End the turn and ask them.")
+        return "no review stop is standing, so there is nothing to lift."
+    said = " ".join(str(quote or "").split()).strip(" \"'“”‘’.!")
+    if len(said) < 2:
+        return ("quote the user's own words of approval in `user_said` - the part of "
+                "their message that says to go on.")
+    heard = " ".join(str(user_text or "").split()).casefold()
+    if said.casefold() not in heard:
+        return ("those words are not in the user's message this turn. Quote them "
+                "exactly as written; if they did not say to go on, the stop stays "
+                "up - make the change they asked for and ask again.")
+    return ""
+
+
 def halt_state(halt: ReviewHalt, collector_node_id: str = "") -> str:
     """The ``[REVIEW HALT]`` block for a turn that begins with one live.
 
@@ -217,6 +249,11 @@ def execution_refusal(halt: ReviewHalt) -> dict:
             "End the turn: say what changed, that it is waiting in the collector "
             "on their canvas, and ask whether to continue or stop."
         ),
+        "if_they_said_yes": (
+            "If the user's message this turn IS their go-ahead, in whatever words, "
+            "call release_review(hook_node_id, user_said=\"<their words>\") and then "
+            "carry on."
+        ),
         "after": (
             "Their next message re-opens this. 'continue' runs the remaining stages "
             "with whatever the collector holds AT THAT POINT — read it fresh, they "
@@ -244,7 +281,9 @@ def ahead_refusal(hook_ids, review_id: str, stage: list | None = None) -> dict:
             + f", then call halt_for_review(\"{review_id}\") and end the turn with the "
               "question put to the user."),
         "after": ("Their `continue` opens the stages behind it; anything else they "
-                  "say is a change to make before asking again."),
+                  "say is a change to make before asking again. If this turn's "
+                  "message from the user IS their go-ahead for a stop already put to "
+                  "them, lift it with release_review(hook_node_id, user_said) first."),
         "do_not": "Do not report this as a failure — nothing failed. It is the stop.",
     }
 

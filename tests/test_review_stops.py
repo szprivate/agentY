@@ -185,5 +185,36 @@ class AnAnswerSaidTwice(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(rg.read_reply(text), "")
 
+class LiftingTheStop(unittest.TestCase):
+    """release_review: the agent reports the user's decision, it does not make it."""
+
+    HALT = rg.ReviewHalt(hook_node_id="12", text_hooks=("4",))
+
+    def test_the_users_own_words_lift_it(self):
+        for said, heard in (("Approved - proceed", "Approved - proceed"),
+                            ("ja, weiter", "Ja, weiter bitte."),
+                            ("that one, go", "ok that one, go - and thanks")):
+            with self.subTest(said=said):
+                self.assertEqual(rg.release_check(self.HALT, False, said, heard), "")
+
+    def test_words_the_user_did_not_write_do_not(self):
+        why = rg.release_check(self.HALT, False, "approved", "make it much shorter")
+        self.assertIn("not in the user's message", why)
+
+    def test_an_empty_quote_does_not(self):
+        self.assertIn("quote", rg.release_check(self.HALT, False, " ", "continue"))
+
+    def test_a_stop_raised_this_turn_cannot_be_lifted_in_it(self):
+        why = rg.release_check(None, True, "approved", "approved")
+        self.assertIn("this very turn", why)
+
+    def test_nothing_standing_is_nothing_to_lift(self):
+        self.assertIn("nothing to lift", rg.release_check(None, False, "approved", "approved"))
+
+    def test_the_refusals_say_how_a_go_ahead_is_reported(self):
+        self.assertIn("release_review", rg.ahead_refusal(["18"], "12")["after"])
+        self.assertIn("release_review", rg.execution_refusal(self.HALT)["if_they_said_yes"])
+
+
 if __name__ == "__main__":
     unittest.main()
