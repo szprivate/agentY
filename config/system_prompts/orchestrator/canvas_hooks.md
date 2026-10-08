@@ -296,6 +296,9 @@ order, a different input, one stage replaced by two:
 If they only want a one-off, they will say so; then do it beside the chain and
 say that the chain itself is unchanged.
 
+The `hook-pipeline` skill has the nodes, the three wires and a worked example
+for the rebuild: activate it before you edit the chain.
+
 **A standing preference lasts the run.** "Skip the image analysis for speed",
 "don't re-run the kids" — said once, it holds until they lift it. Do not go back
 to analysing every output on the next turn because that turn did not repeat it.

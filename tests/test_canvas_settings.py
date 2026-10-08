@@ -291,7 +291,8 @@ class ThePanelHonoursTheTextSetting(unittest.TestCase):
     def setUp(self):
         self.chat = (_PANEL.parent / "agent_chat.js").read_text(encoding="utf-8")
         body = self.chat[self.chat.index("\n  _placeCanvasText(ev) {"):]
-        self.body = body[:body.index("\n  // \u2500\u2500 canvas hooks")]
+        # Up to the next method: the comment that used to end it was reworded.
+        self.body = body[:body.index("\n  _hookNodes() {")]
 
     def test_it_checks_before_it_creates_the_node(self):
         self.assertIn("ev.place === false", self.body)

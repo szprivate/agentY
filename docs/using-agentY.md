@@ -298,6 +298,7 @@ hook → hook → agentY review → hook
 - **Order is the wire, and only the wire.** What a stage reads does not move it.
 - **A wire that splits** starts [branches that run at the same
   time](#branches-run-at-the-same-time).
+- **An [`agentY join`](#bringing-branches-back-together)** is where branches meet again: the stage after it waits for all of them.
 - **A stage that goes through real nodes** is one stage: a hook writing prompts
   into an image node, a save node behind it, then a review. Wire `exec` from the
   hook to the review; wire the save node into the review's `anchor` if you want
@@ -503,11 +504,54 @@ Outside a loop, the agent says which outputs it passes to the next stage and why
 
 ### Branches run at the same time
 
-An execution wire that splits, or chains that share no wire, are separate branches. A run with two or more gives
-each branch [its own conversation](#a-sequence-one-conversation-per-shot): the
-conversation you started becomes the lead, the branches work in parallel, and the
-lead puts their workflows into your graph as they report. Renders on your own GPU
-still queue in ComfyUI.
+An execution wire that splits, or chains that share no wire, are separate
+branches. A run with two or more gives each branch [its own
+conversation](#a-sequence-one-conversation-per-shot):
+
+- **The conversation you started is the lead.** It does the stages before the
+  split itself, then starts one conversation per branch and hands each its own
+  stages of your canvas.
+- **The branches work at the same time.** Each appears in your conversation list
+  while it runs, and you can open one to watch. Renders on your own GPU still
+  queue in ComfyUI.
+- **You review in the lead conversation, not in the branches.** When a branch
+  reaches a human review it reports its outputs and waits. The lead gathers them
+  into that review node's collector and asks you there. Two branches at their
+  reviews are two stops standing at once.
+- **Your answers go back to the same branch conversations.** Say **continue** to
+  approve everything that is waiting, or answer one by one (*"characters are
+  good, make the flat less worn"*). An approval lets that branch carry on; a
+  change is its next round, in the conversation it has been working in all
+  along.
+
+### Bringing branches back together
+
+An **`agentY join`** node (under **agentY ▸ flow**) is where branches meet. Wire
+the last `exec` of each branch into it (it grows an input per wire) and its
+`exec` out into the next stage:
+
+```
+            ┌→ characters → review ─┐
+story → review                      agentY join → animate
+            └→ places     → review ─┘
+```
+
+The stage after a join runs once **every** branch into it has finished and
+every review on those branches is answered. It runs in the lead conversation.
+Without a join, branches simply end.
+
+### Letting the agent build the pipeline
+
+You can ask for the pipeline instead of drawing it: *"build me a pipeline that
+writes a short story, lets me approve it, then makes one reference per character
+and one per location in parallel"*. The agent plans the stages in the chat,
+places the nodes and the wires, and stops. Nothing runs until you press **agentY
+hooks**, so you can read and change what it built first.
+
+The same goes for changing one: if you alter the approach mid-run (*"one master
+image, then derive the others from it"*), the agent proposes the new chain and
+rebuilds the canvas on your go, rather than pushing the new idea through stages
+that no longer describe it.
 
 ---
 

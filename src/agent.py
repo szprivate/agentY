@@ -949,6 +949,8 @@ _ASSEMBLY_SKILL_NAMES = [
 _ORCH_SKILL_NAMES = [
     "story-synopsis", "story-scene", "story-storyboard",
     "spawn-subagent", "batch-handoff", "image-downsize",
+    # Building a hook pipeline on the canvas out of agentY's own nodes.
+    "hook-pipeline",
 ]
 
 

@@ -59,8 +59,15 @@ def _types(t) -> set:
     return {p.strip() for p in str(t or "").split(",") if p.strip()}
 
 
+# The execution wire of a hook pipeline. It is order, not data, so it connects
+# to itself and to nothing else - not even to a wildcard, which takes any DATA.
+EXEC_TYPE = "AGENTY_EXEC"
+
+
 def _compatible(out_t, in_t) -> bool:
     a, b = _types(out_t), _types(in_t)
+    if EXEC_TYPE in a or EXEC_TYPE in b:
+        return EXEC_TYPE in a and EXEC_TYPE in b
     return "*" in a or "*" in b or bool(a & b) or ("COMBO" in b and a & {"COMBO", "STRING"})
 
 
@@ -87,7 +94,22 @@ def _input_spec(specs: dict, name: str):
         return specs[name]
     head = name.split(".", 1)[0]
     if "." in name and head in specs and _is_dynamic(specs[head]):
-        return ["*", {}]
+        # A growing input says what each of its slots takes ("anchors.anchor0"
+        # takes anything, "execs.exec0" takes the execution wire and only that).
+        return _autogrow_member(specs[head]) or ["*", {}]
+    return None
+
+
+def _autogrow_member(spec):
+    """The spec of one slot of a growing input, from its template - or None."""
+    try:
+        template = (spec[1] or {}).get("template") or {}
+        inputs = template.get("input") or {}
+        members = {**(inputs.get("optional") or {}), **(inputs.get("required") or {})}
+        if len(members) == 1:
+            return next(iter(members.values()))
+    except Exception:  # noqa: BLE001 - an unreadable template is just an untyped slot
+        return None
     return None
 
 

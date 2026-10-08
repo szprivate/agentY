@@ -94,7 +94,11 @@ class ALiveNodeOutranksTheSetting(unittest.TestCase):
                 src = fh.read()
         except OSError:
             self.skipTest("sidebar checkout not present")
-        self.assertIn("if (hn.mode === 4 || hn.mode === 2) continue;", src)
+        # One rule for every agentY node now: not active, not a stage, not sent.
+        self.assertIn("return !!n && n.mode !== 4 && n.mode !== 2;", src)
+        stage = src.split("  _isStage(n) {", 1)[1].split("\n  }\n", 1)[0]
+        self.assertIn("if (!this._active(n)) return false;", stage)
+        self.assertIn("if (!this._isStage(hn)) continue;", src)
 
     def test_the_env_var_is_what_sets_forced_off(self):
         from src.utils.qa import qa_settings
