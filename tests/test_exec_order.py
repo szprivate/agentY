@@ -56,8 +56,7 @@ class TheWireIsTheOrder(unittest.TestCase):
     def test_loop_nodes_come_out_and_the_stages_join_up_across_them(self):
         self.assertNotIn("11", self.by_id)
         self.assertEqual(self.by_id["18"]["via_hook_ids"], ["12"])     # through break 11
-        # through start 2 - and 8 reads 18's value too, which is recorded once
-        self.assertEqual(self.by_id["8"]["prev_hook_ids"] + self.by_id["8"]["via_hook_ids"], ["18"])
+        self.assertEqual(self.by_id["8"]["via_hook_ids"], ["18"])      # through start 2
         self.assertEqual(self.by_id["4"]["via_hook_ids"], [])          # start 10 leads nowhere back
 
     def test_what_a_stage_reads_is_kept_apart_from_when_it_runs(self):
@@ -188,6 +187,81 @@ class ThePurposesByTheirNewNames(unittest.TestCase):
                   "directive": "is the ending right?", "via_hook_ids": ["4"], "exec_wired": True}]
         block = ch.describe_hooks(hooks, {})
         self.assertIn('put to the user: "is the ending right?"', block)
+
+
+class BranchesOffTheWire(unittest.TestCase):
+    """A wire that splits is branches; each is worked in a conversation of its own."""
+
+    def setUp(self):
+        self.flow = hf.plan(canvas())
+        self.par = hf.parallel(self.flow)
+
+    def test_the_trunk_is_what_runs_before_the_split(self):
+        self.assertEqual(self.par.trunk, ["4", "12"])
+
+    def test_each_arm_is_a_branch_with_everything_after_it(self):
+        self.assertEqual([b.members for b in self.par.branches],
+                         [["18", "8", "9"], ["29", "27", "28"]])
+        self.assertEqual({b.after for b in self.par.branches}, {"12"})
+
+    def test_a_branch_is_handed_its_loop_nodes_with_its_stages(self):
+        # start_shot(hook_ids=...) scopes the canvas to these: without the loop
+        # nodes the branch would not know its own stages repeat.
+        self.assertEqual(self.par.branches[0].scope, ["18", "8", "9", "2", "3"])
+        self.assertEqual(self.par.branches[1].scope, ["29", "27", "28", "24", "25"])
+
+    def test_it_knows_which_branches_a_person_reviews(self):
+        self.assertEqual([b.reviews for b in self.par.branches], [["9"], []])
+
+    def test_a_single_chain_is_not_parallel(self):
+        chain = [stage("1", "text_only", directive="a"), stage("2", "text_only", after=["1"], directive="b")]
+        self.assertFalse(hf.parallel(hf.plan(chain)))
+        self.assertEqual(hf.parallel_lines(hf.plan(chain)), [])
+
+    def test_the_lead_is_told_to_review_here_and_answer_into_the_same_conversations(self):
+        text = "\n".join(hf.parallel_lines(self.flow))
+        self.assertIn("the execution wire splits into 2 branches", text)
+        self.assertIn("the user reviews HERE", text)
+        self.assertIn("hook_ids=['18', '8', '9', '2', '3']", text)
+        self.assertIn("halt_for_review(<id>, outputs=[those files])", text)
+        self.assertIn("several stops stand at once", text)
+        self.assertIn("message_shot(name, …), never a new start_shot", text)
+        self.assertIn("- trunk (yours, first): hook 4 \"screenplay\"; hook 12", text)
+
+    def test_a_pipeline_with_no_review_in_its_branches_is_not_told_about_stops(self):
+        hooks = [stage("1", "text_only", directive="t"),
+                 stage("2", "make_workflow", after=["1"], directive="a"),
+                 stage("3", "make_workflow", after=["1"], directive="b")]
+        text = "\n".join(hf.parallel_lines(hf.plan(hooks + [stage("9", "loop_start")])))
+        self.assertIn("splits into 2 branches", text)
+        self.assertNotIn("halt_for_review", text)
+
+
+class WhereBranchesMeet(unittest.TestCase):
+    def setUp(self):
+        self.hooks = canvas() + [stage("70", "join", after=["3", "25"]),
+                                 stage("71", "make_workflow", after=["70"], directive="animate")]
+        self.flow = hf.plan(self.hooks)
+        self.by_id = {h["hook_node_id"]: h for h in self.flow.hooks}
+
+    def test_the_stage_after_a_join_runs_after_every_wire_into_it(self):
+        self.assertNotIn("70", self.by_id)                       # the join does no work
+        self.assertEqual(self.by_id["71"]["via_hook_ids"], ["9", "28"])
+
+    def test_it_belongs_to_no_branch_and_waits_for_all(self):
+        par = hf.parallel(self.flow)
+        self.assertEqual(par.joined, ["71"])
+        self.assertEqual([b.members for b in par.branches], [["18", "8", "9"], ["29", "27", "28"]])
+        self.assertIn("wait for ALL of them", "\n".join(hf.parallel_lines(self.flow)))
+
+    def test_it_stays_shut_until_every_branchs_review_is_answered(self):
+        waits = ch.reviews_before(self.flow.hooks)
+        self.assertEqual(sorted(waits["71"]), ["12", "9"])
+
+    def test_a_join_with_one_wire_is_reported(self):
+        hooks = [stage("1", "text_only", directive="a"), stage("70", "join", after=["1"]),
+                 stage("2", "text_only", after=["70"], directive="b")]
+        self.assertTrue(any("join 70 has fewer than two" in p_ for p_ in hf.plan(hooks).problems))
 
 
 if __name__ == "__main__":

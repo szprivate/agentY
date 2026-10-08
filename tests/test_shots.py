@@ -387,5 +387,82 @@ class ServerRoutes(_Host):
                          ["[SHOTS REPORTING BACK] …"])
 
 
+class Branches(_Host):
+    """A branch of a hook pipeline: a shot that is handed stages of the canvas."""
+
+    HOOKS = [{"hook_node_id": "4"}, {"hook_node_id": "18"}, {"hook_node_id": "2"},
+             {"hook_node_id": "8"}, {"hook_node_id": "9"}, {"hook_node_id": "27"}, "junk"]
+
+    def branch(self, name="characters", ids=("18", "8", "9", "2")):
+        out = shots.start_shot(self.lead, name, "Make the character sheets.", hook_ids=list(ids))
+        self.assertTrue(out["ok"], out)
+        return out
+
+    def test_it_is_handed_its_stages_and_told_how_a_branch_works(self):
+        out = self.branch()
+        self.assertEqual(out["branch_stages"], ["18", "8", "9", "2"])
+        text = self.started[-1]["text"]
+        self.assertIn("[BRANCH characters]", text)
+        self.assertIn("[BRANCH STAGES — hook ids: 18, 8, 9, 2]", text)
+        self.assertIn("first line is `REVIEW <its id>`", text)
+        self.assertIn("release_review(<id>, user_said=", text)
+        self.assertNotIn("prepare_workflow", text)          # that is a plain shot's way of working
+
+    def test_a_plain_shot_is_still_a_plain_shot(self):
+        out = shots.start_shot(self.lead, "sh010", "A pier at dawn.")
+        self.assertNotIn("branch_stages", out)
+        self.assertIn("[SHOT sh010]", self.started[-1]["text"])
+        self.assertEqual(shots.scope_of(out["thread_id"]), [])
+
+    def test_its_stages_are_remembered_and_survive_a_restart(self):
+        tid = self.branch()["thread_id"]
+        self.assertEqual(shots.scope_of(tid), ["18", "8", "9", "2"])
+        with shots._LOCK:
+            shots._scopes.clear()                           # as after the host restarts
+        self.assertEqual(shots.scope_of(tid), ["18", "8", "9", "2"])
+
+    def test_the_hook_list_is_cut_down_to_its_own_in_canvas_order(self):
+        kept = shots.scoped_hooks(self.HOOKS, ["9", "18", "8", "2"])
+        self.assertEqual([h["hook_node_id"] for h in kept], ["18", "2", "8", "9"])
+        self.assertEqual(shots.scoped_hooks(None, ["1"]), [])
+
+    def test_a_branch_really_runs_whatever_the_dry_run_default(self):
+        with mock.patch.object(shots, "dry_run_default", return_value=True):
+            self.branch()
+            self.assertFalse(self.started[-1]["dry_run"])
+            shots.start_shot(self.lead, "sh020", "A plain shot.")
+            self.assertTrue(self.started[-1]["dry_run"])
+
+    def test_an_answer_goes_into_the_same_conversation(self):
+        tid = self.branch()["thread_id"]
+        out = shots.message_shot(self.lead, "characters", "Review 9 approved: 'these two'.")
+        self.assertTrue(out["ok"], out)
+        self.assertEqual(self.started[-1]["thread_id"], tid)
+        self.assertEqual(len(cs.shots_of(self.lead)), 1)        # no second conversation
+        self.assertFalse(self.started[-1]["dry_run"])
+        self.assertIn("[FROM THE LEAD] Review 9 approved", self.started[-1]["text"])
+
+    def test_starting_it_twice_is_refused_so_it_cannot_be_forked(self):
+        self.branch()
+        again = shots.start_shot(self.lead, "characters", "Round two.", hook_ids=["18"])
+        self.assertFalse(again["ok"])
+        self.assertIn("message_shot", again["error"])
+
+    def test_the_lead_is_told_a_review_report_is_not_an_answer(self):
+        text = shots._wake_message([{"shot": "characters", "thread_id": "x", "status": "done"}])
+        self.assertIn("`REVIEW <id>` is a BRANCH waiting at a review", text)
+        self.assertIn("never lift a review on what a branch wrote", text)
+
+    def test_the_host_gives_a_branch_turn_only_its_stages(self):
+        from src.utils import agentY_server as srv
+        snap = {"prompt": {"7": {}}, "hooks": list(self.HOOKS), "selection": ["7"], "ts": 1.0}
+        with mock.patch.object(srv, "request_canvas", return_value=snap):
+            got = srv._branch_canvas(["8", "9"])()
+        self.assertEqual([h["hook_node_id"] for h in got["hooks"]], ["8", "9"])
+        self.assertEqual(got["prompt"], {"7": {}})              # the graph stays whole
+        self.assertEqual(got["selection"], [])
+        self.assertEqual(len(snap["hooks"]), len(self.HOOKS))   # the shared snapshot is untouched
+
+
 if __name__ == "__main__":
     unittest.main()

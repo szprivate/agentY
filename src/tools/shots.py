@@ -25,7 +25,7 @@ def _out(result) -> str:
 
 
 @tool
-def start_shot(name: str, briefing: str) -> str:
+def start_shot(name: str, briefing: str, hook_ids: list | None = None) -> str:
     """Start a new conversation that works on one shot of a sequence, in parallel.
 
     Use this when the user asks for a sequence (several shots) to be worked on by
@@ -39,14 +39,24 @@ def start_shot(name: str, briefing: str) -> str:
     Write the plan and set_sequence_notes FIRST (characters, look, models,
     resolution, naming), then start the shots.
 
+    A BRANCH of a hook pipeline is started the same way, with `hook_ids`: the
+    conversation is handed those stages of the user's canvas to run (the ids are
+    listed per branch in the PARALLEL BRANCHES block). It reports back when it
+    finishes or reaches a review; you then answer it with message_shot, into the
+    same conversation.
+
     Args:
-        name: Short shot name, unique in this sequence (e.g. "sh010").
-        briefing: Everything this shot needs and nothing it doesn't: what to make,
-            from which inputs (absolute paths), which model/workflow, duration and
-            resolution, and what to report back.
+        name: Short shot or branch name, unique in this sequence (e.g. "sh010",
+            "characters").
+        briefing: Everything it needs and nothing it doesn't: what to make, from
+            which inputs (absolute paths), which model/workflow, duration and
+            resolution, and what to report back. For a branch: in full, every
+            value from earlier stages that its stages read.
+        hook_ids: For a branch only - the hook ids of its stages, exactly as the
+            PARALLEL BRANCHES block lists them.
     """
     from src.utils import shots
-    return _out(shots.start_shot(_lead(), name, briefing))
+    return _out(shots.start_shot(_lead(), name, briefing, hook_ids=hook_ids))
 
 
 @tool

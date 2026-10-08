@@ -29,7 +29,10 @@ from dataclasses import dataclass, field
 
 LOOP_START = "loop_start"
 LOOP_BREAK = "loop_break"
-_FLOW = {LOOP_START, LOOP_BREAK}
+# Where branches that were split off come back together: the stage after a join
+# runs once every wire into it has finished.
+JOIN = "join"
+_FLOW = {LOOP_START, LOOP_BREAK, JOIN}
 
 DEFAULT_ROUNDS = 3
 MAX_ROUNDS = 10
@@ -140,6 +143,7 @@ class Flow:
     hooks: list = field(default_factory=list)     # work hooks, rewired
     loops: list = field(default_factory=list)
     problems: list = field(default_factory=list)  # things the user should fix
+    raw: list = field(default_factory=list)       # every node as reported, flow nodes included
 
     def loop_of(self, hook_id) -> Loop | None:
         hid = str(hook_id)
@@ -206,7 +210,7 @@ def plan(hooks: list | None) -> Flow:
     """Split *hooks* into work hooks (rewired past the flow nodes) and loops."""
     raw = [h for h in (hooks or []) if isinstance(h, dict)]
     by_id = {_hid(h): h for h in raw if _hid(h)}
-    flow = Flow()
+    flow = Flow(raw=raw)
     if not any(is_flow(h) for h in raw):
         flow.hooks = raw
         return flow
@@ -244,6 +248,9 @@ def plan(hooks: list | None) -> Flow:
         if is_loop_start(h) and _hid(h) not in used_starts:
             flow.problems.append(f"loop start {_hid(h)} has no loop break after it on the "
                                  "execution wire — it does nothing.")
+        if _purpose(h) == JOIN and len(_order_ids(h)) < 2:
+            flow.problems.append(f"join {_hid(h)} has fewer than two execution wires into "
+                                 "it — there is nothing for it to wait for.")
     # A stage that reads another stage's value has to run after it. When the
     # execution wire says otherwise the value does not exist yet, and nothing at
     # run time would report that - the stage would simply read nothing.
@@ -277,7 +284,10 @@ def plan(hooks: list | None) -> Flow:
         via: list[str] = []
         for pid in _via_ids(h):
             for rid in _resolve_through(pid, by_id):
-                if rid not in prev and rid not in via and rid != _hid(h):
+                # Kept whole, even where the stage also READS that one: the wire
+                # is the order, and a reader of it must not have to add the data
+                # links back in to see where a stage sits.
+                if rid not in via and rid != _hid(h):
                     via.append(rid)
         h["via_hook_ids"] = via
         links = []
@@ -331,6 +341,93 @@ def branches(hooks: list | None) -> list[list[str]]:
     for i in ids:
         groups.setdefault(find(i), []).append(i)
     return list(groups.values())
+
+
+@dataclass
+class Branch:
+    """One arm of a pipeline that runs beside the others."""
+    members: list = field(default_factory=list)   # stage ids, in run order
+    after: str = ""                               # the stage the wire splits at, "" for none
+    scope: list = field(default_factory=list)     # members + the loop nodes around them
+    reviews: list = field(default_factory=list)   # human reviews in it
+
+
+@dataclass
+class Parallel:
+    """What runs side by side, and what is left for the conversation that leads it."""
+    branches: list = field(default_factory=list)
+    trunk: list = field(default_factory=list)     # stages before any split, in order
+    joined: list = field(default_factory=list)    # stages that wait for several branches
+
+    def __bool__(self) -> bool:
+        return len(self.branches) >= 2
+
+
+def parallel(flow: Flow, is_work=None) -> Parallel:
+    """The pipeline as a trunk, the branches that split off it, and what joins them.
+
+    A branch is an arm of the execution wire: everything that runs after one of
+    the wires leaving a stage that has two or more, up to the stage where arms
+    meet again. Chains that share no wire at all are branches with no trunk.
+    Only the first split counts - a fork inside a branch is that branch's own
+    business, worked through in order by the one conversation that has it.
+    """
+    work = [h for h in flow.hooks if isinstance(h, dict) and _hid(h)]
+    by_id = {_hid(h): h for h in work}
+    order = [_hid(h) for h in work]
+    preds = {i: [p for p in _order_ids(by_id[i]) if p in by_id] for i in order}
+    succ: dict = {i: [] for i in order}
+    for i in order:
+        for p_ in preds[i]:
+            succ[p_].append(i)
+
+    def reach(start: str) -> list:
+        seen, stack = [], [start]
+        while stack:
+            cur = stack.pop()
+            if cur in seen:
+                continue
+            seen.append(cur)
+            stack.extend(succ[cur])
+        return seen
+
+    out = Parallel()
+    heads = [i for i in order if not preds[i]]
+    if len(heads) >= 2:
+        arms = [("", h) for h in heads]            # chains that share no wire
+    else:
+        fork = next((i for i in order if len(succ[i]) >= 2), "")
+        arms = [(fork, s) for s in succ.get(fork, [])] if fork else []
+    if len(arms) < 2:
+        return out
+    reached = [set(reach(s)) for _, s in arms]
+    counts: dict = {}
+    for r in reached:
+        for i in r:
+            counts[i] = counts.get(i, 0) + 1
+    # A stage more than one arm reaches is where they meet: it, and everything
+    # after it, waits for all of them and belongs to none.
+    shared = {i for i, n in counts.items() if n > 1}
+    taken: set = set()
+    for (after, _start), r in zip(arms, reached):
+        members = [i for i in order if i in r and i not in shared]
+        if not members:
+            continue
+        if is_work is not None and not any(is_work(by_id[i]) for i in members):
+            continue
+        scope = list(members)
+        for lp in flow.loops:
+            if lp.members and set(lp.members) <= set(members):
+                scope += [x for x in (lp.start_id, lp.break_id, lp.qa_id) if x and x not in scope]
+        out.branches.append(Branch(
+            members=members, after=after, scope=scope,
+            reviews=[i for i in members if _is_review(by_id[i])]))
+        taken |= set(members)
+    out.joined = [i for i in order if i in shared]
+    out.trunk = [i for i in order if i not in taken and i not in shared]
+    if len(out.branches) < 2:
+        return Parallel()
+    return out
 
 
 # ── a loop while it runs ────────────────────────────────────────────────────
@@ -470,32 +567,68 @@ def loop_lines(flow: Flow) -> list[str]:
 
 
 def parallel_lines(flow: Flow, is_work=None) -> list[str]:
-    """The branches of this run that can be worked on at the same time."""
-    work = [h for h in flow.hooks if (is_work(h) if is_work else True)]
-    groups = [g for g in branches(flow.hooks)
-              if any(_hid(h) in g for h in work)]
-    if len(groups) < 2:
+    """How a lead runs the branches of this pipeline, each in its own conversation."""
+    par = parallel(flow, is_work)
+    if not par:
         return []
     by_id = {_hid(h): h for h in flow.hooks}
+    has_review = any(b.reviews for b in par.branches)
     lines = [
-        f"\nPARALLEL BRANCHES — this pipeline has {len(groups)} branches that share no "
-        "wire, so none waits for another. Work on them AT THE SAME TIME, as the lead of "
-        "one conversation per branch:\n"
-        "  1. Write the shared notes once (look, models, naming, the QA criteria that "
-        "apply to all) and call start_shot(name, briefing) once per branch, all in the "
-        "same step. A branch's briefing is self-contained: its stages in order with "
-        "their directives, the input files, its loop (condition, rounds) and QA "
-        "criteria if it has them, and what to report back — the workflow file of every "
-        "stage and the output file(s) it forwards.\n"
-        "  2. The branch conversations build and run; they do NOT touch the canvas. "
-        "You are woken when they report.\n"
-        "  3. When a branch reports, put each of its workflows into the canvas "
-        "yourself with insert_workflow_into_canvas(workflow_path, hook_node_id) and "
-        "name the forwarded outputs with forward_outputs. When every branch has "
-        "reported, give the user one summary.\n"
-        "A branch with a single cheap stage (a text hook, one parameter) is not worth "
-        "a conversation: do those yourself while the others run."]
-    for n, group in enumerate(groups, 1):
-        names = "; ".join(_label(by_id[i]) for i in group if i in by_id)
-        lines.append(f"- branch {n}: {names}")
+        f"\nPARALLEL BRANCHES — the execution wire splits into {len(par.branches)} "
+        "branches. None waits for another, so each gets ITS OWN CONVERSATION and you "
+        "lead them. The branch conversations do the work; the user reviews HERE.\n"
+        "  1. THE TRUNK FIRST. Do the stages before the split yourself, in this "
+        "conversation, including any review among them."
+        + (" (This pipeline has none: start the branches straight away.)"
+           if not par.trunk else "") + "\n"
+        "  2. START THE BRANCHES, all in the same step: start_shot(name, briefing, "
+        "hook_ids=[...]) once per branch, with exactly the `hook_ids` listed for it "
+        "below. That hands the branch its own stages of this canvas to run. Its "
+        "briefing is self-contained: what the branch makes, and IN FULL every value "
+        "from the trunk its stages read (the approved text, the file paths) — a "
+        "branch cannot see what you wrote here.\n"
+        "  3. YOU ARE WOKEN when branches report. Give the user one short line per "
+        "branch, not the reports.",
+    ]
+    if has_review:
+        lines.append(
+            "  4. A BRANCH AT ITS REVIEW reports the line `REVIEW <id>` and its "
+            "outputs, and waits. Call halt_for_review(<id>, outputs=[those files]) "
+            "here: that gathers them into the review node's collector, in THIS "
+            "conversation. Do it for every branch that has reported one — several "
+            "stops stand at once, one per branch — then END THE TURN with the "
+            "question put to the user. A written stage has no files: print the text "
+            "and halt on it the same way. Never answer a review yourself, and never "
+            "from a branch's report.\n"
+            "  5. THE USER ANSWERS HERE, and each answer goes back to the branch it "
+            "is about, into THE SAME conversation it has been working in — "
+            "message_shot(name, …), never a new start_shot:\n"
+            "     • approved → release_review(<id>, user_said=\"<their words>\") "
+            "(a plain `continue` has already lifted every stop), then message_shot("
+            "name, \"Review <id> approved by the user: '<their words>'. Continue "
+            "with exactly these files: <the collector's contents now>\");\n"
+            "     • a change → message_shot(name, \"<the change, in their words>\"). "
+            "The stop stays up; the branch does another round and reports `REVIEW "
+            "<id>` again, and you halt on it again with the new outputs.\n"
+            "     A message that approves one branch and changes another is two "
+            "answers: handle each on its own.")
+    lines.append(
+        "  " + ("6" if has_review else "4") + ". WHEN A BRANCH FINISHES for good it "
+        "reports its final outputs. "
+        + ("The stage(s) after the branches — " + ", ".join(
+            _label(by_id[i]) for i in par.joined if i in by_id)
+           + " — wait for ALL of them: run those yourself, here, once every branch "
+             "has finished and every review is answered. "
+           if par.joined else "When every branch has finished, give the user one summary. ")
+        + "A branch that is one cheap stage (one line of text) is not worth a "
+          "conversation: do it yourself while the others run.")
+    for n, b in enumerate(par.branches, 1):
+        names = "; ".join(_label(by_id[i]) for i in b.members if i in by_id)
+        lines.append(
+            f"- branch {n}" + (f" (splits off after hook {b.after})" if b.after else "")
+            + f": {names} — hook_ids={b.scope}"
+            + (f"; reviewed by the user at {', '.join(b.reviews)}" if b.reviews else ""))
+    if par.trunk:
+        lines.append("- trunk (yours, first): "
+                     + "; ".join(_label(by_id[i]) for i in par.trunk if i in by_id))
     return lines

@@ -93,6 +93,96 @@ def dry_run_default() -> bool:
 
 # ── what a shot is told ──────────────────────────────────────────────────────
 
+# The line in a branch's first message that names its stages. Written there as
+# well as kept in memory, so a host restart in the middle of a pipeline does not
+# turn a branch back into a conversation with no canvas.
+_SCOPE_MARK = "[BRANCH STAGES — hook ids: "
+_scopes: dict[str, list[str]] = {}        # branch thread -> the hook ids it was handed
+
+
+def _clean_ids(hook_ids) -> list[str]:
+    out: list[str] = []
+    for i in (hook_ids or []):
+        s = str(i).strip()
+        if s and s not in out:
+            out.append(s)
+    return out
+
+
+def scope_of(thread_id: str) -> list[str]:
+    """The stages of the canvas this conversation was handed as a branch, or []."""
+    tid = str(thread_id or "")
+    if not tid:
+        return []
+    with _LOCK:
+        if tid in _scopes:
+            return list(_scopes[tid])
+    ids: list[str] = []
+    try:
+        if cs.shot_of(tid):
+            for m in ((cs.get_thread(tid) or {}).get("messages") or []):
+                text = str(m.get("content") or "")
+                if m.get("role") == "user" and _SCOPE_MARK in text:
+                    raw = text.split(_SCOPE_MARK, 1)[1].split("]", 1)[0]
+                    ids = _clean_ids(raw.split(","))
+                    break
+    except Exception:  # noqa: BLE001
+        ids = []
+    with _LOCK:
+        _scopes[tid] = ids
+    return list(ids)
+
+
+def scoped_hooks(hooks: list | None, hook_ids) -> list:
+    """*hooks* cut down to a branch's own stages, in their original order."""
+    want = set(_clean_ids(hook_ids))
+    return [h for h in (hooks or [])
+            if isinstance(h, dict) and str(h.get("hook_node_id")) in want]
+
+
+def _branch_briefing(lead_id: str, name: str, briefing: str, dry_run: bool,
+                     hook_ids: list[str]) -> str:
+    lead_title = str((cs.get_thread(lead_id) or {}).get("title") or "the lead conversation")
+    notes = cs.get_sequence_notes(lead_id).strip()
+    parts = [
+        f"[BRANCH {name}] You are working on branch **{name}** of a hook pipeline on the "
+        f"user's canvas. The lead conversation (\"{lead_title}\") runs the pipeline and "
+        "briefed you below; it reads your final answer when your turn ends, and the user "
+        "reads it there - nobody is reading this conversation.",
+        _SCOPE_MARK + ", ".join(hook_ids) + "]",
+        "",
+        briefing.strip(),
+    ]
+    if notes:
+        parts += ["", "[SHARED NOTES — the same for every branch; keep to them]", notes]
+    parts += [
+        "",
+        "[HOW TO WORK AS A BRANCH]",
+        "- Run this branch's stages: they are the hooks in your [CANVAS HOOKS] block, "
+        "which holds your stages and nothing else of the pipeline. Work them in order "
+        "with the hook tools, as in any hook run.",
+        "- The other branches are running at the same time on the same canvas. Do not "
+        "edit the graph (no added, deleted or rewired nodes) and do not start "
+        "conversations of your own.",
+        "- A REVIEW in your stages is not yours to hold and not yours to answer. When you "
+        "reach one, end your turn with a report whose first line is `REVIEW <its id>` and "
+        "which lists every output of the stage as an absolute path (a written stage: the "
+        "full text). The user reviews it in the lead conversation.",
+        "- You will be messaged with their answer, here, in this same conversation. If it "
+        "approves the review: release_review(<id>, user_said=\"<the approval as "
+        "quoted to you>\"), then carry on with the stages behind it, using exactly the "
+        "files you are given. If it asks for a change: redo the stage with it - that is "
+        "the next round of the loop - and report `REVIEW <id>` again.",
+        "- Name your outputs after the branch.",
+    ]
+    if dry_run:
+        parts.append("- Dry run: walk the stages and say what each would do, but do not "
+                     "queue or render anything.")
+    parts.append("- When your stages are all done, end with a short final report: what you "
+                 "made and the output paths. Start it with `DONE`.")
+    return "\n".join(parts)
+
+
 def _briefing_message(lead_id: str, name: str, briefing: str, dry_run: bool) -> str:
     lead_title = str((cs.get_thread(lead_id) or {}).get("title") or "the lead conversation")
     notes = cs.get_sequence_notes(lead_id).strip()
@@ -135,8 +225,13 @@ def _find(lead_id: str, name: str) -> dict | None:
 
 
 def start_shot(lead_id: str, name: str, briefing: str, *,
-               dry_run: bool | None = None) -> dict:
-    """Start a conversation for shot *name* with *briefing* as its first message."""
+               dry_run: bool | None = None, hook_ids=None) -> dict:
+    """Start a conversation for shot *name* with *briefing* as its first message.
+
+    With *hook_ids* it is a BRANCH of a hook pipeline: its turns are handed those
+    stages of the user's canvas (and only those) to run, where a plain shot has
+    no canvas and builds a workflow of its own.
+    """
     name = str(name or "").strip()
     if not lead_id:
         return _err("No conversation is running this — start_shot works from a conversation.")
@@ -155,10 +250,18 @@ def start_shot(lead_id: str, name: str, briefing: str, *,
                     thread_id=existing["thread_id"])
     if len(cs.shots_of(lead_id)) >= MAX_SHOTS_PER_LEAD:
         return _err(f"This sequence already has {MAX_SHOTS_PER_LEAD} shots.")
-    dry = dry_run_default() if dry_run is None else bool(dry_run)
+    scope = _clean_ids(hook_ids)
+    # A branch runs stages of a canvas the user has already built and asked to
+    # run, so it runs them: the dry-run default is for shots, which build
+    # something new that the user has not seen yet.
+    dry = (False if scope else dry_run_default()) if dry_run is None else bool(dry_run)
     tid = cs.create_thread(title=name)
     cs.set_shot(tid, lead_id, name, status="queued")
-    text = _briefing_message(lead_id, name, briefing, dry)
+    if scope:
+        with _LOCK:
+            _scopes[tid] = scope
+    text = (_branch_briefing(lead_id, name, briefing, dry, scope) if scope
+            else _briefing_message(lead_id, name, briefing, dry))
     cs.add_message(tid, "user", text)
     try:
         rid = _hooks["start_turn"](tid, text, origin="lead", dry_run=dry)
@@ -172,7 +275,8 @@ def start_shot(lead_id: str, name: str, briefing: str, *,
         except Exception:  # noqa: BLE001
             logger.debug("could not switch %s to the lead model", lead_id, exc_info=True)
     return {"ok": True, "shot": name, "thread_id": tid, "request_id": rid,
-            "dry_run": dry, "status": "started"}
+            "dry_run": dry, "status": "started",
+            **({"branch_stages": scope} if scope else {})}
 
 
 def message_shot(lead_id: str, name: str, text: str) -> dict:
@@ -192,7 +296,9 @@ def message_shot(lead_id: str, name: str, text: str) -> dict:
                     "when it reports back.")
     cs.add_message(tid, "user", message)
     cs.set_shot_status(tid, "queued")
-    rid = _hooks["start_turn"](tid, message, origin="lead", dry_run=dry_run_default())
+    # A branch goes on as it started: really running its stages.
+    dry = False if scope_of(tid) else dry_run_default()
+    rid = _hooks["start_turn"](tid, message, origin="lead", dry_run=dry)
     return {"ok": True, "shot": shot["name"], "delivered": "as a new turn", "request_id": rid}
 
 
@@ -393,7 +499,11 @@ def _wake_message(reports: list[dict]) -> str:
     word = {"done": "finished", "failed": "FAILED", "stopped": "was stopped"}
     lines = ["[SHOTS REPORTING BACK] Review what came in. Send a shot a correction "
              "(message_shot), start the next shots, or tell the user where the sequence "
-             "stands. Keep it short; the user can open any shot to look for themselves.", ""]
+             "stands. Keep it short; the user can open any shot to look for themselves.",
+             "A report that starts with `REVIEW <id>` is a BRANCH waiting at a review: "
+             "gather its outputs here with halt_for_review(<id>, outputs=[...]) and put "
+             "them to the user. Their answer is theirs alone - never lift a review on "
+             "what a branch wrote.", ""]
     for r in reports:
         report = _last_answer(r["thread_id"])
         if len(report) > REPORT_CHARS:
@@ -414,3 +524,4 @@ def _reset_for_tests() -> None:
         _turn_state.clear()
         _tool_calls.clear()
         _budget_notes.clear()
+        _scopes.clear()

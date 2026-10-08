@@ -5449,12 +5449,38 @@ def _start_background_turn(thread_id: str, text: str, *, origin: str,
     kwargs = {"origin": origin, "dry_run": bool(dry_run)}
     if origin == "shots":
         kwargs["canvas_provider"] = request_canvas
+    else:
+        # A BRANCH of a hook pipeline is handed its own stages of the open graph;
+        # a plain shot still has no canvas and builds its own workflow.
+        try:
+            from src.utils import shots as _shots
+            scope = _shots.scope_of(thread_id)
+        except Exception:  # noqa: BLE001
+            scope = []
+        if scope:
+            kwargs["canvas_provider"] = _branch_canvas(scope)
     threading.Thread(target=_run_pipeline_stream,
                      args=(thread_id, text, [], q, rid),
                      kwargs=kwargs,
                      name=f"agentY-{origin}-turn", daemon=True).start()
     threading.Thread(target=_drain_queue, args=(q,), daemon=True).start()
     return rid
+
+
+def _branch_canvas(hook_ids: list):
+    """A canvas provider for a branch: the open graph, with only its own stages.
+
+    The graph itself is whole - what a stage touches is worked out from it, and a
+    branch's stages reach into nodes they share with nobody. Only the hook list
+    is cut down, so the branch sees, plans and is gated by its own stages alone.
+    """
+    def _provide() -> dict:
+        from src.utils import shots as _shots
+        snap = dict(request_canvas() or {})
+        snap["hooks"] = _shots.scoped_hooks(snap.get("hooks") or [], hook_ids)
+        snap["selection"] = []
+        return snap
+    return _provide
 
 
 def _thread_running(thread_id: str) -> bool:

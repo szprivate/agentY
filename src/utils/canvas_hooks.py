@@ -28,7 +28,8 @@ _HOOK_CLASS = "AgentYHook"
 # The flow nodes (src/utils/hook_flow.py) are hooks as far as the graph goes:
 # inert on a plain Queue, taken out of it before the agent runs anything.
 _REVIEW_CLASS = "AgentYReview"
-_HOOK_CLASSES = {_HOOK_CLASS, _REVIEW_CLASS, "AgentYLoopStart", "AgentYLoopBreak"}
+_HOOK_CLASSES = {_HOOK_CLASS, _REVIEW_CLASS, "AgentYLoopStart", "AgentYLoopBreak",
+                 "AgentYJoin"}
 
 
 def strip_exec_links(prompt: dict | None) -> dict | None:
@@ -45,7 +46,10 @@ def strip_exec_links(prompt: dict | None) -> dict | None:
         return prompt
     for node in prompt.values():
         if isinstance(node, dict) and node.get("class_type") in _HOOK_CLASSES:
-            (node.get("inputs") or {}).pop("exec", None)
+            inputs = node.get("inputs") or {}
+            # `exec` on a stage; `execs.exec0`, `execs.exec1`, … on a join.
+            for key in [k for k in inputs if k == "exec" or str(k).startswith("execs.")]:
+                inputs.pop(key, None)
     return prompt
 
 IMG_EXTS = {"png", "jpg", "jpeg", "webp", "bmp", "gif", "tiff"}
@@ -1224,7 +1228,7 @@ def _is_general(hook: dict) -> bool:
 # which is true of every one of them and therefore tells the user nothing.
 _DEFAULT_HOOK_TITLES = {"", "agenty hook", "agentyhook", "agenty_hook",
                         "agenty review", "agentyreview", "agenty loop start",
-                        "agenty loop break"}
+                        "agenty loop break", "agenty join"}
 
 
 def hook_title(hook: dict) -> str:

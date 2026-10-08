@@ -213,9 +213,10 @@ class WhatTheAgentIsTold(unittest.TestCase):
                  _hook(5, directive="villain shot"), _hook(7, "text", directive="write a caption")]
         self.assertEqual(hf.branches(hooks), [["1", "2"], ["5"], ["7"]])
         block = describe_hooks(hooks, {}, flow=hf.plan(hooks), into_canvas=True)
-        self.assertIn("PARALLEL BRANCHES — this pipeline has 2 branches", block)
-        self.assertIn("start_shot(name, briefing)", block)
-        self.assertIn('- branch 1: hook 1 "hero shot"; hook 2 "animate hero"', block)
+        self.assertIn("PARALLEL BRANCHES — the execution wire splits into 2 branches", block)
+        self.assertIn("start_shot(name, briefing, hook_ids=[...])", block)
+        self.assertIn("- branch 1: hook 1 \"hero shot\"; hook 2 \"animate hero\" — hook_ids=['1', '2']",
+                      block)
 
 
 class TheTools(unittest.TestCase):
