@@ -383,6 +383,28 @@ Each output node is titled with the role, gets an `agentY add tag` node, and a
 small `.agenty.json` file is written next to the media so the agent knows later
 what it is. In a batch, each variant is named after the value that made it.
 
+### Where the files go: the `agentY context` node
+
+Add an **`agentY context`** node and set **sequence / asset** and **shot**. Every
+file the agent produces is then saved under ComfyUI's output folder as
+
+```
+<sequence>/<shot>_<suffix>_v###.<extension>      e.g.  spec/spec_0210_startframe_v003.png
+```
+
+- **suffix** — set by the agent from what the file is (`startframe`, `hero_ref`).
+- **version** — the next free number for that name in that folder.
+- **AYON:** if the graph has an AYON context node, it wins. Sequence and shot are
+  the last two parts of its folder path, as in bEpic's *Get Path (AYON)*.
+- **Several shots or assets in one request** (*"create images of the main male
+  character and the woman"*): the agent names each generation for its own shot.
+- A save node whose prefix you wired, or which already names a folder of its own,
+  keeps its folder and still gets the version.
+- No context node: files go to `agent/images`, `agent/videos`, … as before.
+  Bypass or mute the node to switch the rule off.
+
+Nothing needs wiring; it applies to chat requests and hook runs alike.
+
 ### Where a pipeline's workflows go
 
 A hook run puts every workflow it builds **into the graph you have open**, in a

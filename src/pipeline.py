@@ -2317,6 +2317,83 @@ class Pipeline:
                            "separate workflows again (work_in_open_graph(on=false))."})
 
         @_tool
+        async def name_outputs(suffix: str = "", shot: str = "", sequence: str = "",
+                               workflow_path: str = "") -> str:
+            """Say what a generation's files are, so they are saved in the right
+            place under the right name:
+            ``<sequence>/<shot>_<suffix>_v###.<extension>`` in ComfyUI's output folder.
+
+            The sequence and shot normally come from the canvas (an AYON context
+            node or an ``agentY context`` node - see the ``[OUTPUT CONTEXT]``
+            note). You supply the ``suffix``: one or two words for what the file
+            IS in this job - ``startframe``, ``endframe``, ``hero_ref``. Call it
+            before running the workflow. The version number and the extension
+            are added for you.
+
+            Give ``shot`` and/or ``sequence`` to write somewhere else than the
+            canvas says - this is how one request fills several shots or assets
+            ("the male lead and the woman": one call per workflow, each with its
+            own ``shot``). They also work with no context on the canvas at all.
+
+            Args:
+                suffix: What the output is, e.g. "startframe".
+                shot: Shot or asset name, when it differs from the canvas context.
+                sequence: Sequence or asset group, when it differs.
+                workflow_path: The workflow these names are for. Leave empty to
+                    set them for everything run afterwards in this turn.
+            """
+            from src.utils import output_context as _oc
+            ctx = _oc.current()
+            ctx.update({k: _oc.slug(v) for k, v in (("sequence", sequence), ("shot", shot))
+                        if str(v or "").strip()})
+            if not _oc.active(ctx):
+                return json.dumps({"error": "there is no sequence or shot to name files for: no "
+                                            "context node is on the canvas. Pass shot (and sequence), "
+                                            "or leave the files where they go by default."})
+            sfx = _oc.slug(suffix)
+            if not str(workflow_path or "").strip():
+                now = _oc.set_current(sequence=ctx.get("sequence"), shot=ctx.get("shot"),
+                                      suffix=sfx or None, source="name_outputs")
+                shown = _oc.prefix_for(now, now.get("suffix") or "<what the workflow is called>")
+                return json.dumps({"status": "ok", "files": shown + "_v###.<ext>",
+                                   "applies_to": "everything run from here on in this turn"})
+            try:
+                wf = Path(str(workflow_path).strip())
+                graph = json.loads(wf.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                return json.dumps({"error": f"cannot read {workflow_path}: {exc}"})
+            named = _oc.set_prefixes(graph, ctx, sfx or "output")
+            if not named:
+                return json.dumps({"error": "that workflow has no save node with a filename_prefix "
+                                            "to name (its prefix may be wired from another node)."})
+            wf.write_text(json.dumps(graph, indent=2), encoding="utf-8")
+            # A context set only here (no node on the canvas) must still be in
+            # force when the file comes back and gets its version.
+            if not _oc.active():
+                _oc.set_current(sequence=ctx.get("sequence"), shot=ctx.get("shot"), source="name_outputs")
+            # The same nodes on the canvas, when this workflow was inserted there:
+            # that is the version run_workflow_now runs.
+            on_canvas = []
+            try:
+                ids = self._session.inserted_workflows.get(str(wf.resolve())) or []
+                live = getattr(self, "_canvas_graph", None) or {}
+                mine = _oc.set_prefixes(live, ctx, sfx or "output", node_ids=ids) if ids else {}
+                if mine:
+                    from src.utils.canvas_patch import push as _push_patch
+                    for nid, prefix in mine.items():
+                        _push_patch({"node_id": nid, "params": {"filename_prefix": prefix},
+                                     "reason": "output name"})
+                        on_canvas.append(nid)
+            except Exception:  # noqa: BLE001
+                pass
+            first = next(iter(named.values()))
+            _push_progress(f"🗂 Output name: {first}_v###")
+            return json.dumps({"status": "ok", "files": first + "_v###.<ext>",
+                               "save_nodes": list(named), "canvas_nodes": on_canvas,
+                               "note": "The version is the next free one in that folder; the run "
+                                       "returns the final path."})
+
+        @_tool
         async def loop_check(break_node_id: str, outputs: list) -> str:
             """Close one round of a canvas loop: have its outputs judged, and learn
             whether the loop goes on.
@@ -3695,7 +3772,7 @@ class Pipeline:
                  run_python_node, revise_prompt, prompt_autoloop,
                  delete_canvas_nodes, edit_canvas_graph, insert_workflow_into_canvas, refine_canvas_until,
                  list_outputs, work_in_open_graph, set_canvas_node_mode, run_canvas,
-                 loop_check, forward_outputs,
+                 loop_check, forward_outputs, name_outputs,
                  list_agent_settings, set_agent_setting]
         # Offered only where there is a Slack to send to. Every tool in this list
         # is described to the model on every call, so one nobody can use is a
@@ -4476,6 +4553,13 @@ class Pipeline:
         pin = ""
         if self._open_graph_mode():
             pin = _OPEN_GRAPH_NOTE + "\n\n"
+        try:
+            from src.utils import output_context as _oc
+            _ctx_note = _oc.describe()
+            if _ctx_note:
+                pin += _ctx_note + "\n\n"
+        except Exception:  # noqa: BLE001
+            pass
         if constraints:
             pin += (
                 "[HARD CONSTRAINTS — the user was explicit; honor these exactly and do "
@@ -4801,6 +4885,16 @@ class Pipeline:
         # nodes has to go through — scoping to the hooks would otherwise make
         # every node outside the hook's branch invisible and uneditable.
         self._canvas_graph = canvas_prompt if isinstance(canvas_prompt, dict) else {}
+        # Sequence / shot named on the canvas (an AYON context node, else an
+        # agentY context node): where this turn's files go and what they are called.
+        try:
+            from src.utils import output_context as _oc
+            _ctx = _oc.from_canvas(canvas_prompt)
+            if _ctx:
+                _oc.set_current(sequence=_ctx["sequence"], shot=_ctx["shot"], source=_ctx["source"])
+        except Exception as exc:  # noqa: BLE001
+            if self._verbose:
+                print(f"pipeline: could not read the output context ({exc})")
         # What this turn has changed on that canvas, and whether prepare_workflow
         # has already been told about it (see _canvas_rebuild_refusal).
         self._canvas_edits = []

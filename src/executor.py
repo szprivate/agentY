@@ -346,6 +346,14 @@ def _submit_workflow(workflow_path: str, client_id: str = "") -> str:
             p.write_text(json.dumps(workflow, indent=2), encoding="utf-8")
     except Exception:  # noqa: BLE001 — a safety net must never block a submission
         pass
+    # With a context (sequence / shot) in force, the savers are named by rule:
+    # <sequence>/<shot>_<suffix>. See src/utils/output_context.py.
+    try:
+        from src.utils import output_context
+        if output_context.stamp(workflow):
+            p.write_text(json.dumps(workflow, indent=2), encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001 — naming must never block a submission
+        logger.warning("executor: could not apply the output context (%s)", exc)
     client = get_client()
     payload: dict = {"prompt": workflow}
     if client_id:
@@ -608,6 +616,11 @@ async def _process_completed_job(
             # Fallback: query ComfyUI /system_stats or download via /view.
             if resolved is None:
                 resolved = _resolve_output_path(filename, subfolder, file_type, fallback_dir=fallback_dir)
+            # ComfyUI's counter becomes the version: shot_sfx_00001_.png -> shot_sfx_v003.png
+            # (only for files named by the output context; see output_context.finalize).
+            if file_type == "output":
+                from src.utils import output_context
+                resolved = output_context.finalize(resolved)
             saved_paths.append(resolved)
             if collected_paths is not None:
                 collected_paths.append(str(resolved))
