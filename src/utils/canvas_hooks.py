@@ -2324,6 +2324,210 @@ def gated_by_review(hooks: list | None) -> set:
     return gated
 
 
+def link_through_nodes(hooks: list | None, graph: dict | None) -> list:
+    """Record, on each hook, the hooks it follows by way of REAL nodes.
+
+    A pipeline is rarely hook-to-hook. The usual stage is a hook that writes a
+    prompt into a generator, the generator feeding a save node, and the next hook
+    anchored on that save node: `hook 8 -> GPT Image -> Send to Viewer -> review
+    hook 9`. No wire joins 8 and 9, so nothing that read the hooks alone knew the
+    review stood behind the image stage - it was planned as a loop of one, with
+    no start, and the stop was never tied to what it reviews.
+
+    *graph* is the captured API prompt. From every anchor that is a real node the
+    wires are walked upstream, and the first hook met on each path - a hook node
+    itself, or a node a hook's output is wired into - is one this hook follows.
+    The walk stops there: what lies behind that hook is its own business.
+
+    The ids go into ``via_hook_ids``, beside the direct ``prev_hook_ids`` rather
+    than into them, because the direct list also says "this hook reads that
+    hook's VALUE", which is not true of a stage two nodes away.
+    """
+    hooks = [h for h in (hooks or []) if isinstance(h, dict)]
+    if not isinstance(graph, dict) or not graph:
+        return hooks
+    ids = _hook_ids(hooks)
+    writers = _writers_by_node(hooks)
+
+    def upstream(node_id: str) -> set:
+        found: set = set()
+        stack, seen = [node_id], set()
+        while stack:
+            nid = stack.pop()
+            if nid in seen:
+                continue
+            seen.add(nid)
+            if nid in ids:
+                found.add(nid)
+                continue
+            if nid in writers:
+                found |= set(writers[nid])
+                continue
+            for val in ((graph.get(nid) or {}).get("inputs") or {}).values():
+                if isinstance(val, (list, tuple)) and len(val) == 2 and not isinstance(val[0], (list, dict)):
+                    stack.append(str(val[0]))
+        return found
+
+    for h in hooks:
+        hid = str(h.get("hook_node_id"))
+        direct = _hook_predecessors({**h, "via_hook_ids": []}, ids, writers)
+        via: set = set()
+        for a in (h.get("anchors") or []):
+            if isinstance(a, dict) and str(a.get("node_id")) not in ids:
+                via |= upstream(str(a.get("node_id")))
+        via -= direct | {hid}
+        if via:
+            h["via_hook_ids"] = sorted(via, key=str)
+    return hooks
+
+
+def reviews_before(hooks: list | None) -> dict:
+    """hook id -> the review hooks upstream of it, nearest last.
+
+    The other reading of :func:`gated_by_review`: that one says WHICH hooks stand
+    behind a stop, this one says which stop each of them is waiting on - so a
+    chain with several reviews can open one at a time.
+    """
+    hooks = [h for h in (hooks or []) if isinstance(h, dict)]
+    ids = _hook_ids(hooks)
+    writers = _writers_by_node(hooks)
+    by_id = {str(h.get("hook_node_id")): h for h in hooks}
+    order = [str(h.get("hook_node_id")) for h in hooks]
+    out: dict = {}
+
+    def walk(hid: str, seen: set) -> list:
+        found: list = []
+        for pid in sorted(_hook_predecessors(by_id.get(hid) or {}, ids, writers),
+                          key=lambda i: order.index(i) if i in order else 0):
+            if pid in seen:
+                continue
+            seen.add(pid)
+            for rid in walk(pid, seen):
+                if rid not in found:
+                    found.append(rid)
+            if _is_review(by_id.get(pid) or {}) and pid not in found:
+                found.append(pid)
+        return found
+
+    for hid in by_id:
+        before = walk(hid, {hid})
+        if before:
+            out[hid] = before
+    return out
+
+
+def stage_before_review(hooks: list | None, review_id) -> list:
+    """The hooks whose work a review hook stops on: its producers, nearest first."""
+    hooks = [h for h in (hooks or []) if isinstance(h, dict)]
+    ids = _hook_ids(hooks)
+    hook = next((h for h in hooks if str(h.get("hook_node_id")) == str(review_id)), None)
+    if hook is None:
+        return []
+    return sorted(_hook_predecessors(hook, ids, _writers_by_node(hooks)), key=str)
+
+
+def link_through_nodes(hooks: list | None, graph: dict | None) -> list:
+    """Record, on each hook, the hooks it follows by way of REAL nodes.
+
+    A pipeline is rarely hook-to-hook. The usual stage is a hook that writes a
+    prompt into a generator, the generator feeding a save node, and the next hook
+    anchored on that save node: `hook 8 -> GPT Image -> Send to Viewer -> review
+    hook 9`. No wire joins 8 and 9, so nothing that read the hooks alone knew the
+    review stood behind the image stage - it was planned as a loop of one, with
+    no start, and the stop was never tied to what it reviews.
+
+    *graph* is the captured API prompt. From every anchor that is a real node the
+    wires are walked upstream, and the first hook met on each path - a hook node
+    itself, or a node a hook's output is wired into - is one this hook follows.
+    The walk stops there: what lies behind that hook is its own business.
+
+    The ids go into ``via_hook_ids``, beside the direct ``prev_hook_ids`` rather
+    than into them, because the direct list also says "this hook reads that
+    hook's VALUE", which is not true of a stage two nodes away.
+    """
+    hooks = [h for h in (hooks or []) if isinstance(h, dict)]
+    if not isinstance(graph, dict) or not graph:
+        return hooks
+    ids = _hook_ids(hooks)
+    writers = _writers_by_node(hooks)
+
+    def upstream(node_id: str) -> set:
+        found: set = set()
+        stack, seen = [node_id], set()
+        while stack:
+            nid = stack.pop()
+            if nid in seen:
+                continue
+            seen.add(nid)
+            if nid in ids:
+                found.add(nid)
+                continue
+            if nid in writers:
+                found |= set(writers[nid])
+                continue
+            for val in ((graph.get(nid) or {}).get("inputs") or {}).values():
+                if isinstance(val, (list, tuple)) and len(val) == 2 and not isinstance(val[0], (list, dict)):
+                    stack.append(str(val[0]))
+        return found
+
+    for h in hooks:
+        hid = str(h.get("hook_node_id"))
+        direct = _hook_predecessors({**h, "via_hook_ids": []}, ids, writers)
+        via: set = set()
+        for a in (h.get("anchors") or []):
+            if isinstance(a, dict) and str(a.get("node_id")) not in ids:
+                via |= upstream(str(a.get("node_id")))
+        via -= direct | {hid}
+        if via:
+            h["via_hook_ids"] = sorted(via, key=str)
+    return hooks
+
+
+def reviews_before(hooks: list | None) -> dict:
+    """hook id -> the review hooks upstream of it, nearest last.
+
+    The other reading of :func:`gated_by_review`: that one says WHICH hooks stand
+    behind a stop, this one says which stop each of them is waiting on - so a
+    chain with several reviews can open one at a time.
+    """
+    hooks = [h for h in (hooks or []) if isinstance(h, dict)]
+    ids = _hook_ids(hooks)
+    writers = _writers_by_node(hooks)
+    by_id = {str(h.get("hook_node_id")): h for h in hooks}
+    order = [str(h.get("hook_node_id")) for h in hooks]
+    out: dict = {}
+
+    def walk(hid: str, seen: set) -> list:
+        found: list = []
+        for pid in sorted(_hook_predecessors(by_id.get(hid) or {}, ids, writers),
+                          key=lambda i: order.index(i) if i in order else 0):
+            if pid in seen:
+                continue
+            seen.add(pid)
+            for rid in walk(pid, seen):
+                if rid not in found:
+                    found.append(rid)
+            if _is_review(by_id.get(pid) or {}) and pid not in found:
+                found.append(pid)
+        return found
+
+    for hid in by_id:
+        before = walk(hid, {hid})
+        if before:
+            out[hid] = before
+    return out
+
+
+def stage_before_review(hooks: list | None, review_id) -> list:
+    """The hooks whose work a review hook stops on: its producers, nearest first."""
+    hooks = [h for h in (hooks or []) if isinstance(h, dict)]
+    ids = _hook_ids(hooks)
+    hook = next((h for h in hooks if str(h.get("hook_node_id")) == str(review_id)), None)
+    if hook is None:
+        return []
+    return sorted(_hook_predecessors(hook, ids, _writers_by_node(hooks)), key=str)
+
+
 def _writers_by_node(hooks: list) -> dict:
     """real node id -> {ids of hooks whose output is wired into that node}.
 
@@ -2361,6 +2565,7 @@ def _hook_predecessors(hook: dict, hook_ids: set, writers: dict | None = None) -
     and a collector standing between two hooks stops hiding the wire.
     """
     ids: set = {str(p) for p in (hook.get("prev_hook_ids") or []) if str(p) in hook_ids}
+    ids |= {str(p) for p in (hook.get("via_hook_ids") or []) if str(p) in hook_ids}
     for a in (hook.get("anchors") or []):
         if isinstance(a, dict):
             aid = str(a.get("node_id"))
@@ -3090,7 +3295,7 @@ def _target_context(hook: dict, hook_ids: set | None = None,
 
 
 def describe_hooks(hooks: list, base_prompt: dict | None = None, flow=None,
-                   into_canvas: bool = False) -> str:
+                   into_canvas: bool = False, passed_reviews=None) -> str:
     """Render the ``[CANVAS HOOKS]`` block injected into the orchestrator input.
 
     Hooks are **upstream producers**: each consumes its wired anchor inputs as
@@ -3258,15 +3463,37 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None, flow=None,
         lines.append(
             "\nREVIEW HOOK(S) — a deliberate STOP in the chain. Run the stage(s) "
             "BEFORE one of these, then call `halt_for_review(hook_node_id)` and END "
-            "the turn. That collects what the stage produced into an `agentY image "
-            "collector` on the user's canvas and hands them the choice of which "
-            "outputs go on to the next stage. A review hook produces nothing itself "
-            "and is never run. It carries no directive either — the node hides its "
-            "prompt box, because a stop has nothing to instruct — so an empty one is "
-            "complete, not unfinished:"
+            "the turn. For files that collects what the stage produced into an "
+            "`agentY image collector` on the user's canvas and hands them the choice "
+            "of which outputs go on; for a WRITTEN stage (a text hook) there is "
+            "nothing to collect — the stop is on the text itself, which you print in "
+            "full in your reply so they can read what they are approving. A review "
+            "hook produces nothing itself and is never run. It carries no directive "
+            "either — the node hides its prompt box, because a stop has nothing to "
+            "instruct — so an empty one is complete, not unfinished.\n"
+            "  The stop is ENFORCED, not a suggestion: until the user has answered a "
+            "review hook, every tool that would work a stage behind it refuses. Do "
+            "not plan past the first unanswered one — reach it, halt, end the turn. "
+            "One stop at a time: when two branches each reach a review hook, halt at "
+            "the first; the other is halted at next, with its files passed as "
+            "`outputs`."
         )
+        _passed = {str(i) for i in (passed_reviews or [])}
+        _waits = reviews_before(hooks)
+        gated_ids = {hid for hid, revs in _waits.items()
+                     if not _is_review(next((x for x in hooks
+                                             if str(x.get("hook_node_id")) == hid), {}))
+                     and any(r not in _passed for r in revs)}
         for h in review_hooks:
             hid = h.get("hook_node_id")
+            if str(hid) in _passed:
+                lines.append(f"- review hook {hid}{_t(h)} → ALREADY ANSWERED by the "
+                             "user (continue). Do not stop here again.")
+                continue
+            _stage = stage_before_review(hooks, hid)
+            if _stage:
+                lines.append(f"  (review hook {hid} stops on the work of hook(s) "
+                             + ", ".join(_stage) + ")")
             # A review hook has no prompt box on the node — there is nothing for
             # it to instruct. What it CAN carry is a title, and a user who titles
             # one "pick two for the video" has written the question there.
@@ -3290,9 +3517,10 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None, flow=None,
             lines.append(
                 "  NOT this turn — hook(s) "
                 + ", ".join(sorted(gated_ids, key=str))
-                + " sit AFTER a review hook. Do not run, queue or prepare them until "
-                  "the user has said continue. That is the whole point of the stop: "
-                  "the expensive stage is the one they have not approved yet."
+                + " sit AFTER a review hook the user has not answered. Do not "
+                  "run, queue, write or prepare them until they have said continue — "
+                  "the tools refuse. That is the whole point of the stop: the stage "
+                  "behind it is the one they have not approved yet."
             )
         lines.append(
             "  The user edits that collector while it is stopped — removing rows, "

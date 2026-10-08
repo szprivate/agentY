@@ -78,6 +78,9 @@ class AgentSession(BaseModel):
     # at resume: they are expected to edit it while this is up, and a cached list
     # is a list that can be wrong by then.
     review_halt: dict | None = None
+    # Review hooks the user has answered with a continue, for as long as the run
+    # they belong to is still being walked from stop to stop.
+    reviews_passed: list[str] = Field(default_factory=list)
     # The model family the thread's request named ("SD 1.5", "SDXL", …). A
     # follow-up about the graph that request built — "fix these problems" — does
     # not repeat it, and was then held to nothing: an SD 1.5 request came back

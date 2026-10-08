@@ -53,6 +53,8 @@ _BOUND = (
     "_record_hook_products",
     "_products_note",
     "_review_gate_refusal",
+    "_review_ahead_refusal",
+    "_hooks_feeding",
     "_arm_review_halt",
     "_review_collector_files",
     "_review_collector",
@@ -113,6 +115,7 @@ def pipeline_stub(**over):
         _canvas_flow=None,
         _loop_states={},
         _forwarded={},
+        _texts_placed={},
         _DRY_GRAPH_CAP=Pipeline._DRY_GRAPH_CAP,
     )
     base.update(over)

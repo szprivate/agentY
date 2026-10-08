@@ -351,6 +351,19 @@ delete rows, add your own files, reorder. Then say **continue** (or press
 - Candidates are listed best first by a [quality score](#which-of-these-is-best).
 - Deleting a row renumbers the references after it (`@image3` becomes `@image2`).
   The agent is told and updates the next stage's prompt.
+- **The stop is enforced.** Until you answer, every stage behind the hook is
+  refused, whatever the agent planned. With several review hooks in a chain they
+  open one at a time.
+- **A stage in between can be real nodes.** A hook that writes prompts into an
+  image node, whose save node is wired into the review hook, is the stage that
+  hook reviews; no hook-to-hook wire is needed.
+- **Reviewing text.** After a `text` hook there are no files, so nothing is
+  collected: the agent prints the text in the chat and stops. Say what to change
+  and it rewrites and asks again.
+- **In a loop.** A loop with a review hook in its body is yours to end: each
+  change you ask for is a round, and **continue** ends the loop. The quality
+  checker does not judge it.
+- **Stopping a run** still shows the images and videos that had finished.
 
 ### The keep switch: should this outlive the run?
 

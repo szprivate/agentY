@@ -719,6 +719,9 @@ class Pipeline:
         self._canvas_flow = None
         self._loop_states: dict = {}
         self._forwarded: dict = {}
+        # Text placed on a hook this turn, by hook id: what a review hook that
+        # follows a written stage stops on.
+        self._texts_placed: dict = {}
         # hook id -> the files that hook's stage produced THIS TURN.
         #
         # A hook's wire carries the value it authors; nothing carried what that
@@ -1557,6 +1560,10 @@ class Pipeline:
                     or self._review_gate_refusal(inline=bool(run_now)))
             if gate:
                 return json.dumps(gate)
+            ahead = self._review_ahead_refusal(self._hooks_feeding(
+                [r.get("target_node_id") for r in (resolutions or []) if isinstance(r, dict)]))
+            if ahead:
+                return json.dumps(ahead)
             # NOW the scoping is worth reporting: something is actually about to
             # run on it. Once per turn.
             if getattr(self, "_hook_scope_note", ""):
@@ -1805,6 +1812,55 @@ class Pipeline:
                 files = [p for p in (self._chain_output_paths
                                      or self._session.current_output_paths or []) if p]
             files = list(dict.fromkeys(files))
+            # A written stage: the stop is on the text, and there is nothing to
+            # collect. Only when the caller named no files - a review hook that
+            # follows both a text and an image stage is reviewing the images.
+            from src.utils.canvas_hooks import _is_text as _txt
+            from src.utils.canvas_hooks import stage_before_review as _stage
+            before = _stage(self._canvas_hooks or [], hid)
+            by_id = {str(h.get("hook_node_id")): h for h in (self._canvas_hooks or [])}
+            text_stage = [i for i in before if _txt(by_id.get(i) or {})]
+            written = [i for i in text_stage
+                       if i in getattr(self, "_texts_placed", {})
+                       or (by_id.get(i) or {}).get("_cached")]
+            if text_stage and len(text_stage) == len(before) and not outputs:
+                if not written:
+                    return json.dumps({
+                        "error": f"nothing to review — hook(s) {', '.join(text_stage)} "
+                                 "have not been written yet. Write and place the text "
+                                 "first (place_canvas_text), THEN halt.",
+                    })
+                if self._dry_run:
+                    return json.dumps({
+                        "status": "skipped",
+                        "message": (f"DRY RUN — review hook {hid} would stop here on "
+                                    "the written text. Not halting: carry on."),
+                    })
+                question = " ".join(str(question or "").split())[:300]
+                waits = __import__("src.utils.canvas_hooks", fromlist=["reviews_before"]
+                                   ).reviews_before(self._canvas_hooks or [])
+                remaining = sorted((i for i, revs in waits.items() if hid in revs
+                                    and not _rev(by_id.get(i) or {})), key=str)
+                self._review_armed = ReviewHalt(
+                    hook_node_id=hid, question=question, remaining=tuple(remaining),
+                    text_hooks=tuple(written))
+                _push_patch({"op": "review_text", "hook_node_id": hid,
+                             "text_hooks": written, "question": question})
+                _push_progress(f"⏸️ Stopped at review hook {hid} — the text is waiting "
+                               "for your continue, or for what you want changed.")
+                return json.dumps({
+                    "status": "halted", "hook_node_id": hid, "reviewing": "text",
+                    "text_hooks": written, "not_run": remaining,
+                    "message": (
+                        f"Stopped at review hook {hid} on the written text. Do NOT call "
+                        "any other tool now — reply to the user: print the text of "
+                        f"hook(s) {', '.join(written)} IN FULL (they are approving it, "
+                        "so they must be able to read it here), then ask "
+                        + (f'"{question}"' if question else
+                           "whether to continue with it, or what to change.")
+                        + (f" {len(remaining)} later hook(s) were NOT run." if remaining
+                           else "")),
+                })
             if not files:
                 return json.dumps({
                     "error": "nothing to review — the stage before this hook has not "
@@ -1826,7 +1882,9 @@ class Pipeline:
                 })
 
             question = " ".join(str(question or "").split())[:300]
-            remaining = sorted(_gated(self._canvas_hooks or []), key=str)
+            from src.utils.canvas_hooks import reviews_before as _waits_on
+            remaining = sorted((i for i, revs in _waits_on(self._canvas_hooks or []).items()
+                                if hid in revs and not _rev(by_id.get(i) or {})), key=str)
             collector_key = f"agentY_review_{hid}"
             self._review_armed = ReviewHalt(
                 hook_node_id=hid, collector_key=collector_key,
@@ -2439,6 +2497,14 @@ class Pipeline:
                 known = [lp.break_id for lp in (flow.loops if flow else [])]
                 return json.dumps({"error": f"no loop with break node {break_node_id}.",
                                    "loops": known})
+            if getattr(loop, "review_id", ""):
+                return json.dumps({
+                    "error": f"loop {loop.break_id} is judged by the user at review hook "
+                             f"{loop.review_id}, not by loop_check.",
+                    "what_to_do": f"Call halt_for_review(\"{loop.review_id}\") and end the "
+                                  "turn. A change they ask for is the next round; their "
+                                  "continue ends the loop.",
+                })
             state = self._loop_states.setdefault(loop.break_id, _hf.new_state(loop))
             if state["finished"]:
                 return json.dumps({"finished": True, "round": state["round"],
@@ -3267,6 +3333,10 @@ class Pipeline:
                 return _held
             if not str(text or "").strip():
                 return json.dumps({"error": "text is empty — write the answer first, then place it."})
+            ahead = self._review_ahead_refusal([hook_node_id])
+            if ahead:
+                return json.dumps(ahead)
+            self._texts_placed[str(hook_node_id)] = str(text)
             from src.utils.canvas_patch import push as _push_patch
             from src.utils.canvas_hooks import inject_produced_value as _inject, _is_text
 
@@ -4619,7 +4689,9 @@ class Pipeline:
             from src.utils.canvas_hooks import describe_hooks
             hooks_block = describe_hooks(self._canvas_hooks, self._canvas_base_prompt,
                                          flow=self._canvas_flow,
-                                         into_canvas=self._hooks_into_canvas())
+                                         into_canvas=self._hooks_into_canvas(),
+                                         passed_reviews=getattr(self._session,
+                                                                "reviews_passed", None))
             if hooks_block:
                 # Attach the how-to-run-hooks guidance only now that hooks exist
                 # (it's absent from the base system prompt to keep every non-hook
@@ -4758,7 +4830,7 @@ class Pipeline:
             guide = _orch_partial("review_halt")
             pin += (guide + "\n\n") if guide else ""
             if halt is not None:
-                ballot = self._review_collector() or {}
+                ballot = ({} if halt.is_text() else self._review_collector() or {})
                 pin += halt_state(halt, str(ballot.get("node_id") or ""))
                 if ballot.get("node_id"):
                     pin += (f"  You may write to that collector directly: "
@@ -4768,7 +4840,12 @@ class Pipeline:
                             "dropped — regenerate it, then put the new path in, keeping "
                             "the lines they kept. It needs no canvas selection while "
                             "this halt is up.\n")
-                if self._review_reply == "continue":
+                if self._review_reply == "continue" and halt.is_text():
+                    pin += ("  The user APPROVED the text. The stages behind review hook "
+                            f"{halt.hook_node_id} are open: carry on with them, reading "
+                            "the text as it stands now. If their message also asks for "
+                            "a change, make it first.\n")
+                elif self._review_reply == "continue":
                     now = self._review_collector_files()
                     pin += "  " + resumed_note(len(now),
                                                max(0, halt.count() - len(now))) + "\n"
@@ -4863,10 +4940,20 @@ class Pipeline:
         # Loop start / loop break nodes do no work: they are read here and taken
         # out of the wiring, so everything below sees ordinary hook chains.
         from src.utils import hook_flow as _hook_flow
+        # A stage is usually hook -> generator -> save node -> next hook: join the
+        # hooks across those real nodes first, or a loop and a review stop see only
+        # the hooks that happen to be wired to each other directly.
+        try:
+            from src.utils.canvas_hooks import link_through_nodes as _link
+            canvas_hooks = _link(canvas_hooks, canvas_prompt)
+        except Exception as exc:  # noqa: BLE001
+            if self._verbose:
+                print(f"pipeline: could not follow the hooks through the graph ({exc})")
         self._canvas_flow = _hook_flow.plan(canvas_hooks)
         self._canvas_hooks = self._canvas_flow.hooks
         self._loop_states = {}
         self._forwarded = {}
+        self._texts_placed = {}
         self._canvas_keeplive_run = False
         self._hook_run_stopped = None
         # Set when the canvas is scoped to the hooks at turn setup; pushed only if
@@ -4905,6 +4992,16 @@ class Pipeline:
         self._review_reply = self._read_review_reply(user_text)
         self._review_armed = None
         self._session.review_halt = None
+        # Which review hooks are behind us. A continue adds the one it answers; a
+        # turn that starts with no stop standing is a new run, and starts with none.
+        passed = list(getattr(self._session, "reviews_passed", None) or [])
+        if self._review_halt is None:
+            passed = []
+        elif self._review_reply == "continue":
+            passed.append(str(self._review_halt.hook_node_id))
+        elif self._review_reply == "stop":
+            passed = []
+        self._session.reviews_passed = list(dict.fromkeys(passed))
         # How many times each workflow has been re-run after a provider refused it
         # on content grounds. Per-turn: a refusal that ran out of retries is not
         # held against the next request.
@@ -5029,7 +5126,8 @@ class Pipeline:
         if self._review_halt is not None and self._review_reply:
             from src.utils.canvas_patch import push as _push_patch
             _push_patch({"op": "review_released", "answer": self._review_reply,
-                         "hook_node_id": self._review_halt.hook_node_id})
+                         "hook_node_id": self._review_halt.hook_node_id,
+                         "text": self._review_halt.is_text()})
             self._record_review_preference(user_text)
 
         # ComfyUI run failures are healed inline by the executor (repair_fn below):
@@ -6244,9 +6342,45 @@ class Pipeline:
                 produced=tuple(str(p) for p in (raw.get("produced") or [])),
                 question=str(raw.get("question") or ""),
                 remaining=tuple(str(h) for h in (raw.get("remaining") or [])),
+                text_hooks=tuple(str(h) for h in (raw.get("text_hooks") or [])),
             )
         except Exception:  # noqa: BLE001
             return None
+
+    def _review_ahead_refusal(self, hook_ids) -> dict | None:
+        """Refuse work on hooks that stand behind a review the user has not answered.
+
+        Asked by every tool that works a hook. The stop a review hook asks for
+        used to exist only as a paragraph in the prompt, and a run walked past all
+        three on a canvas: nothing but the agent's own reading held it.
+        """
+        ids = [str(i) for i in (hook_ids or []) if str(i or "").strip()]
+        hooks = self._canvas_hooks or []
+        if not ids or getattr(self, "_dry_run", False):
+            return None
+        try:
+            from src.utils.canvas_hooks import reviews_before, stage_before_review
+            from src.utils.review_gate import ahead_refusal
+            waits = reviews_before(hooks)
+            passed = {str(i) for i in (getattr(self._session, "reviews_passed", None) or [])}
+            for hid in ids:
+                for rid in waits.get(hid, []):
+                    if rid not in passed:
+                        behind = [i for i in ids if rid in waits.get(i, [])]
+                        _push_progress(f"✋ Review hook {rid} comes first — stopping "
+                                       "there before the stages behind it.")
+                        return ahead_refusal(behind, rid, stage_before_review(hooks, rid))
+        except Exception as exc:  # noqa: BLE001
+            if self._verbose:
+                print(f"pipeline: review gate could not be checked ({exc})")
+        return None
+
+    def _hooks_feeding(self, node_ids) -> list:
+        """The hooks whose output is wired into any of *node_ids*."""
+        from src.utils.canvas_hooks import _output_targets
+        want = {str(n) for n in (node_ids or [])}
+        return [str(h.get("hook_node_id")) for h in (self._canvas_hooks or [])
+                if isinstance(h, dict) and any(str(t[0]) in want for t in _output_targets(h))]
 
     def _read_review_reply(self, user_text: str) -> str:
         """How this message answers a live halt: "continue", "stop", or "" (neither)."""
@@ -6735,6 +6869,7 @@ class Pipeline:
                     "produced": list(h.produced),
                     "question": h.question,
                     "remaining": list(h.remaining),
+                    "text_hooks": list(h.text_hooks),
                 }
                 return
             if self._review_halt is not None and not self._review_reply:
@@ -6745,6 +6880,7 @@ class Pipeline:
                     "produced": list(h.produced),
                     "question": h.question,
                     "remaining": list(h.remaining),
+                    "text_hooks": list(h.text_hooks),
                 }
         except Exception:  # noqa: BLE001
             pass

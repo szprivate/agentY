@@ -50,12 +50,37 @@ def is_flow(hook: dict) -> bool:
     return _purpose(hook) in _FLOW
 
 
+_REVIEW = {"human_review", "human review", "review", "halt", "pause",
+           "check_in", "check-in", "checkin"}
+
+
+def _is_review(hook: dict) -> bool:
+    """A stop for the person to choose at (canvas_hooks._is_review, kept in step)."""
+    return _purpose(hook) in _REVIEW
+
+
+_REVIEW = {"human_review", "human review", "review", "halt", "pause",
+           "check_in", "check-in", "checkin"}
+
+
+def _is_review(hook: dict) -> bool:
+    """A stop for the person to choose at (canvas_hooks._is_review, kept in step)."""
+    return _purpose(hook) in _REVIEW
+
+
 def _hid(hook: dict) -> str:
     return str((hook or {}).get("hook_node_id") or "")
 
 
-def _prev_ids(hook: dict) -> list[str]:
+def _via_ids(hook: dict) -> list[str]:
+    """Hooks this one follows by way of real nodes (canvas_hooks.link_through_nodes)."""
+    return [str(i) for i in (hook.get("via_hook_ids") or []) if i is not None]
+
+
+def _prev_ids(hook: dict, direct_only: bool = False) -> list[str]:
     ids = [str(i) for i in (hook.get("prev_hook_ids") or []) if i is not None]
+    if not direct_only:
+        ids += [i for i in _via_ids(hook) if i not in ids]
     one = hook.get("prev_hook_id")
     if one is not None and str(one) not in ids:
         ids.insert(0, str(one))
@@ -85,6 +110,10 @@ class Loop:
     max_rounds: int = DEFAULT_ROUNDS
     forward: str = FORWARD_BEST
     title: str = ""
+    # A review hook in the body: the PERSON judges this loop, not the QA agent.
+    review_id: str = ""
+    # A review hook in the body: the PERSON judges this loop, not the QA agent.
+    review_id: str = ""
 
     def name(self) -> str:
         return self.title or f"loop {self.break_id}"
@@ -179,6 +208,8 @@ def plan(hooks: list | None) -> Flow:
                     title=str(brk.get("title") or "").strip())
         if loop.title.lower() in ("", "agenty loop break"):
             loop.title = ""
+        loop.review_id = next((i for i in reversed(members) if _is_review(by_id[i])), "")
+        loop.review_id = next((i for i in reversed(members) if _is_review(by_id[i])), "")
         if not members:
             flow.problems.append(f"{loop.name()}: nothing is wired between the loop start and the "
                                  "loop break, so there is nothing to repeat.")
@@ -202,11 +233,18 @@ def plan(hooks: list | None) -> Flow:
         h = copy.deepcopy(h)
         prev: list[str] = []
         extra: list = []
-        for pid in _prev_ids(h):
+        for pid in _prev_ids(h, direct_only=True):
             for rid in _resolve_through(pid, by_id):
                 if rid not in prev:
                     prev.append(rid)
             extra += _flow_anchors(pid, by_id)
+        # Reached by way of real nodes: an order, not a value that is read.
+        via: list[str] = []
+        for pid in _via_ids(h):
+            for rid in _resolve_through(pid, by_id):
+                if rid not in prev and rid not in via and rid != _hid(h):
+                    via.append(rid)
+        h["via_hook_ids"] = via
         links = []
         for link in (h.get("prev_links") or []):
             if not isinstance(link, dict):
@@ -367,9 +405,25 @@ def loop_lines(flow: Flow) -> list[str]:
         for lp in flow.loops:
             cond = f'finished when: "{lp.condition}"' if lp.condition \
                 else "finished when the QA briefings on its stages pass"
-            lines.append(f"- LOOP (break node {lp.break_id}"
-                         + (f', "{lp.title}"' if lp.title else "")
-                         + f") — {cond}; at most {lp.max_rounds} round(s); forwards: {lp.forward}.")
+            if lp.review_id:
+                cond = (f'finished when: "{lp.condition}"' if lp.condition
+                        else "finished when the user approves")
+                lines.append(
+                    f"- LOOP (break node {lp.break_id}"
+                    + (f', "{lp.title}"' if lp.title else "")
+                    + f") — JUDGED BY THE USER at review hook {lp.review_id}, not by "
+                      f"loop_check; {cond}; at most {lp.max_rounds} round(s). One round "
+                      f"= run the body's stages, call halt_for_review({lp.review_id}) "
+                      "and END the turn. Their reply decides: a change they ask for is "
+                      "the next round (redo the stage with it, halt again); `continue` "
+                      "or an approval ends the loop, and what they kept is what goes on "
+                      "to the stage after the break. Never call loop_check for this "
+                      "loop, and never judge the condition yourself.")
+            else:
+                lines.append(f"- LOOP (break node {lp.break_id}"
+                             + (f', "{lp.title}"' if lp.title else "")
+                             + f") — {cond}; at most {lp.max_rounds} round(s); "
+                               f"forwards: {lp.forward}.")
             for i, hid in enumerate(lp.members, 1):
                 lines.append(f"    body stage {i}: {_label(by_id.get(hid, {'hook_node_id': hid}))}")
     for problem in flow.problems:

@@ -61,12 +61,22 @@ class ReviewHalt:
     question: str = ""
     # The hooks that have not run yet, so the user can be told what continuing buys.
     remaining: tuple = ()
+    # The text hooks whose WRITTEN answer is what was stopped on. A written stage
+    # has no files, so there is no collector: the text is in the chat and on the
+    # hook, and the user's reply is the whole review.
+    text_hooks: tuple = ()
 
     def count(self) -> int:
         return len(self.produced)
 
+    def is_text(self) -> bool:
+        return bool(self.text_hooks) and not self.produced
+
     def describe(self) -> str:
         """One line for the panel: what is waiting and where."""
+        if self.is_text():
+            return (f"hook {self.hook_node_id} — the written text is waiting for "
+                    "continue or stop")
         n = self.count()
         return (f"hook {self.hook_node_id} — {n} output{'' if n == 1 else 's'} "
                 f"waiting for continue or stop")
@@ -129,6 +139,20 @@ def halt_state(halt: ReviewHalt, collector_node_id: str = "") -> str:
     The how-to lives in the ``orchestrator/review_halt`` prompt partial; this is
     only the part that changes from turn to turn.
     """
+    if halt.is_text():
+        head = (f"[REVIEW HALT] The chain is STOPPED at review hook {halt.hook_node_id}, "
+                f"on the text written for hook(s) {', '.join(halt.text_hooks)}. There "
+                "is no collector: the text itself is what the user is reviewing.\n")
+        if halt.question:
+            head += f"  You asked them: \"{halt.question}\"\n"
+        if halt.remaining:
+            head += f"  Not yet run: hook(s) {', '.join(str(h) for h in halt.remaining)}.\n"
+        return head + (
+            "  A change they ask for is a revision, not a continue: rewrite the text, "
+            "place it again with place_canvas_text on the same hook, print the new "
+            "version in full in your reply, call halt_for_review again and ask again. "
+            "Only `continue` (or a plain approval) lets the stages behind the hook "
+            "run, and they read the text as it stands then.\n")
     where = (f"collector node {collector_node_id}" if collector_node_id
              else "a collector that is no longer wired to the hook")
     head = (f"[REVIEW HALT] The chain is STOPPED at review hook {halt.hook_node_id}. "
@@ -179,6 +203,29 @@ def execution_refusal(halt: ReviewHalt) -> dict:
             "have probably edited it. 'stop' ends the run and nothing else is queued."
         ),
         "do_not": "Do not report this as a failure — nothing failed. It is a pause.",
+    }
+
+
+def ahead_refusal(hook_ids, review_id: str, stage: list | None = None) -> dict:
+    """The tool result for working a stage that stands behind an unanswered review.
+
+    The other half of the stop. :func:`execution_refusal` holds a chain that HAS
+    halted; this holds one that has not halted yet and is about to walk past the
+    hook - which is what an agent told only in prose "stop here" did: it listed
+    the review in its plan, wrote the next three stages and queued 25 runs.
+    """
+    behind = ", ".join(str(h) for h in hook_ids)
+    return {
+        "error": (f"not yet — hook(s) {behind} stand behind review hook {review_id}, "
+                  "which the user has not answered. Nothing was written, queued or run."),
+        "what_to_do": (
+            f"Finish the stage BEFORE review hook {review_id}"
+            + (f" (hook(s) {', '.join(stage)})" if stage else "")
+            + f", then call halt_for_review(\"{review_id}\") and end the turn with the "
+              "question put to the user."),
+        "after": ("Their `continue` opens the stages behind it; anything else they "
+                  "say is a change to make before asking again."),
+        "do_not": "Do not report this as a failure — nothing failed. It is the stop.",
     }
 
 
