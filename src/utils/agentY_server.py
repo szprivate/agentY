@@ -1905,6 +1905,12 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
         # User pressed Stop → the task was cancelled from /agentY/stop.
         stopped = True
         logger.info("pipeline run %s stopped by user", req_id)
+        # What had finished before the stop is still shown: a stopped run is not
+        # an empty one.
+        try:
+            _check_outputs()
+        except Exception:  # noqa: BLE001
+            pass
     except Exception as exc:
         logger.error("pipeline stream error: %s", exc, exc_info=True)
         out_q.put({"type": "error", "message": str(exc)})

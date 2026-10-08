@@ -476,6 +476,41 @@ def _extract_output_files(history: dict) -> list[dict]:
     return files
 
 
+def _salvage_finished_outputs(collected_paths: list[str] | None) -> int:
+    """Collect what a batch had already finished when it was cut short.
+
+    A member's files are collected when its monitor sees it complete. Stop the
+    turn and every monitor is cancelled - including the ones whose job ComfyUI
+    had finished a moment earlier, and the one whose save node had already
+    written its file. Those pictures exist and were paid for, and the panel
+    showed none of them. History is cleared when a batch starts, so whatever it
+    holds now is this batch's: read it once and collect the files not yet seen.
+    Returns how many were added. Never raises - this runs while a turn unwinds.
+    """
+    if collected_paths is None:
+        return 0
+    try:
+        from agenty_core.utils.comfyui_client import get_client
+        history = get_client().get("/history")
+        if not isinstance(history, dict):
+            return 0
+        have = {str(p) for p in collected_paths}
+        added = 0
+        for item in _extract_output_files(history):
+            if not item.get("filename"):
+                continue
+            path = _resolve_output_path(item["filename"], item.get("subfolder", ""),
+                                        item.get("type", "output"))
+            if str(path) not in have and Path(path).is_file():
+                have.add(str(path))
+                collected_paths.append(str(path))
+                added += 1
+        return added
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("executor: could not collect a stopped batch's outputs - %s", exc)
+        return 0
+
+
 def _resolve_output_path(
     filename: str,
     subfolder: str = "",
@@ -1119,6 +1154,7 @@ async def execute_workflows_batch(
     # `outstanding` counts live work units. A unit stays alive across a
     # fail→heal→re-queue cycle (member→heal→member) and is only retired when it
     # finally succeeds or exhausts its heal budget.
+    drained = False
     try:
         while outstanding > 0:
             kind, payload = await out_q.get()
@@ -1188,6 +1224,10 @@ async def execute_workflows_batch(
                 else:
                     outstanding -= 1  # couldn't adjust — retire with what we have
                 continue
+        drained = True
     finally:
         for t in list(active):
             t.cancel()
+        if not drained:
+            # Stopped or failed part-way: what had finished is still delivered.
+            _salvage_finished_outputs(collected_paths)
