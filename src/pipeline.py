@@ -2320,15 +2320,15 @@ class Pipeline:
         async def name_outputs(suffix: str = "", shot: str = "", sequence: str = "",
                                workflow_path: str = "") -> str:
             """Say what a generation's files are, so they are saved in the right
-            place under the right name:
-            ``<sequence>/<shot>_<suffix>_v###.<extension>`` in ComfyUI's output folder.
+            place under the right name, in ComfyUI's output folder:
+            ``<Sequence>/<Shot>/<images|videos>/v###/<shot>_v###_<suffix>``.
 
             The sequence and shot normally come from the canvas (an AYON context
             node or an ``agentY context`` node - see the ``[OUTPUT CONTEXT]``
             note). You supply the ``suffix``: one or two words for what the file
             IS in this job - ``startframe``, ``endframe``, ``hero_ref``. Call it
-            before running the workflow. The version number and the extension
-            are added for you.
+            before running the workflow. The folders and the version number are
+            written into the save node for you, before the run.
 
             Give ``shot`` and/or ``sequence`` to write somewhere else than the
             canvas says - this is how one request fills several shots or assets
@@ -2354,8 +2354,10 @@ class Pipeline:
             if not str(workflow_path or "").strip():
                 now = _oc.set_current(sequence=ctx.get("sequence"), shot=ctx.get("shot"),
                                       suffix=sfx or None, source="name_outputs")
-                shown = _oc.prefix_for(now, now.get("suffix") or "<what the workflow is called>")
-                return json.dumps({"status": "ok", "files": shown + "_v###.<ext>",
+                return json.dumps({"status": "ok",
+                                   "files": f"{_oc.shot_root(now)}/<images|videos>/v###/"
+                                            f"{(now.get('shot') or now.get('sequence')).lower()}_v###_"
+                                            f"{now.get('suffix') or '<what the workflow is called>'}",
                                    "applies_to": "everything run from here on in this turn"})
             try:
                 wf = Path(str(workflow_path).strip())
@@ -2367,17 +2369,23 @@ class Pipeline:
                 return json.dumps({"error": "that workflow has no save node with a filename_prefix "
                                             "to name (its prefix may be wired from another node)."})
             wf.write_text(json.dumps(graph, indent=2), encoding="utf-8")
-            # A context set only here (no node on the canvas) must still be in
-            # force when the file comes back and gets its version.
-            if not _oc.active():
-                _oc.set_current(sequence=ctx.get("sequence"), shot=ctx.get("shot"), source="name_outputs")
             # The same nodes on the canvas, when this workflow was inserted there:
             # that is the version run_workflow_now runs.
             on_canvas = []
             try:
                 ids = self._session.inserted_workflows.get(str(wf.resolve())) or []
                 live = getattr(self, "_canvas_graph", None) or {}
-                mine = _oc.set_prefixes(live, ctx, sfx or "output", node_ids=ids) if ids else {}
+                # The canvas savers take the names just written, kind for kind,
+                # so file and canvas carry the same version.
+                given = list(named.values())
+                mine = {}
+                for nid in ids:
+                    node = live.get(str(nid))
+                    if not _oc._is_saver(node):
+                        continue
+                    kind = f"/{_oc._kind(node.get('class_type', ''))}/"
+                    mine[str(nid)] = next((g for g in given if kind in g), given[0])
+                    node["inputs"]["filename_prefix"] = mine[str(nid)]
                 if mine:
                     from src.utils.canvas_patch import push as _push_patch
                     for nid, prefix in mine.items():
@@ -2387,11 +2395,11 @@ class Pipeline:
             except Exception:  # noqa: BLE001
                 pass
             first = next(iter(named.values()))
-            _push_progress(f"🗂 Output name: {first}_v###")
-            return json.dumps({"status": "ok", "files": first + "_v###.<ext>",
+            _push_progress(f"🗂 Output name: {first}")
+            return json.dumps({"status": "ok", "files": first,
                                "save_nodes": list(named), "canvas_nodes": on_canvas,
-                               "note": "The version is the next free one in that folder; the run "
-                                       "returns the final path."})
+                               "note": "This is the name in the save node. ComfyUI adds its counter "
+                                       "and the extension; the run returns the final path."})
 
         @_tool
         async def loop_check(break_node_id: str, outputs: list) -> str:

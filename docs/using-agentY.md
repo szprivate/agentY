@@ -386,20 +386,28 @@ what it is. In a batch, each variant is named after the value that made it.
 ### Where the files go: the `agentY context` node
 
 Add an **`agentY context`** node and set **sequence / asset** and **shot**. Every
-file the agent produces is then saved under ComfyUI's output folder as
+file the agent produces is then saved under ComfyUI's output folder in the bEpic
+layout (the one `bepicSetPath` / *Get Path (AYON)* build):
 
 ```
-<sequence>/<shot>_<suffix>_v###.<extension>      e.g.  spec/spec_0210_startframe_v003.png
+<Sequence>/<Shot>/images/v###/<shot>_v###_<suffix>_00001_.png
+<Sequence>/<Shot>/videos/v###/<shot>_v###_<suffix>_00001.mp4
+
+e.g.  spec/spec_0210/images/v003/spec_0210_v003_startframe_00001_.png
 ```
 
 - **suffix** — set by the agent from what the file is (`startframe`, `hero_ref`).
-- **version** — the next free number for that name in that folder.
+- **version** — the first one that has no file of that name yet. Running the same
+  workflow again (a retry, a loop round) keeps the version; ComfyUI's counter at
+  the end counts the takes.
+- The name is written into the save node **before** the run. Nothing is renamed
+  afterwards, so ComfyUI's history and Assets show the same file.
 - **AYON:** if the graph has an AYON context node, it wins. Sequence and shot are
-  the last two parts of its folder path, as in bEpic's *Get Path (AYON)*.
+  the last two parts of its folder path, as in *Get Path (AYON)*.
 - **Several shots or assets in one request** (*"create images of the main male
   character and the woman"*): the agent names each generation for its own shot.
 - A save node whose prefix you wired, or which already names a folder of its own,
-  keeps its folder and still gets the version.
+  is left as it is.
 - No context node: files go to `agent/images`, `agent/videos`, … as before.
   Bypass or mute the node to switch the rule off.
 
