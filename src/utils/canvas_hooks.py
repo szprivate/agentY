@@ -19,6 +19,7 @@ import copy
 import os
 import random
 import re
+import threading
 from pathlib import Path
 
 from src.utils.media_loaders import image_loader_node
@@ -1478,6 +1479,30 @@ def canvas_tags(base_prompt: dict | None) -> dict:
             "note_id": nid,
             "role": str((notes[nid].get("inputs") or {}).get("role") or "").strip(),
         }
+    return out
+
+
+def stage_tags(graph: dict | None) -> dict:
+    """``{tag: {"stage_id", "note_id", "role"}}`` for tags that sit on a STAGE's output.
+
+    An ``agentY add tag`` node on the wire leaving a hook or a review does not
+    name a node with a file in it - it names what that stage will have made, or
+    what that review will have let through. Read from the canvas as the user
+    drew it: once the stage nodes are spliced out for a run the tag is left on
+    no wire at all, which is how ``#appartmentref`` on a review's output came to
+    "name nothing".
+    """
+    notes, src_of = _note_sources(graph)
+    out: dict = {}
+    for nid in sorted(notes, key=lambda s: (len(str(s)), str(s))):
+        src = src_of.get(nid)
+        node = (graph or {}).get(src) if src is not None else None
+        if not isinstance(node, dict) or node.get("class_type") not in _HOOK_CLASSES:
+            continue
+        tag = normalise_tag((notes[nid].get("inputs") or {}).get("tag"))
+        if tag and tag not in out:
+            out[tag] = {"stage_id": str(src), "note_id": str(nid),
+                        "role": str((notes[nid].get("inputs") or {}).get("role") or "").strip()}
     return out
 
 
@@ -3127,6 +3152,11 @@ def _trim(text: str, limit: int) -> str:
     return one if len(one) <= limit else one[:limit] + "…"
 
 
+# What describe_hooks was told about tags that name a stage's result, for the
+# helpers it calls (set for the length of one call, per thread).
+_describing = threading.local()
+
+
 def _input_context(hook: dict, base_prompt: dict | None, hook_ids: set,
                    cached: dict | None = None) -> str:
     """Describe what feeds *hook* (its context inputs).
@@ -3159,8 +3189,16 @@ def _input_context(hook: dict, base_prompt: dict | None, hook_ids: set,
     # anchor — same filenames, same stated role — because that is what they are to
     # everything the agent does; only where they came from differs, and that is
     # said once rather than left to be inferred from a missing slot name.
+    # A tag that names a STAGE's result is not the node up its wire (after the
+    # splice that is the stage's save node, i.e. everything it made rather than
+    # what was approved): it is what the TAGS list says it is.
+    results = getattr(_describing, "stage_results", None) or {}
     named = [_render_anchor(nid, cls, inputs, None, role, "", tag)
-             for nid, cls, inputs, role, tag in tagged_inputs(hook, base_prompt)]
+             for nid, cls, inputs, role, tag in tagged_inputs(hook, base_prompt)
+             if tag not in results]
+    named += [f"#{tag} = the result of stage {results[tag].get('stage_id')}, as given "
+              "in the TAGS list above"
+              for tag in mentioned_tags(hook.get("directive")) if tag in results]
     if not rows and not named:
         return "no input wired"
     rows.sort(key=lambda r: r[0])
@@ -3277,7 +3315,24 @@ def _target_context(hook: dict, hook_ids: set | None = None,
 
 
 def describe_hooks(hooks: list, base_prompt: dict | None = None, flow=None,
-                   into_canvas: bool = False, passed_reviews=None) -> str:
+                   into_canvas: bool = False, passed_reviews=None,
+                   stage_results: dict | None = None) -> str:
+    """The ``[CANVAS HOOKS]`` block (see :func:`_describe_hooks`).
+
+    *stage_results* - ``{tag: {stage_id, title, result}}`` for tags that sit on a
+    stage's output (:func:`stage_tags`), with what the run ledger has for it.
+    """
+    _describing.stage_results = stage_results or {}
+    try:
+        return _describe_hooks(hooks, base_prompt, flow, into_canvas, passed_reviews,
+                               stage_results)
+    finally:
+        _describing.stage_results = {}
+
+
+def _describe_hooks(hooks: list, base_prompt: dict | None = None, flow=None,
+                    into_canvas: bool = False, passed_reviews=None,
+                    stage_results: dict | None = None) -> str:
     """Render the ``[CANVAS HOOKS]`` block injected into the orchestrator input.
 
     Hooks are **upstream producers**: each consumes its wired anchor inputs as
@@ -3379,6 +3434,14 @@ def describe_hooks(hooks: list, base_prompt: dict | None = None, flow=None,
             node = (base_prompt or {}).get(nid) or {}
             role = str(info.get("role") or "").strip()
             says = f' — "{_trim(role, 200)}" (take only that from it)' if role else ""
+            named = (stage_results or {}).get(tag)
+            if named:
+                # On a stage's output: the name is that stage's RESULT, which the
+                # host has on record - not a node, and not "nothing".
+                lines.append(f"- #{tag} → THE RESULT OF stage {named.get('stage_id')}"
+                             + (f' "{named["title"]}"' if named.get("title") else "")
+                             + f": {named.get('result') or 'nothing yet'}{says}")
+                continue
             if nid == note_id or not node:
                 # The tag node sits on nothing yet, so the name is real but points at
                 # no reference. Saying that is the useful answer; describing the

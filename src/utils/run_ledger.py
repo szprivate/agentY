@@ -357,6 +357,83 @@ def summary(lead_id: str) -> dict:
             "done": count(DONE)}
 
 
+# ── an approved result that nothing on the canvas holds ──────────────────────
+
+_ORIGIN = "Approved in an agentY pipeline run (stage {stage}, review {review})."
+
+
+def memory_name(title: str, stage_id: str, tag: str = "") -> str:
+    """The name an approved result is remembered under: its tag, else its stage."""
+    return _slug(tag, "") or _slug(title, "") or f"stage_{stage_id}_approved"
+
+
+def memory_body(title: str, files, text_path: str, stage_id: str, review_id: str,
+                first_line: str = "") -> str:
+    """A pointer and one line, in the shape a remembered ``#tag`` is read from:
+    the meaning first, ``path:`` on a line of its own."""
+    files = _files(files)
+    what = (f"{len(files)} approved file(s)" if len(files) != 1 else "Approved file")         if files else "Approved text"
+    head = what + (f' of "{title}"' if title else "")         + (f": {first_line.strip()[:120]}" if first_line.strip() else ".")
+    lines = [head]
+    main = files[0] if files else text_path
+    if main:
+        lines.append("path: " + str(main))
+    lines += ["also: " + f for f in files[1:]]
+    lines.append(_ORIGIN.format(stage=stage_id, review=review_id))
+    return "\n".join(lines)
+
+
+def remember_approved(title: str, files, text_path: str, stage_id: str, review_id: str,
+                      tag: str = "") -> str:
+    """Write an approved result into project memory; returns the name, "" if not written."""
+    files = _files(files)
+    if not files and not text_path:
+        return ""
+    first = ""
+    if not files:
+        try:
+            with open(text_path, encoding="utf-8") as fh:
+                first = next((ln for ln in fh if ln.strip()), "")
+        except OSError:
+            first = ""
+    try:
+        from agenty_core.utils.project_memory import write_entry
+        name = memory_name(title, stage_id, tag)
+        body = memory_body(title, files, text_path, stage_id, review_id, first)
+        return name if write_entry(name, body, type="reference") is not None else ""
+    except Exception:  # noqa: BLE001 - a convenience must never cost a turn
+        return ""
+
+
+def result_words(st: dict, texts=None) -> str:
+    """What a stage's result IS right now, for a tag that names it."""
+    state = (st or {}).get("state") or PENDING
+    texts = [t for t in (texts or []) if t]
+    changed = " (its inputs have changed since - ask before relying on it)" \
+        if (st or {}).get("changed") else ""
+    said = lambda files: "; ".join(files)  # noqa: E731
+    if state == APPROVED:
+        files = list(st.get("approved") or [])
+        if files:
+            return (f"APPROVED by the user - exactly these {len(files)} file(s), in order: "
+                    f"{said(files)}{changed}. They are files, not nodes: give a path as the "
+                    "value for an image input.")
+        if texts:
+            return f"APPROVED by the user - the text saved at {said(texts)}{changed}. Read the file."
+        return "approved by the user, with nothing recorded as going on" + changed
+    files = list((st or {}).get("outputs") or [])
+    if state == WAITING:
+        return ("NOT SETTLED - it is waiting for the user's review"
+                + (f" ({len(files)} file(s) in front of them)" if files else "")
+                + ". Do not use it until they answer.")
+    if files:
+        return (f"made, nobody has approved it: {said(files)}{changed}. "
+                "They are files, not nodes.")
+    if texts:
+        return f"written, nobody has approved it: the text saved at {said(texts)}{changed}."
+    return "NOTHING YET - that stage has not produced a result. It has to run first."
+
+
 def _row(hid: str, st: dict) -> dict:
     files = st.get("approved") if st.get("state") == APPROVED else st.get("outputs")
     return {"id": hid, "title": st.get("title") or "",

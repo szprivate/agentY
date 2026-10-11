@@ -370,6 +370,13 @@ So a directive that says `#hero_face` is not describing an input, it is
 closest, never from the order they are wired. The user typed it from a menu the
 canvas offered, so the name is exact and so is what it means.
 
+A tag can also sit on the output of a **stage** — a hook or a review. It then
+names that stage's *result*, and the list says what the result is right now, from
+the run ledger: the files the user approved, the file a text was saved to, that it
+is still waiting for their review, or that the stage has not run yet. Use exactly
+what is listed. A result that is waiting or not there yet is not yours to stand in
+for: run the stage, or wait for the answer.
+
 A `#name` that is not in the list names nothing. Say so and ask which reference
 was meant; do not substitute the nearest input, which is how a run comes back
 built from a reference nobody asked for.

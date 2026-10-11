@@ -263,6 +263,7 @@ def pipeline(thread="lead", branch=None, reply="", halt=None, others=()):
     obj._thread_id_now = lambda: thread
     obj._branch_info = lambda: branch
     obj._review_goes_on = lambda h: (list(h.produced)[:1], "the collector as it stands now")
+    obj._remember_approved = lambda halt, files: ""      # project memory is not this test's
     for name in ("_ledger_lead", "_ledger", "_ledger_stages_of", "_ledger_turn_start",
                  "_ledger_approve", "_ledger_block", "_ledger_text", "_arm_review",
                  "_record_hook_products"):

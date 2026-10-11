@@ -4976,6 +4976,45 @@ class Pipeline:
             files = []
         rid = str(halt.hook_node_id)
         self._ledger("approved", rid, self._ledger_stages_of(rid), files)
+        self._remember_approved(halt, files)
+
+    def _remember_approved(self, halt, files: list) -> str:
+        """Keep an approved result the canvas does not: a pointer in project memory.
+
+        Approved pictures normally sit in the review's collector on the canvas,
+        and an approved text in its 'agentY text' node. When neither is there -
+        the stop was raised with no page open, or text nodes are switched off -
+        the approval would live in the ledger of this one run only.
+        """
+        if getattr(self, "_dry_run", False):
+            return ""
+        try:
+            from src.utils import run_ledger as _rl
+            rid = str(halt.hook_node_id)
+            stages = self._ledger_stages_of(rid)
+            lead = self._ledger_lead()
+            if halt.is_text():
+                from src.utils.agentY_server import _place_text_nodes_on_canvas
+                if _place_text_nodes_on_canvas():
+                    return ""
+            elif (self._review_collector(halt) or {}).get("node_id"):
+                return ""
+            from src.utils.canvas_hooks import stage_tags
+            tags = stage_tags(getattr(self, "_canvas_graph", None))
+            wrote = ""
+            for sid in stages:
+                st = (_rl.stage(lead, sid) if lead else None) or {}
+                if not st:
+                    continue        # a stage the ledger never saw: nothing to point at
+                tag = next((t for t, i in tags.items() if i["stage_id"] in (sid, rid)), "")
+                wrote = _rl.remember_approved(st.get("title") or "", files,
+                                              "" if files else st.get("text") or "",
+                                              sid, rid, tag) or wrote
+            return wrote
+        except Exception as exc:  # noqa: BLE001
+            if getattr(self, "_verbose", False):
+                print(f"pipeline: could not remember the approved result ({exc})")
+            return ""
 
     def _ledger_block(self) -> str:
         """The ledger as the agent is told it: a branch sees its own stages."""
@@ -4991,6 +5030,38 @@ class Pipeline:
             return _rl.index(lead, only)
         except Exception:  # noqa: BLE001
             return ""
+
+    def _stage_tag_results(self) -> dict:
+        """``{tag: {stage_id, title, result}}`` for tags on a stage's output.
+
+        *result* is what the ledger has for that stage, in words the agent can
+        act on: the files the user approved, the file a text was saved to, or
+        that there is nothing yet.
+        """
+        try:
+            from src.utils.canvas_hooks import stage_tags
+            from src.utils import run_ledger as _rl
+            named = stage_tags(getattr(self, "_canvas_graph", None))
+            if not named:
+                return {}
+            lead = self._ledger_lead()
+            out = {}
+            for tag, info in named.items():
+                sid = info["stage_id"]
+                st = (_rl.stage(lead, sid) if lead else None) or {}
+                # A review holds the choice; the text it passed is with the stage
+                # it reviewed.
+                texts = [st.get("text")] if st.get("text") else []
+                if not texts and (st.get("purpose") in ("human_review", "qa")):
+                    for work in self._ledger_stages_of(sid):
+                        t = ((_rl.stage(lead, work) if lead else None) or {}).get("text")
+                        if t:
+                            texts.append(t)
+                out[tag] = {"stage_id": sid, "title": st.get("title") or "",
+                            "result": _rl.result_words(st, texts)}
+            return out
+        except Exception:  # noqa: BLE001
+            return {}
 
     def _ledger_text(self, hook: dict, text: str) -> str:
         """Save a written stage's answer as a file of its own; returns the path."""
@@ -5187,7 +5258,8 @@ class Pipeline:
                                          flow=self._canvas_flow,
                                          into_canvas=self._hooks_into_canvas(),
                                          passed_reviews=getattr(self._session,
-                                                                "reviews_passed", None))
+                                                                "reviews_passed", None),
+                                         stage_results=self._stage_tag_results())
             if hooks_block:
                 # Attach the how-to-run-hooks guidance only now that hooks exist
                 # (it's absent from the base system prompt to keep every non-hook

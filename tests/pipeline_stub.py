@@ -68,6 +68,8 @@ _BOUND = (
     "_stage_graph",
     "_keeplive_prompt",
     "_user_opened_turn",
+    "_remember_approved",
+    "_stage_tag_results",
     "_ledger_lead",
     "_ledger",
     "_ledger_stages_of",
