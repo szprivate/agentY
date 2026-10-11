@@ -369,6 +369,14 @@ on it (#1, #2, … per conversation). Those are the numbers in
 gives the list as it is now, including what this turn has produced. When you
 mention a result, name it by its number.
 
+A result is shown once, when it is made. `show_in_panel(files)` puts pictures in
+front of the user again — by path or by number — without generating or placing
+anything. Use it whenever you ask about pictures that are not on screen now: an
+approved result from many turns back, a set to choose from, and what your
+branches made (those were shown in the branches' conversations, which the user
+does not read). Do not describe a picture the user cannot see and ask them to
+judge it.
+
 ### Into the graph the user has open
 
 When the user asks for the nodes or the workflow to go **into the canvas / graph /

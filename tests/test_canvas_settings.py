@@ -98,8 +98,12 @@ class EveryRouteAResultArrivesBy(unittest.TestCase):
         source = (ROOT / "src" / "utils" / "agentY_server.py").read_text(encoding="utf-8")
         emitters = source.count('"type": "output"')
         self.assertGreater(emitters, 0)
+        # One output event is not a result arriving: a picture shown AGAIN
+        # (show_in_panel) is never dropped, whatever the switch says.
+        never = source.count('"drop": False')
+        self.assertEqual(never, 1)
         self.assertEqual(source.count('"drop": _drop_outputs_into_canvas()'),
-                         emitters + 1,
+                         emitters - never + 1,
                          "every output event, plus the background Magnific drop")
 
 

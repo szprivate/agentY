@@ -620,6 +620,9 @@ def parallel_lines(flow: Flow, is_work=None) -> list[str]:
            + " — wait for ALL of them: run those yourself, here, once every branch "
              "has finished and every review is answered. "
            if par.joined else "When every branch has finished, give the user one summary. ")
+        + "What a branch made is not in front of the user until you put it there: "
+          "show_in_panel(<its files>) before you speak of it (a review stop does "
+          "this for its own files). "
         + "A branch that is one cheap stage (one line of text) is not worth a "
           "conversation: do it yourself while the others run.")
     lines.append(

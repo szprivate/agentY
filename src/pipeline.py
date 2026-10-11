@@ -1942,6 +1942,12 @@ class Pipeline:
             })
             _push_progress(f"⏸️ Stopped at review hook {hid} — {len(files)} output(s) "
                            "waiting for you on the canvas.")
+            # What is being asked about, in front of the person being asked. A
+            # stage this conversation ran has shown its outputs already; what a
+            # BRANCH made was shown in the branch's conversation, which nobody
+            # reads - so the lead asked "which of these?" about pictures the user
+            # had never been shown.
+            self._show_unseen(files, f"review {hid}")
             # Measured, ordered, and handed over with the halt: this is the moment
             # a choice is being asked for, so it is the moment a ranking is worth
             # anything. It never decides — the collector does — but "4 and 7 are
@@ -2452,6 +2458,46 @@ class Pipeline:
             except Exception:  # noqa: BLE001
                 visible = True
             return json.dumps({"outputs": self._shown_outputs(), "shown_in_panel": visible})
+
+        @_tool
+        async def show_in_panel(files: list, caption: str = "") -> str:
+            """Show images or videos in the user's chat panel - again, or for the
+            first time in THIS conversation.
+
+            A result is shown once, when it is made, in the conversation that made
+            it. Use this whenever the user should be looking at a picture that is
+            not in front of them now: one from many turns ago ("show me the
+            approved location again"), a set you are asking them to choose from,
+            and above all what your BRANCHES made - their outputs were shown in
+            the branches' own conversations, which nobody reads.
+
+            Each file appears as a card with its number. A file this conversation
+            has shown before keeps its number; one it has not gets the next one,
+            and from then on the user can name it by that number here. Nothing is
+            placed on the canvas and nothing is generated.
+
+            Args:
+                files: Absolute paths, or numbers of this conversation's outputs
+                    (``3``, ``"#3"``, ``"image 3"``).
+                caption: Optional few words printed on the cards ("approved
+                    characters").
+            """
+            items, problems = self._show_items(files)
+            if not items:
+                return json.dumps({
+                    "error": "nothing to show - " + ("; ".join(problems) or "no files given."),
+                    "what_to_do": "Pass absolute paths of image or video files that exist, "
+                                  "or the numbers list_outputs gives.",
+                })
+            sent = self._show_again(items, str(caption or "").strip())
+            return json.dumps({
+                "status": "shown",
+                "shown": [{"number": it.get("number"), "path": it["path"]} for it in sent],
+                **({"not_shown": problems} if problems else {}),
+                "message": (f"{len(sent)} card(s) are in the user's panel now, numbered as "
+                            "listed. Refer to them by those numbers. Nothing was placed "
+                            "on the canvas."),
+            })
 
         @_tool
         async def insert_workflow_into_canvas(workflow_path: str, reason: str = "",
@@ -4076,7 +4122,8 @@ class Pipeline:
                  get_canvas_node, set_canvas_node_params, place_canvas_text,
                  run_python_node, revise_prompt, prompt_autoloop,
                  delete_canvas_nodes, edit_canvas_graph, insert_workflow_into_canvas, refine_canvas_until,
-                 list_outputs, work_in_open_graph, set_canvas_node_mode, run_canvas,
+                 list_outputs, show_in_panel, work_in_open_graph, set_canvas_node_mode,
+                 run_canvas,
                  loop_check, forward_outputs, name_outputs,
                  list_agent_settings, set_agent_setting]
         # Offered only where there is a Slack to send to. Every tool in this list
@@ -6341,6 +6388,91 @@ class Pipeline:
         return [{"number": gi.index, "path": gi.path, "caption": gi.caption or "",
                  "kind": "video" if _is_video_file(gi.path) else "image"}
                 for gi in self._session.generated_images]
+
+    _SHOW_NUMBER = re.compile(r"(?:#|image|video|output|picture|no\.?)?\s*#?\s*(\d{1,5})", re.I)
+    _SHOW_IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
+                                  ".tif", ".tiff", ".avif"})
+
+    def _show_items(self, files) -> tuple[list, list]:
+        """What *files* names, as ``[{path, number, caption}]``, and what it could not.
+
+        ``number`` is the one this conversation already knows the file by, or
+        None for a file it has not shown yet.
+        """
+        shown = self._shown_outputs()
+        by_number = {int(o["number"]): o for o in shown}
+        by_path = {os.path.normcase(os.path.abspath(o["path"])): o for o in shown}
+        items, problems, seen = [], [], set()
+        for raw in (files if isinstance(files, (list, tuple)) else [files]):
+            said = str(raw if raw is not None else "").strip().strip("\"'")
+            if not said:
+                continue
+            path = said
+            named = self._SHOW_NUMBER.fullmatch(said)
+            if named and not os.path.isfile(said):
+                known = by_number.get(int(named.group(1)))
+                if known is None:
+                    problems.append(f"{said}: this conversation has no output with that number")
+                    continue
+                path = known["path"]
+            if not os.path.isfile(path):
+                problems.append(f"{said}: no such file")
+                continue
+            ext = os.path.splitext(path)[1].lower()
+            if ext not in self._SHOW_IMAGE_EXTS and not _is_video_file(path):
+                problems.append(f"{said}: not an image or a video")
+                continue
+            key = os.path.normcase(os.path.abspath(path))
+            if key in seen:
+                continue
+            seen.add(key)
+            known = by_path.get(key)
+            items.append({"path": path,
+                          "number": int(known["number"]) if known else None,
+                          "caption": (known or {}).get("caption") or ""})
+        return items, problems
+
+    def _show_again(self, items: list, caption: str = "") -> list:
+        """Send *items* to the panel as cards; returns them with their numbers.
+
+        A file new to this conversation is entered in its output list here, so
+        the number on the card is one the agent and the user can both use.
+        """
+        thread = str(getattr(getattr(self, "_session", None), "session_id", "") or "")
+        sent = []
+        for it in items:
+            it = dict(it)
+            if it.get("number") is None and thread:
+                try:
+                    from src.utils import conversation_store as _cs
+                    it["number"] = _cs.add_gallery_image(thread, it["path"],
+                                                         caption or it.get("caption") or "")
+                except Exception as exc:  # noqa: BLE001 - shown unnumbered, still shown
+                    if getattr(self, "_verbose", False):
+                        print(f"pipeline: could not number {it['path']} ({exc})")
+            sent.append(it)
+        if sent:
+            from src.utils.canvas_patch import push as _push_patch
+            _push_patch({"op": "show_again", "items": sent, "caption": caption})
+        return sent
+
+    def _show_unseen(self, files, caption: str = "") -> int:
+        """Show the ones of *files* this conversation has not shown yet."""
+        try:
+            items, _problems = self._show_items(files)
+            # Not this turn's own outputs: the host shows and numbers those as
+            # they finish, and may simply not have got to them yet.
+            session = getattr(self, "_session", None)
+            own = {os.path.normcase(os.path.abspath(str(p)))
+                   for p in list(getattr(session, "current_output_paths", None) or [])
+                   + list(getattr(self, "_chain_output_paths", None) or [])}
+            unseen = [it for it in items if it.get("number") is None
+                      and os.path.normcase(os.path.abspath(it["path"])) not in own]
+            return len(self._show_again(unseen, caption)) if unseen else 0
+        except Exception as exc:  # noqa: BLE001 - never cost the stop it rides on
+            if getattr(self, "_verbose", False):
+                print(f"pipeline: could not show the review's outputs ({exc})")
+            return 0
 
     def _prepend_gallery(self, text: str) -> str:
         """Prefix *text* with the generated-image gallery block when non-empty."""

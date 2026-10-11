@@ -487,6 +487,27 @@ def _copy_sidecar(src: str, staged_name: str) -> None:
         logger.debug("sidecar copy failed for %s: %s", staged_name, exc)
 
 
+def _staged_copy(path: str) -> str | None:
+    """The copy of *path* already in ComfyUI's input dir, or a new one.
+
+    Showing a picture again must not copy it again: staging gives a second copy
+    a new name every time, and a run reviewed over ten rounds would leave ten of
+    each file behind.
+    """
+    in_dir = _comfy_input_dir()
+    if in_dir is not None:
+        try:
+            src = Path(path)
+            have = in_dir / src.name
+            if have.is_file():
+                a, b = src.stat(), have.stat()
+                if a.st_size == b.st_size and int(a.st_mtime) == int(b.st_mtime):
+                    return src.name
+        except OSError:
+            pass
+    return _stage_into_comfy_input(path)
+
+
 def _stage_into_comfy_input(path: str, subfolder: str = "") -> str | None:
     """Copy *path* into ComfyUI's input dir so a loader node can reference it.
 
@@ -1688,6 +1709,29 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
                 "index": None, "show": _show_outputs_in_panel(),
             })
 
+    again = {"n": 0}
+
+    def _show_again(patch: dict) -> None:
+        """Cards for pictures the agent asked to be shown (show_in_panel).
+
+        Numbered by the agent's side, which knows the conversation's list; never
+        dropped on the canvas; and each given an id of its own, so a page reading
+        this turn from its start again does not show it twice.
+        """
+        for it in patch.get("items") or []:
+            p = str((it or {}).get("path") or "")
+            if not p or not os.path.isfile(p):
+                continue
+            again["n"] += 1
+            out_q.put({
+                "type": "output", "kind": "video" if _is_video_path(p) else "image",
+                "path": p, "filename": _staged_copy(p), "name": os.path.basename(p),
+                "caption": str(patch.get("caption") or it.get("caption") or ""),
+                "role": "", "node_candidates": [], "drop": False,
+                "index": it.get("number"), "show": True,
+                "again": f"{req_id}:{again['n']}",
+            })
+
     def _translate(event: dict) -> None:
         # Interactive asks ------------------------------------------------------
         if event.get("brain_assembly_fail_ask"):
@@ -1767,6 +1811,9 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
         # Canvas node edit — apply to the live graph in the panel -----------------
         cp = event.get("canvas_patch")
         if cp is not None:
+            if cp.get("op") == "show_again":      # not for the canvas: cards in the panel
+                _show_again(cp)
+                return
             out_q.put({"type": "canvas_patch", **cp})
             return
 
