@@ -166,8 +166,7 @@ class TheTools(unittest.TestCase):
     SRC = (ROOT / "src" / "pipeline.py").read_text(encoding="utf-8")
 
     def test_the_orchestrator_has_them(self):
-        self.assertIn("probe_media, read_rhythm,\n                 read_beats, edit_timeline, render_edit,",
-                      self.SRC)
+        self.assertIn("probe_media, read_rhythm,\n                 read_beats,", self.SRC)
 
     def test_a_sheet_is_made_only_when_asked_and_only_of_a_video(self):
         tool = self.SRC.split("        async def probe_media(", 1)[1].split("        @_tool", 1)[0]

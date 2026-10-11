@@ -16,7 +16,12 @@ A timeline::
      "clips": [{"id": "c1", "src": "<path>", "in": 0.0, "out": 3.5,
                 "transition": 0.0, "label": "kitchen wide"}, ...],
      "audio": {"src": "<path>", "in": 0.0, "gain": 1.0, "fade_out": 1.0} | None,
-     "overlays": []}
+     "overlays": [{"id": "t1", "preset": "title_rise", "text": "…", "start": 0.5,
+                   "length": 3.0, "params": {"size": 96}}, ...]}
+
+An overlay is TEXT laid over the picture: a preset (:mod:`src.utils.text_presets`)
+says how it looks and moves, the overlay says what it reads, when, and for how
+long. ``start`` is a moment in the FILM, not in a clip.
 
 Times are seconds. ``in``/``out`` are positions in the SOURCE; ``transition`` is
 the length of the dissolve from the clip before into this one (0 = a cut), and
@@ -203,6 +208,10 @@ def _apply_one(tl: dict, kind: str, op: dict, facts: dict | None) -> None:
                                  "fade_out")}
     elif kind == "fit":
         fit(tl, _seconds(op.get("seconds"), "seconds"))
+    elif kind == "text":
+        _text(tl, op)
+    elif kind == "text_remove":
+        tl["overlays"].pop(_find_text(tl, op.get("text_id") or op.get("id")))
     elif kind == "rhythm":
         rhythm(tl, op.get("lengths"), facts)
     elif kind == "snap":
@@ -213,10 +222,51 @@ def _apply_one(tl: dict, kind: str, op: dict, facts: dict | None) -> None:
             if op.get(key):
                 tl[key] = cast(op[key])
     elif kind == "clear":
-        tl["clips"], tl["audio"] = [], None
+        tl["clips"], tl["audio"], tl["overlays"] = [], None, []
     else:
         raise EditError("unknown operation - use add, trim, move, replace, remove, "
-                        "transition, label, audio, fit, rhythm, snap, settings or clear")
+                        "transition, label, audio, fit, rhythm, snap, text, text_remove, "
+                        "settings or clear")
+
+
+def _find_text(tl: dict, text_id) -> int:
+    want = str(text_id or "").strip()
+    for i, o in enumerate(tl.get("overlays") or []):
+        if str(o.get("id")) == want:
+            return i
+    raise EditError(f"there is no text '{text_id}' - the texts are "
+                    + (", ".join(str(o.get("id")) for o in tl.get("overlays") or []) or "none yet"))
+
+
+def _text(tl: dict, op: dict) -> None:
+    """Add a text, or - with ``text_id`` - change the one that is there."""
+    texts = tl.setdefault("overlays", [])
+    if op.get("text_id") or op.get("id"):
+        o = texts[_find_text(tl, op.get("text_id") or op.get("id"))]
+    else:
+        if not str(op.get("text") or "").strip():
+            raise EditError("give the words (text)")
+        if not str(op.get("preset") or "").strip():
+            raise EditError("name the preset (list_text_presets shows them)")
+        used = {str(t.get("id")) for t in texts}
+        n = len(used) + 1
+        while f"t{n}" in used:
+            n += 1
+        o = {"id": f"t{n}", "preset": "", "text": "", "start": 0.0, "length": 3.0, "params": {}}
+        texts.append(o)
+    if op.get("text") is not None and str(op.get("text")).strip():
+        o["text"] = str(op["text"])
+    if op.get("preset") is not None and str(op.get("preset")).strip():
+        o["preset"] = str(op["preset"]).strip()
+    if op.get("start") is not None:
+        o["start"] = round(_seconds(op["start"], "start"), 4)
+    if op.get("length") is not None:
+        length = _seconds(op["length"], "length")
+        if length < 0.2:
+            raise EditError(f"a text {length:g}s long cannot be read")
+        o["length"] = round(length, 4)
+    if isinstance(op.get("params"), dict):
+        o["params"] = dict(o.get("params") or {}, **op["params"])
 
 
 def fit(timeline: dict, seconds: float) -> dict:
@@ -294,12 +344,27 @@ def snap(timeline: dict, times, facts: dict | None = None, within: float = 0.5) 
     return timeline
 
 
-def problems(timeline: dict, facts: dict | None = None) -> list:
-    """What stops this timeline from being rendered, in words (empty = nothing)."""
+def problems(timeline: dict, facts: dict | None = None, presets=None) -> list:
+    """What stops this timeline from being rendered, in words (empty = nothing).
+
+    *presets* - the names of the text presets there are; with it a text naming
+    one that does not exist is caught here.
+    """
     out = []
     clips = timeline.get("clips") or []
     if not clips:
         return ["the timeline has no clips yet"]
+    film = duration(timeline)
+    for o in timeline.get("overlays") or []:
+        name = f"text {o.get('id')} (\"{str(o.get('text') or '')[:30]}\")"
+        if presets is not None and str(o.get("preset")) not in set(presets):
+            out.append(f"{name} names the preset '{o.get('preset')}', which does not exist")
+        if float(o.get("start") or 0) >= film:
+            out.append(f"{name} starts at {float(o.get('start') or 0):g}s, after the film has "
+                       f"ended ({film:g}s)")
+        elif float(o.get("start") or 0) + float(o.get("length") or 0) > film + 0.05:
+            out.append(f"{name} runs to {float(o.get('start') or 0) + float(o.get('length') or 0):g}s "
+                       f"but the film ends at {film:g}s")
     for i, c in enumerate(clips, 1):
         name = f"clip {c.get('id')} ({os.path.basename(str(c.get('src') or ''))})"
         length = clip_length(c)
@@ -335,9 +400,14 @@ def summary(timeline: dict) -> dict:
                      "into_it": ("cut" if not float(c.get("transition") or 0) or i == 0
                                  else f"{float(c['transition']):g}s dissolve")})
     audio = timeline.get("audio")
+    texts = [{"id": o.get("id"), "preset": o.get("preset"), "text": o.get("text"),
+              "from": o.get("start"), "to": round(float(o.get("start") or 0) + float(o.get("length") or 0), 3),
+              **({"params": o["params"]} if o.get("params") else {})}
+             for o in timeline.get("overlays") or []]
     return {"clips": rows, "duration": round(duration(timeline), 3),
             "fps": timeline.get("fps"), "size": f"{timeline.get('width')}x{timeline.get('height')}",
-            "audio": os.path.basename(str(audio["src"])) if audio else "none"}
+            "audio": os.path.basename(str(audio["src"])) if audio else "none",
+            **({"texts": texts} if texts else {})}
 
 
 # ── OpenTimelineIO ───────────────────────────────────────────────────────────

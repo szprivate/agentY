@@ -581,6 +581,14 @@ behind it.
 - Before cutting, the agent **looks**: a contact sheet of each shot (eight frames
   with their times) tells it what is in the clip and where to cut in and out.
 
+**Text on the picture.** Ask for a title, a name, a caption or an end card and the
+agent puts it on the timeline as a text with a start and a length. How a text
+looks and moves comes from a **preset**; the agent picks one and fills in the
+words, and only changes its settings (size, colour, position, how fast it comes
+in) when you ask. The built-in ones are *title, words rising*, *title, letter by
+letter*, *lower third*, *caption* and *end card*. Text is drawn by Chrome or Edge
+on this machine, so one of them has to be installed.
+
 The agent does not write the film in one go. It keeps a **timeline** — which clip,
 from where to where, in which order, cut or dissolve — and agentY renders it. So a
 note at the review is a small change: *"shot 3 shorter"* trims one clip, *"swap 4

@@ -1,0 +1,50 @@
+{
+  "_about": "Built-in text animation presets for the agentY edit stage. Each is CSS only: the page is built by src/utils/text_presets.py, which splits the text into units (.u, numbered by --i out of --n) and sets --size, --color, --font, --weight, --in, --out and --len (all seconds) on the page. Presets added by the agent or the user are kept beside the conversations, not here.",
+  "presets": [
+    {
+      "name": "title_rise",
+      "title": "Title, words rising",
+      "description": "A centred title. Each word rises into place and fades in, one after another; the whole line fades out at the end.",
+      "use_for": "opening titles, chapter headings",
+      "split": "words",
+      "params": {"size": 96, "color": "#ffffff", "font": "Arial, Helvetica, sans-serif", "weight": 700, "x": 50, "y": 50, "align": "center", "in": 0.7, "out": 0.5, "stagger": 0.08},
+      "css": ".u{display:inline-block;opacity:0;animation:tr-in var(--in) cubic-bezier(.2,.75,.2,1) calc(var(--i) * var(--stagger)) forwards}.text{animation:tr-out var(--out) ease-in calc(var(--len) - var(--out)) forwards}@keyframes tr-in{from{opacity:0;transform:translateY(.55em)}to{opacity:1;transform:none}}@keyframes tr-out{to{opacity:0}}"
+    },
+    {
+      "name": "title_letters",
+      "title": "Title, letter by letter",
+      "description": "A centred title set wide. The letters appear one by one out of a blur; the line fades out at the end.",
+      "use_for": "titles that should feel slow and deliberate",
+      "split": "letters",
+      "params": {"size": 88, "color": "#ffffff", "font": "Georgia, 'Times New Roman', serif", "weight": 400, "x": 50, "y": 50, "align": "center", "in": 0.9, "out": 0.6, "stagger": 0.045, "spacing": 0.12},
+      "css": ".text{letter-spacing:calc(var(--spacing) * 1em);animation:tl-out var(--out) ease-in calc(var(--len) - var(--out)) forwards}.u{display:inline-block;opacity:0;animation:tl-in var(--in) ease-out calc(var(--i) * var(--stagger)) forwards}@keyframes tl-in{from{opacity:0;filter:blur(.25em)}to{opacity:1;filter:blur(0)}}@keyframes tl-out{to{opacity:0}}"
+    },
+    {
+      "name": "lower_third",
+      "title": "Lower third",
+      "description": "A name with a second, smaller line under it, bottom left. A bar draws in first and the lines slide out from behind it; everything slides back at the end. Put the second line after a line break.",
+      "use_for": "naming a person or a place",
+      "split": "lines",
+      "params": {"size": 54, "color": "#ffffff", "font": "Arial, Helvetica, sans-serif", "weight": 700, "x": 7, "y": 82, "align": "left", "in": 0.6, "out": 0.4, "stagger": 0.12, "accent": "#ffcc33"},
+      "css": ".text{padding-left:.5em;border-left:.12em solid var(--accent);clip-path:inset(0 100% 0 0);animation:lt-wipe var(--in) cubic-bezier(.2,.75,.2,1) forwards,lt-away var(--out) ease-in calc(var(--len) - var(--out)) forwards}.u{display:block;opacity:0;animation:lt-in var(--in) ease-out calc(.15s + var(--i) * var(--stagger)) forwards}.u:not(:first-child){font-size:.6em;font-weight:400;opacity:0;margin-top:.15em}@keyframes lt-wipe{to{clip-path:inset(0 0 0 0)}}@keyframes lt-in{from{opacity:0;transform:translateX(-.6em)}to{opacity:1;transform:none}}@keyframes lt-away{to{clip-path:inset(0 100% 0 0)}}"
+    },
+    {
+      "name": "caption",
+      "title": "Caption",
+      "description": "Plain text on a soft dark plate, bottom centre. It is simply there and simply gone, with a very short fade: for reading, not for looking at.",
+      "use_for": "subtitles, spoken lines, short explanations",
+      "split": "none",
+      "params": {"size": 44, "color": "#ffffff", "font": "Arial, Helvetica, sans-serif", "weight": 500, "x": 50, "y": 88, "align": "center", "in": 0.12, "out": 0.12, "plate": "rgba(0,0,0,.55)"},
+      "css": ".text{background:var(--plate);padding:.25em .6em;border-radius:.2em;line-height:1.25;opacity:0;animation:cp-in var(--in) linear forwards,cp-out var(--out) linear calc(var(--len) - var(--out)) forwards}@keyframes cp-in{to{opacity:1}}@keyframes cp-out{to{opacity:0}}"
+    },
+    {
+      "name": "end_card",
+      "title": "End card",
+      "description": "A centred closing line that settles in slowly from slightly larger, holds, and fades out. A second line (after a line break) is set smaller underneath.",
+      "use_for": "the last frame: a title, a credit, a date",
+      "split": "lines",
+      "params": {"size": 80, "color": "#ffffff", "font": "Georgia, 'Times New Roman', serif", "weight": 400, "x": 50, "y": 50, "align": "center", "in": 1.4, "out": 0.9, "stagger": 0.35},
+      "css": ".text{animation:ec-out var(--out) ease-in calc(var(--len) - var(--out)) forwards}.u{display:block;opacity:0;animation:ec-in var(--in) cubic-bezier(.16,.8,.3,1) calc(var(--i) * var(--stagger)) forwards}.u:not(:first-child){font-size:.45em;letter-spacing:.2em;text-transform:uppercase;margin-top:.9em}@keyframes ec-in{from{opacity:0;transform:scale(1.06)}to{opacity:1;transform:none}}@keyframes ec-out{to{opacity:0}}"
+    }
+  ]
+}

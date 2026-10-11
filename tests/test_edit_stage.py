@@ -317,7 +317,7 @@ class TheTools(unittest.TestCase):
 
     def test_a_render_is_checked_first_and_is_the_stages_product(self):
         body = self.tool("render_edit")
-        self.assertLess(body.index("wrong = _et.problems(timeline, facts)"),
+        self.assertLess(body.index("wrong = _et.problems(timeline, facts"),
                         body.index("_er.render, timeline, out, fmt"))
         self.assertIn("products = self._record_hook_products(hid, [out])", body)
         self.assertIn("self._session.current_output_paths.append(out)", body)

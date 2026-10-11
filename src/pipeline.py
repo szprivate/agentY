@@ -2531,6 +2531,24 @@ class Pipeline:
                                **({"missing_or_unreadable": bad} if bad else {})})
 
         @_tool
+        async def list_text_presets() -> str:
+            """The text animations there are for an EDIT stage: titles, a lower
+            third, captions, an end card.
+
+            A preset is how a text looks and moves. You do not write animation:
+            you choose one, and give the words, the moment and - where the default
+            does not fit - a few of its ``params`` (``size`` in pixels of a
+            1080-line film, ``color``, ``font``, ``x``/``y`` in percent of the
+            picture, ``align``, ``in``/``out`` in seconds). Then
+            ``edit_timeline(id, ops=[{"op": "text", "preset": name, "text": "…",
+            "start": s, "length": s}])``.
+            """
+            from src.utils import text_presets as _tp
+            return json.dumps({"presets": _tp.listing(),
+                               "note": "Use a preset as it is unless the user asks for "
+                                       "something else: its defaults are the look."})
+
+        @_tool
         async def read_rhythm(file: str, sensitivity: float = 0.3) -> str:
             """Where a FILM cuts: its shot lengths, in seconds.
 
@@ -2608,6 +2626,13 @@ class Pipeline:
               reference film's shot lengths (from read_rhythm).
             * ``{"op": "snap", "times": [s, …], "within": 0.3}`` - move each cut to
               the nearest of those moments (beats, from read_beats).
+            * ``{"op": "text", "preset": name, "text": "…", "start": s, "length": s,
+              "params": {…}}`` - words over the picture. The preset is how it
+              looks and moves (list_text_presets shows them, with the settings
+              each takes: size, colour, position…); ``start`` is a moment in the
+              FILM. A line break in the text is a second line. With ``"text_id":
+              "t1"`` it changes that text instead of adding one.
+            * ``{"op": "text_remove", "text_id": "t1"}``
             * ``{"op": "label", "clip": id, "label": "…"}``, ``{"op": "clear"}``
 
             A clip is named by its id (``c1``, ``c2``, …) or by its position.
@@ -2691,7 +2716,8 @@ class Pipeline:
                 facts = await asyncio.to_thread(_er.facts_for, timeline)
             except _er.RenderError as exc:
                 return json.dumps({"error": str(exc)})
-            wrong = _et.problems(timeline, facts)
+            from src.utils import text_presets as _tp
+            wrong = _et.problems(timeline, facts, list(_tp.load()))
             if wrong:
                 return json.dumps({"error": "not rendered - the timeline has problems",
                                    "problems": wrong, "timeline": _et.summary(timeline),
@@ -4436,7 +4462,8 @@ class Pipeline:
                  run_python_node, revise_prompt, prompt_autoloop,
                  delete_canvas_nodes, edit_canvas_graph, insert_workflow_into_canvas, refine_canvas_until,
                  list_outputs, show_in_panel, ledger_stage, probe_media, read_rhythm,
-                 read_beats, edit_timeline, render_edit, work_in_open_graph,
+                 read_beats, list_text_presets, edit_timeline, render_edit,
+                 work_in_open_graph,
                  set_canvas_node_mode,
                  run_canvas,
                  loop_check, forward_outputs, name_outputs,

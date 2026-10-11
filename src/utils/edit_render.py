@@ -97,8 +97,14 @@ def _fmt(v: float) -> str:
     return f"{float(v):.4f}".rstrip("0").rstrip(".") or "0"
 
 
-def command(timeline: dict, out_path: str, fmt: str = "mp4", exe: str = "ffmpeg") -> list:
-    """The ffmpeg call that renders *timeline* to *out_path*."""
+def command(timeline: dict, out_path: str, fmt: str = "mp4", exe: str = "ffmpeg",
+            texts: list | None = None) -> list:
+    """The ffmpeg call that renders *timeline* to *out_path*.
+
+    *texts* - the timeline's overlays already drawn, as
+    ``[{"pattern": "…/f_%05d.png", "start": s, "length": s}]``: transparent
+    picture sequences at the film's frame rate, laid over it from their start.
+    """
     clips = timeline.get("clips") or []
     if not clips:
         raise RenderError("the timeline has no clips")
@@ -128,10 +134,22 @@ def command(timeline: dict, out_path: str, fmt: str = "mp4", exe: str = "ffmpeg"
             parts.append(f"[{last}][v{i}]concat=n=2:v=1:a=0[{out}]")
             run += et.clip_length(c)
         last = out
+    n_inputs = len(clips)
+    for k, text in enumerate(texts or []):
+        start, length = float(text.get("start") or 0.0), float(text.get("length") or 0.0)
+        args += ["-framerate", _fmt(fps), "-start_number", "1", "-i", text["pattern"]]
+        # Held to its own length and moved to its moment; outside it the film
+        # passes through untouched.
+        parts.append(f"[{n_inputs}:v]format=rgba,trim=duration={_fmt(length)},"
+                     f"setpts=PTS-STARTPTS+{_fmt(start)}/TB[t{k}]")
+        parts.append(f"[{last}][t{k}]overlay=0:0:eof_action=pass:"
+                     f"enable='between(t,{_fmt(start)},{_fmt(start + length)})'[o{k}]")
+        last = f"o{k}"
+        n_inputs += 1
     audio = timeline.get("audio")
     maps = ["-map", f"[{last}]"]
     if audio:
-        n = len(clips)
+        n = n_inputs
         args += ["-ss", _fmt(audio.get("in") or 0.0), "-i", audio["src"]]
         fade = min(float(audio.get("fade_out") or 0.0), run)
         chain = f"[{n}:a]atrim=duration={_fmt(run)},asetpts=PTS-STARTPTS,volume={_fmt(audio.get('gain', 1.0))}"
@@ -150,6 +168,33 @@ def command(timeline: dict, out_path: str, fmt: str = "mp4", exe: str = "ffmpeg"
     return args + [out_path]
 
 
+def draw_texts(timeline: dict, work_dir: str) -> list:
+    """Draw every text of *timeline* into *work_dir*; returns what :func:`command` takes.
+
+    Each is its preset's page, rendered by a browser to transparent frames at the
+    film's size and frame rate (:mod:`src.utils.text_render`).
+    """
+    from src.utils import text_presets as _tp
+    from src.utils import text_render as _tr
+    drawn = []
+    fps = float(timeline.get("fps") or 24.0)
+    w, h = int(timeline.get("width") or 1920), int(timeline.get("height") or 1080)
+    for o in timeline.get("overlays") or []:
+        preset = _tp.get(o.get("preset"))
+        if preset is None:
+            raise RenderError(f"text {o.get('id')} names the preset '{o.get('preset')}', "
+                              "which does not exist")
+        length = float(o.get("length") or 0.0)
+        html = _tp.page(preset, o.get("text") or "", length, w, h, o.get("params"))
+        try:
+            got = _tr.render_frames(html, os.path.join(work_dir, str(o.get("id"))), w, h, length, fps)
+        except _tr.TextRenderError as exc:
+            raise RenderError(f"text {o.get('id')} could not be drawn: {exc}") from None
+        drawn.append({"pattern": got["pattern"], "start": float(o.get("start") or 0.0),
+                      "length": got["frames"] / fps})
+    return drawn
+
+
 def render(timeline: dict, out_path: str, fmt: str = "mp4") -> str:
     """Render *timeline*; returns *out_path*. Raises :class:`RenderError` with
     ffmpeg's own words when it fails."""
@@ -157,13 +202,19 @@ def render(timeline: dict, out_path: str, fmt: str = "mp4") -> str:
     if not exe:
         raise RenderError("ffmpeg is not installed - an edit cannot be rendered without it.")
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    import tempfile
+    work = tempfile.mkdtemp(prefix="agenty_texts_") if timeline.get("overlays") else ""
     try:
-        run = subprocess.run(command(timeline, out_path, fmt, exe), capture_output=True,
+        texts = draw_texts(timeline, work) if work else []
+        run = subprocess.run(command(timeline, out_path, fmt, exe, texts), capture_output=True,
                              text=True, encoding="utf-8", errors="replace", timeout=_TIMEOUT)
     except subprocess.TimeoutExpired:
         raise RenderError(f"ffmpeg did not finish within {_TIMEOUT // 60} minutes") from None
     except OSError as exc:
         raise RenderError(f"could not start ffmpeg: {exc}") from None
+    finally:
+        if work:
+            shutil.rmtree(work, ignore_errors=True)
     if run.returncode != 0 or not os.path.isfile(out_path) or not os.path.getsize(out_path):
         raise RenderError("ffmpeg failed: " + (run.stderr or "").strip()[-800:])
     return out_path
