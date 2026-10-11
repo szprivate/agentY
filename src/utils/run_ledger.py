@@ -311,7 +311,7 @@ def write_text(path: str, text: str) -> bool:
 # ── what the agent is told ──────────────────────────────────────────────────
 
 _PURPOSE = {"set_parameter": "set / sweep parameter", "make_workflow": "make workflow",
-            "text_only": "text only", "human_review": "review", "qa": "review (agent)",
+            "text_only": "text only", "edit": "edit", "human_review": "review", "qa": "review (agent)",
             "loop_start": "loop start", "loop_break": "loop break", "join": "join"}
 
 

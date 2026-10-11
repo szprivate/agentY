@@ -2417,7 +2417,7 @@ class Pipeline:
             # An empty canvas is a canvas: a hook pipeline is built from nothing,
             # out of agentY's own nodes. Anything else needs a graph to edit.
             _pipeline_nodes = {"AgentYHook", "AgentYReview", "AgentYLoopStart",
-                               "AgentYLoopBreak", "AgentYJoin"}
+                               "AgentYLoopBreak", "AgentYJoin", "AgentYEdit"}
             _from_nothing = bool(ops) and all(
                 isinstance(o, dict) and (
                     (o.get("op") == "add" and str(o.get("class_type")) in _pipeline_nodes)
@@ -2479,6 +2479,181 @@ class Pipeline:
             except Exception:  # noqa: BLE001
                 visible = True
             return json.dumps({"outputs": self._shown_outputs(), "shown_in_panel": visible})
+
+        @_tool
+        async def probe_media(files: list) -> str:
+            """What each picture, video or sound file IS: its length in seconds, its
+            frame rate, its size, whether it has sound.
+
+            Call it before cutting (an EDIT stage): where a clip can be trimmed to
+            depends on how long it is, and a guess that runs past the end of the
+            file is refused at the render.
+
+            Args:
+                files: Absolute paths.
+            """
+            from src.utils import edit_render as _er
+            out, bad = [], []
+            try:
+                for f in (files if isinstance(files, (list, tuple)) else [files]):
+                    path = str(f or "").strip().strip('"')
+                    if not path:
+                        continue
+                    fact = await asyncio.to_thread(_er.probe, path)
+                    if fact is None:
+                        bad.append(path)
+                    else:
+                        out.append({"file": path, **fact})
+            except _er.RenderError as exc:
+                return json.dumps({"error": str(exc)})
+            return json.dumps({"files": out,
+                               **({"missing_or_unreadable": bad} if bad else {})})
+
+        @_tool
+        async def edit_timeline(hook_node_id: str, ops: list | None = None) -> str:
+            """Change the timeline of an EDIT stage, or (with no ops) just read it.
+
+            The timeline is the cut: which clip, from where to where, in which
+            order, and how one passes into the next. It is kept between turns, so
+            a note from the user is a small change to it, not a new cut.
+
+            Operations, applied in order (all or none):
+
+            * ``{"op": "add", "src": path, "in": s, "out": s, "label": "…", "at": n}``
+              - ``in``/``out`` are seconds in the SOURCE file; leave both out for
+              the whole clip (needs probe_media first, or it cannot know the
+              length). A still takes ``"length": s``. ``at`` puts it at that
+              position (1 = first); without it the clip goes to the end.
+            * ``{"op": "trim", "clip": id, "in": s, "out": s}`` - either or both.
+            * ``{"op": "move", "clip": id, "to": n}``
+            * ``{"op": "replace", "clip": id, "src": path}`` - keeps its place and length.
+            * ``{"op": "remove", "clip": id}``
+            * ``{"op": "transition", "clip": id, "seconds": s}`` - a dissolve from
+              the clip before into this one; 0 makes it a cut again.
+            * ``{"op": "audio", "src": path, "gain": 0.8}`` - music or sound under
+              the whole film; ``"src": ""`` takes it off.
+            * ``{"op": "fit", "seconds": s}`` - shorten every clip by the same share
+              so the film is that long.
+            * ``{"op": "label", "clip": id, "label": "…"}``, ``{"op": "clear"}``
+
+            A clip is named by its id (``c1``, ``c2``, …) or by its position.
+
+            Args:
+                hook_node_id: The EDIT stage's node id.
+                ops: The operations. Empty: return the timeline as it stands.
+            """
+            from src.utils import edit_render as _er
+            from src.utils import edit_timeline as _et
+            hook = self._edit_hook(hook_node_id)
+            if hook is None:
+                return json.dumps({"error": f"node {hook_node_id} is not an EDIT stage on this "
+                                            "canvas - the ids are in the [CANVAS HOOKS] block."})
+            ahead = self._review_ahead_refusal([str(hook_node_id)])
+            if ahead:
+                return json.dumps(ahead)
+            timeline = self._edit_load(str(hook_node_id), hook)
+            if ops:
+                try:
+                    # What the sources ARE, so a clip can be added whole and an
+                    # out point past the end is caught here rather than in ffmpeg.
+                    srcs = [str(o.get("src")) for o in ops if isinstance(o, dict) and o.get("src")]
+                    known = {s: await asyncio.to_thread(_er.probe, s) for s in dict.fromkeys(srcs)}
+                    missing = [s for s, f in known.items() if f is None]
+                    if missing:
+                        return json.dumps({"error": "not changed - these files are missing or "
+                                                    "are not pictures, videos or sound: "
+                                                    + "; ".join(missing)})
+                    timeline = _et.apply(timeline, list(ops), known)
+                except _et.EditError as exc:
+                    return json.dumps({"error": f"not changed - {exc}",
+                                       "timeline": _et.summary(timeline)})
+                except _er.RenderError as exc:
+                    return json.dumps({"error": str(exc)})
+                self._edit_save(str(hook_node_id), timeline)
+            wanted = float(((hook.get("edit") or {}).get("length")) or 0)
+            now = _et.duration(timeline)
+            note = ""
+            if wanted and timeline.get("clips") and abs(now - wanted) > 0.25:
+                note = (f"The node asks for a film of {wanted:g} s and this is {now:g} s"
+                        + (" - a fit operation brings it down." if now > wanted
+                           else " - it is shorter; say so, or add material."))
+            return json.dumps({"status": "changed" if ops else "unchanged",
+                               "timeline": _et.summary(timeline),
+                               **({"note": note} if note else {}),
+                               "next": "render_edit(hook_node_id) when the cut is ready to look at."})
+
+        @_tool
+        async def render_edit(hook_node_id: str, same_round: bool = False) -> str:
+            """Render an EDIT stage's timeline into the film.
+
+            The host checks the timeline against the files, renders it at the size
+            and frame rate set on the node, and saves an OpenTimelineIO file
+            (``.otio``) beside it for whoever takes the cut further in Resolve,
+            Nuke Studio or Premiere. The film is this stage's output: it is shown
+            in the panel and goes to the stage behind it.
+
+            Args:
+                hook_node_id: The EDIT stage's node id.
+                same_round: True when this only corrects the render the user is
+                    still looking at (same version); False for a new cut after
+                    their notes, which is the next version.
+            """
+            from src.utils import edit_render as _er
+            from src.utils import edit_timeline as _et
+            hid = str(hook_node_id)
+            hook = self._edit_hook(hid)
+            if hook is None:
+                return json.dumps({"error": f"node {hook_node_id} is not an EDIT stage on this canvas."})
+            if self._hook_run_stopped:
+                return json.dumps({"error": "this hook run was stopped - nothing more runs this turn."})
+            gate = self._plan_gate_refusal() or self._review_gate_refusal(inline=True)
+            if gate:
+                return json.dumps(gate)
+            ahead = self._review_ahead_refusal([hid])
+            if ahead:
+                return json.dumps(ahead)
+            timeline = self._edit_load(hid, hook)
+            try:
+                facts = await asyncio.to_thread(_er.facts_for, timeline)
+            except _er.RenderError as exc:
+                return json.dumps({"error": str(exc)})
+            wrong = _et.problems(timeline, facts)
+            if wrong:
+                return json.dumps({"error": "not rendered - the timeline has problems",
+                                   "problems": wrong, "timeline": _et.summary(timeline),
+                                   "what_to_do": "Fix them with edit_timeline, then render again."})
+            fmt = str((hook.get("edit") or {}).get("format") or "mp4").lower()
+            fmt = fmt if fmt in _et.FORMATS else "mp4"
+            if self._dry_run:
+                return json.dumps({"status": "dry_run", "timeline": _et.summary(timeline),
+                                   "message": "Dry run: the timeline is sound and would render; "
+                                              "nothing was rendered."})
+            self._reopen_reviews_after([hid])
+            version = self._version_stage(hid, [], same_round) or 1
+            out = self._edit_out_path(hook, version, fmt)
+            _push_progress(f"🎬 Rendering the edit — {len(timeline['clips'])} clip(s), "
+                           f"{_et.duration(timeline):g} s …")
+            try:
+                await asyncio.to_thread(_er.render, timeline, out, fmt)
+                otio = await asyncio.to_thread(
+                    _er.write_otio, timeline, os.path.splitext(out)[0] + ".otio",
+                    str(hook.get("title") or "agentY edit"))
+            except _er.RenderError as exc:
+                return json.dumps({"status": "error", "error": str(exc),
+                                   "timeline": _et.summary(timeline)})
+            # This stage's product, like a generation's: shown in the panel,
+            # staged, on record in the ledger, and handed to whoever reads it.
+            self._session.current_output_paths.append(out)
+            self._chain_output_paths.append(out)
+            products = self._record_hook_products(hid, [out])
+            return json.dumps({
+                "status": "rendered", "film": out, "otio": otio,
+                "seconds": round(_et.duration(timeline), 3), "version": f"v{version:03d}",
+                "timeline": _et.summary(timeline),
+                **({"waiting_for_it": products.get("waiting")} if products.get("waiting") else {}),
+                "message": "The film is rendered and shown in the panel. Carry on with the "
+                           "stage behind this one (a review stops there with it).",
+            })
 
         @_tool
         async def ledger_stage(hook_node_id: str) -> str:
@@ -4186,7 +4361,8 @@ class Pipeline:
                  get_canvas_node, set_canvas_node_params, place_canvas_text,
                  run_python_node, revise_prompt, prompt_autoloop,
                  delete_canvas_nodes, edit_canvas_graph, insert_workflow_into_canvas, refine_canvas_until,
-                 list_outputs, show_in_panel, ledger_stage, work_in_open_graph,
+                 list_outputs, show_in_panel, ledger_stage, probe_media, edit_timeline,
+                 render_edit, work_in_open_graph,
                  set_canvas_node_mode,
                  run_canvas,
                  loop_check, forward_outputs, name_outputs,
@@ -5190,6 +5366,65 @@ class Pipeline:
                 print(f"pipeline: could not set the version of stage {hid} ({exc})")
             return 0
 
+    # ── the edit stage (src/utils/edit_timeline.py, edit_render.py) ──────────
+
+    def _edit_hook(self, hook_node_id: str) -> dict | None:
+        from src.utils.canvas_hooks import _is_edit
+        return next((h for h in (self._canvas_hooks or []) if isinstance(h, dict)
+                     and str(h.get("hook_node_id")) == str(hook_node_id) and _is_edit(h)), None)
+
+    def _edit_load(self, hook_node_id: str, hook: dict | None = None) -> dict:
+        """The stage's timeline as it stands, or a new one in the node's settings."""
+        from src.utils import conversation_store as _cs
+        from src.utils import edit_timeline as _et
+        lead = self._ledger_lead()
+        got = _cs.kv_get(lead, f"edit:{hook_node_id}", None) if lead else None
+        if isinstance(got, dict) and isinstance(got.get("clips"), list):
+            return got
+        s = (hook or {}).get("edit") or {}
+        return _et.new(s.get("fps") or 24, s.get("width") or 1920, s.get("height") or 1080)
+
+    def _edit_save(self, hook_node_id: str, timeline: dict) -> None:
+        from src.utils import conversation_store as _cs
+        lead = self._ledger_lead()
+        if lead:
+            _cs.kv_set(lead, f"edit:{hook_node_id}", timeline)
+
+    def _edit_states(self) -> dict:
+        """``{hook_id: "5 clips, 23.5 s"}`` for the edit stages on the canvas."""
+        try:
+            from src.utils.canvas_hooks import _is_edit
+            from src.utils import edit_timeline as _et
+            out = {}
+            for h in (self._canvas_hooks or []):
+                if isinstance(h, dict) and _is_edit(h):
+                    hid = str(h.get("hook_node_id"))
+                    tl = self._edit_load(hid, h)
+                    n = len(tl.get("clips") or [])
+                    if n:
+                        out[hid] = (f"{n} clip(s), {_et.duration(tl):g} s - "
+                                    "edit_timeline(id, ops=[]) shows it")
+            return out
+        except Exception:  # noqa: BLE001
+            return {}
+
+    def _edit_out_path(self, hook: dict, version: int, fmt: str) -> str:
+        """Where a stage's film is saved: the project layout when a shot is named."""
+        from src.utils import output_context as _oc
+        from src.utils import run_ledger as _rl
+        name = _rl._slug(_rl._title(hook), "edit")
+        v = f"v{int(version or 1):03d}"
+        root = _oc._output_root()
+        ctx = _oc.current()
+        if root is not None and _oc.active(ctx):
+            stem = (ctx.get("shot") or ctx.get("sequence") or "output").lower()
+            return os.path.join(str(root), *_oc.shot_root(ctx).split("/"), "videos", v,
+                                f"{stem}_{v}_{name}.{fmt}")
+        if root is None:
+            import tempfile as _tf
+            root = _tf.gettempdir()
+        return os.path.join(str(root), "agent", "edits", f"{name}_{v}.{fmt}")
+
     def _user_opened_turn(self) -> bool:
         """Whether the message that opened this turn is the user's own."""
         return self._turn_origin() not in ("lead", "shots")
@@ -5364,7 +5599,8 @@ class Pipeline:
                                          into_canvas=self._hooks_into_canvas(),
                                          passed_reviews=getattr(self._session,
                                                                 "reviews_passed", None),
-                                         stage_results=self._stage_tag_results())
+                                         stage_results=self._stage_tag_results(),
+                                         edits=self._edit_states())
             if hooks_block:
                 # Attach the how-to-run-hooks guidance only now that hooks exist
                 # (it's absent from the base system prompt to keep every non-hook

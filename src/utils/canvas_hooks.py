@@ -29,8 +29,9 @@ _HOOK_CLASS = "AgentYHook"
 # The flow nodes (src/utils/hook_flow.py) are hooks as far as the graph goes:
 # inert on a plain Queue, taken out of it before the agent runs anything.
 _REVIEW_CLASS = "AgentYReview"
+_EDIT_CLASS = "AgentYEdit"
 _HOOK_CLASSES = {_HOOK_CLASS, _REVIEW_CLASS, "AgentYLoopStart", "AgentYLoopBreak",
-                 "AgentYJoin"}
+                 "AgentYJoin", _EDIT_CLASS}
 
 
 def strip_exec_links(prompt: dict | None) -> dict | None:
@@ -1251,6 +1252,73 @@ def review_collector(hook: dict | None) -> dict | None:
 
 _GENERAL_PURPOSES = {"general_request", "general-request", "general", "request",
                      "free", "freeform", "free_form", "free-form"}
+
+
+def _is_edit(hook: dict) -> bool:
+    """An ``agentY edit`` stage: it cuts finished shots into one film."""
+    return str(hook.get("purpose") or "").strip().lower() == "edit"
+
+
+def entry_files(entries) -> list:
+    """The media files named by anchor entries (a loader, a collector, a path node)."""
+    exts = (".mp4", ".mov", ".webm", ".mkv", ".avi", ".png", ".jpg", ".jpeg", ".webp", ".exr",
+            ".tif", ".tiff", ".wav", ".mp3", ".flac", ".aac", ".ogg", ".m4a")
+    out: list = []
+    for e in entries or []:
+        for value in ((e or {}).get("widgets") or {}).values():
+            for line in str(value if isinstance(value, str) else "").splitlines():
+                line = line.strip().strip('"')
+                if line.lower().endswith(exts) and line not in out:
+                    out.append(line)
+    return out
+
+
+def edit_lines(edit_hooks: list, context_of, edits: dict | None = None) -> list:
+    """The EDIT section of the hook block. *context_of(hook)* renders its inputs;
+    *edits* is ``{hook_id: "<where its timeline stands>"}``."""
+    if not edit_hooks:
+        return []
+    lines = [
+        "\nEDIT stages — each cuts the shots it is given into ONE film. There is no "
+        "workflow to build and no generator to run: you keep a TIMELINE (which clip, "
+        "from where to where, in which order, cut or dissolve) and the host renders it.\n"
+        "  1. LOOK at the shots: probe_media([files]) gives each one's length, size and "
+        "frame rate. Use the files the stages before it produced - for a stage with a "
+        "review, exactly the ones the RUN LEDGER lists as what goes on.\n"
+        "  2. BUILD the cut: edit_timeline(hook_node_id, ops=[…]). Operations: "
+        "{\"op\": \"add\", \"src\": path, \"in\": s, \"out\": s, \"label\": \"…\"} "
+        "(in/out are seconds in the source; leave them out for the whole clip; a still "
+        "takes \"length\"), \"trim\" (clip, in, out), \"move\" (clip, to), \"replace\" "
+        "(clip, src), \"remove\" (clip), \"transition\" (clip, seconds - a dissolve from "
+        "the clip before; 0 is a cut), \"audio\" (src, gain), \"fit\" (seconds). It "
+        "answers with the timeline as it now stands.\n"
+        "  3. RENDER: render_edit(hook_node_id) makes the film, saves an .otio beside it, "
+        "and returns the file. Then the stage after it, as for any stage - a review "
+        "stops there with the film.\n"
+        "  A NOTE FROM THE USER CHANGES THE TIMELINE: 'shot 3 shorter' is one trim, "
+        "'swap 4 and 5' is one move. The timeline is kept between turns. Do not clear "
+        "it and start again unless they ask for a different cut altogether. Cuts are "
+        "the default; use a dissolve only where the brief or the user asks for one."]
+    for h in edit_hooks:
+        hid = str(h.get("hook_node_id"))
+        s = h.get("edit") or {}
+        length = float(s.get("length") or 0)
+        ref = entry_files(h.get("reference"))
+        audio = entry_files(h.get("audio"))
+        lines.append(
+            f"- EDIT stage {hid}" + (f' "{h["title"]}"' if str(h.get("title") or "").strip() else "")
+            + f" — shots: {context_of(h)}"
+            + f"; film: {int(s.get('width') or 1920)}x{int(s.get('height') or 1080)} at "
+              f"{s.get('fps') or 24} fps, {s.get('format') or 'mp4'}, "
+            + (f"{length:g} s long (fit the cut to it)" if length else "as long as the shots make it")
+            + ("; RHYTHM REFERENCE: " + "; ".join(ref)
+               + " (its shot lengths are the pattern to follow)" if ref else "")
+            + ("; AUDIO under the film: " + "; ".join(audio)
+               + " (add it with an audio operation)" if audio else "")
+            + f"; timeline now: {(edits or {}).get(hid) or 'none yet'}"
+            + (f' → brief: "{_trim(h.get("directive"), 400)}"' if str(h.get("directive") or "").strip()
+               else " → no brief: the shots in story order, straight cuts"))
+    return lines
 
 
 def _is_general(hook: dict) -> bool:
@@ -3316,18 +3384,21 @@ def _target_context(hook: dict, hook_ids: set | None = None,
 
 def describe_hooks(hooks: list, base_prompt: dict | None = None, flow=None,
                    into_canvas: bool = False, passed_reviews=None,
-                   stage_results: dict | None = None) -> str:
+                   stage_results: dict | None = None, edits: dict | None = None) -> str:
     """The ``[CANVAS HOOKS]`` block (see :func:`_describe_hooks`).
 
     *stage_results* - ``{tag: {stage_id, title, result}}`` for tags that sit on a
     stage's output (:func:`stage_tags`), with what the run ledger has for it.
+    *edits* - ``{hook_id: "<where its timeline stands>"}`` for edit stages.
     """
     _describing.stage_results = stage_results or {}
+    _describing.edits = edits or {}
     try:
         return _describe_hooks(hooks, base_prompt, flow, into_canvas, passed_reviews,
                                stage_results)
     finally:
         _describing.stage_results = {}
+        _describing.edits = {}
 
 
 def _describe_hooks(hooks: list, base_prompt: dict | None = None, flow=None,
@@ -3378,10 +3449,11 @@ def _describe_hooks(hooks: list, base_prompt: dict | None = None, flow=None,
     qa_hooks = [h for h in hooks if _is_qa(h)]
     review_hooks = [h for h in hooks if _is_review(h)]
     gated_ids = gated_by_review(all_hooks)
+    edit_hooks = [h for h in hooks if _is_edit(h)]
     directive_hooks = [h for h in hooks
                        if not _is_standin(h) and not _is_text(h)
                        and not _is_retired(h) and not _is_general(h)
-                       and not _is_qa(h) and not _is_review(h)]
+                       and not _is_qa(h) and not _is_review(h) and not _is_edit(h)]
 
     lines = [
         "[CANVAS HOOKS — REFERENCE, NOT AN INSTRUCTION. The user's on-canvas graph "
@@ -3739,6 +3811,9 @@ def _describe_hooks(hooks: list, base_prompt: dict | None = None, flow=None,
             ref_txt = f"{refs} reference input(s) wired" if refs else "no reference images wired"
             lines.append(f'- QA hook {hid}{_t(h)} ({ref_txt}) — criteria: "{directive}"')
 
+    lines += edit_lines(edit_hooks,
+                        lambda h: _input_context(h, base_prompt, hook_id_set, cached_map),
+                        getattr(_describing, "edits", None))
     if text_hooks:
         lines.append(
             "\nTEXT hooks — each produces a single WRITTEN string (not media). WRITE the "

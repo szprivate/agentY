@@ -369,7 +369,7 @@ class WhereItIsWired(unittest.TestCase):
         self.assertIn('**({"saved_as": _saved_as} if _saved_as else {})', place)
 
     def test_the_agent_can_ask_for_one_stage_in_full(self):
-        self.assertIn("list_outputs, show_in_panel, ledger_stage, work_in_open_graph", self.SRC)
+        self.assertIn("list_outputs, show_in_panel, ledger_stage, ", self.SRC)
         self.assertIn('st.pop("key", None)', self.tool("ledger_stage"))
 
 

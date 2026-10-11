@@ -559,6 +559,33 @@ The stage after a join runs once **every** branch into it has finished and
 every review on those branches is answered. It runs in the lead conversation.
 Without a join, branches simply end.
 
+### Cutting the shots together: the `agentY edit` node
+
+An **`agentY edit`** node (under **agentY**) is a stage that turns finished shots
+into one film. Put it at the end of a pipeline, usually with an `agentY review`
+behind it.
+
+- **Wire the shots into `anchor`** — a save node, a collector, or the output of
+  the review that approved them. A new input appears each time.
+- **Say what the cut should be** in `brief` (*"open on the kitchen, hold the last
+  shot, quick in the middle"*). Empty means story order and straight cuts.
+- **Set what the film is:** `size` (every shot is scaled to fit and padded, never
+  stretched), `fps`, `length` in seconds (0 = as long as the shots make it), and
+  `format` — `mp4` (H.264) to look at, `mov` (ProRes 422 HQ) to hand on.
+- **`audio`** takes music or sound that is laid under the whole film. The shots'
+  own sound is not carried yet.
+
+The agent does not write the film in one go. It keeps a **timeline** — which clip,
+from where to where, in which order, cut or dissolve — and agentY renders it. So a
+note at the review is a small change: *"shot 3 shorter"* trims one clip, *"swap 4
+and 5"* moves one, and everything else stays as it was. The timeline is kept
+between turns.
+
+Each render is saved like any other result (`…/videos/v###/…`, one version per
+round) with an **`.otio`** file beside it. That is an OpenTimelineIO timeline:
+Resolve, Nuke Studio and Premiere open it, with the cut laid out on the original
+shot files.
+
 ### The run ledger: what is already settled
 
 A pipeline runs over many turns, and with branches in several conversations. So

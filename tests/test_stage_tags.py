@@ -115,7 +115,7 @@ class WhatTheAgentReads(unittest.TestCase):
     def test_the_pipeline_hands_the_record_over(self):
         from pathlib import Path
         src = (Path(__file__).resolve().parent.parent / "src" / "pipeline.py").read_text(encoding="utf-8")
-        self.assertIn("stage_results=self._stage_tag_results())", src)
+        self.assertIn("stage_results=self._stage_tag_results(),", src)
         body = src.split("    def _stage_tag_results(self)", 1)[1].split("\n    def ", 1)[0]
         self.assertIn('stage_tags(getattr(self, "_canvas_graph", None))', body)
         self.assertIn("self._ledger_stages_of(sid)", body)

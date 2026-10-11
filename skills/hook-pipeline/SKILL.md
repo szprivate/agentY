@@ -43,6 +43,7 @@ they are restructuring one they built, show what changes and wait for their go.
 | `AgentYLoopStart` | where a loop begins | none |
 | `AgentYLoopBreak` | where it ends | `condition`, `max_rounds`, `forward` |
 | `AgentYJoin` | where branches meet again | none |
+| `AgentYEdit` | cuts the finished shots into one film | `brief`, `size` (e.g. `1920x1080`), `fps`, `length` (seconds, 0 = free), `format` (`mp4`, `mov`) |
 
 **The three purposes of a hook** — write them exactly like this, with the spaces:
 
