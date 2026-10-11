@@ -6,8 +6,8 @@ time. Everything is brought to the timeline's size and frame rate first (scaled
 to fit, padded, never stretched), then joined - a cut by concatenation, a
 dissolve by ``xfade``.
 
-Sound, for now, is a bed laid under the whole film. The clips' own sound is not
-carried.
+Sound is the clips' own, cut and dissolved with the picture (a clip without any
+is silence for its length), and a bed laid under the whole film, mixed with it.
 """
 
 from __future__ import annotations
@@ -97,13 +97,26 @@ def _fmt(v: float) -> str:
     return f"{float(v):.4f}".rstrip("0").rstrip(".") or "0"
 
 
+_SOUND = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
+
+
+def clips_with_sound(timeline: dict, facts: dict | None) -> list:
+    """For each clip, whether its own sound goes into the film."""
+    if not timeline.get("clip_sound", True) or not facts:
+        return [False] * len(timeline.get("clips") or [])
+    return [bool((facts.get(c.get("src")) or {}).get("audio")) and not et.is_still(c.get("src"))
+            and float(c.get("volume") if c.get("volume") is not None else 1.0) > 0
+            for c in timeline.get("clips") or []]
+
+
 def command(timeline: dict, out_path: str, fmt: str = "mp4", exe: str = "ffmpeg",
-            texts: list | None = None) -> list:
+            texts: list | None = None, facts: dict | None = None) -> list:
     """The ffmpeg call that renders *timeline* to *out_path*.
 
     *texts* - the timeline's overlays already drawn, as
     ``[{"pattern": "…/f_%05d.png", "start": s, "length": s}]``: transparent
     picture sequences at the film's frame rate, laid over it from their start.
+    *facts* - ``{src: probe}``; with it the clips that HAVE sound bring it along.
     """
     clips = timeline.get("clips") or []
     if not clips:
@@ -121,7 +134,9 @@ def command(timeline: dict, out_path: str, fmt: str = "mp4", exe: str = "ffmpeg"
         parts.append(
             f"[{i}:v]fps={_fmt(fps)},scale={w}:{h}:force_original_aspect_ratio=decrease,"
             f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,format=yuv420p,"
-            f"trim=duration={_fmt(length)},setpts=PTS-STARTPTS[v{i}]")
+            # One timebase for every clip: a cut's join and a dissolve disagree about
+            # theirs, and a dissolve straight after a cut then refuses to start.
+            f"trim=duration={_fmt(length)},setpts=PTS-STARTPTS,settb=AVTB[v{i}]")
     last, run = "v0", et.clip_length(clips[0])
     for i, c in enumerate(clips[1:], 1):
         d = float(c.get("transition") or 0.0)
@@ -148,15 +163,46 @@ def command(timeline: dict, out_path: str, fmt: str = "mp4", exe: str = "ffmpeg"
         n_inputs += 1
     audio = timeline.get("audio")
     maps = ["-map", f"[{last}]"]
+    # The clips' own sound, joined exactly as the picture is: every clip gives a
+    # stretch of sound as long as itself (silence where it has none, and padded
+    # where its sound stops short), so a cut is a join and a dissolve a crossfade
+    # of the same length, and sound and picture cannot drift apart.
+    heard = clips_with_sound(timeline, facts)
+    own = ""
+    if any(heard):
+        for i, c in enumerate(clips):
+            length = _fmt(et.clip_length(c))
+            if heard[i]:
+                vol = _fmt(c.get("volume") if c.get("volume") is not None else 1.0)
+                parts.append(f"[{i}:a]{_SOUND},atrim=duration={length},asetpts=PTS-STARTPTS,"
+                             f"apad=whole_dur={length},volume={vol}[a{i}]")
+            else:
+                parts.append(f"anullsrc=r=48000:cl=stereo,atrim=duration={length}[a{i}]")
+        own = "a0"
+        for i, c in enumerate(clips[1:], 1):
+            d = float(c.get("transition") or 0.0)
+            parts.append(f"[{own}][a{i}]acrossfade=d={_fmt(d)}:c1=tri:c2=tri[s{i}]" if d > 0
+                         else f"[{own}][a{i}]concat=n=2:v=0:a=1[s{i}]")
+            own = f"s{i}"
     if audio:
         n = n_inputs
         args += ["-ss", _fmt(audio.get("in") or 0.0), "-i", audio["src"]]
         fade = min(float(audio.get("fade_out") or 0.0), run)
-        chain = f"[{n}:a]atrim=duration={_fmt(run)},asetpts=PTS-STARTPTS,volume={_fmt(audio.get('gain', 1.0))}"
+        chain = (f"[{n}:a]{_SOUND},atrim=duration={_fmt(run)},asetpts=PTS-STARTPTS,"
+                 f"volume={_fmt(audio.get('gain', 1.0))}")
         if fade > 0:
             chain += f",afade=t=out:st={_fmt(run - fade)}:d={_fmt(fade)}"
-        parts.append(chain + "[aout]")
+        if own:
+            # Mixed as they are: nothing is turned down to make room, so the
+            # volumes in the timeline are the volumes heard.
+            parts.append(chain + "[bed]")
+            parts.append(f"[{own}][bed]amix=inputs=2:duration=first:normalize=0[aout]")
+        else:
+            parts.append(chain + "[aout]")
         maps += ["-map", "[aout]"]
+    elif own:
+        maps += ["-map", f"[{own}]"]
+    audio = audio or own
     args += ["-filter_complex", ";".join(parts)] + maps + ["-r", _fmt(fps), "-t", _fmt(run)]
     if fmt == "mov":
         args += ["-c:v", "prores_ks", "-profile:v", "3", "-pix_fmt", "yuv422p10le"]
@@ -206,7 +252,8 @@ def render(timeline: dict, out_path: str, fmt: str = "mp4") -> str:
     work = tempfile.mkdtemp(prefix="agenty_texts_") if timeline.get("overlays") else ""
     try:
         texts = draw_texts(timeline, work) if work else []
-        run = subprocess.run(command(timeline, out_path, fmt, exe, texts), capture_output=True,
+        facts = facts_for(timeline) if timeline.get("clip_sound", True) else None
+        run = subprocess.run(command(timeline, out_path, fmt, exe, texts, facts), capture_output=True,
                              text=True, encoding="utf-8", errors="replace", timeout=_TIMEOUT)
     except subprocess.TimeoutExpired:
         raise RenderError(f"ffmpeg did not finish within {_TIMEOUT // 60} minutes") from None

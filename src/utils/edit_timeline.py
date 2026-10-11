@@ -23,6 +23,10 @@ An overlay is TEXT laid over the picture: a preset (:mod:`src.utils.text_presets
 says how it looks and moves, the overlay says what it reads, when, and for how
 long. ``start`` is a moment in the FILM, not in a clip.
 
+A clip's own sound comes with it (``clip_sound``, on unless switched off), at the
+clip's ``volume`` (1 = as it is, 0 = silent); a clip with no sound is silence
+for its length. ``audio`` is a bed laid under the whole film, mixed with it.
+
 Times are seconds. ``in``/``out`` are positions in the SOURCE; ``transition`` is
 the length of the dissolve from the clip before into this one (0 = a cut), and
 it is taken out of both, so a dissolve shortens the film by its length.
@@ -45,7 +49,7 @@ class EditError(ValueError):
 
 def new(fps: float = 24.0, width: int = 1920, height: int = 1080) -> dict:
     return {"fps": float(fps or 24.0), "width": int(width or 1920), "height": int(height or 1080),
-            "clips": [], "audio": None, "overlays": []}
+            "clips": [], "audio": None, "overlays": [], "clip_sound": True}
 
 
 def is_still(src: str) -> bool:
@@ -208,6 +212,8 @@ def _apply_one(tl: dict, kind: str, op: dict, facts: dict | None) -> None:
                                  "fade_out")}
     elif kind == "fit":
         fit(tl, _seconds(op.get("seconds"), "seconds"))
+    elif kind == "sound":
+        _sound(tl, op)
     elif kind == "text":
         _text(tl, op)
     elif kind == "text_remove":
@@ -225,8 +231,36 @@ def _apply_one(tl: dict, kind: str, op: dict, facts: dict | None) -> None:
         tl["clips"], tl["audio"], tl["overlays"] = [], None, []
     else:
         raise EditError("unknown operation - use add, trim, move, replace, remove, "
-                        "transition, label, audio, fit, rhythm, snap, text, text_remove, "
-                        "settings or clear")
+                        "transition, label, audio, sound, fit, rhythm, snap, text, "
+                        "text_remove, settings or clear")
+
+
+def _sound(tl: dict, op: dict) -> None:
+    """The clips' own sound: on or off for the film, or one clip's volume."""
+    if op.get("clip") is None:
+        if op.get("on") is None and op.get("volume") is None:
+            raise EditError("say on: true/false for the whole film, or name a clip and its volume")
+        if op.get("on") is not None:
+            tl["clip_sound"] = bool(op["on"]) if not isinstance(op["on"], str) \
+                else op["on"].strip().lower() in ("true", "on", "yes", "1")
+        if op.get("volume") is not None:
+            for c in tl["clips"]:
+                c["volume"] = _volume(op["volume"])
+        return
+    c = tl["clips"][_find(tl, op.get("clip"))]
+    if op.get("volume") is None:
+        raise EditError("give the clip's volume (1 = as it is, 0 = silent)")
+    c["volume"] = _volume(op["volume"])
+
+
+def _volume(value) -> float:
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        raise EditError(f"volume must be a number, not {value!r}") from None
+    if not 0 <= v <= 4:
+        raise EditError(f"volume {v:g} is out of range (0 = silent, 1 = as it is, at most 4)")
+    return round(v, 3)
 
 
 def _find_text(tl: dict, text_id) -> int:
@@ -398,7 +432,8 @@ def summary(timeline: dict) -> dict:
                      "label": c.get("label") or "", "in": c.get("in"), "out": c.get("out"),
                      "length": round(clip_length(c), 3), "starts_at": at[i],
                      "into_it": ("cut" if not float(c.get("transition") or 0) or i == 0
-                                 else f"{float(c['transition']):g}s dissolve")})
+                                 else f"{float(c['transition']):g}s dissolve"),
+                     **({"volume": c["volume"]} if c.get("volume") not in (None, 1, 1.0) else {})})
     audio = timeline.get("audio")
     texts = [{"id": o.get("id"), "preset": o.get("preset"), "text": o.get("text"),
               "from": o.get("start"), "to": round(float(o.get("start") or 0) + float(o.get("length") or 0), 3),
@@ -407,6 +442,7 @@ def summary(timeline: dict) -> dict:
     return {"clips": rows, "duration": round(duration(timeline), 3),
             "fps": timeline.get("fps"), "size": f"{timeline.get('width')}x{timeline.get('height')}",
             "audio": os.path.basename(str(audio["src"])) if audio else "none",
+            "clip_sound": "on" if timeline.get("clip_sound", True) else "off",
             **({"texts": texts} if texts else {})}
 
 

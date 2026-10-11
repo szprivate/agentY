@@ -2803,6 +2803,10 @@ class Pipeline:
               the clip before into this one; 0 makes it a cut again.
             * ``{"op": "audio", "src": path, "gain": 0.8}`` - music or sound under
               the whole film; ``"src": ""`` takes it off.
+            * ``{"op": "sound", "clip": id, "volume": 0.5}`` - a clip's OWN sound
+              (1 = as it is, 0 = silent). The clips' sound comes with them unless
+              you switch it off for the film: ``{"op": "sound", "on": false}``.
+              Lower it, or switch it off, when music carries the film.
             * ``{"op": "fit", "seconds": s}`` - shorten every clip by the same share
               so the film is that long.
             * ``{"op": "rhythm", "lengths": [s, …]}`` - give the clips, in order, a

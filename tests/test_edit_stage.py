@@ -155,8 +155,9 @@ class TheCommand(unittest.TestCase):
         self.assertIn("[j1][v2]concat=n=2:v=1:a=0[j2]", self.graph)
 
     def test_the_sound_lies_under_the_whole_film_and_fades_out(self):
-        self.assertIn("[3:a]atrim=duration=8.5,asetpts=PTS-STARTPTS,volume=0.5,"
+        self.assertIn("atrim=duration=8.5,asetpts=PTS-STARTPTS,volume=0.5,"
                       "afade=t=out:st=7.5:d=1[aout]", self.graph)
+        self.assertIn("[3:a]aresample=48000,", self.graph)
 
     def test_a_still_is_held(self):
         tl = et.apply(et.new(), [{"op": "add", "src": "still.png", "length": 2}], FACTS)

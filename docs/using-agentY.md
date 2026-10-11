@@ -572,8 +572,11 @@ behind it.
 - **Set what the film is:** `size` (every shot is scaled to fit and padded, never
   stretched), `fps`, `length` in seconds (0 = as long as the shots make it), and
   `format` — `mp4` (H.264) to look at, `mov` (ProRes 422 HQ) to hand on.
-- **`audio`** takes music or sound that is laid under the whole film. The shots'
-  own sound is not carried yet. Ask for the cuts **on the beat** and the agent
+- **Sound.** The shots' own sound comes with them: cut where the picture cuts,
+  crossfaded where it dissolves, silent where a shot has none. Ask for one shot
+  quieter, or for the shots' sound off altogether when music carries the film.
+- **`audio`** takes music or sound that is laid under the whole film and mixed
+  with the shots' own. Ask for the cuts **on the beat** and the agent
   reads the track's beats and moves each cut to the nearest one. It needs a
   steady pulse; a piece without one is reported as having no beat to cut on.
 - **`reference`** takes a film to cut *like*. Its shot lengths are read off it

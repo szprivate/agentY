@@ -208,7 +208,7 @@ class LaidOverTheFilm(unittest.TestCase):
         self.assertIn("overlay=0:0:eof_action=pass:enable='between(t,4.5,7.5)'[o0]", self.graph)
 
     def test_the_sound_is_still_found_behind_the_texts(self):
-        self.assertIn("[3:a]atrim", self.graph)
+        self.assertIn("[3:a]aresample", self.graph)
         self.assertEqual(self.cmd[self.cmd.index("-map") + 1], "[o0]")
 
     def test_no_texts_is_the_same_command_as_before(self):
