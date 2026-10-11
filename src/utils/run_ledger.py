@@ -155,8 +155,31 @@ def _title(hook: dict) -> str:
     return title
 
 
+def version_base(lead_id: str, shot: str, highest) -> int:
+    """What this run's versions are counted up from, for one shot.
+
+    The highest version the shot already had when the run first saved into it
+    (*highest()* is asked once and the answer kept). In a fresh shot that is 0,
+    so a stage's round and its version are the same number; in a shot with
+    earlier work the run starts above it rather than into an old folder.
+    """
+    key = str(shot or "")
+    got = {}
+
+    def _do(ledger):
+        bases = ledger.setdefault("version_base", {})
+        if key not in bases:
+            try:
+                bases[key] = int(highest() or 0)
+            except Exception:  # noqa: BLE001
+                bases[key] = 0
+        got["base"] = int(bases[key])
+    _edit(lead_id, _do)
+    return got.get("base", 0)
+
+
 def produced(lead_id: str, hook_id: str, outputs=None, text_path: str = "",
-             key: str = "", by: str = "", new_round: bool = True) -> dict:
+             key: str = "", by: str = "", new_round: bool = True, version: int = 0) -> dict:
     """A stage made something. Returns its entry (``round`` is the one just made)."""
     out = {}
 
@@ -177,6 +200,8 @@ def produced(lead_id: str, hook_id: str, outputs=None, text_path: str = "",
             st["key"] = str(key)
         if by:
             st["by"] = str(by)
+        if version:
+            st["version"] = int(version)
         st["updated"] = time.time()
         out.update(st)
     _edit(lead_id, _do)
@@ -307,7 +332,8 @@ def _stage_line(hid: str, st: dict, full: bool = False) -> str:
     head = f"- {hid}" + (f' "{title}"' if title else "") + (f" [{purpose}]" if purpose else "")
     bits = [_state_words(st)]
     if st.get("round"):
-        bits.append(f"round {st['round']}")
+        bits.append(f"round {st['round']}"
+                    + (f" (saved as v{int(st['version']):03d})" if st.get("version") else ""))
     if st.get("by"):
         bits.append(f"by branch {st['by']}")
     line = head + ": " + " · ".join(bits)

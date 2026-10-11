@@ -1449,7 +1449,8 @@ class Pipeline:
                                               bool(getattr(self, "_plan_gate_open", False)))
 
         @_tool
-        async def apply_canvas_hooks(resolutions: list, run_now: bool = False) -> str:
+        async def apply_canvas_hooks(resolutions: list, run_now: bool = False,
+                                     same_round: bool = False) -> str:
             """Run the user's ON-CANVAS graph, expanded per the canvas hooks.
 
             Use this ONLY when a ``[CANVAS HOOKS]`` block is present. It runs the
@@ -1546,6 +1547,13 @@ class Pipeline:
                 resolutions: list of per-node mutation specs (see above).
                 run_now: execute immediately and report per-variant results, instead
                     of queueing them for the end of the turn.
+                same_round: True when this call ADDS TO or REDOES PART OF the round
+                    the user is still looking at - one picture of the four done
+                    again, a missing one filled in. Its files then go into that
+                    round's version folder. Leave it False for a new round (the
+                    stage done again on the user's notes): that is the next
+                    version. A stage's first run, and a re-run within the same
+                    turn, are worked out for you.
             """
             import os as _os
             import tempfile as _tempfile
@@ -1679,6 +1687,10 @@ class Pipeline:
             gone = self._collector_refusal(prompts)
             if gone:
                 return json.dumps(gone)
+            _version = self._version_stage(str((hook or {}).get("hook_node_id") or ""),
+                                           prompts, same_round)
+            if _version:
+                notes.append(f"this round is saved as version v{_version:03d}")
             out_dir = Path(_tempfile.mkdtemp(prefix="agenty_canvas_"))
             paths: list[str] = []
             for i, p in enumerate(prompts):
@@ -2641,7 +2653,7 @@ class Pipeline:
 
         @_tool
         async def name_outputs(suffix: str = "", shot: str = "", sequence: str = "",
-                               workflow_path: str = "") -> str:
+                               workflow_path: str = "", version: int = 0) -> str:
             """Say what a generation's files are, so they are saved in the right
             place under the right name, in ComfyUI's output folder:
             ``<Sequence>/<Shot>/<images|videos>/v###/<shot>_v###_<suffix>``.
@@ -2664,8 +2676,16 @@ class Pipeline:
                 sequence: Sequence or asset group, when it differs.
                 workflow_path: The workflow these names are for. Leave empty to
                     set them for everything run afterwards in this turn.
+                version: ONLY when the user names a version ("save this as v012",
+                    "put it in version 3"). It then wins over the number that
+                    would be counted, for everything run afterwards in this turn.
+                    Leave it 0 otherwise: versions are counted for you.
             """
             from src.utils import output_context as _oc
+            try:
+                self._version_named = max(0, int(version or 0))
+            except (TypeError, ValueError):
+                self._version_named = 0
             ctx = _oc.current()
             ctx.update({k: _oc.slug(v) for k, v in (("sequence", sequence), ("shot", shot))
                         if str(v or "").strip()})
@@ -2687,7 +2707,13 @@ class Pipeline:
                 graph = json.loads(wf.read_text(encoding="utf-8"))
             except (OSError, ValueError) as exc:
                 return json.dumps({"error": f"cannot read {workflow_path}: {exc}"})
-            named = _oc.set_prefixes(graph, ctx, sfx or "output")
+            _oc.pin_version(self._version_named or None)
+            try:
+                if self._version_named:
+                    _oc.set_versions(graph, self._version_named)
+                named = _oc.set_prefixes(graph, ctx, sfx or "output")
+            finally:
+                _oc.pin_version(None)
             if not named:
                 return json.dumps({"error": "that workflow has no save node with a filename_prefix "
                                             "to name (its prefix may be wired from another node)."})
@@ -2760,6 +2786,9 @@ class Pipeline:
                                   "turn. A change they ask for is the next round; their "
                                   "continue ends the loop.",
                 })
+            # What runs after this check is the loop's NEXT round, even in the same
+            # turn: a new round, and so a new version (see _version_stage).
+            self._stage_runs = {}
             state = self._loop_states.setdefault(loop.break_id, _hf.new_state(loop))
             if state["finished"]:
                 return json.dumps({"finished": True, "round": state["round"],
@@ -5097,18 +5126,69 @@ class Pipeline:
                 return ""
             hid = str(hook.get("hook_node_id"))
             was = _rl.stage(lead, hid) or {}
-            version = int(was.get("round") or 0) + 1
+            from src.utils import output_context as _oc
+            ctx = _oc.current()
+            base = _rl.version_base(lead, _oc.shot_root(ctx), lambda: _oc.highest_version(ctx))
+            version = int(getattr(self, "_version_named", 0) or 0)                 or base + int(was.get("round") or 0) + 1
             path = _rl.text_file(lead, hid, _rl._title(hook), version)
             if not _rl.write_text(path, text):
                 path = ""
             branch = self._branch_info() or {}
             _rl.produced(lead, hid, text_path=path, key=str(hook.get("_cache_key") or ""),
-                         by=str(branch.get("name") or ""))
+                         by=str(branch.get("name") or ""), version=version)
             return path
         except Exception as exc:  # noqa: BLE001
             if getattr(self, "_verbose", False):
                 print(f"pipeline: could not save the text of hook {hook.get('hook_node_id')}: {exc}")
             return ""
+
+    def _version_stage(self, hook_id: str, prompts: list, same_round: bool = False) -> int:
+        """Give every graph of one stage's run the same version; returns it (0 = none).
+
+        One version per ROUND of a stage, counted per stage: the four pictures of
+        a sweep are one round and share a folder, the next round after the user's
+        notes is the next version. Running the stage again within the same turn
+        (a repair, a single picture redone) stays in the round it belongs to, and
+        so does a call that says so (*same_round*). A version the user named
+        (name_outputs) wins over all of it.
+        """
+        hid = str(hook_id or "")
+        if not hid or getattr(self, "_dry_run", False):
+            return 0
+        try:
+            from src.utils import output_context as _oc
+            from src.utils import run_ledger as _rl
+            lead = self._ledger_lead()
+            st = (_rl.stage(lead, hid) if lead else None) or {}
+            runs = getattr(self, "_stage_runs", None)
+            if runs is None:
+                runs = self._stage_runs = {}
+            again = bool(same_round) or hid in runs
+            named = int(getattr(self, "_version_named", 0) or 0)
+            if named:
+                version = named
+            elif again and st.get("version"):
+                version = int(st["version"])
+            else:
+                ctx = _oc.current()
+                base = _rl.version_base(lead, _oc.shot_root(ctx),
+                                        lambda: _oc.highest_version(ctx)) if lead else 0
+                version = base + int(st.get("round") or 0) + 1
+            runs[hid] = {"version": version,
+                         "new_round": not (again and int(st.get("round") or 0) > 0)}
+            _oc.pin_version(version)
+            try:
+                for p in prompts or []:
+                    if isinstance(p, dict):
+                        _oc.set_versions(p, version)
+                        _oc.stamp(p)
+            finally:
+                _oc.pin_version(None)
+            return version
+        except Exception as exc:  # noqa: BLE001 - the files are still saved, by the old rule
+            if getattr(self, "_verbose", False):
+                print(f"pipeline: could not set the version of stage {hid} ({exc})")
+            return 0
 
     def _user_opened_turn(self) -> bool:
         """Whether the message that opened this turn is the user's own."""
@@ -5590,6 +5670,10 @@ class Pipeline:
         self._texts_placed = {}
         self._canvas_keeplive_run = False
         self._canvas_keeplive_targets = []
+        # Which stage ran this turn, under which version (see _version_stage), and
+        # a version the user named outright.
+        self._stage_runs = {}
+        self._version_named = 0
         self._hook_run_stopped = None
         # Set when the canvas is scoped to the hooks at turn setup; pushed only if
         # a run actually starts (see apply_canvas_hooks).
@@ -6491,8 +6575,11 @@ class Pipeline:
         if _led is not None and not getattr(self, "_dry_run", False):
             _hook = next((h for h in (self._canvas_hooks or [])
                           if isinstance(h, dict) and str(h.get("hook_node_id")) == hid), {})
+            _run = (getattr(self, "_stage_runs", None) or {}).get(hid) or {}
             _led("produced", hid, outputs=files, key=str(_hook.get("_cache_key") or ""),
-                 by=str((self._branch_info() or {}).get("name") or ""))
+                 by=str((self._branch_info() or {}).get("name") or ""),
+                 new_round=bool(_run.get("new_round", True)),
+                 version=int(_run.get("version") or 0))
         try:
             from src.utils.canvas_hooks import product_consumers
             waiting = product_consumers(self._canvas_hooks or [], hid)

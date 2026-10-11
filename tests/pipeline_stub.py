@@ -68,6 +68,7 @@ _BOUND = (
     "_stage_graph",
     "_keeplive_prompt",
     "_user_opened_turn",
+    "_version_stage",
     "_close_finished_branches",
     "_remember_approved",
     "_stage_tag_results",

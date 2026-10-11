@@ -443,9 +443,15 @@ e.g.  spec/spec_0210/images/v003/spec_0210_v003_startframe_00001_.png
 ```
 
 - **suffix** — set by the agent from what the file is (`startframe`, `hero_ref`).
-- **version** — the first one that has no file of that name yet. Running the same
-  workflow again (a retry, a loop round) keeps the version; ComfyUI's counter at
-  the end counts the takes.
+- **version** — outside a pipeline, the first one that has no file of that name
+  yet. In a **pipeline run** it is **one version per round of a stage**: all
+  pictures of a sweep share a version folder (ComfyUI's counter at the end tells
+  them apart), and the next round after your notes is the next version. It is
+  counted per stage, starting above the highest version the shot already had —
+  so in a fresh shot a stage's round 2 is `v002`. One picture redone within a
+  round stays in that round's version. *Get Path* nodes with a `Version` number
+  get the same number written into them for the run. If you name a version
+  (*"save this as v012"*), that one is used.
 - The name is written into the save node **before** the run. Nothing is renamed
   afterwards, so ComfyUI's history and Assets show the same file.
 - **AYON:** if the graph has an AYON context node, it wins. Sequence and shot are

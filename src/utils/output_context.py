@@ -207,6 +207,76 @@ def next_version(ctx: dict, suffix: str, root=None) -> int:
     return n
 
 
+# ── one version for a whole round ───────────────────────────────────────────
+#
+# Left to itself the rule above gives every graph that is submitted the next free
+# version. A stage that sweeps four characters submits four graphs, so each
+# picture landed in a version folder of its own (v185, v186, v187, v188) - a
+# folder per file. A stage's round is one piece of work and is one version: the
+# caller pins the number while it names that round's graphs.
+
+_PIN = "output.pin"
+
+
+def pin_version(version) -> None:
+    """Name every graph from here on with *version*; ``None`` lifts the pin."""
+    try:
+        slot = _scope().slot(_PIN, dict)
+        slot.clear()
+        if version:
+            slot["v"] = int(version)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def pinned() -> int | None:
+    try:
+        return int(_scope().slot(_PIN, dict).get("v") or 0) or None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+_VDIR = re.compile(r"v(\d{3,})$", re.I)
+
+
+def highest_version(ctx: dict, root=None) -> int:
+    """The highest ``v###`` folder the shot already has, in any kind folder (0 = none)."""
+    root = _output_root() if root is None else root
+    if root is None or not active(ctx):
+        return 0
+    base = os.path.join(str(root), *shot_root(ctx).split("/"))
+    top = 0
+    for kind in KINDS + ("text",):
+        try:
+            names = os.listdir(os.path.join(base, kind))
+        except OSError:
+            continue
+        for name in names:
+            m = _VDIR.match(name)
+            if m:
+                top = max(top, int(m.group(1)))
+    return top
+
+
+def set_versions(graph: dict, version: int) -> list:
+    """Write *version* into the path nodes of *graph* that carry one; returns their ids.
+
+    bEpic's path nodes (Get Path, Get Path (AYON)) build the same layout from a
+    ``Version`` number set on the node - by the user, when they run the graph
+    themselves. In a pipeline run the round's version is the agent's to set.
+    """
+    done = []
+    for nid, node in (graph or {}).items():
+        if not isinstance(node, dict) or "path" not in str(node.get("class_type", "")).lower():
+            continue
+        inputs = node.get("inputs")
+        if isinstance(inputs, dict) and isinstance(inputs.get("Version"), int) \
+                and not isinstance(inputs.get("Version"), bool):
+            inputs["Version"] = int(version)
+            done.append(str(nid))
+    return done
+
+
 def describe(ctx: dict | None = None) -> str:
     """The note the agent is given about the rule in force."""
     ctx = current() if ctx is None else ctx
@@ -278,7 +348,7 @@ def set_prefixes(graph: dict, ctx: dict, suffix: str = "", node_ids=None, root=N
             continue
         sfx = slug(suffix or ctx.get("suffix") or _own_suffix(old, node.get("class_type", "")), "output")
         if sfx not in versions:
-            versions[sfx] = next_version(ctx, sfx, root)
+            versions[sfx] = pinned() or next_version(ctx, sfx, root)
         new = prefix_for(ctx, sfx, _kind(node.get("class_type", "")), versions[sfx])
         node["inputs"]["filename_prefix"] = new
         done[str(nid)] = new
