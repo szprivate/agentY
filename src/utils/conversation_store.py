@@ -168,6 +168,13 @@ def init_db() -> None:
                 notes       TEXT NOT NULL DEFAULT '',
                 updated_at  REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS thread_kv (
+                thread_id   TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+                key         TEXT NOT NULL,
+                value       TEXT NOT NULL,
+                updated_at  REAL NOT NULL,
+                PRIMARY KEY (thread_id, key)
+            );
             """
         )
     _INITIALISED = True
@@ -738,6 +745,42 @@ def shots_of(lead_id: str) -> list[dict[str, Any]]:
             "FROM thread_shot s JOIN threads t ON t.id = s.thread_id "
             "WHERE s.lead_id=? ORDER BY s.created_at, s.rowid", (lead_id,)).fetchall()
     return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Small named values the host keeps with a conversation (JSON)
+# ---------------------------------------------------------------------------
+
+def kv_get(thread_id: str, key: str, default: Any = None) -> Any:
+    """The value stored for *thread_id* under *key*, or *default*."""
+    if not thread_id or not key:
+        return default
+    init_db()
+    with _connect() as conn:
+        row = conn.execute("SELECT value FROM thread_kv WHERE thread_id=? AND key=?",
+                           (thread_id, key)).fetchone()
+    if not row:
+        return default
+    try:
+        return json.loads(row["value"])
+    except Exception:  # noqa: BLE001
+        return default
+
+
+def kv_set(thread_id: str, key: str, value: Any) -> None:
+    """Store *value* (anything JSON can hold) for *thread_id* under *key*."""
+    if not thread_id or not key:
+        return
+    init_db()
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO thread_kv(thread_id, key, value, updated_at) VALUES (?,?,?,?)
+            ON CONFLICT(thread_id, key) DO UPDATE SET
+                value=excluded.value, updated_at=excluded.updated_at
+            """,
+            (thread_id, key, json.dumps(value), time.time()),
+        )
 
 
 def set_sequence_notes(lead_id: str, notes: str) -> None:

@@ -622,6 +622,12 @@ def parallel_lines(flow: Flow, is_work=None) -> list[str]:
            if par.joined else "When every branch has finished, give the user one summary. ")
         + "A branch that is one cheap stage (one line of text) is not worth a "
           "conversation: do it yourself while the others run.")
+    lines.append(
+        "  THE CANVAS IS YOURS TO CHANGE, not a branch's. A branch sets values on its "
+        "own stages; those reach the canvas by themselves when you next take a turn. "
+        "It cannot add, remove or rewire nodes. If a report says its stage needs the "
+        "graph changed, make the change here (edit_canvas_graph), then message_shot "
+        "the branch that it is done.")
     for n, b in enumerate(par.branches, 1):
         names = "; ".join(_label(by_id[i]) for i in b.members if i in by_id)
         lines.append(

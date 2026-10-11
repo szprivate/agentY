@@ -523,6 +523,12 @@ conversation](#a-sequence-one-conversation-per-shot):
   good, make the flat less worn"*). An approval lets that branch carry on; a
   change is its next round, in the conversation it has been working in all
   along.
+- **Branches do not change the canvas themselves.** A value a branch sets on its
+  own stage (a prompt, a seed) is kept for that branch and used by its runs; it
+  appears on your canvas the next time the lead conversation takes a turn. A
+  branch cannot add, remove or rewire nodes: if its stage needs the graph
+  changed, it says so in its report and the lead makes the change. This is what
+  lets branches work side by side instead of waiting for each other.
 
 ### Bringing branches back together
 

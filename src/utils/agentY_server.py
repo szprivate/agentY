@@ -5488,8 +5488,18 @@ _watch_lock = threading.Lock()
 
 
 def _watch_delivers(rid: str, index: int, event: dict) -> bool:
-    """Should this canvas patch of a watched turn go to the page asking for it?"""
-    if str(event.get("op") or "") not in _WATCH_PATCHES:
+    """Should this canvas patch of a watched turn go to the page asking for it?
+
+    A review's own patches always did. So do VALUES now - a parameter set, a text
+    placed: a lead woken by its branches has no page of its own, and without this
+    nothing it or its branches wrote ever reached the canvas. Once per patch, so
+    a page that looks again does not write over what the user changed since.
+    Changes to the graph's structure are still not replayed: late, against a
+    canvas that has moved on, they land on the wrong nodes.
+    """
+    op = event.get("op")
+    is_value = (op is None and isinstance(event.get("params"), dict)) or op == "place_text"
+    if str(op or "") not in _WATCH_PATCHES and not is_value:
         return False
     key = (str(rid), int(index))
     with _watch_lock:

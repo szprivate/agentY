@@ -161,9 +161,14 @@ def _branch_briefing(lead_id: str, name: str, briefing: str, dry_run: bool,
         "- Run this branch's stages: they are the hooks in your [CANVAS HOOKS] block, "
         "which holds your stages and nothing else of the pipeline. Work them in order "
         "with the hook tools, as in any hook run.",
-        "- The other branches are running at the same time on the same canvas. Do not "
-        "edit the graph (no added, deleted or rewired nodes) and do not start "
-        "conversations of your own.",
+        "- The other branches are running at the same time on the same canvas. Values "
+        "on your own stages are yours to set (set_canvas_node_params, "
+        "place_canvas_text): they are kept for you, used by your runs, and shown on "
+        "the user's canvas when the lead next takes a turn. The graph itself is not "
+        "yours to change - no added, deleted, rewired or switched-off nodes. If a "
+        "stage cannot be done on the graph as it is, say in your report exactly what "
+        "should change and the lead will do it. Do not start conversations of your "
+        "own.",
         "- A REVIEW in your stages is not yours to hold and not yours to answer. When you "
         "reach one, end your turn with a report whose first line is `REVIEW <its id>` and "
         "which lists every output of the stage as an absolute path (a written stage: the "

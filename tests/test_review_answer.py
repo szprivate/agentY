@@ -131,7 +131,8 @@ class AStopRaisedWithNoPageWatching(unittest.TestCase):
         self.assertTrue(self.srv._watch_delivers("run2", 7, ev))      # another run's own
 
     def test_edits_to_the_graph_are_still_not_replayed(self):
-        for op in ("edit_graph", "place_text", "delete_nodes", "set_mode", ""):
+        # (Values are, once - tests/test_branch_canvas.py.)
+        for op in ("edit_graph", "delete_nodes", "set_mode", ""):
             self.assertFalse(self.srv._watch_delivers("run1", 1, {"type": "canvas_patch", "op": op}))
 
     def test_the_stream_asks_before_it_skips(self):

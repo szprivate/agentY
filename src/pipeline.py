@@ -3046,7 +3046,7 @@ class Pipeline:
             """
             if str(workflow_path or "").strip():
                 return self._set_built_node_params(workflow_path, node_id, params)
-            _held = self._canvas_lease_refusal()
+            _held = self._canvas_lease_refusal(structural=False)
             if _held:
                 return _held
             sel = getattr(self, "_canvas_selection", []) or []
@@ -3109,7 +3109,7 @@ class Pipeline:
                 "params": params,
                 "node_title": node.get("title") or node.get("type") or "",
             }
-            _push_patch(_patch)
+            _where = self._send_canvas_value(_patch)
             self._canvas_note_patch(_patch)
             self._note_loop_write(node_id, params)
             result = {
@@ -3118,6 +3118,8 @@ class Pipeline:
                 "node": node.get("title") or node.get("type"),
                 "changed": params,
             }
+            if _where:
+                result["where"] = _where
             if unknown:
                 # Not fatal — the frontend adds the widget if it can — but flag it.
                 result["warning"] = (f"widget(s) {unknown} were not in the node's known "
@@ -3509,7 +3511,7 @@ class Pipeline:
                 hook_node_id: The id of the TEXT hook from the ``[CANVAS HOOKS]`` block.
                 text: The final written answer to place (plain text / markdown).
             """
-            _held = self._canvas_lease_refusal()
+            _held = self._canvas_lease_refusal(structural=False)
             if _held:
                 return _held
             if not str(text or "").strip():
@@ -3583,7 +3585,7 @@ class Pipeline:
             from src.utils.agentY_server import _place_text_nodes_on_canvas
             place = _place_text_nodes_on_canvas()
 
-            _push_patch({
+            _where = self._send_canvas_value({
                 "op": "place_text",
                 "hook_node_id": str(hook_node_id),
                 "text": str(text),
@@ -3596,6 +3598,9 @@ class Pipeline:
                     if place else
                     "Placed NO node on the canvas — that switch is off, so do not "
                     "tell the user there is one")
+            if _where:
+                head = ("Wrote your answer for this branch; the reference node goes onto "
+                        "the canvas with the lead's next turn" if place else head)
             if keep_live:
                 msg = (head + "; left the hook wired and injected your answer into "
                        "the graph at run time"
@@ -3668,7 +3673,7 @@ class Pipeline:
                     the goal depends on the roll (composition, pose) rather than on
                     wording.
             """
-            _held = self._canvas_lease_refusal()
+            _held = self._canvas_lease_refusal(structural=False)
             if _held:
                 return _held
             import copy as _copy
@@ -3766,8 +3771,9 @@ class Pipeline:
                 # the loop work in their own graph rather than being told about it
                 # afterwards. It also means an interrupted loop leaves the canvas
                 # holding the value that produced the last output they saw.
-                _push_patch({"node_id": tid, "params": {tparam: value},
-                             "node_title": target.get("title") or target.get("class_type") or ""})
+                self._send_canvas_value(
+                    {"node_id": tid, "params": {tparam: value},
+                     "node_title": target.get("title") or target.get("class_type") or ""})
                 graph = _copy.deepcopy(base)
                 graph[tid].setdefault("inputs", {})[tparam] = value
                 graph = self._stage_graph(graph, [tid])
@@ -4766,6 +4772,61 @@ class Pipeline:
         except Exception:  # noqa: BLE001 - never cost the run
             return graph
 
+    def _send_canvas_value(self, patch: dict) -> str:
+        """Send a value write where it belongs; returns "" or a line for the agent.
+
+        From the lead, or any ordinary conversation: to the canvas. From a branch:
+        into the branch's own copy and onto its lead's list, which the lead's next
+        turn puts on the canvas.
+        """
+        from src.utils.canvas_patch import push as _push_patch
+        branch = self._branch_info()
+        if not branch:
+            _push_patch(patch)
+            return ""
+        try:
+            from src.utils import branch_canvas as _bc
+            _bc.note(self._thread_id_now(), patch)
+            _bc.queue(str(branch.get("lead_id") or ""), patch, str(branch.get("name") or ""))
+        except Exception as exc:  # noqa: BLE001 - the write still counts for this turn
+            if getattr(self, "_verbose", False):
+                print(f"pipeline: could not keep a branch's canvas value ({exc})")
+        return ("Kept as this branch's own value: it holds for the rest of your work "
+                "and is used by your runs. It appears on the user's canvas with the "
+                "lead's next turn, not now.")
+
+    def _take_branch_values(self, canvas_prompt) -> list:
+        """What this conversation's branches wrote since its last turn.
+
+        Laid over the canvas this turn was handed, so the turn reads them as
+        being there; :meth:`_deliver_branch_values` then sends them to the page.
+        Not counted as this turn's own edits - it did not make them.
+        """
+        # With no canvas in hand there is no page to put them on: they wait.
+        if self._branch_info() or not (isinstance(canvas_prompt, dict) and canvas_prompt):
+            return []
+        try:
+            from src.utils import branch_canvas as _bc
+            from src.utils.canvas_edit import apply_patch
+            waiting = _bc.take(self._thread_id_now())
+            for patch in waiting:
+                if patch.get("op") is None:
+                    apply_patch(canvas_prompt, patch)
+        except Exception:  # noqa: BLE001
+            return []
+        return waiting
+
+    def _deliver_branch_values(self) -> int:
+        """Put on the canvas what this conversation's branches wrote."""
+        from src.utils.canvas_patch import push as _push_patch
+        waiting = list(getattr(self, "_branch_values_waiting", None) or [])
+        self._branch_values_waiting = []
+        for patch in waiting:
+            _push_patch(patch)
+        if waiting and getattr(self, "_verbose", False):
+            print(f"pipeline: {len(waiting)} value(s) written by branches go onto the canvas.")
+        return len(waiting)
+
     def _user_opened_turn(self) -> bool:
         """Whether the message that opened this turn is the user's own."""
         return self._turn_origin() not in ("lead", "shots")
@@ -5224,6 +5285,12 @@ class Pipeline:
             from src.utils.canvas_hooks import link_through_nodes as _link
             from src.utils.canvas_hooks import strip_exec_links as _no_exec
             canvas_prompt = _no_exec(canvas_prompt)
+            if self._branch_info():
+                # What this branch set in its earlier turns: it never went onto the
+                # shared canvas (src/utils/branch_canvas.py), so it is put back here.
+                from src.utils import branch_canvas as _bc
+                _bc.overlay(canvas_prompt, self._thread_id_now())
+            self._branch_values_waiting = self._take_branch_values(canvas_prompt)
             canvas_hooks = _link(canvas_hooks, canvas_prompt)
         except Exception as exc:  # noqa: BLE001
             if self._verbose:
@@ -5415,6 +5482,8 @@ class Pipeline:
         # Drop any tool-activity / canvas-patch left over from a previous turn.
         _clear_tools()
         _clear_canvas_patch()
+        # What this conversation's branches wrote while it was not looking.
+        self._deliver_branch_values()
         _clear_exec_errors()
         # A halt the user has just answered is over — tell the panel, so the action
         # bar stops offering Continue / Stop. Pushed here rather than where the
@@ -5877,12 +5946,34 @@ class Pipeline:
 
     # ── Internal helpers ─────────────────────────────────────────────── #
 
-    def _canvas_lease_refusal(self) -> str:
+    def _canvas_lease_refusal(self, structural: bool = True) -> str:
         """"" when this turn may change the open canvas, else the tool's answer.
 
         Several conversations can run at once and they share one canvas; the
         first to change it holds it until its turn ends (src/utils/canvas_lease.py).
+
+        A branch of a pipeline is the exception, and never holds it: its values
+        are kept as its own and reach the canvas through its lead
+        (src/utils/branch_canvas.py), so branches do not wait on each other.
+        What it may not do is change the graph itself - that is *structural*.
         """
+        branch = self._branch_info()
+        if branch:
+            if not structural:
+                return ""
+            return json.dumps({
+                "status": "not_in_a_branch",
+                "error": ("This conversation is a branch of a pipeline. A branch sets "
+                          "values on its own stages; it does not add, remove, rewire or "
+                          "switch off nodes - the canvas is shared with the other "
+                          "branches, and its lead is the one that changes it."),
+                "what_to_do": ("Nothing on the canvas was changed. If your stage cannot be "
+                               "done on the graph as it is, end your turn with a report "
+                               "that says exactly what should change (which nodes, wired "
+                               "how) - the lead reads it and makes the change. Values "
+                               "(set_canvas_node_params, place_canvas_text) are yours to "
+                               "set."),
+            })
         try:
             from agenty_core.utils import turn_scope
             from src.utils import canvas_lease
