@@ -501,7 +501,17 @@ def to_otio(timeline: dict, name: str = "agentY edit") -> dict:
         tracks.append(track("Audio", "A1", [_otio_clip(
             os.path.basename(str(audio["src"])), audio["src"], float(audio.get("in") or 0.0),
             duration(timeline), rate)]))
+    # A text is over the film at a moment, not inside a clip: a marker on the
+    # whole timeline, where an editor sees it as a note of what goes there and
+    # the viewer draws it as a track of its own.
+    texts = [{"OTIO_SCHEMA": "Marker.2", "name": str(o.get("text") or "").splitlines()[0][:80]
+              if str(o.get("text") or "").strip() else "", "color": "PURPLE",
+              "marked_range": _range(float(o.get("start") or 0.0), float(o.get("length") or 0.0), rate),
+              "metadata": {"agentY": {"kind": "text", "text": str(o.get("text") or ""),
+                                      "preset": str(o.get("preset") or ""),
+                                      "params": dict(o.get("params") or {})}}}
+             for o in timeline.get("overlays") or []]
     return {"OTIO_SCHEMA": "Timeline.1", "name": name, "metadata": {"made_by": "agentY"},
             "global_start_time": None,
             "tracks": {"OTIO_SCHEMA": "Stack.1", "name": "tracks", "metadata": {},
-                       "source_range": None, "effects": [], "markers": [], "children": tracks}}
+                       "source_range": None, "effects": [], "markers": texts, "children": tracks}}
