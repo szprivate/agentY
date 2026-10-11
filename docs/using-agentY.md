@@ -611,8 +611,17 @@ Each render is saved like any other result (`…/videos/v###/…`, one version p
 round) with an **`.otio`** file beside it. That is an OpenTimelineIO timeline:
 Resolve, Nuke Studio and Premiere open it, with the cut laid out on the original
 shot files and each text as a marker at its moment. The **bEpic viewer** reads it
-too: open the film there and the cut appears as a strip over the scrub bar, shot
-by shot, with the dissolves, the texts and the sound. Click a shot to go to it.
+too: open the film there and its **Edit panel** comes up with the cut, shot by
+shot, with the dissolves, the texts and the sound.
+
+**Cutting it yourself.** In that panel you can trim a shot by dragging its edge,
+drag a shot to another place, move a text, drop in more clips from the file
+browser or the canvas, and save. That writes your cut into the `.otio` - it does
+not render (the viewer never starts a render). Then tell the agent to render your
+cut: it loads the file and renders that, rather than its own version. On the next
+pipeline turn it is also told by itself that you changed the cut. A cut you
+started in the panel from nothing is saved under `edits/` in the output folder;
+name that file to the agent the same way.
 
 ### The run ledger: what is already settled
 

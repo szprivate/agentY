@@ -68,6 +68,8 @@ _BOUND = (
     "_stage_graph",
     "_keeplive_prompt",
     "_user_opened_turn",
+    "_edit_note_loaded",
+    "_edit_changed_in_viewer",
     "_edit_hook",
     "_edit_load",
     "_edit_save",

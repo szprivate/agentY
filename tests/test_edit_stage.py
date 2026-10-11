@@ -313,7 +313,7 @@ class TheTools(unittest.TestCase):
     def test_a_bad_operation_changes_nothing_and_says_why(self):
         body = self.tool("edit_timeline")
         self.assertLess(body.index("timeline = _et.apply(timeline, list(ops), known)"),
-                        body.index("self._edit_save(str(hook_node_id), timeline)"))
+                        body.rindex("self._edit_save(str(hook_node_id), timeline)"))
         self.assertIn('return json.dumps({"error": f"not changed - {exc}",', body)
 
     def test_a_render_is_checked_first_and_is_the_stages_product(self):

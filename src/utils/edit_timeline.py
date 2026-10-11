@@ -469,8 +469,10 @@ def _url(path: str) -> str:
     return "file:///" + p.lstrip("/")
 
 
-def _otio_clip(name: str, src: str, start: float, length: float, rate: float) -> dict:
-    return {"OTIO_SCHEMA": "Clip.1", "name": name, "metadata": {}, "effects": [], "markers": [],
+def _otio_clip(name: str, src: str, start: float, length: float, rate: float,
+               note: dict | None = None) -> dict:
+    return {"OTIO_SCHEMA": "Clip.1", "name": name,
+            "metadata": {"agentY": dict(note)} if note else {}, "effects": [], "markers": [],
             "source_range": _range(start, length, rate),
             "media_reference": {"OTIO_SCHEMA": "ExternalReference.1", "name": "", "metadata": {},
                                 "available_range": None, "target_url": _url(src)}}
@@ -480,16 +482,24 @@ def to_otio(timeline: dict, name: str = "agentY edit") -> dict:
     rate = float(timeline.get("fps") or 24.0)
     clips = timeline.get("clips") or []
     video = []
+    def halves(seconds: float) -> tuple:
+        # In whole frames, and adding up: two rounded halves of a 25-frame
+        # dissolve are 24 frames, and the film comes back a frame short.
+        frames = round(float(seconds or 0.0) * rate)
+        first = frames // 2
+        return first / rate, (frames - first) / rate
+
     for i, c in enumerate(clips):
-        head = float(c.get("transition") or 0.0) / 2 if i else 0.0
-        tail = float(clips[i + 1].get("transition") or 0.0) / 2 if i + 1 < len(clips) else 0.0
-        if head:
+        head, before = halves(c.get("transition") if i else 0.0)[0], halves(c.get("transition") if i else 0.0)[1]
+        tail = halves(clips[i + 1].get("transition"))[1] if i + 1 < len(clips) else 0.0
+        if head or before:
             video.append({"OTIO_SCHEMA": "Transition.1", "name": "", "metadata": {},
                           "transition_type": "SMPTE_Dissolve",
-                          "in_offset": _rt(head, rate), "out_offset": _rt(head, rate)})
+                          "in_offset": _rt(head, rate), "out_offset": _rt(before, rate)})
         video.append(_otio_clip(c.get("label") or c.get("id") or f"clip {i + 1}", c["src"],
                                 float(c.get("in") or 0.0) + head,
-                                clip_length(c) - head - tail, rate))
+                                clip_length(c) - head - tail, rate,
+                                {"volume": c["volume"]} if c.get("volume") not in (None, 1, 1.0) else None))
 
     def track(kind: str, label: str, children: list) -> dict:
         return {"OTIO_SCHEMA": "Track.1", "name": label, "kind": kind, "metadata": {},
@@ -500,7 +510,8 @@ def to_otio(timeline: dict, name: str = "agentY edit") -> dict:
     if audio:
         tracks.append(track("Audio", "A1", [_otio_clip(
             os.path.basename(str(audio["src"])), audio["src"], float(audio.get("in") or 0.0),
-            duration(timeline), rate)]))
+            duration(timeline), rate,
+            {"bed": True, "gain": audio.get("gain", 1.0), "fade_out": audio.get("fade_out", 1.0)})]))
     # A text is over the film at a moment, not inside a clip: a marker on the
     # whole timeline, where an editor sees it as a note of what goes there and
     # the viewer draws it as a track of its own.
@@ -511,7 +522,131 @@ def to_otio(timeline: dict, name: str = "agentY edit") -> dict:
                                       "preset": str(o.get("preset") or ""),
                                       "params": dict(o.get("params") or {})}}}
              for o in timeline.get("overlays") or []]
-    return {"OTIO_SCHEMA": "Timeline.1", "name": name, "metadata": {"made_by": "agentY"},
+    return {"OTIO_SCHEMA": "Timeline.1", "name": name,
+            "metadata": {"made_by": "agentY",
+                         "agentY": {"width": timeline.get("width"), "height": timeline.get("height"),
+                                    "clip_sound": bool(timeline.get("clip_sound", True))}},
             "global_start_time": None,
             "tracks": {"OTIO_SCHEMA": "Stack.1", "name": "tracks", "metadata": {},
                        "source_range": None, "effects": [], "markers": texts, "children": tracks}}
+
+
+# ── and back ─────────────────────────────────────────────────────────────────
+#
+# A cut comes back from an .otio when it was changed somewhere else: in the bEpic
+# viewer's Edit panel, or in an editing program. What the file holds is taken as
+# the cut; what it cannot hold (the film's size) stays as it was.
+
+def _rt_seconds(rt) -> float:
+    try:
+        rate = float(rt.get("rate") or 0)
+        return float(rt.get("value") or 0) / rate if rate else 0.0
+    except (AttributeError, TypeError, ValueError):
+        return 0.0
+
+
+def _range_seconds(time_range) -> tuple:
+    if not isinstance(time_range, dict):
+        return 0.0, 0.0
+    return _rt_seconds(time_range.get("start_time") or {}), _rt_seconds(time_range.get("duration") or {})
+
+
+def _path(ref) -> str:
+    url = str((ref or {}).get("target_url") or "") if isinstance(ref, dict) else ""
+    if url.startswith("file:///"):
+        return url[8:] if len(url) > 9 and url[9] == ":" else url[7:]
+    if url.startswith("file://"):
+        return "//" + url[7:]
+    return url
+
+
+def _agenty(obj) -> dict:
+    meta = obj.get("metadata") if isinstance(obj, dict) else None
+    note = meta.get("agentY") if isinstance(meta, dict) else None
+    return note if isinstance(note, dict) else {}
+
+
+def viewer_stamp(doc) -> str:
+    """When *doc* was last changed in the bEpic viewer ("" = it was not)."""
+    meta = doc.get("metadata") if isinstance(doc, dict) else None
+    note = meta.get("bepic") if isinstance(meta, dict) else None
+    return str(note.get("edited") or "") if isinstance(note, dict) else ""
+
+
+def from_otio(doc: dict, base: dict | None = None) -> dict:
+    """The timeline an OpenTimelineIO document holds.
+
+    Clips come back at their full length with the dissolve that leads into them
+    (the file lets two clips meet in the middle of one). Markers on the timeline
+    are the texts; one that names no preset becomes a caption. *base* is the
+    timeline this replaces: its size and frame rate are kept, since the file does
+    not say what the film is.
+    """
+    if not isinstance(doc, dict) or not str(doc.get("OTIO_SCHEMA") or "").startswith("Timeline"):
+        raise EditError("that file is not an OpenTimelineIO timeline")
+    note = _agenty(doc)
+    tl = new((base or {}).get("fps") or 24.0,
+             (base or {}).get("width") or note.get("width") or 1920,
+             (base or {}).get("height") or note.get("height") or 1080)
+    tl["clip_sound"] = bool(note.get("clip_sound", (base or {}).get("clip_sound", True)))
+    stack = doc.get("tracks") or {}
+    tracks = [t for t in (stack.get("children") or []) if isinstance(t, dict)
+              and str(t.get("OTIO_SCHEMA") or "").startswith("Track")]
+    video = next((t for t in tracks if str(t.get("kind") or "Video").lower() == "video"), None)
+    if video is None:
+        raise EditError("that timeline has no video track")
+    pending = None
+    for child in video.get("children") or []:
+        if not isinstance(child, dict):
+            continue
+        schema = str(child.get("OTIO_SCHEMA") or "")
+        if schema.startswith("Transition"):
+            before = _rt_seconds(child.get("in_offset") or {})
+            after = _rt_seconds(child.get("out_offset") or {})
+            if tl["clips"]:
+                tl["clips"][-1]["out"] = round(tl["clips"][-1]["out"] + after, 4)
+            pending = (before, after)
+            continue
+        if not schema.startswith("Clip"):
+            pending = None
+            continue
+        src = _path(child.get("media_reference"))
+        start, length = _range_seconds(child.get("source_range"))
+        if not src or length <= 0:
+            pending = None
+            continue
+        clip = {"id": f"c{len(tl['clips']) + 1}", "src": src, "in": start, "out": start + length,
+                "transition": 0.0, "label": str(child.get("name") or "")}
+        if pending:
+            before, after = pending
+            clip["in"] = max(0.0, start - before)
+            clip["transition"] = round(before + after, 4)
+            pending = None
+        volume = _agenty(child).get("volume")
+        if isinstance(volume, (int, float)) and not isinstance(volume, bool):
+            clip["volume"] = float(volume)
+        clip["in"], clip["out"] = round(clip["in"], 4), round(clip["out"], 4)
+        tl["clips"].append(clip)
+    if not tl["clips"]:
+        raise EditError("that timeline has no clips with a file")
+    for m in stack.get("markers") or []:
+        if not isinstance(m, dict):
+            continue
+        start, length = _range_seconds(m.get("marked_range"))
+        about = _agenty(m)
+        text = str(about.get("text") or m.get("name") or "").strip()
+        if not text or length <= 0:
+            continue
+        tl["overlays"].append({"id": f"t{len(tl['overlays']) + 1}",
+                               "preset": str(about.get("preset") or "caption"), "text": text,
+                               "start": round(start, 4), "length": round(length, 4),
+                               "params": dict(about.get("params") or {})})
+    audio = next((t for t in tracks if str(t.get("kind") or "").lower() == "audio"), None)
+    beds = [c for c in (audio or {}).get("children") or [] if isinstance(c, dict)
+            and str(c.get("OTIO_SCHEMA") or "").startswith("Clip")]
+    if len(beds) == 1 and _path(beds[0].get("media_reference")):
+        about = _agenty(beds[0])
+        start, _length = _range_seconds(beds[0].get("source_range"))
+        tl["audio"] = {"src": _path(beds[0].get("media_reference")), "in": round(start, 4),
+                       "gain": float(about.get("gain", 1.0)), "fade_out": float(about.get("fade_out", 1.0))}
+    return tl

@@ -2820,6 +2820,11 @@ class Pipeline:
               FILM. A line break in the text is a second line. With ``"text_id":
               "t1"`` it changes that text instead of adding one.
             * ``{"op": "text_remove", "text_id": "t1"}``
+            * ``{"op": "load", "file": "<path>.otio"}`` - take the cut FROM a
+              timeline file: the one beside a film, after the user changed it in
+              the viewer's Edit panel, or one they made there or in an editing
+              program. It replaces the timeline, so it must be the FIRST
+              operation; anything after it is applied to what was loaded.
             * ``{"op": "label", "clip": id, "label": "…"}``, ``{"op": "clear"}``
 
             A clip is named by its id (``c1``, ``c2``, …) or by its position.
@@ -2838,6 +2843,24 @@ class Pipeline:
             if ahead:
                 return json.dumps(ahead)
             timeline = self._edit_load(str(hook_node_id), hook)
+            # A cut changed elsewhere - in the viewer's Edit panel, or an editing
+            # program - comes in as a file, before anything else is applied to it.
+            loaded = ""
+            if ops and isinstance(ops[0], dict) and str(ops[0].get("op") or "").lower() == "load":
+                try:
+                    path = str(ops[0].get("file") or "").strip().strip('"')
+                    if not path.lower().endswith(".otio") or not os.path.isfile(path):
+                        return json.dumps({"error": f"not loaded - '{path}' is not an .otio file that exists"})
+                    doc = json.loads(Path(path).read_text(encoding="utf-8"))
+                    timeline = _et.from_otio(doc, timeline)
+                    loaded = path
+                    self._edit_note_loaded(str(hook_node_id), _et.viewer_stamp(doc))
+                except _et.EditError as exc:
+                    return json.dumps({"error": f"not loaded - {exc}"})
+                except (OSError, ValueError) as exc:
+                    return json.dumps({"error": f"not loaded - the file could not be read: {exc}"})
+                ops = list(ops[1:])
+                self._edit_save(str(hook_node_id), timeline)
             if ops:
                 try:
                     # What the sources ARE, so a clip can be added whole and an
@@ -2863,7 +2886,8 @@ class Pipeline:
                 note = (f"The node asks for a film of {wanted:g} s and this is {now:g} s"
                         + (" - a fit operation brings it down." if now > wanted
                            else " - it is shorter; say so, or add material."))
-            return json.dumps({"status": "changed" if ops else "unchanged",
+            return json.dumps({"status": "changed" if ops or loaded else "unchanged",
+                               **({"loaded_from": loaded} if loaded else {}),
                                "timeline": _et.summary(timeline),
                                **({"note": note} if note else {}),
                                "next": "render_edit(hook_node_id) when the cut is ready to look at."})
@@ -5678,6 +5702,37 @@ class Pipeline:
         if lead:
             _cs.kv_set(lead, f"edit:{hook_node_id}", timeline)
 
+    def _edit_note_loaded(self, hook_node_id: str, stamp: str) -> None:
+        """Remember which viewer edit of a stage's cut has been taken in."""
+        try:
+            from src.utils import conversation_store as _cs
+            lead = self._ledger_lead()
+            if lead:
+                _cs.kv_set(lead, f"edit_loaded:{hook_node_id}", str(stamp or ""))
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _edit_changed_in_viewer(self, hook_node_id: str) -> str:
+        """The stage's ``.otio``, when the user changed it in the viewer and that
+        change has not been loaded yet ("" otherwise)."""
+        try:
+            from src.utils import conversation_store as _cs
+            from src.utils import edit_timeline as _et
+            from src.utils import run_ledger as _rl
+            lead = self._ledger_lead()
+            films = list(((_rl.stage(lead, hook_node_id) if lead else None) or {}).get("outputs") or [])
+            if not films:
+                return ""
+            otio = os.path.splitext(str(films[-1]))[0] + ".otio"
+            if not os.path.isfile(otio):
+                return ""
+            stamp = _et.viewer_stamp(json.loads(Path(otio).read_text(encoding="utf-8")))
+            if stamp and stamp != str(_cs.kv_get(lead, f"edit_loaded:{hook_node_id}", "") or ""):
+                return otio
+        except Exception:  # noqa: BLE001
+            pass
+        return ""
+
     def _edit_states(self) -> dict:
         """``{hook_id: "5 clips, 23.5 s"}`` for the edit stages on the canvas."""
         try:
@@ -5692,6 +5747,14 @@ class Pipeline:
                     if n:
                         out[hid] = (f"{n} clip(s), {_et.duration(tl):g} s - "
                                     "edit_timeline(id, ops=[]) shows it")
+                    changed = self._edit_changed_in_viewer(hid)
+                    if changed:
+                        # The user's own cut outranks the one on record here.
+                        out[hid] = ((out.get(hid) or "none yet")
+                                    + ". THE USER CHANGED THIS CUT IN THE VIEWER since it was "
+                                      "rendered: before anything else, edit_timeline("
+                                    + hid + ', ops=[{"op": "load", "file": "' + changed.replace("\\", "/")
+                                    + '"}]), then render_edit - their cut, not yours')
             return out
         except Exception:  # noqa: BLE001
             return {}
