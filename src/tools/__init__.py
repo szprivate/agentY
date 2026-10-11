@@ -113,6 +113,7 @@ from src.tools.shots import (  # noqa: F401
     message_shot,
     shot_status,
     stop_shot,
+    close_shot,
     set_sequence_notes,
 )
 # Headless batch jobs — shared with agentY-mcp via agenty_core
@@ -547,6 +548,7 @@ ORCHESTRATOR_TOOLS: list = [
     message_shot,
     shot_status,
     stop_shot,
+    close_shot,
     set_sequence_notes,
     # coder (custom-node-from-github skill): turn a repo into a ComfyUI custom node
     create_custom_node,

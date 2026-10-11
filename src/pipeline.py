@@ -4967,6 +4967,31 @@ class Pipeline:
                 self._ledger_approve(halt)
         elif halts and self._review_reply == "stop":
             self._ledger("reopened", [str(h.hook_node_id) for h in halts])
+        self._close_finished_branches()
+
+    def _close_finished_branches(self) -> list:
+        """A branch whose stages are all approved has nothing left to do: close it.
+
+        Done by the lead's turn rather than left to the lead to remember - an
+        idle branch still counts as one of the run's conversations, and one that
+        is messaged again by mistake starts working on settled stages.
+        """
+        if self._branch_info():
+            return []
+        try:
+            from src.utils import run_ledger as _rl
+            from src.utils import shots as _shots
+            lead = self._ledger_lead()
+            if not lead:
+                return []
+            approved, known = _rl.approved_ids(lead)
+            closed = _shots.close_approved(lead, approved, known)
+        except Exception:  # noqa: BLE001
+            return []
+        if closed:
+            _push_progress("✓ Closed " + ("branch " if len(closed) == 1 else "branches ")
+                           + ", ".join(closed) + " — all of its work is approved.")
+        return closed
 
     def _ledger_approve(self, halt) -> None:
         """The user let *halt* go on: what goes on from it is now on record."""

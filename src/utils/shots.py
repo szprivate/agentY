@@ -221,9 +221,23 @@ def _err(msg: str, **kw) -> dict:
     return {"ok": False, "error": msg, **kw}
 
 
-def _find(lead_id: str, name: str) -> dict | None:
+# A shot that has ended for good. It keeps its conversation, readable as it was,
+# and never takes another turn: "closed" when all its work was approved,
+# "replaced" when the approach changed and a fresh one took over its stages.
+ENDED = ("closed", "replaced")
+
+
+def is_ended(shot: dict | None) -> bool:
+    return bool(shot) and str(shot.get("status") or "") in ENDED
+
+
+def _find(lead_id: str, name: str, ended: bool = False) -> dict | None:
+    """The shot called *name*: the one still at work, else (with *ended*) the
+    most recent one that has ended - a replaced branch gives its name to the next."""
     want = str(name or "").strip().lower()
-    for s in cs.shots_of(lead_id):
+    shots = cs.shots_of(lead_id)
+    live = [s for s in shots if not is_ended(s)]
+    for s in live + (list(reversed([s for s in shots if is_ended(s)])) if ended else []):
         if s["name"].strip().lower() == want or s["thread_id"] == name:
             return s
     return None
@@ -253,7 +267,7 @@ def start_shot(lead_id: str, name: str, briefing: str, *,
     if existing:
         return _err(f"Shot '{name}' already exists — use message_shot to give it more to do.",
                     thread_id=existing["thread_id"])
-    if len(cs.shots_of(lead_id)) >= MAX_SHOTS_PER_LEAD:
+    if len([s for s in cs.shots_of(lead_id) if not is_ended(s)]) >= MAX_SHOTS_PER_LEAD:
         return _err(f"This sequence already has {MAX_SHOTS_PER_LEAD} shots.")
     scope = _clean_ids(hook_ids)
     # A branch runs stages of a canvas the user has already built and asked to
@@ -288,7 +302,13 @@ def message_shot(lead_id: str, name: str, text: str) -> dict:
     """More for a shot to do: handed to its running turn, or a new turn of it."""
     shot = _find(lead_id, name)
     if not shot:
-        return _err(f"No shot '{name}' in this sequence.", shots=[s["name"] for s in cs.shots_of(lead_id)])
+        gone = _find(lead_id, name, ended=True)
+        if gone:
+            return _err(f"Shot '{gone['name']}' is {gone['status']} and takes no more work — "
+                        "it is not reopened. For more work on its stages, start a fresh one "
+                        "with start_shot (the same name is free again).")
+        return _err(f"No shot '{name}' in this sequence.",
+                    shots=[s["name"] for s in cs.shots_of(lead_id) if not is_ended(s)])
     text = str(text or "").strip()
     if not text:
         return _err("Nothing to send.")
@@ -313,6 +333,63 @@ def stop_shot(lead_id: str, name: str) -> dict:
         return _err(f"No shot '{name}' in this sequence.")
     stopped = bool(_hooks["stop_thread"] and _hooks["stop_thread"](shot["thread_id"]))
     return {"ok": True, "shot": shot["name"], "stopped": stopped}
+
+
+def close_shot(lead_id: str, name: str, replaced: bool = False, why: str = "") -> dict:
+    """End a shot for good: stop its turn if one is running and mark it.
+
+    *replaced* when the approach changed and a fresh shot will take its stages
+    over; otherwise it is closed because its work is done and approved. Either
+    way it takes no more turns (so it holds no agent), and its conversation stays.
+    """
+    shot = _find(lead_id, name)
+    if not shot:
+        gone = _find(lead_id, name, ended=True)
+        if gone:
+            return {"ok": True, "shot": gone["name"], "status": gone["status"],
+                    "note": "it had already ended"}
+        return _err(f"No shot '{name}' in this sequence.")
+    tid = shot["thread_id"]
+    if _hooks["is_running"] and _hooks["is_running"](tid) and _hooks["stop_thread"]:
+        _hooks["stop_thread"](tid)
+    state = "replaced" if replaced else "closed"
+    cs.set_shot_status(tid, state)
+    with _LOCK:
+        # Nothing it still had to say is worth waking the lead for.
+        _pending[lead_id] = [r for r in _pending.get(lead_id, []) if r.get("thread_id") != tid]
+    try:
+        cs.add_message(tid, "assistant",
+                       ("↺ This branch was replaced" if replaced else "✓ This branch is closed")
+                       + (f": {why.strip()}" if str(why or "").strip() else
+                          (" by a fresh one after the approach changed."
+                           if replaced else " — all of its work is approved."))
+                       + " It takes no more turns.")
+    except Exception:  # noqa: BLE001
+        pass
+    return {"ok": True, "shot": shot["name"], "thread_id": tid, "status": state}
+
+
+def close_approved(lead_id: str, approved_ids, work_ids=None) -> list[str]:
+    """Close every branch whose stages are ALL settled; returns the names closed.
+
+    *approved_ids* - the stages the run ledger has as approved; *work_ids* - every
+    stage it knows. A branch is closed when it is not running, has reported, and
+    each of its stages the ledger knows is approved. A plain shot (no stages of a
+    canvas) is never closed this way: nothing says its work was approved.
+    """
+    ok = {str(i) for i in approved_ids or []}
+    known = None if work_ids is None else {str(i) for i in work_ids}
+    closed = []
+    for s in cs.shots_of(lead_id):
+        if is_ended(s) or s["status"] not in ("done",):
+            continue
+        if _hooks["is_running"] and _hooks["is_running"](s["thread_id"]):
+            continue
+        mine = [i for i in scope_of(s["thread_id"]) if known is None or i in known]
+        if mine and all(i in ok for i in mine):
+            if close_shot(lead_id, s["name"]).get("ok"):
+                closed.append(s["name"])
+    return closed
 
 
 def stop_all(lead_id: str) -> list[str]:
@@ -389,7 +466,7 @@ def _on_event(event: dict, turn) -> None:
             with _LOCK:
                 _wakes.pop(turn.thread_id, None)
         shot = cs.shot_of(turn.thread_id)
-        if shot:
+        if shot and not is_ended(shot):
             cs.set_shot_status(turn.thread_id, "running")
             _tool_calls[rid] = 0
         return
@@ -412,6 +489,11 @@ def _on_event(event: dict, turn) -> None:
     if ended == "over_budget":
         ended = "stopped"
     shot = cs.shot_of(turn.thread_id)
+    if is_ended(shot):
+        # Closed or replaced while its last turn was still winding down: that
+        # stands, and the lead is not woken by a branch it has let go.
+        _budget_notes.pop(rid, None)
+        return
     if shot:
         cs.set_shot_status(turn.thread_id, ended)
         over = _budget_notes.pop(rid, 0)

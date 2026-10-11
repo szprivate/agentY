@@ -324,16 +324,37 @@ def _stage_line(hid: str, st: dict, full: bool = False) -> str:
     return line
 
 
+def approved_ids(lead_id: str) -> tuple[list, list]:
+    """``(approved, known)`` stage ids of the run still on the canvas."""
+    stages = load(lead_id)["stages"]
+    # Loop and join nodes do no work, and an agent's own check is never "approved"
+    # by anyone: neither is something a branch can still owe.
+    skip = ("loop_start", "loop_break", "join", "qa")
+    known = [h for h, st in stages.items()
+             if not st.get("gone") and (st.get("purpose") or "") not in skip]
+    return [h for h in known if stages[h].get("state") == APPROVED], known
+
+
 def index(lead_id: str, only=None) -> str:
-    """The block the agent is given each turn, or "" while nothing has happened."""
+    """The block the agent is given each turn, or "" while nothing has happened.
+
+    With *only* (a branch: its own stages) the stages settled ELSEWHERE in the
+    run are listed after them - a branch reads the screenplay the trunk wrote and
+    the pictures another branch had approved, and a fresh branch, started after
+    the approach changed, has no conversation to remember them from.
+    """
     ledger = load(lead_id)
     stages = ledger["stages"]
-    ids = [h for h in ledger["order"] if h in stages and not stages[h].get("gone")]
-    if only is not None:
-        ids = [h for h in ids if h in {str(i) for i in only}]
     flow = {"loop_start", "loop_break", "join"}
-    ids = [h for h in ids if (stages[h].get("purpose") or "") not in flow]
-    if not any((stages[h].get("state") or PENDING) != PENDING for h in ids):
+    live = [h for h in ledger["order"] if h in stages and not stages[h].get("gone")
+            and (stages[h].get("purpose") or "") not in flow]
+    ids, elsewhere = live, []
+    if only is not None:
+        mine = {str(i) for i in only}
+        ids = [h for h in live if h in mine]
+        elsewhere = [h for h in live if h not in mine and stages[h].get("state") == APPROVED
+                     and (stages[h].get("purpose") or "") not in ("human_review", "qa")]
+    if not elsewhere and not any((stages[h].get("state") or PENDING) != PENDING for h in ids):
         return ""
     lines = [
         "[RUN LEDGER — kept by the host, not by you. This is what HAS happened in this "
@@ -343,6 +364,10 @@ def index(lead_id: str, only=None) -> str:
         "have changed since is NOT settled any more: say so and ask before relying on it. "
         "ledger_stage(<id>) gives a stage's full file list.]"]
     lines += [_stage_line(h, stages[h]) for h in ids]
+    if elsewhere:
+        lines.append("SETTLED ELSEWHERE IN THE RUN — not your stages, and not yours to redo; "
+                     "this is what you build on:")
+        lines += [_stage_line(h, stages[h]) for h in elsewhere]
     return "\n".join(lines)
 
 
@@ -469,7 +494,8 @@ def plan(lead_id: str, shots: list | None = None, scope_of=None) -> dict:
         for n, b in enumerate(branches, 1):
             members = [str(i) for i in b.get("members") or []]
             shot = None
-            for s in shots or []:
+            # The branch at work first: a replaced one had the same stages.
+            for s in sorted(shots or [], key=lambda s: s.get("status") in ("closed", "replaced")):
                 mine = set(scope_of(s.get("thread_id")) if scope_of else [])
                 if mine & set(members):
                     shot = s

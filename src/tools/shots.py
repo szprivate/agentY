@@ -91,6 +91,32 @@ def shot_status(name: str = "") -> str:
 
 
 @tool
+def close_shot(name: str, replaced: bool = False, why: str = "") -> str:
+    """End one of your shots for good. It takes no more turns and frees its agent;
+    its conversation stays readable. It is not reopened.
+
+    Two reasons to call it:
+
+    * ``replaced=True`` - the APPROACH changed, so the stages this branch was
+      working have changed too. Rebuild that part of the canvas, close the old
+      branch as replaced, then ``start_shot`` a fresh one for the new stages. Do
+      not message the old branch a new plan: its conversation is full of the old
+      one. (Another round of the SAME stages is not this - that is
+      ``message_shot``, in the branch's own conversation.)
+    * ``replaced=False`` - its work is finished and approved. Branches whose
+      stages are all approved are closed for you; call this only for one that
+      was not, e.g. a shot with no review.
+
+    Args:
+        name: The shot's name.
+        replaced: True when a fresh shot takes over because the approach changed.
+        why: Optional few words, shown in the shot's conversation.
+    """
+    from src.utils import shots
+    return _out(shots.close_shot(_lead(), name, replaced=bool(replaced), why=why))
+
+
+@tool
 def stop_shot(name: str) -> str:
     """Stop a shot's running turn (its conversation stays; message_shot resumes it).
 

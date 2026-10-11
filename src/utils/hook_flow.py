@@ -631,6 +631,15 @@ def parallel_lines(flow: Flow, is_work=None) -> list[str]:
         "It cannot add, remove or rewire nodes. If a report says its stage needs the "
         "graph changed, make the change here (edit_canvas_graph), then message_shot "
         "the branch that it is done.")
+    lines.append(
+        "  A BRANCH ENDS. One whose stages are all approved is closed for you: it takes "
+        "no more turns, and message_shot to it is refused. IF THE USER CHANGES THE "
+        "APPROACH so that a branch's STAGES change (different steps, not another round "
+        "of the same ones): rebuild that part of the canvas, close_shot(name, "
+        "replaced=True), then start_shot a fresh branch for the new stages. Do not "
+        "hand the old branch a new plan - its conversation is full of the old one. "
+        "The fresh branch is told what is already settled in the run; you need only "
+        "brief it on its own stages.")
     for n, b in enumerate(par.branches, 1):
         names = "; ".join(_label(by_id[i]) for i in b.members if i in by_id)
         lines.append(

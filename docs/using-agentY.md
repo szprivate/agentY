@@ -530,6 +530,13 @@ conversation](#a-sequence-one-conversation-per-shot):
   changed, it says so in its report and the lead makes the change. This is what
   lets branches work side by side instead of waiting for each other.
 
+- **A branch ends.** Once everything a branch had to do is approved, agentY
+  closes it: it takes no more turns and its conversation stays readable (🔒 in
+  the plan). If you change the approach so that a branch's stages themselves
+  change, the lead rebuilds that part of the canvas, marks the old branch as
+  replaced (↺) and starts a fresh one, which is told what is already settled in
+  the run. Another round of the same stages stays in the same conversation.
+
 ### Bringing branches back together
 
 An **`agentY join`** node (under **agentY ▸ flow**) is where branches meet. Wire
