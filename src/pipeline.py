@@ -2549,6 +2549,189 @@ class Pipeline:
                                        "something else: its defaults are the look."})
 
         @_tool
+        async def find_text_demos(url: str) -> str:
+            """Read a web page of text effects, to make a text preset from one.
+
+            Give it a COLLECTION page (e.g. freefrontend.com/css-text-animations)
+            and it lists the demos the page links to. Give it ONE demo (a CodePen
+            pen) and it returns that demo's markup and CSS, its author, its
+            licence, and what drives it (``driven_by``: scrolling, the mouse, an
+            endless loop) and whether it needs script.
+
+            A demo is a web effect, not a film title, so you never copy it: you
+            write a PRESET from it and hand that to ``try_text_preset``. Pass a
+            demo over, and say why, when it is driven by the mouse, or when what
+            makes it what it is happens in script or in an image rather than in
+            CSS on the text.
+
+            Args:
+                url: A collection page, or one demo.
+            """
+            from src.utils import text_import as _ti
+            try:
+                got = await asyncio.to_thread(_ti.read, str(url or "").strip())
+            except _ti.ImportError_ as exc:
+                return json.dumps({"error": str(exc)})
+            if got.get("kind") == "index":
+                got["next"] = ("Pick the demos worth having (ask the user if they did not say "
+                               "which), then find_text_demos(<its url>) for each one's source.")
+            else:
+                got["next"] = ("Write a preset from this and call try_text_preset. Its rules "
+                               "are in that tool's description.")
+            return json.dumps(got)
+
+        @_tool
+        async def try_text_preset(name: str, css: str, split: str = "none",
+                                  params: dict | None = None, title: str = "",
+                                  description: str = "", use_for: str = "",
+                                  sample_text: str = "", source: str = "", author: str = "",
+                                  licence: str = "") -> str:
+            """Check a text preset you wrote and show the user a test clip of it.
+
+            Nothing is kept yet: the user looks at the clip, and only when they say
+            so do you call ``keep_text_preset``.
+
+            HOW A PRESET IS WRITTEN. It is CSS only. The page is built for you:
+
+            * the text sits in ``<div class="text">`` and is cut into units,
+              ``<span class="u" style="--i:N">``, one per letter, word or line as
+              ``split`` says (``none``: one unit). ``--i`` is the unit's number,
+              ``--n`` how many there are;
+            * these arrive as custom properties: ``--size`` (px), ``--color``,
+              ``--font``, ``--weight``, ``--in`` and ``--out`` (seconds the text
+              takes to arrive and to leave), ``--len`` (seconds it is on screen),
+              and every key of ``params``. Keys ``in``, ``out`` and ``stagger`` are
+              given in seconds; ``x``, ``y`` (percent of the picture) and ``align``
+              place the block and are not yours to use in the CSS.
+
+            It runs ON THE CLOCK, once: an arrival (``animation: … var(--in) …
+            forwards``, staggered with ``calc(var(--i) * var(--stagger))``), a
+            hold, and a leaving that starts at ``calc(var(--len) - var(--out))``.
+            So a demo that loops for ever is cut to one arrival; one that runs on
+            scroll is rewritten on time; one that follows the mouse is not a preset.
+            Name your keyframes with a short prefix of your own. No ``url()``, no
+            ``@import``, no tags, no script - a preset fetches nothing and runs
+            nothing, and one that tries is refused. Use fonts a machine has
+            (Arial, Georgia, …); a web font will not load.
+
+            Args:
+                name: lower_case_with_underscores.
+                css: The preset's CSS.
+                split: none, lines, words or letters.
+                params: Its settings and their defaults, e.g. {"size": 90,
+                    "color": "#fff", "x": 50, "y": 50, "align": "center",
+                    "in": 0.8, "out": 0.5, "stagger": 0.05}.
+                title: A few words a person would call it.
+                description: What it looks like, in a sentence.
+                use_for: What it is good for.
+                sample_text: The words to show it with. Empty: a default line.
+                source: The page it was made from.
+                author: Who made that.
+                licence: The licence find_text_demos reported.
+            """
+            from src.utils import text_import as _ti
+            from src.utils import text_presets as _tp
+            from src.utils.edit_render import RenderError as _RenderError
+            from src.utils.text_render import TextRenderError as _TextError
+            preset = {"name": _tp.slug(name), "css": str(css or ""), "split": str(split or "none"),
+                      "params": dict(params or {}), "title": str(title or "").strip(),
+                      "description": str(description or "").strip(),
+                      "use_for": str(use_for or "").strip(), "source": str(source or "").strip(),
+                      "author": str(author or "").strip(), "licence": str(licence or "").strip()}
+            wrong = _tp.problems(preset)
+            if wrong:
+                return json.dumps({"error": "not a usable preset", "problems": wrong,
+                                   "what_to_do": "Fix them and call this again. Nothing was shown."})
+            if preset["name"] in {n for n, p in _tp.load().items() if p.get("builtin")}:
+                return json.dumps({"error": f"'{preset['name']}' is a built-in preset - give yours "
+                                            "another name."})
+            import tempfile as _tempfile
+            words = str(sample_text or "").strip() or (
+                "Mara Lindqvist\nKitchen, in the morning" if preset["split"] == "lines"
+                else "A quiet morning")
+            clip = os.path.join(_tempfile.mkdtemp(prefix="agenty_preset_"), preset["name"] + ".mp4")
+            try:
+                await asyncio.to_thread(_ti.test_clip, preset, words, clip)
+            except (_RenderError, _TextError) as exc:
+                return json.dumps({"error": f"the test clip could not be made: {exc}"})
+            # Waiting for the user's word, across the turn that carries it.
+            try:
+                from src.utils import conversation_store as _cs
+                thread = str(getattr(self._session, "session_id", "") or "")
+                waiting = _cs.kv_get(thread, "text_presets_waiting", {}) or {}
+                waiting[preset["name"]] = preset
+                _cs.kv_set(thread, "text_presets_waiting", waiting)
+            except Exception:  # noqa: BLE001
+                pass
+            self._pending_text_presets = dict(getattr(self, "_pending_text_presets", None) or {},
+                                              **{preset["name"]: preset})
+            shown = self._show_again([{"path": clip, "number": None, "caption": ""}],
+                                     f"test: {preset['title'] or preset['name']}")
+            return json.dumps({
+                "status": "shown", "name": preset["name"], "clip": clip,
+                "number": (shown[0].get("number") if shown else None),
+                "message": ("A test clip is in the user's panel. It is NOT in the library yet. "
+                            "Tell them what it is and where it came from, and ask whether to "
+                            "keep it. Only when THEY say so: keep_text_preset(name, "
+                            "user_said=\"<their words>\"). If they want it different, change "
+                            "the CSS and try again."),
+            })
+
+        @_tool
+        async def keep_text_preset(name: str, user_said: str) -> str:
+            """Add a preset the user has seen a test clip of to the library.
+
+            Only on the user's own say-so in THIS turn's message, after they were
+            shown the clip (``try_text_preset``): "keep it", "yes, add that one".
+            Not because it looks good to you.
+
+            Args:
+                name: The preset's name, as given to try_text_preset.
+                user_said: Their words, quoted.
+            """
+            from src.utils import text_presets as _tp
+            from src.utils.review_gate import quote_check as _quote
+            key = _tp.slug(name)
+            waiting = dict(getattr(self, "_pending_text_presets", None) or {})
+            thread = str(getattr(self._session, "session_id", "") or "")
+            try:
+                from src.utils import conversation_store as _cs
+                waiting = dict(_cs.kv_get(thread, "text_presets_waiting", {}) or {}, **waiting)
+            except Exception:  # noqa: BLE001
+                _cs = None
+            preset = waiting.get(key)
+            if preset is None:
+                return json.dumps({"error": f"no preset '{name}' is waiting - show the user a "
+                                            "test clip with try_text_preset first.",
+                                   "waiting": sorted(waiting)})
+            heard = self._users_words()
+            if not heard.strip():
+                return json.dumps({"error": "not kept - the user has said nothing in this turn. "
+                                            "Ask them, and keep it when they answer."})
+            why = _quote(user_said, heard)
+            if why:
+                return json.dumps({"error": "not kept - " + why})
+            wrong = _tp.problems(preset)
+            if wrong:
+                return json.dumps({"error": "not kept - it no longer passes the check",
+                                   "problems": wrong})
+            path = _tp.save(preset)
+            waiting.pop(key, None)
+            self._pending_text_presets = {k: v for k, v in
+                                          (getattr(self, "_pending_text_presets", None) or {}).items()
+                                          if k != key}
+            try:
+                if _cs is not None:
+                    _cs.kv_set(thread, "text_presets_waiting", waiting)
+            except Exception:  # noqa: BLE001
+                pass
+            return json.dumps({"status": "kept", "name": key, "file": str(path),
+                               "source": preset.get("source") or "",
+                               "licence": preset.get("licence") or "",
+                               "message": f"'{key}' is in the library: list_text_presets shows it, "
+                                          "and any edit can use it from now on."})
+
+        @_tool
         async def read_rhythm(file: str, sensitivity: float = 0.3) -> str:
             """Where a FILM cuts: its shot lengths, in seconds.
 
@@ -4462,8 +4645,8 @@ class Pipeline:
                  run_python_node, revise_prompt, prompt_autoloop,
                  delete_canvas_nodes, edit_canvas_graph, insert_workflow_into_canvas, refine_canvas_until,
                  list_outputs, show_in_panel, ledger_stage, probe_media, read_rhythm,
-                 read_beats, list_text_presets, edit_timeline, render_edit,
-                 work_in_open_graph,
+                 read_beats, list_text_presets, find_text_demos, try_text_preset,
+                 keep_text_preset, edit_timeline, render_edit, work_in_open_graph,
                  set_canvas_node_mode,
                  run_canvas,
                  loop_check, forward_outputs, name_outputs,

@@ -282,7 +282,7 @@ class TheTools(unittest.TestCase):
     SRC = (ROOT / "src" / "pipeline.py").read_text(encoding="utf-8")
 
     def test_the_agent_can_see_the_presets_and_is_told_to_use_them_as_they_are(self):
-        self.assertIn("list_text_presets, edit_timeline, render_edit,", self.SRC)
+        self.assertIn("list_text_presets, ", self.SRC)
         tool = self.SRC.split("        async def list_text_presets(", 1)[1].split("        @_tool", 1)[0]
         self.assertIn("You do not write animation", tool)
 

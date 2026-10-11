@@ -589,6 +589,15 @@ in) when you ask. The built-in ones are *title, words rising*, *title, letter by
 letter*, *lower third*, *caption* and *end card*. Text is drawn by Chrome or Edge
 on this machine, so one of them has to be installed.
 
+**More presets, from the web.** Point the agent at a page of text effects — a
+collection such as `freefrontend.com/css-text-animations`, or a single CodePen
+demo — and ask for a preset from it. It reads the demo, writes a preset from it
+(a demo is a web effect: one that loops for ever is cut to one arrival, one that
+runs on scroll is put on the clock, one that follows the mouse is passed over),
+and shows you a **test clip** in the panel. Nothing is added until you say so;
+then it is kept with its source, author and licence, and every later edit can
+use it. A preset can only ever be CSS — nothing fetched from a page is run.
+
 The agent does not write the film in one go. It keeps a **timeline** — which clip,
 from where to where, in which order, cut or dissolve — and agentY renders it. So a
 note at the review is a small change: *"shot 3 shorter"* trims one clip, *"swap 4
