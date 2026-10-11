@@ -142,6 +142,67 @@ class ACallThatNamesNodes(unittest.TestCase):
         self.assertIn("cand, dropped = scope_to_nodes(kept, wanted)", trim)
 
 
+class AWrittenValueRunsItsOwnStage(unittest.TestCase):
+    """A value written into a generator queues a run at the end of the turn."""
+
+    def prompt_for(self, targets):
+        import types
+        from src.pipeline import Pipeline
+        clean, _ = ch.splice_hook_nodes(graph(), HOOKS)
+        obj = types.SimpleNamespace(_canvas_base_prompt=clean,
+                                    _canvas_keeplive_targets=list(targets))
+        return clean, Pipeline._keeplive_prompt(obj)
+
+    def test_it_is_that_stage_and_not_the_canvas(self):
+        _clean, queued = self.prompt_for(["26"])
+        self.assertEqual(sorted(queued, key=int), ["26", "31"])
+
+    def test_no_generator_is_queued_without_its_prompt(self):
+        # What ComfyUI refused: 7, 124 and 144 queued beside the stage that ran.
+        _clean, queued = self.prompt_for(["26"])
+        for nid in ("7", "30", "124", "144"):
+            self.assertNotIn(nid, queued)
+
+    def test_two_values_written_in_one_turn_run_both_stages(self):
+        _clean, queued = self.prompt_for(["26", "7"])
+        self.assertEqual(sorted(queued, key=int), ["7", "26", "30", "31"])
+
+    def test_a_canvas_of_one_stage_is_queued_whole(self):
+        clean, queued = self.prompt_for([])
+        self.assertEqual(queued, clean)
+
+    def test_the_turn_end_run_asks_for_it(self):
+        from pathlib import Path
+        src = (Path(__file__).resolve().parent.parent / "src" / "pipeline.py").read_text(encoding="utf-8")
+        self.assertIn("json.dumps(self._keeplive_prompt())", src)
+        self.assertNotIn("_kp.write_text(json.dumps(self._canvas_base_prompt)", src)
+        self.assertEqual(src.count("self._canvas_keeplive_targets = []"), 1)
+
+
+class ALoopOnOneNode(unittest.TestCase):
+    """refine_canvas_until and prompt_autoloop change one value and run again."""
+
+    def cut(self, hooks):
+        import types
+        from src.pipeline import Pipeline
+        clean, _ = ch.splice_hook_nodes(graph(), HOOKS)
+        return clean, Pipeline._stage_graph(types.SimpleNamespace(_canvas_hooks=hooks), clean, ["124"])
+
+    def test_on_a_pipeline_it_runs_that_nodes_stage(self):
+        _clean, queued = self.cut(HOOKS)
+        self.assertEqual(sorted(queued, key=int), ["124", "127"])
+
+    def test_on_an_ordinary_canvas_it_runs_the_graph_that_is_open(self):
+        clean, queued = self.cut(None)
+        self.assertEqual(queued, clean)
+
+    def test_both_loops_cut_before_they_queue(self):
+        from pathlib import Path
+        src = (Path(__file__).resolve().parent.parent / "src" / "pipeline.py").read_text(encoding="utf-8")
+        self.assertIn("graph = self._stage_graph(graph, [tid])", src)
+        self.assertIn("graph = self._stage_graph(graph, [str(node_id)])", src)
+
+
 class OneCallOneStage(unittest.TestCase):
     def test_resolutions_for_two_stages_are_refused(self):
         from pathlib import Path

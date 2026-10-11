@@ -684,6 +684,7 @@ class Pipeline:
         # Set when a keep-live producer hook injects a value into the base graph but
         # queues no batch — the base graph is then run once at turn end (below).
         self._canvas_keeplive_run: bool = False
+        self._canvas_keeplive_targets: list[str] = []   # the nodes those values went into
         # Set by stop_hook_run when a hook's own directive says to abort (e.g. "if
         # any reference failed, STOP and ask"). Nothing is executed at turn end
         # while this is set. Per-turn, like the fields above.
@@ -3324,6 +3325,7 @@ class Pipeline:
 
             graph = _copy.deepcopy(base)
             graph[str(node_id)].setdefault("inputs", {})[slot] = text
+            graph = self._stage_graph(graph, [str(node_id)])
             if reroll_seed:
                 self._reroll_seeds(graph)
             wf = Path(_tempfile.mkdtemp(prefix="agenty_autoloop_")) / f"v{entry['v']}.json"
@@ -3549,6 +3551,9 @@ class Pipeline:
                 # delivers a string for a later/other run, so it must not auto-generate.
                 if injected and not _is_text(hook) and not self._hook_run_stopped:
                     self._canvas_keeplive_run = True
+                    _seen = list(getattr(self, "_canvas_keeplive_targets", None) or [])
+                    self._canvas_keeplive_targets = _seen + [t for t in injected
+                                                             if t not in _seen]
 
             # Journal it. Keyed on what fed the hook, so this exact answer comes
             # back for free until something changes. Written whether or not the keep
@@ -3765,6 +3770,7 @@ class Pipeline:
                              "node_title": target.get("title") or target.get("class_type") or ""})
                 graph = _copy.deepcopy(base)
                 graph[tid].setdefault("inputs", {})[tparam] = value
+                graph = self._stage_graph(graph, [tid])
                 if vary_seed:
                     self._reroll_seeds(graph)
                 run_dir = Path(_tempfile.mkdtemp(prefix="agenty_refine_"))
@@ -4728,6 +4734,38 @@ class Pipeline:
         phrase = " ".join(sorted(best[0][1]))
         return phrase, names
 
+    def _keeplive_prompt(self) -> dict:
+        """The graph a written value's run queues: the stage(s) it was written into.
+
+        This was the whole canvas. With one stage on it that is the same thing;
+        with several, a value written for the location stage queued the character,
+        background and final-shot generators too - and ComfyUI refused the lot,
+        because their prompts are hooks that had not run ("Required input is
+        missing (prompt)" on four nodes, after a stage that had itself finished).
+        """
+        base = self._canvas_base_prompt
+        try:
+            from src.utils.canvas_hooks import scope_to_nodes
+            scoped, _dropped = scope_to_nodes(base, getattr(self, "_canvas_keeplive_targets", None) or [])
+            return scoped
+        except Exception:  # noqa: BLE001 - never cost the run
+            return base
+
+    def _stage_graph(self, graph: dict, node_ids) -> dict:
+        """*graph* cut to what the named nodes drive, on a canvas made of stages.
+
+        A loop that changes one value and runs again runs "the graph the user has
+        open" - which is one thing on an ordinary canvas and every stage at once
+        on a pipeline. There it is the stage the value belongs to.
+        """
+        if not getattr(self, "_canvas_hooks", None):
+            return graph
+        try:
+            from src.utils.canvas_hooks import scope_to_nodes
+            return scope_to_nodes(graph, node_ids)[0]
+        except Exception:  # noqa: BLE001 - never cost the run
+            return graph
+
     def _user_opened_turn(self) -> bool:
         """Whether the message that opened this turn is the user's own."""
         return self._turn_origin() not in ("lead", "shots")
@@ -5196,6 +5234,7 @@ class Pipeline:
         self._forwarded = {}
         self._texts_placed = {}
         self._canvas_keeplive_run = False
+        self._canvas_keeplive_targets = []
         self._hook_run_stopped = None
         # Set when the canvas is scoped to the hooks at turn setup; pushed only if
         # a run actually starts (see apply_canvas_hooks).
@@ -5444,7 +5483,7 @@ class Pipeline:
                         import tempfile as _tf
                         _kd = Path(_tf.mkdtemp(prefix="agenty_keeplive_"))
                         _kp = _kd / "canvas_keeplive.json"
-                        _kp.write_text(json.dumps(self._canvas_base_prompt), encoding="utf-8")
+                        _kp.write_text(json.dumps(self._keeplive_prompt()), encoding="utf-8")
                         workflow_paths = [str(_kp)]
                         _keeplive_run = True
                         if self._verbose:

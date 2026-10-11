@@ -65,6 +65,8 @@ _BOUND = (
     "_thread_id_now",
     "_users_words",
     "_review_goes_on",
+    "_stage_graph",
+    "_keeplive_prompt",
     "_user_opened_turn",
     "_arm_review_halt",
     "_review_collector_files",
