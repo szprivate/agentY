@@ -1614,6 +1614,8 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
     session = getattr(pipeline, "_session", None)
     if image_paths and session is not None:
         session.last_user_input_images = image_paths
+    # What came with THIS message, as opposed to what the conversation remembers.
+    pipeline._fresh_input_images = list(image_paths or [])
     content = _build_content(message, image_paths)
 
     # First assistant turn of a thread → generate a short 2-3 word title in the

@@ -4728,6 +4728,10 @@ class Pipeline:
         phrase = " ".join(sorted(best[0][1]))
         return phrase, names
 
+    def _user_opened_turn(self) -> bool:
+        """Whether the message that opened this turn is the user's own."""
+        return self._turn_origin() not in ("lead", "shots")
+
     def _extract_hard_constraints(self, user_text: str) -> list[str]:
         """Extract MUST-HONOR directives the orchestrator may not silently drop.
 
@@ -4736,12 +4740,22 @@ class Pipeline:
         """
         lines: list[str] = []
         self._turn_user_text = user_text or ""
+        session = getattr(self, "_session", None)
+        if not self._user_opened_turn():
+            # A branch briefed by its lead, a lead woken by its branches: the text
+            # that opened the turn is the harness's or another agent's. Reading it
+            # for "the user explicitly asked for" pinned templates and input files
+            # nobody asked for - a report naming last round's outputs became "the
+            # user provided input file(s)", for every turn that followed.
+            self._turn_families = []
+            return lines
         from src.utils.model_family import named as _named_families
         fams = _named_families(user_text or "")
-        session = getattr(self, "_session", None)
         if fams and session is not None:
             session.named_families = list(fams)
-        elif not fams and session is not None and getattr(self, "_canvas_graph", None):
+        elif (not fams and session is not None and getattr(self, "_canvas_graph", None)
+              and not getattr(self, "_canvas_hooks", None)):
+            # (Not on a canvas of stages: each stage's own nodes say what it loads.)
             # A follow-up about the graph on the canvas ("fix these problems")
             # is held to the family the request that built it named.
             fams = list(getattr(session, "named_families", None) or [])
@@ -4766,7 +4780,12 @@ class Pipeline:
                     f'The user explicitly named "{phrase}" — you MUST use one of these '
                     f'matching templates (never an unrelated one): {", ".join(names)}.'
                 )
-        imgs = list(self._session.last_user_input_images or [])
+        # The files given WITH this message. The session remembers earlier ones so
+        # "now make a video from it" still finds them - but as a MUST they belong
+        # to the turn they came with: pinned on every later turn, one image the
+        # user attached once was demanded as the input of 87 turns in a row.
+        fresh = getattr(self, "_fresh_input_images", None)
+        imgs = list(self._session.last_user_input_images or []) if fresh is None else list(fresh)
         if imgs:
             names_i = ", ".join(os.path.basename(p) for p in imgs)
             lines.append(
@@ -5140,10 +5159,16 @@ class Pipeline:
         user_text = self._extract_text(user_input)
         # Register image paths embedded in a plain-text message so assembly/LoadImage
         # wiring receives real input paths (Chainlit-style callers set this already).
-        if not isinstance(user_input, list):
+        if not self._user_opened_turn():
+            self._fresh_input_images = []
+        if not isinstance(user_input, list) and self._turn_origin() != "shots":
+            # (Not a lead woken by its branches: the paths in a report are what
+            # the branches made, not something handed in to work from.)
             _imgs, _ = Pipeline._scan_media_paths(user_text)
             if _imgs:
                 self._session.last_user_input_images = _imgs
+                if self._user_opened_turn():
+                    self._fresh_input_images = list(_imgs)
         synth = TriageResult(intent=MessageIntent.new_request, response=None,
                              confidence=1.0, run_qa=False)
 
