@@ -573,7 +573,13 @@ behind it.
   stretched), `fps`, `length` in seconds (0 = as long as the shots make it), and
   `format` — `mp4` (H.264) to look at, `mov` (ProRes 422 HQ) to hand on.
 - **`audio`** takes music or sound that is laid under the whole film. The shots'
-  own sound is not carried yet.
+  own sound is not carried yet. Ask for the cuts **on the beat** and the agent
+  reads the track's beats and moves each cut to the nearest one. It needs a
+  steady pulse; a piece without one is reported as having no beat to cut on.
+- **`reference`** takes a film to cut *like*. Its shot lengths are read off it
+  and given to your shots in order — the rhythm is followed, not the pictures.
+- Before cutting, the agent **looks**: a contact sheet of each shot (eight frames
+  with their times) tells it what is in the clip and where to cut in and out.
 
 The agent does not write the film in one go. It keeps a **timeline** — which clip,
 from where to where, in which order, cut or dissolve — and agentY renders it. So a

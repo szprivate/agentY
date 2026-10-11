@@ -304,7 +304,7 @@ class TheTools(unittest.TestCase):
         return self.SRC.split(f"        async def {name}(", 1)[1].split("        @_tool", 1)[0]
 
     def test_the_orchestrator_has_them(self):
-        self.assertIn("probe_media, edit_timeline,\n                 render_edit,", self.SRC)
+        self.assertIn("edit_timeline, render_edit,", self.SRC)
 
     def test_the_timeline_is_kept_with_the_run(self):
         self.assertIn('_cs.kv_set(lead, f"edit:{hook_node_id}", timeline)', self.SRC)

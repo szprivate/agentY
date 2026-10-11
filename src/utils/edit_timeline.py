@@ -203,6 +203,11 @@ def _apply_one(tl: dict, kind: str, op: dict, facts: dict | None) -> None:
                                  "fade_out")}
     elif kind == "fit":
         fit(tl, _seconds(op.get("seconds"), "seconds"))
+    elif kind == "rhythm":
+        rhythm(tl, op.get("lengths"), facts)
+    elif kind == "snap":
+        snap(tl, op.get("times"), facts,
+             _seconds(op.get("within") if op.get("within") is not None else 0.5, "within"))
     elif kind == "settings":
         for key, cast in (("fps", float), ("width", int), ("height", int)):
             if op.get(key):
@@ -211,7 +216,7 @@ def _apply_one(tl: dict, kind: str, op: dict, facts: dict | None) -> None:
         tl["clips"], tl["audio"] = [], None
     else:
         raise EditError("unknown operation - use add, trim, move, replace, remove, "
-                        "transition, label, audio, fit, settings or clear")
+                        "transition, label, audio, fit, rhythm, snap, settings or clear")
 
 
 def fit(timeline: dict, seconds: float) -> dict:
@@ -229,6 +234,63 @@ def fit(timeline: dict, seconds: float) -> dict:
     for c in clips:
         length = max(_MIN_CLIP, clip_length(c) * share)
         c["out"] = round(float(c["in"]) + length, 4)
+    return timeline
+
+
+def _room(clip: dict, facts: dict | None) -> float:
+    """How long *clip* could be from its in point: to the end of its file, when known."""
+    if is_still(clip.get("src")):
+        return float("inf")
+    known = float(((facts or {}).get(clip.get("src")) or {}).get("duration") or 0.0)
+    return max(_MIN_CLIP, known - float(clip.get("in") or 0.0)) if known else float("inf")
+
+
+def rhythm(timeline: dict, lengths, facts: dict | None = None) -> dict:
+    """Give the clips, in order, the shot lengths of another film.
+
+    *lengths* is that film's shots in seconds (``edit_look.shots_of``). The
+    pattern repeats when the cut has more clips than the reference had shots. A
+    clip too short for its slot keeps all it has: the pattern is a guide, and a
+    clip is never stretched.
+    """
+    try:
+        pattern = [float(v) for v in (lengths or []) if float(v) >= _MIN_CLIP]
+    except (TypeError, ValueError):
+        raise EditError("lengths must be a list of seconds") from None
+    if not pattern:
+        raise EditError("give the reference's shot lengths (lengths: [seconds, …])")
+    for i, c in enumerate(timeline.get("clips") or []):
+        want = min(pattern[i % len(pattern)], _room(c, facts))
+        c["out"] = round(float(c.get("in") or 0.0) + max(_MIN_CLIP, want), 4)
+    return timeline
+
+
+def snap(timeline: dict, times, facts: dict | None = None, within: float = 0.5) -> dict:
+    """Move each cut to the nearest of *times* (beats), when one is *within* reach.
+
+    Done from the first cut to the last, by making the clip before the cut longer
+    or shorter, so every later cut is measured from where the earlier ones ended
+    up. A cut with no beat near it stays where it is.
+    """
+    try:
+        marks = sorted(float(v) for v in (times or []))
+    except (TypeError, ValueError):
+        raise EditError("times must be a list of seconds") from None
+    if not marks:
+        raise EditError("give the moments to cut on (times: [seconds, …])")
+    clips = timeline.get("clips") or []
+    at = 0.0
+    for i, c in enumerate(clips):
+        if i:
+            at -= float(c.get("transition") or 0.0)
+        end = at + clip_length(c)
+        if i + 1 < len(clips):
+            near = min(marks, key=lambda m: abs(m - end))
+            length = near - at
+            if abs(near - end) <= within and _MIN_CLIP <= length <= _room(c, facts):
+                c["out"] = round(float(c.get("in") or 0.0) + length, 4)
+                end = near
+        at = end
     return timeline
 
 

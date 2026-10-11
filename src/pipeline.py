@@ -2481,7 +2481,7 @@ class Pipeline:
             return json.dumps({"outputs": self._shown_outputs(), "shown_in_panel": visible})
 
         @_tool
-        async def probe_media(files: list) -> str:
+        async def probe_media(files: list, contact_sheet: bool = False) -> str:
             """What each picture, video or sound file IS: its length in seconds, its
             frame rate, its size, whether it has sound.
 
@@ -2489,11 +2489,22 @@ class Pipeline:
             depends on how long it is, and a guess that runs past the end of the
             file is refused at the render.
 
+            With ``contact_sheet=True`` each video also comes back with a ``sheet``:
+            one picture of eight frames taken at even intervals, and the ``times``
+            (seconds) they were taken at, row by row from the top left. Look at it
+            with ``analyze_image(sheet)`` to SEE the clip - what is in it, where the
+            action is, where it is dull - and read your in and out points off the
+            times. Cutting from file names alone is cutting blind.
+
             Args:
                 files: Absolute paths.
+                contact_sheet: Also make a contact sheet of each video.
             """
             from src.utils import edit_render as _er
+            from src.utils import edit_look as _look
+            import tempfile as _tempfile
             out, bad = [], []
+            _sheets = Path(_tempfile.mkdtemp(prefix="agenty_sheets_")) if contact_sheet else None
             try:
                 for f in (files if isinstance(files, (list, tuple)) else [files]):
                     path = str(f or "").strip().strip('"')
@@ -2502,12 +2513,71 @@ class Pipeline:
                     fact = await asyncio.to_thread(_er.probe, path)
                     if fact is None:
                         bad.append(path)
-                    else:
-                        out.append({"file": path, **fact})
+                        continue
+                    row = {"file": path, **fact}
+                    if _sheets is not None and fact.get("video") and not fact.get("still"):
+                        try:
+                            sheet = await asyncio.to_thread(
+                                _look.contact_sheet, path,
+                                str(_sheets / (Path(path).stem + "_sheet.jpg")))
+                            row["sheet"], row["times"] = sheet["sheet"], sheet["times"]
+                            row["sheet_columns"] = sheet["columns"]
+                        except _er.RenderError as exc:
+                            row["sheet_error"] = str(exc)
+                    out.append(row)
             except _er.RenderError as exc:
                 return json.dumps({"error": str(exc)})
             return json.dumps({"files": out,
                                **({"missing_or_unreadable": bad} if bad else {})})
+
+        @_tool
+        async def read_rhythm(file: str, sensitivity: float = 0.3) -> str:
+            """Where a FILM cuts: its shot lengths, in seconds.
+
+            For an EDIT stage with a RHYTHM REFERENCE - "cut it like this one". The
+            answer's ``shots`` is the pattern to follow; hand it to the timeline
+            with ``{"op": "rhythm", "lengths": [...]}`` and the clips, in order, are
+            given those lengths (the pattern repeats when there are more clips than
+            the reference had shots; a clip too short for its slot keeps what it
+            has). It reads cuts, so a dissolve counts as one cut somewhere inside
+            it, and a film that was not cut comes back as one shot.
+
+            Args:
+                file: The reference film.
+                sensitivity: 0-1. Lower finds softer cuts, and more false ones.
+            """
+            from src.utils import edit_look as _look
+            from src.utils import edit_render as _er
+            try:
+                got = await asyncio.to_thread(_look.shots_of, str(file or "").strip().strip('"'),
+                                              float(sensitivity or 0.3))
+            except _er.RenderError as exc:
+                return json.dumps({"error": str(exc)})
+            return json.dumps({**got, "count": len(got["shots"]),
+                               "use": 'edit_timeline(id, ops=[{"op": "rhythm", "lengths": shots}])'})
+
+        @_tool
+        async def read_beats(file: str) -> str:
+            """Where the beats of a piece of music fall, and its tempo.
+
+            For an EDIT stage with AUDIO under the film, when the cuts should land
+            on the beat. Build the cut first, then
+            ``{"op": "snap", "times": beats, "within": 0.3}`` moves each cut to the
+            nearest beat within that many seconds, from the first cut to the last;
+            a cut with no beat near it stays. A piece with no steady pulse comes
+            back with no beats - then there is nothing to snap to, and saying so
+            is the answer. Use every second or fourth beat for slower cutting.
+
+            Args:
+                file: A sound file, or a video with sound.
+            """
+            from src.utils import edit_look as _look
+            from src.utils import edit_render as _er
+            try:
+                got = await asyncio.to_thread(_look.beats, str(file or "").strip().strip('"'))
+            except _er.RenderError as exc:
+                return json.dumps({"error": str(exc)})
+            return json.dumps({**got, "count": len(got["beats"])})
 
         @_tool
         async def edit_timeline(hook_node_id: str, ops: list | None = None) -> str:
@@ -2534,6 +2604,10 @@ class Pipeline:
               the whole film; ``"src": ""`` takes it off.
             * ``{"op": "fit", "seconds": s}`` - shorten every clip by the same share
               so the film is that long.
+            * ``{"op": "rhythm", "lengths": [s, …]}`` - give the clips, in order, a
+              reference film's shot lengths (from read_rhythm).
+            * ``{"op": "snap", "times": [s, …], "within": 0.3}`` - move each cut to
+              the nearest of those moments (beats, from read_beats).
             * ``{"op": "label", "clip": id, "label": "…"}``, ``{"op": "clear"}``
 
             A clip is named by its id (``c1``, ``c2``, …) or by its position.
@@ -4361,8 +4435,8 @@ class Pipeline:
                  get_canvas_node, set_canvas_node_params, place_canvas_text,
                  run_python_node, revise_prompt, prompt_autoloop,
                  delete_canvas_nodes, edit_canvas_graph, insert_workflow_into_canvas, refine_canvas_until,
-                 list_outputs, show_in_panel, ledger_stage, probe_media, edit_timeline,
-                 render_edit, work_in_open_graph,
+                 list_outputs, show_in_panel, ledger_stage, probe_media, read_rhythm,
+                 read_beats, edit_timeline, render_edit, work_in_open_graph,
                  set_canvas_node_mode,
                  run_canvas,
                  loop_check, forward_outputs, name_outputs,
