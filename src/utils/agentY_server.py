@@ -4106,6 +4106,24 @@ def _build_app():
         return jsonify({"lead_id": lead, "lead_title": lead_t.get("title", ""),
                         "is_shot": bool(mine), "shots": _shots.status(lead)})
 
+    # The run as the host has it on record: the panel's plan overview.
+    @app.route("/agentY/threads/<tid>/plan", methods=["GET"])
+    def thread_plan(tid):
+        from src.utils import run_ledger as _rl
+        from src.utils import shots as _shots
+        lead = _rl.lead_of(tid)
+        try:
+            shots = _shots.status(lead)
+        except Exception:  # noqa: BLE001
+            shots = []
+        try:
+            plan = _rl.plan(lead, shots, _shots.scope_of)
+        except Exception:  # noqa: BLE001 - an unreadable ledger is an empty overview
+            plan = {"summary": {}, "line": "", "groups": []}
+        return jsonify({"ok": True, "lead_id": lead,
+                        "lead_title": (cs.get_thread(lead) or {}).get("title", ""),
+                        "is_shot": lead != tid, "shots": shots, **plan})
+
     # ── CLI-side status notices (memory init, model pulls, …) ───────────────
     # The panel drains this on connect (so startup lines that predate it still
     # show) and after each turn; live lines during a turn arrive as SSE

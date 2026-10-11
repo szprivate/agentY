@@ -131,6 +131,23 @@ def sync(lead_id: str, hooks: list, keys: dict | None = None, partial: bool = Fa
     return _edit(lead_id, _do)
 
 
+def set_groups(lead_id: str, trunk, branches, joined) -> None:
+    """How the run is laid out: what the lead does first, the branches, what waits for them.
+
+    *branches* as ``[{"after": id, "members": [ids]}]``. Kept so the plan can be
+    shown the way it runs without the canvas in hand.
+    """
+    def _do(ledger):
+        ledger["groups"] = {
+            "trunk": [str(i) for i in trunk or []],
+            "branches": [{"after": str(b.get("after") or ""),
+                          "members": [str(i) for i in b.get("members") or []]}
+                         for b in branches or []],
+            "joined": [str(i) for i in joined or []],
+        }
+    _edit(lead_id, _do)
+
+
 def _title(hook: dict) -> str:
     title = " ".join(str(hook.get("title") or "").split())
     if title.lower() in ("", "agenty hook"):
@@ -338,6 +355,75 @@ def summary(lead_id: str) -> dict:
     count = lambda s: sum(1 for st in work if st.get("state") == s)  # noqa: E731
     return {"total": len(work), "approved": count(APPROVED), "waiting": count(WAITING),
             "done": count(DONE)}
+
+
+def _row(hid: str, st: dict) -> dict:
+    files = st.get("approved") if st.get("state") == APPROVED else st.get("outputs")
+    return {"id": hid, "title": st.get("title") or "",
+            "purpose": _PURPOSE.get(st.get("purpose") or "", st.get("purpose") or ""),
+            "state": st.get("state") or PENDING, "round": int(st.get("round") or 0),
+            "changed": bool(st.get("changed")) and st.get("state") in (DONE, APPROVED),
+            "files": len(files or []), "text": bool(st.get("text")),
+            "review": st.get("review") or "", "by": st.get("by") or ""}
+
+
+def plan(lead_id: str, shots: list | None = None, scope_of=None) -> dict:
+    """The run for the panel's overview: ``{"summary", "line", "groups"}``.
+
+    Groups are ``trunk``, one per ``branch`` and ``joined``, each with its stage
+    rows; a run with no branches is one group. *shots* (``shots.status``) and
+    *scope_of(thread_id)`` tie a branch to the conversation working on it.
+    """
+    ledger = load(lead_id)
+    stages = ledger["stages"]
+    flow = {"loop_start", "loop_break", "join"}
+    live = [h for h in ledger["order"] if h in stages and not stages[h].get("gone")
+            and (stages[h].get("purpose") or "") not in flow]
+    if not live:
+        return {"summary": summary(lead_id), "line": "", "groups": []}
+    rows = lambda ids: [_row(h, stages[h]) for h in ids if h in live]  # noqa: E731
+    layout = ledger.get("groups") or {}
+    groups, placed = [], set()
+    branches = layout.get("branches") or []
+    if len(branches) >= 2:
+        trunk = rows(layout.get("trunk") or [])
+        if trunk:
+            groups.append({"kind": "trunk", "name": "Before the branches", "stages": trunk})
+        for n, b in enumerate(branches, 1):
+            members = [str(i) for i in b.get("members") or []]
+            shot = None
+            for s in shots or []:
+                mine = set(scope_of(s.get("thread_id")) if scope_of else [])
+                if mine & set(members):
+                    shot = s
+                    break
+            groups.append({"kind": "branch",
+                           "name": (shot or {}).get("shot") or f"Branch {n}",
+                           "thread_id": (shot or {}).get("thread_id") or "",
+                           "status": (shot or {}).get("status") or "",
+                           "stages": rows(members)})
+        joined = rows(layout.get("joined") or [])
+        if joined:
+            groups.append({"kind": "joined", "name": "After the branches", "stages": joined})
+        for g in groups:
+            placed |= {r["id"] for r in g["stages"]}
+    rest = rows([h for h in live if h not in placed])
+    if rest:
+        groups.append({"kind": "stages", "name": "Stages" if not groups else "Other stages",
+                       "stages": rest})
+    s = summary(lead_id)
+    bits = [f"{s['approved']}/{s['total']} approved"]
+    if s["waiting"]:
+        bits.append(f"{s['waiting']} waiting for you")
+    if s["done"]:
+        bits.append(f"{s['done']} done")
+    running = sum(1 for sh in shots or [] if sh.get("status") in ("running", "queued"))
+    if running:
+        bits.append(f"{running} branch{'es' if running != 1 else ''} running")
+    changed = sum(1 for g in groups for r in g["stages"] if r["changed"])
+    if changed:
+        bits.append(f"{changed} changed since")
+    return {"summary": s, "line": " · ".join(bits), "groups": groups}
 
 
 def stage(lead_id: str, hook_id: str) -> dict | None:

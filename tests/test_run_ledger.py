@@ -193,6 +193,68 @@ class WrittenResults(Store):
         self.assertNotIn("KITCHEN", rl.index("lead"))
 
 
+class ThePlanThePanelShows(Store):
+    """GET /agentY/threads/<id>/plan - the ledger, grouped the way the run goes."""
+
+    SHOTS = [{"shot": "characters", "thread_id": "b1", "status": "running"},
+             {"shot": "places", "thread_id": "b2", "status": "done"}]
+
+    def scope(self, tid):
+        return {"b1": ["8", "135"], "b2": ["118"]}.get(tid, [])
+
+    def setUp(self):
+        super().setUp()
+        rl.sync("lead", HOOKS + [hook("118", title="main location")], {})
+        rl.set_groups("lead", ["4", "131"],
+                      [{"after": "131", "members": ["8", "135"]},
+                       {"after": "131", "members": ["9", "118"]}], ["142"])
+        rl.produced("lead", "4", text_path="s.md")
+        rl.approved("lead", "131", ["4"], [])
+        rl.produced("lead", "8", outputs=["a.png", "b.png"])
+        rl.waiting("lead", "135", ["8"], ["a.png", "b.png"])
+
+    def test_trunk_then_each_branch_then_what_waits_for_them(self):
+        groups = rl.plan("lead", self.SHOTS, self.scope)["groups"]
+        self.assertEqual([(g["kind"], g["name"]) for g in groups],
+                         [("trunk", "Before the branches"), ("branch", "characters"),
+                          ("branch", "places"), ("joined", "After the branches")])
+        self.assertEqual([r["id"] for r in groups[1]["stages"]], ["8", "135"])
+        self.assertEqual([r["id"] for r in groups[2]["stages"]], ["118"])     # no loop node
+
+    def test_a_branch_carries_the_conversation_working_on_it(self):
+        branch = rl.plan("lead", self.SHOTS, self.scope)["groups"][1]
+        self.assertEqual((branch["thread_id"], branch["status"]), ("b1", "running"))
+
+    def test_a_row_says_where_the_stage_stands(self):
+        row = rl.plan("lead", self.SHOTS, self.scope)["groups"][1]["stages"][0]
+        self.assertEqual((row["state"], row["round"], row["files"], row["review"]),
+                         (rl.WAITING, 1, 2, "135"))
+
+    def test_the_one_line(self):
+        line = rl.plan("lead", self.SHOTS, self.scope)["line"]
+        self.assertEqual(line, "1/4 approved · 1 waiting for you · 1 branch running")
+
+    def test_a_run_with_no_branches_is_one_group(self):
+        rl.set_groups("lead", [], [], [])
+        groups = rl.plan("lead", [], self.scope)["groups"]
+        self.assertEqual([g["kind"] for g in groups], ["stages"])
+        self.assertEqual([r["id"] for r in groups[0]["stages"]], ["4", "131", "8", "135", "142", "118"])
+
+    def test_no_run_is_no_plan(self):
+        cs.create_thread("x", thread_id="other")
+        self.assertEqual(rl.plan("other")["groups"], [])
+
+    def test_the_host_serves_it(self):
+        src = (ROOT / "src" / "utils" / "agentY_server.py").read_text(encoding="utf-8")
+        self.assertIn('@app.route("/agentY/threads/<tid>/plan", methods=["GET"])', src)
+        self.assertIn("plan = _rl.plan(lead, shots, _shots.scope_of)", src)
+
+    def test_the_lead_records_the_layout_each_turn(self):
+        src = (ROOT / "src" / "pipeline.py").read_text(encoding="utf-8")
+        start = src.split("    def _ledger_turn_start(self)", 1)[1].split("\n    def ", 1)[0]
+        self.assertIn('self._ledger("set_groups", par.trunk if par else [],', start)
+
+
 def pipeline(thread="lead", branch=None, reply="", halt=None, others=()):
     obj = types.SimpleNamespace(_verbose=False, _dry_run=False, _canvas_hooks=[dict(h) for h in HOOKS],
                                 _session=types.SimpleNamespace(session_id=thread),

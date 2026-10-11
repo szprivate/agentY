@@ -4950,6 +4950,16 @@ class Pipeline:
         keys = {str(h.get("hook_node_id")): str(h.get("_cache_key"))
                 for h in hooks if h.get("_cache_key")}
         self._ledger("sync", hooks, keys, partial=bool(self._branch_info()))
+        if not self._branch_info():
+            try:
+                from src.utils import hook_flow as _hf
+                par = _hf.parallel(self._canvas_flow)
+                self._ledger("set_groups", par.trunk if par else [],
+                             [{"after": b.after, "members": b.scope or b.members}
+                              for b in (par.branches if par else [])],
+                             par.joined if par else [])
+            except Exception:  # noqa: BLE001 - the layout is a nicety of the overview
+                pass
         halts = ([self._review_halt] if getattr(self, "_review_halt", None) is not None else []) \
             + list(getattr(self, "_review_others", None) or [])
         if halts and self._review_reply == "continue":
