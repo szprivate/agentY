@@ -100,8 +100,9 @@ class EveryRouteAResultArrivesBy(unittest.TestCase):
         self.assertGreater(emitters, 0)
         # One output event is not a result arriving: a picture shown AGAIN
         # (show_in_panel) is never dropped, whatever the switch says.
-        never = source.count('"drop": False')
-        self.assertEqual(never, 1)
+        again = source.split("    def _show_again(patch: dict) -> None:", 1)[1].split("    def _translate", 1)[0]
+        never = again.count('"type": "output"')
+        self.assertEqual((never, again.count('"drop": False')), (1, 1))
         self.assertEqual(source.count('"drop": _drop_outputs_into_canvas()'),
                          emitters - never + 1,
                          "every output event, plus the background Magnific drop")
