@@ -135,7 +135,7 @@ class TheTool(unittest.TestCase):
     SRC = (ROOT / "src" / "pipeline.py").read_text(encoding="utf-8")
 
     def test_the_orchestrator_has_it(self):
-        self.assertIn("list_outputs, show_in_panel, work_in_open_graph", self.SRC)
+        self.assertIn("list_outputs, show_in_panel, ", self.SRC)
 
     def test_it_places_and_generates_nothing(self):
         tool = self.SRC.split("        async def show_in_panel(", 1)[1].split("        @_tool", 1)[0]

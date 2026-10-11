@@ -266,6 +266,23 @@ the next stage's input. Run them **strictly in order** and thread the outputs:
   by a script can use `run_script` instead — its output feeds the next stage the
   same way.
 
+### The run ledger — what is already settled
+
+After the stages, your input carries a `[RUN LEDGER]` block: the host's own record
+of this run, one entry per stage — not done yet, done, waiting for the user, or
+approved — with the round it is on and the files it made or the user approved. It
+is written by the host when a stage runs, when a stop is raised and when the user
+answers, across every turn and every branch. **It outranks what you remember.**
+
+- An **approved** stage is settled. Hand on exactly the files listed as what goes
+  on; do not redo the stage and do not ask about it again.
+- A stage marked as having **inputs changed since** is no longer settled: the user
+  edited something it reads. Say so and ask whether to redo it — do not quietly
+  redo it and do not quietly rely on it.
+- A written stage is saved as a file (`text →` in its entry). Read the file when
+  you need the text; do not reconstruct it from the conversation.
+- `ledger_stage(<id>)` gives one stage in full when its file list is cut short.
+
 ### When the user changes the approach mid-run
 
 A hook chain is the user's written plan. A **tweak** stays inside it — "warmer",

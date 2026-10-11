@@ -2050,6 +2050,7 @@ class Pipeline:
                 self._review_released.add(hid)
                 passed = list(getattr(self._session, "reviews_passed", None) or [])
                 self._session.reviews_passed = list(dict.fromkeys(passed + [hid]))
+                self._ledger_approve(other)
                 files, where = self._review_goes_on(other)
                 return json.dumps({
                     "status": "lifted", "hook_node_id": hid,
@@ -2086,6 +2087,13 @@ class Pipeline:
                 if why:
                     return json.dumps({"error": "not lifted - " + why})
                 self._session.reviews_passed = list(dict.fromkeys(passed + [hid]))
+                # No stop was standing, so there is no collector to read: what
+                # goes on is what the stage before it made.
+                _stages = self._ledger_stages_of(hid)
+                _made = []
+                for _sid in _stages:
+                    _made += list((self._ledger("stage", _sid) or {}).get("outputs") or [])
+                self._ledger("approved", hid, _stages, _made)
                 return json.dumps({
                     "status": "lifted", "hook_node_id": hid,
                     "message": (f"Review hook {hid} is answered on the user's words. "
@@ -2103,6 +2111,7 @@ class Pipeline:
             passed = list(getattr(self._session, "reviews_passed", None) or [])
             passed.append(str(halt.hook_node_id))
             self._session.reviews_passed = list(dict.fromkeys(passed))
+            self._ledger_approve(halt)
             if not self._standing_review_ids():
                 # Only when nothing is left standing: the panel reads this as
                 # "the run is no longer waiting on you".
@@ -2458,6 +2467,26 @@ class Pipeline:
             except Exception:  # noqa: BLE001
                 visible = True
             return json.dumps({"outputs": self._shown_outputs(), "shown_in_panel": visible})
+
+        @_tool
+        async def ledger_stage(hook_node_id: str) -> str:
+            """Everything the host has on record for one stage of this pipeline run.
+
+            The ``[RUN LEDGER]`` block lists every stage in a line or two and cuts a
+            long file list short. Call this for the whole of one: every file it
+            made, exactly which ones the user approved to go on, where its written
+            result is saved, which round it is on, and whether what it reads has
+            changed since. Read a written result from the path given (it is a file).
+
+            Args:
+                hook_node_id: The stage's hook id, as in the ledger block.
+            """
+            st = self._ledger("stage", str(hook_node_id))
+            if not st:
+                return json.dumps({"error": f"the ledger has no stage {hook_node_id} - the "
+                                            "ids are the ones in the [RUN LEDGER] block."})
+            st.pop("key", None)
+            return json.dumps({"hook_node_id": str(hook_node_id), **st})
 
         @_tool
         async def show_in_panel(files: list, caption: str = "") -> str:
@@ -3567,6 +3596,7 @@ class Pipeline:
                 return json.dumps(ahead)
             self._texts_placed[str(hook_node_id)] = str(text)
             self._reopen_reviews_after([hook_node_id])
+            _saved_as = ""
             from src.utils.canvas_patch import push as _push_patch
             from src.utils.canvas_hooks import inject_produced_value as _inject, _is_text
 
@@ -3579,6 +3609,10 @@ class Pipeline:
             hook = next((h for h in (self._canvas_hooks or [])
                          if str(h.get("hook_node_id")) == str(hook_node_id)), None)
             keep_live = True
+            if hook is not None and _is_text(hook) and not self._dry_run:
+                # The answer as a file of its own, one version per round - what the
+                # ledger names, and what a later stage or a later turn reads.
+                _saved_as = self._ledger_text(hook, str(text))
 
             # Refuse a value the model will refuse, before it is placed. This is the
             # one moment the agent can still fix it: it wrote the text, it is still
@@ -3659,6 +3693,7 @@ class Pipeline:
             return json.dumps({
                 "status": "placed" if place else "injected",
                 "hook_node_id": str(hook_node_id),
+                **({"saved_as": _saved_as} if _saved_as else {}),
                 "chars": len(text),
                 "keep_live": keep_live,
                 "placed_node": place,
@@ -4122,7 +4157,8 @@ class Pipeline:
                  get_canvas_node, set_canvas_node_params, place_canvas_text,
                  run_python_node, revise_prompt, prompt_autoloop,
                  delete_canvas_nodes, edit_canvas_graph, insert_workflow_into_canvas, refine_canvas_until,
-                 list_outputs, show_in_panel, work_in_open_graph, set_canvas_node_mode,
+                 list_outputs, show_in_panel, ledger_stage, work_in_open_graph,
+                 set_canvas_node_mode,
                  run_canvas,
                  loop_check, forward_outputs, name_outputs,
                  list_agent_settings, set_agent_setting]
@@ -4874,6 +4910,100 @@ class Pipeline:
             print(f"pipeline: {len(waiting)} value(s) written by branches go onto the canvas.")
         return len(waiting)
 
+    # ── the run ledger (src/utils/run_ledger.py) ─────────────────────────────
+
+    def _ledger_lead(self) -> str:
+        """The conversation this run's ledger is kept with ("" outside one)."""
+        try:
+            from src.utils import run_ledger as _rl
+            tid = self._thread_id_now() or str(getattr(self._session, "session_id", "") or "")
+            return _rl.lead_of(tid)
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _ledger(self, what: str, *args, **kwargs):
+        """Call ``run_ledger.<what>(lead, …)``; the record must never cost the run."""
+        try:
+            from src.utils import run_ledger as _rl
+            lead = self._ledger_lead()
+            if not lead:
+                return None
+            return getattr(_rl, what)(lead, *args, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            if getattr(self, "_verbose", False):
+                print(f"pipeline: run ledger ({what}) failed: {exc}")
+            return None
+
+    def _ledger_stages_of(self, review_id: str) -> list:
+        """The work a review looks at: the stage(s) just before it."""
+        try:
+            from src.utils.canvas_hooks import stage_before_review
+            return [str(i) for i in stage_before_review(self._canvas_hooks or [], str(review_id))]
+        except Exception:  # noqa: BLE001
+            return []
+
+    def _ledger_turn_start(self) -> None:
+        """Line the ledger up with the canvas, and record how this message answered a stop."""
+        hooks = [h for h in (self._canvas_hooks or []) if isinstance(h, dict)]
+        if not hooks:
+            return
+        keys = {str(h.get("hook_node_id")): str(h.get("_cache_key"))
+                for h in hooks if h.get("_cache_key")}
+        self._ledger("sync", hooks, keys, partial=bool(self._branch_info()))
+        halts = ([self._review_halt] if getattr(self, "_review_halt", None) is not None else []) \
+            + list(getattr(self, "_review_others", None) or [])
+        if halts and self._review_reply == "continue":
+            for halt in halts:
+                self._ledger_approve(halt)
+        elif halts and self._review_reply == "stop":
+            self._ledger("reopened", [str(h.hook_node_id) for h in halts])
+
+    def _ledger_approve(self, halt) -> None:
+        """The user let *halt* go on: what goes on from it is now on record."""
+        try:
+            files = [] if halt.is_text() else list(self._review_goes_on(halt)[0])
+        except Exception:  # noqa: BLE001
+            files = []
+        rid = str(halt.hook_node_id)
+        self._ledger("approved", rid, self._ledger_stages_of(rid), files)
+
+    def _ledger_block(self) -> str:
+        """The ledger as the agent is told it: a branch sees its own stages."""
+        try:
+            from src.utils import run_ledger as _rl
+            lead = self._ledger_lead()
+            if not lead or not self._canvas_hooks:
+                return ""
+            only = None
+            if self._branch_info():
+                only = [str(h.get("hook_node_id")) for h in self._canvas_hooks
+                        if isinstance(h, dict)]
+            return _rl.index(lead, only)
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _ledger_text(self, hook: dict, text: str) -> str:
+        """Save a written stage's answer as a file of its own; returns the path."""
+        try:
+            from src.utils import run_ledger as _rl
+            lead = self._ledger_lead()
+            if not lead:
+                return ""
+            hid = str(hook.get("hook_node_id"))
+            was = _rl.stage(lead, hid) or {}
+            version = int(was.get("round") or 0) + 1
+            path = _rl.text_file(lead, hid, _rl._title(hook), version)
+            if not _rl.write_text(path, text):
+                path = ""
+            branch = self._branch_info() or {}
+            _rl.produced(lead, hid, text_path=path, key=str(hook.get("_cache_key") or ""),
+                         by=str(branch.get("name") or ""))
+            return path
+        except Exception as exc:  # noqa: BLE001
+            if getattr(self, "_verbose", False):
+                print(f"pipeline: could not save the text of hook {hook.get('hook_node_id')}: {exc}")
+            return ""
+
     def _user_opened_turn(self) -> bool:
         """Whether the message that opened this turn is the user's own."""
         return self._turn_origin() not in ("lead", "shots")
@@ -5054,6 +5184,10 @@ class Pipeline:
                 # turn lean). Guidance first, then the concrete hook block.
                 guide = _orch_partial("canvas_hooks")
                 block = (guide + "\n\n" if guide else "") + hooks_block
+                # What has already happened in this run, from the host's own record.
+                _led = self._ledger_block()
+                if _led:
+                    block += "\n" + _led + "\n"
                 pin = block + "\n" + pin
 
         # Canvas selection: the nodes the user has selected on the graph, with
@@ -5510,6 +5644,7 @@ class Pipeline:
         # Hooks that remember: put last time's answer back before anyone is asked
         # to produce it again.
         self._apply_hook_cache()
+        self._ledger_turn_start()
 
         self._ensure_orch_clean_history()
         # Mark where this turn's messages begin so the learnings pass (fired on
@@ -6245,6 +6380,12 @@ class Pipeline:
         if not hid or not files:
             return {}
         self._hook_products.setdefault(hid, []).extend(files)
+        _led = getattr(self, "_ledger", None)
+        if _led is not None and not getattr(self, "_dry_run", False):
+            _hook = next((h for h in (self._canvas_hooks or [])
+                          if isinstance(h, dict) and str(h.get("hook_node_id")) == hid), {})
+            _led("produced", hid, outputs=files, key=str(_hook.get("_cache_key") or ""),
+                 by=str((self._branch_info() or {}).get("name") or ""))
         try:
             from src.utils.canvas_hooks import product_consumers
             waiting = product_consumers(self._canvas_hooks or [], hid)
@@ -6913,6 +7054,9 @@ class Pipeline:
                     or not (done & set(stage_before_review(self._canvas_hooks or [], r)))]
             if len(keep) != len(passed):
                 self._session.reviews_passed = keep
+                _led = getattr(self, "_ledger", None)
+                if _led is not None:
+                    _led("reopened", [r for r in passed if r not in keep])
         except Exception:  # noqa: BLE001
             pass
 
@@ -7498,6 +7642,10 @@ class Pipeline:
         was sent back and reports again is the same stop with new outputs.
         """
         hid = str(halt.hook_node_id)
+        _led = getattr(self, "_ledger", None)
+        if _led is not None and not getattr(self, "_dry_run", False):
+            _led("waiting", hid, self._ledger_stages_of(hid),
+                 list(getattr(halt, "produced", None) or []))
         if self._review_armed is None or str(self._review_armed.hook_node_id) == hid:
             self._review_armed = halt
             return

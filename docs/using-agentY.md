@@ -546,6 +546,27 @@ The stage after a join runs once **every** branch into it has finished and
 every review on those branches is answered. It runs in the lead conversation.
 Without a join, branches simply end.
 
+### The run ledger: what is already settled
+
+A pipeline runs over many turns, and with branches in several conversations. So
+that nothing settled gets lost on the way, agentY itself keeps a record of the
+run — the **ledger** — and gives it to the agent on every turn:
+
+- **One entry per stage:** not done yet, done, waiting for you, or approved; which
+  round it is on; the files it made, and exactly which ones you approved to go
+  on.
+- **Written by agentY, not by the agent.** An entry changes when a stage actually
+  runs, when a review stop is raised, and when you answer it. The agent is told
+  the ledger outranks its own memory of the conversation.
+- **Kept with the lead conversation.** Branches read and write the same record,
+  and it survives a restart.
+- **Written results are files.** A screenplay or shot list is saved once per
+  round — `<Sequence>/<Shot>/text/<shot>_v003_<name>.md` when a sequence and shot
+  are set, otherwise in the agent's notes folder — and the ledger names the file.
+- **Edits are noticed.** If you change something an approved stage reads (its
+  directive, a wired reference, an upstream result), that stage is marked as
+  *inputs changed since*, and the agent asks before relying on it or redoing it.
+
 ### Letting the agent build the pipeline
 
 You can ask for the pipeline instead of drawing it: *"build me a pipeline that
