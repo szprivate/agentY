@@ -201,8 +201,27 @@ class LLMFunctions:
         return await self._ollama_vision(prompt, images, system=system)
 
     # ── Ollama backend ───────────────────────────────────────────────────
+    @staticmethod
+    def _ollama_options() -> dict[str, Any]:
+        """The context size every Ollama call of agentY asks for.
+
+        Left out, Ollama loads the model at whatever the model file says - 262k
+        for a current Qwen, which is 35 GB and spills onto the CPU - and, because
+        a model is loaded for ONE context size, it then reloads each time an
+        agent (which does ask, see src.agent) and a helper take turns on the same
+        model. So the helpers ask for the agents' size, small as their own
+        prompts are.
+        """
+        try:
+            env = os.environ.get("OLLAMA_NUM_CTX")
+            num_ctx = int(env or _load_settings().get("llm", {}).get("ollama", {}).get("num_ctx") or 32768)
+        except (TypeError, ValueError):
+            num_ctx = 32768
+        return {"num_ctx": num_ctx}
+
     async def _ollama_chat(self, messages: list[dict[str, Any]], *, json_format: bool) -> str:
-        payload: dict[str, Any] = {"model": self.model, "messages": messages, "stream": False}
+        payload: dict[str, Any] = {"model": self.model, "messages": messages, "stream": False,
+                                   "options": self._ollama_options()}
         if json_format:
             payload["format"] = "json"
         async with httpx.AsyncClient() as client:
@@ -216,7 +235,8 @@ class LLMFunctions:
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt, "images": encoded})
-        payload = {"model": self.model, "messages": messages, "stream": False}
+        payload = {"model": self.model, "messages": messages, "stream": False,
+                   "options": self._ollama_options()}
         async with httpx.AsyncClient() as client:
             resp = await client.post(f"{self.host}/api/chat", json=payload, timeout=120.0)
         resp.raise_for_status()
