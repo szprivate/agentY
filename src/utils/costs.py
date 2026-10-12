@@ -129,6 +129,10 @@ GEMINI_PRICES: Dict[str, Tuple[float, float]] = {
 QWEN_PRICES: Dict[str, Tuple[float, float]] = {
     # Flash — cost-optimized; the agentY pipeline's default across every stage
     "qwen3.8-flash":  _mtok(0.109, 0.368),   # 0.8 / 2.7 CNY
+    # Not a Qwen, but served by the same endpoint and billed on the same account.
+    # USD figures as the user gave them on 2026-10-12; not yet checked against the
+    # console bill. Before this row it fell back to the $0.40 / $1.20 default.
+    "deepseek-v4.1-flash": _mtok(0.30, 1.20),
     "qwen3.6-flash":  _mtok(0.163, 0.981),   # 1.2 / 7.2 CNY
     "qwen3.5-flash":  _mtok(0.027, 0.272),   # 0.2 / 2 CNY
     "qwen-flash":     _mtok(0.020, 0.204),   # 0.15 / 1.5 CNY (<=128K)
