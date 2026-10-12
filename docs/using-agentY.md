@@ -616,10 +616,14 @@ shot, with the dissolves, the texts and the sound.
 
 **Cutting it yourself.** In that panel you can trim a shot by dragging its edge,
 drag a shot to another place, move a text, drop in more clips from the file
-browser or the canvas, and save. That writes your cut into the `.otio` - it does
-not render (the viewer never starts a render). Then tell the agent to render your
-cut: it loads the file and renders that, rather than its own version. On the next
-pipeline turn it is also told by itself that you changed the cut. A cut you
+browser or the canvas, and save. That writes your cut into the `.otio`.
+
+**Render** in the panel makes the film of your cut right there, as a new file
+beside the original (`<name>_cut1.mp4`) - picture, dissolves and sound, but
+**without the texts**, which only the agent can draw. For the finished film with
+its titles, tell the agent to render your cut: it loads the file and renders
+that, rather than its own version. On the next pipeline turn it is also told by
+itself that you changed the cut. A cut you
 started in the panel from nothing is saved under `edits/` in the output folder;
 name that file to the agent the same way.
 
