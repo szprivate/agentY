@@ -419,6 +419,13 @@ num_ctx = 32768
 max_tokens = 16384
 repeat_penalty = 1.1
 think = false
+# One GPU for the agent's local model AND for ComfyUI: just before a graph is
+# queued, Ollama is asked to unload its large models, so the render has the
+# card. The model loads again with the agent's next call (about half a minute
+# for a 20 GB model). Only acts when a role runs on Ollama. false = the model
+# stays loaded for Ollama's own keep-alive - right when the agent's models are
+# on another card or another machine.
+unload_before_render = true
 
 [llm.anthropic]
 model = "claude-haiku-4-5"

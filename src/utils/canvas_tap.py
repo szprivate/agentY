@@ -350,6 +350,11 @@ def _submit(tap_prompt: dict) -> str:
     payload: dict = {"prompt": tap_prompt}
     if client.api_key:
         payload["extra_data"] = {"api_key_comfy_org": client.api_key}
+    try:                                   # a probe renders too: see ollama_unload
+        from src.utils.ollama_unload import release as _release_gpu
+        _release_gpu()
+    except Exception:  # noqa: BLE001
+        pass
     result = client.post("/prompt", json_data=payload)
     if isinstance(result, dict) and result.get("prompt_id"):
         return str(result["prompt_id"])

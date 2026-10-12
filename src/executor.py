@@ -382,6 +382,13 @@ def _submit_workflow(workflow_path: str, client_id: str = "") -> str:
         except Exception:  # noqa: BLE001
             pass
 
+    # One card for the agent's local model and for ComfyUI: the model steps
+    # aside before the render starts (src/utils/ollama_unload.py).
+    try:
+        from src.utils.ollama_unload import release as _release_gpu
+        _release_gpu()
+    except Exception:  # noqa: BLE001
+        pass
     result = client.post("/prompt", json_data=payload)
     if isinstance(result, dict) and "prompt_id" in result:
         # A prompt_id is not an acceptance of the whole graph. ComfyUI validates
