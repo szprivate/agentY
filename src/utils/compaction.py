@@ -362,6 +362,63 @@ def archive(thread_id: str, messages: list, reason: str = "") -> Path | None:
 
 # ── the mid-turn guard ───────────────────────────────────────────────────────
 
+# What a local model's window must still hold beyond the history: its answer.
+_ANSWER_RESERVE = 4_096
+# Never trim below this, however small the window: a turn needs its last steps.
+_LOCAL_FLOOR = 8_000
+
+
+def _ollama_window(agent) -> int:
+    """The context size *agent*'s model runs with when it is an Ollama model,
+    else 0. Only Ollama has a window the caller sets and the server enforces by
+    cutting, silently, whatever does not fit."""
+    model = getattr(agent, "model", None)
+    if model is None or "ollama" not in type(model).__name__.lower():
+        return 0
+    try:
+        config = model.get_config() if hasattr(model, "get_config") else {}
+        got = int(((config or {}).get("options") or {}).get("num_ctx") or 0)
+        if got > 0:
+            return got
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from src.utils.settings import load_settings
+        return int(load_settings().get("llm", {}).get("ollama", {}).get("num_ctx") or 0)
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _fixed_tokens(agent) -> int:
+    """What every call sends besides the history: the prompt and the tool
+    definitions, by the same rough measure as :func:`estimate_tokens`."""
+    chars = len(str(getattr(agent, "system_prompt", "") or ""))
+    try:
+        chars += len(json.dumps(agent.tool_registry.get_all_tool_specs(), default=str))
+    except Exception:  # noqa: BLE001
+        pass
+    return chars // 4
+
+
+def hard_budget_for(agent, cfg: dict) -> int:
+    """How large one turn's history may grow before old tool output is aged.
+
+    For a hosted model: ``hard_budget_tokens``, exactly as configured - their
+    windows are large and the provider's prompt cache wants a stable history.
+
+    For a model on Ollama the configured value can be far too late: the window
+    there is ``num_ctx`` (64k on a shared card), the prompt and tool definitions
+    take about 30k of it on every call, and what does not fit is cut off by the
+    server without a word. So the limit is what the window really has left -
+    never more than the configured value, never less than a floor.
+    """
+    configured = int(cfg["hard_budget_tokens"])
+    window = _ollama_window(agent)
+    if window <= 0:
+        return configured
+    room = window - _fixed_tokens(agent) - _ANSWER_RESERVE
+    return max(_LOCAL_FLOOR, min(configured, room))
+
 class CompactionHookProvider:
     """Age old tool output when one turn's history passes the hard budget.
 
@@ -386,7 +443,7 @@ class CompactionHookProvider:
                 return
             agent = getattr(event, "agent", None)
             messages = getattr(agent, "messages", None)
-            if not messages or estimate_tokens(messages) <= cfg["hard_budget_tokens"]:
+            if not messages or estimate_tokens(messages) <= hard_budget_for(agent, cfg):
                 return
             res = compact(list(messages), cfg, allow_summary=False)
             if not res.changed:
