@@ -29,16 +29,27 @@ _RUNTIME = re.compile(r"\n\s*(?:\U0001f9ea|\u2705|\u26a0\ufe0f|\u274c|\u270b)[^\
 _LET_ME = re.compile(r"^\W*(?:ok(?:ay)?[,.! ]+|now[,.! ]+|first[,.! ]+|next[,.! ]+|so[,.! ]+)*let me\b", re.I)
 _LET_ME_KNOW = re.compile(r"\blet me know\b|\blet me say\b", re.I)
 _SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")
+# "Now let me make all the edits: 1. Set batch_size ... 2. Add ..." - an announced
+# plan, written out and then not carried out. The announcement has to be one: a
+# report ("Two things changed: - ...") also ends on a list.
+_PLAN = re.compile(
+    r"(?:^|(?<=[.!?\n]))\s*((?:[^.!?\n]*?\b(?:let me|i['\u2019]ll|i will|i need to|i['\u2019]m going to|i am going to)\b"
+    r"[^.!?\n]*):)\s*(?:\n|\s)*(?:1[.)]|[-*\u2022])\s+\S[\s\S]*$", re.I)
 
 
-def last_words(text: str) -> str:
-    """The answer's last sentence (or line), without what the runtime added."""
+def _clean(text: str) -> str:
+    """*text* without the lines the runtime appended to it."""
     t = str(text or "").strip()
     while True:
         cut = _RUNTIME.sub("", t).strip()
         if cut == t:
-            break
+            return t
         t = cut
+
+
+def last_words(text: str) -> str:
+    """The answer's last sentence (or line), without what the runtime added."""
+    t = _clean(text)
     parts = [p.strip() for p in _SENTENCE.split(t) if p.strip()]
     return parts[-1] if parts else ""
 
@@ -58,6 +69,9 @@ def unfinished(text: str) -> str:
         return last
     if _LET_ME.search(last):
         return last
+    plan = _PLAN.search(_clean(text))
+    if plan and not _LET_ME_KNOW.search(plan.group(1)):
+        return plan.group(1).strip()
     return ""
 
 

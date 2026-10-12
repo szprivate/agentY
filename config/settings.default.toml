@@ -102,6 +102,13 @@ tool_packs_on_demand = true
 # to you as a promise. Local models do this often, hosted ones rarely. false =
 # the turn ends where the agent stopped.
 intent_guard = true
+# In a conversation that works in the open graph, with a graph on the canvas the
+# agent has not touched this turn: its first request for a NEW workflow
+# (prepare_workflow) is answered once with "a graph is open - change it there, or
+# ask again for a separate workflow". Local models often build anew when asked to
+# change what is open; a hosted model rarely does, and pays one extra call when
+# it really wants a second workflow. false = a new workflow is built at once.
+edit_open_graph_first = true
 output_dir = "./output_images/"
 # Where generated/patched workflow JSON is written. BLANK (the default) means
 # "into ComfyUI": <--user-directory>/default/workflows/agentY/, which is the

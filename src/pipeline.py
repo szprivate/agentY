@@ -1240,13 +1240,17 @@ class Pipeline:
                                 for you.
               * ``build_new`` → ``briefing``: no template fit — build from scratch,
                                 then ``signal_workflow_ready``.
+              * ``graph_is_open`` → a graph is open and unchanged, and this call
+                                would build a NEW one beside it. Nothing was built.
+                                Change the open graph with the canvas tools; call
+                                again only for a separate, additional workflow.
               * ``canvas_already_edited`` → you changed the graph on the canvas
                                 this turn, and this call would build a NEW graph
                                 without those changes. Nothing was built. If the
                                 canvas edit was the job, you are done.
               * ``error``     → ``error``: report it.
             """
-            _refusal = self._canvas_rebuild_refusal()
+            _refusal = self._canvas_rebuild_refusal() or self._canvas_edit_first_refusal()
             if _refusal:
                 return json.dumps(_refusal)
             _push_progress("🔎 Researching template & prompt …")
@@ -2374,7 +2378,7 @@ class Pipeline:
             return json.dumps(out)
 
         @_tool
-        async def edit_canvas_graph(ops: list, reason: str = "") -> str:
+        async def edit_canvas_graph(ops: list | str, reason: str = "") -> str:
             """Change the STRUCTURE of the graph open on the canvas: add nodes and wire them.
 
             The edit for anything values alone can't do — "add a hires-fix pass",
@@ -2413,6 +2417,20 @@ class Pipeline:
             from src.utils import canvas_edit as _ce
             from src.utils.canvas_patch import push as _push_patch
 
+            # The list sometimes arrives as its own JSON text. That is the same
+            # edit; refusing it only costs a call (three, in one measured turn).
+            if isinstance(ops, str):
+                try:
+                    ops = json.loads(ops)
+                except Exception:  # noqa: BLE001
+                    return json.dumps({"status": "rejected", "errors": [
+                        "ops is text that is not valid JSON. Send a list of operations."],
+                        "note": "Nothing was changed."})
+            if isinstance(ops, dict):
+                ops = [ops]
+            if not isinstance(ops, list):
+                return json.dumps({"status": "rejected", "errors": ["ops must be a list of operations."],
+                                   "note": "Nothing was changed."})
             graph = getattr(self, "_canvas_graph", None)
             # An empty canvas is a canvas: a hook pipeline is built from nothing,
             # out of agentY's own nodes. Anything else needs a graph to edit.
@@ -2439,8 +2457,12 @@ class Pipeline:
             schemas = _CanvasSchemas()
             res = _ce.plan(graph, ops, schemas)
             if not res["ok"]:
+                # Remembered until an edit goes through: a turn that ENDS here has
+                # changed nothing, whatever it then says (_unfinished_intent_input).
+                self._canvas_edit_rejected = list(res["errors"])[:8]
                 return json.dumps({"status": "rejected", "errors": res["errors"],
                                    "note": "Nothing was changed. Fix these and send the whole list again."})
+            self._canvas_edit_rejected = None
             self._canvas_graph = res["graph"]
             _push_patch({"op": "edit_graph", "ops": res["ops"], "reason": str(reason or "").strip()})
             self._canvas_edits = (getattr(self, "_canvas_edits", None) or []) + [
@@ -5243,6 +5265,16 @@ class Pipeline:
             answer = intent_guard.last_answer(getattr(self._orchestrator_agent, "messages", None))
             if answer is None:
                 return ""
+            # The last change to the canvas was refused and none went through
+            # after it: the request is not done, whatever the answer says - unless
+            # it is a question to the user, which is theirs to answer.
+            rejected = getattr(self, "_canvas_edit_rejected", None)
+            if rejected and not intent_guard.last_words(answer).endswith("?"):
+                self._canvas_edit_rejected = None        # once per refusal
+                if self._verbose:
+                    print("pipeline: the turn ended on a rejected canvas edit; sent back.")
+                return _orch_partial("rejected_edit").replace(
+                    "{errors}", "\n".join(f"- {e}" for e in rejected))
             last = intent_guard.unfinished(answer)
             if not last:
                 return ""
@@ -6408,6 +6440,8 @@ class Pipeline:
         # has already been told about it (see _canvas_rebuild_refusal).
         self._canvas_edits = []
         self._canvas_rebuild_warned = False
+        self._canvas_edit_rejected = None
+        self._canvas_edit_first_said = False
         if isinstance(canvas_prompt, dict) and canvas_prompt:
             try:
                 from src.utils.canvas_hooks import (splice_hook_nodes, prune_to_hooks,
@@ -8204,6 +8238,51 @@ class Pipeline:
                 "the canvas edits are what was asked for (a fix or a change to that graph), "
                 "you are done: say what you changed. Call prepare_workflow again only if the "
                 "user ALSO asked for a different, new workflow."),
+        }
+
+    def _canvas_edit_first_refusal(self) -> dict | None:
+        """Stop prepare_workflow once, when a graph is open and untouched.
+
+        Asked to CHANGE the graph on the canvas ("add canny ControlNet guidance to
+        this workflow"), two of three local orchestrators measured on 2026-10-12
+        built a new workflow instead: a research pass, a template for another
+        model family, an attempt to download its weights, and - when it got that
+        far - a second graph inserted beside the first. The hosted model edited
+        in place, every time, in one call.
+
+        So in a conversation that works in the open graph, with a graph there and
+        nothing changed yet, the first prepare_workflow of a turn is answered with
+        the question it skipped. Said once per turn: a second call goes through,
+        for the request that really is for a new workflow next to what is open.
+        Hook and prompt-loop turns build as part of running, and are left alone;
+        ``edit_open_graph_first = false`` turns it off.
+        """
+        if getattr(self, "_canvas_edit_first_said", False) or getattr(self, "_canvas_edits", None):
+            return None
+        if getattr(self, "_canvas_hooks", None) or getattr(self, "_autoloop", None):
+            return None
+        graph = getattr(self, "_canvas_graph", None)
+        if not isinstance(graph, dict) or len(graph) < 2:
+            return None
+        try:
+            from src.utils.settings import load_settings
+            if not load_settings().get("edit_open_graph_first", True) or not self._open_graph_mode():
+                return None
+        except Exception:  # noqa: BLE001
+            return None
+        self._canvas_edit_first_said = True
+        return {
+            "status": "graph_is_open",
+            "open_graph_nodes": len(graph),
+            "message": (
+                "Nothing was built. A graph is open on the user's canvas and you have not "
+                "changed it this turn. prepare_workflow builds a NEW workflow from a template; "
+                "it does not start from what is open. If the request is to change, extend or "
+                "fix the open graph - add a ControlNet, an upscale, a pass, swap a node, set "
+                "values - do that there: edit_canvas_graph, set_canvas_node_params, "
+                "delete_canvas_nodes (get_node_schema tells you a node's inputs). Call "
+                "prepare_workflow again only if the user asked for a different, separate "
+                "workflow in addition to what is open."),
         }
 
     def _canvas_full_graph(self) -> bool:

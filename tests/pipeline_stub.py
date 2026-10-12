@@ -100,6 +100,7 @@ _BOUND = (
     "_canvas_full_graph",
     "_canvas_note_patch",
     "_canvas_rebuild_refusal",
+    "_canvas_edit_first_refusal",
     "_canvas_lease_refusal",
     "_open_graph_mode",
     "_canvas_version_of",
