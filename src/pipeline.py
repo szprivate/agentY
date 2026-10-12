@@ -5228,6 +5228,53 @@ class Pipeline:
                 shrunk += 1
         return shrunk
 
+    def _unfinished_intent_input(self, done: int) -> str:
+        """What to send the orchestrator when its turn ended on an announced step
+        it did not take - or ``""`` when the turn ended properly (or the guard is
+        off, used up, or a workflow is already on its way to ComfyUI)."""
+        try:
+            from src.utils import intent_guard
+            from src.utils.settings import load_settings
+            if done >= intent_guard.MAX_REDRIVES or not load_settings().get("intent_guard", True):
+                return ""
+            from src.utils.workflow_signal import peek as _peek_signal
+            if _peek_signal():
+                return ""                    # it did act: a run follows this answer
+            answer = intent_guard.last_answer(getattr(self._orchestrator_agent, "messages", None))
+            if answer is None:
+                return ""
+            last = intent_guard.unfinished(answer)
+            if not last:
+                return ""
+            if self._verbose:
+                print(f"pipeline: the turn ended on an announced step ({last[:80]!r}); sent back.")
+            return _orch_partial("unfinished_intent").replace("{last}", last[:200])
+        except Exception as exc:  # noqa: BLE001 - never break a turn over this
+            if getattr(self, "_verbose", False):
+                print(f"pipeline: intent guard skipped ({exc}).")
+            return ""
+
+    def _pin_tool_packs(self, lead: bool) -> None:
+        """The tool packs this turn needs whether or not the conversation has
+        loaded them: what is on the canvas, or what kind of conversation it is,
+        already says so (src/tools/tool_packs.py)."""
+        agent = getattr(self, "_orchestrator_agent", None)
+        if agent is None:
+            return
+        pins = set()
+        try:
+            from src.utils.canvas_hooks import _is_edit
+            if any(isinstance(h, dict) and _is_edit(h) for h in (self._canvas_hooks or [])):
+                pins.add("edit")
+        except Exception:  # noqa: BLE001
+            pass
+        if lead:
+            pins.add("shots")
+        try:
+            agent._tool_packs_pinned = pins
+        except Exception:  # noqa: BLE001
+            pass
+
     def _ensure_orch_clean_history(self) -> None:
         """Sanitize the orchestrator's message list (drop orphaned tool blocks,
         and images the configured model cannot accept), and shrink earlier
@@ -6423,6 +6470,7 @@ class Pipeline:
         # to produce it again.
         self._apply_hook_cache()
         self._ledger_turn_start()
+        self._pin_tool_packs(bool(getattr(self, "_lead_active", False)))
 
         self._ensure_orch_clean_history()
         # Mark where this turn's messages begin so the learnings pass (fired on
@@ -6459,6 +6507,7 @@ class Pipeline:
         # each failed member is repaired concurrently and re-queued on the fly,
         # bounded per-member, so there is no orchestrator re-drive loop here.
         _late_redrives = 0
+        _intent_redrives = 0
         while True:
             interrupt_result = None
             yield {"_orchestrator_start": True}
@@ -6494,6 +6543,15 @@ class Pipeline:
                     _late_redrives += 1
                     yield {"data": "\n\n"}
                     current_input = _late
+                    continue
+            # "Let me do X:" - and the turn ended there, with no tool call. Sent
+            # back, rather than handed to the user as a promise (intent_guard).
+            if interrupt_result is None:
+                _again = self._unfinished_intent_input(_intent_redrives)
+                if _again:
+                    _intent_redrives += 1
+                    yield {"data": "\n\n"}
+                    current_input = _again
                     continue
             yield {"_orchestrator_done": True}
 

@@ -69,12 +69,34 @@ class Packs(unittest.TestCase):
 
     def test_every_pack_names_real_orchestrator_tools(self):
         """A pack naming a tool that no longer exists would silently hold nothing."""
+        import re
+        from pathlib import Path
         from src.tools import ORCHESTRATOR_TOOLS
         have = {tp.name_of(t) for t in ORCHESTRATOR_TOOLS}
+        # ...and the tools the pipeline binds to itself and hands the orchestrator.
+        source = (Path(__file__).resolve().parent.parent / "src" / "pipeline.py").read_text(encoding="utf-8")
+        have |= set(re.findall(r"@_?tool[^\n]*\n\s+(?:async )?def (\w+)\(", source))
         for pack, (_why, names) in tp.PACKS.items():
             for name in names:
                 with self.subTest(pack=pack, tool=name):
                     self.assertIn(name, have)
+
+    def test_a_pinned_pack_is_loaded_without_being_asked_for(self):
+        """The pipeline pins what the turn plainly needs (an edit node on the
+        canvas, a lead conversation); the pack is there before the model asks."""
+        agent = _agent()
+        agent._tool_packs_pinned = {"batch"}
+        tp.sync(agent)
+        self.assertEqual(self.names(agent), ["check_model", "get_batch_status", "start_batch_job"])
+        agent._tool_packs_pinned = set()
+        tp.sync(agent)
+        self.assertEqual(self.names(agent), ["check_model"])
+
+    def test_a_pin_for_a_pack_this_agent_does_not_hold_is_nothing(self):
+        agent = _agent()
+        agent._tool_packs_pinned = {"edit", "shots"}
+        tp.sync(agent)
+        self.assertEqual(self.names(agent), ["check_model"])
 
     def test_what_every_turn_needs_is_never_held(self):
         for name in ("prepare_workflow", "signal_workflow_ready", "withdraw_workflow", "check_model",

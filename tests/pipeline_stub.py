@@ -83,6 +83,8 @@ _BOUND = (
     "_ledger",
     "_ledger_stages_of",
     "_ledger_turn_start",
+    "_pin_tool_packs",
+    "_unfinished_intent_input",
     "_ledger_approve",
     "_ledger_block",
     "_ledger_text",

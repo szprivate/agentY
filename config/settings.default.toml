@@ -91,7 +91,17 @@ models_table_in_prompt = false
 # with one call when a request needs it. Their definitions are about a fifth of
 # what every step would otherwise send. false = they are always in the list.
 # Takes effect when the agent is next built (restart).
+# Since 2026-10-12 also: the edit stage, model downloads, shots, unattended
+# loops, taking a video apart, less common canvas work, the agent's own settings
+# and the world builder - about 12k tokens of definitions per step. The edit
+# pack is loaded by itself when an `agentY edit` node is on the canvas, the
+# shots pack in a lead conversation.
 tool_packs_on_demand = true
+# A turn that ends by announcing a step - "Let me check the wiring:" - and then
+# takes none is sent back to the agent (at most twice) instead of being handed
+# to you as a promise. Local models do this often, hosted ones rarely. false =
+# the turn ends where the agent stopped.
+intent_guard = true
 output_dir = "./output_images/"
 # Where generated/patched workflow JSON is written. BLANK (the default) means
 # "into ComfyUI": <--user-directory>/default/workflows/agentY/, which is the

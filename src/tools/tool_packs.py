@@ -44,6 +44,30 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
     "upload": ("PUT a local file to a presigned URL — the upload step of an MCP flow (Magnific)",
                ("upload_file_to_url",)),
     "calc": ("exact arithmetic and symbolic maths", ("calculator",)),
+    # Added 2026-10-12, when the tool definitions had grown to ~31k of the ~41k
+    # tokens every orchestrator step sent (106 tools). Each group below is a job
+    # most conversations never do; together about 12k tokens.
+    "edit": ("cut shots into a film on an `agentY edit` node: the timeline, its texts and their "
+             "presets, reading rhythm and beats, rendering the cut",
+             ("edit_timeline", "render_edit", "probe_media", "read_rhythm", "read_beats",
+              "list_text_presets", "find_text_demos", "try_text_preset", "keep_text_preset")),
+    "models": ("look for a model that is NOT installed, on Hugging Face - check_model and "
+               "find_local_models (what IS installed) and download_hf_model are always in your list",
+               ("find_hf_file", "hf_search", "hf_file", "hf_repo")),
+    "shots": ("running the shots of a sequence you lead (start_shot, which begins one, is always "
+              "in your list)",
+              ("close_shot", "message_shot", "shot_status", "stop_shot", "set_sequence_notes")),
+    "loops": ("keep refining unattended until a goal is met: a canvas value, a prompt, an iteration plan",
+              ("refine_canvas_until", "prompt_autoloop", "iterate")),
+    "video": ("take a video apart: its shots, single frames, its technical facts",
+              ("split_video_into_shots", "video_frames", "media_info")),
+    "canvas_more": ("less common canvas work: a screenshot of the canvas, bypassing or muting nodes, "
+                    "adding a second workflow as a tab",
+                    ("screenshot_canvas", "set_canvas_node_mode", "add_canvas_workflow")),
+    "admin": ("the agent's own settings and logs, Slack, freeing GPU memory, clearing the history",
+              ("set_agent_setting", "list_agent_settings", "get_logs", "send_to_slack",
+               "free_memory", "get_system_stats", "clear_history")),
+    "worlds": ("build a walkable 3D world from reference images", ("run_world_builder",)),
 }
 _PACK_OF = {name: pack for pack, (_why, names) in PACKS.items() for name in names}
 
@@ -149,9 +173,15 @@ def unload(agent, pack: str) -> None:
     loaded(agent).discard(pack)
 
 
+def pinned(agent) -> set:
+    """Packs the pipeline says this turn needs (an edit node on the canvas, a
+    lead conversation): loaded without the model having to ask."""
+    return set(getattr(agent, "_tool_packs_pinned", None) or ())
+
+
 def sync(agent) -> set:
     """Give *agent* the packs its current conversation uses, and only those."""
-    wanted = packs_in(getattr(agent, "messages", None)) & set(_held(agent))
+    wanted = (packs_in(getattr(agent, "messages", None)) | pinned(agent)) & set(_held(agent))
     for pack in loaded(agent) - wanted:
         unload(agent, pack)
     for pack in wanted - loaded(agent):
