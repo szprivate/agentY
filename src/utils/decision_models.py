@@ -12,12 +12,21 @@ things agentY has to decide are exactly that shape, and were measured on
   caught three renders that plainly did not match their prompt - renders the
   benchmark had passed, because it checks the workflow and not the picture.
 
-**For the local path only.** A decision model runs in Ollama, and agentY cannot
-count on Ollama next to a hosted provider. So each use is ``"auto"`` by default:
-it is active only when the orchestrator itself runs on Ollama AND the model is
-already installed there. Nothing is downloaded, nothing is asked of a hosted
-setup, and every failure - no Ollama, no model, a timeout - means "no opinion",
-which leaves agentY doing exactly what it does without one.
+**Never without Ollama.** A decision model runs in Ollama, and agentY cannot
+count on Ollama next to a hosted provider. Each use is ``"auto"`` by default:
+
+* the *router* is used when the orchestrator itself runs on Ollama - it answers
+  a question only a local orchestrator gets wrong;
+* the *prompt check* is used whenever Ollama answers on this machine, whatever
+  the orchestrator runs on - a hosted model renders pictures that miss their
+  prompt just as a local one does.
+
+**The weights come on first use.** They are no part of any install. The first
+time a use is wanted and its model is not there, the download starts through
+Ollama in the background, with a bar in the run card, and that use has "no
+opinion" until the model has arrived - a turn never waits for a download. Every
+other failure - no Ollama, a timeout - is "no opinion" as well, which leaves
+agentY doing exactly what it does without one.
 
 A probability from these models is how sure the model is, not how often it is
 right. Both uses therefore only ever *advise*: the router can save or cause one
@@ -45,9 +54,14 @@ DEFAULTS = {
     "prompt_check_model": "clef-flash",
     "prompt_check_below": 0.25,       # a picture this unlikely to show its prompt is reported
     "prompt_check_max": 8,
+    "download": True,                 # fetch a missing model through Ollama on first use
 }
+# About how large each is, for the line that says a download has begun.
+SIZE_GB = {"nimble": 9.4, "clef-flash": 10.0, "clef": 18.0, "tev1": 4.5}
 _IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp")
-_installed: dict = {"at": 0.0, "host": "", "names": ()}
+_installed: dict = {"at": 0.0, "host": "", "names": (), "up": False}
+_pulling: dict = {}                    # model -> the thread fetching it
+_pull_lock = __import__("threading").Lock()
 
 
 def settings() -> dict:
@@ -81,10 +95,95 @@ def installed(model: str, host: str | None = None) -> bool:
     if _installed["host"] != host or now - _installed["at"] > 60:
         try:
             names = tuple(str(m.get("name") or "") for m in _call(host + "/api/tags", timeout=4).get("models") or [])
+            up = True
         except Exception:  # noqa: BLE001
-            names = ()
-        _installed.update(at=now, host=host, names=names)
+            names, up = (), False
+        _installed.update(at=now, host=host, names=names, up=up)
     return any(n == model or n.split(":")[0] == model for n in _installed["names"])
+
+
+def ollama_up(host: str | None = None) -> bool:
+    """Whether Ollama answers on this machine (asked with :func:`installed`)."""
+    installed("", host)
+    return bool(_installed["up"])
+
+
+# ── the weights, on first use ────────────────────────────────────────────────
+
+def bar(done: int, total: int, width: int = 16) -> str:
+    """A text bar the panel's run card rewrites in place (it knows the blocks)."""
+    share = 0.0 if total <= 0 else max(0.0, min(1.0, done / total))
+    full = int(round(share * width))
+    return "\u2588" * full + "\u2591" * (width - full)
+
+
+def progress_line(model: str, done: int, total: int, why: str) -> str:
+    pct = 0 if total <= 0 else int(100 * done / total)
+    return (f"\u2b07\ufe0f {model} {bar(done, total)} {pct} % \u00b7 {done / 1e9:.1f} / {total / 1e9:.1f} GB"
+            f" \u2014 {why}, first use")
+
+
+def _pull(model: str, why: str, host: str, say, notify) -> bool:
+    """Download *model* through Ollama, reporting as it goes. True when it is there."""
+    req = urllib.request.Request(host + "/api/pull", data=json.dumps({"model": model, "stream": True}).encode(),
+                                 headers={"Content-Type": "application/json"})
+    layers: dict = {}
+    last = (-1, 0.0)
+    try:
+        with urllib.request.urlopen(req, timeout=24 * 3600) as r:
+            for raw in r:
+                try:
+                    msg = json.loads(raw.decode("utf-8", "replace"))
+                except ValueError:
+                    continue
+                if msg.get("error"):
+                    raise RuntimeError(str(msg["error"]))
+                if msg.get("digest") and msg.get("total"):
+                    layers[msg["digest"]] = (int(msg.get("completed") or 0), int(msg["total"]))
+                    done, total = sum(v[0] for v in layers.values()), sum(v[1] for v in layers.values())
+                    pct, now = int(100 * done / max(1, total)), time.monotonic()
+                    if pct != last[0] and (pct >= last[0] + 2 or now - last[1] > 5):
+                        last = (pct, now)
+                        say(progress_line(model, done, total, why))
+    except Exception as exc:  # noqa: BLE001
+        notify(f"\u2b07\ufe0f {model} could not be downloaded through Ollama ({str(exc)[:160]}). "
+               f"The {why} stays off until it is there: `ollama pull {model}`.")
+        return False
+    _installed["at"] = 0.0                               # ask Ollama afresh
+    ok = installed(model, host)
+    notify(f"\u2705 {model} is ready - the {why} is on from the next time it is needed." if ok else
+           f"\u2b07\ufe0f Ollama finished the download of {model} but does not list it; the {why} stays off.")
+    return ok
+
+
+def fetch_in_background(model: str, why: str, host: str | None = None) -> bool:
+    """Start the download of *model* unless one is running. Returns whether this
+    call started it. The turn that asked goes on without the model."""
+    host = host or _host()
+    with _pull_lock:
+        running = _pulling.get(model)
+        if running is not None and running.is_alive():
+            return False
+        import contextvars
+        import threading
+        try:
+            from agenty_core.utils.progress_signal import push as say
+        except Exception:  # noqa: BLE001
+            say = lambda _line: None  # noqa: E731
+        try:
+            from src.utils.status_bus import notify
+        except Exception:  # noqa: BLE001
+            notify = lambda _text, **_kw: None  # noqa: E731
+        size = SIZE_GB.get(model.split(":")[0])
+        notify(f"\u2b07\ufe0f Downloading {model}" + (f" (about {size:g} GB)" if size else "")
+               + f" through Ollama for the {why} - first use. It is used as soon as it is there; "
+                 f"nothing waits for it.")
+        ctx = contextvars.copy_context()                  # so the bar reaches THIS turn's run card
+        thread = threading.Thread(target=lambda: ctx.run(_pull, model, why, host, say, notify),
+                                  name=f"agentY-pull-{model}", daemon=True)
+        _pulling[model] = thread
+        thread.start()
+        return True
 
 
 def orchestrator_is_local() -> bool:
@@ -95,22 +194,36 @@ def orchestrator_is_local() -> bool:
         return False
 
 
+WHY = {"router": "routing of requests about the open graph", "prompt_check": "prompt check"}
+
+
 def model_for(use: str, cfg: dict | None = None) -> str:
     """The model to ask for *use* ("router" / "prompt_check"), or ``""`` for none.
 
-    ``auto``: the default model, when the orchestrator runs on Ollama and the
-    model is installed. A name: that model, when installed (whatever the
-    orchestrator runs on - the user asked for it). ``off``: none.
+    ``auto``: the default model - for the router when the orchestrator runs on
+    Ollama, for the prompt check whenever Ollama answers here. A name: that
+    model, whatever the orchestrator runs on. ``off``: none. Never without
+    Ollama. A model that is wanted but not there yet is fetched in the
+    background (``download``), and the answer is ``""`` until it has arrived.
     """
     cfg = cfg or settings()
     choice = str(cfg.get(use) or "auto").strip()
     if choice.lower() in ("off", "false", "no", "0", ""):
         return ""
     try:
+        if not ollama_up():
+            return ""
         if choice.lower() == "auto":
             model = str(cfg.get(f"{use}_model") or "")
-            return model if model and orchestrator_is_local() and installed(model) else ""
-        return choice if installed(choice) else ""
+            if not model or (use == "router" and not orchestrator_is_local()):
+                return ""
+        else:
+            model = choice
+        if installed(model):
+            return model
+        if cfg.get("download", True):
+            fetch_in_background(model, WHY.get(use, use))
+        return ""
     except Exception:  # noqa: BLE001
         return ""
 

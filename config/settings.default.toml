@@ -603,14 +603,23 @@ tool_result_head = 500          # … down to this much of its start
 #   router        Is the request a change to the open graph, or a new workflow?
 #                 Sure that it is a new workflow, agentY builds at once and skips
 #                 the one-time question (edit_open_graph_first).
+#                 "auto": when the ORCHESTRATOR runs on Ollama.
 #   prompt_check  After a render: does each picture show what its prompt asked
 #                 for? One that probably does not is named in the report.
 #                 Nothing is re-rendered.
+#                 "auto": whenever Ollama answers on this machine, whatever the
+#                 orchestrator runs on.
 #
-# "auto" = used only when the ORCHESTRATOR runs on Ollama and the model is
-# already installed there (`ollama pull nimble`, `ollama pull clef-flash`);
-# agentY downloads nothing and a hosted setup is never asked. A model name
-# instead of "auto" uses that model whenever it is installed; "off" = never.
+# Never without Ollama: no Ollama, no decision model, and agentY works exactly as
+# it does without one. A model name instead of "auto" uses that model; "off" =
+# never.
+#
+# The weights are no part of the install. The first time a use is wanted its
+# model is downloaded through Ollama in the background (nimble about 9.4 GB,
+# clef-flash about 10 GB), with a bar in the run card; the turn does not wait,
+# and the use starts once the model is there. download = false: nothing is
+# fetched - pull the models yourself (`ollama pull nimble`).
+#
 # A probability from these models is how sure they are, not how often they are
 # right - tune the thresholds on your own work.
 [decision]
@@ -621,3 +630,4 @@ prompt_check = "auto"
 prompt_check_model = "clef-flash"
 prompt_check_below = 0.25
 prompt_check_max = 8
+download = true

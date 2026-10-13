@@ -24,44 +24,138 @@ FLUX = {
 }
 
 
-def _models(*names):
-    return mock.patch.object(dm, "installed", side_effect=lambda m, host=None: m in names)
+def _models(*names, up=True):
+    """Ollama answers (or not) and has exactly *names*."""
+    return mock.patch.multiple(dm, installed=mock.Mock(side_effect=lambda m, host=None: m in names),
+                               ollama_up=mock.Mock(return_value=up))
 
 
 def _local(yes=True):
     return mock.patch.object(dm, "orchestrator_is_local", return_value=yes)
 
 
+def _no_fetch():
+    return mock.patch.object(dm, "fetch_in_background", return_value=False)
+
+
 class WhoIsAsked(unittest.TestCase):
-    """A hosted setup is never asked; nothing is downloaded."""
+    """Never without Ollama; the router only for a local orchestrator."""
 
-    def test_auto_needs_a_local_orchestrator_and_the_model_installed(self):
-        with _models("nimble", "clef-flash"), _local(True):
+    def test_the_router_needs_a_local_orchestrator(self):
+        with _models("nimble", "clef-flash"), _local(True), _no_fetch():
             self.assertEqual(dm.model_for("router", dict(dm.DEFAULTS)), "nimble")
-            self.assertEqual(dm.model_for("prompt_check", dict(dm.DEFAULTS)), "clef-flash")
-
-    def test_a_hosted_orchestrator_means_no_model_even_when_installed(self):
-        with _models("nimble", "clef-flash"), _local(False):
+        with _models("nimble", "clef-flash"), _local(False), _no_fetch():
             self.assertEqual(dm.model_for("router", dict(dm.DEFAULTS)), "")
-            self.assertEqual(dm.model_for("prompt_check", dict(dm.DEFAULTS)), "")
 
-    def test_a_model_that_is_not_installed_is_not_asked_for(self):
-        with _models(), _local(True):
-            self.assertEqual(dm.model_for("router", dict(dm.DEFAULTS)), "")
+    def test_the_prompt_check_runs_beside_a_hosted_orchestrator_too(self):
+        for local in (True, False):
+            with _models("clef-flash"), _local(local), _no_fetch():
+                self.assertEqual(dm.model_for("prompt_check", dict(dm.DEFAULTS)), "clef-flash")
+
+    def test_without_ollama_nothing_is_asked_and_nothing_is_fetched(self):
+        for use in ("router", "prompt_check"):
+            with _models("nimble", "clef-flash", up=False), _local(True), \
+                    mock.patch.object(dm, "fetch_in_background") as fetch:
+                self.assertEqual(dm.model_for(use, dict(dm.DEFAULTS)), "")
+                self.assertEqual(dm.model_for(use, dict(dm.DEFAULTS, **{use: "clef"})), "")
+            fetch.assert_not_called()
 
     def test_off_is_off_and_a_named_model_is_used_when_it_is_there(self):
-        with _models("nimble", "clef"), _local(False):
+        with _models("nimble", "clef"), _local(False), _no_fetch():
             self.assertEqual(dm.model_for("router", dict(dm.DEFAULTS, router="off")), "")
             self.assertEqual(dm.model_for("prompt_check", dict(dm.DEFAULTS, prompt_check="clef")), "clef")
-            self.assertEqual(dm.model_for("prompt_check", dict(dm.DEFAULTS, prompt_check="clef-flash")), "")
+            self.assertEqual(dm.model_for("router", dict(dm.DEFAULTS, router="nimble")), "nimble")
 
     def test_the_defaults_are_auto(self):
         self.assertEqual((dm.DEFAULTS["router"], dm.DEFAULTS["prompt_check"]), ("auto", "auto"))
 
     def test_no_ollama_means_nothing_is_installed(self):
-        dm._installed.update(at=0.0, host="", names=())
+        dm._installed.update(at=0.0, host="", names=(), up=True)
         with mock.patch.object(dm, "_call", side_effect=OSError("refused")):
             self.assertFalse(dm.installed("nimble", "http://127.0.0.1:1"))
+            self.assertFalse(dm.ollama_up("http://127.0.0.1:1"))
+        dm._installed.update(at=0.0)
+
+
+class TheWeights(unittest.TestCase):
+    """Fetched on first use, in the background, with a bar - never in the way."""
+
+    def test_a_model_that_is_missing_is_fetched_and_the_use_waits_for_it(self):
+        with _models(), _local(True), mock.patch.object(dm, "fetch_in_background") as fetch:
+            self.assertEqual(dm.model_for("prompt_check", dict(dm.DEFAULTS)), "")
+            self.assertEqual(dm.model_for("router", dict(dm.DEFAULTS)), "")
+        self.assertEqual([c.args[0] for c in fetch.call_args_list], ["clef-flash", "nimble"])
+
+    def test_the_router_is_not_fetched_for_a_hosted_orchestrator(self):
+        with _models(), _local(False), mock.patch.object(dm, "fetch_in_background") as fetch:
+            dm.model_for("router", dict(dm.DEFAULTS))
+        fetch.assert_not_called()
+
+    def test_download_off_fetches_nothing(self):
+        with _models(), _local(True), mock.patch.object(dm, "fetch_in_background") as fetch:
+            self.assertEqual(dm.model_for("prompt_check", dict(dm.DEFAULTS, download=False)), "")
+        fetch.assert_not_called()
+
+    def test_the_bar_is_one_the_run_card_rewrites_in_place(self):
+        line = dm.progress_line("clef-flash", 3_800_000_000, 10_000_000_000, "prompt check")
+        self.assertIn("\u2588", line)
+        self.assertIn("\u2591", line)
+        self.assertIn("38 %", line)
+        self.assertIn("3.8 / 10.0 GB", line)
+        self.assertEqual(dm.bar(0, 0), "\u2591" * 16)
+        self.assertEqual(dm.bar(10, 10), "\u2588" * 16)
+
+    def _stream(self, messages):
+        body = [json.dumps(m).encode() + b"\n" for m in messages]
+
+        class Reply:
+            def __enter__(self_inner):
+                return iter(body)
+
+            def __exit__(self_inner, *a):
+                return False
+        return mock.patch.object(dm.urllib.request, "urlopen", return_value=Reply())
+
+    def test_the_download_reports_progress_and_says_when_it_is_ready(self):
+        said, told = [], []
+        layers = [{"status": "pulling manifest"},
+                  {"digest": "a", "total": 8_000, "completed": 2_000},
+                  {"digest": "b", "total": 2_000, "completed": 0},
+                  {"digest": "a", "total": 8_000, "completed": 8_000},
+                  {"digest": "b", "total": 2_000, "completed": 2_000},
+                  {"status": "success"}]
+        with self._stream(layers), mock.patch.object(dm, "installed", return_value=True):
+            ok = dm._pull("nimble", "routing", "http://h", said.append, lambda text, **kw: told.append(text))
+        self.assertTrue(ok)
+        self.assertTrue(said and "100 %" in said[-1])
+        self.assertTrue(all("nimble" in line for line in said))
+        self.assertIn("nimble is ready", told[-1])
+
+    def test_a_failed_download_is_said_with_what_to_do(self):
+        told = []
+        with self._stream([{"error": "pull model manifest: file does not exist"}]):
+            ok = dm._pull("nimble", "routing", "http://h", lambda line: None, lambda text, **kw: told.append(text))
+        self.assertFalse(ok)
+        self.assertIn("ollama pull nimble", told[-1])
+
+    def test_one_download_at_a_time_per_model(self):
+        import threading
+        release = threading.Event()
+        started = []
+
+        def slow(model, why, host, say, notify):
+            started.append(model)
+            release.wait(5)
+            return True
+        dm._pulling.clear()
+        with mock.patch.object(dm, "_pull", side_effect=slow), \
+                mock.patch("src.utils.status_bus.notify"):
+            self.assertTrue(dm.fetch_in_background("nimble", "routing", "http://h"))
+            self.assertFalse(dm.fetch_in_background("nimble", "routing", "http://h"))
+            release.set()
+            dm._pulling["nimble"].join(5)
+        self.assertEqual(started, ["nimble"])
+        dm._pulling.clear()
 
 
 class TheRouter(unittest.TestCase):
@@ -83,7 +177,7 @@ class TheRouter(unittest.TestCase):
         self.assertIn("CLIPTextEncode x2", self.sent[1]["canvas"])
 
     def test_no_model_or_no_answer_is_no_opinion(self):
-        with _models(), _local():
+        with _models(), _local(), _no_fetch():
             self.assertIsNone(dm.change_probability("add a ControlNet", GRAPH))
         with _models("nimble"), _local(), self._ask(error=TimeoutError()):
             self.assertIsNone(dm.change_probability("add a ControlNet", GRAPH))
@@ -159,9 +253,9 @@ class ThePromptCheck(unittest.TestCase):
         self.assertEqual([f["path"] for f in found], ["b.png"])
 
     def test_no_model_means_no_check(self):
-        with _models(), _local():
+        with _models(), _local(), _no_fetch():
             self.assertEqual(dm.prompt_check(["a.png"]), [])
-        with _models("clef-flash"), _local(False):
+        with _models("clef-flash", up=False), _local(True), _no_fetch():
             self.assertEqual(dm.prompt_check(["a.png"]), [])
 
 
