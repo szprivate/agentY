@@ -397,7 +397,7 @@ def _submit_workflow(workflow_path: str, client_id: str = "") -> str:
     # aside before the render starts (src/utils/ollama_unload.py).
     try:
         from src.utils.ollama_unload import release as _release_gpu
-        _release_gpu()
+        _release_gpu(prompt=workflow)
     except Exception:  # noqa: BLE001
         pass
     result = client.post("/prompt", json_data=payload)

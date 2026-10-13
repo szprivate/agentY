@@ -145,7 +145,7 @@ def auto(host: str | None = None) -> dict:
             model, facts = max(known, key=lambda mf: mf[1]["size"])
             window = fit(card, facts)
             need = (facts["size"] + OVERHEAD + window * facts["per_token"]) / 2 ** 30
-            answer = {"window": window, "model": model,
+            answer = {"window": window, "model": model, "facts": facts,
                       "why": f"{model} needs about {need:.0f} GB with it, on a {card / 2 ** 30:.0f} GB card"}
     _cache["auto"] = answer
     return answer
@@ -165,6 +165,15 @@ def resolve(setting=None) -> int:
     except (TypeError, ValueError):
         value = 0
     return value if value > 0 else auto()["window"]
+
+
+def need_bytes() -> int:
+    """What the largest local model takes of the card at the window it is loaded
+    with (the setting's, or the one worked out) - 0 when that cannot be said."""
+    facts = auto().get("facts")
+    if not facts:
+        return 0
+    return int(facts["size"] + OVERHEAD + resolve() * facts["per_token"])
 
 
 # The most an answer is given, and the share of a small window it may take.

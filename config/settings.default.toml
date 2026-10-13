@@ -471,7 +471,12 @@ think = false
 # card. The model loads again with the agent's next call (about half a minute
 # for a 20 GB model). Only acts when a role runs on Ollama. false = the model
 # stays loaded for Ollama's own keep-alive - right when the agent's models are
-# on another card or another machine.
+# on another card or another machine. A graph of API nodes only needs no card
+# and leaves the model loaded. The same switch works the other way round:
+# before a local model is called, ComfyUI is asked to unload the models it
+# still holds from its last render when the model would not fit beside them
+# (it would run from shared memory, fifty times slower) - never while ComfyUI
+# is rendering or has something queued.
 unload_before_render = true
 
 [llm.anthropic]

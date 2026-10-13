@@ -74,7 +74,98 @@ class Wired(unittest.TestCase):
         for name in ("executor.py", "utils/canvas_tap.py"):
             src = (root / name).read_text(encoding="utf-8")
             with self.subTest(file=name):
-                self.assertLess(src.index("_release_gpu()"), src.index('client.post("/prompt"'))
+                self.assertLess(src.index("_release_gpu(prompt="), src.index('client.post("/prompt"'))
+
+
+INFO = {"KlingOmniPro": {"python_module": "comfy_api_nodes.nodes_kling", "api_node": True},
+        "KSampler": {"python_module": "nodes"}, "CheckpointLoaderSimple": {"python_module": "nodes"}}
+
+
+class NeedsCard(unittest.TestCase):
+    """The model steps aside only for a graph that uses the card."""
+
+    def test_api_nodes_and_plumbing_do_not(self):
+        graph = {"1": {"class_type": "LoadImage"}, "2": {"class_type": "KlingOmniPro"},
+                 "3": {"class_type": "SaveVideo"}, "4": {"class_type": "AgentYHook"},
+                 "5": {"class_type": "PrimitiveInt"}}
+        self.assertFalse(ou.needs_card(graph, INFO))
+
+    def test_one_local_node_does(self):
+        graph = {"1": {"class_type": "KlingOmniPro"}, "2": {"class_type": "KSampler"}}
+        self.assertTrue(ou.needs_card(graph, INFO))
+
+    def test_what_is_not_known_does(self):
+        self.assertTrue(ou.needs_card({"1": {"class_type": "SomePackUpscaler"}}, INFO))
+        self.assertTrue(ou.needs_card({"1": {"inputs": {}}}, INFO))
+        self.assertTrue(ou.needs_card({}, INFO))
+        self.assertTrue(ou.needs_card(None, INFO))
+
+    def test_release_leaves_the_model_for_a_graph_that_needs_no_card(self):
+        ou._last = 0.0
+        calls = []
+        with mock.patch.object(ou, "_call", side_effect=lambda u, b=None: calls.append(u) or {"models": []}), \
+                mock.patch.object(ou, "needs_card", return_value=False):
+            self.assertEqual(ou.release("http://o", settings=LOCAL, prompt={"1": {"class_type": "KlingOmniPro"}}), [])
+        self.assertEqual(calls, [])                     # Ollama was not even asked
+
+
+class MakeRoom(unittest.TestCase):
+    """ComfyUI lets go of the card before a local model works."""
+
+    def setUp(self):
+        ou._room_last = 0.0
+        self.asked = []
+
+    def _run(self, free_gb, loaded=False, queue=None, need_gb=25, settings=LOCAL):
+        def comfy(path, body=None):
+            self.asked.append(path)
+            if path == "/system_stats":
+                return {"devices": [{"type": "cuda", "vram_free": int(free_gb * GB)}]}
+            if path == "/queue":
+                return queue or {"queue_running": [], "queue_pending": []}
+            return {}
+        with mock.patch.object(ou, "_comfy", side_effect=comfy), \
+                mock.patch.object(ou, "_model_loaded", return_value=loaded), \
+                mock.patch("src.utils.ollama_window.need_bytes", return_value=int(need_gb * GB)):
+            return ou.make_room("http://o", settings=settings)
+
+    def test_it_asks_when_the_model_would_not_fit_beside_what_comfyui_holds(self):
+        self.assertTrue(self._run(free_gb=5.7))                       # as measured: 26 GB held, 25 needed
+        self.assertEqual(self.asked, ["/system_stats", "/queue", "/free"])
+
+    def test_not_when_there_is_room(self):
+        self.assertFalse(self._run(free_gb=30))
+        self.assertEqual(self.asked, ["/system_stats"])
+
+    def test_a_loaded_model_only_needs_not_to_be_squeezed(self):
+        self.assertFalse(self._run(free_gb=5.7, loaded=True))
+        ou._room_last = 0.0
+        self.assertTrue(self._run(free_gb=0.2, loaded=True))          # it is living in shared memory
+
+    def test_never_while_comfyui_renders_or_has_something_waiting(self):
+        self.assertFalse(self._run(free_gb=1, queue={"queue_running": [[1, "a"]], "queue_pending": []}))
+        ou._room_last = 0.0
+        self.assertFalse(self._run(free_gb=1, queue={"queue_running": [], "queue_pending": [[2, "b"]]}))
+        self.assertNotIn("/free", self.asked)
+
+    def test_not_for_hosted_models_and_not_with_the_switch_off(self):
+        self.assertFalse(self._run(free_gb=1, settings=HOSTED))
+        off = {"llm": {**LOCAL["llm"], "ollama": {"unload_before_render": False}}}
+        self.assertFalse(self._run(free_gb=1, settings=off))
+        self.assertEqual(self.asked, [])
+
+    def test_it_is_not_asked_again_at_once(self):
+        self.assertTrue(self._run(free_gb=1))
+        self.assertFalse(self._run(free_gb=1))
+        self.assertEqual(self.asked.count("/system_stats"), 1)
+
+    def test_a_comfyui_that_does_not_answer_costs_nothing(self):
+        with mock.patch.object(ou, "_comfy", side_effect=OSError("down")):
+            self.assertFalse(ou.make_room("http://o", settings=LOCAL))
+
+    def test_a_machine_without_a_card_is_left_alone(self):
+        with mock.patch.object(ou, "_comfy", return_value={"devices": [{"type": "cpu", "vram_free": 0}]}):
+            self.assertFalse(ou.make_room("http://o", settings=LOCAL))
 
 
 if __name__ == "__main__":

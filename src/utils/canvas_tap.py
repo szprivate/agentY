@@ -352,7 +352,7 @@ def _submit(tap_prompt: dict) -> str:
         payload["extra_data"] = {"api_key_comfy_org": client.api_key}
     try:                                   # a probe renders too: see ollama_unload
         from src.utils.ollama_unload import release as _release_gpu
-        _release_gpu()
+        _release_gpu(prompt=tap_prompt)
     except Exception:  # noqa: BLE001
         pass
     result = client.post("/prompt", json_data=payload)

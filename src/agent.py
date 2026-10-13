@@ -1213,6 +1213,14 @@ def _wrap_agent(*, role: str, llm: str, model, model_id: str, system_prompt: str
     # way around it.
     if not any(isinstance(h, ToolPermissionHookProvider) for h in _hooks):
         _hooks.append(ToolPermissionHookProvider())
+    # One card for a local model and for ComfyUI: before a local call, ComfyUI
+    # lets go of what it still holds from its last render (ollama_unload.make_room).
+    try:
+        from src.utils.ollama_unload import MakeRoomHook
+        if not any(isinstance(h, MakeRoomHook) for h in _hooks):
+            _hooks.append(MakeRoomHook())
+    except Exception:  # noqa: BLE001
+        pass
     # Likewise every agent: any of them can reach for a tool it does not hold,
     # and "Unknown tool: X" on its own sends them improvising instead of picking
     # the neighbouring tool that would have worked.
