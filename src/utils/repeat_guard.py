@@ -1,0 +1,166 @@
+"""Stop an agent that keeps making the call it has already made.
+
+Seen on 2026-10-12 (qwen3.8:27b as orchestrator, benchmark case CX04): looking
+for a depth ControlNet, the model called ``hf_file`` 136 times in one turn - two
+URLs, 63 and 62 times each, every answer identical to the one before. Nothing
+stopped it. The history outgrew the model's window, the server cut the start of
+it off (the user's request included) and answered "no user query found", and the
+retry, in the same conversation, died at once.
+
+Two rules, both about what actually happened in the turn, not about which model
+is running:
+
+**The same call, the same answer.** A call whose tool and arguments are exactly
+those of an earlier call in this turn, and whose earlier answers were all the
+same, is refused once it has been answered ``same_call`` times (3). Nothing new
+can come back. Tools whose answer is SUPPOSED to change while the arguments stay
+the same - the queue, a download's progress, a shot's status - are compared like
+any other: while the answer keeps changing they are never refused, and they are
+given more patience when it does not (``POLLING``), because waiting on a render
+is what polling looks like.
+
+**One tool, over and over.** A tool called ``per_tool`` times in one turn (30),
+whatever the arguments, gets a single refusal that says so and asks the model to
+decide with what it has. It is a speed bump, not a wall: the count has to double
+before the next one, and a folder of forty reference images analysed one by one
+passes with one extra step. After the third bump the tool is closed for the rest
+of the turn.
+
+A refusal is an ordinary tool result (Strands' ``cancel_tool``): the agent reads
+it and goes on, which is what lets it recover rather than fail.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+
+logger = logging.getLogger("agentY.repeat_guard")
+
+SAME_CALL = 3
+PER_TOOL = 30
+MAX_BUMPS = 3
+# Asked again with the same arguments on purpose, while something else works.
+POLLING = frozenset({
+    "queue", "get_history", "get_prompt_status_by_id", "wait_for_download", "shot_status",
+    "get_batch_status", "list_batch_jobs", "get_system_stats", "loop_check", "list_outputs",
+    "get_canvas_node", "screenshot_canvas", "get_logs",
+})
+POLLING_PATIENCE = 12
+
+
+def settings() -> dict:
+    out = {"enabled": True, "same_call": SAME_CALL, "per_tool": PER_TOOL}
+    try:
+        from src.utils.settings import load_settings
+        cfg = load_settings()
+        out["enabled"] = bool(cfg.get("repeat_guard", True))
+        out["same_call"] = max(2, int(cfg.get("repeat_guard_same_call", SAME_CALL)))
+        out["per_tool"] = max(5, int(cfg.get("repeat_guard_per_tool", PER_TOOL)))
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+def _digest(value) -> str:
+    try:
+        text = json.dumps(value, sort_keys=True, default=str, ensure_ascii=False)
+    except Exception:  # noqa: BLE001
+        text = str(value)
+    return hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()
+
+
+def _result_text(result) -> str:
+    """What a tool answered, without the parts that differ on every call (ids)."""
+    if isinstance(result, dict):
+        return json.dumps([result.get("status"), result.get("content")], sort_keys=True, default=str)
+    return str(result)
+
+
+class Turn:
+    """What one agent has called so far in one turn. Pure: no agent, no settings."""
+
+    def __init__(self, same_call: int = SAME_CALL, per_tool: int = PER_TOOL):
+        self.same_call = same_call
+        self.per_tool = per_tool
+        self._answers: dict[str, list[str]] = {}       # call -> digests of its answers
+        self._count: dict[str, int] = {}               # tool -> calls let through
+        self._bumps: dict[str, int] = {}               # tool -> refusals for volume
+        self._next_bump: dict[str, int] = {}
+
+    @staticmethod
+    def key(name: str, args) -> str:
+        return f"{name}:{_digest(args)}"
+
+    def refusal(self, name: str, args) -> str:
+        """Why this call is not run, or ``""`` to let it through (and count it)."""
+        answers = self._answers.get(self.key(name, args), [])
+        patience = max(self.same_call, POLLING_PATIENCE) if name in POLLING else self.same_call
+        if len(answers) >= patience and len(set(answers[-patience:])) == 1:
+            return (f"Not run. You have made this exact call to {name} {len(answers)} times this turn "
+                    f"and the answer was the same every time; asking again will not change it. "
+                    f"Use the answer you already have. If it does not give you what you need, "
+                    f"that is the finding: try a different approach, or tell the user what you "
+                    f"could not find or do.")
+        count = self._count.get(name, 0)
+        threshold = self._next_bump.get(name, self.per_tool)
+        bumps = self._bumps.get(name, 0)
+        if bumps >= MAX_BUMPS:
+            return (f"Not run. {name} is closed for the rest of this turn: you have called it "
+                    f"{count} times. Decide with what you have, or tell the user where you are stuck.")
+        if count >= threshold:
+            self._bumps[name] = bumps + 1
+            self._next_bump[name] = threshold * 2
+            return (f"Not run. You have called {name} {count} times this turn. If you are searching "
+                    f"or checking in a loop, stop here: decide with what you have, or tell the user "
+                    f"what you could not find. If every one of those calls was needed (a long list "
+                    f"worked through item by item), carry on - this notice comes once at this count.")
+        self._count[name] = count + 1
+        return ""
+
+    def answered(self, name: str, args, result) -> None:
+        self._answers.setdefault(self.key(name, args), []).append(_digest(_result_text(result)))
+
+
+class RepeatGuardHookProvider:
+    """One :class:`Turn` per agent invocation; refusals go out as cancelled calls."""
+
+    def __init__(self) -> None:
+        self._turn: Turn | None = None
+        self._on = True
+
+    def register_hooks(self, registry, **kwargs) -> None:  # noqa: ARG002
+        from strands.hooks import BeforeInvocationEvent
+        from strands.hooks.events import AfterToolCallEvent, BeforeToolCallEvent
+        registry.add_callback(BeforeInvocationEvent, self._start)
+        registry.add_callback(BeforeToolCallEvent, self._before)
+        registry.add_callback(AfterToolCallEvent, self._after)
+
+    def _start(self, event, **kwargs) -> None:  # noqa: ANN001, ARG002
+        cfg = settings()
+        self._on = cfg["enabled"]
+        self._turn = Turn(cfg["same_call"], cfg["per_tool"])
+
+    def _before(self, event, **kwargs) -> None:  # noqa: ANN001, ARG002
+        try:
+            if not self._on or getattr(event, "cancel_tool", False):
+                return
+            if self._turn is None:
+                self._start(event)
+            use = getattr(event, "tool_use", None) or {}
+            why = self._turn.refusal(str(use.get("name", "")), use.get("input"))
+            if why:
+                event.cancel_tool = why
+                logger.info("repeat guard: refused %s", use.get("name"))
+        except Exception as exc:  # noqa: BLE001 - a broken guard must not break a turn
+            logger.debug("repeat guard skipped (%s)", exc)
+
+    def _after(self, event, **kwargs) -> None:  # noqa: ANN001, ARG002
+        try:
+            if not self._on or self._turn is None:
+                return
+            use = getattr(event, "tool_use", None) or {}
+            self._turn.answered(str(use.get("name", "")), use.get("input"), getattr(event, "result", None))
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("repeat guard skipped (%s)", exc)

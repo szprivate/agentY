@@ -1208,6 +1208,15 @@ def _wrap_agent(*, role: str, llm: str, model, model_id: str, system_prompt: str
     # the neighbouring tool that would have worked.
     if not any(isinstance(h, UnknownToolHookProvider) for h in _hooks):
         _hooks.append(UnknownToolHookProvider())
+    # And every agent: a model that makes the same call again and again - 136
+    # times, in the turn this was written after - is stopped by what it did,
+    # not by which model it is (src/utils/repeat_guard.py).
+    try:
+        from src.utils.repeat_guard import RepeatGuardHookProvider
+        if not any(isinstance(h, RepeatGuardHookProvider) for h in _hooks):
+            _hooks.append(RepeatGuardHookProvider())
+    except Exception:  # noqa: BLE001
+        pass
     # Agents that do the orchestrator's work INSIDE one of its tool calls. A message
     # the user sends while one of them runs is shown to it at its next step, so a
     # delegation does not have to finish the old version before anyone reads it.
