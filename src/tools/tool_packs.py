@@ -9,6 +9,15 @@ together they are about a fifth of the tool definitions. With the setting
 the prompt lists each pack with its tools, and ``load_tools(pack)`` puts one in
 the tool list.
 
+Two packs are of another kind: their tools are not rare, they belong to a KIND
+OF TURN - the stages of a hook pipeline (``hooks``), changing and running the
+graph that is open (``graph``). Whether a turn is of that kind is known before
+it starts (there are hook nodes on the canvas; a graph came with the message),
+so the pipeline pins the pack (``_tool_packs_pinned``) and the model never has
+to ask: on such a turn the tools are simply there, and on every other turn
+their ~4,600 tokens of definitions are not sent. They are listed in the prompt
+like the others, so a turn that needs one unexpectedly can still load it.
+
 The same rules as MCP servers (src/tools/mcp_on_demand.py), for the same
 reasons: which packs a conversation has is read off its own history at the start
 of every turn (pooled agents, restarts), and a direct call to a tool whose pack
@@ -68,7 +77,18 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
               ("set_agent_setting", "list_agent_settings", "get_logs", "send_to_slack",
                "free_memory", "get_system_stats", "clear_history")),
     "worlds": ("build a walkable 3D world from reference images", ("run_world_builder",)),
+    # Pinned by the pipeline on the turns they belong to (CONTEXT_PACKS).
+    "hooks": ("the stages of a hook pipeline on the canvas - already in your list whenever the canvas "
+              "has `agentY hook` / review / loop nodes",
+              ("apply_canvas_hooks", "stop_hook_run", "halt_for_review", "release_review", "loop_check",
+               "forward_outputs", "place_canvas_text")),
+    "graph": ("changing the wiring of the graph the user has open, deleting its nodes, running it as it "
+              "is - already in your list whenever a graph is open or you work in the open graph "
+              "(`set_canvas_node_params` and `get_canvas_node` always are)",
+              ("edit_canvas_graph", "delete_canvas_nodes", "run_canvas")),
 }
+# Packs the pipeline loads by what the turn is, rather than the model by asking.
+CONTEXT_PACKS = ("hooks", "graph")
 _PACK_OF = {name: pack for pack, (_why, names) in PACKS.items() for name in names}
 
 

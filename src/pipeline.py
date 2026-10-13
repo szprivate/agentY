@@ -5316,6 +5316,19 @@ class Pipeline:
             pass
         if lead:
             pins.add("shots")
+        # Tools that belong to a kind of turn: there when the turn is of that
+        # kind, and not sent with every other call (tool_packs.CONTEXT_PACKS).
+        try:
+            # (Not _canvas_flow: a plan of no hooks is still an object.)
+            if self._canvas_hooks or self._review_halt is not None or getattr(self, "_loop_states", None):
+                pins.add("hooks")
+        except Exception:  # noqa: BLE001
+            pins.add("hooks")
+        try:
+            if self._canvas_graph or self._canvas_selection or self._open_graph_mode():
+                pins.add("graph")
+        except Exception:  # noqa: BLE001
+            pins.add("graph")
         try:
             agent._tool_packs_pinned = pins
         except Exception:  # noqa: BLE001
