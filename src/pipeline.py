@@ -1250,7 +1250,7 @@ class Pipeline:
                                 canvas edit was the job, you are done.
               * ``error``     → ``error``: report it.
             """
-            _refusal = self._canvas_rebuild_refusal() or self._canvas_edit_first_refusal()
+            _refusal = self._canvas_rebuild_refusal() or self._canvas_edit_first_refusal(request)
             if _refusal:
                 return json.dumps(_refusal)
             _push_progress("🔎 Researching template & prompt …")
@@ -6690,6 +6690,15 @@ class Pipeline:
                     # path that produces most sets. Per-file QA is told to mark
                     # those n/a because they are checked here — a promise that has
                     # to hold on the queued batch too, not just on run_now.
+                    # Does each picture show what was asked for? Asked of a local
+                    # decision model when there is one; it only ever adds a line.
+                    try:
+                        from src.utils import decision_models as _dm
+                        _missed = await asyncio.to_thread(_dm.prompt_check, list(exec_paths[_outputs_before:]))
+                        if _missed:
+                            yield {"data": "\n\n" + _dm.prompt_check_text(_missed)}
+                    except Exception:  # noqa: BLE001 - never cost the run its report
+                        pass
                     _set = await self._qa_set_verdict(list(exec_paths[_outputs_before:]))
                     if _set and not _set.get("passed"):
                         yield {"data": ("\n\n🔍 QA — the outputs pass individually, but "
@@ -8240,7 +8249,7 @@ class Pipeline:
                 "user ALSO asked for a different, new workflow."),
         }
 
-    def _canvas_edit_first_refusal(self) -> dict | None:
+    def _canvas_edit_first_refusal(self, request: str = "") -> dict | None:
         """Stop prepare_workflow once, when a graph is open and untouched.
 
         Asked to CHANGE the graph on the canvas ("add canny ControlNet guidance to
@@ -8270,6 +8279,20 @@ class Pipeline:
                 return None
         except Exception:  # noqa: BLE001
             return None
+        # With a local decision model at hand (src/utils/decision_models.py), the
+        # question is put to it instead of being asked of every first build: sure
+        # that a new workflow is meant, the build goes ahead with no detour. No
+        # model, no answer, or not sure: the one-time question below, as before.
+        try:
+            from src.utils import decision_models as _dm
+            _cfg = _dm.settings()
+            _p = _dm.change_probability(request, graph, _cfg)
+            if _p is not None and _p <= float(_cfg["router_build_below"]):
+                if self._verbose:
+                    print(f"pipeline: a new workflow beside the open graph (decision model: {_p:.2f} that it is a change).")
+                return None
+        except Exception:  # noqa: BLE001
+            pass
         self._canvas_edit_first_said = True
         return {
             "status": "graph_is_open",

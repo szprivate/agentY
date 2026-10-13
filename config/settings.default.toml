@@ -595,3 +595,29 @@ keep_recent_messages = 8        # tool output this recent is never cut
 keep_turns = 2                  # turns kept word for word when older ones are summarised
 tool_result_chars = 1500        # tool output longer than this can be cut …
 tool_result_head = 500          # … down to this much of its start
+
+# Decision models - small LOCAL judges (Ollama's "decision" category). They do
+# not write: given a situation and a typed question they answer with a
+# probability, in a fraction of a second. Two uses, both advisory:
+#
+#   router        Is the request a change to the open graph, or a new workflow?
+#                 Sure that it is a new workflow, agentY builds at once and skips
+#                 the one-time question (edit_open_graph_first).
+#   prompt_check  After a render: does each picture show what its prompt asked
+#                 for? One that probably does not is named in the report.
+#                 Nothing is re-rendered.
+#
+# "auto" = used only when the ORCHESTRATOR runs on Ollama and the model is
+# already installed there (`ollama pull nimble`, `ollama pull clef-flash`);
+# agentY downloads nothing and a hosted setup is never asked. A model name
+# instead of "auto" uses that model whenever it is installed; "off" = never.
+# A probability from these models is how sure they are, not how often they are
+# right - tune the thresholds on your own work.
+[decision]
+router = "auto"
+router_model = "nimble"
+router_build_below = 0.3
+prompt_check = "auto"
+prompt_check_model = "clef-flash"
+prompt_check_below = 0.25
+prompt_check_max = 8
