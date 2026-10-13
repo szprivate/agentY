@@ -119,7 +119,12 @@ edit_open_graph_first = true
 repeat_guard = true
 repeat_guard_same_call = 3
 repeat_guard_per_tool = 30
-output_dir = "./output_images/"
+# Where a result is put when it is not already in ComfyUI's output folder (a
+# file fetched from ComfyUI over the network). Read against ComfyUI's
+# --output-directory: blank is that folder itself, a relative path a folder
+# inside it, an absolute path is used as it is. (What the agent makes itself
+# goes to <ComfyUI output>/agent/images, /videos, ... whatever this says.)
+output_dir = ""
 # Where generated/patched workflow JSON is written. BLANK (the default) means
 # "into ComfyUI": <--user-directory>/default/workflows/agentY/, which is the
 # folder ComfyUI's own workflow browser lists, so agent-built graphs are one

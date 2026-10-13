@@ -3501,6 +3501,7 @@ def settings_payload() -> dict:
         from src.agent import TIER_LABELS as _tier_labels
     except Exception:  # noqa: BLE001
         _tier_labels = {}
+    _facts = _comfy_facts()
     return {
         # Masked, never the real values. This response used to carry every
         # API key in plaintext to anyone who asked, which — with the old
@@ -3528,7 +3529,12 @@ def settings_payload() -> dict:
         "media_node_choices": _media_node_choices(),
         # What a blank path setting comes to on this machine, so that Settings
         # shows where things go instead of an empty field.
-        "setting_defaults": _setting_defaults(settings),
+        "setting_defaults": _setting_defaults(settings, _facts),
+        # The folders ComfyUI loads models from besides its own (read-only: they
+        # are ComfyUI's extra model paths, set where ComfyUI is started).
+        "comfyui_extra_model_dirs": _extra_model_dirs(_facts),
+        # What can be picked for the models the agent loads itself.
+        "aux_model_choices": _aux_model_choices(settings, _facts),
         # The window local models are loaded with, and how it was arrived at.
         "ollama_window": _ollama_window_info(settings),
     }
@@ -3547,46 +3553,118 @@ def _ollama_window_info(settings: dict) -> dict:
         return {}
 
 
-def _setting_defaults(settings: dict) -> dict:
-    """``{setting: what a blank value means here}`` for the path settings that are
-    blank by default because the right value is found on the machine."""
-    out = {}
-    root = _project_root()
+def _comfy_facts() -> dict:
+    """What ComfyUI says of itself, for the settings page: ``{"argv", "root",
+    "user_dir", "output_dir", "folders"}`` - empty values when it cannot be asked."""
+    out = {"argv": [], "root": "", "user_dir": "", "output_dir": "", "folders": {}}
     try:
         from agenty_core.utils.comfyui_client import get_client, parse_argv_dir_flag
         stats = get_client().get("/system_stats")
         argv = stats.get("system", {}).get("argv", []) if isinstance(stats, dict) else []
-    except Exception:  # noqa: BLE001
-        argv = []
-    comfy = ""
-    try:
-        main = next((a for a in argv if str(a).replace("\\", "/").endswith("main.py")), "")
-        comfy = str(Path(main).resolve().parent) if main else ""
-    except Exception:  # noqa: BLE001
-        comfy = ""
-    user_dir = ""
-    try:
-        from agenty_core.utils.comfyui_client import parse_argv_dir_flag as _flag
-        user_dir = str(_flag(argv, "--user-directory") or "")
-    except Exception:  # noqa: BLE001
-        user_dir = ""
-    if not user_dir and comfy:
-        user_dir = str(Path(comfy) / "user")
-    unreachable = "found when ComfyUI is running"
-    out["comfyui_dir"] = comfy or "looked for beside agentY (" + str(root.parent) + ")"
-    out["comfyui_models_dir"] = (str(Path(comfy) / "models") if comfy else unreachable) + " - as ComfyUI reports it"
-    out["comfyui_user_dir"] = user_dir or unreachable
-    out["output_workflows_dir"] = (str(Path(user_dir) / "default" / "workflows" / "agentY") if user_dir
-                                   else "ComfyUI's user folder /default/workflows/agentY - " + unreachable)
+        out["argv"] = [str(a) for a in argv]
+        main = next((a for a in out["argv"] if a.replace("\\", "/").endswith("main.py")), "")
+        out["root"] = str(Path(main).resolve().parent) if main else ""
+        out["user_dir"] = str(parse_argv_dir_flag(argv, "--user-directory") or "")
+        out["output_dir"] = str(parse_argv_dir_flag(argv, "--output-directory") or "")
+        folders = get_client().get("/internal/folder_paths")
+        out["folders"] = folders if isinstance(folders, dict) else {}
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("settings: ComfyUI could not be asked about itself (%s)", exc)
+    if out["root"]:
+        out["user_dir"] = out["user_dir"] or str(Path(out["root"]) / "user")
+        out["output_dir"] = out["output_dir"] or str(Path(out["root"]) / "output")
+    return out
+
+
+def _extra_model_dirs(facts: dict) -> list:
+    """The folders ComfyUI loads models from besides its own ``models`` folder
+    (its extra model paths), as it reports them: the parents of where it looks
+    for checkpoints, loras, VAEs and diffusion models."""
+    own = (str(Path(facts["root"]) / "models").lower().replace("\\", "/") if facts.get("root") else "")
+    seen, out = set(), []
+    for kind in ("checkpoints", "diffusion_models", "loras", "vae", "text_encoders", "controlnet"):
+        for path in (facts.get("folders") or {}).get(kind) or []:
+            parent = str(Path(str(path)).parent)
+            key = parent.lower().replace("\\", "/")
+            if key == own or key in seen:
+                continue
+            seen.add(key)
+            out.append(parent)
+    return out
+
+
+def _setting_defaults(settings: dict, facts: dict | None = None) -> dict:
+    """What the path settings of "Files & logs" come to on this machine, in
+    full: ``{setting: absolute path}`` - a blank one resolved to where things
+    really go, a relative one to the folder it is read against. A value that
+    cannot be worked out (ComfyUI is not running) says so instead."""
+    facts = facts if facts is not None else _comfy_facts()
+    root = _project_root()
+    comfy, user_dir, comfy_out = facts["root"], facts["user_dir"], facts["output_dir"]
+    waiting = "known when ComfyUI is running"
+
+    def under(base, value):
+        value = str(value or "").strip()
+        if value and Path(value).is_absolute():
+            return str(Path(value))
+        # normpath, not resolve(): a mapped drive stays the drive the user knows
+        # it by instead of turning into its \\server\share name.
+        return os.path.normpath(os.path.join(str(base), value)) if base else ""
+
+    out = {
+        "comfyui_dir": str(settings.get("comfyui_dir") or "").strip() or comfy or waiting,
+        "comfyui_models_dir": str(settings.get("comfyui_models_dir") or "").strip()
+        or (str(Path(comfy) / "models") if comfy else waiting),
+        "comfyui_user_dir": str(settings.get("comfyui_user_dir") or "").strip() or user_dir or waiting,
+        "output_workflows_dir": under(root, settings.get("output_workflows_dir"))
+        if str(settings.get("output_workflows_dir") or "").strip()
+        else (str(Path(user_dir) / "default" / "workflows" / "agentY") if user_dir else waiting),
+        # Read against ComfyUI's output folder, not this checkout.
+        "output_dir": under(comfy_out, settings.get("output_dir")) or waiting,
+    }
+    for key in ("comfyui_custom_templates_dir", "conversation_db", "message_history_log", "tokens_usage_log"):
+        out[key] = under(root, settings.get(key))
     models = str(Path(comfy) / "models") if comfy else "ComfyUI's models folder"
-    out["annotate.sam3_checkpoint"] = str(Path(models) / "sam3" / "sam3.safetensors") if comfy \
-        else models + " /sam3/sam3.safetensors"
+    out["annotate.sam3_checkpoint"] = str(Path(models) / "sam3" / "sam3.safetensors")
     out["annotate.sam3_bpe"] = "inside the installed sam3 package, then the ComfyUI-SAM3 node"
-    # Anything else that is blank and is a path: say where a relative one starts.
-    for key in ("output_dir", "comfyui_custom_templates_dir", "conversation_db", "message_history_log",
-                "tokens_usage_log"):
-        if not str(settings.get(key) or "").strip():
-            out[key] = "under " + str(root)
+    return out
+
+
+# The decision models Ollama offers, whether or not they are on this machine yet.
+_DECISION_MODELS = ("nimble", "clef-flash", "clef", "tev1:4b", "tev1:0.8b", "laya")
+_FACE_MODELS = (("buffalo_l", "buffalo_l - accurate, about 330 MB"), ("buffalo_m", "buffalo_m"),
+                ("buffalo_s", "buffalo_s - small, less sure of itself"), ("buffalo_sc", "buffalo_sc - smallest"),
+                ("antelopev2", "antelopev2"))
+
+
+def _aux_model_choices(settings: dict, facts: dict | None = None) -> dict:
+    """What can be picked for each auxiliary model: ``{setting path: [{id, label}]}``."""
+    facts = facts if facts is not None else _comfy_facts()
+    out = {}
+    have = []
+    try:
+        from src.utils import decision_models as _dm
+        _dm.installed("")                                   # asks Ollama, at most once a minute
+        have = [n for n in _dm._installed["names"] if "embed" not in n]
+    except Exception:  # noqa: BLE001
+        have = []
+    bare = {n[:-7] if n.endswith(":latest") else n for n in have}
+    decision = [{"id": n, "label": n + ("" if n in bare else "  - downloaded on first use")} for n in _DECISION_MODELS]
+    decision += [{"id": n, "label": n} for n in sorted(bare) if n not in _DECISION_MODELS]
+    out["decision.router_model"] = decision
+    out["decision.prompt_check_model"] = decision
+    out["likeness.face_model"] = [{"id": i, "label": label} for i, label in _FACE_MODELS]
+    found = [{"id": "", "label": "Automatic - sam3/sam3.safetensors in ComfyUI's models folders"}]
+    for folder in (facts.get("folders") or {}).get("sam3") or []:
+        try:
+            for f in sorted(Path(str(folder)).iterdir()):
+                if f.is_file() and f.suffix.lower() in (".safetensors", ".pt", ".pth"):
+                    found.append({"id": str(f), "label": str(f)})
+        except OSError:
+            continue
+    out["annotate.sam3_checkpoint"] = found
+    out["annotate.sam3_device"] = [{"id": "auto", "label": "auto - the graphics card when there is one"},
+                                   {"id": "cuda", "label": "cuda"}, {"id": "cpu", "label": "cpu - a lookup takes about a minute"}]
     return out
 
 
@@ -3626,6 +3704,12 @@ def settings_save(body: dict) -> dict:
         _update_env_file({str(k): "" if v is None else str(v)
                           for k, v in env_updates.items()})
         result["env_updated"] = sorted(env_updates.keys())
+    # Keys taken out altogether ("Remove" in Authentication): the line leaves .env.
+    gone = body.get("env_remove")
+    if isinstance(gone, list) and gone:
+        removed = _remove_env_keys([str(k) for k in gone])
+        if removed:
+            result["env_removed"] = removed
     settings_updates = body.get("settings")
     if isinstance(settings_updates, dict) and settings_updates:
         result["settings_updated"] = _update_settings_file(settings_updates)
@@ -3680,6 +3764,33 @@ def _update_env_file(updates: dict) -> None:
     # A key that just changed should stop being "old" immediately, not at the next
     # restart — otherwise the one action the warning asks for appears not to work.
     _note_key_ages()
+
+
+_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _remove_env_keys(keys: list) -> list:
+    """Take *keys* out of .env - the whole line - and out of this process's
+    environment. Comments and the other lines are left as they are. Returns the
+    names that were there."""
+    names = {k for k in keys if _ENV_NAME.match(k)}
+    path = _env_path()
+    if not names or not path.exists():
+        return []
+    kept, removed = [], []
+    for raw in path.read_text(encoding="utf-8").splitlines(keepends=True):
+        s = raw.strip()
+        key = s.split("=", 1)[0].strip() if s and not s.startswith("#") and "=" in s else ""
+        if key in names:
+            removed.append(key)
+            continue
+        kept.append(raw)
+    if removed:
+        path.write_text("".join(kept), encoding="utf-8")
+    for key in names:
+        os.environ.pop(key, None)
+    _note_key_ages()
+    return sorted(set(removed))
 
 
 # ── API-key age ──────────────────────────────────────────────────────────────

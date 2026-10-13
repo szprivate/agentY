@@ -134,10 +134,21 @@ def _console_lines() -> bool | None:
 
 
 def _output_dir() -> Path:
-    """Return the fallback directory where ComfyUI output files are saved."""
+    """Where a result is put when it is not already in ComfyUI's output folder.
+
+    ``output_dir`` in settings is read against ComfyUI's ``--output-directory``:
+    blank is that folder itself, a relative path a folder inside it, an absolute
+    path is used as it is. Only when ComfyUI's folder is not on this machine (a
+    remote ComfyUI) or cannot be asked does it fall back to this checkout.
+    """
     cfg = _load_config()
-    od = cfg.get("output_dir", "./output/")
-    return (_project_root() / od).resolve()
+    od = str(cfg.get("output_dir") or "").strip()
+    if od and Path(od).is_absolute():
+        return Path(od).resolve()
+    comfy = _get_comfyui_output_dir()
+    if comfy is not None and comfy.is_dir():
+        return (comfy / od).resolve() if od else comfy
+    return (_project_root() / (od or "./output_images/")).resolve()
 
 
 # --- ComfyUI dir cache -----------------------------------------------------
