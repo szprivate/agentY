@@ -79,7 +79,15 @@ from src.utils.debug_log import trace as _trace
 # and once more per turn that was kept - 45,000 characters of the same text per
 # message on a canvas with hooks, which is most of what a long conversation
 # weighed. In the prompt it is there once, ahead of everything that changes,
-# where a provider's (and Ollama's) prompt cache holds it.
+# where a provider's prompt cache holds it.
+#
+# Not for a LOCAL orchestrator: measured on qwen3.8:27b, a case that needs the
+# canvas guidance (the benchmark's CX01) passed 5 of 8 runs with it beside the
+# canvas in the message and 0 of 3 with it in the prompt. A small model follows
+# what stands next to the thing it is about. So for Ollama the turn's guidance
+# stays in the message, exactly as it was - and is taken out of the EARLIER
+# turns' messages when the next one starts (_drop_old_guides), which is where
+# the weight was.
 # ---------------------------------------------------------------------------
 _ORCH_PARTIALS_DIR = Path(__file__).parent.parent / "config" / "system_prompts" / "orchestrator"
 # In this order, whichever of them a turn has: the same turns get the same text.
@@ -5315,11 +5323,17 @@ class Pipeline:
         """Put the guidance partials *names* into the orchestrator's prompt for
         this turn (and take out what the last turn had). False when that could
         not be done - the caller then sends them with the message, as before."""
-        if os.environ.get("AGENTY_GUIDES_INLINE", "0") == "1":
-            return False
         agent = getattr(self, "_orchestrator_agent", None)
+        inline = os.environ.get("AGENTY_GUIDES_INLINE", "0") == "1" or self._orch_is_local()
         try:
             prompt = agent.system_prompt
+            if inline:
+                # Whatever an earlier turn (on another model) put there comes out.
+                had = getattr(agent, "_turn_guides_text", "") or ""
+                if had and isinstance(prompt, str) and had in prompt:
+                    agent.system_prompt = prompt.replace(had, "")
+                    agent._turn_guides_text = ""
+                return False
             if not isinstance(prompt, str):
                 return False
             had = getattr(agent, "_turn_guides_text", "") or ""
@@ -5334,6 +5348,35 @@ class Pipeline:
             if getattr(self, "_verbose", False):
                 print(f"pipeline: turn guidance stays in the message ({exc}).")
             return False
+
+    def _orch_is_local(self) -> bool:
+        """Is the model under the orchestrator right now an Ollama one?"""
+        try:
+            model = getattr(self._orchestrator_agent, "model", None)
+            return "ollama" in type(model).__name__.lower()
+        except Exception:  # noqa: BLE001
+            return False
+
+    @staticmethod
+    def _drop_old_guides(messages) -> int:
+        """Take the guidance partials out of the user messages of EARLIER turns
+        (every message there is when a turn starts). It applied to the turn it
+        came with; the next turn brings its own. Returns how many were removed."""
+        texts = [t for t in (_orch_partial(n) for n in _TURN_GUIDES) if t]
+        removed = 0
+        for msg in messages or []:
+            if not isinstance(msg, dict) or msg.get("role") != "user":
+                continue
+            for block in msg.get("content") or []:
+                if not isinstance(block, dict) or not isinstance(block.get("text"), str):
+                    continue
+                text = block["text"]
+                for guide in texts:
+                    if guide in text:
+                        text = text.replace(guide + "\n\n", "").replace(guide, "")
+                        removed += 1
+                block["text"] = text
+        return removed
 
     def _pin_tool_packs(self, lead: bool) -> None:
         """The tool packs this turn needs whether or not the conversation has
@@ -5379,6 +5422,12 @@ class Pipeline:
         msgs = getattr(agent, "messages", None)
         if not msgs:
             return
+        try:
+            dropped = self._drop_old_guides(msgs)
+            if dropped and self._verbose:
+                print(f"pipeline: took {dropped} guidance block(s) out of earlier turns' messages.")
+        except Exception:  # noqa: BLE001 - never cost a turn
+            pass
         shrunk = self._shrink_old_catalogs(msgs)
         if shrunk and self._verbose:
             print(f"pipeline: shrank {shrunk} workflow catalog(s) from earlier turns.")

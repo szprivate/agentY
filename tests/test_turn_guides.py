@@ -68,6 +68,40 @@ class WhereItGoes(unittest.TestCase):
         self.assertEqual(p._orchestrator_agent.system_prompt, BASE)
 
 
+class OllamaModel:        # named as the real one is: the class name is what is asked
+    pass
+
+
+class ALocalOrchestrator(unittest.TestCase):
+    """qwen3.8:27b did worse with the guidance away from what it is about."""
+
+    def _local(self, prompt=BASE):
+        return pipeline_stub(_orchestrator_agent=SimpleNamespace(system_prompt=prompt, model=OllamaModel()))
+
+    def test_keeps_it_in_the_message(self):
+        p = self._local()
+        self.assertFalse(p._set_turn_guides(["canvas_nodes"]))
+        self.assertEqual(p._orchestrator_agent.system_prompt, BASE)
+
+    def test_and_what_a_hosted_turn_left_in_the_prompt_comes_out(self):
+        p = _stub()
+        p._set_turn_guides(["canvas_nodes"])
+        p._orchestrator_agent.model = OllamaModel()
+        self.assertFalse(p._set_turn_guides(["canvas_nodes"]))
+        self.assertEqual(p._orchestrator_agent.system_prompt, BASE)
+
+    def test_earlier_turns_lose_theirs(self):
+        guide = pl._orch_partial("canvas_hooks")
+        review = pl._orch_partial("review_halt")
+        msgs = [{"role": "user", "content": [{"text": guide + "\n\n[CANVAS HOOKS] 4 -> 7\n" + review + "\n\nrun it"}]},
+                {"role": "assistant", "content": [{"text": guide}]},
+                {"role": "user", "content": [{"toolResult": {"content": [{"text": "x"}]}}]}]
+        self.assertEqual(pl.Pipeline._drop_old_guides(msgs), 2)
+        self.assertEqual(msgs[0]["content"][0]["text"], "[CANVAS HOOKS] 4 -> 7\nrun it")
+        self.assertEqual(msgs[1]["content"][0]["text"], guide)          # only what the pipeline put in
+        self.assertEqual(pl.Pipeline._drop_old_guides(msgs), 0)
+
+
 class TheMessage(unittest.TestCase):
 
     def _input(self, p):

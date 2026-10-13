@@ -85,6 +85,8 @@ _BOUND = (
     "_ledger_turn_start",
     "_pin_tool_packs",
     "_set_turn_guides",
+    "_orch_is_local",
+    "_drop_old_guides",
     "_build_orchestrator_input",
     "_format_image_gallery",
     "_unfinished_intent_input",
