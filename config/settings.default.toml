@@ -109,6 +109,16 @@ intent_guard = true
 # change what is open; a hosted model rarely does, and pays one extra call when
 # it really wants a second workflow. false = a new workflow is built at once.
 edit_open_graph_first = true
+# An agent that keeps making the call it has already made is stopped: the same
+# tool with the same arguments, answered the same way three times, is refused the
+# fourth time (polling tools - the queue, a download - get twelve); and one tool
+# called 30 times in a turn gets a single notice asking the model to decide with
+# what it has, then again at 60 and 120, after which the tool is closed for the
+# turn. A refusal is an ordinary tool result, so the agent goes on. For every
+# agent and every model.
+repeat_guard = true
+repeat_guard_same_call = 3
+repeat_guard_per_tool = 30
 output_dir = "./output_images/"
 # Where generated/patched workflow JSON is written. BLANK (the default) means
 # "into ComfyUI": <--user-directory>/default/workflows/agentY/, which is the
@@ -573,6 +583,14 @@ max_download_mb = 250
 enabled = true
 history_budget_tokens = 20000   # summarise older turns when history is above this
 hard_budget_tokens = 60000      # mid-turn guard: age old tool output past this
+# Ollama models only. A call that does not fit the model's window
+# (llm.ollama.num_ctx) is not refused by Ollama: the start of it is dropped
+# without a word, the user's request first. With this on, old tool output is cut
+# until the call fits - one result at a time, oldest first, the newest answer of
+# each tool last - and only when it really would not fit. Hosted models are
+# never touched by it. The better cure is a larger window where the card has
+# room: qwen3.8:27b takes 23 GB at 65536, 25 GB at 98304, 27.5 GB at 131072.
+fit_local_window = true
 keep_recent_messages = 8        # tool output this recent is never cut
 keep_turns = 2                  # turns kept word for word when older ones are summarised
 tool_result_chars = 1500        # tool output longer than this can be cut …

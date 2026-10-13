@@ -55,6 +55,9 @@ DEFAULTS = {
     "history_budget_tokens": 20_000,
     # Mid-turn guard: past this, old tool output is aged even while a turn runs.
     "hard_budget_tokens": 60_000,
+    # Ollama models only: when a call would not fit the model's window, cut old
+    # tool output until it does (see fit_to_window). Hosted models never use it.
+    "fit_local_window": True,
     "keep_recent_messages": 8,     # tool output this recent is never aged
     "keep_turns": 2,               # user turns kept word for word by a summary
     "tool_result_chars": 1_500,    # tool output longer than this can be aged …
@@ -360,6 +363,123 @@ def archive(thread_id: str, messages: list, reason: str = "") -> Path | None:
         return None
 
 
+# ── a local model's window ───────────────────────────────────────────────────
+#
+# A model on Ollama runs with the window the caller sets (llm.ollama.num_ctx),
+# and a call that does not fit is not refused: the server drops the START of it,
+# silently. When that reaches the user's own message the turn dies ("no user
+# query found in messages", seen 2026-10-12); before that it just loses things.
+#
+# The first attempt at this aged ALL tool output outside the last eight messages
+# as soon as the history was large, and was reverted the same night: it cut the
+# report of the workflow the turn had just built, and a model that has lost that
+# starts guessing - three of five cases failed that had passed without it.
+#
+# So this one does as little as it can. Only when the call REALLY would not fit;
+# one tool result at a time, oldest first, stopping the moment it fits; and the
+# newest answer of every tool is left for last, because that is the one the turn
+# is working from (the last prepare_workflow report, the last look at a node).
+# What goes first is what a long turn is mostly made of: the tenth identical
+# lookup, the schema read forty steps ago.
+
+_ANSWER_RESERVE = 4_096
+
+
+def ollama_window(agent) -> int:
+    """The context size *agent*'s model runs with when it is an Ollama model, else 0."""
+    model = getattr(agent, "model", None)
+    if model is None or "ollama" not in type(model).__name__.lower():
+        return 0
+    try:
+        config = model.get_config() if hasattr(model, "get_config") else {}
+        got = int(((config or {}).get("options") or {}).get("num_ctx") or 0)
+        if got > 0:
+            return got
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from src.utils.settings import load_settings
+        return int(load_settings().get("llm", {}).get("ollama", {}).get("num_ctx") or 0)
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def fixed_tokens(agent) -> int:
+    """What every call sends besides the history: the prompt and the tool
+    definitions, by the same rough measure as :func:`estimate_tokens`."""
+    chars = len(str(getattr(agent, "system_prompt", "") or ""))
+    try:
+        chars += len(json.dumps(agent.tool_registry.get_all_tool_specs(), default=str))
+    except Exception:  # noqa: BLE001
+        pass
+    return chars // 4
+
+
+def _tool_names(messages) -> dict:
+    names = {}
+    for m in messages or []:
+        for block in (m.get("content") or []) if isinstance(m, dict) else []:
+            use = block.get("toolUse") if isinstance(block, dict) else None
+            if isinstance(use, dict):
+                names[use.get("toolUseId")] = str(use.get("name") or "")
+    return names
+
+
+def fit_to_window(messages: list, room: int, *, keep_recent: int, tool_chars: int,
+                  tool_head: int) -> tuple[list, list]:
+    """Cut old tool output until *messages* is at most *room* tokens.
+
+    Returns ``(new_messages, originals_changed)``; the input is returned as it is
+    when it already fits. See the notes above for the order things are cut in.
+    """
+    out = list(messages or [])
+    if estimate_tokens(out) <= room:
+        return out, []
+    names = _tool_names(out)
+    limit = max(0, len(out) - max(0, keep_recent))
+    spots = []                                    # (message index, block index, tool name)
+    for i in range(limit):
+        m = out[i]
+        for j, block in enumerate((m.get("content") or []) if isinstance(m, dict) else []):
+            tr = block.get("toolResult") if isinstance(block, dict) else None
+            if not isinstance(tr, dict):
+                continue
+            size = sum(len(str(it.get("text", ""))) if "text" in it else len(json.dumps(it.get("json"), default=str))
+                       for it in tr.get("content") or [] if isinstance(it, dict))
+            first = next((str(it.get("text", "")) for it in tr.get("content") or []
+                          if isinstance(it, dict) and "text" in it), "")
+            if size > tool_chars and not first.startswith(TRIM_MARK):
+                spots.append((i, j, names.get(tr.get("toolUseId"), "")))
+    newest = {}
+    for i, j, name in spots:
+        newest[name] = (i, j)
+    in_use = set(newest.values())
+    changed: list = []
+    total = estimate_tokens(out)
+    for group in ([s for s in spots if (s[0], s[1]) not in in_use],
+                  [s for s in spots if (s[0], s[1]) in in_use]):
+        for i, j, _name in group:
+            if total <= room:
+                return out, changed
+            m = out[i]
+            before = len(json.dumps(m, ensure_ascii=False, default=str))
+            content = list(m.get("content") or [])
+            tr = content[j]["toolResult"]
+            items = []
+            for it in tr.get("content") or []:
+                text = str(it["text"]) if isinstance(it, dict) and "text" in it else (
+                    json.dumps(it["json"], ensure_ascii=False, default=str)
+                    if isinstance(it, dict) and "json" in it else None)
+                items.append({"text": _cut(text, tool_head, "tool output")}
+                             if text is not None and len(text) > tool_head else it)
+            content[j] = {"toolResult": {**tr, "content": items}}
+            if all(m is not c for c in changed):
+                changed.append(messages[i])
+            out[i] = {**m, "content": content}
+            total -= (before - len(json.dumps(out[i], ensure_ascii=False, default=str))) // 4
+    return out, changed
+
+
 # ── the mid-turn guard ───────────────────────────────────────────────────────
 
 class CompactionHookProvider:
@@ -386,6 +506,8 @@ class CompactionHookProvider:
                 return
             agent = getattr(event, "agent", None)
             messages = getattr(agent, "messages", None)
+            if messages and cfg.get("fit_local_window", True):
+                self._fit_local(agent, messages, cfg)
             if not messages or estimate_tokens(messages) <= cfg["hard_budget_tokens"]:
                 return
             res = compact(list(messages), cfg, allow_summary=False)
@@ -397,6 +519,29 @@ class CompactionHookProvider:
             logger.info("compaction (%s, mid-turn): %s", self._role, res.describe())
         except Exception as exc:  # noqa: BLE001 — never cost the model call
             logger.debug("compaction hook skipped (%s)", exc)
+
+
+def _fit_local(self, agent, messages, cfg) -> None:
+    """For a model on Ollama: make this call fit its window (fit_to_window)."""
+    window = ollama_window(agent)
+    if window <= 0:
+        return                                   # hosted: nothing here applies
+    room = window - fixed_tokens(agent) - _ANSWER_RESERVE
+    if room <= 0 or estimate_tokens(messages) <= room:
+        return
+    fitted, changed = fit_to_window(list(messages), room, keep_recent=cfg["keep_recent_messages"],
+                                    tool_chars=cfg["tool_result_chars"], tool_head=cfg["tool_result_head"])
+    if not changed:
+        return
+    if self._role == "orchestrator":
+        archive(_current_thread(), changed, "window")
+    before = estimate_tokens(messages)
+    messages[:] = fitted
+    logger.info("compaction (%s, local window %s): %s old tool result(s) cut, ~%s -> ~%s tokens of history",
+                self._role, window, len(changed), f"{before:,}", f"{estimate_tokens(fitted):,}")
+
+
+CompactionHookProvider._fit_local = _fit_local
 
 
 def _current_thread() -> str:
