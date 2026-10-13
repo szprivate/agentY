@@ -116,7 +116,7 @@ class MakeRoom(unittest.TestCase):
         ou._room_last = 0.0
         self.asked = []
 
-    def _run(self, free_gb, loaded=False, queue=None, need_gb=25, settings=LOCAL):
+    def _run(self, free_gb, queue=None, need_gb=25, settings=LOCAL):
         def comfy(path, body=None):
             self.asked.append(path)
             if path == "/system_stats":

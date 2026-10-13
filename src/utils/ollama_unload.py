@@ -165,8 +165,6 @@ def release(host: str | None = None, *, settings: dict | None = None, prompt=Non
 
 # Asked at most this often: the answer does not change between two calls of one step.
 _ROOM_QUIET_SECONDS = 20.0
-# With the model already loaded, this much free means it is not living in shared memory.
-_LOADED_MARGIN = 1.5 * 1024 ** 3
 # No estimate to be had (no card to ask, Ollama not answering): what a 27b model takes.
 _NEED_FALLBACK = 20 * 1024 ** 3
 _room_last = 0.0
@@ -189,14 +187,6 @@ def _comfy(path: str, body: dict | None = None) -> dict:
     return got if isinstance(got, dict) else {}
 
 
-def _model_loaded(host: str) -> bool:
-    try:
-        loaded = _call(host + "/api/ps").get("models") or []
-    except Exception:  # noqa: BLE001
-        return False
-    return any(int(m.get("size_vram") or m.get("size") or 0) >= MIN_BYTES for m in loaded)
-
-
 def make_room(host: str | None = None, *, settings: dict | None = None) -> bool:
     """Before a local model is called: if ComfyUI holds so much of the card that
     the model would not fit beside it, and nothing is rendering or queued, ask
@@ -213,18 +203,14 @@ def make_room(host: str | None = None, *, settings: dict | None = None) -> bool:
         free = max((int(d.get("vram_free") or 0) for d in devices if str(d.get("type")) == "cuda"), default=None)
         if free is None:
             return False                      # no card of its own to give back
-        if host is None:
-            from src.utils.settings import ollama_host
-            host = ollama_host()
-        host = str(host).rstrip("/")
-        if _model_loaded(host):
-            need = _LOADED_MARGIN
-        else:
-            try:
-                from src.utils.ollama_window import need_bytes
-                need = need_bytes() or _NEED_FALLBACK
-            except Exception:  # noqa: BLE001
-                need = _NEED_FALLBACK
+        # ComfyUI's "free" is the card less what ComfyUI ITSELF holds (measured:
+        # 27.6 GB "free" with a 25 GB model of Ollama's loaded beside it) - so it
+        # is the room there is for the model whether that is loaded yet or not.
+        try:
+            from src.utils.ollama_window import need_bytes
+            need = need_bytes() or _NEED_FALLBACK
+        except Exception:  # noqa: BLE001
+            need = _NEED_FALLBACK
         if free >= need:
             return False
         queue = _comfy("/queue")
