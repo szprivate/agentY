@@ -404,6 +404,54 @@ def ollama_window(agent) -> int:
         return 0
 
 
+def answer_reserve(agent) -> int:
+    """How much of an Ollama model's window is kept free for the answer.
+
+    Ollama lets a prompt be ``num_ctx - num_predict`` long and no longer: the
+    answer's allowance (the model's ``max_tokens``) comes off the window before
+    the prompt is measured. Measured on this: a 32,768 window with 16,384 for
+    the answer cut a 47,461-token call down to 16,386.
+    """
+    try:
+        model = getattr(agent, "model", None)
+        config = model.get_config() if hasattr(model, "get_config") else {}
+        return max(_ANSWER_RESERVE, int((config or {}).get("max_tokens") or 0))
+    except Exception:  # noqa: BLE001
+        return _ANSWER_RESERVE
+
+
+_WINDOWS = (32_768, 49_152, 65_536, 81_920, 98_304, 131_072, 196_608, 262_144)
+_warned: dict = {}                       # (thread, role) -> when the user was last told
+
+
+def window_warning(window: int, reserve: int, fixed: int, history: int) -> str:
+    """What to tell the user when a call cannot fit a local model's window."""
+    need = fixed + history + reserve
+    want = next((w for w in _WINDOWS if w >= need * 1.15), _WINDOWS[-1])
+    return (f"\u26a0\ufe0f The local model's window is too small for this call. It is {window:,} tokens, "
+            f"{reserve:,} of them are kept for the answer (llm.ollama.max_tokens), and agentY's own prompt and "
+            f"tools take about {fixed:,} - which leaves {max(0, window - reserve - fixed):,} for a conversation "
+            f"that needs about {history:,}. Ollama does not refuse such a call: it drops the START of it, the "
+            f"request first, and what comes back are errors like 'no user query found in messages' or a broken "
+            f"tool call ('XML syntax error'). Set llm.ollama.num_ctx to {want:,} or more and restart the agent "
+            f"(qwen3.8:27b: 23 GB of VRAM at 65,536, 25 GB at 98,304, 27.5 GB at 131,072).")
+
+
+def _warn_window(role: str, text: str) -> None:
+    import time
+    key = (_current_thread(), role)
+    now = time.monotonic()
+    if now - _warned.get(key, -1e9) < 300:
+        return
+    _warned[key] = now
+    logger.warning("compaction (%s): %s", role, text)
+    try:
+        from src.utils.status_bus import notify
+        notify(text)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def fixed_tokens(agent) -> int:
     """What every call sends besides the history: the prompt and the tool
     definitions, by the same rough measure as :func:`estimate_tokens`."""
@@ -526,16 +574,23 @@ def _fit_local(self, agent, messages, cfg) -> None:
     window = ollama_window(agent)
     if window <= 0:
         return                                   # hosted: nothing here applies
-    room = window - fixed_tokens(agent) - _ANSWER_RESERVE
-    if room <= 0 or estimate_tokens(messages) <= room:
+    fixed, reserve = fixed_tokens(agent), answer_reserve(agent)
+    room = window - fixed - reserve
+    before = estimate_tokens(messages)
+    if room > 0 and before <= room:
         return
-    fitted, changed = fit_to_window(list(messages), room, keep_recent=cfg["keep_recent_messages"],
-                                    tool_chars=cfg["tool_result_chars"], tool_head=cfg["tool_result_head"])
+    fitted, changed = (fit_to_window(list(messages), room, keep_recent=cfg["keep_recent_messages"],
+                                     tool_chars=cfg["tool_result_chars"], tool_head=cfg["tool_result_head"])
+                       if room > 0 else (messages, []))
+    # Cutting old tool output was not enough (or there is nothing to cut: the
+    # prompt alone is too much). The call goes out and Ollama will cut it - so
+    # the user is told what the errors that follow mean, and what cures them.
+    if estimate_tokens(fitted) > max(0, room):
+        _warn_window(self._role, window_warning(window, reserve, fixed, estimate_tokens(fitted)))
     if not changed:
         return
     if self._role == "orchestrator":
         archive(_current_thread(), changed, "window")
-    before = estimate_tokens(messages)
     messages[:] = fitted
     logger.info("compaction (%s, local window %s): %s old tool result(s) cut, ~%s -> ~%s tokens of history",
                 self._role, window, len(changed), f"{before:,}", f"{estimate_tokens(fitted):,}")

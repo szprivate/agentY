@@ -432,7 +432,17 @@ qa_checker = ""
 
 [llm.ollama]
 host = "http://localhost:11434"
-num_ctx = 32768
+# The model's window. What a call may send is num_ctx MINUS max_tokens: Ollama
+# keeps the answer's allowance free, and a call that is longer is not refused -
+# its start is dropped without a word (the request first), and what comes back
+# is "no user query found in messages" or a broken tool call. The orchestrator's
+# own prompt and tools are about 30,000 tokens, a first call in an open graph
+# with project memory about 47,000 - so 32,768 here cannot work for it.
+# qwen3.8:27b takes 23 GB of VRAM at 65536, 25 GB at 98304, 27.5 GB at 131072.
+# A smaller card: lower this AND max_tokens, and keep num_ctx - max_tokens
+# above 60,000 if the orchestrator is local. agentY says so in the chat when a
+# call does not fit.
+num_ctx = 98304
 max_tokens = 16384
 repeat_penalty = 1.1
 think = false

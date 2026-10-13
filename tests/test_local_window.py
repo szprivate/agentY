@@ -12,8 +12,10 @@ from src.utils import compaction as cp
 
 
 class OllamaModel:
-    def __init__(self, num_ctx=None):
+    def __init__(self, num_ctx=None, max_tokens=None):
         self._cfg = {"options": {"num_ctx": num_ctx}} if num_ctx else {}
+        if max_tokens:
+            self._cfg["max_tokens"] = max_tokens
 
     def get_config(self):
         return self._cfg
@@ -122,6 +124,37 @@ class TheHook(unittest.TestCase):
     def test_a_local_model_with_room_to_spare_is_left_alone(self):
         msgs = _history([("hf_file", 8_000)] * 6)
         self.assertEqual(self._run(OllamaModel(131_072), msgs), msgs)
+
+    def test_the_answers_allowance_comes_off_the_window(self):
+        """Ollama lets a prompt be num_ctx - num_predict long: 32,768 with 16,384
+        for the answer cut a 47,461-token call down to 16,386."""
+        self.assertEqual(cp.answer_reserve(_agent(OllamaModel(65_536, 16_384), [])), 16_384)
+        self.assertEqual(cp.answer_reserve(_agent(OllamaModel(65_536), [])), cp._ANSWER_RESERVE)
+        msgs = _history([("hf_file", 8_000)] * 12)                 # ~24k: fits 65k, not 65k less 16k
+        self.assertEqual(self._run(OllamaModel(65_536), msgs), msgs)
+        out = self._run(OllamaModel(65_536, 16_384), msgs)
+        self.assertGreater(sum(t.startswith(cp.TRIM_MARK) for t in _texts(out)), 0)
+
+    def test_a_window_the_call_cannot_fit_is_said_once(self):
+        told = []
+        cp._warned.clear()
+        with mock.patch("src.utils.status_bus.notify", side_effect=lambda text, **kw: told.append(text)):
+            msgs = _history([("hf_file", 2_000)] * 3)
+            self.assertEqual(self._run(OllamaModel(32_768, 16_384), msgs), msgs)     # nothing to cut: 30k of prompt
+            self._run(OllamaModel(32_768, 16_384), msgs)
+        self.assertEqual(len(told), 1)
+        self.assertIn("32,768", told[0])
+        self.assertIn("16,384 of them are kept for the answer", told[0])
+        self.assertIn("no user query found", told[0])
+        self.assertIn("llm.ollama.num_ctx", told[0])
+
+    def test_a_call_that_fits_says_nothing(self):
+        told = []
+        cp._warned.clear()
+        with mock.patch("src.utils.status_bus.notify", side_effect=lambda text, **kw: told.append(text)):
+            self._run(OllamaModel(98_304, 16_384), _history([("hf_file", 8_000)] * 24))
+            self._run(OpenAIModel(), _history([("hf_file", 8_000)] * 24))
+        self.assertEqual(told, [])
 
     def test_the_setting_turns_it_off(self):
         msgs = _history([("hf_file", 8_000)] * 24)
