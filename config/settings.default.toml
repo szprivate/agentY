@@ -445,11 +445,13 @@ qa_checker = ""
 
 [llm.ollama]
 host = "http://localhost:11434"
-# The model's whole window: what goes in AND what comes out ("Max Token Window"
-# in Settings). 0 = worked out at startup from the graphics card's memory and
+# The model's whole window: what goes in AND what comes out ("Context Window
+# Size" in Settings). 0 = worked out at startup from the graphics card's memory and
 # the size of the largest local model the agents use (src/utils/ollama_window.py)
-# - the largest window with which that model still fits the card. Set a number
-# to overrule it.
+# - the largest window, up to the model's own, with which that model still fits
+# the card. (Not simply the model's own: Ollama sets memory aside for the whole
+# window when it loads the model, used or not - qwen3.8:27b at its own 262,144
+# is about 35 GB.) Set a number to overrule it.
 # What a call may SEND is this minus max_tokens: Ollama keeps the answer's
 # allowance free, and a call that is longer is not refused - its start is
 # dropped without a word (the request first), and what comes back is "no user

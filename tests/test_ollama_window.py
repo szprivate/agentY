@@ -24,7 +24,8 @@ class TheArithmetic(unittest.TestCase):
 
     def test_the_largest_window_that_fits_the_card(self):
         self.assertEqual(ow.fit(32 * GB, QWEN), 98_304)          # 131,072 would need 27.8 of the 27.2 it may take
-        self.assertEqual(ow.fit(48 * GB, QWEN), 131_072)
+        self.assertEqual(ow.fit(40 * GB, QWEN), 196_608)
+        self.assertEqual(ow.fit(48 * GB, QWEN), 262_144)         # the model's own window, where the card has room
         self.assertEqual(ow.fit(24 * GB, QWEN), 32_768)          # it does not fit at all: the smallest, not nothing
 
     def test_never_beyond_what_the_model_itself_takes(self):
@@ -32,7 +33,8 @@ class TheArithmetic(unittest.TestCase):
 
     def test_a_small_model_gets_the_whole_ladder(self):
         small = {"size": 5 * GB, "per_token": 30_000, "limit": 262_144}
-        self.assertEqual(ow.fit(16 * GB, small), 131_072)
+        self.assertEqual(ow.fit(24 * GB, small), 262_144)
+        self.assertEqual(ow.fit(24 * GB, dict(small, limit=131_072)), 131_072)   # never beyond the model's own
 
 
 class WhatItComesTo(unittest.TestCase):

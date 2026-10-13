@@ -18,6 +18,11 @@ are measured, on qwen3.8:27b on a 32 GB card: 23.0 GB at 65,536, 25.2 GB at
 cache gives, and 2.3 GB on top of the file. A card is filled to 85 %: the rest
 is what the desktop, the embedder and a decision model take.
 
+Why not simply the model's own window: Ollama sets the cache aside for the whole
+window when it loads the model, used or not. qwen3.8:27b at its own 262,144 is
+about 35 GB - on a 32 GB card it spills onto the CPU. So the model's window is
+the ceiling, and the card decides how much of it can be had.
+
 A number in the setting is used as it is. Nothing here raises: with no card to
 ask, or no Ollama, the answer is a window the orchestrator's prompt fits.
 """
@@ -30,7 +35,8 @@ import urllib.request
 
 logger = logging.getLogger("agentY.ollama_window")
 
-LADDER = (32_768, 49_152, 65_536, 81_920, 98_304, 131_072)
+# Up to a model's own window (262,144 for a current Qwen) where the card has the room for it.
+LADDER = (32_768, 49_152, 65_536, 81_920, 98_304, 131_072, 196_608, 262_144)
 FALLBACK = 65_536            # no card or no model to measure: the orchestrator's prompt fits this
 CARD_SHARE = 0.85
 OVERHEAD = 2.3 * 2 ** 30     # a loaded model, besides its weights and its cache
