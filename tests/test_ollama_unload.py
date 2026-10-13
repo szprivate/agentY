@@ -125,7 +125,6 @@ class MakeRoom(unittest.TestCase):
                 return queue or {"queue_running": [], "queue_pending": []}
             return {}
         with mock.patch.object(ou, "_comfy", side_effect=comfy), \
-                mock.patch.object(ou, "_model_loaded", return_value=loaded), \
                 mock.patch("src.utils.ollama_window.need_bytes", return_value=int(need_gb * GB)):
             return ou.make_room("http://o", settings=settings)
 
@@ -137,10 +136,11 @@ class MakeRoom(unittest.TestCase):
         self.assertFalse(self._run(free_gb=30))
         self.assertEqual(self.asked, ["/system_stats"])
 
-    def test_a_loaded_model_only_needs_not_to_be_squeezed(self):
-        self.assertFalse(self._run(free_gb=5.7, loaded=True))
+    def test_what_comfyui_calls_free_is_the_card_less_its_own(self):
+        """So a model that is already loaded beside 10 GB of ComfyUI's is squeezed too."""
+        self.assertTrue(self._run(free_gb=21.8))
         ou._room_last = 0.0
-        self.assertTrue(self._run(free_gb=0.2, loaded=True))          # it is living in shared memory
+        self.assertFalse(self._run(free_gb=27.6))                     # as measured with the model loaded
 
     def test_never_while_comfyui_renders_or_has_something_waiting(self):
         self.assertFalse(self._run(free_gb=1, queue={"queue_running": [[1, "a"]], "queue_pending": []}))
