@@ -165,16 +165,21 @@ class TheRouter(unittest.TestCase):
             if error:
                 raise error
             self.sent = (model, state, questions)
-            return {"change": {"type": "noul", "noul": value}}
+            probs = None if value is None else {"change": value, "new": 1 - value}
+            return {"what": {"type": "choice", "choice": "change", "probabilities": probs}}
         return mock.patch.object(dm, "ask", side_effect=ask)
 
-    def test_the_request_and_what_is_open_are_put_to_the_model(self):
-        with _models("nimble"), _local(), self._ask(0.93):
+    def test_it_is_asked_about_the_wording_alone_as_a_choice(self):
+        """Told that a graph is open, the model said "change" to nearly every
+        build request (10 of 40 right); asked about the wording, 40 of 40."""
+        with _models("nimble"), _local(), self._ask(0.98):
             got = dm.change_probability("add a canny ControlNet to this workflow", GRAPH)
-        self.assertEqual(got, 0.93)
-        self.assertEqual(self.sent[0], "nimble")
-        self.assertIn("KSampler", self.sent[1]["canvas"])
-        self.assertIn("CLIPTextEncode x2", self.sent[1]["canvas"])
+        self.assertEqual(got, 0.98)
+        model, state, questions = self.sent
+        self.assertEqual(model, "nimble")
+        self.assertEqual(list(state), ["request"])                 # nothing about the canvas
+        self.assertEqual(questions["what"]["type"], "choice")
+        self.assertEqual(set(questions["what"]["criteria"]), {"change", "new"})
 
     def test_no_model_or_no_answer_is_no_opinion(self):
         with _models(), _local(), _no_fetch():
@@ -213,6 +218,16 @@ class ThePrompt(unittest.TestCase):
 
     def test_it_is_found_through_the_nodes_in_between(self):
         self.assertEqual(dm.positive_prompt(FLUX), "an old fisherman mending nets")
+
+    def test_a_guider_with_one_conditioning_is_followed_too(self):
+        redux = {
+            "6": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["11", 0], "text": "a portrait of a lighthouse keeper"}},
+            "26": {"class_type": "FluxGuidance", "inputs": {"conditioning": ["6", 0], "guidance": 3.5}},
+            "41": {"class_type": "StyleModelApply", "inputs": {"conditioning": ["26", 0], "style_model": ["42", 0]}},
+            "22": {"class_type": "BasicGuider", "inputs": {"model": ["30", 0], "conditioning": ["41", 0]}},
+            "13": {"class_type": "SamplerCustomAdvanced", "inputs": {"guider": ["22", 0], "latent_image": ["27", 0]}},
+        }
+        self.assertEqual(dm.positive_prompt(redux), "a portrait of a lighthouse keeper")
 
     def test_a_graph_without_one_gives_nothing(self):
         self.assertEqual(dm.positive_prompt({"1": {"class_type": "LoadImage", "inputs": {"image": "a.png"}}}), "")

@@ -248,21 +248,31 @@ def graph_summary(graph) -> str:
     return ", ".join(f"{n}" + (f" x{c}" if c > 1 else "") for n, c in sorted(counts.items()))[:1500]
 
 
-def change_probability(request: str, graph, cfg: dict | None = None) -> float | None:
-    """How likely *request* asks to change the open graph rather than to build a
-    new workflow - or ``None`` when there is no decision model to ask."""
+def change_probability(request: str, graph=None, cfg: dict | None = None) -> float | None:
+    """How likely *request* asks to change a workflow that exists rather than to
+    build one - or ``None`` when there is no decision model to ask.
+
+    The question is put about the WORDING alone, as a choice between the two.
+    The first version also told the model that a graph was open, and asked
+    yes/no: with a graph open - the only time the router is asked - it then said
+    "change" to 30 of 32 plain build requests (10 of 40 right; the 40 of 40
+    measured the night before had told it "the canvas is empty" for every build,
+    which gave the answer away). Asked this way it is 40 of 40 with a graph
+    open, no edit under 0.98 and no build over 0.04. *graph* is accepted and
+    not used, for that reason.
+    """
     cfg = cfg or settings()
     model = model_for("router", cfg)
     if not model or not str(request or "").strip():
         return None
     try:
-        answers = ask(model, {"request": str(request)[:6000],
-                              "canvas": "a workflow graph is open on the canvas: " + graph_summary(graph)},
-                      {"change": {"type": "noul", "instructions": (
-                          "Does the request ask to CHANGE the workflow graph that is already open "
-                          "(add, remove, rewire or re-set something in it) rather than to build a new "
-                          "workflow?")}}, timeout=15)
-        value = (answers.get("change") or {}).get("noul")
+        answers = ask(model, {"request": str(request)[:6000]},
+                      {"what": {"type": "choice", "instructions": "What does the request ask for?", "criteria": {
+                          "change": "to modify a workflow that already exists ('this workflow', 'add ... to it', "
+                                    "'change', 'instead of')",
+                          "new": "to build a workflow, described from scratch: its model, its prompt, its settings",
+                      }}}, timeout=15)
+        value = ((answers.get("what") or {}).get("probabilities") or {}).get("change")
         return float(value) if isinstance(value, (int, float)) else None
     except Exception as exc:  # noqa: BLE001
         logger.info("decision: router %s gave no answer (%s)", model, exc)
@@ -282,12 +292,20 @@ def _text_of(node) -> str:
 
 def positive_prompt(graph) -> str:
     """The prompt a ComfyUI graph was sampled with: what its sampler's
-    ``positive`` input leads back to. Not the longest text in the graph - that is
-    as often the negative prompt."""
+    ``positive`` input - or its guider's ``conditioning`` - leads back to. Not
+    the longest text in the graph: that is as often the negative prompt."""
     if not isinstance(graph, dict):
         return ""
+    starts = []
     for node in graph.values():
-        link = ((node or {}).get("inputs") or {}).get("positive") if isinstance(node, dict) else None
+        if not isinstance(node, dict):
+            continue
+        inputs = node.get("inputs") or {}
+        if isinstance(inputs.get("positive"), list):
+            starts.append(inputs["positive"])
+        elif "guider" in str(node.get("class_type") or "").lower() and isinstance(inputs.get("conditioning"), list):
+            starts.append(inputs["conditioning"])            # BasicGuider: one conditioning, no negative
+    for link in starts:
         seen = set()
         while isinstance(link, list) and link and str(link[0]) not in seen:
             seen.add(str(link[0]))
