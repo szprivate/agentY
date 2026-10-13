@@ -3315,9 +3315,21 @@ class Pipeline:
                 if b and id(b) not in seen:
                     seen.add(id(b))
                     scoped.append(b)
-            results = await asyncio.to_thread(
-                _lj.judge, files, loop, scoped, request=str(loop.condition or ""))
+            try:
+                results = await asyncio.to_thread(
+                    _lj.judge, files, loop, scoped, request=str(loop.condition or ""))
+            except Exception as exc:  # noqa: BLE001 - a judge that cannot be asked is not a round
+                from src.utils.condition_judge import ConditionError as _CondErr
+                if not isinstance(exc, _CondErr) and not getattr(loop, "judge", None):
+                    raise
+                _push_progress(f"🔁 {loop.name()} — the condition could not be judged: {str(exc)[:200]}")
+                return json.dumps({"error": f"this round was not judged: {exc}",
+                                   "what_to_do": "Tell the user exactly this and stop the loop here - "
+                                                 "do not judge the condition yourself and do not "
+                                                 "start another round.",
+                                   "round": state["round"]})
             verdict = _hf.record_round(state, results, loop)
+            judge_id = str((getattr(loop, "judge", None) or {}).get("node_id") or "")
             verdict["judged"] = [{"file": Path(r["path"]).name, "passed": r["passed"],
                                   "missed": r["missed"][:4], "summary": r["summary"][:300]}
                                  for r in results]
@@ -3331,10 +3343,11 @@ class Pipeline:
                     self._forwarded[hid] = chosen
                 try:
                     from src.utils.canvas_patch import push as _push_patch
-                    _push_patch({"op": "flow_state", "node_id": loop.break_id,
-                                 "state": "met" if verdict["condition_met"] else "out_of_rounds",
-                                 "round": verdict["round"], "max_rounds": loop.max_rounds,
-                                 "forward": [Path(p).name for p in chosen]})
+                    for nid in [loop.break_id] + ([judge_id] if judge_id else []):
+                        _push_patch({"op": "flow_state", "node_id": nid,
+                                     "state": "met" if verdict["condition_met"] else "out_of_rounds",
+                                     "round": verdict["round"], "max_rounds": loop.max_rounds,
+                                     "forward": [Path(p).name for p in chosen]})
                 except Exception:  # noqa: BLE001
                     pass
             else:
@@ -3342,8 +3355,9 @@ class Pipeline:
                                + "; ".join(verdict.get("missed") or ["no objection given"])[:300])
                 try:
                     from src.utils.canvas_patch import push as _push_patch
-                    _push_patch({"op": "flow_state", "node_id": loop.break_id, "state": "running",
-                                 "round": verdict["round"], "max_rounds": loop.max_rounds})
+                    for nid in [loop.break_id] + ([judge_id] if judge_id else []):
+                        _push_patch({"op": "flow_state", "node_id": nid, "state": "running",
+                                     "round": verdict["round"], "max_rounds": loop.max_rounds})
                 except Exception:  # noqa: BLE001
                     pass
             return json.dumps(verdict)

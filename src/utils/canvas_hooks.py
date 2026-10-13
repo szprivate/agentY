@@ -32,6 +32,10 @@ _REVIEW_CLASS = "AgentYReview"
 _EDIT_CLASS = "AgentYEdit"
 _HOOK_CLASSES = {_HOOK_CLASS, _REVIEW_CLASS, "AgentYLoopStart", "AgentYLoopBreak",
                  "AgentYJoin", _EDIT_CLASS}
+# Real nodes that also sit on the execution wire: the wire is taken off them,
+# the node stays in the graph (an ``agentY condition`` still judges the picture
+# wired into it when it is not the judge of a loop).
+_EXEC_ONLY_CLASSES = {"AgentYCondition"}
 
 
 def strip_exec_links(prompt: dict | None) -> dict | None:
@@ -47,7 +51,8 @@ def strip_exec_links(prompt: dict | None) -> dict | None:
     if not isinstance(prompt, dict):
         return prompt
     for node in prompt.values():
-        if isinstance(node, dict) and node.get("class_type") in _HOOK_CLASSES:
+        if isinstance(node, dict) and (node.get("class_type") in _HOOK_CLASSES
+                                       or node.get("class_type") in _EXEC_ONLY_CLASSES):
             inputs = node.get("inputs") or {}
             # `exec` on a stage; `execs.exec0`, `execs.exec1`, … on a join.
             for key in [k for k in inputs if k == "exec" or str(k).startswith("execs.")]:

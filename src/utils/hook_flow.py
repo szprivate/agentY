@@ -32,7 +32,11 @@ LOOP_BREAK = "loop_break"
 # Where branches that were split off come back together: the stage after a join
 # runs once every wire into it has finished.
 JOIN = "join"
-_FLOW = {LOOP_START, LOOP_BREAK, JOIN}
+# An ``agentY condition`` node on the wire: in a loop's body it is the JUDGE of
+# the loop - a decision model answers its statements about each round's files
+# (src/utils/condition_judge.py). Like the other flow nodes it is not a stage.
+CONDITION = "condition"
+_FLOW = {LOOP_START, LOOP_BREAK, JOIN, CONDITION}
 
 DEFAULT_ROUNDS = 3
 MAX_ROUNDS = 10
@@ -54,6 +58,10 @@ def is_loop_start(hook: dict) -> bool:
 
 def is_loop_break(hook: dict) -> bool:
     return _purpose(hook) == LOOP_BREAK
+
+
+def is_condition(hook: dict) -> bool:
+    return _purpose(hook) == CONDITION
 
 
 def is_flow(hook: dict) -> bool:
@@ -132,6 +140,10 @@ class Loop:
     review_id: str = ""
     # An agent review in the body: its notes and checks are part of the judging.
     qa_id: str = ""
+    # A condition node in the body: a decision model judges the rounds by its
+    # statements ({node_id, condition, model, threshold, batch}). The break's own
+    # condition, if it has one, is judged by the QA agent on what passes.
+    judge: dict = field(default_factory=dict)
 
     def name(self) -> str:
         return self.title or f"loop {self.break_id}"
@@ -232,6 +244,21 @@ def plan(hooks: list | None) -> Flow:
             loop.title = ""
         loop.review_id = next((i for i in reversed(members) if _is_review(by_id[i])), "")
         loop.qa_id = next((i for i in reversed(inside) if _is_qa(by_id[i])), "")
+        judges = [i for i in order if i in set(upstream) and is_condition(by_id[i])]
+        if judges:
+            from src.utils.condition_judge import settings as _judge_settings
+            loop.judge = _judge_settings(by_id[judges[-1]])
+            if len(judges) > 1:
+                flow.problems.append(f"{loop.name()}: {len(judges)} condition nodes are in the loop; "
+                                     f"the last one on the wire (node {judges[-1]}) judges it - put "
+                                     "every statement into that one.")
+            if not loop.judge["condition"]:
+                flow.problems.append(f"{loop.name()}: the condition node in it (node {judges[-1]}) "
+                                     "has no statement written in it, so it judges nothing.")
+                loop.judge = {}
+            elif loop.review_id:
+                flow.problems.append(f"{loop.name()}: it has a human review, so the person judges "
+                                     f"it; the condition node (node {judges[-1]}) is not asked.")
         if not members:
             flow.problems.append(f"{loop.name()}: nothing is wired between the loop start and the "
                                  "loop break, so there is nothing to repeat.")
@@ -239,7 +266,7 @@ def plan(hooks: list | None) -> Flow:
         if not start:
             flow.problems.append(f"{loop.name()}: no loop start is on the execution wire before "
                                  "it, so the loop takes every stage that leads into the break.")
-        if not loop.condition and not loop.review_id and not loop.qa_id:
+        if not loop.condition and not loop.review_id and not loop.qa_id and not loop.judge:
             flow.problems.append(f"{loop.name()}: the break has no condition and there is no "
                                  "review node in the loop, so nothing says when it is finished.")
         flow.loops.append(loop)
@@ -248,6 +275,11 @@ def plan(hooks: list | None) -> Flow:
         if is_loop_start(h) and _hid(h) not in used_starts:
             flow.problems.append(f"loop start {_hid(h)} has no loop break after it on the "
                                  "execution wire — it does nothing.")
+        if is_condition(h) and not any(lp.judge.get("node_id") == _hid(h) for lp in flow.loops) \
+                and not any(_hid(h) in p for p in flow.problems):
+            flow.problems.append(f"condition node {_hid(h)} is on the execution wire but not inside "
+                                 "a loop - there it judges nothing. Put it between a loop start and "
+                                 "a loop break.")
         if _purpose(h) == JOIN and len(_order_ids(h)) < 2:
             flow.problems.append(f"join {_hid(h)} has fewer than two execution wires into "
                                  "it — there is nothing for it to wait for.")
@@ -552,6 +584,11 @@ def loop_lines(flow: Flow) -> list[str]:
                       "to the stage after the break. Never call loop_check for this "
                       "loop, and never judge the condition yourself.")
             else:
+                if lp.judge:
+                    said = " / ".join(lp.judge["condition"].splitlines())
+                    cond = (f'JUDGED BY THE CONDITION NODE {lp.judge["node_id"]} (a decision model, '
+                            f'{lp.judge["model"]}, not the QA agent) — finished when: "{said}"'
+                            + (f'; and then, by the QA agent: "{lp.condition}"' if lp.condition else ""))
                 lines.append(f"- LOOP (break node {lp.break_id}"
                              + (f', "{lp.title}"' if lp.title else "")
                              + f") — {cond}; at most {lp.max_rounds} round(s); "
