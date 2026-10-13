@@ -38,6 +38,24 @@ def _dead_nodes(workflow_path: str) -> tuple[list, list]:
         return [], []
 
 
+def _validation_errors(workflow_path: str) -> list:
+    """What the validator says is wrong with the file - [] when it is fine, or
+    when it could not be asked (a hand-off is never refused over that)."""
+    try:
+        from src.tools import validate_workflow as _vw
+        got = json.loads(getattr(_vw, "func", _vw)(workflow_path))
+    except Exception:  # noqa: BLE001
+        return []
+    if not isinstance(got, dict) or got.get("valid"):
+        return []
+    errors = [str(e) for e in (got.get("local_errors") or []) if e]
+    for node_id, err in ((got.get("server_errors") or {}).get("node_errors") or {}).items():
+        for item in (err or {}).get("errors") or []:
+            errors.append(f"Node {node_id} ({(err or {}).get('class_type', '?')}): "
+                          f"{item.get('message', '')} {item.get('details', '')}".strip())
+    return errors
+
+
 @tool
 def signal_workflow_ready(workflow_path: str) -> str:
     """Signal that the workflow is fully assembled and validated, ready for execution.
@@ -56,13 +74,18 @@ def signal_workflow_ready(workflow_path: str) -> str:
     ComfyUI would never execute (their output read by nobody). Fix each one and call
     again — that call runs.
 
+    Answers ``status: "not_ready"`` with ``problems`` when the workflow does not
+    validate (a required input nothing is wired into, an unknown node). Fix each
+    one with ``update_workflow`` and call again.
+
     Args:
         workflow_path: File path to the validated workflow JSON
                        (the same path returned by ``get_workflow_template`` or
                        ``save_workflow`` and used in ``update_workflow``).
     """
-    from src.utils.workflow_signal import (append_workflow_path,
-                                           dead_nodes_refused_once, execution_hold)
+    from src.utils.workflow_signal import (MAX_INVALID_REFUSALS, append_workflow_path,
+                                           dead_nodes_refused_once, execution_hold,
+                                           invalid_refusals)
 
     # A turn whose plan the user asked to approve holds the queue shut until they
     # have answered. Refusing here — while the agent still has the turn — is what
@@ -95,6 +118,26 @@ def signal_workflow_ready(workflow_path: str) -> str:
     # Handed back ONCE, while the agent still has the turn to fix it. A second
     # signal of the same file is queued with the note anyway: something useless in
     # a graph must never become a render that never happens.
+    # The validator ran after every edit and said what was wrong; nothing made
+    # that count. Here it does: a graph with a required input nobody feeds is
+    # handed back while the agent still has the turn - twice at most, then it goes
+    # through with a note (the run fails and the repair that follows takes it).
+    problems = _validation_errors(resolved)
+    if problems:
+        if invalid_refusals(resolved) <= MAX_INVALID_REFUSALS:
+            return json.dumps({
+                "status": "not_ready",
+                "workflow_path": resolved,
+                "problems": problems[:12],
+                "problem": f"This workflow does not validate: {len(problems)} problem(s). "
+                           "It has NOT been queued.",
+                "fix": ("Fix every entry in `problems` with update_workflow - an "
+                        "'unconnected' input needs a wire from a node that outputs that "
+                        "type (add the node if the graph has none) - until update_workflow "
+                        "answers status \"ok\". Then call signal_workflow_ready again."),
+            })
+        _note(f"⚠️ Running a workflow that still does not validate: {problems[0][:160]}")
+
     dead, lines = _dead_nodes(resolved)
     if dead and dead_nodes_refused_once(resolved):
         return json.dumps({

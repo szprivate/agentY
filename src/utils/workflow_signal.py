@@ -18,13 +18,15 @@ _lock = threading.Lock()
 class _State:
     """One turn's mailbox. Per turn (:mod:`agenty_core.utils.turn_scope`): two
     conversations running at once must not hand each other their workflows."""
-    __slots__ = ("pending_paths", "dead_refused", "hold", "hold_fired")
+    __slots__ = ("pending_paths", "dead_refused", "invalid_refused", "hold", "hold_fired")
 
     def __init__(self) -> None:
         self.pending_paths: list[str] = []
         # Paths already handed back once over nodes that would never execute (see
         # dead_nodes_refused_once). Cleared with the queue.
         self.dead_refused: set[str] = set()
+        # How often each path was handed back for not validating (invalid_refusals).
+        self.invalid_refused: dict[str, int] = {}
         self.hold: dict | None = None
         self.hold_fired = False
 
@@ -89,6 +91,20 @@ def dead_nodes_refused_once(path: str) -> bool:
         return True
 
 
+# A workflow that does not validate is handed back this often, then let through:
+# a refusal that never ends is a run that never happens, and what ComfyUI then
+# says about the graph goes to the repair that follows a failed run.
+MAX_INVALID_REFUSALS = 2
+
+
+def invalid_refusals(path: str) -> int:
+    """Count one more hand-back of *path* for not validating; how many that makes."""
+    with _lock:
+        n = _st().invalid_refused.get(path, 0) + 1
+        _st().invalid_refused[path] = n
+        return n
+
+
 def append_workflow_path(path: str) -> None:
     """Append *path* to the pending queue (used for batch runs)."""
     with _lock:
@@ -140,4 +156,5 @@ def clear_and_get() -> list[str]:
         paths = list(_st().pending_paths)
         _st().pending_paths = []
         _st().dead_refused.clear()
+        _st().invalid_refused.clear()
         return paths

@@ -2492,13 +2492,30 @@ class Pipeline:
             n_wire = sum(1 for o in res["ops"] if o["op"] == "connect")
             _push_progress(f"🔧 Canvas edited: {n_add} node(s) added, {n_wire} wire(s) set"
                            + (f" — {reason}" if reason else ""))
+            # Every node this turn has touched is looked at again, not only this
+            # edit's: a later edit is what wires an earlier one's inputs.
+            _seen = set(getattr(self, "_canvas_touched", None) or ()) | set(res["touched"])
+            self._canvas_touched = {n for n in _seen if n in res["graph"]}
+            self._canvas_unwired = {n: u for n in sorted(self._canvas_touched)
+                                    for u in [_ce.unwired_required(res["graph"], n, schemas)] if u}
             out = {"status": "applied", "added": res["added"],
                    "nodes": {n: res["graph"][n]["class_type"] for n in res["touched"] if n in res["graph"]},
                    "message": "Applied to the live canvas; the user can undo with Ctrl+Z."}
             if unwired:
-                out["still_unwired"] = unwired
-                out["message"] += (" Some required inputs are still unwired (still_unwired) — "
-                                   "the graph will not run until they are connected.")
+                # The status says it, because a status is what gets read: "applied"
+                # with a note behind it was taken for "done" (qwen3.5:9b, 2026-10-13).
+                hints = {n: h for n in unwired for h in [_ce.wire_candidates(res["graph"], n, schemas)] if h}
+                out = {"status": "applied_incomplete", "still_unwired": unwired,
+                       **({"wire_from": hints} if hints else {}),
+                       "added": out["added"], "nodes": out["nodes"],
+                       "message": ("Applied to the live canvas, but the edit is NOT finished: the "
+                                   "required inputs in still_unwired have nothing wired into them "
+                                   "and the graph will not run. Connect each one now with another "
+                                   "edit_canvas_graph call"
+                                   + (" - wire_from lists the outputs already in the graph that "
+                                      "carry the type" if hints else "")
+                                   + ". An input with no entry in wire_from needs a node added "
+                                     "that outputs its type. The user can undo with Ctrl+Z.")}
             return json.dumps(out)
 
         @_tool
@@ -5283,6 +5300,52 @@ class Pipeline:
                 shrunk += 1
         return shrunk
 
+    async def _unfinished_work_input(self, done: int, msg_start: int) -> str:
+        """What to send the orchestrator when its turn ended with the graph it
+        worked on still broken - or ``""`` (src/utils/work_guard.py)."""
+        try:
+            from src.utils import work_guard
+            from src.utils.settings import load_settings
+            if done >= work_guard.MAX_REDRIVES or not load_settings().get("intent_guard", True):
+                return ""
+            # The open graph: inputs of nodes this turn touched that nothing feeds.
+            unwired = getattr(self, "_canvas_unwired", None) or {}
+            if unwired:
+                hints = {}
+                try:
+                    from src.utils import canvas_edit as _ce
+                    schemas = _CanvasSchemas()
+                    hints = {n: _ce.wire_candidates(self._canvas_graph or {}, n, schemas) for n in unwired}
+                except Exception:  # noqa: BLE001
+                    pass
+                if getattr(self, "_verbose", False):
+                    print(f"pipeline: the turn left {len(unwired)} node(s) with unfed inputs; sent back.")
+                return _orch_partial("unfinished_graph").replace("{list}", work_guard.graph_note(unwired, hints))
+            # A workflow file: the turn's last edit of it did not validate, and it
+            # was not handed off.
+            from src.utils.workflow_signal import peek as _peek_signal
+            if _peek_signal():
+                return ""
+            last = work_guard.last_file_edit(getattr(self._orchestrator_agent, "messages", None), msg_start)
+            if not last or last["ok"] or not last["workflow_path"] or not last["errors"]:
+                return ""
+            if getattr(self, "_work_repaired", None) == last["workflow_path"]:
+                return ""                    # the specialist has had its go at this one
+            self._work_repaired = last["workflow_path"]
+            fixed = await self._run_fix_workflow_assembly(last["workflow_path"], problems=last["errors"][:12])
+            ready = isinstance(fixed, dict) and fixed.get("status") == "ready"
+            if getattr(self, "_verbose", False):
+                print(f"pipeline: the turn left a workflow that did not validate; repair: "
+                      f"{(fixed or {}).get('status')}.")
+            return (_orch_partial("unfinished_workflow_fixed" if ready else "unfinished_workflow")
+                    .replace("{path}", last["workflow_path"])
+                    .replace("{list}", "\n".join("- " + e for e in (
+                        last["errors"] if ready else ((fixed or {}).get("problems") or last["errors"]))[:12])))
+        except Exception as exc:  # noqa: BLE001 - never break a turn over this
+            if getattr(self, "_verbose", False):
+                print(f"pipeline: work guard skipped ({exc}).")
+            return ""
+
     def _unfinished_intent_input(self, done: int) -> str:
         """What to send the orchestrator when its turn ended on an announced step
         it did not take - or ``""`` when the turn ended properly (or the guard is
@@ -6658,6 +6721,8 @@ class Pipeline:
         # bounded per-member, so there is no orchestrator re-drive loop here.
         _late_redrives = 0
         _intent_redrives = 0
+        _work_redrives = 0
+        self._canvas_touched, self._canvas_unwired, self._work_repaired = set(), {}, None
         while True:
             interrupt_result = None
             yield {"_orchestrator_start": True}
@@ -6700,6 +6765,13 @@ class Pipeline:
                 _again = self._unfinished_intent_input(_intent_redrives)
                 if _again:
                     _intent_redrives += 1
+                    yield {"data": "\n\n"}
+                    current_input = _again
+                    continue
+                # The graph the turn worked on is still broken (work_guard).
+                _again = await self._unfinished_work_input(_work_redrives, _orch_msg_start)
+                if _again:
+                    _work_redrives += 1
                     yield {"data": "\n\n"}
                     current_input = _again
                     continue

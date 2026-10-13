@@ -232,6 +232,27 @@ def unwired_required(graph: dict, node_id: str, object_info: dict) -> list[str]:
     return out
 
 
+def wire_candidates(graph: dict, node_id: str, object_info: dict, limit: int = 3) -> dict:
+    """For each unfed required input of *node_id* (as :func:`unwired_required`
+    names it): the outputs already in the graph that carry its type -
+    ``{"vae (VAE)": ["node 4 (CheckpointLoaderSimple) output 2"]}``. Empty where
+    nothing in the graph makes that type: a node has to be added first."""
+    out: dict = {}
+    for name in unwired_required(graph, node_id, object_info):
+        want = name[name.rfind("(") + 1:-1] if name.endswith(")") and "(" in name else ""
+        found = []
+        for other_id, other in (graph or {}).items():
+            if str(other_id) == str(node_id) or not isinstance(other, dict):
+                continue
+            outputs = (object_info.get(other.get("class_type")) or {}).get("output") or []
+            for slot, kind in enumerate(outputs):
+                if want and str(kind) == want:
+                    found.append(f"node {other_id} ({other.get('class_type')}) output {slot}")
+        if found:
+            out[name] = found[:limit]
+    return out
+
+
 def plan(graph: dict, ops: list, object_info: dict) -> dict:
     """Check and apply *ops* to a copy of *graph*.
 

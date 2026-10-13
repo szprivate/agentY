@@ -62,9 +62,10 @@ instructions for the user, a menu of ways they could do it, or a request for a
 file path — the graph is right there and this tool changes it.
 
 A swap is add + rewire + delete: add the new node, connect it, then
-`delete_canvas_nodes` the old one (say what it was). If the result lists
-`still_unwired` inputs, connect them before you finish — a graph that cannot run
-is not a finished edit.
+`delete_canvas_nodes` the old one (say what it was). If the result's status is
+`applied_incomplete` it lists `still_unwired` inputs: connect them before you
+finish (`wire_from` names the outputs already in the graph that carry the type)
+— a graph that cannot run is not a finished edit.
 
 ### Deleting
 

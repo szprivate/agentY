@@ -42,7 +42,9 @@ class Fixture(unittest.TestCase):
         exists = mock.patch("pathlib.Path.exists", return_value=True)
         resolve = mock.patch("pathlib.Path.resolve",
                              side_effect=lambda: __import__("pathlib").Path("wf.json"))
-        for p in (exists, resolve):
+        # What the validator says is another test's (test_work_guard): fine here.
+        valid = mock.patch.object(handoff, "_validation_errors", return_value=[])
+        for p in (exists, resolve, valid):
             p.start()
             self.addCleanup(p.stop)
 

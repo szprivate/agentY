@@ -90,6 +90,7 @@ _BOUND = (
     "_build_orchestrator_input",
     "_format_image_gallery",
     "_unfinished_intent_input",
+    "_unfinished_work_input",
     "_ledger_approve",
     "_ledger_block",
     "_ledger_text",
