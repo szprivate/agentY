@@ -2567,6 +2567,16 @@ class Pipeline:
             params = params if isinstance(params, dict) else {}
             schemas = _CanvasSchemas()
             path = str(workflow_path or "").strip()
+            if path and not Path(path).exists():
+                # A path whose backslashes were escaped once too often on the way
+                # here (seen twice in one run) is still that path.
+                once = path
+                while "\\\\" in once[2:]:
+                    once = once[:2] + once[2:].replace("\\\\", "\\")
+                if once.startswith("\\\\\\\\"):
+                    once = once[2:]
+                if Path(once).exists():
+                    path = once
 
             if path:
                 # A workflow file: the same operations, applied to the file's graph.
@@ -10178,6 +10188,15 @@ class Pipeline:
                 _load_workflow as _lw, summarize_workflow_graph as _sum,
             )
             result["built"] = _sum(_lw(path))
+            # Where the next step is read: in the result that calls for it. The same
+            # line in the prompt was passed over by small models, which went on to
+            # wire the stage by hand (change_graph was called in 7 of ~30 attempts).
+            result["to_add_a_stage"] = (
+                "If the request asks for a stage `built` lacks, ONE call adds it, fully wired: "
+                "change_graph(operation, params, workflow_path=<workflow_path above>) with operation = "
+                "image_to_image | controlnet | patch_model (FreeU_V2 ...) | lora | hires_fix | "
+                "model_upscale | preview_output | save_output. Use update_workflow only for what "
+                "these do not cover.")
         except Exception as exc:  # noqa: BLE001
             if self._verbose:
                 print(f"pipeline: could not summarize {path}: {exc}")
