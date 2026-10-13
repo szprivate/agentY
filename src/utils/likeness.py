@@ -59,6 +59,16 @@ def _band(value: float, bands, above: str) -> str:
     return above
 
 
+def _face_model() -> str:
+    """Which InsightFace model compares faces (``likeness.face_model``)."""
+    try:
+        from src.utils.settings import load_settings
+        name = str(((load_settings().get("likeness") or {}).get("face_model")) or "").strip()
+    except Exception:  # noqa: BLE001
+        name = ""
+    return name or "buffalo_l"
+
+
 def _face_analyser():
     """The ArcFace pipeline, built once. ``None`` when it cannot be loaded."""
     global _face_app
@@ -68,7 +78,7 @@ def _face_analyser():
     os.environ.setdefault("INSIGHTFACE_HOME", str(MODELS_DIR / "insightface"))
     try:
         from insightface.app import FaceAnalysis
-        app = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"],
+        app = FaceAnalysis(name=_face_model(), providers=["CPUExecutionProvider"],
                            allowed_modules=["detection", "recognition"])
         app.prepare(ctx_id=-1, det_size=(640, 640))
         _face_app = app

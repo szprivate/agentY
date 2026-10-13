@@ -212,12 +212,14 @@ class LLMFunctions:
         model. So the helpers ask for the agents' size, small as their own
         prompts are.
         """
+        from src.utils.ollama_window import resolve as _resolve_window
         try:
             env = os.environ.get("OLLAMA_NUM_CTX")
-            num_ctx = int(env or _load_settings().get("llm", {}).get("ollama", {}).get("num_ctx") or 32768)
-        except (TypeError, ValueError):
-            num_ctx = 32768
-        return {"num_ctx": num_ctx}
+            setting = env or _load_settings().get("llm", {}).get("ollama", {}).get("num_ctx")
+        except Exception:  # noqa: BLE001
+            setting = 0
+        # 0 or nothing = worked out from the graphics card, as the agents' is.
+        return {"num_ctx": _resolve_window(setting or 0)}
 
     async def _ollama_chat(self, messages: list[dict[str, Any]], *, json_format: bool) -> str:
         payload: dict[str, Any] = {"model": self.model, "messages": messages, "stream": False,

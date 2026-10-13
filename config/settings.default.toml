@@ -286,6 +286,14 @@ shell_extra_roots = []
 # the checkpoint and tokenizer are found in ComfyUI's own folders. Fill these in
 # only for a non-standard layout, or when ComfyUI lives somewhere unguessable
 # (also see `comfyui_dir` above).
+# ── Face matching ────────────────────────────────────────────────────────────
+# The model a QA check compares faces with (InsightFace, on the CPU). It is
+# downloaded into models/insightface/ the first time a likeness check runs.
+# "buffalo_l" is the accurate one (about 330 MB); "buffalo_s" is a tenth of that
+# and noticeably less sure of itself.
+[likeness]
+face_model = "buffalo_l"
+
 [annotate]
 # Path to sam3.safetensors. Blank = look in <ComfyUI>/models/sam3/.
 # Env: AGENTY_SAM3_CHECKPOINT.
@@ -432,17 +440,19 @@ qa_checker = ""
 
 [llm.ollama]
 host = "http://localhost:11434"
-# The model's window. What a call may send is num_ctx MINUS max_tokens: Ollama
-# keeps the answer's allowance free, and a call that is longer is not refused -
-# its start is dropped without a word (the request first), and what comes back
-# is "no user query found in messages" or a broken tool call. The orchestrator's
-# own prompt and tools are about 30,000 tokens, a first call in an open graph
-# with project memory about 47,000 - so 32,768 here cannot work for it.
-# qwen3.8:27b takes 23 GB of VRAM at 65536, 25 GB at 98304, 27.5 GB at 131072.
-# A smaller card: lower this AND max_tokens, and keep num_ctx - max_tokens
-# above 60,000 if the orchestrator is local. agentY says so in the chat when a
-# call does not fit.
-num_ctx = 98304
+# The model's whole window: what goes in AND what comes out ("Max Token Window"
+# in Settings). 0 = worked out at startup from the graphics card's memory and
+# the size of the largest local model the agents use (src/utils/ollama_window.py)
+# - the largest window with which that model still fits the card. Set a number
+# to overrule it.
+# What a call may SEND is this minus max_tokens: Ollama keeps the answer's
+# allowance free, and a call that is longer is not refused - its start is
+# dropped without a word (the request first), and what comes back is "no user
+# query found in messages" or a broken tool call. The orchestrator's own prompt
+# and tools are about 30,000 tokens, a first call in an open graph with project
+# memory about 47,000. agentY says so in the chat when a call does not fit.
+num_ctx = 0
+# The most a local model may write in one answer ("Max Output Tokens").
 max_tokens = 16384
 repeat_penalty = 1.1
 think = false

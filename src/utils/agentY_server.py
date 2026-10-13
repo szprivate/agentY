@@ -3015,7 +3015,7 @@ def _list_models_now() -> dict:
 _KNOWN_ENV_KEYS = [
     "HF_TOKEN", "ANTHROPIC_API_KEY", "COMFYUI_API_KEY",
     "DASHSCOPE_API_KEY", "DASHSCOPE_BASE_URL",
-    "OPENAI_API_KEY", "GEMINI_API_KEY",
+    "OPENAI_API_KEY", "OPENAI_BASE_URL", "GEMINI_API_KEY", "GEMINI_BASE_URL",
     # Slack bridge. Listed here so the settings UI offers the three fields the
     # workspace side cannot be set up without, rather than sending someone to a
     # text editor for the one integration whose whole point is not being at the
@@ -3485,6 +3485,12 @@ def settings_payload() -> dict:
         ds_url = ((settings.get("llm") or {}).get("dashscope") or {}).get("base_url", "")
         if ds_url:
             env["DASHSCOPE_BASE_URL"] = ds_url
+    # The other providers' endpoints likewise: what is used when nothing is set.
+    for key, block, fallback in (("OPENAI_BASE_URL", "openai", "https://api.openai.com/v1"),
+                                 ("GEMINI_BASE_URL", "google",
+                                  "https://generativelanguage.googleapis.com/v1beta/openai/")):
+        if not env.get(key):
+            env[key] = str(((settings.get("llm") or {}).get(block) or {}).get("base_url") or fallback)
     # Show ComfyUI's live --user-directory rather than the static fallback.
     live_user_dir = _effective_comfyui_user_dir()
     if live_user_dir:
@@ -3520,7 +3526,68 @@ def settings_payload() -> dict:
         "memory_embedders": _memory_embedders(),
         # The loader and saver nodes this ComfyUI offers per kind of file.
         "media_node_choices": _media_node_choices(),
+        # What a blank path setting comes to on this machine, so that Settings
+        # shows where things go instead of an empty field.
+        "setting_defaults": _setting_defaults(settings),
+        # The window local models are loaded with, and how it was arrived at.
+        "ollama_window": _ollama_window_info(settings),
     }
+
+
+def _ollama_window_info(settings: dict) -> dict:
+    try:
+        from src.utils import ollama_window as ow
+        setting = int((((settings.get("llm") or {}).get("ollama") or {}).get("num_ctx")) or 0)
+        if setting > 0:
+            return {"window": setting, "auto": False, "why": "set by hand"}
+        got = ow.auto()
+        return {"window": got["window"], "auto": True, "why": got.get("why", "")}
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("ollama window info unavailable: %s", exc)
+        return {}
+
+
+def _setting_defaults(settings: dict) -> dict:
+    """``{setting: what a blank value means here}`` for the path settings that are
+    blank by default because the right value is found on the machine."""
+    out = {}
+    root = _project_root()
+    try:
+        from agenty_core.utils.comfyui_client import get_client, parse_argv_dir_flag
+        stats = get_client().get("/system_stats")
+        argv = stats.get("system", {}).get("argv", []) if isinstance(stats, dict) else []
+    except Exception:  # noqa: BLE001
+        argv = []
+    comfy = ""
+    try:
+        main = next((a for a in argv if str(a).replace("\\", "/").endswith("main.py")), "")
+        comfy = str(Path(main).resolve().parent) if main else ""
+    except Exception:  # noqa: BLE001
+        comfy = ""
+    user_dir = ""
+    try:
+        from agenty_core.utils.comfyui_client import parse_argv_dir_flag as _flag
+        user_dir = str(_flag(argv, "--user-directory") or "")
+    except Exception:  # noqa: BLE001
+        user_dir = ""
+    if not user_dir and comfy:
+        user_dir = str(Path(comfy) / "user")
+    unreachable = "found when ComfyUI is running"
+    out["comfyui_dir"] = comfy or "looked for beside agentY (" + str(root.parent) + ")"
+    out["comfyui_models_dir"] = (str(Path(comfy) / "models") if comfy else unreachable) + " - as ComfyUI reports it"
+    out["comfyui_user_dir"] = user_dir or unreachable
+    out["output_workflows_dir"] = (str(Path(user_dir) / "default" / "workflows" / "agentY") if user_dir
+                                   else "ComfyUI's user folder /default/workflows/agentY - " + unreachable)
+    models = str(Path(comfy) / "models") if comfy else "ComfyUI's models folder"
+    out["annotate.sam3_checkpoint"] = str(Path(models) / "sam3" / "sam3.safetensors") if comfy \
+        else models + " /sam3/sam3.safetensors"
+    out["annotate.sam3_bpe"] = "inside the installed sam3 package, then the ComfyUI-SAM3 node"
+    # Anything else that is blank and is a path: say where a relative one starts.
+    for key in ("output_dir", "comfyui_custom_templates_dir", "conversation_db", "message_history_log",
+                "tokens_usage_log"):
+        if not str(settings.get(key) or "").strip():
+            out[key] = "under " + str(root)
+    return out
 
 
 def _media_node_choices() -> dict:

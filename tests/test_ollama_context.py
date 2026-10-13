@@ -61,9 +61,14 @@ class OllamaContextTest(unittest.TestCase):
     def test_the_environment_wins_and_nonsense_falls_back(self):
         with self._settings("many"), mock.patch.dict(os.environ, {"OLLAMA_NUM_CTX": "8192"}):
             self.assertEqual(LLMFunctions._ollama_options(), {"num_ctx": 8192})
-        with self._settings("many"):
+        # Nothing usable in the setting: what the machine works out (src.utils.ollama_window).
+        from src.utils import ollama_window
+        with self._settings("many"), mock.patch.object(ollama_window, "auto", return_value={"window": 98304, "why": ""}):
             os.environ.pop("OLLAMA_NUM_CTX", None)
-            self.assertEqual(LLMFunctions._ollama_options(), {"num_ctx": 32768})
+            self.assertEqual(LLMFunctions._ollama_options(), {"num_ctx": 98304})
+        with self._settings(0), mock.patch.object(ollama_window, "auto", return_value={"window": 49152, "why": ""}):
+            os.environ.pop("OLLAMA_NUM_CTX", None)
+            self.assertEqual(LLMFunctions._ollama_options(), {"num_ctx": 49152})
 
 
 if __name__ == "__main__":

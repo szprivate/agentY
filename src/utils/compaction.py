@@ -398,8 +398,8 @@ def ollama_window(agent) -> int:
     except Exception:  # noqa: BLE001
         pass
     try:
-        from src.utils.settings import load_settings
-        return int(load_settings().get("llm", {}).get("ollama", {}).get("num_ctx") or 0)
+        from src.utils.ollama_window import resolve
+        return int(resolve())
     except Exception:  # noqa: BLE001
         return 0
 
