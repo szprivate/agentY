@@ -1024,9 +1024,9 @@ def _build_model(*, role: str, llm: str, system_prompt: str,
         # Ollama defaults num_ctx to ~4k, which truncates the large agent prompts
         # (query_templates/assemble_workflow carry the full model table) and yields
         # malformed brainbriefings. Give the local model a big context window.
-        # 0 (the default) = worked out from the graphics card (src.utils.ollama_window).
+        # -1 (the default) = worked out from the graphics card (src.utils.ollama_window).
         from src.utils.ollama_window import resolve as _resolve_window
-        num_ctx = _resolve_window(_cfg("OLLAMA_NUM_CTX", "ollama", "num_ctx", default=0))
+        num_ctx = _resolve_window(_cfg("OLLAMA_NUM_CTX", "ollama", "num_ctx", default=-1))
         # From-scratch builds emit a long tool-call sequence; a low output cap
         # trips MaxTokensReachedException, so raise num_predict/max_tokens too.
         ol_max_tokens = int(_cfg("OLLAMA_MAX_TOKENS", "ollama", "max_tokens", default=12288))

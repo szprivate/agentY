@@ -48,10 +48,12 @@ class WhatItComesTo(unittest.TestCase):
                 mock.patch.object(ow, "local_models", return_value=list(models)),
                 mock.patch.object(ow, "model_facts", return_value=facts))
 
-    def test_zero_is_worked_out(self):
+    def test_minus_one_is_worked_out(self):
         a, b, c = self._machine()
         with a, b, c:
-            self.assertEqual(ow.resolve(0), 98_304)
+            self.assertEqual(ow.resolve(-1), 98_304)
+            self.assertEqual(ow.resolve("-1"), 98_304)
+            self.assertEqual(ow.resolve(0), 98_304)                 # as it was written before -1
             self.assertEqual(ow.resolve("0"), 98_304)
             self.assertIn("qwen3.8:27b", ow.auto()["why"])
 
@@ -97,7 +99,7 @@ class WhatItComesTo(unittest.TestCase):
         root = Path(__file__).resolve().parent.parent
         with open(root / "config" / "settings.default.toml", "rb") as fh:
             cfg = tomllib.load(fh)
-        self.assertEqual(cfg["llm"]["ollama"]["num_ctx"], 0)
+        self.assertEqual(cfg["llm"]["ollama"]["num_ctx"], -1)
         self.assertEqual(cfg["likeness"]["face_model"], "buffalo_l")
 
 

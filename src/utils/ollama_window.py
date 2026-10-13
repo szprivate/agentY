@@ -4,7 +4,7 @@
 out. Too small and Ollama drops the start of a call without a word; too large and
 the model no longer fits the card, spills onto the CPU and a turn takes minutes.
 Neither is something to ask a person to tune by hand, so the setting's default is
-0 - "work it out": the largest window with which the largest local model the
+-1 - "work it out" (0 and nothing mean the same): the largest window with which the largest local model the
 agents use still fits the card.
 
 What a model needs is estimated as

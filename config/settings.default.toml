@@ -446,7 +446,7 @@ qa_checker = ""
 [llm.ollama]
 host = "http://localhost:11434"
 # The model's whole window: what goes in AND what comes out ("Context Window
-# Size" in Settings). 0 = worked out at startup from the graphics card's memory and
+# Size" in Settings). -1 = worked out at startup from the graphics card's memory and
 # the size of the largest local model the agents use (src/utils/ollama_window.py)
 # - the largest window, up to the model's own, with which that model still fits
 # the card. (Not simply the model's own: Ollama sets memory aside for the whole
@@ -458,7 +458,7 @@ host = "http://localhost:11434"
 # query found in messages" or a broken tool call. The orchestrator's own prompt
 # and tools are about 30,000 tokens, a first call in an open graph with project
 # memory about 47,000. agentY says so in the chat when a call does not fit.
-num_ctx = 0
+num_ctx = -1
 # The most a local model may write in one answer ("Max Output Tokens").
 max_tokens = 16384
 repeat_penalty = 1.1
