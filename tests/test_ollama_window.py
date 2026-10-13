@@ -93,6 +93,15 @@ class WhatItComesTo(unittest.TestCase):
         with mock.patch("src.utils.settings.load_settings", return_value=settings):
             self.assertEqual(ow.local_models(), ["qwen3.8:27b", "tiny"])
 
+    def test_the_answers_allowance_is_worked_out_from_the_window(self):
+        self.assertEqual(ow.output_allowance(-1, 98_304), 16_384)
+        self.assertEqual(ow.output_allowance(0, 262_144), 16_384)        # a larger window does not need longer answers
+        self.assertEqual(ow.output_allowance(-1, 65_536), 16_384)
+        self.assertEqual(ow.output_allowance(-1, 32_768), 8_192)         # never more than a quarter of the window
+        self.assertEqual(ow.output_allowance(-1, 8_192), 4_096)
+        self.assertEqual(ow.output_allowance(12_000, 98_304), 12_000)    # a number is used as it is
+        self.assertEqual(ow.output_allowance("nonsense", 98_304), 16_384)
+
     def test_the_default_setting_is_zero(self):
         import tomllib
         from pathlib import Path
@@ -100,6 +109,7 @@ class WhatItComesTo(unittest.TestCase):
         with open(root / "config" / "settings.default.toml", "rb") as fh:
             cfg = tomllib.load(fh)
         self.assertEqual(cfg["llm"]["ollama"]["num_ctx"], -1)
+        self.assertEqual(cfg["llm"]["ollama"]["max_tokens"], -1)
         self.assertEqual(cfg["likeness"]["face_model"], "buffalo_l")
 
 

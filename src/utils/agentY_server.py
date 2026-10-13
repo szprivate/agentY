@@ -3543,11 +3543,23 @@ def settings_payload() -> dict:
 def _ollama_window_info(settings: dict) -> dict:
     try:
         from src.utils import ollama_window as ow
-        setting = int((((settings.get("llm") or {}).get("ollama") or {}).get("num_ctx")) or 0)
+        local = (settings.get("llm") or {}).get("ollama") or {}
+
+        def number(key):
+            try:
+                return int(local.get(key) or 0)
+            except (TypeError, ValueError):
+                return 0
+        setting = number("num_ctx")
         if setting > 0:
-            return {"window": setting, "auto": False, "why": "set by hand"}
-        got = ow.auto()
-        return {"window": got["window"], "auto": True, "why": got.get("why", "")}
+            out = {"window": setting, "auto": False, "why": "set by hand"}
+        else:
+            got = ow.auto()
+            out = {"window": got["window"], "auto": True, "why": got.get("why", "")}
+        # The answer's allowance, worked out from that window unless it was set.
+        out["output"] = ow.output_allowance(number("max_tokens"), out["window"])
+        out["output_auto"] = number("max_tokens") <= 0
+        return out
     except Exception as exc:  # noqa: BLE001
         logger.debug("ollama window info unavailable: %s", exc)
         return {}

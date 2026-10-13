@@ -1029,7 +1029,9 @@ def _build_model(*, role: str, llm: str, system_prompt: str,
         num_ctx = _resolve_window(_cfg("OLLAMA_NUM_CTX", "ollama", "num_ctx", default=-1))
         # From-scratch builds emit a long tool-call sequence; a low output cap
         # trips MaxTokensReachedException, so raise num_predict/max_tokens too.
-        ol_max_tokens = int(_cfg("OLLAMA_MAX_TOKENS", "ollama", "max_tokens", default=12288))
+        # -1 (the default) = worked out from the window (ollama_window.output_allowance).
+        from src.utils.ollama_window import output_allowance as _output_allowance
+        ol_max_tokens = _output_allowance(_cfg("OLLAMA_MAX_TOKENS", "ollama", "max_tokens", default=-1), num_ctx)
         # qwen3.6 is a reasoning model: its <think> chain-of-thought consumes output
         # tokens and, on complex brainbriefings, exhausts max_tokens -> the
         # unrecoverable MaxTokensReachedException (observed ~50% of text-to-image

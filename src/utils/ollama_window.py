@@ -167,6 +167,38 @@ def resolve(setting=None) -> int:
     return value if value > 0 else auto()["window"]
 
 
+# The most an answer is given, and the share of a small window it may take.
+OUTPUT_MOST = 16_384
+OUTPUT_LEAST = 4_096
+OUTPUT_SHARE = 4            # at most a quarter of the window
+
+
+def output_allowance(setting=None, window: int | None = None) -> int:
+    """How many tokens a local model may write in one answer (``llm.ollama.max_tokens``).
+
+    A number above zero is used as it is. Otherwise (-1, the default) it is
+    worked out from the window: 16,384 - more than an answer needs, a tool call
+    with a whole workflow in it included - but never more than a quarter of the
+    window, because Ollama takes the allowance OUT of the window before it
+    measures what was sent. A large allowance does not buy longer answers; it
+    buys a shorter memory.
+    """
+    if setting is None:
+        try:
+            from src.utils.settings import load_settings
+            setting = ((load_settings().get("llm") or {}).get("ollama") or {}).get("max_tokens")
+        except Exception:  # noqa: BLE001
+            setting = -1
+    try:
+        value = int(setting or 0)
+    except (TypeError, ValueError):
+        value = 0
+    if value > 0:
+        return value
+    window = int(window or resolve())
+    return max(OUTPUT_LEAST, min(OUTPUT_MOST, window // OUTPUT_SHARE))
+
+
 def forget() -> None:
     """Measure again next time (the models were changed in Settings)."""
     _cache.clear()
