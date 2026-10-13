@@ -51,11 +51,17 @@ asks for the runs; changing a value never is.
 
 ### Adding nodes and rewiring
 
-When the change needs a node that isn't there or a different wire — a hires-fix
-pass, a preview instead of a save, an upscaler before the save, a LoRA between
-loader and sampler — make it with **`edit_canvas_graph(ops, reason)`**: `add` a
-node, `connect` an output to an input, `disconnect` a wire, in one call. Only the
-nodes the change needs; everything else on their graph stays as it was.
+When the change needs a node that isn't there or a different wire, look first
+whether it is one of the common ones, and make it with **one call of
+`change_graph(operation, params)`** — it adds the nodes and sets every wire:
+`image_to_image`, `controlnet`, `patch_model` (FreeU and the like), `lora`,
+`hires_fix`, `model_upscale`, `preview_output`, `save_output`. Its answer
+`status: "ok"` means the graph is complete.
+
+For anything else — or when it answers `cannot` — make the change with
+**`edit_canvas_graph(ops, reason)`**: `add` a node, `connect` an output to an
+input, `disconnect` a wire, in one call. Only the nodes the change needs;
+everything else on their graph stays as it was.
 
 This is your job, not theirs. Never answer an edit request with click-by-click
 instructions for the user, a menu of ways they could do it, or a request for a

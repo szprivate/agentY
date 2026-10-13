@@ -2519,6 +2519,143 @@ class Pipeline:
             return json.dumps(out)
 
         @_tool
+        async def change_graph(operation: str, params: dict | str | None = None,
+                               workflow_path: str = "") -> str:
+            """Make one of the COMMON changes to a graph in a single call - the nodes are
+            added and every wire is set for you. Use this FIRST for any of these; wire
+            by hand (edit_canvas_graph / update_workflow) only for what is not listed.
+
+            operation, and its params:
+            * "image_to_image" - start from an image instead of an empty latent.
+              {"image": "<file in ComfyUI's input folder>", "denoise": 0.6}
+            * "controlnet" - guide the picture with a control image.
+              {"control_net_name": "<model, a part of its name is enough>", "image": "<file>",
+               "preprocessor": "canny" | "none", "strength": 1.0}
+            * "patch_model" - a model patch in front of the sampler (FreeU_V2,
+              LoraLoaderModelOnly, ModelSamplingAuraFlow, any node MODEL -> MODEL).
+              {"class_type": "FreeU_V2", ...that node's own values}
+            * "lora" - a LoRA on model and text encoders.
+              {"lora_name": "<name>", "strength_model": 1.0, "strength_clip": 1.0}
+            * "hires_fix" - a second sampling pass on the upscaled latent.
+              {"scale_by": 1.5, "denoise": 0.5}
+            * "model_upscale" - upscale the decoded picture with an upscale model.
+              {"model_name": "<name>"}
+            * "preview_output" - a PreviewImage in place of the SaveImage.
+            * "save_output" - a SaveImage in place of the PreviewImage. {"filename_prefix": "..."}
+
+            It works on the graph open on the canvas, or - with workflow_path - on a
+            workflow file (the path prepare_workflow / get_workflow_template gave you).
+            The answer says what was added. status "ok" means the graph is complete:
+            every required input is wired. status "cannot" means it found nothing to
+            attach to and changed nothing - then make the change by hand.
+
+            Args:
+                operation: One of the names above.
+                params: The values for it, as above. All optional except where a file
+                    or model has to be named.
+                workflow_path: A workflow file to change. Blank = the open canvas.
+            """
+            from src.utils import canvas_edit as _ce
+            from src.utils import graph_splice as _gs
+
+            if isinstance(params, str):
+                try:
+                    params = json.loads(params) if params.strip() else {}
+                except Exception:  # noqa: BLE001
+                    return json.dumps({"status": "cannot", "error": "params is text that is not valid JSON.",
+                                       "note": "Nothing was changed."})
+            params = params if isinstance(params, dict) else {}
+            schemas = _CanvasSchemas()
+            path = str(workflow_path or "").strip()
+
+            if path:
+                # A workflow file: the same operations, applied to the file's graph.
+                try:
+                    from agenty_core.tools.comfyui import _edit_target, _load_workflow, _save_workflow
+                    graph = _load_workflow(path)
+                except Exception as exc:  # noqa: BLE001
+                    return json.dumps({"status": "cannot", "error": f"could not read {path}: {exc}",
+                                       "note": "Nothing was changed."})
+                got = _gs.splice(graph, operation, params, schemas)
+                if not got.get("ok"):
+                    return json.dumps({"status": "cannot", **{k: v for k, v in got.items() if k != "ok"},
+                                       "note": "Nothing was changed. Make this change by hand with update_workflow."})
+                res = _ce.plan(graph, got["ops"], schemas)
+                if not res["ok"]:
+                    return json.dumps({"status": "cannot", "error": "; ".join(res["errors"][:4]),
+                                       "note": "Nothing was changed. Make this change by hand with update_workflow."})
+                new = res["graph"]
+                for nid, values in got["set"].items():
+                    if nid in new:
+                        new[nid].setdefault("inputs", {}).update(values)
+                for nid in got["delete"]:
+                    new.pop(nid, None)
+                try:
+                    target = _edit_target(path)
+                    if target is not None:
+                        target.write_text(json.dumps(new, indent=2), encoding="utf-8")
+                        saved = str(target)
+                    else:
+                        saved = _save_workflow(new, Path(path).stem if path.lower().endswith(".json") else "")
+                except Exception as exc:  # noqa: BLE001
+                    return json.dumps({"status": "cannot", "error": f"could not write the workflow: {exc}"})
+                problems = []
+                try:
+                    from src.tools import validate_workflow as _vw
+                    v = json.loads(getattr(_vw, "func", _vw)(saved))
+                    problems = [str(e) for e in (v.get("local_errors") or [])]
+                except Exception:  # noqa: BLE001
+                    pass
+                _push_progress(f"🔧 {got['summary']}")
+                return json.dumps({
+                    "status": "ok" if not problems else "error", "workflow_path": saved,
+                    "done": got["summary"], "added": {r: res["added"][r] for r in res["added"]},
+                    "set": got["set"], "removed": got["delete"],
+                    **({"problems": problems[:10]} if problems else {}),
+                    "message": ("The workflow is changed and validates. Use workflow_path from here on."
+                                if not problems else
+                                "The change was made, but the workflow has other problems - fix them with "
+                                "update_workflow.")})
+
+            # The open canvas.
+            graph = getattr(self, "_canvas_graph", None)
+            if not isinstance(graph, dict) or not graph:
+                return json.dumps({"status": "cannot", "error": "no graph is open on the canvas this turn.",
+                                   "what_to_do": "Pass workflow_path to change a workflow file instead."})
+            got = _gs.splice(graph, operation, params, schemas)
+            if not got.get("ok"):
+                return json.dumps({"status": "cannot", **{k: v for k, v in got.items() if k != "ok"},
+                                   "note": "Nothing was changed. Make this change by hand with edit_canvas_graph."})
+            edit = json.loads(await edit_canvas_graph(ops=got["ops"], reason=got["summary"]))
+            if edit.get("status") not in ("applied", "applied_incomplete"):
+                return json.dumps({"status": "cannot", "error": "; ".join(map(str, edit.get("errors") or [edit])[:4]),
+                                   "note": "Nothing was changed. Make this change by hand with edit_canvas_graph."})
+            notes = []
+            for nid, values in got["set"].items():
+                try:
+                    r = json.loads(await set_canvas_node_params(node_id=str(nid), params=values))
+                    if r.get("status") not in ("applied", "ok"):
+                        notes.append(f"node {nid}: {json.dumps(values)} was NOT set - set it with "
+                                     f"set_canvas_node_params ({str(r.get('error') or r)[:160]})")
+                except Exception as exc:  # noqa: BLE001
+                    notes.append(f"node {nid}: {json.dumps(values)} was NOT set ({exc})")
+            if got["delete"]:
+                try:
+                    await delete_canvas_nodes(node_ids=list(got["delete"]), reason="replaced by " + got["summary"])
+                except Exception as exc:  # noqa: BLE001
+                    notes.append(f"node(s) {', '.join(got['delete'])} are no longer read - delete them ({exc})")
+            unfed = edit.get("still_unwired") or {}
+            return json.dumps({
+                "status": "ok" if not unfed and not notes else "incomplete",
+                "done": got["summary"], "added": edit.get("added") or {}, "set": got["set"],
+                "removed": got["delete"],
+                **({"still_unwired": unfed, "wire_from": edit.get("wire_from") or {}} if unfed else {}),
+                **({"notes": notes} if notes else {}),
+                "message": ("Done on the live canvas - every required input is wired. The user can undo with Ctrl+Z."
+                            if not unfed and not notes else
+                            "Applied, but not finished - see still_unwired / notes and complete it.")})
+
+        @_tool
         async def list_outputs() -> str:
             """The images and videos of this conversation, with the number shown on
             each in the user's chat panel.
@@ -4743,7 +4880,8 @@ class Pipeline:
                  halt_for_review, release_review, run_workflow_now, add_canvas_workflow,
                  get_canvas_node, set_canvas_node_params, place_canvas_text,
                  run_python_node, revise_prompt, prompt_autoloop,
-                 delete_canvas_nodes, edit_canvas_graph, insert_workflow_into_canvas, refine_canvas_until,
+                 delete_canvas_nodes, edit_canvas_graph, change_graph, insert_workflow_into_canvas,
+                 refine_canvas_until,
                  list_outputs, show_in_panel, ledger_stage, probe_media, read_rhythm,
                  read_beats, list_text_presets, find_text_demos, try_text_preset,
                  keep_text_preset, edit_timeline, render_edit, work_in_open_graph,

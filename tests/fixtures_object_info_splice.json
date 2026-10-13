@@ -1,0 +1,755 @@
+{
+ "KSampler": {
+  "input": {
+   "required": {
+    "model": [
+     "MODEL",
+     {}
+    ],
+    "seed": [
+     "INT",
+     {
+      "default": 0,
+      "min": 0,
+      "max": 18446744073709551615
+     }
+    ],
+    "steps": [
+     "INT",
+     {
+      "default": 20,
+      "min": 1,
+      "max": 10000
+     }
+    ],
+    "cfg": [
+     "FLOAT",
+     {
+      "default": 8.0,
+      "min": 0.0,
+      "max": 100.0
+     }
+    ],
+    "sampler_name": [
+     [
+      "euler",
+      "euler_cfg_pp"
+     ],
+     {}
+    ],
+    "scheduler": [
+     [
+      "simple",
+      "sgm_uniform"
+     ],
+     {}
+    ],
+    "positive": [
+     "CONDITIONING",
+     {}
+    ],
+    "negative": [
+     "CONDITIONING",
+     {}
+    ],
+    "latent_image": [
+     "LATENT",
+     {}
+    ],
+    "denoise": [
+     "FLOAT",
+     {
+      "default": 1.0,
+      "min": 0.0,
+      "max": 1.0
+     }
+    ]
+   },
+   "optional": {}
+  },
+  "output": [
+   "LATENT"
+  ],
+  "output_name": [
+   "LATENT"
+  ],
+  "output_node": false
+ },
+ "KSamplerAdvanced": {
+  "input": {
+   "required": {
+    "model": [
+     "MODEL"
+    ],
+    "add_noise": [
+     [
+      "enable",
+      "disable"
+     ],
+     {}
+    ],
+    "noise_seed": [
+     "INT",
+     {
+      "default": 0,
+      "min": 0,
+      "max": 18446744073709551615
+     }
+    ],
+    "steps": [
+     "INT",
+     {
+      "default": 20,
+      "min": 1,
+      "max": 10000
+     }
+    ],
+    "cfg": [
+     "FLOAT",
+     {
+      "default": 8.0,
+      "min": 0.0,
+      "max": 100.0
+     }
+    ],
+    "sampler_name": [
+     [
+      "euler",
+      "euler_cfg_pp"
+     ]
+    ],
+    "scheduler": [
+     [
+      "simple",
+      "sgm_uniform"
+     ]
+    ],
+    "positive": [
+     "CONDITIONING"
+    ],
+    "negative": [
+     "CONDITIONING"
+    ],
+    "latent_image": [
+     "LATENT"
+    ],
+    "start_at_step": [
+     "INT",
+     {
+      "default": 0,
+      "min": 0,
+      "max": 10000
+     }
+    ],
+    "end_at_step": [
+     "INT",
+     {
+      "default": 10000,
+      "min": 0,
+      "max": 10000
+     }
+    ],
+    "return_with_leftover_noise": [
+     [
+      "disable",
+      "enable"
+     ],
+     {}
+    ]
+   },
+   "optional": {}
+  },
+  "output": [
+   "LATENT"
+  ],
+  "output_name": [
+   "LATENT"
+  ],
+  "output_node": false
+ },
+ "FreeU_V2": {
+  "input": {
+   "required": {
+    "model": [
+     "MODEL"
+    ],
+    "b1": [
+     "FLOAT",
+     {
+      "default": 1.3,
+      "min": 0.0,
+      "max": 10.0
+     }
+    ],
+    "b2": [
+     "FLOAT",
+     {
+      "default": 1.4,
+      "min": 0.0,
+      "max": 10.0
+     }
+    ],
+    "s1": [
+     "FLOAT",
+     {
+      "default": 0.9,
+      "min": 0.0,
+      "max": 10.0
+     }
+    ],
+    "s2": [
+     "FLOAT",
+     {
+      "default": 0.2,
+      "min": 0.0,
+      "max": 10.0
+     }
+    ]
+   },
+   "optional": {}
+  },
+  "output": [
+   "MODEL"
+  ],
+  "output_name": [
+   "MODEL"
+  ],
+  "output_node": false
+ },
+ "LoraLoader": {
+  "input": {
+   "required": {
+    "model": [
+     "MODEL",
+     {}
+    ],
+    "clip": [
+     "CLIP",
+     {}
+    ],
+    "lora_name": [
+     [
+      "Alpha Gen - LTX2.5 - 145frames max,1920x1080 max,1str.safetensors",
+      "Cars\\2017mclaren720slb.safetensors"
+     ],
+     {}
+    ],
+    "strength_model": [
+     "FLOAT",
+     {
+      "default": 1.0,
+      "min": -100.0,
+      "max": 100.0
+     }
+    ],
+    "strength_clip": [
+     "FLOAT",
+     {
+      "default": 1.0,
+      "min": -100.0,
+      "max": 100.0
+     }
+    ]
+   },
+   "optional": {}
+  },
+  "output": [
+   "MODEL",
+   "CLIP"
+  ],
+  "output_name": [
+   "MODEL",
+   "CLIP"
+  ],
+  "output_node": false
+ },
+ "LoraLoaderModelOnly": {
+  "input": {
+   "required": {
+    "model": [
+     "MODEL"
+    ],
+    "lora_name": [
+     [
+      "Alpha Gen - LTX2.5 - 145frames max,1920x1080 max,1str.safetensors",
+      "Cars\\2017mclaren720slb.safetensors"
+     ]
+    ],
+    "strength_model": [
+     "FLOAT",
+     {
+      "default": 1.0,
+      "min": -100.0,
+      "max": 100.0
+     }
+    ]
+   },
+   "optional": {}
+  },
+  "output": [
+   "MODEL"
+  ],
+  "output_name": [
+   "MODEL"
+  ],
+  "output_node": false
+ },
+ "VAEEncode": {
+  "input": {
+   "required": {
+    "pixels": [
+     "IMAGE"
+    ],
+    "vae": [
+     "VAE"
+    ]
+   },
+   "optional": {}
+  },
+  "output": [
+   "LATENT"
+  ],
+  "output_name": [
+   "LATENT"
+  ],
+  "output_node": false
+ },
+ "LoadImage": {
+  "input": {
+   "required": {
+    "image": [
+     [
+      "ComfyUI_00001_.png",
+      "ComfyUI_temp_aynhi_00001_.png"
+     ],
+     {}
+    ]
+   },
+   "optional": {}
+  },
+  "output": [
+   "IMAGE",
+   "MASK"
+  ],
+  "output_name": [
+   "IMAGE",
+   "MASK"
+  ],
+  "output_node": false
+ },
+ "ControlNetLoader": {
+  "input": {
+   "required": {
+    "control_net_name": [
+     [
+      "Flux-Dev\\FLUX.1-dev-Controlnet-Inpainting-Beta.safetensors",
+      "Flux-Dev\\FLUX.1-dev-Controlnet-Union.safetensors"
+     ]
+    ]
+   },
+   "optional": {}
+  },
+  "output": [
+   "CONTROL_NET"
+  ],
+  "output_name": [
+   "CONTROL_NET"
+  ],
+  "output_node": false
+ },
+ "ControlNetApplyAdvanced": {
+  "input": {
+   "required": {
+    "positive": [
+     "CONDITIONING"
+    ],
+    "negative": [
+     "CONDITIONING"
+    ],
+    "control_net": [
+     "CONTROL_NET"
+    ],
+    "image": [
+     "IMAGE"
+    ],
+    "strength": [
+     "FLOAT",
+     {
+      "default": 1.0,
+      "min": 0.0,
+      "max": 10.0
+     }
+    ],
+    "start_percent": [
+     "FLOAT",
+     {
+      "default": 0.0,
+      "min": 0.0,
+      "max": 1.0
+     }
+    ],
+    "end_percent": [
+     "FLOAT",
+     {
+      "default": 1.0,
+      "min": 0.0,
+      "max": 1.0
+     }
+    ]
+   },
+   "optional": {
+    "vae": [
+     "VAE"
+    ]
+   }
+  },
+  "output": [
+   "CONDITIONING",
+   "CONDITIONING"
+  ],
+  "output_name": [
+   "positive",
+   "negative"
+  ],
+  "output_node": false
+ },
+ "Canny": {
+  "input": {
+   "required": {
+    "image": [
+     "IMAGE"
+    ],
+    "low_threshold": [
+     "FLOAT",
+     {
+      "default": 0.4,
+      "min": 0.01,
+      "max": 0.99
+     }
+    ],
+    "high_threshold": [
+     "FLOAT",
+     {
+      "default": 0.8,
+      "min": 0.01,
+      "max": 0.99
+     }
+    ]
+   },
+   "optional": {}
+  },
+  "output": [
+   "IMAGE"
+  ],
+  "output_name": [
+   "IMAGE"
+  ],
+  "output_node": false
+ },
+ "LatentUpscaleBy": {
+  "input": {
+   "required": {
+    "samples": [
+     "LATENT"
+    ],
+    "upscale_method": [
+     [
+      "nearest-exact",
+      "bilinear"
+     ]
+    ],
+    "scale_by": [
+     "FLOAT",
+     {
+      "default": 1.5,
+      "min": 0.01,
+      "max": 8.0
+     }
+    ]
+   },
+   "optional": {}
+  },
+  "output": [
+   "LATENT"
+  ],
+  "output_name": [
+   "LATENT"
+  ],
+  "output_node": false
+ },
+ "UpscaleModelLoader": {
+  "input": {
+   "required": {
+    "model_name": [
+     "COMBO",
+     {}
+    ]
+   },
+   "optional": {}
+  },
+  "output": [
+   "UPSCALE_MODEL"
+  ],
+  "output_name": [
+   "UPSCALE_MODEL"
+  ],
+  "output_node": false
+ },
+ "ImageUpscaleWithModel": {
+  "input": {
+   "required": {
+    "upscale_model": [
+     "UPSCALE_MODEL"
+    ],
+    "image": [
+     "IMAGE"
+    ]
+   },
+   "optional": {}
+  },
+  "output": [
+   "IMAGE"
+  ],
+  "output_name": [
+   "IMAGE"
+  ],
+  "output_node": false
+ },
+ "PreviewImage": {
+  "input": {
+   "required": {
+    "images": [
+     "IMAGE"
+    ]
+   },
+   "optional": {}
+  },
+  "output": [
+   "IMAGE"
+  ],
+  "output_name": [
+   "images"
+  ],
+  "output_node": true
+ },
+ "SaveImage": {
+  "input": {
+   "required": {
+    "images": [
+     "IMAGE",
+     {}
+    ],
+    "filename_prefix": [
+     "STRING",
+     {
+      "default": "ComfyUI"
+     }
+    ]
+   },
+   "optional": {}
+  },
+  "output": [
+   "IMAGE"
+  ],
+  "output_name": [
+   "images"
+  ],
+  "output_node": true
+ },
+ "EmptyLatentImage": {
+  "input": {
+   "required": {
+    "width": [
+     "INT",
+     {
+      "default": 1024,
+      "min": 16,
+      "max": 16384
+     }
+    ],
+    "height": [
+     "INT",
+     {
+      "default": 1024,
+      "min": 16,
+      "max": 16384
+     }
+    ],
+    "batch_size": [
+     "INT",
+     {
+      "default": 1,
+      "min": 1,
+      "max": 4096
+     }
+    ]
+   },
+   "optional": {}
+  },
+  "output": [
+   "LATENT"
+  ],
+  "output_name": [
+   "LATENT"
+  ],
+  "output_node": false
+ },
+ "CheckpointLoaderSimple": {
+  "input": {
+   "required": {
+    "ckpt_name": [
+     [
+      "CHORD\\chord_v1.safetensors",
+      "FLUX1\\flux1-dev-fp8.safetensors"
+     ],
+     {}
+    ]
+   },
+   "optional": {}
+  },
+  "output": [
+   "MODEL",
+   "CLIP",
+   "VAE"
+  ],
+  "output_name": [
+   "MODEL",
+   "CLIP",
+   "VAE"
+  ],
+  "output_node": false
+ },
+ "VAEDecode": {
+  "input": {
+   "required": {
+    "samples": [
+     "LATENT",
+     {}
+    ],
+    "vae": [
+     "VAE",
+     {}
+    ]
+   },
+   "optional": {}
+  },
+  "output": [
+   "IMAGE"
+  ],
+  "output_name": [
+   "IMAGE"
+  ],
+  "output_node": false
+ },
+ "CLIPTextEncode": {
+  "input": {
+   "required": {
+    "text": [
+     "STRING",
+     {}
+    ],
+    "clip": [
+     "CLIP",
+     {}
+    ]
+   },
+   "optional": {}
+  },
+  "output": [
+   "CONDITIONING"
+  ],
+  "output_name": [
+   "CONDITIONING"
+  ],
+  "output_node": false
+ },
+ "VAELoader": {
+  "input": {
+   "required": {
+    "vae_name": [
+     [
+      "FLUX1\\ae.safetensors",
+      "FLUX2\\flux2_dev_vae.safetensors"
+     ]
+    ]
+   },
+   "optional": {}
+  },
+  "output": [
+   "VAE"
+  ],
+  "output_name": [
+   "VAE"
+  ],
+  "output_node": false
+ },
+ "EmptySD3LatentImage": {
+  "input": {
+   "required": {
+    "width": [
+     "INT",
+     {
+      "default": 1024,
+      "min": 16,
+      "max": 16384
+     }
+    ],
+    "height": [
+     "INT",
+     {
+      "default": 1024,
+      "min": 16,
+      "max": 16384
+     }
+    ],
+    "batch_size": [
+     "INT",
+     {
+      "default": 1,
+      "min": 1,
+      "max": 4096
+     }
+    ]
+   },
+   "optional": {}
+  },
+  "output": [
+   "LATENT"
+  ],
+  "output_name": [
+   "LATENT"
+  ],
+  "output_node": false
+ },
+ "SamplerCustomAdvanced": {
+  "input": {
+   "required": {
+    "noise": [
+     "NOISE"
+    ],
+    "guider": [
+     "GUIDER"
+    ],
+    "sampler": [
+     "SAMPLER"
+    ],
+    "sigmas": [
+     "SIGMAS"
+    ],
+    "latent_image": [
+     "LATENT"
+    ]
+   },
+   "optional": {}
+  },
+  "output": [
+   "LATENT",
+   "LATENT"
+  ],
+  "output_name": [
+   "output",
+   "denoised_output"
+  ],
+  "output_node": false
+ }
+}
