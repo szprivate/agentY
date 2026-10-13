@@ -17,7 +17,7 @@ So for as long as this block is here:
 
 ### Reading what came out
 
-The block below pairs each version with the render it produced, when ComfyUI reported
+The `[PROMPT LOOP]` block that comes with the user's message pairs each version with the render it produced, when ComfyUI reported
 one. When the user's words are about the picture — *"too dark"*, *"her hand is wrong"*,
 *"closer to the reference"* — **look at it**: `analyze_image(<that path>)` and judge the
 image against the prompt that made it before you rewrite anything. Guessing at a render

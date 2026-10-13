@@ -70,11 +70,22 @@ from src.utils.debug_log import trace as _trace
 # ---------------------------------------------------------------------------
 # Orchestrator prompt partials — guidance for contexts that only occur on SOME
 # turns (canvas hooks, input images, selected nodes) lives in separate .md files
-# under config/system_prompts/orchestrator/ and is appended to the per-turn input
-# ONLY when that context is present, instead of bloating the always-sent system
-# prompt. Loaded from disk (never hardcoded here) and cached after first read.
+# under config/system_prompts/orchestrator/ and is attached ONLY when that context
+# is present, instead of bloating the always-sent system prompt. Loaded from disk
+# (never hardcoded here) and cached after first read.
+#
+# Attached to the PROMPT of such a turn, not to the user's message: a message
+# stays in the history, so guidance in it was sent again with every later call
+# and once more per turn that was kept - 45,000 characters of the same text per
+# message on a canvas with hooks, which is most of what a long conversation
+# weighed. In the prompt it is there once, ahead of everything that changes,
+# where a provider's (and Ollama's) prompt cache holds it.
 # ---------------------------------------------------------------------------
 _ORCH_PARTIALS_DIR = Path(__file__).parent.parent / "config" / "system_prompts" / "orchestrator"
+# In this order, whichever of them a turn has: the same turns get the same text.
+_TURN_GUIDES = ("canvas_hooks", "review_halt", "canvas_nodes", "input_images", "project_memory",
+                "prompt_loop", "plan_approval")
+_TURN_GUIDES_HEAD = "\n\n# For this kind of turn\n\n"
 
 # How many nodes one delete_canvas_nodes call may remove. Not a safety boundary —
 # the user can undo — but a misread "clean up the graph" should cost a sentence
@@ -5300,6 +5311,30 @@ class Pipeline:
                 print(f"pipeline: intent guard skipped ({exc}).")
             return ""
 
+    def _set_turn_guides(self, names) -> bool:
+        """Put the guidance partials *names* into the orchestrator's prompt for
+        this turn (and take out what the last turn had). False when that could
+        not be done - the caller then sends them with the message, as before."""
+        if os.environ.get("AGENTY_GUIDES_INLINE", "0") == "1":
+            return False
+        agent = getattr(self, "_orchestrator_agent", None)
+        try:
+            prompt = agent.system_prompt
+            if not isinstance(prompt, str):
+                return False
+            had = getattr(agent, "_turn_guides_text", "") or ""
+            if had and had in prompt:
+                prompt = prompt.replace(had, "")
+            texts = [t for t in (_orch_partial(n) for n in _TURN_GUIDES if n in names) if t]
+            block = (_TURN_GUIDES_HEAD + "\n\n".join(texts)) if texts else ""
+            agent.system_prompt = prompt + block
+            agent._turn_guides_text = block
+            return agent.system_prompt == prompt + block
+        except Exception as exc:  # noqa: BLE001 - never cost a turn
+            if getattr(self, "_verbose", False):
+                print(f"pipeline: turn guidance stays in the message ({exc}).")
+            return False
+
     def _pin_tool_packs(self, lead: bool) -> None:
         """The tool packs this turn needs whether or not the conversation has
         loaded them: what is on the canvas, or what kind of conversation it is,
@@ -6028,6 +6063,8 @@ class Pipeline:
         """
         constraints = self._extract_hard_constraints(user_text)
         pin = ""
+        # The guidance this turn's blocks call for, by name (_set_turn_guides).
+        guides: list = []
         if self._open_graph_mode():
             pin = _OPEN_GRAPH_NOTE + "\n\n"
         try:
@@ -6062,8 +6099,8 @@ class Pipeline:
                 # Attach the how-to-run-hooks guidance only now that hooks exist
                 # (it's absent from the base system prompt to keep every non-hook
                 # turn lean). Guidance first, then the concrete hook block.
-                guide = _orch_partial("canvas_hooks")
-                block = (guide + "\n\n" if guide else "") + hooks_block
+                guides.append("canvas_hooks")
+                block = hooks_block
                 # What has already happened in this run, from the host's own record.
                 _led = self._ledger_block()
                 if _led:
@@ -6087,8 +6124,7 @@ class Pipeline:
                 self._canvas_graph,
                 [n.get("id") for n in (self._canvas_selection or [])])
         if sel_block or graph_block:
-            guide = _orch_partial("canvas_nodes")
-            pin = pin + (guide + "\n\n" if guide else "")
+            guides.append("canvas_nodes")
             if sel_block:
                 pin += sel_block + "\n\n"
             if graph_block:
@@ -6110,9 +6146,7 @@ class Pipeline:
         if not has_input_images and isinstance(user_input, list):
             has_input_images = any(isinstance(b, dict) and "image" in b for b in user_input)
         if has_input_images:
-            guide = _orch_partial("input_images")
-            if guide:
-                pin = pin + guide + "\n\n"
+            guides.append("input_images")
 
         # When canvas auto-graphing is off, the user opted out of having every
         # generated workflow loaded onto their canvas — so tell the orchestrator
@@ -6158,8 +6192,8 @@ class Pipeline:
         # Guidance rides along only when there is something to apply it to.
         project_ctx = self._get_project_memory_context()
         if project_ctx:
-            guide = _orch_partial("project_memory")
-            pin = pin + (guide + "\n\n" if guide else "") + project_ctx + "\n\n"
+            guides.append("project_memory")
+            pin = pin + project_ctx + "\n\n"
 
         # The panel's prompt loop: the agent writes, the panel queues. Carries where the
         # prompt goes, every version so far, and which render came out of which —
@@ -6170,8 +6204,8 @@ class Pipeline:
         except Exception:  # noqa: BLE001 — never cost a turn
             loop_block = ""
         if loop_block:
-            guide = _orch_partial("prompt_loop")
-            pin = pin + (guide + "\n\n" if guide else "") + "[PROMPT LOOP]\n" + loop_block + "\n"
+            guides.append("prompt_loop")
+            pin = pin + "[PROMPT LOOP]\n" + loop_block + "\n"
 
         # Plan approval — only where someone actually asked to be asked. Resolved
         # here, once, from the three places such a standing rule can live (the
@@ -6181,8 +6215,8 @@ class Pipeline:
         self._plan_approval = self._detect_plan_approval(user_text, project_ctx)
         if self._plan_approval is not None:
             from src.utils.plan_gate import approval_state
-            guide = _orch_partial("plan_approval")
-            pin = pin + (guide + "\n\n" if guide else "") + approval_state(
+            guides.append("plan_approval")
+            pin = pin + approval_state(
                 self._plan_approval, bool(getattr(self, "_plan_gate_open", False))) + "\n\n"
 
         # A chain stopped at a review hook. Like the plan gate this decides whether
@@ -6197,8 +6231,7 @@ class Pipeline:
         if halt is not None or has_review:
             from src.utils.review_gate import (binding_table, halt_state,
                                                renumber_note, resumed_note)
-            guide = _orch_partial("review_halt")
-            pin += (guide + "\n\n") if guide else ""
+            guides.append("review_halt")
             if halt is not None:
                 ballot = ({} if halt.is_text() else self._review_collector() or {})
                 pin += halt_state(halt, str(ballot.get("node_id") or ""))
@@ -6255,6 +6288,13 @@ class Pipeline:
                             "with release_review, and each answer is relayed to its own "
                             "branch with message_shot.\n")
                 pin += "\n"
+
+        # The guidance goes into the prompt; into the message only where that
+        # could not be done.
+        if not self._set_turn_guides(guides):
+            inline = [t for t in (_orch_partial(n) for n in _TURN_GUIDES if n in guides) if t]
+            if inline:
+                pin = "\n\n".join(inline) + "\n\n" + pin
 
         # Ahead of every other block, including the hooks: it does not add a rule,
         # it changes what all of them mean this turn.

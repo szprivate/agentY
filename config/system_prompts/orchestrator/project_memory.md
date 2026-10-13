@@ -1,4 +1,4 @@
-[PROJECT MEMORY — how to use the block below]
+[PROJECT MEMORY — how to use the project-memory block that comes with the user's message]
 
 This project has a memory of its own, stored beside it (in ComfyUI's user
 directory) and switched by the pipeline when the project switches. It holds what

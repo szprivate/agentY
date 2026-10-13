@@ -254,6 +254,12 @@ class AnthropicModel(_BaseAnthropicModel):
 
     def format_request(self, messages, tool_specs=None, system_prompt=None, tool_choice=None):  # type: ignore[override]
         req = super().format_request(messages, tool_specs, system_prompt, tool_choice)
+        # ``params.system`` is the prompt as it was when the model was built, and
+        # it wins over the one passed here - so whatever the agent's prompt has
+        # gained since (the skills, the guidance for this kind of turn) never
+        # arrived. The prompt of the call is the agent's, cached the same way.
+        if isinstance(system_prompt, str) and system_prompt.strip():
+            req["system"] = [{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}]
         if req.get("tools"):
             *head, last = req["tools"]
             req["tools"] = head + [{**last, "cache_control": {"type": "ephemeral"}}]
