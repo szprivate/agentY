@@ -148,6 +148,17 @@ class TheHook(unittest.TestCase):
         self.assertIn("no user query found", told[0])
         self.assertIn("llm.ollama.num_ctx", told[0])
 
+    def test_an_output_allowance_that_eats_the_window_is_named_as_the_cause(self):
+        """Max Output Tokens set to 90,384 of a 98,304 window: the advice is to
+        lower that, not to find a card for a 262,144 window."""
+        text = cp.window_warning(98_304, 90_384, 31_471, 58_051)
+        self.assertIn("because of the output allowance", text)
+        self.assertIn("Max Output Tokens", text)
+        self.assertIn("16,384", text)
+        self.assertNotIn("262,144", text)
+        # a window that really is too small still says so
+        self.assertIn("llm.ollama.num_ctx", cp.window_warning(32_768, 16_384, 30_000, 20_000))
+
     def test_a_call_that_fits_says_nothing(self):
         told = []
         cp._warned.clear()

@@ -428,6 +428,19 @@ def window_warning(window: int, reserve: int, fixed: int, history: int) -> str:
     """What to tell the user when a call cannot fit a local model's window."""
     need = fixed + history + reserve
     want = next((w for w in _WINDOWS if w >= need * 1.15), _WINDOWS[-1])
+    # The usual cause is not the window but how much of it the answer is given:
+    # an output allowance of most of the window leaves nothing to send. Say that,
+    # not "buy a larger card".
+    usual = 16_384
+    if reserve > usual and window - usual - fixed >= history * 0.6:
+        return (f"⚠️ This call does not fit the local model's window - because of the output allowance, not "
+                f"the window. The window is {window:,} tokens and {reserve:,} of them are kept free for the answer "
+                f"(Max Output Tokens, llm.ollama.max_tokens); agentY's own prompt and tools take about {fixed:,}, "
+                f"which leaves {max(0, window - reserve - fixed):,} for a conversation that needs about {history:,}. "
+                f"Set Max Output Tokens back to about {usual:,} (Settings > LLM providers > Ollama): an answer is "
+                f"rarely longer, and that leaves {window - usual - fixed:,} for the conversation. Until then Ollama "
+                f"drops the START of the call - the request first - and what comes back are errors like 'no user "
+                f"query found in messages' or a broken tool call ('XML syntax error').")
     return (f"\u26a0\ufe0f The local model's window is too small for this call. It is {window:,} tokens, "
             f"{reserve:,} of them are kept for the answer (llm.ollama.max_tokens), and agentY's own prompt and "
             f"tools take about {fixed:,} - which leaves {max(0, window - reserve - fixed):,} for a conversation "
