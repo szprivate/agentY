@@ -500,7 +500,17 @@ body:
   **continue** ends the loop;
 - **an agent review, or none** — a separate QA agent judges the result against
   the condition and the review's own notes and checks. On a miss the agent
-  changes what was objected to and runs the body again.
+  changes what was objected to and runs the body again;
+- **an `agentY condition` node** — put it on the execution wire inside the loop
+  (`… → make workflow → agentY condition → agentY loop break`) and its decision
+  model judges every round by the node's own statements, at the node's
+  threshold, instead of the QA agent: a fixed yes/no that costs a fraction of a
+  second and no tokens. It needs no picture wired in — the agent hands it each
+  round's files (three frames of a film). It runs through Ollama on this
+  machine; the model is downloaded on first use, and without Ollama the loop
+  stops and says so. If the break also has a `finished when`, the QA agent
+  judges that on what the condition node let through. With a human review in
+  the loop the person judges, and the condition node is not asked.
 
 If the rounds run out, the best attempt of any round goes on, and the report says
 the condition was not met. The break node shows where its loop stands.
