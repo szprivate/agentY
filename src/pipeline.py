@@ -95,6 +95,9 @@ _TURN_GUIDES = ("canvas_hooks", "review_halt", "canvas_nodes", "input_images", "
                 "prompt_loop", "plan_approval")
 _TURN_GUIDES_HEAD = "\n\n# For this kind of turn\n\n"
 
+# How many of a conversation's outputs each turn lists in full (the newest).
+_GALLERY_LISTED = 12
+
 # How many nodes one delete_canvas_nodes call may remove. Not a safety boundary —
 # the user can undo — but a misread "clean up the graph" should cost a sentence
 # rather than a workflow, and clearing the whole thing is one gesture they can
@@ -7813,10 +7816,17 @@ class Pipeline:
         shown = self._shown_outputs()
         if not shown:
             return ""
+        # Only the newest in full: this block goes with every message, and listing
+        # them all grew with each picture - 100 of them, 17k characters, on every
+        # turn of one conversation (2026-10-14). The rest are a list_outputs away.
+        older = shown[:-_GALLERY_LISTED] if len(shown) > _GALLERY_LISTED else []
         lines = [
             f"  {o['number']}. {o['path']}" + (f"  — {o['caption']}" if o["caption"] else "")
-            for o in shown
+            for o in shown[len(older):]
         ]
+        if older:
+            lines.insert(0, f"  ({len(older)} older: #{older[0]['number']}–#{older[-1]['number']} — "
+                            "call list_outputs for their paths and what they were made for)")
         return (
             "[GENERATED IN THIS THREAD] — the user may reference these by number "
             "(\"image 2\"), recency (\"the last one\"), or description (\"the lighthouse "

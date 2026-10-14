@@ -80,6 +80,18 @@ class OneNumbering(_WithFiles):
     def test_nothing_generated_is_no_block_at_all(self):
         self.assertEqual(self._pipe([])._format_image_gallery(), "")
 
+    def test_a_long_gallery_lists_only_the_newest(self):
+        """The block goes with every message: a conversation with 100 pictures
+        sent all 100, with their prompts, on every turn."""
+        from src.pipeline import _GALLERY_LISTED
+        rows = [{"idx": i + 1, "path": self.files[0], "caption": f"take {i + 1}"} for i in range(30)]
+        block = self._pipe(rows)._format_image_gallery()
+        older = 30 - _GALLERY_LISTED
+        self.assertIn(f"({older} older: #1–#{older} — call list_outputs", block)
+        self.assertNotIn(f"  {older}. ", block)
+        self.assertIn(f"  {older + 1}. {self.files[0]}  — take {older + 1}", block)
+        self.assertIn(f"  30. {self.files[0]}  — take 30", block)
+
     def test_a_restart_keeps_the_stored_numbers(self):
         src = inspect.getsource(srv)
         self.assertIn('GeneratedImage(index=int(g.get("idx") or i + 1)', src)
