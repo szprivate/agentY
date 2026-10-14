@@ -2374,6 +2374,12 @@ def create_orchestrator_agent(
     orch_hooks = [TokenUsageHookProvider(role="orchestrator"), ToolActivityHookProvider(role="orchestrator"),
                   MagnificWatchHookProvider(), ComfyUIInterruptHook(), InterjectHookProvider(),
                   *mcp_hooks, *extra_hooks]
+    # The common changes to a graph go through change_graph first (splice_first).
+    try:
+        from src.utils.splice_first import SpliceFirstHook
+        orch_hooks.append(SpliceFirstHook())
+    except Exception:  # noqa: BLE001
+        pass
 
     agent = _make_agent(
         role="orchestrator",
