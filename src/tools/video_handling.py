@@ -73,9 +73,11 @@ def _resolve_local_video(path: str) -> Optional[str]:
         from src.tools.image_handling import _comfy_input_dir
         d = _comfy_input_dir()
         if d:
-            cand = Path(d) / p.name
-            if cand.is_file():
-                return str(cand.resolve())
+            # As the widget names it ("agentY/<file>"), then bare.
+            for rel in (p, Path(p.name)):
+                cand = Path(d) / rel
+                if cand.is_file():
+                    return str(cand.resolve())
     except Exception:  # noqa: BLE001
         pass
     return None

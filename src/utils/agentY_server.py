@@ -492,35 +492,52 @@ def _staged_copy(path: str) -> str | None:
 
     Showing a picture again must not copy it again: staging gives a second copy
     a new name every time, and a run reviewed over ten rounds would leave ten of
-    each file behind.
+    each file behind. Copies staged before :data:`STAGE_SUBFOLDER` lie at the
+    top of the input dir and are still found there.
     """
     in_dir = _comfy_input_dir()
     if in_dir is not None:
-        try:
-            src = Path(path)
-            have = in_dir / src.name
-            if have.is_file():
-                a, b = src.stat(), have.stat()
-                if a.st_size == b.st_size and int(a.st_mtime) == int(b.st_mtime):
-                    return src.name
-        except OSError:
-            pass
+        src = Path(path)
+        for name in (f"{STAGE_SUBFOLDER}/{src.name}", src.name):
+            try:
+                have = in_dir / name
+                if have.is_file():
+                    a, b = src.stat(), have.stat()
+                    if a.st_size == b.st_size and int(a.st_mtime) == int(b.st_mtime):
+                        return name
+            except OSError:
+                pass
     return _stage_into_comfy_input(path)
+
+
+# Where staged copies go: a folder of their own in ComfyUI's input dir. Every
+# loader (LoadImage, LoadVideo, the VHS loaders, ...) lists the TOP of the input
+# dir each time ComfyUI builds its node list, file by file - on a network drive
+# that is seconds per loader, and the frontend's splash waits for all of them.
+# Loaders read "agentY/<file>" all the same (as ComfyUI's own "pasted/<file>").
+STAGE_SUBFOLDER = "agentY"
 
 
 def _stage_into_comfy_input(path: str, subfolder: str = "") -> str | None:
     """Copy *path* into ComfyUI's input dir so a loader node can reference it.
 
-    Returns the input-relative filename the node's widget should use, or None
-    when the input dir can't be resolved (frontend then falls back to the
-    absolute path for path-based loaders). *subfolder*: core's Load 3D lists
-    ``input/3d``, so a model goes there and is named ``3d/<file>``.
+    Returns the input-relative filename the node's widget should use
+    (``agentY/<file>``), or None when the input dir can't be resolved (frontend
+    then falls back to the absolute path for path-based loaders). *subfolder*:
+    core's Load 3D lists ``input/3d``, so a model goes there and is named
+    ``3d/<file>``; anything else goes to :data:`STAGE_SUBFOLDER`.
     """
     in_dir = _comfy_input_dir()
     if in_dir is None:
         return None
+    subfolder = subfolder or STAGE_SUBFOLDER
     try:
-        in_dir = in_dir / subfolder if subfolder else in_dir
+        # Already in the input dir (a downloaded reference): named where it is.
+        try:
+            return Path(path).resolve().relative_to(in_dir.resolve()).as_posix()
+        except ValueError:
+            pass
+        in_dir = in_dir / subfolder
         prefix = f"{subfolder}/" if subfolder else ""
         in_dir.mkdir(parents=True, exist_ok=True)
         src = Path(path)

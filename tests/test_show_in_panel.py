@@ -175,20 +175,49 @@ class TheHost(unittest.TestCase):
             with mock.patch.object(srv, "_comfy_input_dir", return_value=in_dir):
                 first = srv._staged_copy(str(f))
                 second = srv._staged_copy(str(f))
-            self.assertEqual((first, second), ("mara.png", "mara.png"))
-            self.assertEqual(sorted(p.name for p in in_dir.iterdir()), ["mara.png"])
+            self.assertEqual((first, second), ("agentY/mara.png", "agentY/mara.png"))
+            self.assertEqual(sorted(p.name for p in (in_dir / "agentY").iterdir()), ["mara.png"])
+            self.assertEqual(sorted(p.name for p in in_dir.iterdir()), ["agentY"],
+                             "nothing at the top of the input dir, which every loader lists")
+
+    def test_a_file_already_in_the_input_dir_is_not_copied(self):
+        from src.utils import agentY_server as srv
+        with tempfile.TemporaryDirectory() as tmp:
+            in_dir = Path(tmp) / "input"
+            in_dir.mkdir()
+            ref = in_dir / "reference_1a2b3c4d.jpg"     # where download_image puts it
+            ref.write_bytes(b"jpeg")
+            with mock.patch.object(srv, "_comfy_input_dir", return_value=in_dir):
+                self.assertEqual(srv._stage_into_comfy_input(str(ref)), "reference_1a2b3c4d.jpg")
+            self.assertEqual(sorted(p.name for p in in_dir.iterdir()), ["reference_1a2b3c4d.jpg"])
+
+    def test_a_copy_staged_before_the_subfolder_is_still_found(self):
+        import os
+        from src.utils import agentY_server as srv
+        with tempfile.TemporaryDirectory() as tmp:
+            src_dir, in_dir = Path(tmp) / "out", Path(tmp) / "input"
+            src_dir.mkdir(); in_dir.mkdir()
+            f = src_dir / "mara.png"
+            f.write_bytes(b"picture")
+            old = in_dir / "mara.png"
+            old.write_bytes(b"picture")
+            os.utime(old, (f.stat().st_atime, f.stat().st_mtime))
+            with mock.patch.object(srv, "_comfy_input_dir", return_value=in_dir):
+                self.assertEqual(srv._staged_copy(str(f)), "mara.png")
+            self.assertFalse((in_dir / "agentY").exists())
 
     def test_a_different_file_of_the_same_name_is_still_copied(self):
         from src.utils import agentY_server as srv
         with tempfile.TemporaryDirectory() as tmp:
             src_dir, in_dir = Path(tmp) / "out", Path(tmp) / "input"
             src_dir.mkdir(); in_dir.mkdir()
-            (in_dir / "mara.png").write_bytes(b"an older, longer picture")
+            (in_dir / "agentY").mkdir()
+            (in_dir / "agentY" / "mara.png").write_bytes(b"an older, longer picture")
             f = src_dir / "mara.png"
             f.write_bytes(b"picture")
             with mock.patch.object(srv, "_comfy_input_dir", return_value=in_dir):
                 staged = srv._staged_copy(str(f))
-            self.assertNotEqual(staged, "mara.png")
+            self.assertNotEqual(staged, "agentY/mara.png")
             self.assertEqual((in_dir / staged).read_bytes(), b"picture")
 
 

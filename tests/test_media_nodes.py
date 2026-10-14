@@ -324,7 +324,7 @@ class ThreeD(unittest.TestCase):
             with mock.patch.object(srv, "_comfy_input_dir", lambda: Path(tmp) / "input"):
                 self.assertEqual(srv._stage_into_comfy_input(str(src), "3d"), "3d/chair.glb")
                 self.assertTrue((Path(tmp) / "input" / "3d" / "chair.glb").exists())
-                self.assertEqual(srv._stage_into_comfy_input(str(src)), "chair.glb")
+                self.assertEqual(srv._stage_into_comfy_input(str(src)), "agentY/chair.glb")
 
 
 class HowAClipIsSaved(unittest.TestCase):
