@@ -179,8 +179,13 @@ def choices(object_info: dict | None = None, keep: bool = False) -> dict:
 
 def choices_now(refresh: bool = True) -> dict:
     """:func:`choices` without waiting for ComfyUI: what this host already
-    knows, else the list kept from an earlier run (refreshed in the background
-    when *refresh*), else ``{}``. For Settings, which opens at once."""
+    knows, else the list kept from an earlier run, else ``{}`` - and then, when
+    *refresh*, the list is fetched in the background once.
+
+    A kept list is not refreshed from here: ComfyUI builds its node list on its
+    one event loop, so for those 40 s it answers NOTHING else (its own page
+    included). The kept list is renewed whenever this host fetches the node list
+    for its own work (the first branch below)."""
     if _choices_cache:
         return _choices_cache
     try:
@@ -191,7 +196,7 @@ def choices_now(refresh: bool = True) -> dict:
     if known:
         return choices(known, keep=True)
     kept = _load_choices()
-    if refresh and _refreshing.acquire(blocking=False):
+    if refresh and not kept and _refreshing.acquire(blocking=False):
         def run():
             try:
                 choices()

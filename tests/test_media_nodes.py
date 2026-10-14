@@ -156,6 +156,13 @@ class SettingsDoNotWait(unittest.TestCase):
                 time.sleep(0.1)
         self.assertIn("SaveImage", _ids(mn._load_choices()["image"]["save"]))
 
+    def test_a_kept_list_is_not_refreshed_from_here(self):
+        # Building the node list stalls ComfyUI's whole server for its duration.
+        mn._save_choices(mn.choices(INFO))
+        mn._choices_cache.clear()
+        with mock.patch("threading.Thread", side_effect=AssertionError("refresh started")):
+            self.assertIn("SaveImage", _ids(mn.choices_now()["image"]["save"]))
+
     def test_offline_never_asks_comfyui(self):
         with mock.patch("agenty_core.tools.comfyui._get_object_info", side_effect=AssertionError("asked")), \
                 mock.patch("threading.Thread", side_effect=AssertionError("refresh started")):
