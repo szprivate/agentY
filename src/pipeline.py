@@ -2397,6 +2397,108 @@ class Pipeline:
             return json.dumps(out)
 
         @_tool
+        async def replace_canvas_node(node_id: str, class_type: str, params: dict | str | None = None,
+                                      wires: dict | str | None = None, reason: str = "") -> str:
+            """Put a node of another type IN PLACE of one on the user's canvas - same
+            spot, same id, its wires carried over. One call; this is THE way to swap.
+
+            For "use Seedream instead of the GPT Image node", "swap the sampler for
+            KSamplerAdvanced", "replace the loader with a GGUF loader". Do not build a
+            new workflow for it and do not add + wire + delete by hand.
+
+            Wires into the old node go to the new input of the same name, else to the
+            first free input of the same type; wires out leave the new node's output
+            of the same type. Values the new node also has (seed, prompt text, a size
+            it offers) are kept; the rest are listed as dropped. If a wire has nowhere
+            to go, nothing changes and the answer lists the new node's inputs: send
+            again with ``wires`` saying where it goes. Ctrl+Z undoes the whole swap.
+
+            Args:
+                node_id: The node to replace, from `[CANVAS GRAPH]`.
+                class_type: The new node's type, e.g. ``"ByteDanceSeedreamNode"``.
+                    Unsure of the name? ``get_node_schema`` / ``search_nodes`` first.
+                params: Values to set on the new node, e.g.
+                    ``{"model": "seedream 5.0 lite", "size_preset": "2560x1440 (16:9)"}``.
+                wires: Only when the answer asks: old input name -> new input name,
+                    e.g. ``{"images": "image"}``; ``""`` leaves that wire behind.
+                reason: One line on why, shown to the user.
+            """
+            _held = self._canvas_lease_refusal()
+            if _held:
+                return _held
+            from src.utils import canvas_edit as _ce
+            from src.utils.canvas_patch import push as _push_patch
+
+            def _obj(v, what):
+                if v is None or v == "":
+                    return {}, None
+                if isinstance(v, str):
+                    try:
+                        v = json.loads(v)
+                    except Exception:  # noqa: BLE001
+                        return None, f"{what} is text that is not valid JSON - send an object."
+                return (v, None) if isinstance(v, dict) else (None, f"{what} must be an object.")
+
+            params, err1 = _obj(params, "params")
+            wires, err2 = _obj(wires, "wires")
+            if err1 or err2:
+                return json.dumps({"status": "rejected", "errors": [e for e in (err1, err2) if e],
+                                   "note": "Nothing was changed."})
+            nid = str(node_id or "").strip().lstrip("#")
+            graph = getattr(self, "_canvas_graph", None)
+            if not isinstance(graph, dict) or not graph:
+                return json.dumps({"error": "no graph is open on the canvas this turn."})
+            if not self._canvas_full_graph():
+                selected = {str(n.get("id")) for n in (self._canvas_selection or [])}
+                if nid not in selected:
+                    return json.dumps({
+                        "error": f"node {nid} is not in the current canvas selection, so it cannot be replaced.",
+                        "what_to_do": "Ask the user to select the node to replace."})
+            ballot = str((self._review_collector() or {}).get("node_id") or "")
+            if ballot and ballot == nid:
+                return json.dumps({"error": f"node {nid} is the review collector this run is stopped on.",
+                                   "what_to_do": "Replacing it would discard the choice the user is making."})
+            schemas = _CanvasSchemas()
+            old_cls = (graph.get(nid) or {}).get("class_type")
+            got = _ce.replacement_ops(graph, nid, str(class_type or "").strip(), schemas, params, wires)
+            res = _ce.plan(graph, got["ops"], schemas) if got["ok"] else {"ok": False, "errors": got["errors"]}
+            if not res["ok"]:
+                self._canvas_edit_rejected = list(res["errors"])[:8]
+                return json.dumps({"status": "rejected", "errors": res["errors"],
+                                   "note": "Nothing was changed. Fix these and call again."})
+            self._canvas_edit_rejected = None
+            self._canvas_graph = res["graph"]
+            why = str(reason or "").strip() or f"#{nid} {old_cls} → {class_type}"
+            _push_patch({"op": "edit_graph", "ops": res["ops"], "reason": why})
+            self._canvas_edits = (getattr(self, "_canvas_edits", None) or []) + [
+                f"replaced #{nid} {old_cls} with {class_type}"]
+            _seen = set(getattr(self, "_canvas_touched", None) or ()) | set(res["touched"])
+            self._canvas_touched = {n for n in _seen if n in res["graph"]}
+            unwired = _ce.unwired_required(res["graph"], nid, schemas)
+            self._canvas_unwired = {n: u for n in sorted(self._canvas_touched)
+                                    for u in [_ce.unwired_required(res["graph"], n, schemas)] if u}
+            _push_progress(f"🔁 Replaced #{nid} {old_cls} with {class_type}")
+            out = {"status": "replaced", "node_id": nid, "was": old_cls, "now": class_type,
+                   "wired_in": got["wired_in"], "wired_out": got["wired_out"],
+                   "values_kept": got["carried"],
+                   "values": {k: v for k, v in res["graph"][nid]["inputs"].items() if not _ce._is_link(v)},
+                   "message": (f"#{nid} is now {class_type}, in the same place with the same wires. "
+                               "The user can undo with Ctrl+Z. Nothing was run.")}
+            if got["dropped_values"]:
+                out["values_dropped"] = got["dropped_values"]
+            if got["left_behind"]:
+                out["wires_left_behind"] = got["left_behind"]
+            if unwired:
+                out["status"] = "replaced_incomplete"
+                out["still_unwired"] = unwired
+                hints = _ce.wire_candidates(res["graph"], nid, schemas)
+                if hints:
+                    out["wire_from"] = hints
+                out["message"] += (" But required inputs in still_unwired have no feed and the graph "
+                                   "will not run: connect them now with edit_canvas_graph.")
+            return json.dumps(out)
+
+        @_tool
         async def edit_canvas_graph(ops: list | str, reason: str = "") -> str:
             """Change the STRUCTURE of the graph open on the canvas: add nodes and wire them.
 
@@ -4897,7 +4999,8 @@ class Pipeline:
                  halt_for_review, release_review, run_workflow_now, add_canvas_workflow,
                  get_canvas_node, set_canvas_node_params, place_canvas_text,
                  run_python_node, revise_prompt, prompt_autoloop,
-                 delete_canvas_nodes, edit_canvas_graph, change_graph, insert_workflow_into_canvas,
+                 delete_canvas_nodes, edit_canvas_graph, replace_canvas_node, change_graph,
+                 insert_workflow_into_canvas,
                  refine_canvas_until,
                  list_outputs, show_in_panel, ledger_stage, probe_media, read_rhythm,
                  read_beats, list_text_presets, find_text_demos, try_text_preset,

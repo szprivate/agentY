@@ -266,6 +266,7 @@ def plan(graph: dict, ops: list, object_info: dict) -> dict:
     resolved: list[dict] = []
     added: dict[str, str] = {}
     touched: list[str] = []
+    removed: set[str] = set()
 
     def node_of(ref) -> str | None:
         r = str(ref).strip().lstrip("#")
@@ -318,14 +319,24 @@ def plan(graph: dict, ops: list, object_info: dict) -> dict:
                 continue
             inputs.update(params)
             defaults = {k: v for k, v in inputs.items() if k not in params}
-            nid = str(_next_id(g))
+            # "id": the id of a node removed earlier in this call - a replacement
+            # keeps it, so hooks, notes and the user's "#7" still name that place.
+            want_id = str(op.get("id") or "").strip()
+            if want_id and (want_id in g or not want_id.isdigit()):
+                errors.append(f"{where}: id {want_id} is taken (or not a number); "
+                              f"remove that node first or leave id out.")
+                continue
+            nid = want_id or str(max(_next_id(g), _next_id({k: 1 for k in removed})))
             g[nid] = {"class_type": cls, "inputs": inputs}
             ref = str(op.get("ref") or nid)
             added[ref] = nid
             added[nid] = nid
             near = node_of(op.get("near")) if op.get("near") is not None else None
-            resolved.append({"op": "add", "node_id": nid, "class_type": cls,
-                             "params": params, "defaults": defaults, "near": near})
+            entry = {"op": "add", "node_id": nid, "class_type": cls,
+                     "params": params, "defaults": defaults, "near": near}
+            if op.get("at") is not None and str(op.get("at")) in removed:
+                entry["at"] = str(op.get("at"))      # takes that node's place on the canvas
+            resolved.append(entry)
             touched.append(nid)
 
         elif kind == "connect":
@@ -379,6 +390,21 @@ def plan(graph: dict, ops: list, object_info: dict) -> dict:
             resolved.append({"op": "disconnect", "node": nid, "input": name})
             touched.append(nid)
 
+        elif kind == "remove":
+            # Part of a replacement (replacement_ops). Deleting on its own is
+            # delete_canvas_nodes, which says what each deleted node took with it.
+            nid = node_of(op.get("node"))
+            if nid is None:
+                errors.append(f"{where}: no node {op.get('node')} on the canvas.")
+                continue
+            del g[nid]
+            for other in g.values():
+                ins = other.get("inputs") or {}
+                for k in [k for k, v in ins.items() if _is_link(v) and str(v[0]) == nid]:
+                    del ins[k]
+            removed.add(nid)
+            resolved.append({"op": "remove", "node": nid})
+
         else:
             errors.append(f"{where}: unknown op {op.get('op')!r} — use add, connect or disconnect "
                           f"(delete_canvas_nodes removes nodes, set_canvas_node_params sets values).")
@@ -387,7 +413,156 @@ def plan(graph: dict, ops: list, object_info: dict) -> dict:
         return {"ok": False, "errors": errors, "graph": graph, "ops": [], "added": {}, "touched": []}
     refs = {k: v for k, v in added.items() if k != v}
     return {"ok": True, "errors": [], "graph": g, "ops": resolved, "added": refs,
-            "touched": list(dict.fromkeys(touched))}
+            "touched": [n for n in dict.fromkeys(touched) if n in g]}
+
+
+def _is_widget_spec(spec) -> bool:
+    t = _spec_type(spec)
+    return isinstance(t, list) or t in _WIDGET_TYPES or _is_dynamic(spec)
+
+
+def replacement_ops(graph: dict, node_id: str, class_type: str, object_info: dict,
+                    params: dict | None = None, wires: dict | None = None) -> dict:
+    """The ops that put a node of *class_type* in the place of *node_id*: the
+    same id and spot on the canvas, its wires carried over, its values kept
+    where the new node has an input of that name that takes them.
+
+    A swap was add + rewire + delete by hand, three calls in which the model had
+    to read both nodes' inputs and every consumer's - and it did not: asked to put
+    a Seedream node where a GPT Image node was, one built a separate workflow and
+    ran it beside the graph (2026-10-14).
+
+    A wire INTO the old node goes to the new input of the same name, else to the
+    first free input that takes its type (links before widgets, required before
+    optional). A wire OUT leaves the new output at the same slot if that carries
+    the type, else the first that does. *wires* overrides by the old input's
+    name: ``{"images": "image"}``, or ``""`` to leave that wire behind. *params*
+    sets values on the new node and wins over a carried one.
+
+    Returns ``{"ok", "errors", "ops", "carried", "dropped_values", "wired_in",
+    "wired_out", "left_behind"}``. Not ok when a wire cannot be carried and is not
+    named in *wires*: a replacement that silently loses a feed is not one.
+    """
+    nid = str(node_id).strip().lstrip("#")
+    g = graph if isinstance(graph, dict) else {}
+    out = {"ok": False, "errors": [], "ops": [], "carried": {}, "dropped_values": [],
+           "wired_in": [], "wired_out": [], "left_behind": []}
+    old = g.get(nid)
+    if not isinstance(old, dict):
+        out["errors"].append(f"no node {nid} on the canvas.")
+        return out
+    new_schema = object_info.get(class_type)
+    if not new_schema:
+        out["errors"].append(f"node type '{class_type}' is not installed in this ComfyUI.")
+        return out
+    old_schema = object_info.get(old.get("class_type")) or {}
+    new_specs = _specs(new_schema)
+    listing = ", ".join(f"{n} ({_spec_type(s) if not isinstance(_spec_type(s), list) else 'COMBO'})"
+                        for n, s in sorted(new_specs.items()))
+    required = set(((new_schema.get("input") or {}).get("required") or {}))
+    old_inputs = old.get("inputs") or {}
+    wires = {str(k): ("" if v is None else str(v)) for k, v in (wires or {}).items()}
+    params = dict(params or {})
+    unknown = [k for k in params if _input_spec(new_specs, k) is None]
+    if unknown:
+        out["errors"].append(f"{class_type} has no input {', '.join(map(repr, unknown))} "
+                             f"(it has: {listing or 'none'}).")
+    for k, target in wires.items():
+        if not _is_link(old_inputs.get(k)):
+            out["errors"].append(f"wires names '{k}', but nothing is wired into #{nid}.{k}.")
+        elif target and _input_spec(new_specs, target) is None:
+            out["errors"].append(f"wires sends '{k}' to '{target}', which {class_type} does not have "
+                                 f"(it has: {listing or 'none'}).")
+
+    def out_type(src_id, slot):
+        src = g.get(str(src_id)) or {}
+        outs = (object_info.get(src.get("class_type")) or {}).get("output") or []
+        return outs[slot] if 0 <= slot < len(outs) else None
+
+    def same_kind(t, spec) -> bool:
+        # A wire may go into a widget (a STRING into a prompt) only when it IS
+        # that kind - never because the widget's side says "*".
+        return bool((_types(t) - {"*"}) & _types(_spec_type(spec)))
+
+    # Wires in.
+    taken: set = set()
+    connects: list = []
+    order = sorted(new_specs, key=lambda n: (_is_widget_spec(new_specs[n]), n not in required))
+    for name, value in old_inputs.items():
+        if not _is_link(value):
+            continue
+        src, slot = str(value[0]), int(value[1])
+        t = out_type(src, slot)
+        if name in wires:
+            target = wires[name] or None
+            if target is None:
+                out["left_behind"].append(f"#{src} → {name}")
+                continue
+        elif name in new_specs and _compatible(t, _spec_type(new_specs[name])):
+            target = name
+        else:
+            target = next((n for n in order if n not in taken and n not in params
+                           and n not in old_inputs
+                           and _compatible(t, _spec_type(new_specs[n]))
+                           and (not _is_widget_spec(new_specs[n]) or same_kind(t, new_specs[n]))),
+                          None)
+        if target is None or target in taken:
+            out["errors"].append(
+                f"the wire from #{src} ({t}) into '{name}' has nowhere to go on {class_type} "
+                f"(its inputs: {listing or 'none'}). Name the input it should feed in wires, "
+                f"e.g. {{\"{name}\": \"<input>\"}}, or \"\" to leave that wire behind.")
+            continue
+        taken.add(target)
+        connects.append({"op": "connect", "from": src, "output": slot, "to": "new", "input": target})
+        out["wired_in"].append(f"#{src} → {target}" + (f" (was {name})" if target != name else ""))
+
+    # Values, where the new node has an input of that name that takes them.
+    for name, value in old_inputs.items():
+        if _is_link(value) or name in params or name in taken:
+            continue
+        spec = new_specs.get(name)
+        if spec is None or not _is_widget_spec(spec) or _is_dynamic(spec):
+            out["dropped_values"].append(name)
+            continue
+        fixed, err = coerce_value(spec, value)
+        if err:
+            out["dropped_values"].append(f"{name} {err}")
+        else:
+            out["carried"][name] = fixed
+
+    # Wires out.
+    new_outs = list(new_schema.get("output") or [])
+    old_outs = list(old_schema.get("output") or [])
+    for cid, cnode in g.items():
+        if str(cid) == nid or not isinstance(cnode, dict):
+            continue
+        for iname, v in (cnode.get("inputs") or {}).items():
+            if not (_is_link(v) and str(v[0]) == nid):
+                continue
+            slot = int(v[1])
+            cspec = _input_spec(_specs(object_info.get(cnode.get("class_type")) or {}), iname)
+            want = (_spec_type(cspec) if cspec is not None
+                    else (old_outs[slot] if slot < len(old_outs) else None))
+            if (want is None or _types(want) == {"*"}) and slot < len(old_outs):
+                want = old_outs[slot]        # into a wildcard: keep the type that flowed
+            pick = (slot if slot < len(new_outs) and _compatible(new_outs[slot], want)
+                    else next((j for j, t in enumerate(new_outs) if _compatible(t, want)), None))
+            if pick is None:
+                out["errors"].append(
+                    f"#{cid} {cnode.get('class_type')}.{iname} takes {want} from #{nid}, and "
+                    f"{class_type} has no output of that type "
+                    f"(outputs: {', '.join(map(str, new_outs)) or 'none'}).")
+                continue
+            connects.append({"op": "connect", "from": "new", "output": pick, "to": str(cid), "input": iname})
+            out["wired_out"].append(f"#{cid}.{iname}")
+
+    if out["errors"]:
+        return out
+    out["ops"] = [{"op": "remove", "node": nid},
+                  {"op": "add", "class_type": class_type, "ref": "new", "id": nid, "at": nid,
+                   "params": {**out["carried"], **params}}] + connects
+    out["ok"] = True
+    return out
 
 
 def block_layout(workflow: dict, added: dict, prefix: str = "wf") -> dict:
@@ -524,4 +699,11 @@ def apply_patch(graph: dict, patch: dict) -> dict:
                 graph[str(o["to"])].setdefault("inputs", {})[o["input"]] = [str(o["from"]), int(o["output"])]
             elif o.get("op") == "disconnect" and str(o.get("node")) in graph:
                 (graph[str(o["node"])].get("inputs") or {}).pop(o.get("input"), None)
+            elif o.get("op") == "remove":
+                gone = str(o.get("node"))
+                graph.pop(gone, None)
+                for node in graph.values():
+                    ins = node.get("inputs") or {}
+                    for k in [k for k, v in ins.items() if _is_link(v) and str(v[0]) == gone]:
+                        del ins[k]
     return graph

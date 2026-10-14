@@ -55,7 +55,7 @@ class ThePacks(unittest.TestCase):
         self.assertEqual(set(tp.PACKS["hooks"][1]), {"apply_canvas_hooks", "stop_hook_run", "halt_for_review",
                                                      "release_review", "loop_check", "forward_outputs",
                                                      "place_canvas_text"})
-        self.assertEqual(set(tp.PACKS["graph"][1]), {"edit_canvas_graph", "delete_canvas_nodes", "run_canvas"})
+        self.assertEqual(set(tp.PACKS["graph"][1]), {"edit_canvas_graph", "replace_canvas_node", "delete_canvas_nodes", "run_canvas"})
         self.assertEqual(tp.CONTEXT_PACKS, ("hooks", "graph"))
 
     def test_what_works_on_a_built_workflow_too_stays_in_every_list(self):

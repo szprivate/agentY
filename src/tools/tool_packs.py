@@ -85,7 +85,7 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
     "graph": ("changing the wiring of the graph the user has open, deleting its nodes, running it as it "
               "is - already in your list whenever a graph is open or you work in the open graph "
               "(`set_canvas_node_params` and `get_canvas_node` always are)",
-              ("edit_canvas_graph", "delete_canvas_nodes", "run_canvas")),
+              ("edit_canvas_graph", "replace_canvas_node", "delete_canvas_nodes", "run_canvas")),
 }
 # Packs the pipeline loads by what the turn is, rather than the model by asking.
 CONTEXT_PACKS = ("hooks", "graph")

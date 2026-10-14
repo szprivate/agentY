@@ -67,11 +67,17 @@ This is your job, not theirs. Never answer an edit request with click-by-click
 instructions for the user, a menu of ways they could do it, or a request for a
 file path — the graph is right there and this tool changes it.
 
-A swap is add + rewire + delete: add the new node, connect it, then
-`delete_canvas_nodes` the old one (say what it was). If the result's status is
-`applied_incomplete` it lists `still_unwired` inputs: connect them before you
-finish (`wire_from` names the outputs already in the graph that carry the type)
-— a graph that cannot run is not a finished edit.
+**A swap is `replace_canvas_node(node_id, class_type, params)`** — "use Seedream
+instead of the GPT Image node", "swap the loader for a GGUF one": the new node
+takes the old one's place, id and wires in one call, and keeps the values it
+also has. Not a new workflow beside the graph, and not add + wire + delete by
+hand. Set what the new node needs that the old one did not have (its model, its
+size) in `params`.
+
+If a result's status is `applied_incomplete` / `replaced_incomplete` it lists
+`still_unwired` inputs: connect them before you finish (`wire_from` names the
+outputs already in the graph that carry the type) — a graph that cannot run is
+not a finished edit.
 
 ### Deleting
 
