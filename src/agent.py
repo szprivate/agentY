@@ -587,7 +587,11 @@ class TokenUsageHookProvider:
             d_cost = None if cost is None else max(0.0, cost - float(last.get("cost") or 0.0))
             self._live = {**now, "cost": cost if cost is not None else float(last.get("cost") or 0.0)}
             if calls or any(d.values()):
-                turn_usage.add(d["in"], d["out"], d["cr"], d["cw"], d_cost, calls=calls)
+                # Between two reports at most one model call has finished, so a
+                # rise in input IS that call's input. Only the orchestrator's says
+                # how big the conversation is; a specialist's is its own.
+                turn_usage.add(d["in"], d["out"], d["cr"], d["cw"], d_cost, calls=calls,
+                               last_call=d["in"] if self._role == "orchestrator" else 0)
         except Exception:  # noqa: BLE001 - never break the agent loop for a status line
             pass
 

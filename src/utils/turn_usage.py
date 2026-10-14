@@ -21,7 +21,7 @@ _SLOT = "turn_usage"
 
 def _blank() -> dict:
     return {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0,
-            "cost": 0.0, "calls": 0, "priced": False, "_sent": -1, "_rev": 0}
+            "cost": 0.0, "calls": 0, "priced": False, "last_call": 0, "_sent": -1, "_rev": 0}
 
 
 def _state(scope) -> dict:
@@ -29,12 +29,14 @@ def _state(scope) -> dict:
 
 
 def add(d_in: int = 0, d_out: int = 0, d_cache_read: int = 0, d_cache_write: int = 0,
-        d_cost: float | None = None, calls: int = 1) -> None:
+        d_cost: float | None = None, calls: int = 1, last_call: int = 0) -> None:
     """Count what an agent used since its last report, in the current turn.
 
     *d_cost* None means the model has no known price: the tokens are counted and
     the cost is left as it was. Negative numbers (an accumulator that started
-    over) are ignored rather than subtracted.
+    over) are ignored rather than subtracted. *last_call* is the input of the
+    orchestrator's latest model call - how big one call is, which the total
+    (every call's input added up) does not say.
     """
     scope = turn_scope.current()
     with scope.lock:
@@ -44,6 +46,8 @@ def add(d_in: int = 0, d_out: int = 0, d_cache_read: int = 0, d_cache_write: int
         s["cache_read"] += max(0, int(d_cache_read or 0))
         s["cache_write"] += max(0, int(d_cache_write or 0))
         s["calls"] += max(0, int(calls or 0))
+        if int(last_call or 0) > 0:
+            s["last_call"] = int(last_call)
         if d_cost is not None:
             s["cost"] += max(0.0, float(d_cost))
             s["priced"] = True
@@ -65,6 +69,8 @@ def snapshot(scope=None) -> dict:
             "cache_hit": round(s["cache_read"] / total_in, 3) if total_in else 0.0,
             "cost": round(s["cost"], 4) if s["priced"] else None,
             "calls": s["calls"],
+            # input of the orchestrator's latest call (0: none yet)
+            "last_call": s["last_call"],
         }
 
 

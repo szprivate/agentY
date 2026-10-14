@@ -40,7 +40,7 @@ class Counting(_InTurn):
         turn_usage.add(2000, 150, 1400, 100, 0.02)
         got = turn_usage.take_changed()
         self.assertEqual(got, {"input": 3000, "output": 200, "cache_read": 2000, "cache_write": 100,
-                               "cache_hit": 0.667, "cost": 0.03, "calls": 2})
+                               "cache_hit": 0.667, "cost": 0.03, "calls": 2, "last_call": 0})
         self.assertIsNone(turn_usage.take_changed(), "unchanged: not sent again")
         turn_usage.add(10, 1)
         self.assertEqual(turn_usage.take_changed()["input"], 3010)
@@ -118,6 +118,18 @@ class TheHookReports(_InTurn):
         specialist._report_live(_agent(400, 5), calls=1)
         got = turn_usage.take_changed()
         self.assertEqual((got["input"], got["calls"]), (1400, 2))
+
+    def test_one_call_is_the_orchestrators_latest_not_the_total(self):
+        """The total is every call's input added up; 830k over 11 calls read as a
+        context of 830k. The orchestrator's latest call is the size of one."""
+        specialist = agent_mod.TokenUsageHookProvider(role="vision_agent")
+        self.hook._report_live(_agent(98000, 40), calls=1)
+        self.hook._report_live(_agent(98000, 40), calls=1)     # nothing new: still the last one
+        specialist._report_live(_agent(3000, 90), calls=1)    # a specialist's own small context
+        self.assertEqual(turn_usage.take_changed()["last_call"], 98000)
+        self.hook._report_live(_agent(199500, 80), calls=1)
+        got = turn_usage.take_changed()
+        self.assertEqual((got["input"], got["last_call"]), (202500, 101500))
 
     def test_a_broken_agent_object_never_breaks_the_turn(self):
         self.hook._report_live(SimpleNamespace())       # no metrics at all
