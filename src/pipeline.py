@@ -2611,8 +2611,15 @@ class Pipeline:
                     return json.dumps({"status": "cannot", "error": f"could not write the workflow: {exc}"})
                 problems = []
                 try:
+                    # Local checks only: ComfyUI's own check queues the graph, and
+                    # beside another job it is not stopped again (see local_only).
+                    from agenty_core.tools.comfyui import local_only
                     from src.tools import validate_workflow as _vw
-                    v = json.loads(getattr(_vw, "func", _vw)(saved))
+                    _tok = local_only().set(True)
+                    try:
+                        v = json.loads(getattr(_vw, "func", _vw)(saved))
+                    finally:
+                        local_only().reset(_tok)
                     problems = [str(e) for e in (v.get("local_errors") or [])]
                 except Exception:  # noqa: BLE001
                     pass

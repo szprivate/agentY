@@ -184,6 +184,25 @@ class AtTheHandOff(unittest.TestCase):
         self.assertIn(self._signal([])["status"], ("ready", "dry_run"))
 
 
+class TheHandOffCheckQueuesNothing(unittest.TestCase):
+    """ComfyUI validates only by queueing; beside another job that graph renders."""
+
+    def test_only_the_local_checks_run(self):
+        import tempfile
+        from agenty_core.tools import comfyui as core
+        from src.tools import workflow_handoff as wh
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "w.json"
+            path.write_text(json.dumps({"1": {"class_type": "VAEEncode", "inputs": {}}}), encoding="utf-8")
+            with mock.patch.object(core, "_server_validate", side_effect=AssertionError("queued")) as server,                     mock.patch.object(core, "_get_object_info", return_value={
+                        "VAEEncode": {"input": {"required": {"pixels": ["IMAGE"], "vae": ["VAE"]}},
+                                      "output": ["LATENT"]}}):
+                errors = wh._validation_errors(str(path))
+        server.assert_not_called()
+        self.assertTrue(any("unconnected" in e for e in errors), errors)
+        self.assertFalse(core.local_only().get())          # and the switch is off again after
+
+
 class TheCanvasTool(unittest.TestCase):
 
     def test_an_edit_that_leaves_inputs_unfed_says_so_in_its_status(self):

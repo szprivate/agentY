@@ -41,11 +41,25 @@ def _dead_nodes(workflow_path: str) -> tuple[list, list]:
 def _validation_errors(workflow_path: str) -> list:
     """What the validator says is wrong with the file - [] when it is fine, or
     when it could not be asked (a hand-off is never refused over that)."""
+    # Local checks only. ComfyUI's own check queues the graph, and one that is not
+    # the only job running is not stopped again - it renders (a Flux inpaint did,
+    # for two and a half minutes, at every hand-off of a benchmark run).
+    token = None
+    try:
+        from agenty_core.tools.comfyui import local_only
+        token = local_only().set(True)
+    except Exception:  # noqa: BLE001 - an older core: no gate rather than a render
+        return []
     try:
         from src.tools import validate_workflow as _vw
         got = json.loads(getattr(_vw, "func", _vw)(workflow_path))
     except Exception:  # noqa: BLE001
         return []
+    finally:
+        try:
+            local_only().reset(token)
+        except Exception:  # noqa: BLE001
+            pass
     if not isinstance(got, dict) or got.get("valid"):
         return []
     errors = [str(e) for e in (got.get("local_errors") or []) if e]
