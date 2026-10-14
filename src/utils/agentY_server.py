@@ -3975,7 +3975,8 @@ def _stream_turn(q, rid: str, thread_id: str, poll: float = 15.0):
     # (or in the browser); if the runner never gets there, the turn is
     # parked and the keep-alive count below shows how long we waited.
     yield _sse({"type": "thread", "id": thread_id})
-    yield _sse({"type": "request", "request_id": rid})
+    # When it began, for the panel's clock (epoch seconds).
+    yield _sse({"type": "request", "request_id": rid, "started": time.time()})
     idle = 0
     sent_done = False
 
@@ -4266,7 +4267,8 @@ def _build_app():
             # With the message that started the turn: a panel that had this
             # conversation open before it started has not seen it.
             yield _sse({"type": "request", "request_id": rid, "watching": True,
-                        "text": t.text if t is not None else ""})
+                        "text": t.text if t is not None else "",
+                        "started": t.started if t is not None else None})
             ended = False
             index = -1
             for ev in turn_bus.follow(rid):
