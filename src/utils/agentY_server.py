@@ -3467,11 +3467,12 @@ def _last_run_from_ts() -> float | None:
     return ts_all[j]
 
 
-def settings_payload() -> dict:
+def settings_payload(offline: bool = False) -> dict:
     """What Settings shows: the .env keys (masked), the merged settings, the model
     lists and pricing. Everything in it is read from files and the environment,
     so it is also what the settings page gets while this host is NOT running
-    (src.utils.settings_offline, started by the ComfyUI extension)."""
+    (src.utils.settings_offline, started by the ComfyUI extension) - *offline*
+    then, which reads what was kept and asks ComfyUI nothing."""
     import copy
     from src.agent import _load_settings
     # Deep-copy: _load_settings() returns the shared cached merge, and we
@@ -3526,7 +3527,7 @@ def settings_payload() -> dict:
         # Long-term memory's embedder choices and whether each can work here.
         "memory_embedders": _memory_embedders(),
         # The loader and saver nodes this ComfyUI offers per kind of file.
-        "media_node_choices": _media_node_choices(),
+        "media_node_choices": _media_node_choices(refresh=not offline),
         # What a blank path setting comes to on this machine, so that Settings
         # shows where things go instead of an empty field.
         "setting_defaults": _setting_defaults(settings, _facts),
@@ -3680,10 +3681,11 @@ def _aux_model_choices(settings: dict, facts: dict | None = None) -> dict:
     return out
 
 
-def _media_node_choices() -> dict:
+def _media_node_choices(refresh: bool = True) -> dict:
+    # Never waits for ComfyUI's node list: that can take most of a minute.
     try:
-        from src.utils.media_nodes import choices
-        return choices()
+        from src.utils.media_nodes import choices_now
+        return choices_now(refresh=refresh)
     except Exception as exc:  # noqa: BLE001
         logger.debug("media node choices unavailable: %s", exc)
         return {}

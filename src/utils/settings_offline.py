@@ -37,7 +37,7 @@ def _load_env() -> None:
 
 def read() -> dict:
     from src.utils import agentY_server as srv
-    out = {"ok": True, "offline": True, "settings": srv.settings_payload()}
+    out = {"ok": True, "offline": True, "settings": srv.settings_payload(offline=True)}
     try:
         from src.tools.mcp_tools import load_mcp_config, mcp_status
         out["mcp"] = {"ok": True, "config": load_mcp_config(), "status": mcp_status()}

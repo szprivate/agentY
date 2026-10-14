@@ -19,7 +19,10 @@ was saving. Anything else is left as it is.
 """
 from __future__ import annotations
 
+import json
 import logging
+import threading
+from pathlib import Path
 
 logger = logging.getLogger("agentY.media_nodes")
 
@@ -40,6 +43,11 @@ _LOADER_WORDS = {"model": ("3d", "mesh", "splat", "point cloud"), "video": ("vid
                  "audio": ("audio",), "image": ("image",)}
 
 _choices_cache: dict = {}
+# The last list found, kept between runs: ComfyUI's full node list can take most
+# of a minute to build (every loader lists the input folder, which may be on a
+# network drive), and Settings must not wait for it.
+_CHOICES_FILE = Path(__file__).resolve().parents[2] / "output" / "cache" / "media_node_choices.json"
+_refreshing = threading.Lock()
 
 
 def _types(schema: dict) -> dict:
@@ -130,13 +138,16 @@ def loader_kinds(class_type: str, schema: dict) -> list[str]:
     return []
 
 
-def choices(object_info: dict | None = None) -> dict:
+def choices(object_info: dict | None = None, keep: bool = False) -> dict:
     """``{kind: {"load": [{id, label}], "save": [...]}}`` for this ComfyUI.
 
     Empty when ComfyUI cannot be asked. Cached for the life of the host: the
     node list is nine seconds to fetch here and changes only with a restart.
+    A list fetched from ComfyUI (or *keep*) is also kept on disk for
+    :func:`choices_now`.
     """
     if object_info is None:
+        keep = True
         if _choices_cache:
             return _choices_cache
         try:
@@ -161,7 +172,49 @@ def choices(object_info: dict | None = None) -> dict:
     if object_info and any(v["load"] or v["save"] for v in out.values()):
         _choices_cache.clear()
         _choices_cache.update(out)
+        if keep:
+            _save_choices(out)
     return out
+
+
+def choices_now(refresh: bool = True) -> dict:
+    """:func:`choices` without waiting for ComfyUI: what this host already
+    knows, else the list kept from an earlier run (refreshed in the background
+    when *refresh*), else ``{}``. For Settings, which opens at once."""
+    if _choices_cache:
+        return _choices_cache
+    try:
+        from agenty_core.tools import comfyui as _core
+        known = getattr(_core, "_object_info_cache", None)
+    except Exception:  # noqa: BLE001
+        known = None
+    if known:
+        return choices(known, keep=True)
+    kept = _load_choices()
+    if refresh and _refreshing.acquire(blocking=False):
+        def run():
+            try:
+                choices()
+            finally:
+                _refreshing.release()
+        threading.Thread(target=run, name="media-node-choices", daemon=True).start()
+    return kept
+
+
+def _load_choices() -> dict:
+    try:
+        data = json.loads(_CHOICES_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:  # noqa: BLE001 - none kept yet
+        return {}
+
+
+def _save_choices(out: dict) -> None:
+    try:
+        _CHOICES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _CHOICES_FILE.write_text(json.dumps(out), encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("media nodes: could not keep the list (%s)", exc)
 
 
 # ── what was chosen ─────────────────────────────────────────────────────────

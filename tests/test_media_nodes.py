@@ -114,6 +114,58 @@ class WhatCanBeChosen(unittest.TestCase):
             self.assertEqual(mn.choices(), {})
 
 
+class SettingsDoNotWait(unittest.TestCase):
+    """ComfyUI's node list can take most of a minute (every loader lists the
+    input folder); Settings answers from what was kept and refreshes behind."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = Path(tempfile.mkdtemp())
+        patches = [mock.patch.object(mn, "_CHOICES_FILE", self.tmp / "cache" / "choices.json"),
+                   mock.patch.dict(mn._choices_cache, {}, clear=True),
+                   mock.patch("agenty_core.tools.comfyui._object_info_cache", None)]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_a_list_fetched_from_comfyui_is_kept_and_answered_without_asking_again(self):
+        with mock.patch("agenty_core.tools.comfyui._get_object_info", return_value=INFO):
+            fetched = mn.choices()
+        mn._choices_cache.clear()
+        with mock.patch("agenty_core.tools.comfyui._get_object_info", side_effect=AssertionError("asked")):
+            self.assertEqual(mn.choices_now(refresh=False), json.loads(json.dumps(fetched)))
+
+    def test_a_list_handed_in_is_not_kept(self):
+        mn.choices(INFO)
+        self.assertFalse(mn._CHOICES_FILE.exists())
+
+    def test_nothing_kept_answers_empty_at_once_and_refreshes_behind(self):
+        import threading
+        asked = threading.Event()
+
+        def slow():
+            asked.set()
+            return INFO
+        with mock.patch("agenty_core.tools.comfyui._get_object_info", side_effect=slow):
+            self.assertEqual(mn.choices_now(), {})
+            self.assertTrue(asked.wait(5))
+            for _ in range(50):
+                if mn._CHOICES_FILE.exists():
+                    break
+                import time
+                time.sleep(0.1)
+        self.assertIn("SaveImage", _ids(mn._load_choices()["image"]["save"]))
+
+    def test_offline_never_asks_comfyui(self):
+        with mock.patch("agenty_core.tools.comfyui._get_object_info", side_effect=AssertionError("asked")), \
+                mock.patch("threading.Thread", side_effect=AssertionError("refresh started")):
+            self.assertEqual(mn.choices_now(refresh=False), {})
+
+    def test_a_node_list_this_host_already_has_is_used(self):
+        with mock.patch("agenty_core.tools.comfyui._object_info_cache", INFO):
+            self.assertIn("SaveImage", _ids(mn.choices_now(refresh=False)["image"]["save"]))
+
+
 def _settings(**chosen):
     return mock.patch("src.agent._load_settings", return_value={"media_nodes": chosen})
 
@@ -473,7 +525,7 @@ class WhereItIsWired(unittest.TestCase):
 
     def test_the_settings_page_is_given_the_candidates(self):
         server = (ROOT / "src" / "utils" / "agentY_server.py").read_text(encoding="utf-8")
-        self.assertIn('"media_node_choices": _media_node_choices(),', server)
+        self.assertIn('"media_node_choices": _media_node_choices(refresh=not offline),', server)
 
 
 if __name__ == "__main__":
