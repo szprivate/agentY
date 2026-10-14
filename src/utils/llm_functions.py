@@ -252,9 +252,13 @@ class LLMFunctions:
         return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
 
     async def _openai_chat(self, messages: list[dict[str, Any]], *, json_format: bool) -> str:
+        # No thinking: these are small helper calls, and a Qwen model thinks by
+        # default - measured on a compaction summary (2026-10-14): 171 s and 8,849
+        # reasoning tokens with it, 15 s without, so every summary ran into the
+        # timeout below and fell back to the digest.
         payload: dict[str, Any] = {
             "model": self.model, "messages": messages, "stream": False,
-            "max_tokens": self.max_tokens,
+            "max_tokens": self.max_tokens, "enable_thinking": False,
         }
         if json_format:
             payload["response_format"] = {"type": "json_object"}
@@ -273,7 +277,8 @@ class LLMFunctions:
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": content})
-        payload = {"model": self.model, "messages": messages, "stream": False, "max_tokens": self.max_tokens}
+        payload = {"model": self.model, "messages": messages, "stream": False, "max_tokens": self.max_tokens,
+                   "enable_thinking": False}
         async with httpx.AsyncClient() as client:
             resp = await client.post(self._openai_url(), json=payload, headers=self._openai_headers(), timeout=120.0)
         resp.raise_for_status()
