@@ -80,6 +80,16 @@ class Finding:
 
 
 _schema_cache: dict = {}
+_schema_stamp: tuple | None = None
+
+
+def _input_dir_stamp() -> tuple | None:
+    """agenty_core's stamp of ComfyUI's input dir (None when it is not on this machine)."""
+    try:
+        from agenty_core.tools.comfyui import _input_dir_stamp as _stamp
+        return _stamp()
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _schema(cls: str) -> dict:
@@ -90,10 +100,20 @@ def _schema(cls: str) -> dict:
     a single class is two hundred milliseconds and the graph only ever needs the
     handful of nodes the hooks touch. Failures are cached too — a ComfyUI that is
     down should cost one refused connection, not one per node.
+
+    Forgotten when a file lands in the input dir: LoadImage's menu IS that dir's
+    listing. Kept, it made insert_workflow_into_canvas refuse the photo the agent
+    had uploaded seconds before ("'2f79780a_me.png' is not an option") — every
+    graph built from an attached image ran, but never reached the canvas.
     """
+    global _schema_stamp
     cls = str(cls or "")
     if not cls:
         return {}
+    stamp = _input_dir_stamp()
+    if stamp is not None and stamp != _schema_stamp:
+        _schema_cache.clear()
+        _schema_stamp = stamp
     if cls in _schema_cache:
         return _schema_cache[cls]
     out: dict = {}
