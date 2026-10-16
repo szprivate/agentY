@@ -89,9 +89,13 @@ def _block(block: Any) -> dict | None:
         return {"text": str(block["text"])}
     if "toolUse" in block:
         tu = block["toolUse"] if isinstance(block["toolUse"], dict) else {}
-        return {"toolUse": {"toolUseId": str(tu.get("toolUseId", "")),
-                            "name": str(tu.get("name", "")),
-                            "input": _jsonable(tu.get("input", {}))}}
+        use = {"toolUseId": str(tu.get("toolUseId", "")),
+               "name": str(tu.get("name", "")),
+               "input": _jsonable(tu.get("input", {}))}
+        if tu.get("reasoningSignature"):
+            # Gemini 3 refuses a replayed function call without its thought signature.
+            use["reasoningSignature"] = str(tu["reasoningSignature"])
+        return {"toolUse": use}
     if "toolResult" in block:
         tr = block["toolResult"] if isinstance(block["toolResult"], dict) else {}
         result = {"toolUseId": str(tr.get("toolUseId", "")),

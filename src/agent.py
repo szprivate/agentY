@@ -1109,7 +1109,7 @@ def _build_model(*, role: str, llm: str, system_prompt: str,
     elif llm in _GEMINI_PROVIDERS:
         # Google Gemini through its OpenAI-compatible endpoint (same client). Key
         # from GEMINI_API_KEY or GOOGLE_API_KEY.
-        from strands.models.openai import OpenAIModel
+        from src.utils.gemini_compat import GeminiCompatModel  # keeps Gemini 3 thought signatures
         model_id = dashscope_model or str(_cfg("GEMINI_MODEL", "google", "model", default="gemini-2.5-flash"))
         base_url = str(_cfg("GEMINI_BASE_URL", "google", "base_url",
                             default="https://generativelanguage.googleapis.com/v1beta/openai/"))
@@ -1120,7 +1120,7 @@ def _build_model(*, role: str, llm: str, system_prompt: str,
         gm_params: dict = {"max_tokens": oc_max_tokens}
         if want_think:
             gm_params["reasoning_effort"] = "medium"   # Gemini's OpenAI-compatible knob
-        model = OpenAIModel(
+        model = GeminiCompatModel(
             client_args={"api_key": api_key, "base_url": base_url},
             model_id=model_id,
             params=gm_params,
