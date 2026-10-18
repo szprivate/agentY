@@ -213,9 +213,17 @@ class TheArchive(unittest.TestCase):
         self.assertEqual(rows[1]["reason"], "mid-turn")
 
     def test_an_unwritable_archive_never_raises(self):
-        with mock.patch.object(c, "ARCHIVE_DIR", Path("Z:/nope/nope")):
-            with self.assertLogs("agentY.compaction", level="WARNING"):
-                self.assertIsNone(c.archive("t", [user("x")]))
+        # A directory inside a regular FILE cannot be created on any platform.
+        # The old stand-in, Path("Z:/nope/nope"), is only unwritable on Windows:
+        # on POSIX it is a RELATIVE path, so mkdir succeeded under the repo root,
+        # the archive was written, the assertion failed — and every suite run
+        # left an untracked Z:/nope/nope/t.jsonl tree behind to be found later.
+        with tempfile.TemporaryDirectory() as tmp:
+            blocker = Path(tmp) / "blocker"
+            blocker.write_text("not a directory", encoding="utf-8")
+            with mock.patch.object(c, "ARCHIVE_DIR", blocker / "nope" / "nope"):
+                with self.assertLogs("agentY.compaction", level="WARNING"):
+                    self.assertIsNone(c.archive("t", [user("x")]))
 
 
 class TheMidTurnGuard(unittest.TestCase):
