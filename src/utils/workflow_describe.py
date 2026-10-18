@@ -236,7 +236,9 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     try:
         from dotenv import load_dotenv
-        load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+        # Same rule as agenty_ui_server: agentY's .env is authoritative, so an
+        # inherited DASHSCOPE_API_KEY (Qwen Code exports one) must not win.
+        load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=True)
     except Exception:  # noqa: BLE001
         pass
     try:

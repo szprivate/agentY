@@ -32,7 +32,10 @@ if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 from dotenv import load_dotenv
-load_dotenv(_project_root / ".env")
+# agentY's own .env is authoritative: the shell we inherit (Qwen Code, for one)
+# already exports DASHSCOPE_API_KEY, and without override that key silently
+# wins over ours — the wrong credentials the day the two differ.
+load_dotenv(_project_root / ".env", override=True)
 
 
 def _unload_ollama_models() -> None:
