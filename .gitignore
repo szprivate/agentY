@@ -28,6 +28,8 @@ output_workflows/
 # Agent scratch: scripts it writes (output/scripts) + code-change proposals
 # (output/proposals). Media itself lands under ComfyUI's output dir, not here.
 /output/
+# Same idea for skills: somewhere to try one out that can never be staged.
+skills/_scratch/
 # QA scoring model weights (ArcFace ~0.6 GB, DreamSim ~3 GB). Downloaded on first
 # use, deliberately here rather than in a home directory: they are large, they
 # belong to this checkout, and C: is not where model weights go.
@@ -85,6 +87,9 @@ user/
 # `> nul` is a Windows device name. On macOS it is an ordinary file, so a command
 # copied across platforms silently drops a junk file in the repo root.
 nul
+# The macOS counterpart: Finder drops one into every directory it has looked at.
+# No slash in the pattern, so this matches at any depth, not just the root.
+.DS_Store
 
 # The agent host's session token. The ComfyUI panel reads it from here to
 # authenticate to the host — a real credential, and one that means nothing on any
