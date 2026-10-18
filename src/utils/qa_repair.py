@@ -292,24 +292,35 @@ def governing_params(prompt: dict, schema_of=None) -> list:
 
 # ── choosing the value ──────────────────────────────────────────────────────
 
+def _qualifies(opt, want_ratio: float | None, want_short: int | None,
+               tolerance: float = 0.02) -> bool:
+    """True when *opt* already meets the requirement.
+
+    An option naming no shape (``auto``, ``Custom``) is never ruled out by a
+    resolution ask — there is nothing to measure — but it can never satisfy a
+    ratio, which is a number the label has to carry.
+    """
+    if want_ratio is not None:
+        r = ratio_of(opt)
+        if r is None or abs(r - want_ratio) > tolerance * want_ratio:
+            return False
+    if want_short is not None:
+        s = short_side_of(opt)
+        if s is not None and s < want_short:
+            return False
+    return True
+
+
 def _best_option(options: list, want_ratio: float | None, want_short: int | None,
                  tolerance: float = 0.02):
     """The option that satisfies the requirement, or None if none does."""
-    scored = []
-    for opt in options:
-        r = ratio_of(opt)
-        s = short_side_of(opt)
-        if want_ratio is not None:
-            if r is None or abs(r - want_ratio) > tolerance * want_ratio:
-                continue
-        if want_short is not None and s is not None and s < want_short:
-            continue
-        # Prefer the smallest option that qualifies: it is the cheapest render
-        # that meets what was asked, and asking for more than that is our choice
-        # to make on someone else's bill.
-        scored.append(((s or 0), opt))
+    scored = [((short_side_of(opt) or 0), opt) for opt in options
+              if _qualifies(opt, want_ratio, want_short, tolerance)]
     if not scored:
         return None
+    # Prefer the smallest option that qualifies: it is the cheapest render
+    # that meets what was asked, and asking for more than that is our choice
+    # to make on someone else's bill.
     scored.sort()
     return scored[0][1]
 
@@ -390,6 +401,15 @@ def evaluate_shape(prompt: dict, want_ratio: float | None, want_short: int | Non
             # one requirement never silently reshapes the picture.
             here_ratio = (want_ratio if want_ratio is not None
                           else ratio_of(str(cand.get("value") or "")))
+            # Already right? Then leave it. A size menu holds several options
+            # that satisfy one ratio, so "the cheapest that qualifies" is not
+            # the one the user picked: 3840x2160 IS 16:9, and quietly
+            # re-rendering it at 2048x1152 reports a fix for a graph that was
+            # correct. The cheapest rule decides which option to move TO, not
+            # whether to move at all — which is what _dims_for does for
+            # width/height.
+            if _qualifies(cand.get("value"), here_ratio, want_short):
+                return ("satisfied", None)
             pick = _best_option(cand["options"], here_ratio, want_short)
             if pick is None:
                 continue                      # this menu has nothing that fits

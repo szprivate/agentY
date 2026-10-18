@@ -264,6 +264,27 @@ class SizeOnlyMenusTest(unittest.TestCase):
                               {"aspect_ratio": "16:9"})
         self.assertNotEqual(fix["to"], "3840x2160")
 
+    def test_a_size_that_already_meets_the_ratio_is_left_alone(self):
+        """The cheapest rule picks where to MOVE a size, not whether to move it.
+
+        Applied to a value that already complies it silently downgrades a render
+        the user chose themselves: a 3840x2160 start frame came back 2048x1152
+        because the review node asked for 16:9, which 3840x2160 already is.
+        """
+        self.assertEqual(fixes_for(self._api("OpenAIGPTImage1", "3840x2160"),
+                                   {"aspect_ratio": "16:9"}), ([], []))
+
+    def test_a_size_meeting_both_requirements_is_left_alone(self):
+        self.assertEqual(fixes_for(self._api("OpenAIGPTImage1", "2048x1152"),
+                                   {"aspect_ratio": "16:9",
+                                    "resolution": "1080p"}), ([], []))
+
+    def test_a_size_failing_the_resolution_still_moves_to_the_cheapest(self):
+        """1536x1024 is 3:2 and under 1080p — it meets neither, so move it."""
+        (fix,), _ = fixes_for(self._api("OpenAIGPTImage1", "1536x1024"),
+                              {"aspect_ratio": "16:9", "resolution": "1080p"})
+        self.assertEqual(fix["to"], "2048x1152")
+
     def test_options_that_name_no_shape_are_ignored(self):
         """`auto` and `Custom` are on that menu and mean nothing measurable."""
         for opt in ("auto", "Custom"):
