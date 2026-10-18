@@ -5,7 +5,14 @@ __pycache__/
 dist/
 build/
 .venv/
+# Local env files and every copy or variant of them (`.env.old`, `.env.local`,
+# `.env.production`...): each holds real API keys, and a stray one must not be
+# addable. `.env.*` does not match bare `.env`, so both patterns are needed.
+# The tracked templates below are the exception — they hold no secrets.
 .env
+.env.*
+!.env_example
+!.env.example
 
 # Official Comfy-Org workflow templates (cloned repo — large)
 comfyui_workflow_templates_official_deprecated/
