@@ -10545,8 +10545,21 @@ class Pipeline:
                 await agent.invoke_async(prompt)
         except (TimeoutError, asyncio.TimeoutError):
             _push_progress("⚠️ Repair timed out.")
-            return {"status": "failed", "workflow_path": workflow_path,
-                    "error": "repair agent timed out"}
+            # "rejected", not "failed" — the same shape content_policy.exhausted
+            # returns, for the same reason. A failed heal is retried on the same
+            # file with the same prompt, and the retry starts from a cleared
+            # history and a fresh repeat-guard budget, so a specialist that could
+            # not converge in this window replays the identical exploration in the
+            # next one. Seen on 2026-10-18: two variants timed out at 120s, were
+            # retried from a blank slate, and burned four minutes and ~890k input
+            # tokens each before the user pressed stop. A timeout is a verdict on
+            # the repair, not a defect another repair can find.
+            return {"status": "rejected", "workflow_path": workflow_path,
+                    "error": (f"the repair specialist ran "
+                              f"{self._FIX_ASSEMBLY_TIMEOUT:.0f}s without converging and was "
+                              f"stopped; the workflow is unchanged and another identical "
+                              f"attempt would not differ. Decide with the graph as it "
+                              f"stands, or tell the user what could not be repaired.")}
         except Exception as exc:  # noqa: BLE001
             return {"status": "failed", "workflow_path": workflow_path, "error": str(exc)}
 
@@ -10584,7 +10597,13 @@ class Pipeline:
         rejection = self._policy_rejection(exec_error)
         if rejection is not None:
             return self._retry_after_refusal(workflow_path, rejection)
-        agent = create_fix_workflow_assembly_agent()
+        # ONE repeat-guard budget for every heal of this workflow, not one per
+        # attempt. The agent is new each time and its messages are cleared, so a
+        # per-invocation budget restarts at zero and three attempts get three
+        # times the exploration the guard was written to cap.
+        from src.utils.repeat_guard import RepeatGuardHookProvider  # noqa: PLC0415
+        agent = create_fix_workflow_assembly_agent(
+            hooks=[RepeatGuardHookProvider(scope=f"heal:{workflow_path}")])
         try:
             return await self._run_fix_workflow_assembly(
                 workflow_path, exec_error=exec_error, agent=agent)

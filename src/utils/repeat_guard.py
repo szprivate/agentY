@@ -123,10 +123,38 @@ class Turn:
         self._answers.setdefault(self.key(name, args), []).append(_digest(_result_text(result)))
 
 
-class RepeatGuardHookProvider:
-    """One :class:`Turn` per agent invocation; refusals go out as cancelled calls."""
+def shared_turn(scope: str, cfg: dict | None = None) -> Turn:
+    """The :class:`Turn` every agent working on *scope* in this turn shares.
 
-    def __init__(self) -> None:
+    A fresh ``Turn`` per invocation is right for an agent that owns its work and
+    wrong for one restarted over the same job. The repair specialist is built
+    anew for each heal of a workflow with its messages cleared, so a
+    per-invocation budget lets every attempt start from zero — the loop this
+    guard exists to stop is spread across attempts thin enough to never trip it.
+    Keyed by the thing being worked on and held in the turn's own scope, so one
+    turn's budget is not spent by the next.
+    """
+    cfg = cfg or settings()
+    try:
+        from agenty_core.utils import turn_scope
+        store = turn_scope.current().slot("repeat_guard.shared", dict)
+    except Exception:  # noqa: BLE001 - outside a turn: a private budget is all there is
+        return Turn(cfg["same_call"], cfg["per_tool"])
+    # setdefault, not get-then-set: heals run concurrently, and two Turns for one
+    # workflow would split the budget this exists to keep whole.
+    return store.setdefault(scope, Turn(cfg["same_call"], cfg["per_tool"]))
+
+
+class RepeatGuardHookProvider:
+    """One :class:`Turn` per agent invocation; refusals go out as cancelled calls.
+
+    With *scope*, the budget is shared with every other provider naming the same
+    scope in this turn instead of restarting per invocation — see
+    :func:`shared_turn`.
+    """
+
+    def __init__(self, scope: str = "") -> None:
+        self._scope = str(scope or "")
         self._turn: Turn | None = None
         self._on = True
 
@@ -140,7 +168,8 @@ class RepeatGuardHookProvider:
     def _start(self, event, **kwargs) -> None:  # noqa: ANN001, ARG002
         cfg = settings()
         self._on = cfg["enabled"]
-        self._turn = Turn(cfg["same_call"], cfg["per_tool"])
+        self._turn = (shared_turn(self._scope, cfg) if self._scope
+                      else Turn(cfg["same_call"], cfg["per_tool"]))
 
     def _before(self, event, **kwargs) -> None:  # noqa: ANN001, ARG002
         try:

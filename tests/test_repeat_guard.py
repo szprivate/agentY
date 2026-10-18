@@ -144,5 +144,76 @@ class TheHook(unittest.TestCase):
         self.assertIn("RepeatGuardHookProvider()", src)
 
 
+class OneBudgetForTheWholeJobTest(unittest.TestCase):
+    """An agent restarted over the same job must not get a fresh budget each time.
+
+    The repair specialist is built anew for every heal of a workflow, with its
+    messages cleared, so a per-invocation budget let each attempt explore from
+    zero. On 2026-10-18 that spread one runaway over several attempts: 67
+    ``get_node_source`` calls, each with different arguments so ``same_call``
+    never fired, and no attempt on its own near the per-tool notice.
+    """
+
+    CFG = {"enabled": True, "same_call": 3, "per_tool": 5}
+
+    def setUp(self):
+        from agenty_core.utils import turn_scope
+        self._turn_scope = turn_scope
+        self._token = turn_scope.enter(turn_scope.Scope(request_id="test"))
+
+    def tearDown(self):
+        self._turn_scope.leave(self._token)
+
+    def _start(self, scope=""):
+        with mock.patch.object(rg, "settings", return_value=dict(self.CFG)):
+            provider = rg.RepeatGuardHookProvider(scope=scope)
+            provider._start(None)
+        return provider
+
+    def _attempt(self, provider, calls):
+        """One agent invocation's worth of calls; returns how many were refused."""
+        refused = 0
+        for i in range(calls):
+            # Different arguments every time, as in the incident: this is
+            # exploration sprawl, so only the per-tool budget can catch it.
+            event = SimpleNamespace(
+                tool_use={"name": "get_node_source", "input": {"node": f"n{i}"}},
+                cancel_tool=False)
+            provider._before(event)
+            if event.cancel_tool:
+                refused += 1
+            else:
+                provider._after(SimpleNamespace(
+                    tool_use=event.tool_use,
+                    result={"status": "success", "content": [{"text": "source"}]}))
+        return refused
+
+    def test_two_attempts_at_one_workflow_share_one_budget(self):
+        first, second = self._start("heal:/tmp/wf.json"), self._start("heal:/tmp/wf.json")
+        self.assertEqual(self._attempt(first, 5), 0)     # fills the budget exactly
+        self.assertEqual(self._attempt(second, 5), 1)    # and the next call trips it
+
+    def test_without_a_scope_every_attempt_still_starts_fresh(self):
+        first, second = self._start(), self._start()
+        self.assertEqual(self._attempt(first, 5), 0)
+        self.assertEqual(self._attempt(second, 5), 0)
+
+    def test_another_workflow_is_another_budget(self):
+        a, b = self._start("heal:/tmp/a.json"), self._start("heal:/tmp/b.json")
+        self.assertEqual(self._attempt(a, 5), 0)
+        self.assertEqual(self._attempt(b, 5), 0)         # untouched by a's spend
+
+    def test_the_same_scope_names_the_same_turn(self):
+        self.assertIs(rg.shared_turn("heal:/tmp/wf.json", dict(self.CFG)),
+                      rg.shared_turn("heal:/tmp/wf.json", dict(self.CFG)))
+
+    def test_a_new_turn_starts_clean(self):
+        rg.shared_turn("heal:/tmp/wf.json", dict(self.CFG)).refusal("x", {"n": 1})
+        self._turn_scope.leave(self._token)
+        self._token = self._turn_scope.enter(self._turn_scope.Scope(request_id="next"))
+        fresh = rg.shared_turn("heal:/tmp/wf.json", dict(self.CFG))
+        self.assertEqual(fresh.refusal("x", {"n": 1}), "")
+
+
 if __name__ == "__main__":
     unittest.main()
