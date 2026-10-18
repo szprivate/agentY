@@ -61,6 +61,13 @@ Match the failure to the right repair:
 - **Missing model / checkpoint / LoRA file** → `check_model([...])` to confirm,
   then `find_hf_file` / `search_huggingface_models` → `download_hf_model` (pass
   the right `node_class_type`), and point the loader at the real filename.
+  - Unless the node runs its model remotely: a `category` beginning `partner/`,
+    or ComfyUI flagging the node `api_node`, means its `model` input is a menu of
+    remote model names, not a filename on disk. So `check_model(["MiniMax H3"])`
+    returning `"False"` says "that is not a local file", not "a model is
+    missing" — there is nothing to install and nothing to download. If such a
+    node's model value is genuinely wrong, pick another from that node's own menu
+    with `update_workflow`, never `download_hf_model` / `hf_file` / `find_hf_file`.
 
 ### 3. Validate and finish
 - After `update_workflow` / `replace_node`, check the result:
