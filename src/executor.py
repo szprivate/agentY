@@ -85,6 +85,38 @@ def clear_exec_errors() -> None:
     _exec_errors().clear()
 
 
+# ---------------------------------------------------------------------------
+# A cancellation is not a defect
+#
+# The progress monitor flags the interruptions it witnesses, but a member can
+# reach the heal decision by a path that never got the chance: a socket dropped
+# before the ``execution_error`` event arrived, or the job ended between the
+# history being cleared and being read. Those arrive as a bare failure carrying
+# the exception in its details, and healing one sends the repair specialist
+# after a graph that ran fine until somebody stopped it. Seen on 2026-10-18: a
+# two-variant canvas sweep was globally interrupted ~1s in, and both members
+# were "repaired" for four minutes — 109 tool calls, 67 of them
+# ``get_node_source``, one ``update_workflow`` — until the user pressed stop.
+# So read the exception here too, with core's own classifier rather than a
+# second list of signatures that would drift from it.
+# ---------------------------------------------------------------------------
+def is_interruption(error_result: dict | None) -> bool:
+    """True when *error_result* is a cancellation, not a workflow fault."""
+    if not isinstance(error_result, dict):
+        return False
+    if error_result.get("interrupted"):
+        return True
+    details = error_result.get("details")
+    if not isinstance(details, dict):
+        return False
+    try:
+        from agenty_core.utils.comfyui_progress import _exception_is_interrupt
+    except Exception:  # noqa: BLE001 - core without the classifier still runs
+        return False
+    return bool(_exception_is_interrupt(str(details.get("exception_type") or ""),
+                                        str(details.get("exception_message") or "")))
+
+
 def _project_root() -> Path:
     return Path(__file__).parent.parent.resolve()
 
@@ -855,7 +887,7 @@ async def execute_workflow(
         await _gen.aclose()
 
     if error_result is not None:
-        if error_result.get("interrupted"):
+        if is_interruption(error_result):
             # A deliberate stop, not a defect — do NOT record it or repair it.
             yield "🛑 Execution interrupted — not a workflow error; nothing to repair."
             return
@@ -1018,7 +1050,7 @@ async def execute_workflows_batch(
                 await gen.aclose()
 
             if error_result is not None:
-                if error_result.get("interrupted"):
+                if is_interruption(error_result):
                     # Deliberate stop, not a defect — retire the member without
                     # recording an error or triggering a heal.
                     await out_q.put(("line", f"{label}🛑 Execution interrupted — "
