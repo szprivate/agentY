@@ -65,6 +65,14 @@ class ReviewHalt:
     # has no files, so there is no collector: the text is in the chat and on the
     # hook, and the user's reply is the whole review.
     text_hooks: tuple = ()
+    # What the collector held when the halt was raised, BEFORE agentY wrote this
+    # round's outputs into it; None when unknown (a record from an older build).
+    # The collector is the user's answer when it has CHANGED from what the halt
+    # left there - not when its names happen to overlap `produced`: files from an
+    # earlier round, another stage or a manual import are a perfectly good answer.
+    # Unchanged from this value means nobody touched it (the write never reached
+    # a page), so it is left over from an earlier run and is not the answer.
+    collector_before: tuple | None = None
 
     def count(self) -> int:
         return len(self.produced)

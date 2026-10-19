@@ -69,6 +69,54 @@ class WhatGoesOn(unittest.TestCase):
         self.assertNotIn("The collector is EMPTY or gone — say so and ask what", src)
 
 
+class ChangedSinceTheHalt(unittest.TestCase):
+    """The collector is the answer when the user CHANGED it, whoever made the files."""
+
+    def goes_on(self, collector_files, before):
+        halt = rg.ReviewHalt(hook_node_id="135", collector_key="k", produced=tuple(V3),
+                             collector_before=tuple(before))
+        return Pipeline._review_goes_on(me(collector_files), halt)
+
+    def test_files_from_elsewhere_are_the_answer(self):
+        # The viewer's Approve: the collector is filled with older files, "continue" sent.
+        files, where = self.goes_on(OLD, before=[])
+        self.assertEqual(files, OLD)
+        self.assertIn("the collector as it stands now", where)
+        self.assertNotIn("NOT the answer", where)
+
+    def test_foreign_files_replacing_an_earlier_collector_are_the_answer(self):
+        files, _ = self.goes_on(OLD[:1], before=OLD)
+        self.assertEqual(files, OLD[:1])
+
+    def test_an_untouched_collector_from_an_earlier_run_is_still_ignored(self):
+        files, where = self.goes_on(OLD, before=OLD)
+        self.assertEqual(files, V3)
+        self.assertIn("NOT the answer", where)
+
+    def test_a_reorder_is_honoured(self):
+        files, _ = self.goes_on(list(reversed(V3)), before=OLD)
+        self.assertEqual(files, list(reversed(V3)))
+
+    def test_own_files_mixed_with_this_rounds_keep_their_order(self):
+        mixed = [OLD[0], V3[1]]
+        files, where = self.goes_on(mixed, before=[])
+        self.assertEqual(files, mixed)
+        self.assertIn("1 of this round's output(s) removed", where)
+
+    def test_an_empty_collector_means_this_rounds_outputs(self):
+        files, where = self.goes_on([], before=OLD)
+        self.assertEqual(files, V3)
+        self.assertIn("No collector for this review", where)
+
+    def test_the_baseline_survives_the_stored_record(self):
+        halt = rg.ReviewHalt(hook_node_id="1", produced=("a",), collector_before=("x", "y"))
+        rec = Pipeline._halt_record(halt)
+        self.assertEqual(rec["collector_before"], ["x", "y"])
+        from src.pipeline import _before_of
+        self.assertEqual(_before_of(rec), ("x", "y"))
+        self.assertIsNone(_before_of({}))
+
+
 class WhoseWordsCount(unittest.TestCase):
     def setUp(self):
         interject_hook._spoken.clear()

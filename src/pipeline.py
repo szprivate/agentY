@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import json
 import os
 import re
@@ -132,6 +133,12 @@ _FROM_SCRATCH_NOTE = (
 
 
 _RATIO_IN_TEXT = re.compile(r"(?<![\d.:])(\d{1,2}(?:\.\d{1,2})?)\s*[:x×]\s*(\d{1,2})(?![\d:])")
+
+
+def _before_of(raw: dict):
+    """The collector's pre-halt content out of a stored halt record, None if absent."""
+    v = raw.get("collector_before")
+    return tuple(str(p) for p in v) if isinstance(v, (list, tuple)) else None
 
 
 def _ratio_named_in(text: str) -> str:
@@ -1980,10 +1987,17 @@ class Pipeline:
             remaining = sorted((i for i, revs in _waits_on(self._canvas_hooks or []).items()
                                 if hid in revs and not _rev(by_id.get(i) or {})), key=str)
             collector_key = f"agentY_review_{hid}"
-            self._arm_review(ReviewHalt(
+            _halt = ReviewHalt(
                 hook_node_id=hid, collector_key=collector_key,
                 produced=tuple(files), question=question, remaining=tuple(remaining),
-            ))
+            )
+            try:
+                # What the collector holds before this halt writes into it: the
+                # yardstick for "did the user change it" at resume.
+                _before = tuple(str(p) for p in self._review_collector_files(_halt) if p)
+            except Exception:  # noqa: BLE001
+                _before = None
+            self._arm_review(dataclasses.replace(_halt, collector_before=_before))
             _push_patch({
                 "op": "review_collector",
                 "hook_node_id": hid,
@@ -8356,6 +8370,7 @@ class Pipeline:
                 question=str(raw.get("question") or ""),
                 remaining=tuple(str(h) for h in (raw.get("remaining") or [])),
                 text_hooks=tuple(str(h) for h in (raw.get("text_hooks") or [])),
+                collector_before=_before_of(raw),
             )
         except Exception:  # noqa: BLE001
             return None
@@ -8433,7 +8448,8 @@ class Pipeline:
                         produced=tuple(str(p) for p in (raw.get("produced") or [])),
                         question=str(raw.get("question") or ""),
                         remaining=tuple(str(h) for h in (raw.get("remaining") or [])),
-                        text_hooks=tuple(str(h) for h in (raw.get("text_hooks") or []))))
+                        text_hooks=tuple(str(h) for h in (raw.get("text_hooks") or [])),
+                        collector_before=_before_of(raw)))
         except Exception:  # noqa: BLE001
             return []
         return out if self._session.review_halt else []
@@ -8467,11 +8483,14 @@ class Pipeline:
     def _review_goes_on(self, halt) -> tuple:
         """What leaves a review once it is answered: ``(files, note)``.
 
-        The collector on the canvas is the answer when it holds this review's
-        files - the user edits it, and what is left is their choice. It is NOT
-        the answer when it is missing, empty, or full of files this stage never
-        made: a collector left over from an earlier run, never updated because
-        the stop was raised while no page was there to place it. Reporting that
+        The collector on the canvas is the answer when the user has changed it
+        since the halt (``halt.collector_before``): rows removed, reordered, or
+        files of their own added - from an earlier round, another stage, an import
+        or the viewer's Approve. It is NOT the answer when it is missing, empty,
+        or unchanged from what the halt found: a collector left over from an
+        earlier run, never updated because the stop was raised while no page was
+        there to place it. (A halt recorded without ``collector_before`` falls back
+        to asking whether the collector holds any of this round's files.) Reporting that
         as "the approved set" set a list of yesterday's pictures against the
         ones the user had just approved, and left the agent to work out which
         was meant. So there is one list, and a line saying where it came from.
@@ -8481,7 +8500,22 @@ class Pipeline:
             return [], ""
         held = [str(p) for p in self._review_collector_files(halt) if p]
         names = lambda paths: {Path(p).name for p in paths}  # noqa: E731
-        if held and (names(held) & names(produced) or not produced):
+        before = getattr(halt, "collector_before", None)
+        if held and before is not None:
+            # Judged by whether it CHANGED since the halt, not by whose files are
+            # in it: the user may add an image from an earlier round, another
+            # stage or a manual import (the viewer's "Approve" does exactly that).
+            untouched = held == list(before) and held != produced
+            if not untouched:
+                kept = len([p for p in held if Path(p).name in names(produced)])
+                if kept:
+                    dropped = max(0, len(produced) - kept)
+                    return held, ("the collector as it stands now"
+                                  + (f" ({dropped} of this round's output(s) removed by "
+                                     "the user)" if dropped else ""))
+                return held, ("the collector as it stands now - the user replaced this "
+                              "round's outputs with files of their own choosing")
+        elif held and (names(held) & names(produced) or not produced):
             dropped = max(0, len(produced) - len([p for p in held if Path(p).name in names(produced)]))
             return held, ("the collector as it stands now"
                           + (f" ({dropped} of this round's output(s) removed by the user)"
@@ -9078,7 +9112,9 @@ class Pipeline:
     def _halt_record(h) -> dict:
         return {"hook_node_id": h.hook_node_id, "collector_key": h.collector_key,
                 "produced": list(h.produced), "question": h.question,
-                "remaining": list(h.remaining), "text_hooks": list(h.text_hooks)}
+                "remaining": list(h.remaining), "text_hooks": list(h.text_hooks),
+                "collector_before": (None if h.collector_before is None
+                                    else list(h.collector_before))}
 
     def _arm_review_halt(self) -> None:
         """At the end of a turn, decide which stops the next one begins with.
