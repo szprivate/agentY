@@ -116,6 +116,26 @@ def _viewer_enabled() -> bool:
         return True
 
 
+def open_edit_enabled() -> bool:
+    """Open a finished edit render in the viewer's Edit panel (default on)."""
+    env = os.environ.get("AGENTY_VIEWER_OPEN_EDIT", "").strip().lower()
+    if env in ("0", "false", "no", "off"):
+        return False
+    if env in ("1", "true", "yes", "on"):
+        return _viewer_enabled()
+    try:
+        from src.agent import _load_settings
+        on = bool(((_load_settings() or {}).get("media_nodes") or {}).get("viewer_open_edit", True))
+    except Exception:  # noqa: BLE001
+        on = True
+    return on and _viewer_enabled()
+
+
+def mark_viewer_sent(path) -> None:
+    """*path* is in the viewer already; push_to_viewer will not send it again."""
+    _once(_viewer_sent, path)
+
+
 def push_to_viewer(path, group: str = "", label: str = "", *, wait: bool = False) -> bool:
     """Show *path* in the viewer's agentY tab, once. *path* must lie inside
     ComfyUI's folders (pass the staged copy). Never raises; True when sent."""

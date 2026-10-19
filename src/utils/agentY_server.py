@@ -537,6 +537,53 @@ def _viewer_copy(path: str, staged: str | None) -> str | None:
     return None
 
 
+def _inside_comfy(path: str) -> bool:
+    in_dir = _comfy_input_dir()
+    if in_dir is None:
+        return False
+    here = Path(path).resolve()
+    for base in (in_dir, in_dir.parent / "output", in_dir.parent / "temp"):
+        try:
+            here.relative_to(base.resolve())
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def open_edit_in_viewer(film: str, otio: str = "", title: str = "") -> dict:
+    """An edit render finished: load the film into the viewer and open its Edit
+    panel on the cut. The viewer reads the ``.otio`` beside the film, and only
+    inside ComfyUI's folders, so a film that lies elsewhere is copied there WITH
+    its cut. Off with ``media_nodes.viewer_open_edit = false``. Never raises."""
+    try:
+        if not media_sink.open_edit_enabled():
+            return {"skipped": "viewer_open_edit is off"}
+        target = film
+        if not _inside_comfy(film):
+            in_dir = _comfy_input_dir()
+            if in_dir is None:
+                return {"skipped": "ComfyUI's folders are unknown"}
+            import shutil
+            dest = in_dir / STAGE_SUBFOLDER
+            dest.mkdir(parents=True, exist_ok=True)
+            target = str(dest / Path(film).name)
+            shutil.copy2(film, target)
+            if otio and Path(otio).is_file():
+                shutil.copy2(otio, str(dest / Path(target).with_suffix(".otio").name))
+        from agenty_core.tools.show_in_viewer import open_in_viewer
+        from src.utils.viewer_group import DEFAULT_TAB, tab_name
+        res = open_in_viewer([target], tab_name=tab_name() or DEFAULT_TAB, group=title or "edit",
+                             label="edit", focus=True, panel="edit")
+        # The generic delivery must not push the same film again without the cut.
+        media_sink.mark_viewer_sent(target)
+        media_sink.take(film)
+        return res
+    except Exception as exc:  # noqa: BLE001 - a missing viewer never costs the render
+        logger.info("could not open the edit in the viewer: %s", exc)
+        return {"error": str(exc)}
+
+
 def _deliver_elsewhere(path: str, kind: str, staged: str | None, role: str,
                        index, origin: str, thread_id: str) -> None:
     """Everything a turn's ``output`` event does not do on its own.

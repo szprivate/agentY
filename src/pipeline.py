@@ -3309,6 +3309,9 @@ class Pipeline:
             from src.utils import media_sink
             media_sink.note(out, str(hook.get("title") or "edit"), "edit")
             self._register_output_path(out)
+            # The film comes up in the viewer with its Edit panel on this cut.
+            from src.utils.agentY_server import open_edit_in_viewer
+            await asyncio.to_thread(open_edit_in_viewer, out, otio, str(hook.get("title") or "edit"))
             products = self._record_hook_products(hid, [out])
             return json.dumps({
                 "status": "rendered", "film": out, "otio": otio,
