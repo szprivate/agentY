@@ -1028,6 +1028,24 @@ built-in table, overridden by the ones you enter under **Model pricing**.
 
 ![Token usage overview](images/token-usage.png)
 
+**Reported or estimated.** Most providers (Anthropic, OpenAI, Gemini, DashScope)
+return token counts only, so their cost is *estimated*: tokens, with cached
+input at the provider's cache rate, times the price table. A provider that states
+the cost of each call (OpenRouter's `usage.cost`, when it is the endpoint behind
+`openai`) is used as-is and marked *reported*. The overview has a **Source**
+column per model and labels the cost tile accordingly (`reported`, `estimated`,
+`mixed`, or `free` for local models). The token log carries the same mark
+(`src=reported dcost=...`).
+
+**Cross-check with the provider's books (optional).** Set `[costs] reconcile =
+true` and put an *admin* key in `.env` (`ANTHROPIC_ADMIN_KEY`,
+`OPENAI_ADMIN_KEY`; a normal API key cannot read billing). The overview then
+shows each provider's own total for the period. It is read-only and free, but it
+covers the whole organisation, not only agentY, so it is a sanity check and is
+never added to the figures. Google (billing export to BigQuery only) and
+DashScope (Alibaba Cloud billing API, needs Alibaba AccessKeys) have no API a
+plain key can call, so they stay estimates.
+
 ---
 
 ## Memory
