@@ -873,6 +873,14 @@ class Pipeline:
         if not path:
             return
         try:
+            # Not made by a save node, so the viewer has not seen it: say what it
+            # belongs under (the running tool, unless the caller already named it)
+            # and the host sends it on when it stages the file.
+            from src.utils import media_sink
+            media_sink.note(path, media_sink.default_group())
+        except Exception:  # noqa: BLE001
+            pass
+        try:
             paths = self._session.current_output_paths
             if path not in paths:
                 paths.append(path)
@@ -3298,8 +3306,9 @@ class Pipeline:
                                    "timeline": _et.summary(timeline)})
             # This stage's product, like a generation's: shown in the panel,
             # staged, on record in the ledger, and handed to whoever reads it.
-            self._session.current_output_paths.append(out)
-            self._chain_output_paths.append(out)
+            from src.utils import media_sink
+            media_sink.note(out, str(hook.get("title") or "edit"), "edit")
+            self._register_output_path(out)
             products = self._record_hook_products(hid, [out])
             return json.dumps({
                 "status": "rendered", "film": out, "otio": otio,
@@ -4615,8 +4624,8 @@ class Pipeline:
             files = _py.local_paths(result["files"], _resolve_output_path)
             if files:
                 # Staged like any other product this turn.
-                self._session.current_output_paths.extend(files)
-                self._chain_output_paths.extend(files)
+                for _f in files:
+                    self._register_output_path(_f)
             if place:
                 from src.utils.canvas_patch import push as _push_patch
                 _push_patch({
