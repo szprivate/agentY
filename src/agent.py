@@ -549,6 +549,23 @@ class TokenUsageHookProvider:
         # turn_usage.py) - kept apart from the per-tool deltas above, which are
         # only taken after tool calls.
         self._live = {"in": 0, "out": 0, "cr": 0, "cw": 0, "cost": 0.0}
+        # What the provider itself stated as cost (src/utils/usage_capture.py), as
+        # of the last tool-call report and the last live report.
+        self._prev_rep = (0.0, 0, 0)
+        self._live_rep = (0.0, 0, 0)
+
+    @staticmethod
+    def _reported_delta(agent, prev: tuple) -> tuple:
+        """``(snapshot, delta_cost)``: the cost the provider stated for the calls
+        since *prev*, or None unless it stated one for every one of them."""
+        from src.utils.usage_capture import snapshot  # noqa: PLC0415
+        cur = snapshot(agent)
+        if cur[1] < prev[1]:
+            prev = (0.0, 0, 0)
+        d_calls, d_cc = cur[1] - prev[1], cur[2] - prev[2]
+        if d_cc > 0 and d_cc == d_calls:
+            return cur, max(0.0, cur[0] - prev[0])
+        return cur, None
 
     def register_hooks(self, registry: HookRegistry, **kwargs) -> None:  # noqa: ARG002
         registry.add_callback(AfterToolCallEvent, self._on_after_tool_call)
@@ -585,6 +602,9 @@ class TokenUsageHookProvider:
                 last = {"in": 0, "out": 0, "cr": 0, "cw": 0, "cost": 0.0}
             d = {k: now[k] - last[k] for k in ("in", "out", "cr", "cw")}
             d_cost = None if cost is None else max(0.0, cost - float(last.get("cost") or 0.0))
+            self._live_rep, d_rep = self._reported_delta(agent, self._live_rep)
+            if d_rep is not None:
+                d_cost = d_rep      # the provider's own figure beats the estimate
             self._live = {**now, "cost": cost if cost is not None else float(last.get("cost") or 0.0)}
             if calls or any(d.values()):
                 # Between two reports at most one model call has finished, so a
@@ -612,6 +632,7 @@ class TokenUsageHookProvider:
             self._prev_out = out_tok
             self._prev_cache_read = cache_read
             self._prev_cache_write = cache_write
+            self._prev_rep, d_rep = self._reported_delta(event.agent, self._prev_rep)
 
             tool_name = event.tool_use.get("name", "?")
 
@@ -675,6 +696,14 @@ class TokenUsageHookProvider:
                     cost_str = f" cost=${cost_val:.2f}/tokens={total_tokens}"
                 except Exception:
                     cost_str = ""
+                # Where the cost of THIS line's delta comes from: the provider's
+                # own figure (dcost, USD) or the price-table estimate.
+                if d_rep is not None:
+                    cost_str += f" src=reported dcost={d_rep:.6f}"
+                elif self._is_ollama:
+                    cost_str += " src=free"
+                else:
+                    cost_str += " src=estimated"
 
                 # Record which model produced this usage so the Token Usage
                 # overview can filter by model. Older log lines predate this
@@ -1064,7 +1093,8 @@ def _build_model(*, role: str, llm: str, system_prompt: str,
               f"think={_add_args.get('think', 'n/a')})")
     elif llm in _DASHSCOPE_PROVIDERS:
         # Alibaba Model Studio (DashScope) via its OpenAI-compatible endpoint.
-        from strands.models.openai import OpenAIModel
+        from src.utils.usage_capture import capturing_openai_model  # noqa: PLC0415
+        OpenAIModel = capturing_openai_model()
         model_id = dashscope_model or str(_cfg("DASHSCOPE_MODEL", "dashscope", "model", default="qwen-plus"))
         base_url = str(_cfg("DASHSCOPE_BASE_URL", "dashscope", "base_url",
                             default="https://dashscope-intl.aliyuncs.com/compatible-mode/v1"))
@@ -1089,7 +1119,8 @@ def _build_model(*, role: str, llm: str, system_prompt: str,
         # OpenAI proper, via the same OpenAI-compatible Strands client. The model id
         # threads in through ``dashscope_model`` (the shared openai-compatible model
         # slot the factories populate from settings).
-        from strands.models.openai import OpenAIModel
+        from src.utils.usage_capture import capturing_openai_model  # noqa: PLC0415
+        OpenAIModel = capturing_openai_model()
         model_id = dashscope_model or str(_cfg("OPENAI_MODEL", "openai", "model", default="gpt-4o"))
         base_url = str(_cfg("OPENAI_BASE_URL", "openai", "base_url", default="https://api.openai.com/v1"))
         api_key = os.environ.get("OPENAI_API_KEY") or ""

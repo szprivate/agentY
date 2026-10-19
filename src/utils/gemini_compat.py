@@ -19,6 +19,8 @@ from typing import Any
 
 from strands.models.openai import OpenAIModel
 
+from src.utils.usage_capture import UsageCaptureMixin
+
 # Gemini's documented stand-in for a call that has no real signature (history
 # written by another model, or saved before signatures were kept): it makes the
 # validator skip the check instead of failing the request.
@@ -36,8 +38,11 @@ def _signature_of(tool_call: Any) -> str | None:
     return None
 
 
-class GeminiCompatModel(OpenAIModel):
+class GeminiCompatModel(UsageCaptureMixin, OpenAIModel):
     """OpenAIModel that round-trips Gemini 3 thought signatures."""
+
+    # Thinking tokens are billed as output but only show up in total_tokens.
+    thoughts_in_total = True
 
     @classmethod
     def format_request_message_tool_call(cls, tool_use, **kwargs: Any) -> dict[str, Any]:

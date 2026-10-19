@@ -610,6 +610,14 @@ max_upload_mb = 45
 # than half-downloaded.
 max_download_mb = 250
 
+# Cost overview. Per-call costs the provider states itself (OpenRouter) are always
+# used in place of the estimate. `reconcile` additionally asks Anthropic / OpenAI
+# for their own cost totals (read-only, free) and shows them beside the overview;
+# it needs an ADMIN key in ANTHROPIC_ADMIN_KEY / OPENAI_ADMIN_KEY - a normal API
+# key cannot read billing - and the totals cover the whole organisation.
+[costs]
+reconcile = false
+
 # History compaction — keeps a long conversation as quick as a new one.
 # Between turns (in the background, never while you wait): tool output that is no
 # longer recent is cut to its start, and if the history is still over the budget,

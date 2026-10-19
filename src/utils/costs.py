@@ -359,6 +359,15 @@ _CACHE_RATES_ANTHROPIC = (0.10, 1.25)
 _CACHE_RATES_DASHSCOPE = (0.20, 1.00)
 _CACHE_RATES_DEFAULT = (0.10, 1.00)
 
+# Cached-input price relative to the input price, where it differs from 0.10.
+# Longest prefix wins. OpenAI: developers.openai.com/api/docs/pricing; Gemini:
+# ai.google.dev/gemini-api/docs/pricing ("context caching" column). Neither
+# charges for creating the (implicit) cache.
+_CACHE_HIT_BY_PREFIX = {
+    "gpt-4o": 0.50, "o1": 0.50, "gpt-4.1": 0.25, "o3": 0.25, "o4": 0.25,
+    "gemini-2.0": 0.25, "gemini-1.5": 0.25,
+}
+
 
 def _cache_accounting(obj) -> Tuple[float, float, bool]:
     """``(hit_multiplier, creation_multiplier, cached_included_in_input)`` for *obj*."""
@@ -369,7 +378,12 @@ def _cache_accounting(obj) -> Tuple[float, float, bool]:
         return (*_CACHE_RATES_ANTHROPIC, False)
     if p in _DASHSCOPE_PROVIDERS or m.startswith("qwen"):
         return (*_CACHE_RATES_DASHSCOPE, True)
-    return (*_CACHE_RATES_DEFAULT, True)
+    hit = _CACHE_RATES_DEFAULT[0]
+    for prefix in sorted(_CACHE_HIT_BY_PREFIX, key=len, reverse=True):
+        if m.startswith(prefix):
+            hit = _CACHE_HIT_BY_PREFIX[prefix]
+            break
+    return (hit, _CACHE_RATES_DEFAULT[1], True)
 
 
 def compute_cost_from_usage(usage: dict, obj) -> Tuple[float, int]:
@@ -407,3 +421,18 @@ def compute_cost_from_usage(usage: dict, obj) -> Tuple[float, int]:
     )
     total = in_tok + out_tok + (0 if included else cache_read + cache_write)
     return cost, total
+
+
+def cost_for_call(usage: dict, obj, reported: float | None = None) -> Tuple[float, int, str]:
+    """:func:`compute_cost_from_usage` plus where the figure comes from.
+
+    Returns ``(cost, total_tokens, source)``. *reported* is the USD the provider
+    itself stated for these calls (see :mod:`src.utils.usage_capture`); when given
+    it IS the cost and *source* is ``"reported"``. Otherwise the cost is the price
+    table's estimate (``"estimated"``), and ``"free"`` for a local Ollama model.
+    """
+    est, total = compute_cost_from_usage(usage, obj)
+    if reported is not None:
+        return float(reported), total, "reported"
+    _p, _m, is_ollama = _extract_meta(obj)
+    return est, total, ("free" if is_ollama else "estimated")

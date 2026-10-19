@@ -3240,6 +3240,24 @@ _RE_TOKENS_DELTA = re.compile(
 )
 _RE_TOKENS_MODEL = re.compile(r"\bmodel=(\S+)")
 _RE_TOKENS_TOTAL = re.compile(r"total=(\d+)in/")
+# ``src=reported dcost=<USD>``: the provider stated the cost of this line's delta;
+# ``src=estimated`` / ``src=free``: priced from the table (absent on older lines).
+_RE_TOKENS_SRC = re.compile(r"\bsrc=(reported|estimated|free)\b")
+_RE_TOKENS_DCOST = re.compile(r"\bdcost=(\d+(?:\.\d+)?)")
+
+
+def _cost_source(b: dict) -> str:
+    """How a bucket's cost was arrived at: ``reported`` (every priced call carried
+    the provider's own figure), ``estimated`` (none did), ``mixed``, or ``free``
+    (local model)."""
+    rep, est = b.get("calls_reported", 0), b.get("calls_estimated", 0)
+    if rep and est:
+        return "mixed"
+    if rep:
+        return "reported"
+    if est:
+        return "estimated"
+    return "free" if b.get("calls", 0) else "estimated"
 
 
 def _parse_token_usage(from_ts: float | None, to_ts: float | None) -> dict:
@@ -3294,6 +3312,8 @@ def _aggregate_token_usage(accept) -> dict:
         if b is None:
             b = {"model": key, "input": 0, "output": 0,
                  "cache_read": 0, "cache_write": 0, "cost": 0.0, "calls": 0,
+                 "cost_reported": 0.0, "cost_estimated": 0.0,
+                 "calls_reported": 0, "calls_estimated": 0,
                  # Each token once. DashScope counts cache hits inside input,
                  # so input + cache_read would count them twice.
                  "tokens": 0}
@@ -3345,6 +3365,20 @@ def _aggregate_token_usage(accept) -> dict:
                 # Recompute cost from *this delta* (the logged cost column is
                 # cumulative and cannot be summed). Only possible when the model
                 # is known; role-only historical lines contribute 0 cost.
+                src_m = _RE_TOKENS_SRC.search(line)
+                src = src_m.group(1) if src_m else "estimated"
+                dc_m = _RE_TOKENS_DCOST.search(line)
+                if src == "reported" and dc_m:
+                    # The provider stated what this call cost: that beats any
+                    # estimate (tokens are still counted below).
+                    b["cost"] += float(dc_m.group(1))
+                    b["cost_reported"] += float(dc_m.group(1))
+                    b["calls_reported"] += 1
+                    src = "reported"
+                elif src == "free":
+                    pass
+                else:
+                    b["calls_estimated"] += 1
                 if model:
                     provider, _, model_id = model.partition("/")
                     try:
@@ -3353,7 +3387,9 @@ def _aggregate_token_usage(accept) -> dict:
                              "cacheReadInputTokens": d_cr, "cacheWriteInputTokens": d_cw},
                             _Meta(provider, model_id),
                         )
-                        b["cost"] += cost
+                        if src != "reported":
+                            b["cost"] += cost
+                            b["cost_estimated"] += cost
                         b["tokens"] += tokens
                     except Exception:
                         b["tokens"] += d_in + d_out
@@ -3362,12 +3398,17 @@ def _aggregate_token_usage(accept) -> dict:
 
     rows = sorted(agg.values(), key=lambda r: r["input"] + r["output"], reverse=True)
     total = {"input": 0, "output": 0, "cache_read": 0,
-             "cache_write": 0, "cost": 0.0, "calls": 0, "tokens": 0}
+             "cache_write": 0, "cost": 0.0, "calls": 0, "tokens": 0,
+             "cost_reported": 0.0, "cost_estimated": 0.0,
+             "calls_reported": 0, "calls_estimated": 0}
     for r in rows:
         for k in total:
             total[k] += r[k]
-        r["cost"] = round(r["cost"], 4)
-    total["cost"] = round(total["cost"], 4)
+        r["cost_source"] = _cost_source(r)
+    total["cost_source"] = _cost_source(total)
+    for r in rows + [total]:
+        for k in ("cost", "cost_reported", "cost_estimated"):
+            r[k] = round(r[k], 4)
 
     return {
         "ok": True,
@@ -4475,6 +4516,24 @@ def _build_app():
             return jsonify(_parse_token_usage(_num("from"), _num("to")))
         except Exception as exc:  # noqa: BLE001
             logger.error("token_usage failed: %s", exc, exc_info=True)
+            return jsonify({"ok": False, "error": str(exc)}), 500
+
+    @app.route("/agentY/cost_reconcile", methods=["GET", "OPTIONS"])
+    def cost_reconcile():
+        """The providers' own cost totals for a window, when ``[costs] reconcile``
+        is on and an admin key is set (src/utils/cost_reconcile.py)."""
+        if request.method == "OPTIONS":
+            return "", 204
+        from src.utils import cost_reconcile as _cr  # noqa: PLC0415
+
+        def _num(name):
+            try:
+                return float(request.args.get(name))
+            except (TypeError, ValueError):
+                return None
+        try:
+            return jsonify({"ok": True, **_cr.reconcile(_num("from"), _num("to"))})
+        except Exception as exc:  # noqa: BLE001
             return jsonify({"ok": False, "error": str(exc)}), 500
 
     # ── Purge the token-usage log (irreversible) ────────────────────────────
