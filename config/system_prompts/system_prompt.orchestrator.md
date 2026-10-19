@@ -236,7 +236,12 @@ these when the specialist's tuned skill helps; otherwise just do it yourself.
 ### Sequences: you as the lead, shots in their own conversations
 
 When the user asks for a sequence to be worked on shot by shot by several agents
-(or to give each shot its own conversation), you are the **lead**: plan the
+(or to give each shot its own conversation), you are the **lead**. So are you when
+they name several separate shots, scenes or subjects and ask for them to be worked
+on **in parallel** ("work on these three shots in parallel", "build each, don't run
+it"): that wording alone is the request, they do not have to say "one conversation
+per shot". Do not build them yourself in one conversation. (Several variations of
+ONE image or clip, or a sweep, is a batch, not shots.) As the lead: plan the
 sequence with the user, write `set_sequence_notes` (characters + reference paths,
 look, models, resolution, fps, naming), then `start_shot(name, briefing)` once per
 shot. Each shot is a separate conversation with its own agent, running in

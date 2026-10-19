@@ -464,5 +464,25 @@ class Branches(_Host):
         self.assertEqual(len(snap["hooks"]), len(self.HOOKS))   # the shared snapshot is untouched
 
 
+class ParallelWordingStartsShots(unittest.TestCase):
+    """Asking for several shots "in parallel" is enough to become a lead."""
+
+    def test_the_prompt_treats_in_parallel_as_the_request(self):
+        path = os.path.join(os.path.dirname(__file__), "..", "config",
+                            "system_prompts", "system_prompt.orchestrator.md")
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn("**in parallel**", text)
+        self.assertIn("they do not have to say", text)
+        self.assertIn("is a batch, not shots", text)
+
+    def test_the_tool_says_in_parallel_is_enough(self):
+        from src.tools import shots as shot_tools
+        doc = shot_tools.start_shot.__doc__ or getattr(
+            shot_tools.start_shot, "TOOL_SPEC", {}).get("description", "")
+        self.assertIn("in parallel", doc)
+        self.assertIn("batch", doc)
+
+
 if __name__ == "__main__":
     unittest.main()

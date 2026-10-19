@@ -28,8 +28,10 @@ def _out(result) -> str:
 def start_shot(name: str, briefing: str, hook_ids: list | None = None) -> str:
     """Start a new conversation that works on one shot of a sequence, in parallel.
 
-    Use this when the user asks for a sequence (several shots) to be worked on by
-    several agents, or explicitly asks to hand shots to their own conversations.
+    Use this when the user names several separate shots (scenes, subjects) and asks
+    for them to be worked on in parallel or by several agents, or asks to hand shots
+    to their own conversations - "in parallel" alone is enough, once per shot. Not
+    for a single image or clip, nor for variations of one image (that is a batch).
     The shot gets its own agent and history and appears in the user's conversation
     list; it is told it is a shot of yours and gets your sequence notes
     (set_sequence_notes) with its briefing. When it finishes, its report comes back
