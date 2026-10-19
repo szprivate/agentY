@@ -223,15 +223,20 @@ tokens_usage_log = "./.logs/tokens_usage.log"
 # Which node loads and which node saves each kind of file ("" = automatic: the
 # save node a workflow was built with, and the first loader this ComfyUI has).
 # A node class name, e.g. image_save = "bEpicSendToViewer". Chosen in Settings.
+# The bEpic viewer (ComfyUI-ImageViewer, installed with agentY) is the default saver
+# for images, videos and 3D files; ComfyUI without it keeps what the workflow had.
 [media_nodes]
 image_load = ""
-image_save = ""
+image_save = "bEpicSendToViewer"
 video_load = ""
-video_save = ""
+video_save = "bEpicSendToViewer"
 audio_load = ""
 audio_save = ""
 model_load = ""
-model_save = ""
+model_save = "bEpicSendToViewer"
+# The viewer tab all of the agent's pictures go to; each stage's pictures are
+# grouped under its hook title inside it. "" leaves the viewer node's own tab.
+viewer_tab = "agentY"
 # How a clip is saved when the chosen video save node can do both (bEpic's Send
 # to Image Viewer): "video" = a video file (mp4), "sequence" = one image per
 # frame, named prefix.1001.<ext>, in sequence_format.

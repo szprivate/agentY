@@ -760,6 +760,10 @@ else
     ensure_repo "agentY-comfyuiConnect" "https://github.com/szprivate/agentY-comfyuiConnect.git" "$NODE_DIR"
     success "Sidebar node installed under $RESOLVED_COMFY/custom_nodes - restart ComfyUI once."
 
+    # The bEpic viewer is agentY's standard viewer (Settings > Load & save nodes
+    # saves into it by default). A failed clone only costs the viewer.
+    ensure_repo "ComfyUI-ImageViewer" "https://github.com/szprivate/ComfyUI-ImageViewer.git" "$RESOLVED_COMFY/custom_nodes/ComfyUI-ImageViewer"
+
     # Record where the agentY host lives so the sidebar's "Start server" button can
     # relaunch run_agent.sh when the host is down. The agentY host also rewrites
     # this on startup; this bootstrap makes the button work day-1, before the host

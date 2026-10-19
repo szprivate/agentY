@@ -397,6 +397,13 @@ def _submit_workflow(workflow_path: str, client_id: str = "") -> str:
             p.write_text(json.dumps(workflow, indent=2), encoding="utf-8")
     except Exception as exc:  # noqa: BLE001
         logger.warning("executor: could not apply the chosen save nodes (%s)", exc)
+    # The viewer saver puts the agent's pictures in one tab, grouped by stage.
+    try:
+        from src.utils import viewer_group
+        if viewer_group.stamp(workflow, workflow_path):
+            p.write_text(json.dumps(workflow, indent=2), encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001 - a label must never block a submission
+        logger.warning("executor: could not name the viewer tab (%s)", exc)
     # With a context (sequence / shot) in force, the savers are named by rule
     # before the run - folders, version and suffix; nothing is renamed after.
     # See src/utils/output_context.py.

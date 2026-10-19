@@ -5438,6 +5438,23 @@ def _build_app():
                            str(node_id) if node_id not in ("?", None) else None)
         return jsonify({"status": "dispatched"})
 
+    # The bEpic viewer's "Tag for agentY": a picture from its history becomes a
+    # named reference (#name) the same way an `agentY add tag` node makes one. The
+    # viewer reaches this through the panel's bridge (agentY-comfyuiConnect).
+    @app.route("/agentY/viewer/tag", methods=["POST", "OPTIONS"])
+    def viewer_tag():
+        if request.method == "OPTIONS":
+            return "", 204
+        data = request.get_json(silent=True) or {}
+        try:
+            from src.utils import tag_memory
+            entry = tag_memory.remember_file(data.get("tag"), data.get("path"), data.get("role", ""))
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        except Exception as exc:  # noqa: BLE001
+            return jsonify({"ok": False, "error": f"Could not tag it: {exc}"}), 500
+        return jsonify({"ok": True, **entry})
+
     @app.route("/agentY/node_responses", methods=["GET", "OPTIONS"])
     def node_responses():
         if request.method == "OPTIONS":

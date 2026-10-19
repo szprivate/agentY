@@ -161,6 +161,19 @@ def _resolve(path) -> tuple[str, dict]:
     return role, meta
 
 
+def run_role_of(workflow_path) -> tuple[str, dict]:
+    """What the run in force says its files are, with the one MEMBER's own role on top.
+
+    ``(role, meta)`` for a workflow about to be submitted: the member's role when a
+    batch named it (:func:`set_workflow_role`), else the run's. Read before the
+    submission, where :func:`role_for` reads after a file has landed.
+    """
+    with _lock:
+        found = _st().wf_roles.get(_key(workflow_path)) if workflow_path else None
+        role, meta = found if found else (_st().run_role, _st().run_meta)
+    return str(role or ""), dict(meta or {})
+
+
 def role_for(path) -> str:
     """The role of *path* — the run's, unless it was tagged individually."""
     return _resolve(path)[0]

@@ -814,6 +814,11 @@ if ($SkipComfyNode) {
         Ensure-Repo -Name "agentY-comfyuiConnect" -Url "https://github.com/szprivate/agentY-comfyuiConnect.git" -Dir $nodeDir
         Write-Success "Sidebar node installed under $ResolvedComfy\custom_nodes - restart ComfyUI once."
 
+        # The bEpic viewer is agentY's standard viewer (Settings > Load & save nodes
+        # saves into it by default). A failed clone only costs the viewer.
+        $viewerDir = Join-Path (Join-Path $ResolvedComfy "custom_nodes") "ComfyUI-ImageViewer"
+        Ensure-Repo -Name "ComfyUI-ImageViewer" -Url "https://github.com/szprivate/ComfyUI-ImageViewer.git" -Dir $viewerDir
+
         # Record where the agentY host lives so the sidebar's "Start server" button
         # can relaunch run_agent.ps1 when the host is down. The agentY host also
         # rewrites this on startup; this bootstrap makes the button work day-1,

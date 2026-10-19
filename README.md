@@ -70,7 +70,7 @@ one pass:
 3. creates agentY's `.venv` (via `uv`, on Python 3.12), sorts out **torch** — on Windows it offers the CUDA build when it sees an NVIDIA GPU, because the wheel on PyPI is CPU-only and that makes SAM3 grounding take about a minute a call; on a Mac the PyPI wheel already carries Metal, so it just reports whether MPS was found — and installs `requirements.txt` (which pulls in `agentY-core` editable);
 4. copies `.env_example` → `.env` and **prompts** you for `HF_TOKEN`, `ANTHROPIC_API_KEY`, and the optional `COMFYUI_API_KEY` / `DASHSCOPE_API_KEY` (Enter keeps an existing value);
 5. asks which **memory embedder** long-term memory should use (a built-in local one, Ollama, or a provider you have a key for);
-6. **finds your ComfyUI** (auto-detects common paths, otherwise asks) and clones **agentY-comfyuiConnect** into its `custom_nodes/`, optionally pointing `settings.local.json` at your ComfyUI URL;
+6. **finds your ComfyUI** (auto-detects common paths, otherwise asks) and clones **agentY-comfyuiConnect** and the **bEpic viewer** (`ComfyUI-ImageViewer`, agentY's standard viewer) into its `custom_nodes/`, optionally pointing `settings.local.json` at your ComfyUI URL;
 7. sets up **agentY-mcp**'s own venv + `.env` and reuses the tokens you just entered;
 8. **checks the result** — every dependency agentY names is import-tested in the venv that will run it, and anything missing is listed with what it costs.
 
@@ -184,6 +184,10 @@ wasn't found), install it by hand and restart ComfyUI once:
 ```powershell
 git clone https://github.com/szprivate/agentY-comfyuiConnect  <ComfyUI>\custom_nodes\agentY-comfyuiConnect
 ```
+
+The same step clones [`ComfyUI-ImageViewer`](https://github.com/szprivate/ComfyUI-ImageViewer),
+the viewer agentY saves into by default (`git clone` it into `custom_nodes/` yourself
+if you skipped the installer). `run_agent` keeps it up to date with the rest.
 
 After the restart you get, from the one node pack:
 - the **agentY** tab in ComfyUI's left sidebar (the chat panel);

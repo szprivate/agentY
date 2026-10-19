@@ -310,27 +310,26 @@ else
   # who works on it, a dev clone beside agentY. Update every one we can find — a
   # stale installed clone is the usual reason the panel is missing a feature the
   # host already has. Candidates are cheap path guesses; nothing is searched.
-  ext_seen=""; ext_updated=0; ext_i=0
-  for cand in "$PARENT/agentY-comfyuiConnect" \
-              "${AGENTY_COMFYUI_DIR:-}/custom_nodes/agentY-comfyuiConnect" \
-              "${COMFYUI_DIR:-}/custom_nodes/agentY-comfyuiConnect" \
-              "$PARENT/comfyui/custom_nodes/agentY-comfyuiConnect" \
-              "$PARENT/ComfyUI/custom_nodes/agentY-comfyuiConnect" \
-              "${HOME:-}/ComfyUI/custom_nodes/agentY-comfyuiConnect" \
-              "${HOME:-}/comfyui/custom_nodes/agentY-comfyuiConnect"; do
-    case "$cand" in /custom_nodes/*) continue ;; esac   # an unset root leaves a bare path
-    [ -d "$cand/.git" ] || continue
-    full="$(cd "$cand" && pwd)"
-    case " $ext_seen " in *" $full "*) continue ;; esac
-    ext_seen="$ext_seen $full"
-    ext_i=$((ext_i + 1))
-    ext_label="agentY-comfyuiConnect"
-    [ "$ext_i" -gt 1 ] && ext_label="agentY-comfyuiConnect #$ext_i"
-    update_repo "$ext_label" "$full"
-    [ "$REPO_MOVED" = "1" ] && ext_updated=1
+  # The bEpic viewer (ComfyUI-ImageViewer) is the same kind of checkout and is
+  # kept current the same way.
+  ext_updated=0
+  for ext_name in agentY-comfyuiConnect ComfyUI-ImageViewer; do
+    ext_seen=""; ext_i=0
+    for cand in "$PARENT/$ext_name"                 "${AGENTY_COMFYUI_DIR:-}/custom_nodes/$ext_name"                 "${COMFYUI_DIR:-}/custom_nodes/$ext_name"                 "$PARENT/comfyui/custom_nodes/$ext_name"                 "$PARENT/ComfyUI/custom_nodes/$ext_name"                 "${HOME:-}/ComfyUI/custom_nodes/$ext_name"                 "${HOME:-}/comfyui/custom_nodes/$ext_name"; do
+      case "$cand" in /custom_nodes/*) continue ;; esac   # an unset root leaves a bare path
+      [ -d "$cand/.git" ] || continue
+      full="$(cd "$cand" && pwd)"
+      case " $ext_seen " in *" $full "*) continue ;; esac
+      ext_seen="$ext_seen $full"
+      ext_i=$((ext_i + 1))
+      ext_label="$ext_name"
+      [ "$ext_i" -gt 1 ] && ext_label="$ext_name #$ext_i"
+      update_repo "$ext_label" "$full"
+      [ "$REPO_MOVED" = "1" ] && ext_updated=1
+    done
   done
   if [ "$ext_updated" = "1" ]; then
-    say "[update] The ComfyUI sidebar extension changed - restart ComfyUI (or reload the browser for JS-only changes) to pick it up." "$C_YELLOW"
+    say "[update] The ComfyUI sidebar extension or viewer changed - restart ComfyUI (or reload the browser for JS-only changes) to pick it up." "$C_YELLOW"
   fi
   echo
 fi

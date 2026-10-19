@@ -513,10 +513,11 @@ class TheLoader(unittest.TestCase):
 
 class WhereItIsWired(unittest.TestCase):
 
-    def test_the_settings_start_on_automatic(self):
+    def test_the_settings_start_on_the_viewer_as_saver(self):
         defaults = tomllib.loads((ROOT / "config" / "settings.default.toml").read_text(encoding="utf-8"))
         want = {f"{k}_{r}": "" for k in mn.KINDS for r in ("load", "save")}
-        want.update(video_as="video", sequence_format="png")
+        want.update(image_save="bEpicSendToViewer", video_save="bEpicSendToViewer",
+                    model_save="bEpicSendToViewer", viewer_tab="agentY", video_as="video", sequence_format="png")
         self.assertEqual(defaults["media_nodes"], want)
         self.assertIn("update_channel", defaults, "the table must not swallow the settings after it")
 

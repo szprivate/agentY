@@ -304,25 +304,28 @@ if ($skipUpdate) {
     # who works on it, a dev clone beside agentY. Update every one we can find —
     # a stale installed clone is the usual reason the panel is missing a feature the
     # host already has. Candidates are cheap path guesses; nothing is searched.
-    $extCandidates = @(
-        (Join-Path $parent "agentY-comfyuiConnect")
-    )
-    foreach ($root in @($env:AGENTY_COMFYUI_DIR, $Script:ComfyUIDir)) {
-        if ($root) { $extCandidates += (Join-Path $root "custom_nodes\agentY-comfyuiConnect") }
-    }
-    foreach ($name in @("comfyui", "ComfyUI", "ComfyUI_windows_portable\ComfyUI")) {
-        $extCandidates += (Join-Path (Join-Path $parent $name) "custom_nodes\agentY-comfyuiConnect")
-    }
-    $seen = @{}
-    $i = 0
-    foreach ($cand in $extCandidates) {
-        if (-not $cand -or -not (Test-Path (Join-Path $cand ".git"))) { continue }
-        $full = (Resolve-Path $cand).Path
-        if ($seen.ContainsKey($full)) { continue }
-        $seen[$full] = $true
-        $i++
-        $label = if ($i -eq 1) { "agentY-comfyuiConnect" } else { "agentY-comfyuiConnect #$i" }
-        $targets += @{ n = $label; d = $full; ext = $true }
+    # The bEpic viewer (ComfyUI-ImageViewer) is the same kind of checkout and is
+    # kept current the same way.
+    foreach ($extName in @("agentY-comfyuiConnect", "ComfyUI-ImageViewer")) {
+        $extCandidates = @()
+        if ($extName -eq "agentY-comfyuiConnect") { $extCandidates += (Join-Path $parent $extName) }
+        foreach ($root in @($env:AGENTY_COMFYUI_DIR, $Script:ComfyUIDir)) {
+            if ($root) { $extCandidates += (Join-Path $root "custom_nodes\$extName") }
+        }
+        foreach ($name in @("comfyui", "ComfyUI", "ComfyUI_windows_portable\ComfyUI")) {
+            $extCandidates += (Join-Path (Join-Path $parent $name) "custom_nodes\$extName")
+        }
+        $seen = @{}
+        $i = 0
+        foreach ($cand in $extCandidates) {
+            if (-not $cand -or -not (Test-Path (Join-Path $cand ".git"))) { continue }
+            $full = (Resolve-Path $cand).Path
+            if ($seen.ContainsKey($full)) { continue }
+            $seen[$full] = $true
+            $i++
+            $label = if ($i -eq 1) { $extName } else { "$extName #$i" }
+            $targets += @{ n = $label; d = $full; ext = $true }
+        }
     }
 
     $ErrorActionPreference = "Continue"         # see Get-DirtyPaths
@@ -338,7 +341,7 @@ if ($skipUpdate) {
         }
     }
     if ($extUpdated) {
-        Write-Host "[update] The ComfyUI sidebar extension changed - restart ComfyUI (or reload the browser for JS-only changes) to pick it up." -ForegroundColor Yellow
+        Write-Host "[update] The ComfyUI sidebar extension or viewer changed - restart ComfyUI (or reload the browser for JS-only changes) to pick it up." -ForegroundColor Yellow
     }
     $ErrorActionPreference = "Stop"
     Write-Host ""

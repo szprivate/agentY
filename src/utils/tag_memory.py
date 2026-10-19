@@ -114,14 +114,43 @@ def _file_of(node: dict) -> str:
     return ""
 
 
-def entry_body(tag: str, file_path: str, role: str) -> str:
+def entry_body(tag: str, file_path: str, role: str, origin: str = "") -> str:
     """What gets stored for one remembered tag."""
     head = str(role or "").strip() or f"Reference image `{Path(file_path).name}`."
     lines = [head]
     if file_path:
         lines.append(_PATH_PREFIX + stored_path(file_path))
-    lines.append(_ORIGIN.format(tag=tag))
+    lines.append(origin or _ORIGIN.format(tag=tag))
     return "\n".join(lines)
+
+
+_VIEWER_ORIGIN = "Tagged `#{tag}` for agentY from the bEpic viewer's history."
+
+
+def remember_file(tag: str, path: str, role: str = "") -> dict:
+    """Tag one file from outside any graph - what the viewer's "Tag for agentY" does.
+
+    The result is the entry an ``agentY add tag`` node with ``remember`` on would
+    have written, so ``#tag`` resolves exactly as one does (:func:`resolve`): in a
+    hook's prompt, in the collector's ``#`` menu, in what the agent is told is on
+    record. Raises ``ValueError`` with a sentence for the user when it cannot.
+    """
+    from agenty_core.utils.project_memory import write_entry
+    from src.utils.canvas_hooks import _looks_like_media_file, normalise_tag
+
+    name = normalise_tag(tag)
+    if not name or not any(c.isalpha() for c in name):
+        raise ValueError("A tag needs a name with at least one letter, like hero_face.")
+    raw = str(path or "").strip().strip('"')
+    if not raw or not Path(raw).is_file():
+        raise ValueError("That picture is not on disk, so there is nothing to tag.")
+    if not _looks_like_media_file(raw):
+        raise ValueError("Only images, videos and other media files can be tagged.")
+    role = " ".join(str(role or "").split())[:200]
+    body = entry_body(name, raw, role, _VIEWER_ORIGIN.format(tag=name))
+    if write_entry(name, body, type="reference") is None:
+        raise ValueError("The project memory could not be written - is ComfyUI running?")
+    return {"tag": name, "path": stored_path(raw), "role": role}
 
 
 def sync(base_prompt: dict | None) -> list[str]:

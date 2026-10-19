@@ -327,6 +327,26 @@ exists during a run, so agentY renders just that branch first
 (`🔎 Rendering hook input(s)…`). Your savers don't run. Turn it off with
 `hook_tap_tensors`.
 
+### The bEpic viewer: tag, approve, find
+
+The [bEpic viewer](https://github.com/szprivate/ComfyUI-ImageViewer) is agentY's
+standard viewer: the installer puts it beside the sidebar extension and
+**Send to Image Viewer** is the default save node for images, videos and 3D files
+(Settings ▸ Load & save nodes).
+
+- **One tab, grouped by stage.** Everything the agent saves lands in one viewer tab
+  (`agentY`, changeable in Settings). Pictures from a hook sit under a heading with
+  the hook's **title** — name your hooks *Characters*, *Places* — and a batch's
+  pictures wear their own name (each character) on the thumbnail.
+- **Tag for agentY…** — right-click a picture in the viewer's history, give it a
+  name, and `#name` works in any hook prompt and in the collector's `#` menu, in
+  any graph: the same as an `agentY add tag` node with *remember* on.
+- **Approve for agentY** — when a `review` hook has stopped the run, select the
+  pictures you want (<kbd>Ctrl</kbd>+click, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+click
+  for a range), right-click ▸ **Approve for agentY**. The review collector is filled
+  with exactly those and the run continues, as if you had edited the collector and
+  pressed **Continue with these**.
+
 ### Tagging a reference
 
 The **`agentY add tag`** node sits on a wire (`Load Image → add tag → …`):
@@ -881,6 +901,9 @@ Changed values are saved to `config/settings.local.json`; the defaults in
 `config/settings.default.toml` are never edited.
 
 ### Load & save nodes
+
+Out of the box the viewer ([above](#the-bepic-viewer-tag-approve-find)) saves
+images, videos and 3D files; ComfyUI without it keeps each workflow's own save node.
 
 **Settings ▸ Load & save nodes** picks, for images, videos, audio and 3D models,
 which node loads a file and which node saves one. Each dropdown lists what this ComfyUI has,
