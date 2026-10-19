@@ -57,6 +57,31 @@ class Chunks(unittest.TestCase):
         titles = [c["title"] for c in cl.propose(_graph(), Schemas())]
         self.assertEqual(titles, ["Load models", "Prompt", "Sampling", "Decode & save"])
 
+    def test_a_chunk_follows_the_chunks_that_feed_it(self):
+        # the role order would put Prompt before Sampling; here a sampler feeds the prompt
+        g = {
+            "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "a"}},
+            "2": {"class_type": "KSampler", "inputs": {"model": ["1", 0], "seed": 1}},
+            "3": {"class_type": "CLIPTextEncode", "inputs": {"text": ["2", 0], "clip": ["1", 1]}},
+            "4": {"class_type": "SaveImage", "inputs": {"images": ["3", 0]}},
+        }
+        chunks = cl.propose(g, Schemas())
+        where = {n: i for i, c in enumerate(chunks) for n in c["node_ids"]}
+        for k, n in g.items():
+            for v in n["inputs"].values():
+                if isinstance(v, list):
+                    self.assertLessEqual(where[v[0]], where[k], (v[0], k))
+
+    def test_a_cycle_between_chunks_still_returns_every_chunk(self):
+        g = {
+            "1": {"class_type": "KSampler", "inputs": {"model": ["2", 0]}},
+            "2": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1", 0]}},
+            "3": {"class_type": "SaveImage", "inputs": {"images": ["1", 0]}},
+            "4": {"class_type": "CheckpointLoaderSimple", "inputs": {}},
+        }
+        ids = [n for c in cl.propose(g, Schemas()) for n in c["node_ids"]]
+        self.assertEqual(sorted(ids), ["1", "2", "3", "4"])
+
     def test_every_node_is_in_exactly_one_chunk(self):
         ids = [n for c in cl.propose(_graph(), Schemas()) for n in c["node_ids"]]
         self.assertEqual(sorted(ids), sorted(_graph()))
