@@ -1,7 +1,7 @@
 ---
 name: self-extension
 description: How to extend yourself — capture a reusable procedure as a skill (create_skill), spawn a subagent for a heavy self-contained job (spawn_subagent), or author a ComfyUI node pack from a model's GitHub repo (create_custom_node) — plus the hard safety policy (never edit your own live code; write a proposal instead). Activate when the user asks you to build/save a skill, spawn a subagent, or turn a GitHub model into a node.
-allowed-tools: create_skill, list_skills, remove_skill, spawn_subagent, create_custom_node, list_generated_nodes, run_script, write_text_file, run_planner
+allowed-tools: add_mcp_server, use_mcp_server, create_skill, list_skills, remove_skill, spawn_subagent, create_custom_node, list_generated_nodes, run_script, write_text_file, run_planner
 ---
 
 # Self-extension
@@ -50,4 +50,9 @@ allowed-tools: create_skill, list_skills, remove_skill, spawn_subagent, create_c
   review. A human applies, tests, and restarts. Promoting a `_scratch` skill into
   the committed `skills/` set is likewise a human decision — surface it, don't do
   it silently.
-- Never write to `.env` or `config/` except through the settings UI path.
+- Never write to `.env` or `config/` except through the settings UI path — and
+  `add_mcp_server`, the one sanctioned tool for it: when the user asks you to
+  install/add an MCP server, call it with the start command, address or README JSON.
+  It shows the user exactly what will run and waits for their approval every time,
+  tests the server, saves it (keys to `.env`) and connects it; then `use_mcp_server`.
+  Never `run_script`/npm or hand-edit `config/mcp.json` for this.

@@ -970,7 +970,18 @@ agentY can use tools from external **MCP** servers. Manage them under
 2. **Add.** Keys in what you pasted are moved to `.env`.
 3. **Test** — connects once and lists the tools. Add a key or use **Browser
    sign-in** if it asks.
-4. **Save.** The server is available after the next agent start.
+4. **Save.** The server is available after the next agent start (a server the
+   agent added is connected at once).
+
+**Asking the agent:** say "install the X MCP" (and give the command, address or
+README JSON if you have it). The agent calls `add_mcp_server`, which shows you in
+the chat exactly what will run — command, arguments, the names of any keys — and
+waits for your **Allow**. It is asked every time; "allow for this session" never
+covers it, and with no agentY panel open the answer is no. After you allow it,
+the server is tested, and only if it starts is it saved to `config/mcp.json`
+(keys go to `.env`). Its tools work in the same conversation, no restart.
+`npx`/`uvx` packages are pinned to their current version. An MCP server runs code
+with your user's permissions, so approve only ones you trust.
 
 **Bundles (`.mcpb`):** **Install bundle…**, choose the file, check the command it
 will run, fill in its settings, **Install**, **Test**, **Save**. A bundle is code
@@ -978,6 +989,10 @@ that runs on your machine — install only ones you trust.
 
 **OAuth servers** (Magnific ships preconfigured): click **Authorize…**, sign in,
 restart the agent.
+
+**Remotion** (motion-graphics video): ask the agent to make a Remotion video; its
+`remotion` skill offers to install the `remotion-mcp` server (the shell sandbox has
+no Node, so the server is what runs `npm` and renders).
 
 Tools load on demand: the agent knows every server's tool names and loads a
 server's tools the first time a conversation needs them. `mcp_tools_on_demand =

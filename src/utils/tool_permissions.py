@@ -92,6 +92,8 @@ def describe(tool_name: str, tool_input: dict) -> str:
     data = tool_input if isinstance(tool_input, dict) else {}
     if tool_name == "run_script":
         return str(data.get("command", "")).strip()
+    if tool_name == "add_mcp_server" and data.get("summary"):
+        return str(data["summary"])
     if tool_name == "iterate":
         times = data.get("iter", 1)
         return f"{str(data.get('python_call', '')).strip()}   ×{times}"
@@ -165,14 +167,17 @@ def _asking_conversation() -> dict:
 
 
 def request(tool_name: str, tool_input: dict, *, timeout: float = DEFAULT_TIMEOUT,
-            unattended_allows: bool = False) -> Decision:
+            unattended_allows: bool = False, allow_session: bool = True) -> Decision:
     """Ask, and block this thread until somebody answers.
+
+    ``allow_session=False`` is for questions that must be asked every time: an
+    earlier "allow for this session" does not answer it and a new one is not kept.
 
     Returns a :class:`Decision`; a refusal is an ordinary outcome, not an error.
     """
     name = str(tool_name or "tool")
     with _LOCK:
-        if name in _SESSION_GRANTS:
+        if allow_session and name in _SESSION_GRANTS:
             return Decision(True, "allowed for this session", remembered=True)
 
     if not has_listener():
@@ -190,6 +195,7 @@ def request(tool_name: str, tool_input: dict, *, timeout: float = DEFAULT_TIMEOU
         "event": event, "reply": None,
         "request": {"permission_id": pid, "tool": name,
                     "summary": describe(name, tool_input),
+                    "allow_session": bool(allow_session),
                     "asked_at": _now(), **_asking_conversation()},
     }
     with _LOCK:
@@ -211,7 +217,7 @@ def request(tool_name: str, tool_input: dict, *, timeout: float = DEFAULT_TIMEOU
                 "Say what you were trying to do and I can ask again."))
         reply = entry["reply"] if isinstance(entry["reply"], dict) else {}
         allowed = bool(reply.get("allowed"))
-        if allowed and reply.get("remember"):
+        if allowed and reply.get("remember") and allow_session:
             with _LOCK:
                 _SESSION_GRANTS.add(name)
             return Decision(True, "allowed for the rest of this session", remembered=True)
