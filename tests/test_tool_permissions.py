@@ -205,6 +205,22 @@ class TheQueue(unittest.TestCase):
         tp.answer(first["permission_id"], False)
         t.join(timeout=3.0)
 
+    def test_pending_ids_drop_a_question_the_waiter_gave_up_on(self):
+        """The panel removes a card whose id is no longer listed as pending."""
+        t = threading.Thread(
+            target=lambda: tp.request("run_script", {"command": "x"}, timeout=1.0),
+            daemon=True)
+        t.start()
+        deadline = time.time() + 3.0
+        first = None
+        while first is None and time.time() < deadline:
+            first = tp.take()
+            time.sleep(0.01)
+        self.assertIsNotNone(first)
+        self.assertIn(first["permission_id"], tp.pending_ids())
+        t.join(timeout=5.0)
+        self.assertNotIn(first["permission_id"], tp.pending_ids())
+
     def test_a_reload_can_pick_up_an_unanswered_question(self):
         """A page that vanished mid-question must release it.
 
