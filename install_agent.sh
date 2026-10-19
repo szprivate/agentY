@@ -2,7 +2,7 @@
 # install_agent.sh — One-shot installer / bootstrapper for the full agentY stack.
 #
 # The macOS (and Linux) counterpart of install_agent.ps1: the same eight stages, in
-# the same order, with the same switches. Sets up the four repos that make up
+# the same order, with the same switches. Sets up the five repos that make up
 # agentY, prompts for the secrets it needs, and drops the chat UI into your ComfyUI:
 #
 #   * agentY                (this repo)  - the Strands chat host / pipeline
@@ -157,7 +157,7 @@ read_secret() {   # $1 = file  $2 = key  $3 = label  $4 = help
 
 # -- Release channel ----------------------------------------------------------
 # "stable" (the default) follows each repository's `stable` branch, which only
-# moves when a release is made - all four repositories together, so what runs is
+# moves when a release is made - all five repositories together, so what runs is
 # always a set that was tested together. "dev" follows the repository's `dev`
 # branch, where new work lands first, commit by commit. Set update_channel in
 # config/settings.local.json, or AGENTY_UPDATE_CHANNEL.

@@ -1,7 +1,7 @@
 """Make a release of the whole agentY stack, and read what a release is made of.
 
-agentY is four repositories - agentY, agentY-core, agentY-comfyuiConnect and
-agentY-mcp - that only work as a set. A release pins that set:
+agentY is five repositories - agentY, agentY-core, agentY-comfyuiConnect,
+agentY-mcp and ComfyUI-ImageViewer (the bEpic viewer) - that only work as a set. A release pins that set:
 
 * ``release.toml`` (in agentY) records the version and the commit of each
   sibling it was made with;
@@ -21,7 +21,7 @@ half-updated mix. ``update_channel = "dev"`` follows every commit instead.
 
 New work goes to each repository's `dev` branch first. A release takes the
 tested `dev` commits and moves the default branch (`main`; `master` in
-agentY-core) and `stable` to them, in all four repositories under one version
+agentY-core and ComfyUI-ImageViewer) and `stable` to them, in all five repositories under one version
 number. Every repository is released at the commit it has checked out, which
 must already be pushed. Run the tests first; this does not.
 """
@@ -42,7 +42,7 @@ import core_dir  # noqa: E402
 
 MANIFEST = ROOT / "release.toml"
 LOCK = ROOT / "requirements.lock"
-SIBLINGS = ("agentY-core", "agentY-comfyuiConnect", "agentY-mcp")
+SIBLINGS = ("agentY-core", "agentY-comfyuiConnect", "agentY-mcp", "ComfyUI-ImageViewer")
 STABLE = "stable"
 
 
@@ -103,7 +103,7 @@ def repo_dirs(parent: Path | None = None) -> dict:
     core = core_dir.find(parent)
     if core is not None:
         found["agentY-core"] = Path(core)
-    for name in ("agentY-comfyuiConnect", "agentY-mcp"):
+    for name in ("agentY-comfyuiConnect", "agentY-mcp", "ComfyUI-ImageViewer"):
         if (parent / name / ".git").exists():
             found[name] = parent / name
     return found
@@ -155,7 +155,7 @@ def drift(manifest: dict | None = None, dirs: dict | None = None) -> list:
 
 def drift_note() -> str:
     """One line for the launcher, or "" - only on the stable channel, where the
-    promise is that the four repositories are a released set."""
+    promise is that the five repositories are a released set."""
     try:
         if channel() != STABLE:
             return ""

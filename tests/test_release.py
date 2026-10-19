@@ -1,4 +1,4 @@
-"""A release is a set: four repositories at known commits, and pinned packages.
+"""A release is a set: five repositories at known commits, and pinned packages.
 
 Before this, every machine took the newest commit of each repository's main
 branch whenever it happened to start, so the four were compatible only by luck
@@ -27,7 +27,8 @@ class TheManifest(unittest.TestCase):
 
     REPOS = {"agentY-core": {"tag": "v1.2.0", "commit": "a" * 40},
              "agentY-comfyuiConnect": {"tag": "v1.2.0", "commit": "b" * 40},
-             "agentY-mcp": {"tag": "v1.2.0", "commit": "c" * 40}}
+             "agentY-mcp": {"tag": "v1.2.0", "commit": "c" * 40},
+             "ComfyUI-ImageViewer": {"tag": "v1.2.0", "commit": "d" * 40}}
 
     def test_what_is_written_is_what_is_read(self):
         text = mr.render_manifest("1.2.0", "2026-10-07", self.REPOS)
@@ -53,12 +54,17 @@ class TheManifest(unittest.TestCase):
 
 
 class WhereAReleaseGoes(unittest.TestCase):
+    REPOS_ALL = TheManifest.REPOS
     """dev first; a release moves the default branch and stable to the tested commit."""
 
     def test_the_release_moves_the_default_branch_and_stable(self):
         text = (ROOT / "scripts" / "make_release.py").read_text(encoding="utf-8")
         self.assertIn("(default_branch(path), STABLE)", text)
         self.assertIn("releases are meant to be cut from dev", text)
+
+    def test_the_viewer_is_one_of_the_released_repositories(self):
+        self.assertIn("ComfyUI-ImageViewer", mr.SIBLINGS)
+        self.assertIn("ComfyUI-ImageViewer", mr.render_manifest("1.2.0", "2026-10-07", self.REPOS_ALL))
 
     def test_every_repository_carries_the_rule_for_coding_agents(self):
         rule = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
@@ -159,7 +165,9 @@ class TheLock(unittest.TestCase):
         if manifest is None:
             self.skipTest("no release has been made from this checkout yet")
         self.assertRegex(manifest["version"], r"^\d+\.\d+\.\d+$")
-        for name in mr.SIBLINGS:
+        # The viewer joined the set after 1.1.8; a manifest written before the
+        # first release that includes it simply does not list it.
+        for name in (n for n in mr.SIBLINGS if n != "ComfyUI-ImageViewer" or n in manifest["repos"]):
             with self.subTest(repo=name):
                 self.assertRegex(manifest["repos"][name]["commit"], r"^[0-9a-f]{40}$")
                 self.assertEqual(manifest["repos"][name]["tag"], "v" + manifest["version"])

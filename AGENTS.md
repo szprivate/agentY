@@ -1,14 +1,15 @@
 # Rules for coding agents
 
 These apply to every repository of the agentY stack: **agentY**, **agentY-core**,
-**agentY-comfyuiConnect** and **agentY-mcp**. The same file is in each of them.
+**agentY-comfyuiConnect**, **agentY-mcp** and **ComfyUI-ImageViewer** (the bEpic
+viewer). The same file is in each of them.
 
 ## Branches
 
 | branch | what it is | who moves it |
 |---|---|---|
 | `dev` | where all new work goes first | you, by committing and pushing |
-| `main` (`master` in agentY-core) | the latest release | only a release |
+| `main` (`master` in agentY-core and ComfyUI-ImageViewer) | the latest release | only a release |
 | `stable` | the latest release; what installed machines follow | only a release |
 
 1. **Commit and push new work to `dev`.** Never commit or push directly to
@@ -24,7 +25,7 @@ These apply to every repository of the agentY stack: **agentY**, **agentY-core**
 4. **Moving tested work from `dev` to `main` / `stable` is a release** of the
    whole system, unless the user says otherwise. Do it only when the user asks
    for it, and only after the tests have been run.
-5. **A release covers all four repositories under one version number**, also
+5. **A release covers all five repositories under one version number**, also
    the ones that did not change, so version numbers stay the same across the
    stack. Never tag or release one repository by itself.
 6. **Use the release script**, from the agentY checkout, with every repository on

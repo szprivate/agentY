@@ -87,7 +87,7 @@ running one and offers to stop it. An install older than this behaviour needs on
 `git pull` in the `agentY` folder first, so that it has this installer.
 
 **Releases.** By default an install follows the `stable` channel: it only moves
-from one release to the next, and all four repositories move together. Set
+from one release to the next, and all five repositories move together. Set
 `update_channel` to `dev` (Settings ▸ Updates) to get every commit as it lands.
 See [Releases](docs/reference.md#releases).
 

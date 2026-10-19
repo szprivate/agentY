@@ -3,7 +3,7 @@
 How the pieces fit, plus ports, security and configuration files. For day-to-day
 use see [Using agentY](using-agentY.md).
 
-## The four repos
+## The five repos
 
 | Repo | Location | Role |
 |---|---|---|
@@ -11,6 +11,7 @@ use see [Using agentY](using-agentY.md).
 | **[agentY-core](https://github.com/szprivate/agentY-core)** | next to `agentY` | Shared tool layer (ComfyUI, Hugging Face, web, files) and the workflow template corpus. Required. |
 | **[agentY-comfyuiConnect](https://github.com/szprivate/agentY-comfyuiConnect)** | `<ComfyUI>/custom_nodes/` | The sidebar chat tab and the canvas nodes. |
 | **[agentY-mcp](https://github.com/szprivate/agentY-mcp)** | next to `agentY` | Optional MCP server for Claude Desktop, built on `agentY-core`. |
+| **[ComfyUI-ImageViewer](https://github.com/szprivate/ComfyUI-ImageViewer)** | `<ComfyUI>/custom_nodes/` | The bEpic viewer, agentY's standard picture/video viewer. Installed with agentY; released with it. |
 
 ## Architecture
 
@@ -34,10 +35,10 @@ and staged onto the graph as loader nodes.
 
 ## Releases
 
-agentY is four repositories that only work as a set. A release pins that set:
+agentY is five repositories that only work as a set. A release pins that set:
 
 - every repository gets the tag `v<version>` and a GitHub release;
-- each repository's **`main`** (`master` in agentY-core) and **`stable`** branch
+- each repository's **`main`** (`master` in agentY-core and ComfyUI-ImageViewer) and **`stable`** branch
   are moved to that commit;
 - `release.toml` in agentY records the version and each sibling's commit;
 - `requirements.lock` records the Python package versions it was tested with.
@@ -51,7 +52,7 @@ agentY is four repositories that only work as a set. A release pins that set:
 | `dev` | each repository's `dev` branch, every commit | working on agentY itself |
 
 **Branches.** New work goes to `dev` first. `main` and `stable` only move when a
-release is made, and a release always covers all four repositories under one
+release is made, and a release always covers all five repositories under one
 version number. The rules for coding agents are in `AGENTS.md` in each repository.
 
 A stable machine never goes backwards: a checkout that is already past the
