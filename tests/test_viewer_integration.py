@@ -105,12 +105,10 @@ class OneTabGroupedByStage(unittest.TestCase):
         self.assertLess(src.index("media_nodes.apply_savers(workflow)"), src.index("viewer_group.stamp("))
 
     def test_the_pipeline_records_the_stage_a_picture_belongs_to(self):
-        from src import pipeline
-        cls = next(c for c in vars(pipeline).values()
-                   if isinstance(c, type) and hasattr(c, "_stage_name"))
-        self.assertEqual(cls._stage_name({"title": "Characters", "hook_node_id": "7"}), "Characters")
-        self.assertEqual(cls._stage_name({"title": "agentY hook"}, "hero sheets"), "hero sheets")
-        self.assertEqual(cls._stage_name(None), "")
+        from src.pipeline import _stage_name
+        self.assertEqual(_stage_name({"title": "Characters", "hook_node_id": "7"}), "Characters")
+        self.assertEqual(_stage_name({"title": "agentY hook"}, "hero sheets"), "hero sheets")
+        self.assertEqual(_stage_name(None), "")
 
 
 class TaggingFromTheViewer(unittest.TestCase):

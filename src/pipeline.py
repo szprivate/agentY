@@ -208,6 +208,19 @@ def release_stale_invocation_lock(agent, why: str) -> bool:
     return False
 
 
+def _stage_name(hook: dict | None, declared: str = "") -> str:
+    """What the viewer files a stage's pictures under: the user's own name for the
+    hook ("Characters"), else the role they wrote in its prompt, else nothing -
+    a stage called "agentY hook" would only be noise over its thumbnails."""
+    if not hook:
+        return ""
+    try:
+        from src.utils.canvas_hooks import hook_title
+        return hook_title(hook) or " ".join(str(declared or "").split())[:40]
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 class _CanvasSchemas:
     """``/object_info`` as canvas_edit reads it (``.get(class)``), one class at a
     time through preflight's per-class cache — the whole database is seconds to
@@ -8157,19 +8170,6 @@ class Pipeline:
             return role
         return " ".join(str(hook.get("directive") or "").split())[:80]
 
-    @staticmethod
-    def _stage_name(hook: dict | None, declared: str = "") -> str:
-        """What the viewer files a stage's pictures under: the user's own name for the
-        hook ("Characters"), else the role they wrote in its prompt, else nothing —
-        a stage called "agentY hook" would only be noise over its thumbnails."""
-        if not hook:
-            return ""
-        try:
-            from src.utils.canvas_hooks import hook_title
-            return hook_title(hook) or " ".join(str(declared or "").split())[:40]
-        except Exception:  # noqa: BLE001
-            return ""
-
     def _tag_run_outputs(self, hook: dict | None = None, role: str = "") -> None:
         """Declare what the run about to start is for, before its files appear.
 
@@ -8191,7 +8191,7 @@ class Pipeline:
         set_run_role(final,
                      declared=bool(declared or role),
                      hook=str((hook or {}).get("hook_node_id") or ""),
-                     stage=self._stage_name(hook, declared))
+                     stage=_stage_name(hook, declared))
 
     @staticmethod
     def _variant_label(label: dict, limit: int = 70) -> str:
@@ -8261,7 +8261,7 @@ class Pipeline:
             role = f"{declared}: {what}" if declared else what
             set_workflow_role(path, role, hook=str((hook or {}).get("hook_node_id") or ""),
                               variant=i + 1, declared=bool(declared),
-                              stage=self._stage_name(hook, declared), asset=what)
+                              stage=_stage_name(hook, declared), asset=what)
 
     @staticmethod
     def _variant_report(paths: list, labels: list, errors: dict | None = None) -> list:
