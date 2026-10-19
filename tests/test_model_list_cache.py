@@ -105,3 +105,29 @@ class OllamaOverIPv4(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ModelListFreshness(unittest.TestCase):
+    """The fallback lists carry the current models; noise is filtered; prices resolve."""
+
+    def test_anthropic_fallback_has_the_current_ids(self):
+        ids = {spec for spec, _ in srv._ANTHROPIC_FALLBACK}
+        for mid in ("claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"):
+            self.assertIn(f"claude,{mid}", ids)
+
+    def test_gemini_filter_drops_non_chat_models_and_labels_the_rest(self):
+        for mid in ("gemini-3.8-live", "gemini-3.1-flash-tts-preview", "gemini-3.1-flash-image",
+                    "gemini-3.5-transcribe", "gemini-embedding-2"):
+            self.assertFalse(srv._gemini_keep(mid), mid)
+        self.assertTrue(srv._gemini_keep("gemini-3.1-pro-preview"))
+        self.assertEqual(srv._prettify_gemini_id("gemini-3.1-pro-preview"), "Gemini 3.1 Pro Preview")
+
+    def test_new_claude_models_are_priced_not_caught_by_an_old_prefix(self):
+        from src.utils import costs
+        per_m = lambda m: tuple(round(x * 1e6, 3) for x in costs._lookup_prices(m))
+        self.assertEqual(per_m("claude-opus-5-5"), (4.0, 20.0))
+        self.assertEqual(per_m("claude-opus-4-8"), (5.0, 25.0))
+        self.assertEqual(per_m("claude-sonnet-5-5"), (2.0, 10.0))
+        self.assertEqual(per_m("claude-haiku-5-5"), (0.1, 0.5))
+        self.assertEqual(per_m("claude-fable-5-1"), (10.0, 50.0))
+        self.assertEqual(per_m("claude-haiku-4-5-20251001"), (1.0, 5.0))
