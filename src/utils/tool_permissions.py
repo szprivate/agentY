@@ -195,6 +195,7 @@ def request(tool_name: str, tool_input: dict, *, timeout: float = DEFAULT_TIMEOU
         "event": event, "reply": None,
         "request": {"permission_id": pid, "tool": name,
                     "summary": describe(name, tool_input),
+                    "allow_session": bool(allow_session),
                     "asked_at": _now(), **_asking_conversation()},
     }
     with _LOCK:

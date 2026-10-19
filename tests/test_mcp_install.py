@@ -134,6 +134,17 @@ class Approval(unittest.TestCase):
             d = tp.request("add_mcp_server", {"summary": "x"}, allow_session=False)
         self.assertFalse(d.allowed)
 
+    def test_the_panel_event_carries_allow_session(self):
+        import threading
+        with mock.patch.object(tp, "has_listener", return_value=True):
+            t = threading.Thread(target=lambda: tp.request(
+                "add_mcp_server", {"summary": "x"}, timeout=2, allow_session=False))
+            t.start()
+            got = tp.take(wait=2)
+            self.assertIs(got["allow_session"], False)
+            tp.answer(got["permission_id"], False)
+            t.join(3)
+
     def test_prompt_shows_the_summary(self):
         self.assertEqual(tp.describe("add_mcp_server", {"summary": "Add X"}), "Add X")
 
