@@ -191,6 +191,25 @@ def _stages(graph: dict, schemas, lv: dict) -> tuple:
     return stage, titles
 
 
+def _by_dependency(items: list, graph: dict) -> list:
+    """*items* ``[((stage, role), ids)]`` reordered so a chunk follows every chunk
+    it receives links from. Ties keep the incoming order; a cycle between chunks
+    is broken at the earliest remaining one."""
+    home = {n: i for i, (_, ids) in enumerate(items) for n in ids}
+    feeds = [set() for _ in items]
+    for k, n in graph.items():
+        for v in (n.get("inputs") or {}).values():
+            if _is_link(v) and str(v[0]) in home and home[str(v[0])] != home[k]:
+                feeds[home[k]].add(home[str(v[0])])
+    rest, placed, out = list(range(len(items))), set(), []
+    while rest:
+        nxt = next((i for i in rest if feeds[i] <= placed), rest[0])
+        rest.remove(nxt)
+        placed.add(nxt)
+        out.append(items[nxt])
+    return out
+
+
 def propose(graph: dict, schemas, min_nodes: int = 4) -> list:
     """The chunks of *graph*: ``[{title, role, color, node_ids}]``, reading order.
 
@@ -209,8 +228,9 @@ def propose(graph: dict, schemas, min_nodes: int = 4) -> list:
         (st, r), ids = item
         return (min(lv[i] for i in ids) if st else 0, ROLE_ORDER.index(r), str(st))
 
+    ordered = _by_dependency(sorted(chunks.items(), key=order), graph)
     out = []
-    for (st, r), ids in sorted(chunks.items(), key=order):
+    for (st, r), ids in ordered:
         label = ROLE_LABELS[r]
         title = f"{stage_title.get(st, 'Shared')} · {label}" if stage else label
         out.append({"title": title, "role": r, "color": ROLE_COLORS[r],
