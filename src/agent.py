@@ -1250,6 +1250,16 @@ def _wrap_agent(*, role: str, llm: str, model, model_id: str, system_prompt: str
             _hooks.append(MediaSinkHookProvider())
     except Exception as _ms_exc:  # noqa: BLE001 - a missing piece must not stop an agent
         logging.getLogger("agentY.media_sink").warning("media sink hook not installed: %s", _ms_exc)
+    # The code an agent writes (a script, a custom node, a composition, a fenced
+    # block in the reply) goes to the viewer's "Agent code" panel: one hook on the
+    # tool arguments here, one turn observer for the reply text.
+    try:
+        from src.utils import code_sink
+        if not any(isinstance(h, code_sink.CodeSinkHookProvider) for h in _hooks):
+            _hooks.append(code_sink.CodeSinkHookProvider())
+        code_sink.install()
+    except Exception as _cs_exc:  # noqa: BLE001 - a missing piece must not stop an agent
+        logging.getLogger("agentY.code_sink").warning("code sink hook not installed: %s", _cs_exc)
     # Every agent gets the mid-turn guard: a specialist forty tool calls into one
     # delegation carries its results exactly like the orchestrator does.
     if _compaction is not None and not any(
