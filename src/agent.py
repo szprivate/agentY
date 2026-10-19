@@ -1241,6 +1241,15 @@ def _wrap_agent(*, role: str, llm: str, model, model_id: str, system_prompt: str
     _hooks = list(agent_kwargs.get("hooks") or [])
     if not any(isinstance(h, ToolActivityHookProvider) for h in _hooks):
         _hooks.append(ToolActivityHookProvider(role=role))
+    # Every agent's tool results are read for media files made outside a ComfyUI
+    # save node (an MCP render, a script's output), which are then put on the
+    # canvas and in the viewer. One hook here, not a patch per tool.
+    try:
+        from src.utils.media_sink import MediaSinkHookProvider
+        if not any(isinstance(h, MediaSinkHookProvider) for h in _hooks):
+            _hooks.append(MediaSinkHookProvider())
+    except Exception as _ms_exc:  # noqa: BLE001 - a missing piece must not stop an agent
+        logging.getLogger("agentY.media_sink").warning("media sink hook not installed: %s", _ms_exc)
     # Every agent gets the mid-turn guard: a specialist forty tool calls into one
     # delegation carries its results exactly like the orchestrator does.
     if _compaction is not None and not any(

@@ -67,6 +67,7 @@ from pathlib import Path
 from src.utils import conversation_store as cs
 from src.utils import status_bus
 from src.utils import notify_bus
+from src.utils import media_sink
 from src.utils import interject_bus
 from agenty_core.utils import turn_scope
 from src.utils.pipeline_pool import ConversationBusy, PipelinePool, PoolTimeout
@@ -516,6 +517,58 @@ def _staged_copy(path: str) -> str | None:
 # that is seconds per loader, and the frontend's splash waits for all of them.
 # Loaders read "agentY/<file>" all the same (as ComfyUI's own "pasted/<file>").
 STAGE_SUBFOLDER = "agentY"
+
+
+def _viewer_copy(path: str, staged: str | None) -> str | None:
+    """The file the bEpic viewer may open: it only reads inside ComfyUI's own
+    folders, so a result agentY wrote elsewhere is shown from its staged copy."""
+    in_dir = _comfy_input_dir()
+    if staged and in_dir is not None and (in_dir / staged).is_file():
+        return str(in_dir / staged)
+    if in_dir is None:
+        return None
+    here = Path(path).resolve()
+    for base in (in_dir, in_dir.parent / "output", in_dir.parent / "temp"):
+        try:
+            here.relative_to(base.resolve())
+            return path
+        except ValueError:
+            continue
+    return None
+
+
+def _deliver_elsewhere(path: str, kind: str, staged: str | None, role: str,
+                       index, origin: str, thread_id: str) -> None:
+    """Everything a turn's ``output`` event does not do on its own.
+
+    * The viewer: a file that came through no save node (an MCP render, a script's
+      output, an edit render, a downloaded reference) was registered with
+      :mod:`src.utils.media_sink`, which remembered its group; it is sent to the
+      viewer's agentY tab here, once, from its staged copy. A save node's own
+      output has no such record and is already there.
+    * The canvas, for a turn no page is streaming (a shot, a lead woken by its
+      shots, a Slack turn): its ``output`` event only fed a queue nobody reads - a
+      page watching that turn deliberately does not drop - so the file is announced
+      on the notification bus, which the open panel polls, once per file.
+    """
+    try:
+        intent = media_sink.take(path)
+        if intent is not None and kind in ("image", "video", "model"):
+            target = _viewer_copy(path, staged)
+            if target:
+                media_sink.push_to_viewer(target, intent.get("group", ""),
+                                          intent.get("label", "") or Path(path).stem)
+        if origin != "panel" and kind != "file" and media_sink.claim_drop(path):
+            notify_bus.emit({"kind": "media", "output": {
+                "kind": kind, "path": path, "filename": staged, "name": Path(path).name,
+                "role": role, "role_declared": False,
+                "node_candidates": _NODE_CANDIDATES.get(kind, []),
+                "drop": _drop_outputs_into_canvas(),
+                # Its number belongs to another conversation's list: no card here.
+                "index": None, "show": False,
+            }})
+    except Exception as exc:  # noqa: BLE001 - delivery elsewhere must not cost the turn its output
+        logger.warning("could not deliver %s to the viewer/canvas: %s", path, exc)
 
 
 def _stage_into_comfy_input(path: str, subfolder: str = "") -> str | None:
@@ -1708,6 +1761,7 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
                 "drop": _drop_outputs_into_canvas(),
                 "index": index, "show": _show_outputs_in_panel(),
             })
+            _deliver_elsewhere(p, kind, staged, role, index, origin, thread_id)
 
     def _emit_paths(paths: list[str], caption: str = "") -> None:
         for p in paths:
@@ -4424,6 +4478,12 @@ def _build_app():
             snap["pending"] = magnific_watch.active_count()
         except Exception:  # noqa: BLE001
             snap["pending"] = 0
+        # A turn nobody streams (a shot) puts its results on this bus too, so the
+        # panel keeps polling while one is running.
+        try:
+            snap["pending"] += sum(1 for t in turn_bus.active() if getattr(t, "origin", "panel") != "panel")
+        except Exception:  # noqa: BLE001
+            pass
         return jsonify(snap)
 
     # ── Canvas probes: ask the open page something and wait for its answer ──

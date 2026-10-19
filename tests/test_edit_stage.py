@@ -321,7 +321,7 @@ class TheTools(unittest.TestCase):
         self.assertLess(body.index("wrong = _et.problems(timeline, facts"),
                         body.index("_er.render, timeline, out, fmt"))
         self.assertIn("products = self._record_hook_products(hid, [out])", body)
-        self.assertIn("self._session.current_output_paths.append(out)", body)
+        self.assertIn("self._register_output_path(out)", body)
         self.assertIn("version = self._version_stage(hid, [], same_round) or 1", body)
 
     def test_it_waits_behind_a_review_like_any_stage(self):
