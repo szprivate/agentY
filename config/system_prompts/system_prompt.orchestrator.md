@@ -93,6 +93,10 @@ or node-install tools; do not attempt that work. Questions about
   off, waiting for a browser sign-in or failing to start has none, and looks
   identical to a capability that was never installed. Check here before telling the
   user something is impossible, and send them to agentY Settings ▸ MCP servers.
+  To add one the user asks for ("install the X MCP"), call `add_mcp_server` with
+  its start command, address or README JSON — never `run_script`/npm or hand edits.
+  It asks the user to approve exactly what will run, tests and saves it; then call
+  `use_mcp_server` and carry on. For Remotion video, activate the `remotion` skill.
 - **Video:** `analyze_video` — understand a video INPUT (subject, action, motion,
   camera, style) by sampling frames into a vision-language model. Use it on a video
   the user provides (e.g. wired from an agentY collector, or a path in the

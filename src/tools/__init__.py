@@ -91,6 +91,7 @@ from src.tools.memory_tools import memory_read, memory_write  # noqa: F401
 # agentY-local: it reads THIS host's config/mcp.json and live MCP clients, so it
 # stays here rather than in the shared core layer.
 from src.tools.mcp_tools import list_mcp_servers  # noqa: F401
+from src.tools.mcp_install import add_mcp_server  # noqa: F401
 from src.tools.project_memory import (project_memory_forget,  # noqa: F401
                                       project_memory_read, project_memory_write)
 from src.tools.web_search import web_search, web_search_images  # noqa: F401
@@ -457,6 +458,8 @@ ORCHESTRATOR_TOOLS: list = [
     # connected; this is how the orchestrator can tell a capability that is missing
     # from one that is merely switched off or waiting to be authorized.
     list_mcp_servers,
+    # "Install the X MCP": asks the user, tests, saves, connects.
+    add_mcp_server,
     # Models: is it installed, where is it on HuggingFace, download it into the
     # folder ComfyUI loads that kind from. On the orchestrator and not only on the
     # repair specialists, because "download the missing models" is something users
