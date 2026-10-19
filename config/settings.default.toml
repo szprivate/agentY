@@ -237,6 +237,9 @@ model_save = "bEpicSendToViewer"
 # The viewer tab all of the agent's pictures go to; each stage's pictures are
 # grouped under its hook title inside it. "" leaves the viewer node's own tab.
 viewer_tab = "agentY"
+# When the edit node finishes a render, open the film in the viewer with its Edit
+# panel on the cut (the .otio beside it). false: the film is only shown, as before.
+viewer_open_edit = true
 # How a clip is saved when the chosen video save node can do both (bEpic's Send
 # to Image Viewer): "video" = a video file (mp4), "sequence" = one image per
 # frame, named prefix.1001.<ext>, in sequence_format.
