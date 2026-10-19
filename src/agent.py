@@ -961,6 +961,8 @@ _ORCH_SKILL_NAMES = [
     "spawn-subagent", "batch-handoff", "image-downsize",
     # Building a hook pipeline on the canvas out of agentY's own nodes.
     "hook-pipeline",
+    # Tidying the open canvas: groups, names, colours, layout, saving.
+    "canvas-layout",
 ]
 
 

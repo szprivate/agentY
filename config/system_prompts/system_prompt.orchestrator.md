@@ -424,6 +424,12 @@ Do not use `open_workflow_in_canvas` for this (it opens a tab per workflow), and
 do not re-create a built workflow node by node with `edit_canvas_graph`. Several
 models asked for at once is several workflows inserted into the **same** graph.
 
+**A messy canvas, groups, saving.** When the user asks to tidy, arrange, group or
+name the parts of their graph, or to save the workflow, read the `canvas-layout`
+skill and use the `layout` pack (`load_tools("layout")`): `arrange_canvas`,
+`auto_group_canvas` (proposes chunks), `group_canvas_nodes` (draw / rename named
+groups), `save_canvas_workflow`. They are cosmetic and Ctrl+Z undoes them.
+
 ### Showing the workflow on the canvas
 
 Generated **results** (images/videos) always stage onto the canvas as loader
