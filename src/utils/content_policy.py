@@ -63,6 +63,10 @@ _SIGNATURES: tuple = (
     (re.compile(r"\bcontent_policy_violation\b|\bmoderation_blocked\b|"
                 r"\bimage_content_policy_violation\b", re.I), "OpenAI", "input"),
     (re.compile(r"rejected as a result of our safety system", re.I), "OpenAI", "input"),
+    # Alibaba DashScope (Wan, HappyHorse, Qwen-Image) — dashscope_generate's own
+    # error text carries the API code. Input stage: the prompt or image was refused.
+    (re.compile(r"IPInfringementSuspect", re.I), "DashScope", "input"),
+    (re.compile(r"DataInspectionFailed|data inspection failed", re.I), "DashScope", "unknown"),
     # Black Forest Labs / Flux — polling statuses
     (re.compile(r"\bRequest Moderated\b", re.I), "Black Forest Labs", "input"),
     (re.compile(r"\bContent Moderated\b", re.I), "Black Forest Labs", "output"),

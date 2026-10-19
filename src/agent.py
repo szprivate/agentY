@@ -992,6 +992,8 @@ _ORCH_SKILL_NAMES = [
     "hook-pipeline",
     # Tidying the open canvas: groups, names, colours, layout, saving.
     "canvas-layout",
+    # Image/video generation on the user's own DashScope key.
+    "dashscope-generate",
 ]
 
 

@@ -150,6 +150,10 @@ from agenty_core.tools.workspace_tools import (  # noqa: F401,E402
     get_node_source, list_files, find_workflows, media_info, video_frames, read_web_page,
 )
 
+# Image / video generation on the user's own DashScope key, not Comfy credits
+# (agenty_core.tools.dashscope_generate).
+from agenty_core.tools.dashscope_generate import dashscope_generate, dashscope_fetch  # noqa: F401,E402
+
 _SHARED_CORE_TOOLS = [
     # comfyui
     "interrupt_execution", "free_memory", "get_history",
@@ -174,6 +178,8 @@ _SHARED_CORE_TOOLS = [
     # to be agentY-local @tool functions; missing them here hands Strands a bare
     # function where it expects a DecoratedFunctionTool.
     "download_image", "upload_file_to_url",
+    # generation on the user's own DashScope key
+    "dashscope_generate", "dashscope_fetch",
     # per-project memory — moved to the shared layer (a Claude Desktop session on
     # the same ComfyUI now reads and writes the same facts the panel does), so it
     # arrives as a plain callable and needs wrapping like every other core tool.
@@ -518,6 +524,8 @@ ORCHESTRATOR_TOOLS: list = [
     annotate_image,      # circle/box/arrow things in an image (overlay, not a re-render)
     download_image,
     upload_file_to_url,  # PUT a local file to a presigned URL (MCP upload flows)
+    dashscope_generate,  # image/video on the user's own DashScope key (not Comfy credits)
+    dashscope_fetch,     # collect one that timed out
     # Files / shell / web
     read_text_file,
     write_text_file,
