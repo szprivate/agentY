@@ -104,8 +104,9 @@ class EveryRouteAResultArrivesBy(unittest.TestCase):
         never = again.count('"type": "output"')
         self.assertEqual((never, again.count('"drop": False')), (1, 1))
         self.assertEqual(source.count('"drop": _drop_outputs_into_canvas()'),
-                         emitters - never + 1,
-                         "every output event, plus the background Magnific drop")
+                         emitters - never + 2,
+                         "every output event, plus the background Magnific drop and "
+                         "the announcement for a turn nobody streams (a shot)")
 
 
 @unittest.skipIf(_PANEL is None, "the agentY-comfyuiConnect extension is not beside this checkout")

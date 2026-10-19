@@ -338,6 +338,11 @@ standard viewer: the installer puts it beside the sidebar extension and
   (`agentY`, changeable in Settings). Pictures from a hook sit under a heading with
   the hook's **title** — name your hooks *Characters*, *Places* — and a batch's
   pictures wear their own name (each character) on the thumbnail.
+- **Not only the save node.** A film an MCP tool rendered (Remotion, say), a file
+  a script wrote, a shot's picture and an edit render also appear in that tab,
+  under the MCP server's, the shot's or the hook's name, and on the canvas as a
+  loader node - even in a turn that has no graph of its own. Each file is sent
+  once. Switch the viewer part off with `media_nodes.viewer_push = false`.
 - **Tag for agentY…** — right-click a picture in the viewer's history, give it a
   name, and `#name` works in any hook prompt and in the collector's `#` menu, in
   any graph: the same as an `agentY add tag` node with *remember* on.
