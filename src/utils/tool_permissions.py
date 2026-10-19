@@ -293,6 +293,15 @@ def answer(permission_id: str, allowed: bool, *, remember: bool = False,
         return True
 
 
+def pending_ids() -> list[str]:
+    """Ids of the questions still waiting for an answer.
+
+    Sent along with every poll so a panel showing a card can tell that the host
+    has stopped waiting for it (timed out, turn stopped) and take it down."""
+    with _LOCK:
+        return list(_PENDING)
+
+
 def pending_count() -> int:
     with _LOCK:
         return len(_PENDING)

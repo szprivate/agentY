@@ -4432,7 +4432,11 @@ def _build_app():
             wait = min(30.0, max(0.0, float(request.args.get("wait", 0))))
         except (TypeError, ValueError):
             wait = 0.0
-        return jsonify({"request": tp.take(wait), "granted": tp.granted_for_session()})
+        # "pending" lets a panel that is showing a card notice the host stopped
+        # waiting for it (timed out, turn stopped) and remove the stale card.
+        found = tp.take(wait)
+        return jsonify({"request": found, "granted": tp.granted_for_session(),
+                        "pending": tp.pending_ids()})
 
     @app.route("/agentY/permission/reply", methods=["POST", "OPTIONS"])
     def permission_reply():
