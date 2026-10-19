@@ -76,6 +76,9 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
     "admin": ("the agent's own settings and logs, Slack, freeing GPU memory, clearing the history",
               ("set_agent_setting", "list_agent_settings", "get_logs", "send_to_slack",
                "free_memory", "get_system_stats", "clear_history")),
+    "layout": ("make the open canvas readable: arrange nodes without overlaps, split into named coloured "
+               "groups, rename groups, save the workflow (read the `canvas-layout` skill first)",
+               ("arrange_canvas", "group_canvas_nodes", "auto_group_canvas", "save_canvas_workflow")),
     "worlds": ("build a walkable 3D world from reference images", ("run_world_builder",)),
     # Pinned by the pipeline on the turns they belong to (CONTEXT_PACKS).
     "hooks": ("the stages of a hook pipeline on the canvas - already in your list whenever the canvas "

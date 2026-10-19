@@ -3846,6 +3846,212 @@ class Pipeline:
             return json.dumps({"status": "applied", "mode": mode, "node_ids": ids,
                                "message": "Applied to the live canvas; the user can undo with Ctrl+Z."})
 
+        def _layout_scope(ids: list) -> str:
+            """"" when these node ids may be laid out this turn, else the refusal.
+            In selection-only mode the same rule as every other canvas edit."""
+            if ids and not self._canvas_full_graph():
+                selected = {str(n.get("id")) for n in (self._canvas_selection or [])}
+                outside = [n for n in ids if n not in selected]
+                if outside:
+                    return json.dumps({
+                        "error": f"node(s) {', '.join(outside)} are not in the current canvas "
+                                 f"selection, so they cannot be moved or grouped.",
+                        "what_to_do": "Ask the user to select the nodes, or leave node_ids out "
+                                      "to lay out the selection."})
+            return ""
+
+        def _push_layout(groups: list, arrange, reason: str, summary: str) -> None:
+            from src.utils.canvas_patch import push as _push_patch
+            _push_patch({"op": "layout", "groups": groups, "arrange": arrange,
+                         "reason": str(reason or "").strip()})
+            self._canvas_edits = (getattr(self, "_canvas_edits", None) or []) + [
+                summary + (f" ({str(reason).strip()})" if str(reason or "").strip() else "")]
+            _push_progress("🧭 Canvas layout: " + summary + (f" - {reason}" if reason else ""))
+
+        @_tool
+        async def arrange_canvas(node_ids: list | None = None, reason: str = "") -> str:
+            """Tidy the layout of the graph open on the canvas: no overlaps, data flowing left to right.
+
+            Lays nodes out in columns by how far they are from the inputs (loaders
+            at the left, the save at the right), several nodes in a column one
+            under another, spaced by their real sizes so nothing sits on top of
+            anything. A node inside a group stays inside it and the group is
+            redrawn round its nodes; groups sit next to each other in the order
+            their data flows. Nothing is rewired, renamed or deleted and nothing
+            is queued; the user can undo it with Ctrl+Z.
+
+            Use when the user says the graph is a mess, nodes overlap, or after
+            you added nodes or groups. It MOVES the user's nodes, so on a graph
+            they arranged themselves, do it when they ask for it (or say what you
+            are about to do) rather than as a side effect.
+
+            Args:
+                node_ids: Only these nodes (and everything in the groups they are
+                    in) - omit for the whole canvas. Ids as in `[CANVAS GRAPH]`.
+                reason: One line on why, shown to the user.
+            """
+            _held = self._canvas_lease_refusal()
+            if _held:
+                return _held
+            ids = [str(n).strip().lstrip("#") for n in (node_ids or []) if str(n).strip()]
+            ids = list(dict.fromkeys(ids))
+            graph = getattr(self, "_canvas_graph", None)
+            if not isinstance(graph, dict) or not graph:
+                return json.dumps({"error": "no graph is open on the canvas this turn."})
+            refused = _layout_scope(ids)
+            if refused:
+                return refused
+            if not ids and not self._canvas_full_graph():
+                ids = [str(n.get("id")) for n in (self._canvas_selection or [])]
+                if not ids:
+                    return json.dumps({"error": "nothing is selected and the whole canvas is not visible to you.",
+                                       "what_to_do": "Ask the user to select the nodes to tidy."})
+            _push_layout([], {"node_ids": ids or None}, reason,
+                         f"arranged {len(ids)} node(s)" if ids else "arranged the whole canvas")
+            return json.dumps({"status": "applied", "arranged": ids or "all",
+                               "message": "Laid out on the live canvas (left to right, no overlaps); "
+                                          "the user can undo with Ctrl+Z."})
+
+        @_tool
+        async def group_canvas_nodes(groups: list | str, arrange: bool = True, reason: str = "") -> str:
+            """Draw named, coloured groups round sets of nodes on the canvas, or rename existing ones.
+
+            ``groups`` is a list of ``{"title": "Load models", "node_ids": ["4","9"],
+            "color": "models"}``. The box is drawn round the nodes' real rectangles.
+            ``color`` is a hex colour or a role: models, inputs, prompt, sampling,
+            finish, hooks, other (the same colour for the same kind of chunk on
+            every graph - see the canvas-layout skill). A group already titled
+            the same is resized round the new nodes instead of duplicated. To
+            RENAME a group, give ``"rename_from": "<its current title>"`` with the
+            new ``title`` (leave ``node_ids`` empty to keep what it holds).
+
+            With ``arrange`` (the default) the groups are then laid out so they do
+            not overlap each other or other nodes; set it false to keep every node
+            exactly where it is (a box drawn round scattered nodes can cover
+            others). Only the groups change: no node is rewired or deleted. The
+            user can undo with Ctrl+Z. To split a graph into chunks, call
+            ``auto_group_canvas`` first, or decide the chunks yourself and send
+            them here.
+
+            Args:
+                groups: The groups, as above.
+                arrange: Lay out the grouped nodes without overlaps (default true).
+                reason: One line on why, shown to the user.
+            """
+            _held = self._canvas_lease_refusal()
+            if _held:
+                return _held
+            from src.utils import canvas_layout as _cl
+            graph = getattr(self, "_canvas_graph", None)
+            if not isinstance(graph, dict) or not graph:
+                return json.dumps({"error": "no graph is open on the canvas this turn."})
+            if isinstance(groups, str):
+                try:
+                    groups = json.loads(groups)
+                except Exception:  # noqa: BLE001
+                    return json.dumps({"status": "rejected", "errors": ["groups is text that is not valid JSON."],
+                                       "note": "Nothing was changed."})
+            specs, errors = _cl.clean_group_specs(groups)
+            named = [n for s in specs for n in s["node_ids"]]
+            if not errors:
+                # Bypassed and muted nodes are not in [CANVAS GRAPH] but are on the
+                # canvas, so an unknown id is only refused when NOTHING is known.
+                if named and not any(n in graph for n in named):
+                    errors.append("none of those node ids are on the canvas - take them from [CANVAS GRAPH].")
+            if errors:
+                return json.dumps({"status": "rejected", "errors": errors, "note": "Nothing was changed."})
+            refused = _layout_scope(named)
+            if refused:
+                return refused
+            titles = ", ".join(s["title"] for s in specs)
+            _push_layout(specs, {"node_ids": None, "only_groups": True} if arrange else None, reason,
+                         f"grouped: {titles}")
+            return json.dumps({"status": "applied", "groups": [s["title"] for s in specs],
+                               "message": "Groups drawn on the live canvas"
+                                          + (" and the grouped nodes laid out without overlaps" if arrange else "")
+                                          + "; the user can undo with Ctrl+Z."})
+
+        @_tool
+        async def auto_group_canvas(apply: bool = False, arrange: bool = True, reason: str = "") -> str:
+            """Split the open graph into meaningful chunks and (optionally) draw them as groups.
+
+            Reads the graph's structure - model loaders, input media, prompt and
+            conditioning, sampling, decode and save, hook stages - and proposes one
+            group per chunk, titled by role and coloured the same on every graph;
+            a graph with several generating stages is cut per stage ("Flux ·
+            Sampling"). With ``apply=false`` (the default) NOTHING is changed: you
+            get the proposal back, to read, rename by what each chunk PRODUCES
+            (see the canvas-layout skill) and send on to ``group_canvas_nodes``.
+            With ``apply=true`` the proposed groups are drawn as they are, and
+            with ``arrange`` (default) laid out without overlaps; Ctrl+Z undoes it.
+
+            Returns an empty proposal for a graph that is too small to need one.
+
+            Args:
+                apply: Draw the proposed groups now instead of only returning them.
+                arrange: With apply, also arrange the nodes left to right without overlaps.
+                reason: One line on why, shown to the user.
+            """
+            from src.utils import canvas_layout as _cl
+            graph = getattr(self, "_canvas_graph", None)
+            if not isinstance(graph, dict) or not graph:
+                return json.dumps({"error": "no graph is open on the canvas this turn."})
+            if not self._canvas_full_graph():
+                selected = {str(n.get("id")) for n in (self._canvas_selection or [])}
+                graph = {k: v for k, v in graph.items() if k in selected}
+            chunks = _cl.propose(graph, _CanvasSchemas())
+            if not chunks:
+                return json.dumps({"status": "nothing_to_split", "chunks": [],
+                                   "message": "The graph is too small, or all one kind of thing - "
+                                              "grouping would add a box and say nothing."})
+            out = {"chunks": [{"title": c["title"], "color": c["color"], "node_ids": c["node_ids"]}
+                              for c in chunks]}
+            if not apply:
+                out["status"] = "proposed"
+                out["message"] = ("Nothing was changed. Rename any chunk by what it produces, then draw "
+                                  "them with group_canvas_nodes - or call auto_group_canvas(apply=true).")
+                return json.dumps(out)
+            _held = self._canvas_lease_refusal()
+            if _held:
+                return _held
+            specs = [{"title": c["title"], "node_ids": c["node_ids"], "color": c["color"]} for c in chunks]
+            _push_layout(specs, {"node_ids": None, "only_groups": True} if arrange else None, reason,
+                         "split into " + ", ".join(s["title"] for s in specs))
+            out["status"] = "applied"
+            out["message"] = "Groups drawn on the live canvas; the user can undo with Ctrl+Z."
+            return json.dumps(out)
+
+        @_tool
+        async def save_canvas_workflow(name: str = "", overwrite: bool = False) -> str:
+            """Save the workflow open on the canvas (the tab's own save, as Ctrl+S does).
+
+            A workflow that has never been saved ("Unsaved Workflow") needs a
+            ``name`` - a short file name for what it does, "flux_portrait_upscale"
+            - and is saved under it in the user's workflows. A workflow that is
+            already a file is saved over that file ONLY with ``overwrite=true``;
+            without it you are told which file would be replaced, and nothing is
+            written. A ``name`` that is already another workflow's file is refused,
+            never replaced. Say what was saved and where.
+
+            Does not change the graph. Needs the ComfyUI page open.
+
+            Args:
+                name: File name (no folder, no ``.json``) for a workflow that has no file yet.
+                overwrite: True to save over the open workflow's own file.
+            """
+            from src.utils import canvas_probe as _probe
+            _held = self._canvas_lease_refusal()
+            if _held:
+                return _held
+            if self._dry_run:
+                return json.dumps({"error": "this is a dry run - nothing is saved."})
+            reply = await asyncio.to_thread(
+                _probe.request, "save_workflow",
+                {"name": str(name or "").strip(), "overwrite": bool(overwrite)}, 30.0)
+            if reply.get("error") and not reply.get("status"):
+                return json.dumps({"status": "failed", "error": reply["error"]})
+            return json.dumps(reply)
+
         @_tool
         async def list_agent_settings() -> str:
             """The agentY settings you can change for the user, and their values now.
@@ -5036,6 +5242,7 @@ class Pipeline:
                  read_beats, list_text_presets, find_text_demos, try_text_preset,
                  keep_text_preset, edit_timeline, render_edit, work_in_open_graph,
                  set_canvas_node_mode,
+                 arrange_canvas, group_canvas_nodes, auto_group_canvas, save_canvas_workflow,
                  run_canvas,
                  loop_check, forward_outputs, name_outputs,
                  list_agent_settings, set_agent_setting]

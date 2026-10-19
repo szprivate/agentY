@@ -715,6 +715,26 @@ without labels; select a part to get it readable. The ComfyUI tab must be open.
 
 ![A workflow photographed by `screenshot_canvas`](images/canvas-screenshot.png)
 
+### Tidying the canvas: layout, groups, saving
+
+> *"This graph is a mess - tidy it and put it in groups."*
+
+The agent can lay a graph out so nothing overlaps and the data flows left to right
+(**arrange**), split it into chunks and draw them as named, coloured groups
+(**group**), rename the groups you already have, and save the workflow. It follows
+the `canvas-layout` skill: a chunk is one step you can name and skip (load models,
+prompt, sampling, decode and save, a hook stage), groups are named by what they
+produce rather than by node class, and the same kind of chunk is always the same
+colour. A graph with two generating stages gets its chunks per stage. Groups you
+drew yourself are not renamed or recoloured unless you ask.
+
+- Arranging **moves your nodes**, so on a layout you made by hand ask for it
+  explicitly; everything is undone with **Ctrl+Z**, and nothing is rewired.
+- *"Which groups would you make?"* gets a proposal and changes nothing.
+- *"Save it as `portrait_upscale`."* saves a workflow that has never been saved
+  under that name. It never replaces another workflow's file; saving over the file
+  the tab already has needs you to say so (*"yes, overwrite it"*).
+
 ### Loops: keep trying until it's right
 
 > *"Change the prompt until the woman's position matches the original frame."*
