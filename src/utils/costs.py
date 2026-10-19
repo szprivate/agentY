@@ -35,7 +35,18 @@ def _mtok(inp: float, out: float) -> tuple:
 # Source: https://platform.claude.com/docs/en/about-claude/pricing  (Apr 2026)
 # ---------------------------------------------------------------------------
 ANTHROPIC_PRICES: Dict[str, Tuple[float, float]] = {
+    # Claude 5.x  (https://platform.claude.com/docs/en/about-claude/pricing)
+    # Haiku 5.5 is tiered ($0.50/$2.50 over 100k-token prompts); the base tier is stored.
+    "claude-fable-5-1":       _mtok(10.00,  50.00),
+    "claude-fable-5":         _mtok(10.00,  50.00),
+    "claude-opus-5-5":        _mtok( 4.00,  20.00),
+    "claude-opus-5":          _mtok( 5.00,  25.00),
+    "claude-sonnet-5-5":      _mtok( 2.00,  10.00),
+    "claude-sonnet-5":        _mtok( 2.00,  10.00),
+    "claude-haiku-5-5":       _mtok( 0.10,   0.50),
     # Claude 4.x
+    "claude-opus-4-8":        _mtok( 5.00,  25.00),
+    "claude-opus-4-7":        _mtok( 5.00,  25.00),
     "claude-opus-4-6":        _mtok( 5.00,  25.00),
     "claude-opus-4-5":        _mtok( 5.00,  25.00),
     "claude-opus-4-1":        _mtok(15.00,  75.00),
@@ -94,6 +105,9 @@ OPENAI_PRICES: Dict[str, Tuple[float, float]] = {
 # ---------------------------------------------------------------------------
 GEMINI_PRICES: Dict[str, Tuple[float, float]] = {
     # Gemini 3.x  (newest generation)
+    "gemini-3.8-flash":              _mtok(0.750,   3.75),  # intro rate to 2026-12-31; 1.50/7.50 from 2027-01-01
+    "gemini-3.6-flash":              _mtok(0.750,   3.75),  # same intro rate
+    "gemini-3.5-flash-lite":         _mtok(0.300,   2.50),
     "gemini-3.1-pro-preview":        _mtok(2.000,  12.00),
     "gemini-3.1-flash-lite-preview":  _mtok(0.250,   1.50),
     "gemini-3-flash-preview":         _mtok(0.500,   3.00),
@@ -182,9 +196,11 @@ def _lookup_prices(model_id: str) -> Optional[Tuple[float, float]]:
     if key in _ALL_PRICES:
         return _ALL_PRICES[key]
     # Prefix match: handles snapshot-dated IDs like "claude-haiku-4-5-20251001"
-    for table_key, prices in _ALL_PRICES.items():
+    # Longest table key first, so "claude-opus-4-8" never lands on the old
+    # "claude-opus-4" ($15/$75) row just because it came earlier in the table.
+    for table_key in sorted(_ALL_PRICES, key=len, reverse=True):
         if key.startswith(table_key) or table_key.startswith(key):
-            return prices
+            return _ALL_PRICES[table_key]
     return None
 
 

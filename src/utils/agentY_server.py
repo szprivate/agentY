@@ -2707,6 +2707,10 @@ def _dispatch_to_agent(message: str, image_paths: list[str], node_id: str | None
 
 # Fallbacks — used only when a provider's /models endpoint can't be reached.
 _ANTHROPIC_FALLBACK = [
+    ["claude,claude-fable-5-1", "Claude Fable 5.1"],
+    ["claude,claude-opus-5-5", "Claude Opus 5.5"],
+    ["claude,claude-sonnet-5-5", "Claude Sonnet 5.5"],
+    ["claude,claude-haiku-5-5", "Claude Haiku 5.5"],
     ["claude,claude-opus-4-8", "Claude Opus 4.8"],
     ["claude,claude-sonnet-5", "Claude Sonnet 5"],
     ["claude,claude-haiku-4-5", "Claude Haiku 4.5"],
@@ -2725,8 +2729,12 @@ _OPENAI_FALLBACK = [
     ["openai,o3", "o3"],
 ]
 _GEMINI_FALLBACK = [
-    ["google,gemini-2.5-pro", "gemini-2.5-pro"],
-    ["google,gemini-2.5-flash", "gemini-2.5-flash"],
+    ["google,gemini-3.8-flash", "Gemini 3.8 Flash"],
+    ["google,gemini-3.5-flash", "Gemini 3.5 Flash"],
+    ["google,gemini-3.5-flash-lite", "Gemini 3.5 Flash Lite"],
+    ["google,gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview"],
+    ["google,gemini-2.5-pro", "Gemini 2.5 Pro"],
+    ["google,gemini-2.5-flash", "Gemini 2.5 Flash"],
 ]
 
 # Live-list cache (avoid hitting the endpoints on every panel load).
@@ -2827,7 +2835,9 @@ def _fetch_dashscope_models(key: str, base_url: str) -> list[list[str]]:
 _OPENAI_KEEP_RE = re.compile(r"^(gpt-|chatgpt|o[1-9])")
 _OPENAI_DROP = ("embedding", "whisper", "tts", "audio", "realtime", "transcribe",
                 "image", "dall-e", "moderation", "search", "instruct")
-_GEMINI_DROP = ("embedding", "aqa", "imagen", "-vision")
+_GEMINI_DROP = ("embedding", "aqa", "imagen", "-vision", "tts", "live", "native-audio",
+                "image", "transcribe", "robotics", "computer-use", "translate",
+                "nano-banana", "customtools")
 
 
 def _openai_keep(mid: str) -> bool:
@@ -2857,6 +2867,11 @@ def _fetch_openai_models(key: str, base_url: str) -> list[list[str]]:
     return [pair for _, pair in rows]
 
 
+def _prettify_gemini_id(mid: str) -> str:
+    """gemini-3.1-pro-preview → "Gemini 3.1 Pro Preview"."""
+    return " ".join(t[:1].upper() + t[1:] for t in mid.split("-"))
+
+
 def _fetch_gemini_models(key: str, base_url: str) -> list[list[str]]:
     """Live Gemini model list via the OpenAI-compatible GET {base}/models.
 
@@ -2869,7 +2884,7 @@ def _fetch_gemini_models(key: str, base_url: str) -> list[list[str]]:
     resp.raise_for_status()
     ids = {(m.get("id", "") or "").split("/")[-1] for m in resp.json().get("data", [])}
     keep = sorted(mid for mid in ids if mid and _gemini_keep(mid))
-    return [[f"google,{mid}", mid] for mid in keep]
+    return [[f"google,{mid}", _prettify_gemini_id(mid)] for mid in keep]
 
 
 def _available_models() -> dict:
@@ -2951,7 +2966,7 @@ def _list_models_now() -> dict:
             models = _fetch_anthropic_models(anthropic_key)
             groups["Anthropic"] = models or list(_ANTHROPIC_FALLBACK)
         except Exception as exc:  # noqa: BLE001
-            logger.debug("Anthropic live model list failed (%s); using fallback", exc)
+            logger.warning("Anthropic live model list failed (%s); showing the built-in fallback list", exc)
             groups["Anthropic"] = list(_ANTHROPIC_FALLBACK)
 
     dashscope_key = os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("ALIBABA_API_KEY")
@@ -2963,7 +2978,7 @@ def _list_models_now() -> dict:
             models = _fetch_dashscope_models(dashscope_key, base)
             groups["Alibaba (DashScope)"] = models or list(_DASHSCOPE_FALLBACK)
         except Exception as exc:  # noqa: BLE001
-            logger.debug("DashScope live model list failed (%s); using fallback", exc)
+            logger.warning("DashScope live model list failed (%s); showing the built-in fallback list", exc)
             groups["Alibaba (DashScope)"] = list(_DASHSCOPE_FALLBACK)
 
     # OpenAI and Google Gemini appear only when their key is configured — same
@@ -2977,7 +2992,7 @@ def _list_models_now() -> dict:
             models = _fetch_openai_models(openai_key, base)
             groups["OpenAI"] = models or list(_OPENAI_FALLBACK)
         except Exception as exc:  # noqa: BLE001
-            logger.debug("OpenAI live model list failed (%s); using fallback", exc)
+            logger.warning("OpenAI live model list failed (%s); showing the built-in fallback list", exc)
             groups["OpenAI"] = list(_OPENAI_FALLBACK)
 
     gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
