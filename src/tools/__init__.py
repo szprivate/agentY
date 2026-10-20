@@ -162,6 +162,8 @@ from agenty_core.tools.previz_shot import render_camera_move  # noqa: F401,E402
 from agenty_core.tools.worldlabs_atlas import (  # noqa: F401,E402
     atlas_create_world, atlas_expand_world, atlas_rebuild_world_mesh, atlas_splat_to_mesh, atlas_fetch, atlas_list,
 )
+# Render one new view of an Atlas world at a camera, optionally upscaled; open a world in the viewer.
+from agenty_core.tools.atlas_render import atlas_render_view, atlas_open_in_viewer  # noqa: F401,E402
 try:
     from src.utils.viewer_group import tab_name as _viewer_tab_name
     _set_viewer_tab(_viewer_tab_name)
@@ -200,7 +202,7 @@ _SHARED_CORE_TOOLS = [
     "render_camera_move",
     # a 3D scene from a picture / prompt with World Labs Atlas
     "atlas_create_world", "atlas_expand_world", "atlas_rebuild_world_mesh", "atlas_splat_to_mesh",
-    "atlas_fetch", "atlas_list",
+    "atlas_fetch", "atlas_list", "atlas_render_view", "atlas_open_in_viewer",
     # per-project memory — moved to the shared layer (a Claude Desktop session on
     # the same ComfyUI now reads and writes the same facts the panel does), so it
     # arrives as a plain callable and needs wrapping like every other core tool.
@@ -555,6 +557,8 @@ ORCHESTRATOR_TOOLS: list = [
     atlas_splat_to_mesh,
     atlas_fetch,         # collect an Atlas job that timed out
     atlas_list,
+    atlas_render_view,   # one new view of an Atlas world at a camera (+ optional upscale): consistent backgrounds
+    atlas_open_in_viewer,  # open an Atlas world in the viewer's 3D view for the user to pick a camera
     # Files / shell / web
     read_text_file,
     write_text_file,

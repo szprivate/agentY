@@ -584,6 +584,17 @@ def open_edit_in_viewer(film: str, otio: str = "", title: str = "") -> dict:
         return {"error": str(exc)}
 
 
+def _deliver_atlas_render(path: str) -> None:
+    """A finished viewer-asked Atlas render, with no turn around it: staged for ComfyUI, announced on the
+    notification bus (a loader node on the canvas + a toast) and sent to the viewer's agentY tab."""
+    try:
+        staged = _stage_into_comfy_input(path)
+        media_sink.note(path, "Atlas")
+        _deliver_elsewhere(path, "image", staged, "Atlas render", None, "atlas", "")
+    except Exception as exc:  # noqa: BLE001 - delivery must never cost the render
+        logger.warning("could not deliver the Atlas render %s: %s", path, exc)
+
+
 def _deliver_elsewhere(path: str, kind: str, staged: str | None, role: str,
                        index, origin: str, thread_id: str) -> None:
     """Everything a turn's ``output`` event does not do on its own.
@@ -4575,6 +4586,26 @@ def _build_app():
         # was stopped). Reported rather than treated as an error: the panel should
         # take the prompt down either way.
         return jsonify({"ok": ok, "expired": not ok})
+
+    # A render with World Labs Atlas that the bEpic viewer asked for (its "Render with Atlas"
+    # button, through ComfyUI: the viewer has neither agenty_core nor the key). The core function is
+    # the same one the agent's atlas_render_view tool runs; see src.utils.atlas_render_jobs.
+    from src.utils.atlas_render_jobs import AtlasRenderJobs as _AtlasRenderJobs
+    _atlas_jobs = _AtlasRenderJobs(deliver=_deliver_atlas_render)
+
+    @app.route("/agentY/atlas_render", methods=["GET", "POST", "OPTIONS"])
+    def atlas_render():
+        if request.method == "OPTIONS":
+            return "", 204
+        if request.method == "GET":
+            job = _atlas_jobs.get(request.args.get("id") or "")
+            if job is None:
+                return jsonify({"error": "unknown render"}), 404
+            return jsonify(_atlas_jobs.public(job))
+        try:
+            return jsonify({"ok": True, **_atlas_jobs.start(request.get_json(silent=True))})
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
 
     @app.route("/agentY/canvas_probe", methods=["GET"])
     def canvas_probe_poll():

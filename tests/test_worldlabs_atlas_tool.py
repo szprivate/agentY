@@ -2,7 +2,7 @@
 import unittest
 
 _NAMES = ["atlas_create_world", "atlas_expand_world", "atlas_rebuild_world_mesh", "atlas_splat_to_mesh",
-          "atlas_fetch", "atlas_list"]
+          "atlas_fetch", "atlas_list", "atlas_render_view", "atlas_open_in_viewer"]
 
 
 class Registered(unittest.TestCase):
