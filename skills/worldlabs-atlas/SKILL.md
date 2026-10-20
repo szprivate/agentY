@@ -1,7 +1,7 @@
 ---
 name: worldlabs-atlas
-description: Make a 3D scene from a picture or a text prompt with World Labs Atlas (a depth mesh in the picture's camera), grow it with new views, use it as the set for render_camera_move, and render single new views of it from any camera (consistent backgrounds). Use for "turn this image into a 3D world with Atlas / World Labs", "make a courtyard world from a prompt", "extend the scene sideways", "image to Atlas world to camera move to control video", "same room from another angle", "a new shot of this background", "render this view with Atlas".
-allowed-tools: atlas_create_world atlas_expand_world atlas_rebuild_world_mesh atlas_splat_to_mesh atlas_fetch atlas_list atlas_render_view atlas_open_in_viewer render_camera_move show_in_viewer
+description: Make a 3D scene from a picture or a text prompt with World Labs Atlas (a depth mesh in the picture's camera), grow it with new views, use it as the set for render_camera_move, and render single new views of it from any camera (consistent backgrounds). Use for "turn this image into a 3D world with Atlas / World Labs", "make a courtyard world from a prompt", "extend the scene sideways", "image to Atlas world to camera move to control video", "same room from another angle", "a new shot of this background", "render this view with Atlas", "a full 360 environment", "make a Gaussian splat of this place", "explorable 3D scene from this picture".
+allowed-tools: atlas_create_world atlas_expand_world atlas_rebuild_world_mesh atlas_splat_to_mesh atlas_fetch atlas_list atlas_render_view atlas_open_in_viewer atlas_capture_around train_splat splat_training_status render_camera_move show_in_viewer
 ---
 
 # World Labs Atlas: picture or prompt -> 3D scene -> camera move
@@ -48,6 +48,19 @@ so say what you are about to spend (one call = one task) and do not loop.
    presses **Render with Atlas** in the Previz panel (upscale choice, "add to world"); the picture lands in
    the viewer and as a loader node on the canvas. Tell them that; do not render on their behalf.
 6. `show_in_viewer` on the glb only when the user wants to look at it.
+7. **A full 360 environment / a Gaussian splat.** Two calls, in this order:
+   - `atlas_capture_around(world, prompt=...)` has Atlas paint the place ALL ROUND (about 40 views: a ring
+     outwards from the middle, then ceiling and floor; 5-6 billed tasks, a few minutes). It grows outwards
+     from the picture, so the unseen sides stay consistent. People in the picture get repeated all round:
+     for an empty place remove them from the picture FIRST (a local image edit, e.g. Qwen-Image-Edit 2511),
+     make the world from the edited picture, and say "no people" in `prompt`. `center` / `radius` for a
+     place that is not a room-sized space in front of the picture.
+   - `train_splat(world)` trains a Gaussian splat from those views on the local GPU (Brush; downloaded once,
+     no API cost): ~2 min for `steps=3000` (a quick look), 10-30 min for the default 30000. It frees ComfyUI's
+     VRAM first, cleans floaters, saves a standard 3DGS `.ply` (+ a colour-only `_lite.ply`), shows a preview
+     picture and opens the splat in the viewer's 3D view. It returns `"running"` when it takes longer than
+     `wait_s`: tell the user, then `splat_training_status(name, wait_s=...)` finishes it. Do not start it twice.
+   A splat from the first picture alone (or a few views) is a flat shell: capture first.
 
 Other tools: `atlas_rebuild_world_mesh` (free, offline: finer/lighter mesh, cut the sky with
 `max_depth`), `atlas_splat_to_mesh` (a Marble `.spz` -> GLB), `atlas_list` (scenes here, or the

@@ -75,6 +75,30 @@ session token from the connect extension's `/agent/host_info`), which runs the s
 (`src/utils/atlas_render_jobs.py`); the page polls `GET /bepic/atlas_render?id=`. The finished picture is delivered
 outside any turn: a loader node on the canvas, a toast, and the viewer's agentY tab.
 
+## A 360 environment and a Gaussian splat
+
+`atlas_capture_around(world, center, radius=1.0, step_deg=30, ceiling_floor=True, prompt)`
+(`agenty_core/tools/atlas_capture.py`) adds about 40 Atlas views all round the middle of the place: a ring of
+cameras standing `radius` behind the centre looking outwards (yaw 0, +-30, ... 180, an inner camera every other
+step for parallax), then ceiling and floor. Batches of 8 (one `atlasGenerate` task each) go out in growing yaw,
+each with the 4 existing views nearest to it as context, so the unseen sides join what is already there. The
+default centre is half-way to what the first picture shows straight ahead.
+
+`train_splat(source, steps=30000, max_splats=3000000, sh_degree=3)` (`agenty_core/tools/splat_train.py`) writes
+the world as a Nerfstudio dataset (cameras, pictures, and the depth maps unprojected as starting points) and
+trains a Gaussian splat with [Brush](https://github.com/ArthurBrussee/brush) (Apache-2.0) as a background
+process. Brush `v0.3.0` is downloaded once into `<app>/tools/brush/` (checksum checked) unless `BRUSH_PATH`
+names a binary. A copy of the first picture is held out for evaluation; its renders are the progress signal and
+the preview. When Brush is done: huge splats and big splats in front of a camera are removed, the splat is
+turned into 3DGS axes (Y down; positions, rotations and the SH coefficients turned together) and saved as
+`output/3d_scenes/splats/<name>/<name>.ply` plus `<name>_lite.ply` (colour only), and opened in the viewer's 3D
+view through the first training camera. `splat_training_status(name)` checks on / finishes a training that
+outlived the call. A COLMAP or Nerfstudio folder works as `source` too.
+
+Measured (2026-10-21, RTX 5090, 41 views at 1280x720): 3,000 steps in 1 min 42 s (2.3 M splats), 30,000 steps
+about 30 min with ComfyUI's models still on the GPU (free them: the tool does). The restaurant from one picture:
+people removed with Qwen-Image-Edit 2511, 41 views, splat holds up all round; mirrors and window glass smear.
+
 ## Cost and limits
 Atlas reports no per-task cost: the operation carries no usage / credit field, so tools return `usage: null`. Credits
 (1,000 per US$, no expiry) and a monthly spend limit are on the platform's Billing / Usage pages. Rate limits are
