@@ -80,8 +80,10 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
                "groups, rename groups, save the workflow (read the `canvas-layout` skill first)",
                ("arrange_canvas", "group_canvas_nodes", "auto_group_canvas", "save_canvas_workflow")),
     "worlds": ("build a walkable 3D world from reference images, and fly a camera through a 3D scene "
-               "to render a camera move (read the `camera-move-control` skill first)",
-               ("run_world_builder", "render_camera_move")),
+               "to render a camera move (read the `camera-move-control` skill first); make a 3D scene "
+               "with World Labs Atlas from a picture or a prompt (read the `worldlabs-atlas` skill first)",
+               ("run_world_builder", "render_camera_move", "atlas_create_world", "atlas_expand_world",
+                "atlas_rebuild_world_mesh", "atlas_splat_to_mesh", "atlas_fetch", "atlas_list")),
     # Pinned by the pipeline on the turns they belong to (CONTEXT_PACKS).
     "hooks": ("the stages of a hook pipeline on the canvas - already in your list whenever the canvas "
               "has `agentY hook` / review / loop nodes",

@@ -14,6 +14,8 @@ The chain, in order. Say the plan in one line first, then run it.
    models line up with the picture exactly, so the camera can start where the picture's
    camera stood. Ask the user for the engine only if they have a preference; `s3d_moge` is
    the default here.
+   With a World Labs key (`WORLDLABS_API_KEY`) the user may ask for Atlas instead: follow the
+   `worldlabs-atlas` skill, then pass its `glb` as `render_camera_move(model=...)`.
 2. **Animate and render the camera.** `render_camera_move(name, world, moves)`. The viewer
    shows the scene in a "Previz: <name>" tab, plays the camera through it and writes
    `output/previz/<name>.mp4`; the tool returns the path. The moves are relative to the
