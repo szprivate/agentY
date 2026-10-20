@@ -102,3 +102,6 @@ nul
 # When each API key in .env was first seen, so the host can warn about ones that
 # have gone unrotated. Holds fingerprints, never the keys themselves.
 config/key_ages.json
+
+# downloaded helper programs (Brush, the splat trainer)
+tools/
