@@ -996,6 +996,8 @@ _ORCH_SKILL_NAMES = [
     "dashscope-generate",
     # Showing files in the bEpic viewer / opening an edit in its Edit panel.
     "show-in-viewer",
+    # Picture -> 3D scene -> camera move -> control video.
+    "camera-move-control",
 ]
 
 

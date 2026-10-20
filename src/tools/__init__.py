@@ -156,6 +156,8 @@ from agenty_core.tools.dashscope_generate import dashscope_generate, dashscope_f
 # Load files into the bEpic viewer on request (agenty_core.tools.show_in_viewer);
 # the default tab follows Settings > media_nodes.viewer_tab.
 from agenty_core.tools.show_in_viewer import show_in_viewer, set_default_tab_provider as _set_viewer_tab  # noqa: F401,E402
+# Fly a camera through a 3D scene in the viewer and render the move (agenty_core.tools.previz_shot).
+from agenty_core.tools.previz_shot import render_camera_move  # noqa: F401,E402
 try:
     from src.utils.viewer_group import tab_name as _viewer_tab_name
     _set_viewer_tab(_viewer_tab_name)
@@ -190,6 +192,8 @@ _SHARED_CORE_TOOLS = [
     "dashscope_generate", "dashscope_fetch",
     # show files in the bEpic viewer, open an edit in its Edit panel
     "show_in_viewer",
+    # animate a camera through a 3D scene in the viewer and render the move
+    "render_camera_move",
     # per-project memory — moved to the shared layer (a Claude Desktop session on
     # the same ComfyUI now reads and writes the same facts the panel does), so it
     # arrives as a plain callable and needs wrapping like every other core tool.
@@ -537,6 +541,7 @@ ORCHESTRATOR_TOOLS: list = [
     dashscope_generate,  # image/video on the user's own DashScope key (not Comfy credits)
     dashscope_fetch,     # collect one that timed out
     show_in_viewer,      # "show me clip 3 in the viewer" / "open the edit"
+    render_camera_move,  # fly a camera through a 3D scene in the viewer, render the move (control video)
     # Files / shell / web
     read_text_file,
     write_text_file,
