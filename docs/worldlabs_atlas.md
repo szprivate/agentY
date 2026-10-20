@@ -49,6 +49,32 @@ The viewer already loads glb/ply/splats, so no viewer change was needed. Atlas n
 - `images2PosedRGBD` puts the camera at ~1.86 above a gravity-levelled origin; the base-frame transform absorbs it.
 - A prompt world is about 8 MB of GLB at stride 4 (34k vertices per view); stride 8 is a quarter of that.
 
+## Render a view (agent tool and viewer button)
+`atlas_render_view(world, camera, upscale=0|2|4, add_to_world, depth, fov, prompt)` (`agenty_core/tools/atlas_render.py`)
+asks `atlasGenerate` for ONE new picture at one target camera (1280 x 720 grid), with the 1 to 4 posed views nearest the
+camera as context. Camera in the MESH frame (`world.glb`: first picture's camera at the origin, looking -Z): a relative
+move (`forward/right/up/yaw/pitch/roll`), `position` + `look_at`, a 4x4 `matrix`, or the viewer's own camera
+(`viewer`: raw three.js `matrixWorld.elements` of the camera and of the model's node + fov/aspect). The conversion to
+Atlas's world frame is `mesh_pose_to_camera` (`R_w = R_0 R_m`, `t_w = R_0 t_m + t_0`, `R_0, t_0` = the first camera);
+three.js, glTF and Atlas's "rub" cameras share axes (X right, Y up, camera looks -Z), so the viewer pose needs no axis
+flip, only the model node's transform undone (`viewer_pose_to_mesh`). Files: `<world>/renders/render_NNN.png`
+(+ `_x2` / `_x4`) with sidecars; recorded in `world.json` under `renders`; `add_to_world` also appends the view (with
+depth) to `frames` and rebuilds `world.glb`. A timeout is resumable: `atlas_fetch(operation_id)` completes it
+(download, upscale, publish).
+
+Upscale: a small ComfyUI workflow through the core client (`LoadImage` -> `UpscaleModelLoader` ->
+`ImageUpscaleWithModel` [-> `ImageScaleBy` lanczos when the model's native factor is not the one asked] ->
+`SaveImage`). The model comes from `/models/upscale_models`: photographic names first (UltraSharp, NMKD, ESRGAN...),
+illustration ones (anime...) last, a native factor equal to the request preferred; `upscale_model` forces one. A failed
+upscale keeps the render and reports `upscale_error`.
+
+The viewer: `atlas_open_in_viewer(world)` (or the Previz panel opened on any `world.glb` from an Atlas folder) shows
+a **Render with Atlas** button. The viewer runs in ComfyUI's Python, which has neither `agenty_core` nor the key, so
+`POST /bepic/atlas_render` (ComfyUI-ImageViewer) forwards to this host's `POST /agentY/atlas_render` (address and
+session token from the connect extension's `/agent/host_info`), which runs the same core function in a background job
+(`src/utils/atlas_render_jobs.py`); the page polls `GET /bepic/atlas_render?id=`. The finished picture is delivered
+outside any turn: a loader node on the canvas, a toast, and the viewer's agentY tab.
+
 ## Cost and limits
 Atlas reports no per-task cost: the operation carries no usage / credit field, so tools return `usage: null`. Credits
 (1,000 per US$, no expiry) and a monthly spend limit are on the platform's Billing / Usage pages. Rate limits are
