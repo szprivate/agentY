@@ -158,6 +158,10 @@ from agenty_core.tools.dashscope_generate import dashscope_generate, dashscope_f
 from agenty_core.tools.show_in_viewer import show_in_viewer, set_default_tab_provider as _set_viewer_tab  # noqa: F401,E402
 # Fly a camera through a 3D scene in the viewer and render the move (agenty_core.tools.previz_shot).
 from agenty_core.tools.previz_shot import render_camera_move  # noqa: F401,E402
+# A 3D scene from a picture or a prompt with World Labs Atlas (agenty_core.tools.worldlabs_atlas).
+from agenty_core.tools.worldlabs_atlas import (  # noqa: F401,E402
+    atlas_create_world, atlas_expand_world, atlas_rebuild_world_mesh, atlas_splat_to_mesh, atlas_fetch, atlas_list,
+)
 try:
     from src.utils.viewer_group import tab_name as _viewer_tab_name
     _set_viewer_tab(_viewer_tab_name)
@@ -194,6 +198,9 @@ _SHARED_CORE_TOOLS = [
     "show_in_viewer",
     # animate a camera through a 3D scene in the viewer and render the move
     "render_camera_move",
+    # a 3D scene from a picture / prompt with World Labs Atlas
+    "atlas_create_world", "atlas_expand_world", "atlas_rebuild_world_mesh", "atlas_splat_to_mesh",
+    "atlas_fetch", "atlas_list",
     # per-project memory — moved to the shared layer (a Claude Desktop session on
     # the same ComfyUI now reads and writes the same facts the panel does), so it
     # arrives as a plain callable and needs wrapping like every other core tool.
@@ -542,6 +549,12 @@ ORCHESTRATOR_TOOLS: list = [
     dashscope_fetch,     # collect one that timed out
     show_in_viewer,      # "show me clip 3 in the viewer" / "open the edit"
     render_camera_move,  # fly a camera through a 3D scene in the viewer, render the move (control video)
+    atlas_create_world,  # World Labs Atlas: picture / prompt -> posed depth mesh (GLB)
+    atlas_expand_world,  # Atlas invents more views at new cameras and grows the mesh
+    atlas_rebuild_world_mesh,
+    atlas_splat_to_mesh,
+    atlas_fetch,         # collect an Atlas job that timed out
+    atlas_list,
     # Files / shell / web
     read_text_file,
     write_text_file,

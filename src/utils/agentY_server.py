@@ -3148,6 +3148,7 @@ def _list_models_now() -> dict:
 _KNOWN_ENV_KEYS = [
     "HF_TOKEN", "ANTHROPIC_API_KEY", "COMFYUI_API_KEY",
     "DASHSCOPE_API_KEY", "DASHSCOPE_BASE_URL",
+    "WORLDLABS_API_KEY",
     "OPENAI_API_KEY", "OPENAI_BASE_URL", "GEMINI_API_KEY", "GEMINI_BASE_URL",
     # Slack bridge. Listed here so the settings UI offers the three fields the
     # workspace side cannot be set up without, rather than sending someone to a

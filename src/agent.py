@@ -998,6 +998,8 @@ _ORCH_SKILL_NAMES = [
     "show-in-viewer",
     # Picture -> 3D scene -> camera move -> control video.
     "camera-move-control",
+    # World Labs Atlas: picture / prompt -> 3D scene mesh.
+    "worldlabs-atlas",
 ]
 
 
