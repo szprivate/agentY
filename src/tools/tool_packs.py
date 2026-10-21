@@ -87,6 +87,9 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
                 "atlas_render_view", "atlas_open_in_viewer", "atlas_capture_around", "train_splat",
                 "splat_training_status")),
     # Pinned by the pipeline on the turns they belong to (CONTEXT_PACKS).
+    "farm": ("render on the studio's Deadline render farm instead of the local ComfyUI: send a workflow as a "
+             "job, follow it, see the pools and workers (read the `deadline-farm` skill first)",
+             ("submit_to_deadline", "deadline_job_status", "deadline_farm_info")),
     "hooks": ("the stages of a hook pipeline on the canvas - already in your list whenever the canvas "
               "has `agentY hook` / review / loop nodes",
               ("apply_canvas_hooks", "stop_hook_run", "halt_for_review", "release_review", "loop_check",

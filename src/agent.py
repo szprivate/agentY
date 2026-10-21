@@ -1000,6 +1000,8 @@ _ORCH_SKILL_NAMES = [
     "camera-move-control",
     # World Labs Atlas: picture / prompt -> 3D scene mesh.
     "worldlabs-atlas",
+    # Rendering on the Deadline farm.
+    "deadline-farm",
 ]
 
 

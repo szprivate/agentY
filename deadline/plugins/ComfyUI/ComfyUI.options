@@ -1,0 +1,29 @@
+[PromptFile]
+Type=string
+Label=Prompt File Name
+Category=ComfyUI
+Index=0
+Description=Name of the auxiliary file holding the API-format workflow.
+Required=false
+DisableIfBlank=true
+Default=prompt.json
+
+[OutputDirectory]
+Type=folder
+Label=Output Directory
+Category=ComfyUI
+Index=1
+Description=Network folder the results are copied to.
+Required=false
+DisableIfBlank=true
+
+[SeedMode]
+Type=enum
+Values=keep;randomize
+Label=Seeds
+Category=ComfyUI
+Index=2
+Description=randomize = every task gets its own random seeds (for variations).
+Required=false
+DisableIfBlank=true
+Default=keep

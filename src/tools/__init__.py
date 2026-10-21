@@ -167,6 +167,8 @@ from agenty_core.tools.atlas_render import atlas_render_view, atlas_open_in_view
 # Capture an Atlas world all round; train a Gaussian splat from posed views locally (Brush).
 from agenty_core.tools.atlas_capture import atlas_capture_around  # noqa: F401,E402
 from agenty_core.tools.splat_train import train_splat, splat_training_status  # noqa: F401,E402
+# Send ComfyUI workflows to the on-prem Deadline render farm and follow them (agenty_core.tools.deadline_farm).
+from agenty_core.tools.deadline_farm import submit_to_deadline, deadline_job_status, deadline_farm_info  # noqa: F401,E402
 try:
     from src.utils.viewer_group import tab_name as _viewer_tab_name
     _set_viewer_tab(_viewer_tab_name)
@@ -208,6 +210,8 @@ _SHARED_CORE_TOOLS = [
     "atlas_fetch", "atlas_list", "atlas_render_view", "atlas_open_in_viewer",
     # all-round Atlas capture, and a Gaussian splat trained from it (local, Brush)
     "atlas_capture_around", "train_splat", "splat_training_status",
+    # the Deadline render farm: submit a workflow as a job, follow it, look at the pools
+    "submit_to_deadline", "deadline_job_status", "deadline_farm_info",
     # per-project memory — moved to the shared layer (a Claude Desktop session on
     # the same ComfyUI now reads and writes the same facts the panel does), so it
     # arrives as a plain callable and needs wrapping like every other core tool.
@@ -567,6 +571,9 @@ ORCHESTRATOR_TOOLS: list = [
     atlas_capture_around,  # Atlas views all round a place (for a 360 environment / splat)
     train_splat,           # Gaussian splat from posed views (an Atlas world), trained locally with Brush
     splat_training_status, # check on / finish a splat training
+    submit_to_deadline,    # send a workflow to the Deadline farm (dedicated ComfyUI pool)
+    deadline_job_status,   # follow a farm job, fetch its outputs
+    deadline_farm_info,    # pools / workers / the ComfyUI pool
     # Files / shell / web
     read_text_file,
     write_text_file,

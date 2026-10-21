@@ -3160,6 +3160,9 @@ _KNOWN_ENV_KEYS = [
     "HF_TOKEN", "ANTHROPIC_API_KEY", "COMFYUI_API_KEY",
     "DASHSCOPE_API_KEY", "DASHSCOPE_BASE_URL",
     "WORLDLABS_API_KEY",
+    # Deadline render farm (all optional; see docs/deadline.md)
+    "DEADLINE_PATH", "DEADLINE_REPOSITORY", "DEADLINE_WEBSERVICE_URL", "DEADLINE_COMFYUI_PATH",
+    "DEADLINE_COMFYUI_POOL", "DEADLINE_GROUP", "DEADLINE_OUTPUT_DIR",
     "OPENAI_API_KEY", "OPENAI_BASE_URL", "GEMINI_API_KEY", "GEMINI_BASE_URL",
     # Slack bridge. Listed here so the settings UI offers the three fields the
     # workspace side cannot be set up without, rather than sending someone to a
