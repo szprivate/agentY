@@ -18,9 +18,6 @@ Each server picks a ``transport`` (``http`` streamable / ``sse`` / ``stdio``) an
 * ``header`` — static request headers; ``${ENV_VAR}`` references are expanded from
   the environment (put the secret in ``.env``).
 
-Every server also takes ``timeout_s`` (per-call limit, default 600), ``tool_timeouts``
-(``{"render_*": 1800}``) and ``guards`` (rules that refuse a call; see mcp_resilience).
-
 ``${VAR}`` expands in a stdio server's ``command``, ``args``, ``cwd`` and ``env`` too.
 When the environment doesn't set one, a few are worked out on this machine
 (``_BUILTINS``): ``${PYTHON}`` (agentY's own interpreter), ``${AGENTY_ROOT}``,
@@ -519,18 +516,6 @@ def _transport_callable(sc: dict, provider):
     raise ValueError(f"unknown transport {transport!r}")
 
 
-def _harden_client(name: str, client) -> None:
-    """Timeouts, reconnect-on-dead-session and guards for every call (mcp_resilience)."""
-    from src.tools import mcp_resilience
-
-    def get_config() -> dict:
-        sc = (load_mcp_config().get("servers") or {}).get(name)
-        return sc if isinstance(sc, dict) else {}
-
-    mcp_resilience.harden(name, client, get_config,
-                          lambda text: _STATUS.__setitem__(name, text))
-
-
 def _connect(name: str, sc: dict, interactive: bool):
     """Connect to one server and return ``(client, tools)``. Raises ``_AuthRequired``
     for an OAuth server with no usable token (silent mode)."""
@@ -556,7 +541,6 @@ def _connect(name: str, sc: dict, interactive: bool):
         with quiet:
             client.start()
             tools = client.list_tools_sync()
-        _harden_client(name, client)
         return client, tools
     except Exception as exc:  # noqa: BLE001
         # Surfaces as an ExceptionGroup from the strands background thread — turn
@@ -758,10 +742,8 @@ def mcp_server_report() -> str:
                 try:
                     names = _tool_names(name, client.list_tools_sync())
                     said = f"connected, {len(names)} tool(s): " + ", ".join(names[:25])
-                except Exception as exc:  # noqa: BLE001
-                    from src.tools.mcp_resilience import describe
-                    said = f"NOT running — its session is closed ({describe(exc)}); the next call restarts it"
-                    _STATUS[name] = f"error: session closed ({describe(exc)})"
+                except Exception:  # noqa: BLE001
+                    said = f"connected ({state})"
         elif said is None:
             said = state.replace("error:", "failed to start:") or "unknown"
         bundle = sc.get("bundle") if isinstance(sc.get("bundle"), dict) else None
@@ -801,17 +783,6 @@ def list_mcp_servers() -> str:
 def is_server_connected(name: str) -> bool:
     """True when *name* has a live MCP client in this process."""
     return name in _CLIENTS
-
-
-def _session_dead(name: str) -> bool:
-    """True when *name* has a client whose session is no longer running (its stdio
-    process died). The status then must not keep saying "connected"."""
-    client = _CLIENTS.get(name)
-    check = getattr(client, "_is_session_active", None)
-    try:
-        return client is not None and callable(check) and not check()
-    except Exception:  # noqa: BLE001
-        return False
 
 
 def call_mcp_tool(server: str, name: str, arguments: dict | None = None,
@@ -874,8 +845,6 @@ def mcp_status() -> dict:
     for name, sc in (load_mcp_config().get("servers") or {}).items():
         sc = sc if isinstance(sc, dict) else {}
         state = _STATUS.get(name)
-        if state and state.startswith("connected") and _session_dead(name):
-            state = _STATUS[name] = "error: session closed (the next call restarts it)"
         if state is None:
             if not sc.get("enabled"):
                 state = "disabled"
