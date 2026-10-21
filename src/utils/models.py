@@ -89,6 +89,10 @@ class AgentSession(BaseModel):
     # not repeat it, and was then held to nothing: an SD 1.5 request came back
     # SDXL on the correction turn. See Pipeline._extract_hard_constraints.
     named_families: list[str] = Field(default_factory=list)
+    # The sentence in which the user told the agent to stop asking and decide for
+    # itself ("" = they have not). Kept with the conversation so it outlives the
+    # turn, the summarising of old turns and a restart (src/utils/standing_orders.py).
+    standing_autonomy: str = ""
 
 
 class TriageResult(BaseModel):

@@ -93,7 +93,7 @@ from src.utils.debug_log import trace as _trace
 _ORCH_PARTIALS_DIR = Path(__file__).parent.parent / "config" / "system_prompts" / "orchestrator"
 # In this order, whichever of them a turn has: the same turns get the same text.
 _TURN_GUIDES = ("canvas_hooks", "review_halt", "canvas_nodes", "input_images", "project_memory",
-                "prompt_loop", "plan_approval")
+                "prompt_loop", "plan_approval", "autonomy")
 _TURN_GUIDES_HEAD = "\n\n# For this kind of turn\n\n"
 
 # How many of a conversation's outputs each turn lists in full (the newest).
@@ -263,6 +263,9 @@ def _orch_partial(name: str) -> str:
 # tool call. Bounded so a stream of messages cannot hold a turn open forever;
 # anything past it goes back to the panel's queue as the next message.
 _MAX_LATE_REDRIVES = 5
+# How many times one turn is re-driven after the model was cut off (output limit /
+# window overflow) before the error is shown to the user.
+_MAX_CUT_OFF_REDRIVES = 3
 
 
 def _interject_pending() -> bool:
@@ -5853,6 +5856,61 @@ class Pipeline:
                 print(f"pipeline: work guard skipped ({exc}).")
             return ""
 
+    async def _stream_until_cut_off(self, current_input, cut_off: list):
+        """The orchestrator's stream, with the two cut-offs held back for the caller.
+
+        ``MaxTokensReachedException`` (the answer hit the output limit) and
+        ``ContextWindowOverflowException`` (the prompt no longer fits) used to
+        propagate out of the turn: the user saw an error and the task stopped until
+        they nudged it. They land in *cut_off* instead, so the turn loop can trim
+        and re-drive (:meth:`_cut_off_input`).
+        """
+        try:
+            from strands.types.exceptions import ContextWindowOverflowException
+            stops = (MaxTokensReachedException, ContextWindowOverflowException)
+        except Exception:  # noqa: BLE001
+            stops = (MaxTokensReachedException,)
+        try:
+            async for event in self._orchestrator_agent.stream_async(current_input):
+                yield event
+        except stops as exc:
+            cut_off.append(exc)
+
+    def _cut_off_input(self, exc: Exception, done: int) -> str:
+        """What to send the orchestrator after the model was cut off, or ``""`` when
+        it cannot go on (re-drives used up, or nothing can be trimmed to make room)."""
+        if done >= _MAX_CUT_OFF_REDRIVES:
+            return ""
+        agent = getattr(self, "_orchestrator_agent", None)
+        messages = getattr(agent, "messages", None)
+        overflow = not isinstance(exc, MaxTokensReachedException)
+        try:
+            from src.utils import compaction
+            cfg = dict(compaction.settings())
+            # Tighter than the mid-turn guard: the prompt already failed to fit.
+            cfg.update(tool_result_chars=600, tool_result_head=250,
+                       keep_recent_messages=max(2, cfg["keep_recent_messages"] // 2 ** (done + 1)))
+            res = compaction.compact(list(messages or []), cfg, allow_summary=False)
+            if res.changed and messages is not None:
+                if getattr(self._session, "session_id", ""):
+                    compaction.archive(compaction._current_thread(), res.archived, "cut-off")
+                messages[:] = res.messages
+            elif overflow:
+                return ""                # nothing left to trim: re-driving would fail the same way
+        except Exception:  # noqa: BLE001 - trimming is best effort
+            if overflow:
+                return ""
+        if getattr(self, "_verbose", False):
+            print(f"pipeline: model cut off ({type(exc).__name__}); re-driving ({done + 1}/{_MAX_CUT_OFF_REDRIVES}).")
+        if overflow:
+            why = "not sent: the conversation no longer fit the model's window, so old tool output was cut down"
+            how = "Work in smaller steps and re-read only what you need."
+        else:
+            why = "cut off by the output limit before it was finished (a half-written tool call was dropped)"
+            how = ("Do it in smaller pieces: a shorter reply, and anything long written to a "
+                   "file in several calls.")
+        return _orch_partial("turn_cut_off").replace("{why}", why).replace("{how}", how)
+
     def _unfinished_intent_input(self, done: int) -> str:
         """What to send the orchestrator when its turn ended on an announced step
         it did not take - or ``""`` when the turn ended properly (or the guard is
@@ -5878,6 +5936,15 @@ class Pipeline:
                     print("pipeline: the turn ended on a rejected canvas edit; sent back.")
                 return _orch_partial("rejected_edit").replace(
                     "{errors}", "\n".join(f"- {e}" for e in rejected))
+            said = getattr(getattr(self, "_session", None), "standing_autonomy", "")
+            if said:
+                from src.utils import standing_orders
+                menu = standing_orders.menu(answer)
+                if menu:
+                    if self._verbose:
+                        print(f"pipeline: the turn ended on a menu despite 'decide yourself' ({menu[:80]!r}); sent back.")
+                    return _orch_partial("decide_yourself").replace(
+                        "{last}", menu[:200]).replace("{said}", said[:200])
             last = intent_guard.unfinished(answer)
             if not last:
                 return ""
@@ -6831,6 +6898,11 @@ class Pipeline:
         # user's message, a hook node's directive, the project's memory), so the
         # tools that would run work all consult the same verdict. Last of the
         # blocks: it decides whether anything above it happens this turn.
+        if getattr(self._session, "standing_autonomy", ""):
+            guides.append("autonomy")
+            pin = pin + ("[STANDING INSTRUCTION] The user told you earlier in this "
+                         f"conversation: \"{self._session.standing_autonomy}\" - decide "
+                         "yourself, do not stop to ask, until they say otherwise.\n\n")
         self._plan_approval = self._detect_plan_approval(user_text, project_ctx)
         if self._plan_approval is not None:
             from src.utils.plan_gate import approval_state
@@ -7055,6 +7127,14 @@ class Pipeline:
         self._session.plan_awaiting_reply = False
         self._plan_approval = None
         self._plan_gate_fired = False
+        # "Don't stop, decide yourself" - the user's, for the rest of the conversation.
+        try:
+            from src.utils import standing_orders
+            if self._user_opened_turn():
+                self._session.standing_autonomy = standing_orders.update(
+                    getattr(self._session, "standing_autonomy", ""), user_text)
+        except Exception:  # noqa: BLE001 - never cost a turn
+            pass
         # A review halt left standing by an earlier turn, and how this message
         # answers it. Cleared from the session either way: a halt that has been
         # answered is spent, and one that has NOT is re-armed at the end of this
@@ -7229,11 +7309,13 @@ class Pipeline:
         _late_redrives = 0
         _intent_redrives = 0
         _work_redrives = 0
+        _cut_redrives = 0
+        _cut_off: list = []
         self._canvas_touched, self._canvas_unwired, self._work_repaired = set(), {}, None
         while True:
             interrupt_result = None
             yield {"_orchestrator_start": True}
-            async for event in self._orchestrator_agent.stream_async(current_input):
+            async for event in self._stream_until_cut_off(current_input, _cut_off):
                 yield event
                 if "result" in event:
                     agent_result = event["result"]
@@ -7255,6 +7337,19 @@ class Pipeline:
                 yield {"tool_activity": _ta}
             for _cp in _drain_canvas_patch():
                 yield {"canvas_patch": _cp}
+            # The model was cut off (output limit, or a prompt that no longer fits):
+            # the task is not done and the user has been told nothing. Trim, and
+            # carry on in the same turn - bounded, then the error is theirs to see.
+            if _cut_off:
+                _exc = _cut_off.pop()
+                _again = self._cut_off_input(_exc, _cut_redrives)
+                if not _again:
+                    raise _exc
+                _cut_redrives += 1
+                _push_progress("↻ The model was cut off mid-task - carrying on.")
+                yield {"data": "\n\n"}
+                current_input = _again
+                continue
             # Something the user said after the agent's last tool call — while it was
             # writing its answer — has no tool boundary left to ride on. Read it now,
             # in this turn, instead of handing it back to wait for the next one.
@@ -8555,6 +8650,11 @@ class Pipeline:
         if self._turn_origin() in ("lead", "shots"):
             return None
         sources = [("the user's message", user_text)]
+        if getattr(self._session, "standing_autonomy", ""):
+            # They said "decide yourself": a hook's or the project's standing
+            # "ask me first" no longer holds the turn. What they ask for in THIS
+            # message still does.
+            return find_approval_request(sources)
         for h in (self._canvas_hooks or []):
             if isinstance(h, dict):
                 sources.append((f"hook {h.get('hook_node_id')}'s directive",

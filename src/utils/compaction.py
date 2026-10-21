@@ -44,6 +44,12 @@ _ROOT = Path(__file__).resolve().parent.parent.parent
 ARCHIVE_DIR = _ROOT / "memory" / "history_archive"
 
 NEWLINE = chr(10)
+# Said to the agent inside every summary: a summary is background, not a message
+# to answer. Without it a model that wakes up on one tends to reply with a recap
+# and end the turn, and the task waits until the user nudges it.
+CONTINUE_NOTE = ("Do not answer or recap this summary: read the user's message "
+                 "below and carry on with the task in OPEN, standing instructions "
+                 "(USER RULES) included.")
 TRIM_MARK = "[trimmed by compaction:"
 SUMMARY_MARK = "[EARLIER IN THIS CONVERSATION — summarised to keep it short"
 SUMMARY_END = "[END OF SUMMARY — the conversation continues below]"
@@ -196,7 +202,7 @@ def render_for_summary(messages, limit: int = 40_000) -> str:
             if "text" in block:
                 text = str(block["text"])
                 if text.startswith(SUMMARY_MARK):
-                    body = text[len(SUMMARY_MARK):].split(SUMMARY_END)[0]
+                    body = text[len(SUMMARY_MARK):].split(SUMMARY_END)[0].replace(CONTINUE_NOTE, "")
                     lines.append("PREVIOUS SUMMARY:\n" + body.strip(" ]\n:"))
                     rest = text.split(SUMMARY_END, 1)[-1].strip() if SUMMARY_END in text else ""
                     if rest:
@@ -283,7 +289,7 @@ def summarise_older(messages: list, *, keep_turns: int,
         text = digest(old)
     first = copy.copy(recent[0])
     block = {"text": f"{SUMMARY_MARK}; the full messages are archived on disk]\n"
-                     f"{text.strip()}\n{SUMMARY_END}"}
+                     f"{text.strip()}\n{CONTINUE_NOTE}\n{SUMMARY_END}"}
     first["content"] = [block] + list(first.get("content") or [])
     return [first] + recent[1:], old
 
