@@ -16,8 +16,10 @@ DECISIONS — what was decided, and what was tried and rejected (with the reason
   not tried again).
 STATE — what exists now: files produced, workflows built or changed, what is on the canvas,
   downloads done, settings changed.
-OPEN — anything unfinished, promised, or waiting on the user.
-USER RULES — standing instructions the user gave.
+OPEN — the task still in progress and the very next step to take, plus anything
+  unfinished, promised, or really waiting on the user.
+USER RULES — standing instructions the user gave, word for word ("decide yourself",
+  "don't stop to ask", "always ..."). These never get dropped.
 
 Rules:
 - If a PREVIOUS SUMMARY is included, fold it in: its facts stay unless the later messages
