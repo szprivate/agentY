@@ -104,4 +104,4 @@ nul
 config/key_ages.json
 
 # downloaded helper programs (Brush, the splat trainer)
-tools/
+/tools/
