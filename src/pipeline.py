@@ -1327,6 +1327,7 @@ class Pipeline:
                 return json.dumps({"status": "blocked", "blockers": briefing.blockers})
             result = await self._assemble_deterministic(briefing)
             result = await self._enforce_model_family(result, request)
+            result = await self._enforce_local_only(result, request)
             _mark_from_scratch(result, briefing)
             self._fit_requested_shape(result, request)
             self._apply_chosen_savers(result)
@@ -1457,6 +1458,7 @@ class Pipeline:
                 return json.dumps({"status": "blocked", "blockers": briefing.blockers})
             result = await self._assemble_deterministic(briefing)
             result = await self._enforce_model_family(result, request)
+            result = await self._enforce_local_only(result, request)
             if result.get("status") != "ready":
                 # build_new / needs_fix / limit_exceeded: building and repairing are
                 # the orchestrator's tools. Hand the job up with everything it needs.
@@ -9768,7 +9770,12 @@ class Pipeline:
     )
     # Partner-API models are the default (documented in the catalog header); only
     # an explicit ask for local/offline flips it.
-    _LOCAL_RE = re.compile(r"local|offline|on my machine|without api|no api|self hosted")
+    # An explicit "local" is a hard constraint, not a preference: partner/API
+    # templates and nodes are excluded from the catalog scope, a template pick and
+    # the built graph (see _scope_recipes, _template_is_api, _enforce_local_only).
+    _LOCAL_RE = re.compile(
+        r"local|offline|on my machine|on my gpu|on my pc|without api|no api|"
+        r"self hosted|open source|opensource|no partner|without partner")
 
     @staticmethod
     def _norm_request(text: str) -> str:
@@ -9955,24 +9962,36 @@ class Pipeline:
                     out.append({**t, "models": models})
             return out
 
+        # An explicit "local" ask drops every partner-API model before any other
+        # axis is applied: the model and task branches below used to ignore
+        # `execution`, so "the local MiniMax H3 workflow" kept the paid Hailuo
+        # recipe next to the local one and the researcher could pick it.
+        local_only = execution == "local"
+
+        def _ok(m) -> bool:
+            return not (local_only and m.get("uses_api_nodes"))
+
         if model:
             # A named model outranks the API-first default and the media guess:
             # "build me a wan 2.2 workflow" must not resolve to the one partner-API
             # WAN 2.2 recipe while hiding the six local ones, and "relight this shot
             # with magnific" reads as video though Magnific is image-only.
-            tasks = _pick(lambda m: str(m.get("model") or "") == model)
+            tasks = _pick(lambda m: str(m.get("model") or "") == model and _ok(m))
             if tasks:
-                return f"model:{model}", tasks, f"model “{model}”"
+                return (f"model:{model}" + (":local" if local_only else ""), tasks,
+                        f"model “{model}”" + (" (local only)" if local_only else ""))
         if named_tasks:
             # Between the model key and the media bucket: the request named a
             # capability but no model. Both the partner-API and local variants of
             # the task are kept — which to prefer is the researcher's call, and
             # the API ones already sort first.
             wanted = set(named_tasks)
-            tasks = [t for t in self._load_recipe_tasks() if (t.get("task") or "") in wanted]
+            tasks = [{**t, "models": [m for m in (t.get("models") or []) if _ok(m)]}
+                     for t in self._load_recipe_tasks() if (t.get("task") or "") in wanted]
+            tasks = [t for t in tasks if t["models"]]
             if tasks:
                 labels = sorted({self._task_base(t.get("task") or "") for t in tasks})
-                key = "task:" + "+".join(sorted(wanted))
+                key = "task:" + "+".join(sorted(wanted)) + (":local" if local_only else "")
                 return key, tasks, "the " + " / ".join(labels) + " workflows"
         if media:
             want_api = execution == "api"
@@ -10037,6 +10056,11 @@ class Pipeline:
         # Exact duplicates filed under a different filename:
         "text_to_image",              # generic Z-Image-Turbo t2i → text_to_image_z_image_turbo
         "image_z_image_turbo",        # dup of text_to_image_z_image_turbo
+        # "All in one" comparison graphs: several alternative model branches (Flux,
+        # Qwen, Grok, …) wired side by side, each with its own sampler chain. An
+        # automatic build writes the prompt onto one branch while the others stay
+        # connected and fail (SamplerCustomAdvanced latent size mismatch, #47).
+        "templates-all_in_one-image_edit_models",
     })
 
     def _template_models_installed(self, stem: str) -> bool:
@@ -10431,6 +10455,54 @@ class Pipeline:
                   f"server_errors={res.get('server_errors')}")
         return await self._run_fix_workflow_assembly(
             wf, problems=problems, server_errors=res.get("server_errors", {}))
+
+    @classmethod
+    def _wants_local(cls, request: str) -> bool:
+        """Did the request explicitly ask for local / open-source execution?"""
+        return bool(cls._LOCAL_RE.search(cls._norm_request(request or "")))
+
+    def _template_is_api(self, name: str) -> bool:
+        """Is *name* a partner-API template in the recipe DB (and in no local model)?"""
+        stem = name[:-5] if str(name).endswith(".json") else str(name)
+        api = local = False
+        for t in self._load_recipe_tasks():
+            for m in (t.get("models") or []):
+                if stem in [f[:-5] if f.endswith(".json") else f for f in (m.get("member_files") or [])]:
+                    if m.get("uses_api_nodes"):
+                        api = True
+                    else:
+                        local = True
+        return api and not local
+
+    async def _enforce_local_only(self, result: dict, request: str) -> dict:
+        """Hold a ``ready`` workflow to an explicit "local" request.
+
+        A graph with a partner-API node (``comfy_api_nodes``) bills and, without
+        credit, fails with Payment Required; the user asked for none of that.
+        The repair specialist gets the offending nodes as problems.
+        """
+        if not isinstance(result, dict) or result.get("status") != "ready"                 or not self._wants_local(request):
+            return result
+        path = result.get("workflow_path")
+        if not path:
+            return result
+        try:
+            wf = json.loads(Path(path).read_text(encoding="utf-8"))
+            from agenty_core.tools.comfyui import _get_object_info, _is_api_node
+            info = _get_object_info() or {}
+        except Exception:  # noqa: BLE001
+            return result
+        graph = wf.get("prompt") if isinstance(wf.get("prompt"), dict) else wf
+        bad = [(nid, v["class_type"]) for nid, v in (graph or {}).items()
+               if isinstance(v, dict) and _is_api_node(info.get(v.get("class_type")))]
+        if not bad:
+            return result
+        problems = [f"Node {nid} ({cls}) is a partner-API node (paid, remote); the request "
+                    f"asked for a LOCAL workflow. Replace it with a local equivalent."
+                    for nid, cls in bad]
+        _push_progress("🩹 The request is local-only but the graph has partner-API nodes — "
+                       "running the repair specialist …")
+        return await self._run_fix_workflow_assembly(path, problems=problems, server_errors={})
 
     async def _enforce_model_family(self, result: dict, request: str) -> dict:
         """Hold a ``ready`` workflow to the model family the user named.
@@ -11496,6 +11568,19 @@ class Pipeline:
             _tname = (decision.template.name or "").strip()
             if _tname and _tname.lower() not in ("build_new", "none"):
                 _match = self._match_template(_tname)
+                if _match and self._wants_local(user_input) and self._template_is_api(_match):
+                    # "Local" is a hard constraint: a partner-API template is never
+                    # an acceptable pick, however well its name matches.
+                    if _bad_tmpl_retries < self._MAX_BAD_TEMPLATE_RETRIES:
+                        _bad_tmpl_retries += 1
+                        last_error = (
+                            f"Template '{_match}' runs on partner API nodes (paid, remote) "
+                            f"but the request asks for a LOCAL workflow. Choose a local "
+                            f"template from the catalog, or \"build_new\" if none fits.")
+                        _context_reset = True
+                        continue
+                    decision.template.name = "build_new"
+                    _match = "build_new"
                 if _match is None:
                     if _bad_tmpl_retries < self._MAX_BAD_TEMPLATE_RETRIES:
                         _bad_tmpl_retries += 1
