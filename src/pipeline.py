@@ -6647,6 +6647,11 @@ class Pipeline:
         matched = self._match_named_templates(user_text)
         if matched:
             phrase, names = matched
+            # A hidden template counts as named only in the user's own words: a
+            # lead's brief or a memory note that mentions one is not the user
+            # asking for it (that is how #47's all-in-one graph came back).
+            names = [n for n in names if self._user_named_template(n, user_text)]
+        if matched and names:
             if len(names) == 1:
                 lines.append(
                     f'The user explicitly asked for the "{names[0]}" template — you '
@@ -10174,6 +10179,17 @@ class Pipeline:
         "templates-all_in_one-image_edit_models",
     })
 
+    def _user_named_template(self, name: str, user_text: str) -> bool:
+        """Whether *name* may be used: any template not hidden from the catalog, or a
+        hidden one the user wrote out by name in a message they typed themselves (not
+        a shot's brief from its lead, nor a lead woken by its shots)."""
+        stem = name[:-5] if str(name).endswith(".json") else str(name)
+        if stem not in self._SUPPRESSED_TEMPLATES:
+            return True
+        if self._turn_origin() in ("lead", "shots"):
+            return False
+        return bool(re.search(r"(?<![\w.-])" + re.escape(stem.lower()) + r"(?![\w-])", str(user_text or "").lower()))
+
     def _template_models_installed(self, stem: str) -> bool:
         """Whether *stem*'s models are on this machine, to the version.
 
@@ -11680,6 +11696,19 @@ class Pipeline:
             _tname = (decision.template.name or "").strip()
             if _tname and _tname.lower() not in ("build_new", "none"):
                 _match = self._match_template(_tname)
+                if _match and not self._user_named_template(_match, user_input):
+                    # Hidden from automatic picks (see _SUPPRESSED_TEMPLATES); only the
+                    # user's own words can ask for one.
+                    if _bad_tmpl_retries < self._MAX_BAD_TEMPLATE_RETRIES:
+                        _bad_tmpl_retries += 1
+                        last_error = (
+                            f"Template '{_match}' is not offered for automatic builds (it is "
+                            f"not in the catalog you were given) and the user did not name it. "
+                            f"Choose a template from the catalog, or \"build_new\" if none fits.")
+                        _context_reset = True
+                        continue
+                    decision.template.name = "build_new"
+                    _match = "build_new"
                 if _match and self._wants_local(user_input) and self._template_is_api(_match):
                     # "Local" is a hard constraint: a partner-API template is never
                     # an acceptable pick, however well its name matches.
