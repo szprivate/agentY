@@ -29,6 +29,11 @@ from __future__ import annotations
 
 import copy
 
+from agenty_core.tools.assembly_deterministic import (
+    describe_input_names as _describe_names,
+    expand_input_specs as _expand_specs,
+)
+
 _WIDGET_TYPES = {"INT", "FLOAT", "STRING", "BOOLEAN", "COMBO"}
 
 
@@ -88,16 +93,67 @@ def _default(spec):
     return combo[0] if combo else None
 
 
-def _input_spec(specs: dict, name: str):
-    """The spec for *name*, allowing V3 dynamic members ("values.a")."""
+def _schema_inputs(schema: dict) -> tuple[dict, dict]:
+    inp = (schema or {}).get("input") or {}
+    return inp.get("required") or {}, inp.get("optional") or {}
+
+
+def _input_spec(specs: dict, name: str, values: dict | None = None):
+    """The spec for *name*, or None when the node has no such input.
+
+    Beside the node's own inputs this knows the dotted ones: a V3 autogrow slot
+    (``anchors.anchor0``), a member of a dynamic combo's selected option
+    (``model.duration``; the option is ``values[<combo>]``, else the combo's
+    default) and a slot of an autogrow group inside such an option
+    (``model.reference_images.image_1``). A name that belongs to an option that is
+    not selected, or to no option, is None - it would reach ComfyUI as a key the
+    node never binds."""
     if name in specs:
         return specs[name]
+    if "." not in name:
+        return None
+    expanded = _expand_specs(specs, None, values)
+    if name in expanded:
+        return expanded[name]
     head = name.split(".", 1)[0]
-    if "." in name and head in specs and _is_dynamic(specs[head]):
-        # A growing input says what each of its slots takes ("anchors.anchor0"
-        # takes anything, "execs.exec0" takes the execution wire and only that).
+    # A growing input whose slots the schema does not list (a prefix template
+    # with no maximum): its slots are named at run time, so any is allowed.
+    if head in specs and _is_dynamic(specs[head]) and _spec_type(specs[head]) != "COMFY_DYNAMICCOMBO_V3":
         return _autogrow_member(specs[head]) or ["*", {}]
     return None
+
+
+def _valid_names(specs: dict, values: dict | None = None) -> str:
+    """The input names a node takes, as the prompt spells them, for an error."""
+    return ", ".join(_describe_names(_expand_specs(specs, None, values))) or "none"
+
+
+def _unknown_input_error(where: str, cls: str, name: str, specs: dict, values: dict | None) -> str:
+    head, _, rest = name.partition(".")
+    hint = ""
+    spec = specs.get(head)
+    if rest and _spec_type(spec) == "COMFY_DYNAMICCOMBO_V3":
+        chosen = (values or {}).get(head)
+        others = [str(o.get("key")) for o in ((spec[1] or {}).get("options") or [])
+                  if isinstance(o, dict) and rest in _option_names(o)]
+        if others and chosen not in others:
+            hint = (f" '{name}' belongs to option {others} of '{head}', but '{head}' is "
+                    f"{chosen!r}; set '{head}' first.")
+        elif not isinstance(chosen, str):
+            hint = f" '{head}' needs one of its options as a value first."
+    elif "." not in name and any(("." in k and k.endswith("." + name)) for k in
+                                 _expand_specs(specs, None, values)):
+        full = next(k for k in _expand_specs(specs, None, values) if k.endswith("." + name))
+        hint = f" Dotted address: '{full}'."
+    return (f"{where}: {cls} has no input '{name}'.{hint} "
+            f"It takes: {_valid_names(specs, values)}.")
+
+
+def _option_names(opt: dict) -> set:
+    """The input names one option of a dynamic combo brings, nested slots as dotted
+    suffixes (``reference_images.image_1``)."""
+    inner = opt.get("inputs") or {}
+    return set(_expand_specs(inner.get("required"), inner.get("optional"), {}))
 
 
 def _autogrow_member(spec):
@@ -114,24 +170,17 @@ def _autogrow_member(spec):
 
 
 def _member_spec(specs: dict, name: str, values: dict):
-    """The spec of a dynamic combo's member — ``model.duration`` — for the option
-    in force (``values[head]``, else the first), or None.
+    """The spec of a dynamic combo's member - ``model.duration`` - for the option
+    in force (``values[head]``, else the default), or None; also reaches a slot of
+    an autogrow group nested in the option.
 
     `_input_spec` only knows such a name is allowed; without its own spec a
     value written there was never checked, and a Wan 3.0 ``model.duration`` of
-    ``5`` went onto the canvas where the menu holds ``"5"`` — which ComfyUI
+    ``5`` went onto the canvas where the menu holds ``"5"`` - which ComfyUI
     refuses ("Value not in list") when the graph is queued."""
-    head, _, rest = name.partition(".")
-    spec = specs.get(head)
-    if not rest or _spec_type(spec) != "COMFY_DYNAMICCOMBO_V3" or len(spec) < 2:
+    if "." not in name:
         return None
-    options = (spec[1] or {}).get("options") or []
-    key = (values or {}).get(head)
-    opt = next((o for o in options if isinstance(o, dict) and o.get("key") == key), None)
-    if opt is None and options and isinstance(options[0], dict):
-        opt = options[0]
-    sub = (opt or {}).get("inputs") or {}
-    return {**(sub.get("optional") or {}), **(sub.get("required") or {})}.get(rest)
+    return _expand_specs(specs, None, values).get(name)
 
 
 def _dynamic_defaults(name: str, spec, key=None) -> dict:
@@ -306,10 +355,13 @@ def plan(graph: dict, ops: list, object_info: dict) -> dict:
                 elif t == "COMFY_DYNAMICCOMBO_V3":
                     inputs.update(_dynamic_defaults(name, spec, params.get(name)))
             bad = False
+            # A dynamic combo's value first: its option decides which dotted
+            # names exist, on the page as well as here.
+            params = dict(sorted(params.items(), key=lambda kv: str(kv[0]).count(".")))
+            in_force = {**inputs, **params}
             for name in params:
-                if _input_spec(specs, name) is None:
-                    errors.append(f"{where}: {cls} has no input '{name}' "
-                                  f"(it has: {', '.join(sorted(specs)) or 'none'}).")
+                if _input_spec(specs, name, in_force) is None:
+                    errors.append(_unknown_input_error(where, cls, name, specs, in_force))
                     bad = True
             params, wrong = coerce_params(schema, params, inputs)
             for w in wrong:
@@ -364,17 +416,20 @@ def plan(graph: dict, ops: list, object_info: dict) -> dict:
                 errors.append(f"{where}: #{src} {g[src]['class_type']} has no output {want!r} "
                               f"(outputs: {listing or 'none'}).")
                 continue
-            spec = _input_spec(_specs(d_schema), name)
+            d_specs = _specs(d_schema)
+            d_values = g[dst].get("inputs") or {}
+            spec = _input_spec(d_specs, name, d_values)
             if spec is None:
-                errors.append(f"{where}: #{dst} {g[dst]['class_type']} has no input '{name}' "
-                              f"(it has: {', '.join(sorted(_specs(d_schema))) or 'none'}).")
+                errors.append(_unknown_input_error(f"{where}: #{dst}", g[dst]["class_type"],
+                                                   name, d_specs, d_values))
                 continue
             if not _compatible(outs[slot], _spec_type(spec)):
                 errors.append(f"{where}: #{src} output {slot} is {outs[slot]}, but "
                               f"#{dst}.{name} takes {_spec_type(spec)}.")
                 continue
             g[dst].setdefault("inputs", {})[name] = [src, slot]
-            resolved.append({"op": "connect", "from": src, "output": slot, "to": dst, "input": name})
+            resolved.append({"op": "connect", "from": src, "output": slot, "to": dst, "input": name,
+                             "slot_type": outs[slot] if isinstance(outs[slot], str) else "*"})
             touched += [src, dst]
 
         elif kind == "disconnect":
@@ -463,14 +518,14 @@ def replacement_ops(graph: dict, node_id: str, class_type: str, object_info: dic
     old_inputs = old.get("inputs") or {}
     wires = {str(k): ("" if v is None else str(v)) for k, v in (wires or {}).items()}
     params = dict(params or {})
-    unknown = [k for k in params if _input_spec(new_specs, k) is None]
+    unknown = [k for k in params if _input_spec(new_specs, k, params) is None]
     if unknown:
         out["errors"].append(f"{class_type} has no input {', '.join(map(repr, unknown))} "
-                             f"(it has: {listing or 'none'}).")
+                             f"(it takes: {_valid_names(new_specs, params)}).")
     for k, target in wires.items():
         if not _is_link(old_inputs.get(k)):
             out["errors"].append(f"wires names '{k}', but nothing is wired into #{nid}.{k}.")
-        elif target and _input_spec(new_specs, target) is None:
+        elif target and _input_spec(new_specs, target, params) is None:
             out["errors"].append(f"wires sends '{k}' to '{target}', which {class_type} does not have "
                                  f"(it has: {listing or 'none'}).")
 
@@ -487,6 +542,10 @@ def replacement_ops(graph: dict, node_id: str, class_type: str, object_info: dic
     # Wires in.
     taken: set = set()
     connects: list = []
+    # What the new node's dotted inputs are judged against: the values it will
+    # hold, so a wire into ``model.reference_images.image_1`` finds that slot on
+    # the same dynamic combo option.
+    carried_values = {**{k: v for k, v in old_inputs.items() if not _is_link(v)}, **params}
     order = sorted(new_specs, key=lambda n: (_is_widget_spec(new_specs[n]), n not in required))
     for name, value in old_inputs.items():
         if not _is_link(value):
@@ -498,7 +557,8 @@ def replacement_ops(graph: dict, node_id: str, class_type: str, object_info: dic
             if target is None:
                 out["left_behind"].append(f"#{src} → {name}")
                 continue
-        elif name in new_specs and _compatible(t, _spec_type(new_specs[name])):
+        elif (_input_spec(new_specs, name, carried_values) is not None
+              and _compatible(t, _spec_type(_input_spec(new_specs, name, carried_values)))):
             target = name
         else:
             target = next((n for n in order if n not in taken and n not in params
@@ -540,7 +600,8 @@ def replacement_ops(graph: dict, node_id: str, class_type: str, object_info: dic
             if not (_is_link(v) and str(v[0]) == nid):
                 continue
             slot = int(v[1])
-            cspec = _input_spec(_specs(object_info.get(cnode.get("class_type")) or {}), iname)
+            cspec = _input_spec(_specs(object_info.get(cnode.get("class_type")) or {}), iname,
+                               cnode.get("inputs"))
             want = (_spec_type(cspec) if cspec is not None
                     else (old_outs[slot] if slot < len(old_outs) else None))
             if (want is None or _types(want) == {"*"}) and slot < len(old_outs):

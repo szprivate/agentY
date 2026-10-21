@@ -9260,11 +9260,16 @@ class Pipeline:
         if schema:
             declared = {**((schema.get("input") or {}).get("required") or {}),
                         **((schema.get("input") or {}).get("optional") or {})}
-            unknown = [k for k in params if k not in declared and k not in inputs]
+            # Dotted names too: a dynamic combo's selected option brings its own
+            # (model.prompt), and so do the autogrow groups inside it.
+            in_force = {**inputs, **params}
+            unknown = [k for k in params if k not in inputs
+                       and _ce._input_spec(declared, k, in_force) is None]
             if unknown:
                 return json.dumps({"status": "rejected", "errors": [
-                    f"{node.get('class_type')} has no input '{k}'" for k in unknown],
-                    "inputs": sorted(declared)})
+                    _ce._unknown_input_error("", str(node.get("class_type")), k, declared, in_force).lstrip(": ")
+                    for k in unknown],
+                    "inputs": _ce._valid_names(declared, in_force)})
             widgets = {k: v for k, v in inputs.items() if not isinstance(v, list)}
             params, wrong = _ce.coerce_params(schema, params, widgets)
             if wrong:
