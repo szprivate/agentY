@@ -60,7 +60,8 @@ class PlanGateHonoursIt(unittest.TestCase):
     def _detect(self, standing, user_text, directive="wait for my go-ahead before running"):
         fake = SimpleNamespace(
             _session=SimpleNamespace(standing_autonomy=standing),
-            _canvas_hooks=[{"hook_node_id": 7, "directive": directive}])
+            _canvas_hooks=[{"hook_node_id": 7, "directive": directive}],
+            _turn_origin=lambda: "user")
         return Pipeline._detect_plan_approval(fake, user_text, "")
 
     def test_hook_ask_first_holds_without_the_instruction(self):
