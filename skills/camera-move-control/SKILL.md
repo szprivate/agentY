@@ -23,7 +23,13 @@ The chain, in order. Say the plan in one line first, then run it.
    / `roll` degrees, at `t` seconds. Needs at least two. Examples:
    - low drone pass toward the horizon, slight rise: `[{"t":0},{"t":5,"forward":45,"up":1.2}]`
    - push-in with a drift: `[{"t":0},{"t":5,"forward":12,"right":1.5,"yaw":-4}]`
-   - orbit-ish: three moves with growing `right` and `yaw`.
+   - circling a person or object ("orbit", "circle around him", "arc shot"): do NOT key it - use
+     `render_camera_move(name, world, orbit={...})` instead of `moves`. A pivot on the subject turns
+     about the vertical axis while the camera, its child, moves straight back / up, so the arc is
+     smooth and the horizon level. E.g. close-up to wide, 180 degrees behind him over 5 s:
+     `orbit={"center": [x, eye_height, z], "degrees": 180, "seconds": 5, "distance": [0.5, 7],
+     "height": [0, 1.4]}`, `ease: "linear"`. The centre is the subject's position at eye height
+     (a close-up) or chest height; positive degrees turn left.
    Keep it believable: a single picture holds only what it shows, so a move far past the
    picture's depth shows holes. About the depth of the scene is the limit; say so when the
    user asks for more. `shading: "clay"` gives the grey layout look some models want.
