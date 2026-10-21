@@ -131,6 +131,10 @@ class _Stub:
     _detect_plan_approval = Pipeline._detect_plan_approval
     _plan_gate_refusal = Pipeline._plan_gate_refusal
     _arm_plan_gate = Pipeline._arm_plan_gate
+    origin = "panel"
+
+    def _turn_origin(self):
+        return self.origin
 
     def __init__(self, hooks=(), gate_open=False, approval=None):
         self._canvas_hooks = list(hooks)
@@ -160,6 +164,17 @@ class SourcesTest(unittest.TestCase):
         self.assertIsNotNone(stub._detect_plan_approval("render the sequence"))
         self.assertIsNone(stub._detect_plan_approval("just do it, no need to ask"),
                           "their own rule is theirs to suspend for a turn")
+
+    def test_a_shot_or_a_woken_lead_is_never_gated(self):
+        # One lead approval card used to stall every parallel shot: the shot's
+        # briefing / the project memory matched, and nobody could answer in a shot tab.
+        for origin in ("lead", "shots"):
+            stub = _Stub([_hook(30, "Ask me first before you run anything.")])
+            stub.origin = origin
+            self.assertIsNone(stub._detect_plan_approval(
+                "render sh01", "policy: ask me first before running"), origin)
+        stub = _Stub([_hook(30, "Ask me first before you run anything.")])
+        self.assertIsNotNone(stub._detect_plan_approval("render it"))
 
     def test_nobody_asked_means_no_gate(self):
         self.assertIsNone(_Stub(hooks=[_hook(30, "Caption the image in anchor_0.")])

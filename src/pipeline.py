@@ -8548,6 +8548,12 @@ class Pipeline:
         from src.utils.plan_gate import find_approval_request, waived
         if waived(user_text):
             return None
+        # A turn nobody typed into has no one to ask: a shot is briefed by its lead
+        # (the lead put the plan to the user before starting it), and a lead woken by
+        # its shots is re-running or reviewing work the user already asked for. Gating
+        # those left every parallel shot stalled behind one approval card.
+        if self._turn_origin() in ("lead", "shots"):
+            return None
         sources = [("the user's message", user_text)]
         for h in (self._canvas_hooks or []):
             if isinstance(h, dict):
@@ -8572,7 +8578,8 @@ class Pipeline:
         from src.utils.plan_gate import execution_refusal
         if announce:
             self._plan_gate_fired = True
-            _push_progress("✋ The plan was asked to be approved first — holding.")
+            _push_progress(f"✋ Holding — waiting for the user's go-ahead on the plan "
+                           f"({req.source}: \"{req.quote}\").")
         return execution_refusal(req)
 
     def _restore_review_halt(self):
