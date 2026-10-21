@@ -86,5 +86,30 @@ class LocalConstraintTest(unittest.TestCase):
         self.assertNotIn("Text to Video", tasks)
 
 
+
+
+class HiddenTemplateOnlyByTheUser(unittest.TestCase):
+    """A hidden (suppressed) template is used only when the user's own message names it."""
+
+    def _p(self, origin):
+        from types import SimpleNamespace
+        fake = SimpleNamespace(_SUPPRESSED_TEMPLATES=Pipeline._SUPPRESSED_TEMPLATES, _turn_origin=lambda: origin)
+        return lambda name, text: Pipeline._user_named_template(fake, name, text)
+
+    def test_named_by_the_user(self):
+        ok = self._p("panel")
+        self.assertTrue(ok("templates-all_in_one-image_edit_models",
+                           "use templates-all_in_one-image_edit_models to compare"))
+        self.assertFalse(ok("templates-all_in_one-image_edit_models", "edit this photo with Qwen"))
+
+    def test_a_shot_brief_does_not_count(self):
+        ok = self._p("lead")
+        self.assertFalse(ok("templates-all_in_one-image_edit_models",
+                            'Template: "templates-all_in_one-image_edit_models" (user-named)'))
+
+    def test_ordinary_templates_always_pass(self):
+        self.assertTrue(self._p("lead")("image_edit_qwen_2511", "anything"))
+
+
 if __name__ == "__main__":
     unittest.main()
