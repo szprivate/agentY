@@ -57,3 +57,11 @@ transitions, captions, maps, audio, rendering) at github.com/remotion-dev/skills
 (`npx skills add remotion-dev/skills`). They are large and meant for a coding
 agent with a shell; fetch the one page you need with `read_web_page` (e.g.
 `.../skills/remotion-markup/transitions.md`) rather than loading them wholesale.
+
+## Never re-initialise an existing project
+
+`init_remotion_project` runs `npm install` and writes `package.json`, `Root.tsx`
+and `index.ts`. Never call it on a folder that already holds a Remotion project
+(`package.json` or `src/Root.tsx` present) - agentY refuses the call. Work in the
+existing project instead and render with its own local CLI from inside the folder:
+`npx remotion render` / `npx remotion still`.
