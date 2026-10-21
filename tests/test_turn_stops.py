@@ -173,5 +173,24 @@ class PartialsExist(unittest.TestCase):
         self.assertIn("autonomy", pl._TURN_GUIDES)
 
 
+
+
+class NotAGrant(unittest.TestCase):
+    """Ordinary sentences must not switch the agent into deciding everything."""
+
+    def test_everyday_wording_is_not_a_grant(self):
+        from src.utils import standing_orders as so
+        for text in ("Your call to the API failed, can you check?", "Don't stop the render, it's almost done",
+                     "your choice of LoRA looked off", "don't stop this download", "my decision was A",
+                     "Should you decide between the two? No, show me both first."):
+            self.assertEqual(so.granted(text), "", text)
+
+    def test_real_grants(self):
+        from src.utils import standing_orders as so
+        for text in ("Don't stop, decide yourself", "it's your call", "It's up to you", "you decide",
+                     "don't stop.", "Don't stop to ask me"):
+            self.assertTrue(so.granted(text), text)
+
+
 if __name__ == "__main__":
     unittest.main()

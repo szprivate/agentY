@@ -20,12 +20,16 @@ import re
 # Only ever read against the USER's own message (never a hook directive or the
 # harness's text): the user's words are what grant it.
 _GRANT = (
-    re.compile(r"\bdo\s*n[o']?t\s+stop\b", re.I),
+    # "don't stop" on its own / "don't stop to ask" - not "don't stop the render"
+    re.compile(r"\bdo\s*n[o']?t\s+stop\b(?!\s+(?:the|this|that|it|them|my|your|a|an|any)\b)", re.I),
     re.compile(r"\bstop\s+(?:asking|stopping|checking\s+in|interrupting)\b", re.I),
     re.compile(r"\b(?:do\s*n[o']?t|never)\s+(?:ask|check\s+in)\b[^.!?]{0,24}\b(?:me|again|anything|questions?)\b", re.I),
     re.compile(r"\bno\s+more\s+(?:questions|options|choices|menus?)\b", re.I),
     re.compile(r"\bdecide\s+(?:it\s+|this\s+|that\s+|everything\s+)?(?:for\s+)?yourself\b", re.I),
-    re.compile(r"\b(?:you\s+decide(?!\s+(?:between|whether|if|which|what|on\s+the))|your\s+(?:call|choice|decision))\b", re.I),
+    re.compile(r"\byou\s+decide\b(?!\s+(?:between|whether|if|which|what|on\s+the))", re.I),
+    # "it's your call" / "up to you" - not "your call to the API failed"
+    re.compile(r"\b(?:it'?s|its|it\s+is|that'?s)\s+(?:all\s+)?your\s+(?:call|choice|decision)\b", re.I),
+    re.compile(r"\b(?:it'?s|it\s+is)\s+(?:all\s+)?up\s+to\s+you\b", re.I),
     re.compile(r"\b(?:pick|choose)\b[^.!?]{0,16}\byourself\b", re.I),
     re.compile(r"\b(?:make|take)\s+(?:the|these|all)\s+(?:decisions?|choices?|calls?)\s+(?:yourself|for\s+me)\b", re.I),
     re.compile(r"\bwithout\s+(?:asking|stopping|checking\s+(?:in|with\s+me))\b", re.I),
