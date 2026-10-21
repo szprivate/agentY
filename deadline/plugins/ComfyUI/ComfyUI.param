@@ -1,0 +1,100 @@
+[About]
+Type=label
+Label=About
+Category=About Plugin
+CategoryOrder=-1
+Index=0
+Default=ComfyUI Plugin for Deadline (runs an API-format workflow on a headless ComfyUI; submitted by agentY)
+Description=Not configurable
+
+[ConcurrentTasks]
+Type=label
+Label=ConcurrentTasks
+Category=About Plugin
+CategoryOrder=-1
+Index=0
+Default=False
+Description=Not configurable
+
+[ComfyUIPath_Windows]
+Type=folder
+Label=ComfyUI Folder (Windows)
+Category=ComfyUI Install
+CategoryOrder=0
+Index=0
+Default=
+Description=The ComfyUI folder (the one holding main.py, or a portable folder holding ComfyUI\main.py) on Windows workers. If empty, the path agentY submits with the job (DEADLINE_COMFYUI_PATH) is used. A worker where this folder does not exist fails the task at once.
+
+[ComfyUIPath_Linux]
+Type=folder
+Label=ComfyUI Folder (Linux)
+Category=ComfyUI Install
+CategoryOrder=0
+Index=1
+Default=
+Description=The ComfyUI folder on Linux workers.
+
+[ComfyUIPath_Mac]
+Type=folder
+Label=ComfyUI Folder (Mac)
+Category=ComfyUI Install
+CategoryOrder=0
+Index=2
+Default=
+Description=The ComfyUI folder on Mac workers.
+
+[PythonExe]
+Type=filename
+Label=Python Executable
+Category=ComfyUI Install
+CategoryOrder=0
+Index=3
+Default=
+Description=Python that runs ComfyUI. Empty = look for python_embeded, .venv or venv next to / inside the ComfyUI folder, then python on PATH.
+
+[ExtraArgs]
+Type=string
+Label=Extra ComfyUI Arguments
+Category=ComfyUI Install
+CategoryOrder=0
+Index=4
+Default=
+Description=Extra command line arguments for ComfyUI, e.g. --highvram or --extra-model-paths-config <file>. Host, port and --disable-auto-launch are always set.
+
+[StartupTimeoutSeconds]
+Type=integer
+Label=Startup Timeout (s)
+Category=Behaviour
+CategoryOrder=1
+Index=0
+Minimum=30
+Maximum=3600
+Default=300
+Description=How long to wait for ComfyUI to come up (cold model/custom node loading can be slow).
+
+[KeepWarm]
+Type=boolean
+Label=Keep ComfyUI warm
+Category=Behaviour
+CategoryOrder=1
+Index=1
+Default=false
+Description=Leave ComfyUI running after the job so the next job on this worker starts faster (it is reused when healthy, replaced when the install differs).
+
+[ApiKeyEnvVar]
+Type=string
+Label=API Key Environment Variable
+Category=Partner Nodes
+CategoryOrder=2
+Index=0
+Default=COMFY_ORG_API_KEY
+Description=Name of the worker's environment variable holding the Comfy.org API key that partner/API nodes need. The key is never stored in jobs.
+
+[ApiKeyFile]
+Type=filename
+Label=API Key File
+Category=Partner Nodes
+CategoryOrder=2
+Index=1
+Default=
+Description=Alternative: a text file on the worker holding just the Comfy.org API key (used when the environment variable is not set).
