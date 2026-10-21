@@ -30,6 +30,13 @@ The chain, in order. Say the plan in one line first, then run it.
      `orbit={"center": [x, eye_height, z], "degrees": 180, "seconds": 5, "distance": [0.5, 7],
      "height": [0, 1.4]}`, `ease: "linear"`. The centre is the subject's position at eye height
      (a close-up) or chest height; positive degrees turn left.
+   - a product turntable, whip turns, holds on hero views (side / front / back): the same orbit
+     rig with a speed curve, `orbit={"center": [x, y, z], "distance": [d, d], "height": [h, h],
+     "keys": [{"t": 0, "degrees": 0}, {"t": 1.3, "degrees": 15}, {"t": 1.65, "degrees": 105,
+     "ease": "smooth"}, {"t": 2.95, "degrees": 120}, ...]}` - each key is the angle turned so far,
+     its ease how the turn arrives there; every step under 180 degrees. Never build a turntable or
+     a whip from absolute `position` + `look_at` moves: the camera cuts across the circle (the
+     subject jumps toward the lens) and the Euler angles flip mid-turn.
    Keep it believable: a single picture holds only what it shows, so a move far past the
    picture's depth shows holes. About the depth of the scene is the limit; say so when the
    user asks for more. `shading: "clay"` gives the grey layout look some models want.
