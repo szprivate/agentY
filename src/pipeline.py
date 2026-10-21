@@ -10485,7 +10485,8 @@ class Pipeline:
         credit, fails with Payment Required; the user asked for none of that.
         The repair specialist gets the offending nodes as problems.
         """
-        if not isinstance(result, dict) or result.get("status") != "ready"                 or not self._wants_local(request):
+        if (not isinstance(result, dict) or result.get("status") != "ready"
+                or not self._wants_local(request)):
             return result
         path = result.get("workflow_path")
         if not path:
