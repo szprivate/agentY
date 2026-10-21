@@ -116,7 +116,7 @@ def check_guards(sc: dict, tool: str, arguments: dict | None) -> str | None:
     return None
 
 
-def harden(name: str, client, get_config, set_status=None) -> None:
+def harden(server: str, client, get_config, set_status=None) -> None:
     """Wrap *client* (a strands ``MCPClient``) in place. ``get_config()`` returns the
     server's current config dict; ``set_status(text)`` records connected/error."""
     lock = threading.Lock()
@@ -138,16 +138,16 @@ def harden(name: str, client, get_config, set_status=None) -> None:
                 try:
                     client.stop(None, None, None)
                 except Exception as exc:  # noqa: BLE001  stop re-raises the close error
-                    logger.debug("mcp[%s]: stop while restarting: %s", name, describe(exc))
+                    logger.debug("mcp[%s]: stop while restarting: %s", server, describe(exc))
                 client.start()
                 n = len(client.list_tools_sync())
             except Exception as exc:  # noqa: BLE001
                 reason = describe(exc)
                 status(f"error: session closed, restart failed: {reason}")
-                logger.warning("mcp[%s]: restart failed: %s", name, reason)
+                logger.warning("mcp[%s]: restart failed: %s", server, reason)
                 return reason
             status(f"connected ({n})")
-            logger.info("mcp[%s]: session restarted", name)
+            logger.info("mcp[%s]: session restarted", server)
             return None
 
     def handle(tool_use_id, exception):
@@ -164,21 +164,21 @@ def harden(name: str, client, get_config, set_status=None) -> None:
     client._handle_tool_execution_error = handle
 
     def dead_text(reason: str) -> str:
-        return (f"MCP server {name!r} is not running and could not be restarted ({reason}). "
+        return (f"MCP server {server!r} is not running and could not be restarted ({reason}). "
                 "Its tools are unavailable until it can start (check its command in "
                 "Settings > MCP servers).")
 
     def timeout_text(tool: str, secs: float) -> str:
-        return (f"MCP tool {name}/{tool} did not finish within {int(secs)} s and was abandoned; "
+        return (f"MCP tool {server}/{tool} did not finish within {int(secs)} s and was abandoned; "
                 f"the server session was restarted. Retry with a smaller job, or raise "
-                f"`timeout_s` / `tool_timeouts` for {name!r} in config/mcp.json.")
+                f"`timeout_s` / `tool_timeouts` for {server!r} in config/mcp.json.")
 
-    async def call_async(tool_use_id, name_, arguments=None, read_timeout_seconds=None, meta=None):
+    async def call_async(tool_use_id, name, arguments=None, read_timeout_seconds=None, meta=None):
         sc = get_config() or {}
-        refusal = check_guards(sc, name_, arguments)
+        refusal = check_guards(sc, name, arguments)
         if refusal:
             return _error(tool_use_id, refusal)
-        secs = read_timeout_seconds.total_seconds() if read_timeout_seconds else _timeout_for(sc, name_)
+        secs = read_timeout_seconds.total_seconds() if read_timeout_seconds else _timeout_for(sc, name)
         for attempt in (0, 1):
             if not client._is_session_active():
                 reason = await asyncio.to_thread(restart)
@@ -188,12 +188,12 @@ def harden(name: str, client, get_config, set_status=None) -> None:
             _last_exc.set(holder)
             try:
                 res = await asyncio.wait_for(
-                    orig_async(tool_use_id=tool_use_id, name=name_, arguments=arguments,
+                    orig_async(tool_use_id=tool_use_id, name=name, arguments=arguments,
                                read_timeout_seconds=timedelta(seconds=secs), meta=meta),
                     secs + _GRACE_S)
             except asyncio.TimeoutError:
                 await asyncio.to_thread(restart)
-                return _error(tool_use_id, timeout_text(name_, secs))
+                return _error(tool_use_id, timeout_text(name, secs))
             except Exception as exc:  # noqa: BLE001  e.g. session not running
                 holder.append(exc)
                 res = _error(tool_use_id, f"Tool execution failed: {describe(exc)}")
@@ -202,10 +202,10 @@ def harden(name: str, client, get_config, set_status=None) -> None:
                 return res
             if _is_timeout(exc):
                 await asyncio.to_thread(restart)
-                return _error(tool_use_id, timeout_text(name_, secs))
+                return _error(tool_use_id, timeout_text(name, secs))
             if _is_closed(exc) and attempt == 0:
                 logger.warning("mcp[%s]: session dead (%s) — restarting and retrying %s",
-                               name, describe(exc), name_)
+                               server, describe(exc), name)
                 reason = await asyncio.to_thread(restart)
                 if reason:
                     return _error(tool_use_id, dead_text(reason))
@@ -213,12 +213,12 @@ def harden(name: str, client, get_config, set_status=None) -> None:
             return res
         return res  # pragma: no cover
 
-    def call_sync(tool_use_id, name_, arguments=None, read_timeout_seconds=None, meta=None):
+    def call_sync(tool_use_id, name, arguments=None, read_timeout_seconds=None, meta=None):
         sc = get_config() or {}
-        refusal = check_guards(sc, name_, arguments)
+        refusal = check_guards(sc, name, arguments)
         if refusal:
             return _error(tool_use_id, refusal)
-        secs = read_timeout_seconds.total_seconds() if read_timeout_seconds else _timeout_for(sc, name_)
+        secs = read_timeout_seconds.total_seconds() if read_timeout_seconds else _timeout_for(sc, name)
         for attempt in (0, 1):
             if not client._is_session_active():
                 reason = restart()
@@ -227,7 +227,7 @@ def harden(name: str, client, get_config, set_status=None) -> None:
             holder: list = []
             _last_exc.set(holder)
             try:
-                res = orig_sync(tool_use_id=tool_use_id, name=name_, arguments=arguments,
+                res = orig_sync(tool_use_id=tool_use_id, name=name, arguments=arguments,
                                 read_timeout_seconds=timedelta(seconds=secs), meta=meta)
             except Exception as exc:  # noqa: BLE001
                 holder.append(exc)
@@ -237,7 +237,7 @@ def harden(name: str, client, get_config, set_status=None) -> None:
                 return res
             if _is_timeout(exc):
                 restart()
-                return _error(tool_use_id, timeout_text(name_, secs))
+                return _error(tool_use_id, timeout_text(name, secs))
             if _is_closed(exc) and attempt == 0:
                 reason = restart()
                 if reason:

@@ -81,6 +81,19 @@ def run(coro):
     return asyncio.run(coro)
 
 
+class CalledLikeStrands(unittest.TestCase):
+    """strands' MCPAgentTool calls with keywords (tool_use_id=, name=, arguments=, read_timeout_seconds=)."""
+
+    def test_keyword_call_async(self):
+        c, _ = make(["ok"])
+        res = run(c.call_tool_async(tool_use_id="t1", name="x", arguments={}, read_timeout_seconds=None))
+        self.assertEqual(res["status"], "success")
+
+    def test_keyword_call_sync(self):
+        c, _ = make(["ok"])
+        self.assertEqual(c.call_tool_sync(tool_use_id="t1", name="x", arguments={})["status"], "success")
+
+
 class DeadSession(unittest.TestCase):
     def test_restart_and_retry_async(self):
         c, states = make(["dead", "ok"])
