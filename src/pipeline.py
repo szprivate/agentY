@@ -9928,6 +9928,10 @@ class Pipeline:
         q = self._norm_request(f"{request} {staged}")
         words = q.split()
         in_media = "image" if "image" in self._norm_request(staged) else "text"
+        # "Reference to video" starts from images by definition, staged or not;
+        # read as Text to Video it hid the local r2v templates (#54).
+        if " reference to " in q or " r2v " in q or " reference images " in q:
+            in_media = "image"
 
         def _mentions(term: str) -> bool:
             if " " in term:                       # phrase: match as written

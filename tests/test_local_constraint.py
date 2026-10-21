@@ -74,6 +74,17 @@ class LocalConstraintTest(unittest.TestCase):
         self.assertIn("image_flux2_klein_edit", cat)
         self.assertNotIn("all_in_one", cat)
 
+    def test_reference_to_video_reads_as_image_input(self):
+        self.p._recipe_tasks_cache = TASKS + [
+            {"task": "Image to Video", "models": [
+                _model("Anima", False, "video", ["video_minimax_h3_r2v"])]},
+            {"task": "Text to Video", "models": [
+                _model("Generic", False, "video", ["video_minimax_h3_t2v"])]}]
+        LIVE["video_minimax_h3_t2v"] = "Local MiniMax H3 text to video."
+        tasks = self.p._resolve_tasks("local minimax reference-to-video", "video", "")
+        self.assertIn("Image to Video", tasks)
+        self.assertNotIn("Text to Video", tasks)
+
 
 if __name__ == "__main__":
     unittest.main()
