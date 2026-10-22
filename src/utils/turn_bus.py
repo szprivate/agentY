@@ -298,3 +298,40 @@ def recent(within: float = LOG_KEEP_AFTER_END) -> list:
     with _LOCK:
         return [(lg.turn, lg.ended) for lg in _logs.values()
                 if lg.turn is not None and lg.ended and now - lg.ended <= within]
+
+
+def snapshot(request_id: str) -> "dict | None":
+    """A copy of turn *request_id*'s events so far, for a watcher that wants the
+    whole picture at once rather than a stream (the turn API's summary).
+
+    ``{"events", "dropped", "ended", "asking"}``, or None for a turn it has no
+    record of (never ran, or ended longer than ``LOG_KEEP_AFTER_END`` ago).
+    """
+    with _LOCK:
+        log = _logs.get(str(request_id))
+    if log is None:
+        return None
+    with log.cond:
+        return {"events": list(log.events), "dropped": log.dropped,
+                "ended": log.ended, "asking": bool(log.asking and not log.ended)}
+
+
+def wait(request_id: str, timeout: float, *, stop_on_ask: bool = True) -> bool:
+    """Block until turn *request_id* ends (or, with *stop_on_ask*, until it stops
+    to ask a question), at most *timeout* seconds. True when it ended or asked.
+
+    A turn with no record is reported as ended: there is nothing to wait for.
+    """
+    with _LOCK:
+        log = _logs.get(str(request_id))
+    if log is None:
+        return True
+    deadline = time.time() + max(0.0, float(timeout))
+    with log.cond:
+        while True:
+            if log.ended or (stop_on_ask and log.asking):
+                return True
+            left = deadline - time.time()
+            if left <= 0:
+                return False
+            log.cond.wait(timeout=min(left, 5.0))

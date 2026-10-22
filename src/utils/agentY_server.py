@@ -4223,6 +4223,9 @@ def _build_app():
 
     app = Flask("agentY_bridge")
     app.logger.disabled = True
+    # Keep the summaries of finished turns for the turn API (idempotent).
+    from src.utils import turn_api as _turn_api
+    _turn_api.install()
     # Keep dict order as authored. The settings form is GENERATED from the settings
     # file, so that file's ordering is the only thing deciding what the user reads
     # first — and Flask alphabetises JSON keys by default, which was quietly
@@ -4468,6 +4471,53 @@ def _build_app():
             if not ended:
                 yield _sse({"type": "done"})
         return _sse_response(gen())
+
+    # ── Turn API: another program asks agentY to do something ──────────────
+    # The panel streams a turn it started and draws it. A top-level agent (Claude
+    # Code, an MCP client) wants the opposite: hand over a message, get ONE
+    # structured answer when the turn is over. These routes start a turn exactly as
+    # the panel would (same orchestrator, skills, hooks) and fold its events from
+    # the turn bus into that answer (src/utils/turn_api.py). They sit behind the
+    # same admission guard as everything else: Host/Origin rules, and the session
+    # token a local client reads from the .agenty_token file (see docs/turn-api.md).
+    @app.route("/agentY/turns", methods=["GET", "POST", "OPTIONS"])
+    def api_turns():
+        if request.method == "OPTIONS":
+            return "", 204
+        from src.utils import turn_api
+        if request.method == "GET":
+            return jsonify({"turns": turn_api.recent_turns()})
+        body = request.get_json(silent=True) or {}
+        paths = body.get("image_paths") or body.get("attachments") or []
+        if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+            return jsonify({"error": "attachments must be a list of file paths"}), 400
+        try:
+            rid, tid = _api_start_turn(body.get("message"), paths,
+                                       body.get("thread_id") or body.get("conversation") or "",
+                                       body.get("title") or "")
+        except ValueError as exc:
+            busy = "already running" in str(exc)
+            return jsonify({"error": str(exc)}), (409 if busy else 400)
+        return jsonify({"turn_id": rid, "conversation": tid, "status": "running"}), 202
+
+    @app.route("/agentY/turns/<rid>", methods=["GET", "OPTIONS"])
+    def api_turn(rid):
+        """The turn as it stands. ``?wait=<seconds>`` holds the request until the
+        turn ends or stops to ask something (a client polls in slices)."""
+        if request.method == "OPTIONS":
+            return "", 204
+        from src.utils import turn_api
+        try:
+            wait = max(0.0, min(float(request.args.get("wait", "0")), 120.0))
+        except ValueError:
+            wait = 0.0
+        if wait:
+            turn_bus.wait(rid, wait)
+        out = turn_api.current(rid)
+        if out is None:
+            return jsonify({"error": "unknown turn (finished turns are kept for the "
+                            "last 100, and not across a host restart)"}), 404
+        return jsonify(out)
 
     # Stop every running shot of a lead — the lead's own turn may long be over.
     @app.route("/agentY/threads/<tid>/shots/stop", methods=["POST", "OPTIONS"])
@@ -5944,6 +5994,43 @@ def _slack_start_turn(text: str, image_paths: list, thread_id: str = "") -> str:
     # it anyway, or the turn blocks on a queue that fills and never empties.
     threading.Thread(target=_drain_queue, args=(q,), daemon=True).start()
     return rid
+
+
+def _api_start_turn(text: str, image_paths: list, thread_id: str = "",
+                    title: str = "") -> tuple[str, str]:
+    """Run a turn asked for through the turn API (``POST /agentY/turns``): the same
+    orchestrator, skills and hooks as a panel turn, with nobody streaming it.
+
+    Returns ``(turn_id, thread_id)``. Like a Slack turn it is fed to the turn bus
+    only (the panel follows it from /agentY/runs when that conversation is open),
+    and it asks the open panel for the canvas. Raises ``ValueError`` for what is
+    not a turn: nothing to say, a slash command, or a conversation already busy.
+    """
+    text = str(text or "").strip()
+    if not text:
+        raise ValueError("message is empty")
+    thread_id = str(thread_id or "")
+    if thread_id and cs.get_thread(thread_id) is None:
+        raise ValueError(f"no conversation '{thread_id}' (omit it to start a new one)")
+    if thread_id and thread_id in running_threads():
+        raise ValueError(f"conversation '{thread_id}' is already running a turn: wait "
+                         "for it, answer it, or stop it first")
+    if text.startswith("/") and _is_command(text, thread_id):
+        raise ValueError("slash commands are not turns; send the request in words")
+    for p in image_paths or []:
+        if not os.path.isfile(p):
+            raise ValueError(f"attachment not found on the host's disk: {p}")
+    if not thread_id:
+        thread_id = cs.create_thread(title=(str(title).strip() or "New chat")[:120])
+    cs.add_message(thread_id, "user", text)
+    q: queue.Queue = queue.Queue()
+    rid = uuid.uuid4().hex
+    threading.Thread(target=_run_pipeline_stream,
+                     args=(thread_id, text, [str(p) for p in image_paths or []], q, rid),
+                     kwargs={"origin": "api", "canvas_provider": request_canvas},
+                     name="agentY-api-turn", daemon=True).start()
+    threading.Thread(target=_drain_queue, args=(q,), daemon=True).start()
+    return rid, thread_id
 
 
 def _drain_queue(q: "queue.Queue") -> None:

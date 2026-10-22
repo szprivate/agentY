@@ -107,6 +107,9 @@ under `[security]` in the settings:
 The host also warns at startup when a key in `.env` is older than
 `security.api_key_max_age_days` (30; `0` turns it off).
 
+Other programs (Claude Code, MCP clients) can start turns on a running host and read
+the result back: see [turn-api.md](turn-api.md).
+
 ## What the agent may run
 
 `run_script` runs **one program, with no shell**: pipes, redirects and `&&` chains

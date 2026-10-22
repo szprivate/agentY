@@ -151,7 +151,26 @@ def _write_token(root: Path, token: str) -> bool:
         os.chmod(path, 0o600)
     except OSError:
         pass
+    _restrict_to_current_user(path)
     return True
+
+
+def _restrict_to_current_user(path: Path) -> None:
+    """On Windows ``chmod`` does nothing useful: the file inherits whatever the
+    folder allows, often every local user. Drop inherited rights and grant the
+    current user alone. Best-effort — a failure leaves the file as it was.
+    """
+    if os.name != "nt":
+        return
+    user = os.environ.get("USERNAME") or ""
+    if not user:
+        return
+    try:
+        import subprocess
+        subprocess.run(["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"],
+                       capture_output=True, timeout=10, check=False)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def clear_token_file(root: Path) -> None:
