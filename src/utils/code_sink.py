@@ -120,6 +120,8 @@ def snippets_for_tool(name: str, args) -> list:
     if name == "run_python_node":
         add(str(args.get("title") or "python node"), args.get("code"), "python")
     elif name == "run_script":
+        if str(args.get("code") or "").strip():
+            add("run_script (code)", args.get("code"), "python")
         cmd = str(args.get("command") or "")
         m = _PY_C.search(cmd.strip())
         if m:

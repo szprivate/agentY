@@ -66,16 +66,19 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
     "shots": ("running the shots of a sequence you lead (start_shot, which begins one, is always "
               "in your list)",
               ("close_shot", "message_shot", "shot_status", "stop_shot", "set_sequence_notes")),
-    "loops": ("keep refining unattended until a goal is met: a canvas value, a prompt, an iteration plan",
-              ("refine_canvas_until", "prompt_autoloop", "iterate")),
-    "video": ("take a video apart: its shots, single frames, its technical facts",
-              ("split_video_into_shots", "video_frames", "media_info")),
+    "loops": ("keep refining unattended until a goal is met: a canvas value, a prompt, an iteration plan; "
+              "write a revised prompt into its canvas node",
+              ("refine_canvas_until", "prompt_autoloop", "iterate", "revise_prompt")),
+    "video": ("take a video apart: understand what is in it, its shots, single frames, its technical facts",
+              ("analyze_video", "split_video_into_shots", "video_frames", "media_info")),
     "canvas_more": ("less common canvas work: a screenshot of the canvas, bypassing or muting nodes, "
                     "adding a second workflow as a tab",
                     ("screenshot_canvas", "set_canvas_node_mode", "add_canvas_workflow")),
-    "admin": ("the agent's own settings and logs, Slack, freeing GPU memory, clearing the history",
+    "admin": ("the agent's own settings and logs, Slack, freeing GPU memory, clearing the history, the "
+              "ComfyUI queue's history and a prompt's status, submitting a workflow file straight to ComfyUI",
               ("set_agent_setting", "list_agent_settings", "get_logs", "send_to_slack",
-               "free_memory", "get_system_stats", "clear_history")),
+               "free_memory", "get_system_stats", "clear_history", "get_history",
+               "get_prompt_status_by_id", "submit_prompt")),
     "layout": ("make the open canvas readable: arrange nodes without overlaps, split into named coloured "
                "groups, rename groups, save the workflow (read the `canvas-layout` skill first)",
                ("arrange_canvas", "group_canvas_nodes", "auto_group_canvas", "save_canvas_workflow")),
@@ -86,6 +89,24 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
                 "atlas_rebuild_world_mesh", "atlas_splat_to_mesh", "atlas_fetch", "atlas_list",
                 "atlas_render_view", "atlas_open_in_viewer", "atlas_capture_around", "train_splat",
                 "splat_training_status")),
+    # Added 2026-10-22 (speed-ups): the least-called of what stayed always-on - in 22,000 orchestrator
+    # tool calls each of these was called 0-2 % of the time, and together they were ~7,000 tokens of
+    # definitions on every call. A direct call to a held tool still loads its pack and runs.
+    "dashscope": ("make an image or video on the user's own DashScope key (not Comfy credits) and "
+                  "collect one that timed out",
+                  ("dashscope_generate", "dashscope_fetch")),
+    "viewer": ("show files in the bEpic viewer, or in the chat panel",
+               ("show_in_viewer", "show_in_panel")),
+    "web_more": ("find reference IMAGES on the web, or hand a web search to the scout "
+                 "(web_search, read_web_page, download_image and run_info are always in your list)",
+                 ("web_search_images", "run_web_search")),
+    "inspect": ("read arbitrary files, list a workflow file's loaded models, search folders for workflow "
+                "files (read_text_file, list_files and get_node_source are always in your list)",
+                ("file_read", "inspect_workflow_file", "find_workflows")),
+    "mcp": ("see which MCP servers are set up and whether each is loaded, or install a new one",
+            ("list_mcp_servers", "add_mcp_server")),
+    "dirs": ("where ComfyUI keeps its folders (models, input, output) and where agentY saves what it makes",
+             ("get_comfyui_dirs", "get_agent_output_dirs")),
     # Pinned by the pipeline on the turns they belong to (CONTEXT_PACKS).
     "farm": ("render on the studio's Deadline render farm instead of the local ComfyUI: send a workflow as a "
              "job, follow it, see the pools and workers (read the `deadline-farm` skill first)",

@@ -302,6 +302,12 @@ class WhatTheUserIsShown(unittest.TestCase):
             tp.describe("run_script", {"command": "python ./x.py --flag"}),
             "python ./x.py --flag")
 
+    def test_run_script_code_shows_the_source_not_an_empty_command(self):
+        out = tp.describe("run_script", {"code": "import os; os.remove('x')", "args": "a.png"})
+        self.assertIn("os.remove('x')", out)
+        self.assertIn("a.png", out)
+        self.assertIn("run_script", tp.DEFAULT_ASK_TOOLS)
+
     def test_iterate_shows_the_code_and_the_count(self):
         out = tp.describe("iterate", {"python_call": "os.remove(p)", "iter": 40})
         self.assertIn("os.remove(p)", out)

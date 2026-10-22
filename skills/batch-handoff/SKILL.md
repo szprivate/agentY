@@ -1,12 +1,19 @@
 ---
 name: batch-handoff
 description: "Step-by-step procedure for handing off multi-iteration batch workflows to the Executor. Activate when count_iter > 1, or when applying the SAME workflow to multiple input images (Mode C: swap the input image per iteration instead of building N separate workflows)."
-allowed-tools: duplicate_workflow, update_workflow, signal_workflow_ready, read_text_file, upload_image, upload_image_multiple
+allowed-tools: run_variants, duplicate_workflow, update_workflow, signal_workflow_ready, read_text_file, upload_image, upload_image_multiple
 ---
 
 # Batch Handoff Multi-Iteration Procedure
 
 Activate this skill when `count_iter > 1` in the brainbriefing, or when the user asked to apply one workflow to several input images (Mode C).
+
+**Shortcut for independent variants.** When the variants are independent (different prompts,
+inputs or settings of the same workflow) and you want their outputs back in this turn, ONE
+`run_variants(workflow_path, variants=[{"label": "...", "set": {"<node id>.<input name>": value}}, ...])`
+does the whole duplicate -> patch -> validate -> queue below for all N at once (16 steps
+become 1). The step-by-step modes below remain for hand-off at the end of the turn
+(`signal_workflow_ready`) and for anything `run_variants` cannot express.
 
 There are three batch modes. Determine the mode from the request / brainbriefing:
 - `variations == true` AND `count_iter > 1` → **Variations mode**

@@ -1277,6 +1277,10 @@ class Pipeline:
             Returns JSON with a ``status`` field:
               * ``ready``     → ``workflow_path`` is assembled & validated; call
                                 ``signal_workflow_ready(workflow_path)`` next.
+                                A ``ready`` result may carry ``template_adjust``: the
+                                template differs from the request in those
+                                parameters (resolution, audio ...) - set them with
+                                ``update_workflow`` first.
               * ``blocked``   → ``blockers``: ask the user for the missing detail.
               * ``needs_fix`` → ``workflow_path`` + ``problems``: repair with the
                                 assembly tools, then ``signal_workflow_ready``.
@@ -1335,6 +1339,16 @@ class Pipeline:
             self._fit_requested_shape(result, request)
             self._apply_chosen_savers(result)
             self._attach_built_summary(result)
+            try:
+                from src.utils import template_pick as _tp
+                _adj = _tp.adjustments(getattr(briefing.template, "name", "") or "", request)
+                if _adj and isinstance(result, dict) and result.get("status") == "ready":
+                    result["template_adjust"] = _adj
+                    result["template_adjust_note"] = ("The template differs from the request in these "
+                                                      "parameters: set them with update_workflow before "
+                                                      "signalling.")
+            except Exception:  # noqa: BLE001
+                pass
             return json.dumps(result)
 
         @_tool
@@ -2300,6 +2314,158 @@ class Pipeline:
             if products.get("waiting"):
                 result["products_for"] = products["waiting"]
             return json.dumps(result)
+
+        @_tool
+        async def run_variants(workflow_path: str, variants: list, run: bool = True) -> str:
+            """Make and run N independent variants of ONE workflow in a single call.
+
+            "Give me 4 versions", "try three lightings", "the same shot for each of
+            these prompts / seeds / images": ONE call duplicates the workflow N times
+            (fresh seeds), patches each copy with its own overrides, validates them
+            and queues them ALL together - instead of duplicate -> update -> run once
+            per variant (16 steps for 4 variants, each replaying the conversation).
+            Outputs come back per variant and are staged on the canvas like
+            ``run_workflow_now``'s. Use it whenever the variants do not depend on each
+            other; chain stages (one result feeds the next) still use ``run_workflow_now``.
+
+            ``variants``: a list of objects, e.g.
+            ``[{"label": "warm", "set": {"6.text": "a warm lamp"}},
+              {"label": "cold", "set": {"6.text": "a cold lamp", "12.image": "b.png"}}]``.
+            ``set`` keys are ``<node id>.<input name>``; the full shape of
+            ``update_workflow`` works too (``patches`` / ``add_nodes`` /
+            ``remove_nodes``). ``{}`` is a fresh-seeded copy ("4 takes"). Up to 24.
+            A variant that fails validation is reported and skipped; the rest run.
+
+            Runs now: do NOT also signal the files. ``run=False`` only builds and
+            validates (returns each ``workflow_path``).
+
+            Args:
+                workflow_path: Path of the validated base workflow.
+                variants: List of variant objects.
+                run: False to build and validate only.
+            """
+            from agenty_core.tools.variants import prepare_variants as _prepare_variants
+            from src.executor import execute_workflow as _execute_workflow
+
+            if self._hook_run_stopped:
+                return json.dumps({"error": "this hook run was stopped ("
+                                            + str(self._hook_run_stopped.get("reason", "")) + ") - nothing more runs "
+                                            "this turn. Reply to the user instead."})
+            prepared = await asyncio.to_thread(_prepare_variants, workflow_path, variants)
+            ready = list(prepared.get("ready") or [])
+            if prepared.get("status") == "error" or not run or not ready:
+                return json.dumps({**prepared, "ran": False})
+            gate = self._plan_gate_refusal() or self._review_gate_refusal(inline=True)
+            if gate:
+                return json.dumps(gate)
+            hooks = [h for h in (self._canvas_hooks or []) if isinstance(h, dict)]
+            _only = hooks[0] if len(hooks) == 1 else None
+            self._tag_run_outputs(_only)
+            if self._dry_run:
+                return json.dumps({**prepared, "ran": False,
+                                   "dry_run": [self._dry_run_one(p, _only) for p in ready]})
+            brief = self._last_brainbriefing_json or "{}"
+            label_of = {v["workflow_path"]: v["label"] for v in prepared["variants"]}
+            _push_progress(f"▶ Running {len(ready)} variants together.")
+
+            async def _one(path: str):
+                got: list = []
+                try:
+                    async for _line in _execute_workflow(path, brief, user_message="", verbose=self._verbose,
+                                                         collected_paths=got, qa_briefing=self._qa_briefing):
+                        _push_progress(f"[{label_of.get(path, 'variant')}] {_line}")
+                except Exception as exc:  # noqa: BLE001
+                    return path, got, f"{type(exc).__name__}: {exc}"
+                return path, got, None
+
+            results = await asyncio.gather(*[_one(p) for p in ready])
+            errors = {}
+            for path, got, err in results:
+                for v in prepared["variants"]:
+                    if v["workflow_path"] == path:
+                        v["outputs"] = list(got)
+                        if err:
+                            v["run_error"] = err
+                if err:
+                    errors[label_of.get(path, path)] = err
+            new = [f for _p, got, _e in results for f in got]
+            self._session.current_output_paths.extend(new)
+            self._chain_output_paths.extend(new)
+            self._record_hook_products(str((_only or {}).get("hook_node_id") or ""), new)
+            return json.dumps({**prepared, "ran": True, "outputs": new, **({"errors": errors} if errors else {}),
+                               "message": f"{len(new)} output(s) from {len(ready)} variants, staged onto the canvas."})
+
+        @_tool
+        async def partner_run(node_type: str, inputs: dict | None = None, settings: dict | None = None,
+                              save: str = "auto", name: str = "", run: bool = True) -> str:
+            """Build and run ONE partner (API) node directly - no template search.
+
+            THE route when the request names a partner model or node: Seedance,
+            Kling, GPT Image, Nano Banana / Gemini image, Ideogram, Meshy, Veo,
+            Runway ... Read the node's own schema, load the files, wire them to
+            the right slots, add the save node, validate, run - in this ONE call
+            (then QA the outputs like any render). Do not search templates, call
+            prepare_workflow or hand-build the graph for such a request.
+
+            ``node_type``: the class name (``ByteDance2FirstLastFrameNode``) or the
+            name you know it by ("Seedance 2.5 first last frame", "GPT Image 2",
+            "Nano Banana"); an ambiguous name returns candidates and builds nothing.
+
+            ``inputs``: FILE slots -> path, or a list of paths for a slot group:
+            ``{"first_frame": "D:/shots/a.png"}``,
+            ``{"model.reference_images": ["a.png", "b.png"], "model.reference_videos": "m.mp4"}``
+            (a group fills image_1, image_2 ... in order).
+
+            ``settings``: everything else - ``prompt``, ``model`` (a dynamic combo;
+            its option decides which other settings exist, e.g. "Seedance 2.5"),
+            ``resolution``, ``duration``, ``generate_audio``, ``seed`` ... A bare
+            name works when unambiguous (``resolution`` for ``model.resolution``).
+            A value the node does not offer is an error listing the options - read
+            it and call again; nothing is changed silently.
+
+            ``save``: "image" | "video" | "auto" (by what the node outputs).
+            ``name``: short name for the output files. ``run=False`` only builds
+            and validates (returns ``workflow_path``).
+
+            Runs on the user's partner credits: once per request, never to test.
+            It runs now (like ``run_workflow_now``): do not ALSO signal the file.
+            When a hook chain or review gate stands, the same gates apply.
+
+            Args:
+                node_type: Node class name or display name.
+                inputs: ``{slot: file path | [paths]}`` for image / video / audio inputs.
+                settings: ``{name: value}`` for prompt and every widget.
+                save: "image", "video" or "auto".
+                name: Short name for the output files.
+                run: False to build and validate only.
+            """
+            from agenty_core.tools.partner_run import prepare_partner_workflow as _prepare
+
+            prepared = await asyncio.to_thread(_prepare, node_type, inputs, settings, save, name)
+            if prepared.get("status") != "ready":
+                return json.dumps(prepared)
+            if not run:
+                return json.dumps({**prepared, "ran": False})
+            _push_progress(f"▶ {prepared.get('node')}: built "
+                           f"({len(prepared.get('loaders') or [])} file input(s)); running.")
+            ran = await run_workflow_now(workflow_path=prepared["workflow_path"])
+            try:
+                ran = json.loads(ran)
+            except (TypeError, ValueError):
+                ran = {"result": ran}
+            # a partner job that ran clean is kept as a machine-local template (see
+            # src/utils/local_templates_hook.py); its words are what a later request matches on
+            try:
+                if isinstance(ran, dict) and ran.get("outputs") and not self._dry_run:
+                    from src.utils import local_templates_hook as _lth
+                    _words = " ".join(str(x) for x in (
+                        prepared.get("node"), name, (settings or {}).get("model") if isinstance(settings, dict) else "",
+                        (settings or {}).get("prompt") if isinstance(settings, dict) else "") if x)
+                    if await asyncio.to_thread(_lth.record, prepared["workflow_path"], _words, ran["outputs"]):
+                        self._catalog_names_cache = None
+            except Exception:  # noqa: BLE001
+                pass
+            return json.dumps({**prepared, "ran": True, "run": ran})
 
         @_tool
         async def add_canvas_workflow(name: str, description: str = "") -> str:
@@ -5249,7 +5415,7 @@ class Pipeline:
         tools = [prepare_workflow, run_info,
                  run_web_search, run_world_builder, run_planner, apply_canvas_hooks, stop_hook_run,
                  screenshot_canvas,
-                 halt_for_review, release_review, run_workflow_now, add_canvas_workflow,
+                 halt_for_review, release_review, run_workflow_now, run_variants, partner_run, add_canvas_workflow,
                  get_canvas_node, set_canvas_node_params, place_canvas_text,
                  run_python_node, revise_prompt, prompt_autoloop,
                  delete_canvas_nodes, edit_canvas_graph, replace_canvas_node, change_graph,
@@ -7433,8 +7599,11 @@ class Pipeline:
                 _outputs_before = len(exec_paths)  # chain outputs already staged
                 _qa_fail_event: dict | None = None
                 _batch_no = 0
+                _ran_paths: list = []
+                _ran_keeplive = bool(_keeplive_run)
                 while workflow_paths:
                     _batch_no += 1
+                    _ran_paths.extend(workflow_paths)
                     # Name what is about to come out: the hook that drove this run if
                     # there was one, else the briefing the workflow was built from.
                     _hooks = [h for h in (self._canvas_hooks or []) if isinstance(h, dict)]
@@ -7617,6 +7786,19 @@ class Pipeline:
                     self._session.last_agent = "orchestrator"
                     self._log_orchestrator()
                     return
+
+                # A job that ran clean becomes a machine-local template, so the same job
+                # with new inputs skips research and assembly next time
+                # (src/utils/local_templates_hook.py; setting local_templates_auto).
+                if (_ran_paths and not self._dry_run and not _ran_keeplive and not self._canvas_hooks
+                        and len(exec_paths) > _outputs_before):
+                    try:
+                        from src.utils import local_templates_hook as _lth
+                        if await asyncio.to_thread(_lth.record_turn, _ran_paths, user_text,
+                                                   list(exec_paths[_outputs_before:])):
+                            self._catalog_names_cache = None     # the new template is pickable now
+                    except Exception:  # noqa: BLE001 - a courtesy after the run
+                        pass
 
                 # A dry run's whole product is the account of what it would have
                 # done, so it is stated by the runtime rather than left to the
@@ -9873,7 +10055,13 @@ class Pipeline:
             if not block:
                 block = self._format_flat_catalog()    # fallback: flat name: hint list
             cache[scope_key] = block
-        return cache[scope_key]
+        block = cache[scope_key]
+        if request:
+            # Per request, so applied after the per-scope cache: templates that cannot do
+            # this job are marked, and the jobs already solved on this machine come first.
+            from src.utils import template_pick as _tp
+            block = _tp.saved_jobs_block(request) + _tp.annotate_catalog(block, request)
+        return block
 
     # --------------------------------------------------------------------- #
     # Catalog scoping
@@ -10363,7 +10551,8 @@ class Pipeline:
         # Skipped for a scoped render: there the exclusion is the point, and
         # get_workflow_catalog is still there when the scope turns out too narrow.
         if not scope_note:
-            uncovered = sorted(set(live) - emitted - hidden - self._SUPPRESSED_TEMPLATES)
+            uncovered = sorted(set(live) - emitted - hidden - self._SUPPRESSED_TEMPLATES
+                               - self._local_template_names())
             if uncovered:
                 other = "\n".join(
                     f"    - {s}: {self._catalog_hint(live.get(s, ''))}" for s in uncovered
@@ -10387,6 +10576,15 @@ class Pipeline:
             )
         return header + "\n".join(blocks)
 
+    @staticmethod
+    def _local_template_names() -> set:
+        """Saved jobs of this machine: offered by matching ("YOUR SAVED JOBS"), not listed in bulk."""
+        try:
+            from agenty_core.tools import local_templates
+            return local_templates.local_names()
+        except Exception:  # noqa: BLE001
+            return set()
+
     def _format_flat_catalog(self) -> str:
         """Fallback catalog: a flat ``- name: <first-sentence hint>`` list from the
         live catalog. Used only when the recipe DB is unavailable."""
@@ -10395,9 +10593,10 @@ class Pipeline:
             from src.tools import get_workflow_catalog as _gwc  # noqa: PLC0415
             cat = json.loads(getattr(_gwc, "func", _gwc)())
             if isinstance(cat, dict) and cat:
+                _local = self._local_template_names()
                 lines = [f"- {name}: {self._catalog_hint(cat[name])}"
                          for name in sorted(cat)
-                         if name not in self._SUPPRESSED_TEMPLATES]
+                         if name not in self._SUPPRESSED_TEMPLATES and name not in _local]
                 block = ("AVAILABLE TEMPLATES — set template.name to EXACTLY one of "
                          "these names (or \"build_new\" if none fit); each line is "
                          "name: what it does:\n" + "\n".join(lines))
@@ -11733,6 +11932,26 @@ class Pipeline:
                         continue
                     decision.template.name = "build_new"
                     _match = "build_new"
+                if _match:
+                    # By what the template IS (output kind, a storyboard step, model
+                    # version, first-frame vs reference): a name that sounds right is
+                    # not enough. Not for a template the user named themselves.
+                    from src.utils import template_pick as _tp
+                    _unfit = _tp.reject_reason(_match, user_input,
+                                               _tp.names_template(user_input, _match))
+                    if _unfit:
+                        if _bad_tmpl_retries < self._MAX_BAD_TEMPLATE_RETRIES:
+                            _bad_tmpl_retries += 1
+                            last_error = (
+                                f"Template '{_match}' does not do what the request asks: {_unfit}. "
+                                f"Choose a template that does (the catalog marks the ones that "
+                                f"cannot), or \"build_new\" if none fits.")
+                            if self._verbose:
+                                print(f"pipeline: template '{_match}' rejected by fit check ({_unfit}); retrying.")
+                            _context_reset = True
+                            continue
+                        decision.template.name = "build_new"
+                        _match = "build_new"
                 if _match is None:
                     if _bad_tmpl_retries < self._MAX_BAD_TEMPLATE_RETRIES:
                         _bad_tmpl_retries += 1

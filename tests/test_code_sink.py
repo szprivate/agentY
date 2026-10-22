@@ -53,6 +53,11 @@ class ToolArguments(unittest.TestCase):
         self.assertEqual(cs.snippets_for_tool("run_script", {"command": "dir"}), [])
         self.assertEqual(cs.snippets_for_tool("run_script", {"command": "a\nb"})[0]["language"], "shell")
 
+    def test_run_script_code_param_goes_to_the_code_panel(self):
+        s = cs.snippets_for_tool("run_script", {"code": PY, "args": "x.png"})
+        self.assertEqual([(x["title"], x["language"], x["source"]) for x in s],
+                         [("run_script (code)", "python", "run_script")])
+
     def test_remotion_composition_is_tsx(self):
         s = cs.snippets_for_tool("remotion__update_composition", {"id": "Main", "code": TSX})
         self.assertEqual(len(s), 1)

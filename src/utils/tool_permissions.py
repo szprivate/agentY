@@ -91,6 +91,13 @@ def describe(tool_name: str, tool_input: dict) -> str:
     """
     data = tool_input if isinstance(tool_input, dict) else {}
     if tool_name == "run_script":
+        # run_script(code=...) runs the source itself: the prompt must show the code,
+        # not an empty command, or approving it would be approving blind.
+        code = str(data.get("code", "") or "").strip()
+        if code:
+            args = str(data.get("args", "") or "").strip()
+            shown = code if len(code) <= 1200 else code[:1200] + " ... (+%d characters)" % (len(code) - 1200)
+            return "python (inline code)" + (f"  args: {args}" if args else "") + ": " + shown
         return str(data.get("command", "")).strip()
     if tool_name == "add_mcp_server" and data.get("summary"):
         return str(data["summary"])

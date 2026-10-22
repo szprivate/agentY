@@ -382,14 +382,52 @@ def get_image_resolution(image_path: str) -> str:
         return json.dumps({"error": str(e)})
 
 
+def _analyze_many(paths: list, question: str, mode: str) -> dict:
+    """One vision call over a numbered contact sheet of *paths*."""
+    from agenty_core.utils import contact_sheet as _cs
+    resolved = []
+    for p in paths:
+        r = _resolve_local_image(p)
+        resolved.append(r or p)
+    try:
+        sheet = _cs.build_contact_sheet(resolved)
+    except ValueError as exc:
+        return {"status": "error", "content": [{"text": f"Could not build a contact sheet: {exc}"}]}
+    out = analyze_image(file_path=sheet["path"], question=_cs.sheet_question(question, sheet["tiles"]),
+                        mode=mode)
+    legend = "; ".join(f"{t['n']} = {t['file']}" for t in sheet["tiles"])
+    note = f"Contact sheet of {len(sheet['tiles'])} images ({legend})."
+    if sheet["skipped"]:
+        note += " Could not read: " + ", ".join(s["file"] for s in sheet["skipped"]) + "."
+    try:
+        os.remove(sheet["path"])
+    except OSError:
+        pass
+    content = list(out.get("content") or [])
+    if content and isinstance(content[0], dict) and "text" in content[0]:
+        content[0] = {"text": note + chr(10) * 2 + str(content[0]["text"])}
+    else:
+        content.insert(0, {"text": note})
+    return {**out, "content": content}
+
+
 @tool
 def analyze_image(
     file_path: str = "",
     image_url: str = "",
     question: str = "",
     mode: Literal["describe", "full"] = "describe",
+    file_paths: Optional[list] = None,
 ) -> dict:
     """Load an image from a local file or URL and analyse it.
+
+    **Several images in ONE call:** pass ``file_paths=[...]`` (up to 16). They are
+    tiled into one numbered contact sheet and answered in a single vision call —
+    far faster than one ``analyze_image`` per image (each costs 12-21 s). Ask the
+    question you have about all of them ("which of these shows the red coat?",
+    "rate sharpness 1-10 for each"); the answer is per image NUMBER, and the
+    result lists which number is which file. Use single-image calls only when one
+    image needs a long, detailed look.
 
     Supported formats: PNG, JPEG/JPG, GIF, WEBP.
     Images are automatically downsized to satisfy Claude's 5 MB / 1568 px constraints.
@@ -409,11 +447,19 @@ def analyze_image(
         image_url: Public http/https URL of an image to download.
         question:  Specific question or aspect to focus on when analysing the image.
         mode:      ``'describe'`` (default) or ``'full'``.
+        file_paths: Several local image paths to look at together (contact sheet).
 
     Use ``mode='describe'`` unless you need pixel-level reasoning (e.g. comparing
     two images for identical content, precise spatial positioning, or explicit
     user request for raw pixel analysis).
     """
+    _many = [str(p) for p in (file_paths or []) if str(p or "").strip()]
+    if file_path and _many:
+        _many.insert(0, file_path)
+    if len(_many) >= 2:
+        return _analyze_many(_many, question, mode)
+    if len(_many) == 1 and not file_path:
+        file_path = _many[0]
     # A dry run's "generations" are paths and nothing else. Answering "file not
     # found" would read as a failure and send the agent healing something that was
     # never broken — so say what it actually is.

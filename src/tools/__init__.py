@@ -169,6 +169,13 @@ from agenty_core.tools.atlas_capture import atlas_capture_around  # noqa: F401,E
 from agenty_core.tools.splat_train import train_splat, splat_training_status  # noqa: F401,E402
 # Send ComfyUI workflows to the on-prem Deadline render farm and follow them (agenty_core.tools.deadline_farm).
 from agenty_core.tools.deadline_farm import submit_to_deadline, deadline_job_status, deadline_farm_info  # noqa: F401,E402
+# Build and run one partner (API) node directly from its schema (agenty_core.tools.partner_run).
+# The orchestrator's own copy is the pipeline closure of the same name (it runs the graph
+# through run_workflow_now); this one serves every agent that holds the plain core tool.
+from agenty_core.tools.partner_run import partner_run  # noqa: F401,E402
+# N independent variants of one workflow duplicated, patched and queued together
+# (agenty_core.tools.variants); the orchestrator uses the pipeline closure of the same name.
+from agenty_core.tools.variants import run_variants  # noqa: F401,E402
 try:
     from src.utils.viewer_group import tab_name as _viewer_tab_name
     _set_viewer_tab(_viewer_tab_name)
@@ -212,6 +219,8 @@ _SHARED_CORE_TOOLS = [
     "atlas_capture_around", "train_splat", "splat_training_status",
     # the Deadline render farm: submit a workflow as a job, follow it, look at the pools
     "submit_to_deadline", "deadline_job_status", "deadline_farm_info",
+    # one partner (API) node built from its schema and run directly
+    "partner_run", "run_variants",
     # per-project memory — moved to the shared layer (a Claude Desktop session on
     # the same ComfyUI now reads and writes the same facts the panel does), so it
     # arrives as a plain callable and needs wrapping like every other core tool.

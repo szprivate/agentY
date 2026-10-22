@@ -1002,6 +1002,8 @@ _ORCH_SKILL_NAMES = [
     "worldlabs-atlas",
     # Rendering on the Deadline farm.
     "deadline-farm",
+    # One partner (API) node built from its schema and run directly (partner_run).
+    "partner-run",
 ]
 
 
