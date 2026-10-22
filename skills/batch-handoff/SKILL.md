@@ -31,7 +31,8 @@ Each iteration gets a **unique prompt** from `output_workflows/multiprompt.json`
    - Call `signal_workflow_ready(base_workflow_path)`.
 
 3. **Iterations 2 … N** (for each `promptN` where N = 2 to count_iter):
-   - Call `duplicate_workflow(base_workflow_path)` → record `new_path`.
+   - Make all the copies in ONE call: `duplicate_workflow(base_workflow_path, count=N-1)`
+     → `new_paths` (one per iteration, in order). Do not call it once per iteration.
    - Call `update_workflow(new_path, patches=[{"node_id": "<positive_prompt_node_id>", "input_name": "text", "value": "<promptN>"}])`.
    - If `status: "error"` → fix patches and retry.
    - Call `signal_workflow_ready(new_path)`.
@@ -51,7 +52,8 @@ All iterations use the **same** assembled workflow. Seeds are randomised automat
    - Call `signal_workflow_ready(base_workflow_path)`.
 
 2. **Iterations 2 … N** (for N = 2 to count_iter):
-   - Call `duplicate_workflow(base_workflow_path)` → record `new_path`.
+   - Make all the copies in ONE call: `duplicate_workflow(base_workflow_path, count=N-1)`
+     → `new_paths`. Do not call it once per iteration.
    - Call `update_workflow(new_path)` to validate the duplicate. If `status: "error"` → fix and retry.
    - Call `signal_workflow_ready(new_path)`.
 

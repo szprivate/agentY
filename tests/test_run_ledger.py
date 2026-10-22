@@ -172,6 +172,29 @@ class WhatTheAgentIsTold(Store):
         self.assertEqual(rl.summary("lead"), {"total": 3, "approved": 1, "waiting": 1, "done": 0})
 
 
+class AskingForARerun(Store):
+    """An explicit "run it again" outranks a stage being settled, in the same turn."""
+
+    def test_the_phrasings(self):
+        for yes in ("rerun it", "Please re-render the shot", "run it again", "do this from scratch",
+                    "generate that once more", "start over", "redo the packshot", "new seed please"):
+            self.assertTrue(rl.asks_rerun(yes), yes)
+        for no in ("what did it make?", "approve the characters", "the run ledger looks fine",
+                   "again, thanks for the help", ""):
+            self.assertFalse(rl.asks_rerun(no), no)
+
+    def test_the_note_rides_with_the_ledger_only_when_asked(self):
+        rl.produced("lead", "8", outputs=["a.png"])
+        self.assertNotIn("ASKED FOR A RE-RUN", rl.index("lead"))
+        self.assertNotIn("ASKED FOR A RE-RUN", rl.index("lead", rerun=False))
+        text = rl.index("lead", rerun=True)
+        self.assertIn("ASKED FOR A RE-RUN", text)
+        self.assertIn("a.png", text)          # the previous round stays on record
+
+    def test_nothing_to_say_while_nothing_has_happened(self):
+        self.assertEqual(rl.index("lead", rerun=True), "")
+
+
 class WrittenResults(Store):
     def test_in_the_project_layout_when_a_shot_is_named(self):
         path = rl.text_file("lead", "4", "Screenplay (draft)", 3,
@@ -339,6 +362,23 @@ class ThePipelineWritesIt(Store):
         text = obj._ledger_block()
         self.assertIn('"characters"', text)
         self.assertNotIn("screenplay", text)
+
+
+    def test_a_users_rerun_request_reaches_the_block(self):
+        rl.produced("lead", "8", outputs=["a.png"])
+        obj = pipeline()
+        obj._user_opened_turn = lambda: True
+        obj._turn_user_text = "please rerun the characters"
+        self.assertIn("ASKED FOR A RE-RUN", obj._ledger_block())
+        obj._turn_user_text = "how does it look?"
+        self.assertNotIn("ASKED FOR A RE-RUN", obj._ledger_block())
+
+    def test_a_harness_message_never_triggers_the_override(self):
+        rl.produced("lead", "8", outputs=["a.png"])
+        obj = pipeline()
+        obj._user_opened_turn = lambda: False
+        obj._turn_user_text = "rerun everything"
+        self.assertNotIn("ASKED FOR A RE-RUN", obj._ledger_block())
 
 
 class WhereItIsWired(unittest.TestCase):

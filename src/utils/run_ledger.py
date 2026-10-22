@@ -361,7 +361,30 @@ def approved_ids(lead_id: str) -> tuple[list, list]:
     return [h for h in known if stages[h].get("state") == APPROVED], known
 
 
-def index(lead_id: str, only=None) -> str:
+# The user plainly asking for work to be done AGAIN. The ledger says an approved
+# stage is settled; that is right for the agent's own doubts and wrong for the
+# user's instruction - answered once with "nothing left to run" and the user had
+# to say it a second time. Matched on the user's own words only (the caller must
+# not pass harness text), and only on unambiguous phrasings.
+_RERUN = re.compile(
+    r"\b(re-?run|re-?render|re-?do|re-?generate|re-?make|re-?roll)\b"
+    r"|\b(run|render|generate|do|make|try)\b[^.\n]{0,40}\b(again|anew|afresh|from scratch)\b"
+    r"|\bfrom scratch\b|\bstart (over|again)\b|\bonce more\b|\bnew (seed|roll)\b",
+    re.IGNORECASE)
+
+RERUN_NOTE = (
+    "[THE USER ASKED FOR A RE-RUN in this message. That outranks 'settled': run the stage(s) "
+    "they name (every stage they point at, if none is named) AGAIN, now, as a new round, "
+    "with a fresh seed. Do not answer that nothing is left to run, and do not ask "
+    "whether they are sure. The stages below stay on record as the previous round.]")
+
+
+def asks_rerun(text) -> bool:
+    """Whether the user's own message asks for work to be done again."""
+    return bool(_RERUN.search(str(text or "")))
+
+
+def index(lead_id: str, only=None, rerun: bool = False) -> str:
     """The block the agent is given each turn, or "" while nothing has happened.
 
     With *only* (a branch: its own stages) the stages settled ELSEWHERE in the
@@ -389,6 +412,8 @@ def index(lead_id: str, only=None) -> str:
         "what goes on, do not redo it, do not ask about it again. A stage whose inputs "
         "have changed since is NOT settled any more: say so and ask before relying on it. "
         "ledger_stage(<id>) gives a stage's full file list.]"]
+    if rerun:
+        lines.append(RERUN_NOTE)
     lines += [_stage_line(h, stages[h]) for h in ids]
     if elsewhere:
         lines.append("SETTLED ELSEWHERE IN THE RUN — not your stages, and not yours to redo; "

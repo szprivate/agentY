@@ -6398,7 +6398,13 @@ class Pipeline:
             if self._branch_info():
                 only = [str(h.get("hook_node_id")) for h in self._canvas_hooks
                         if isinstance(h, dict)]
-            return _rl.index(lead, only)
+            rerun = False
+            try:
+                if self._user_opened_turn():
+                    rerun = _rl.asks_rerun(getattr(self, "_turn_user_text", ""))
+            except Exception:  # noqa: BLE001 - the override is a courtesy, the block is not
+                rerun = False
+            return _rl.index(lead, only, rerun=rerun)
         except Exception:  # noqa: BLE001
             return ""
 
