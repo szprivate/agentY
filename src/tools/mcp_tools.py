@@ -498,12 +498,12 @@ def _transport_callable(sc: dict, provider):
     transport = str(sc.get("transport", "http") or "http").lower()
     if transport in ("http", "streamable-http", "streamable_http"):
         from mcp.client.streamable_http import streamablehttp_client
-        url = sc["url"]
+        url = _expand(sc["url"])   # ${AYON_SERVER_URL}/api/mcp and the like
         headers = _expand_map(sc.get("headers")) or None
         return lambda: streamablehttp_client(url, headers=headers, auth=provider)
     if transport == "sse":
         from mcp.client.sse import sse_client
-        url = sc["url"]
+        url = _expand(sc["url"])   # ${AYON_SERVER_URL}/api/mcp and the like
         headers = _expand_map(sc.get("headers")) or None
         return lambda: sse_client(url, headers=headers, auth=provider)
     if transport == "stdio":

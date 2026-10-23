@@ -500,6 +500,39 @@
       "setup_steps": "",
       "default_selected": false,
       "notes": "Authorize once in agentY Settings (Comfy account OAuth). Headless alternative: auth `header`, headers {\"X-API-Key\":\"${COMFY_API_KEY}\"} with a key from https://platform.comfy.org/profile/api-keys (starts comfyui-)."
+    },
+    {
+      "id": "ayon",
+      "name": "AYON",
+      "category": "Pipeline",
+      "description": "Ynput's official AYON MCP: projects, folders, tasks, products, versions, representations, comments, events. Writes need confirm_mutation; the service user's permissions apply.",
+      "server": {
+        "enabled": true,
+        "transport": "http",
+        "url": "${AYON_SERVER_URL}/api/mcp",
+        "auth": "header",
+        "headers": {
+          "x-api-key": "${AYON_API_KEY}"
+        }
+      },
+      "env_keys": [
+        {
+          "key": "AYON_SERVER_URL",
+          "label": "AYON server URL (e.g. https://bepic.ayon.app)",
+          "help_url": "https://github.com/ynput/ayon-mcp",
+          "optional": false
+        },
+        {
+          "key": "AYON_API_KEY",
+          "label": "AYON service user API key",
+          "help_url": "https://github.com/ynput/ayon-mcp",
+          "optional": false
+        }
+      ],
+      "requires": [],
+      "setup_steps": "",
+      "notes": "Server side, once, by an AYON admin: install the ayon-mcp addon on the AYON server and create a service for it (Services > New Service > AYON MCP Server); it then answers at https://<server>/api/mcp in tunnel mode. Use a service user's key with only the projects and rights the agent should have; set AYON_MCP_READ_ONLY on the service to start read-only. Without the server-side service: run the Docker image ynput/ayon-mcp (port 8088, /mcp) and point the URL there.",
+      "default_selected": false
     }
   ]
 }
