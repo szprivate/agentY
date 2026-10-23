@@ -166,6 +166,26 @@ set `llm.dashscope.base_url` to `https://dashscope.aliyuncs.com/compatible-mode/
 A value resolves as: CLI flag → environment variable → `settings.local.json` →
 `settings.default.toml` → built-in default.
 
+### Adding a custom OpenAI-compatible provider
+
+Any service with an OpenAI-style `/v1` API (Mercury, OpenRouter, Together, vLLM, LM Studio...) can be
+used as a provider. In Settings, **Authentication > + Add API key > Other service...**: give the service
+name, the key and the server URL, and tick *OpenAI-compatible LLM provider* (and *can read images* if its
+models take image input). The key and URL are written to `.env` as `<NAME>_API_KEY` and `<NAME>_BASE_URL`;
+the registry entry goes to `llm.custom_providers.<id>` in `config/settings.local.json`:
+
+```json
+{"llm": {"custom_providers": {"mercury": {"label": "Mercury", "key_env": "MERCURY_API_KEY",
+                                           "url_env": "MERCURY_BASE_URL", "vision": false}}}}
+```
+
+The id is the lowercased service name and may not be a built-in provider name (`claude`, `anthropic`,
+`dashscope`/`qwen`/`alibaba`/`modelstudio`, `openai`/`gpt`, `google`/`gemini`, `ollama`, `bedrock`). A tier
+then reads `"mercury,<model id>"`. The model menus list the models from `GET {url}/models`; if that fails the
+provider is still offered and a model id can be typed. Under Connections the provider has a **Test** button
+and a **Remove** button (Remove drops the registry entry; the keys stay in `.env` until removed under
+Authentication). A missing key or URL is reported by variable name when the agent is built.
+
 ## Checking the environment
 
 ```powershell

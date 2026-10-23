@@ -1042,6 +1042,13 @@ def _orchestrator_supports_vision() -> bool:
     # Providers whose current models are multimodal across the board.
     if provider in ("claude", "anthropic", "bedrock", "google", "gemini"):
         return True
+    # A custom provider says so itself (llm.custom_providers.<id>.vision).
+    try:
+        from src.utils import custom_providers as _cp  # noqa: PLC0415
+        if (_cp.get(provider) or {}).get("vision"):
+            return True
+    except Exception:  # noqa: BLE001
+        pass
     # Otherwise require an explicit vision marker in the model id.
     markers = ("-vl", "vl-", "vl:", "vision", "omni", "4o", "gpt-4.1", "o4-",
                "llava", "minicpm-v", "gemma3", "gemma-3", "pixtral", "internvl", "moondream")
@@ -2697,7 +2704,9 @@ def _switch_model(args: list[str]) -> list[dict]:
     model = model.strip()
 
     from src.agent import _DASHSCOPE_PROVIDERS, _OPENAI_PROVIDERS, _GEMINI_PROVIDERS
-    if provider not in ({"claude", "ollama"} | _DASHSCOPE_PROVIDERS | _OPENAI_PROVIDERS | _GEMINI_PROVIDERS):
+    from src.utils import custom_providers as _cprov
+    if provider not in ({"claude", "ollama"} | _DASHSCOPE_PROVIDERS | _OPENAI_PROVIDERS | _GEMINI_PROVIDERS
+                         | set(_cprov.load())):
         return [_sys(f"❌ Unknown provider `{provider}`. Use `claude`, `ollama`, "
                      "`dashscope`, `openai`, or `google`.")]
 
@@ -2979,6 +2988,31 @@ def _fetch_openai_models(key: str, base_url: str) -> list[list[str]]:
     return [pair for _, pair in rows]
 
 
+def _fetch_custom_models(provider_id: str, key: str, base_url: str) -> list[list[str]]:
+    """The model ids of a custom OpenAI-compatible provider, via GET {base}/models
+    (8 s). Raises on any failure; the caller still offers the provider."""
+    import requests  # noqa: PLC0415
+    resp = requests.get(base_url.rstrip("/") + "/models",
+                        headers={"Authorization": f"Bearer {key}"}, timeout=8)
+    resp.raise_for_status()
+    body = resp.json()
+    rows = body.get("data", []) if isinstance(body, dict) else (body if isinstance(body, list) else [])
+    ids = sorted({str(m.get("id", "")) if isinstance(m, dict) else str(m) for m in rows} - {""})
+    return [[f"{provider_id},{mid}", mid] for mid in ids]
+
+
+def test_custom_provider(provider_id: str) -> dict:
+    """Settings > Connections > Test: GET /models of a registered provider.
+    {ok, count, error}."""
+    from src.utils import custom_providers as cp  # noqa: PLC0415
+    try:
+        url, key = cp.connection(provider_id)
+        models = _fetch_custom_models(provider_id, key, url)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "count": 0, "error": str(exc)}
+    return {"ok": True, "count": len(models), "error": ""}
+
+
 def _prettify_gemini_id(mid: str) -> str:
     """gemini-3.1-pro-preview → "Gemini 3.1 Pro Preview"."""
     return " ".join(t[:1].upper() + t[1:] for t in mid.split("-"))
@@ -3120,6 +3154,21 @@ def _list_models_now() -> dict:
             logger.debug("Gemini live model list failed (%s); using fallback", exc)
             groups["Google (Gemini)"] = list(_GEMINI_FALLBACK)
 
+    # Custom OpenAI-compatible providers (llm.custom_providers). Each is offered
+    # even when its list cannot be fetched (empty group: the page lets a model id
+    # be typed), as long as it is registered.
+    try:
+        from src.utils import custom_providers as _cp  # noqa: PLC0415
+        for pid, entry in _cp.load().items():
+            try:
+                url, key = _cp.connection(pid)
+                groups[entry["label"]] = _fetch_custom_models(pid, key, url)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("%s model list failed (%s); offering it without a list", entry["label"], exc)
+                groups[entry["label"]] = []
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("custom providers unavailable: %s", exc)
+
     # Ollama has no static fallback — its models are known only from a live query,
     # so any miss (daemon not up yet, a slow /api/tags under GPU load) drops the
     # whole vendor. Track whether it was enumerated so a miss is cached only briefly
@@ -3237,6 +3286,11 @@ def _services() -> list[dict]:
                                 "secret": _key_age.is_secret_key(k["key"])} for k in rest]})
         taken.update(k["key"] for k in keys)
     return out
+
+
+def _custom_provider_list() -> list[dict]:
+    from src.utils import custom_providers as cp  # noqa: PLC0415
+    return [{"id": pid, **e} for pid, e in cp.load().items()]
 
 
 def _env_path() -> Path:
@@ -3771,6 +3825,10 @@ def settings_payload(offline: bool = False) -> dict:
         "env_file_keys": sorted(k for k, v in file_env.items() if str(v or "").strip()),
         # The services "Add API key" offers.
         "services": _services(),
+        # Registered OpenAI-compatible providers, for Connections and the model menus.
+        "custom_providers": _custom_provider_list(),
+        # Provider names a custom one may not take, so the page can say so before saving.
+        "reserved_providers": sorted(__import__("src.utils.custom_providers", fromlist=["x"]).reserved()),
         "env_mask": _SECRET_MASK,
         # How long each key has been in place, so the panel can show the
         # same rotation warning the host prints at startup.
@@ -3989,11 +4047,47 @@ def settings_save(body: dict) -> dict:
     settings_updates = body.get("settings")
     if isinstance(settings_updates, dict) and settings_updates:
         result["settings_updated"] = _update_settings_file(settings_updates)
+    cp_change = _save_custom_providers(body.get("custom_providers"))
+    if cp_change:
+        result.update(cp_change)
+        if cp_change.get("custom_providers_added") or cp_change.get("custom_providers_removed"):
+            result["settings_updated"] = list(result.get("settings_updated") or []) + ["llm.custom_providers"]
     pricing_updates = body.get("pricing")
     if isinstance(pricing_updates, dict):
         _save_pricing_config(pricing_updates)
         result["pricing_updated"] = True
     return result
+
+
+def _save_custom_providers(change) -> dict:
+    """{"add": {id: {label, key_env, url_env, vision}}, "remove": [id]} from a Settings
+    save, into llm.custom_providers of settings.local.json. A rejected entry is
+    reported under "custom_providers_rejected" and not written."""
+    if not isinstance(change, dict):
+        return {}
+    from src.utils import custom_providers as cp  # noqa: PLC0415
+    from src.utils.settings import remove_local, set_local  # noqa: PLC0415
+    out: dict = {}
+    add, rejected = {}, {}
+    for pid, entry in (change.get("add") or {}).items():
+        pid = str(pid).strip().lower()
+        why = cp.validate(pid, entry)
+        if why:
+            rejected[pid] = why
+        else:
+            add[pid] = cp.normalize(pid, entry)
+    if add:
+        set_local({"llm": {"custom_providers": add}})
+        out["custom_providers_added"] = sorted(add)
+    removed = [str(pid).strip().lower() for pid in (change.get("remove") or [])
+               if remove_local(["llm", "custom_providers", str(pid).strip().lower()])]
+    if removed:
+        out["custom_providers_removed"] = removed
+    if rejected:
+        out["custom_providers_rejected"] = rejected
+    if add or removed:
+        _MODEL_CACHE.pop("groups", None)       # the menus list them: ask again
+    return out
 
 
 def _read_env_file() -> dict:
@@ -5355,6 +5449,14 @@ def _build_app():
         except Exception as exc:  # noqa: BLE001
             logger.error("mcp bundle install failed: %s", exc, exc_info=True)
             return jsonify({"ok": False, "error": str(exc)}), 500
+
+    @app.route("/agentY/custom_provider/test", methods=["POST", "OPTIONS"])
+    def custom_provider_test_route():
+        # Settings > Connections > Test: GET /models of a registered provider.
+        if request.method == "OPTIONS":
+            return "", 204
+        body = request.get_json(silent=True) or {}
+        return jsonify(test_custom_provider(str(body.get("id") or "").strip().lower()))
 
     @app.route("/agentY/mcp/test", methods=["POST", "OPTIONS"])
     def mcp_test_route():

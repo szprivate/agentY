@@ -242,6 +242,7 @@ _DASHSCOPE_PROVIDERS = {"dashscope", "modelstudio", "qwen", "alibaba"}
 # "orchestrator": "openai,gpt-4o" or "orchestrator": "google,gemini-2.5-pro".
 _OPENAI_PROVIDERS = {"openai", "gpt"}
 _GEMINI_PROVIDERS = {"google", "gemini"}
+from src.utils import custom_providers as _custom_providers  # noqa: E402
 
 
 class AnthropicModel(_BaseAnthropicModel):
@@ -1174,6 +1175,23 @@ def _build_model(*, role: str, llm: str, system_prompt: str,
             params=gm_params,
         )
         print(f"[agentY:{role}] Using Google Gemini — {model_id} (thinking={want_think})")
+    elif llm in _custom_providers.load():
+        # A registered OpenAI-compatible service (llm.custom_providers): the same
+        # client as OpenAI, pointed at its own URL and key. The model id is the
+        # tier string's; no vendor-specific request fields.
+        from src.utils.usage_capture import capturing_openai_model  # noqa: PLC0415
+        OpenAIModel = capturing_openai_model()
+        _cp = _custom_providers.get(llm)
+        base_url, api_key = _custom_providers.connection(llm)
+        model_id = dashscope_model
+        if not model_id:
+            raise RuntimeError(f"{_cp['label']}: no model id - write the tier as \"{llm},<model id>\"")
+        model = OpenAIModel(
+            client_args={"api_key": api_key, "base_url": base_url},
+            model_id=model_id,
+            params={"max_tokens": max_tokens or 8192},
+        )
+        print(f"[agentY:{role}] Using {_cp['label']} (OpenAI-compatible, {base_url}) — {model_id}")
     else:
         model_id = anthropic_model or str(_cfg("ANTHROPIC_MODEL", "anthropic", "model", default="claude-haiku-4-5"))
         tokens = max_tokens or int(_cfg("ANTHROPIC_MAX_TOKENS", "anthropic", "max_tokens", default=4096))

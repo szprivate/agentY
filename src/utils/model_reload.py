@@ -54,7 +54,16 @@ _CLIENT_ENV_MARKERS = ("ANTHROPIC", "DASHSCOPE", "OPENAI", "GEMINI", "GOOGLE", "
 
 def env_affects_clients(keys) -> bool:
     """Whether changing these environment keys changes what a model client holds."""
-    return any(marker in str(key).upper() for key in (keys or []) for marker in _CLIENT_ENV_MARKERS)
+    keys = list(keys or [])
+    if any(marker in str(key).upper() for key in keys for marker in _CLIENT_ENV_MARKERS):
+        return True
+    # A custom OpenAI-compatible provider's own variables (llm.custom_providers).
+    try:
+        from src.utils import custom_providers  # noqa: PLC0415
+        mine = custom_providers.env_names()
+    except Exception:  # noqa: BLE001
+        mine = set()
+    return any(str(key) in mine for key in keys)
 
 
 def fingerprint() -> dict[str, str]:

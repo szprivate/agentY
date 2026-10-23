@@ -152,6 +152,26 @@ def set_local(overrides: dict) -> dict:
         return merged
 
 
+def remove_local(path: list) -> bool:
+    """Take the key at *path* (a list of keys) out of ``settings.local.json``.
+    ``set_local`` only merges, so a deletion needs its own door. Returns whether
+    anything was removed."""
+    with _lock:
+        data = load_local()
+        node = data
+        for k in path[:-1]:
+            node = node.get(k) if isinstance(node, dict) else None
+            if node is None:
+                return False
+        if not isinstance(node, dict) or path[-1] not in node:
+            return False
+        del node[path[-1]]
+        _LOCAL_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        global _cache
+        _cache = None
+        return True
+
+
 # The port the chat host listens on when nothing else says otherwise, per platform.
 #
 # macOS is not 5000 because macOS does not leave 5000 free. ControlCenter's AirPlay
