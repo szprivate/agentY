@@ -1004,6 +1004,9 @@ _ORCH_SKILL_NAMES = [
     "deadline-farm",
     # One partner (API) node built from its schema and run directly (partner_run).
     "partner-run",
+    # Modelling to match a reference photo in Blender (MCP): measure, camera,
+    # blockout, detail, look - one build script rebuilt every pass.
+    "model-from-reference",
 ]
 
 

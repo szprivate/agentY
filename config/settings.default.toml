@@ -350,7 +350,9 @@ history_window = 12
 # rejected image stays in the history. These lists override the guess — plain
 # substrings matched against the model id, text_only checked first.
 # e.g. vision_models = ["qwen3.7-flash"]   text_only_models = ["qwen3.7-max"]
-vision_models = []
+# Tested on DashScope 2026-10-23: these three read images, also inside tool results
+# (so analyze_image(mode='full') lets the orchestrator look for itself).
+vision_models = ["deepseek-v4.1-flash", "qwen3.8-max", "qwen3.8-flash"]
 text_only_models = []
 
 # WHICH MODEL DOES WHICH JOB.
