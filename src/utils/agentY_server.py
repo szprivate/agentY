@@ -3173,6 +3173,72 @@ _KNOWN_ENV_KEYS = [
 ]
 
 
+# The services "Add API key" offers, so a key is added by naming the service and
+# not by knowing its variable. key_env/url_env are the names the code reads
+# (src/agent.py, src/main.py, src/utils/slack_*); default_url is what is used when
+# the URL variable is unset. `fields` are further variables of the same service
+# (Slack needs three). The MCP presets' env keys are appended by _services().
+_BUILTIN_SERVICES = [
+    {"id": "dashscope", "label": "Alibaba Model Studio (DashScope)",
+     "key_env": "DASHSCOPE_API_KEY", "url_env": "DASHSCOPE_BASE_URL",
+     "default_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+     "help_url": "https://modelstudio.console.alibabacloud.com/?tab=model#/api-key",
+     "hint": "Endpoint by region: international https://dashscope-intl.aliyuncs.com/compatible-mode/v1, "
+             "China https://dashscope.aliyuncs.com/compatible-mode/v1, "
+             "US https://dashscope-us.aliyuncs.com/compatible-mode/v1. The key must belong to the same region."},
+    {"id": "anthropic", "label": "Anthropic", "key_env": "ANTHROPIC_API_KEY",
+     "help_url": "https://console.anthropic.com/settings/keys"},
+    {"id": "openai", "label": "OpenAI", "key_env": "OPENAI_API_KEY", "url_env": "OPENAI_BASE_URL",
+     "default_url": "https://api.openai.com/v1",
+     "help_url": "https://platform.openai.com/api-keys"},
+    {"id": "gemini", "label": "Google Gemini", "key_env": "GEMINI_API_KEY", "url_env": "GEMINI_BASE_URL",
+     "default_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+     "help_url": "https://aistudio.google.com/apikey"},
+    {"id": "comfyui", "label": "ComfyUI", "key_env": "COMFYUI_API_KEY",
+     "help_url": "https://platform.comfy.org/profile/api-keys"},
+    {"id": "huggingface", "label": "Hugging Face", "key_env": "HF_TOKEN",
+     "help_url": "https://huggingface.co/settings/tokens"},
+    {"id": "worldlabs", "label": "World Labs", "key_env": "WORLDLABS_API_KEY",
+     "help_url": "https://platform.worldlabs.ai/api-keys"},
+    {"id": "slack", "label": "Slack", "key_env": "SLACK_BOT_TOKEN",
+     "help_url": "https://api.slack.com/apps",
+     "hint": "Bot token (xoxb-...). The app-level token needs connections:write. SLACK_ALLOWED_USERS is "
+             "who may talk to the bot: empty means every message is refused. See docs/slack.md.",
+     "fields": [{"env": "SLACK_APP_TOKEN", "label": "App-level token (xapp-...)", "secret": True},
+                {"env": "SLACK_ALLOWED_USERS", "label": "Allowed Slack member ids", "secret": False}]},
+]
+
+
+def _services() -> list[dict]:
+    """The services catalog the settings payload sends: the built-in ones, then
+    every env key of the MCP presets (labelled by preset name)."""
+    out = []
+    for s in _BUILTIN_SERVICES:
+        out.append({"id": s["id"], "label": s["label"], "key_env": s["key_env"],
+                    "url_env": s.get("url_env", ""), "default_url": s.get("default_url", ""),
+                    "help_url": s.get("help_url", ""), "hint": s.get("hint", ""),
+                    "fields": [dict(f) for f in s.get("fields", [])]})
+    taken = {s["key_env"] for s in out} | {f["env"] for s in out for f in s["fields"]}
+    try:
+        from scripts import mcp_presets as _mp  # noqa: PLC0415
+        presets = _mp.load_catalog()
+    except Exception as exc:  # noqa: BLE001 - the catalog is optional
+        logger.debug("MCP presets unavailable for the services list: %s", exc)
+        presets = []
+    for p in presets:
+        keys = [k for k in p.get("env_keys", []) if k.get("key") and k["key"] not in taken]
+        if not keys:
+            continue
+        first, rest = keys[0], keys[1:]
+        out.append({"id": "mcp:" + p["id"], "label": p["name"], "key_env": first["key"],
+                    "url_env": "", "default_url": "", "help_url": str(first.get("help_url") or ""),
+                    "hint": str(first.get("label") or ""),
+                    "fields": [{"env": k["key"], "label": str(k.get("label") or k["key"]),
+                                "secret": _key_age.is_secret_key(k["key"])} for k in rest]})
+        taken.update(k["key"] for k in keys)
+    return out
+
+
 def _env_path() -> Path:
     return _project_root() / ".env"
 
@@ -3668,7 +3734,8 @@ def settings_payload(offline: bool = False) -> dict:
     # mutate `settings` below (live user dir) — must not poison the cache.
     settings = copy.deepcopy(_load_settings())
     env = {k: "" for k in _KNOWN_ENV_KEYS}
-    env.update(_read_env_file())
+    file_env = _read_env_file()
+    env.update(file_env)
     # Show the DashScope endpoint (beneath its API key) even when it's not
     # overridden in .env — seed it from the merged settings so it's never blank.
     if not env.get("DASHSCOPE_BASE_URL"):
@@ -3698,6 +3765,12 @@ def settings_payload(offline: bool = False) -> dict:
         # `Allow-Origin: *` — meant any website the user had open.
         "env": _masked_env(env),
         "env_keys": list(dict.fromkeys(_KNOWN_ENV_KEYS + list(env.keys()))),
+        # Which variables .env really holds a value for, before the endpoints are
+        # seeded with their defaults above: the page shows an endpoint only for these
+        # or for a key that is set.
+        "env_file_keys": sorted(k for k, v in file_env.items() if str(v or "").strip()),
+        # The services "Add API key" offers.
+        "services": _services(),
         "env_mask": _SECRET_MASK,
         # How long each key has been in place, so the panel can show the
         # same rotation warning the host prints at startup.
