@@ -208,6 +208,110 @@
       "notes": ""
     },
     {
+      "id": "after-effects",
+      "name": "Adobe After Effects (community)",
+      "category": "Motion / Video",
+      "description": "Inspect and edit a running After Effects project: comps, layers, keyframes, effects, masks, text, shapes, expressions, backups and preview renders.",
+      "server": {
+        "enabled": true,
+        "transport": "stdio",
+        "command": "npx",
+        "args": [
+          "-y",
+          "@kumoproductions/mcp-aftereffects@0.3.1"
+        ],
+        "auth": "none"
+      },
+      "env_keys": [],
+      "requires": [
+        "node",
+        "after-effects"
+      ],
+      "setup_steps": "No panel or plugin is needed. One setting in After Effects (2024-2026, Node.js 24+): Edit > Preferences > Scripting & Expressions > turn ON \"Allow Scripts to Write Files and Access Network\" (without it the tools fail). Open the project in After Effects before the first call; if After Effects is not in a standard Adobe folder set AE_MCP_EXE to the AfterFX.exe path in the server env. Only one After Effects instance is supported without extra work (AfterFX.exe -m needs a startup script, see the project README). Try it on a copy of the .aep first: it can modify the open project.",
+      "default_selected": false,
+      "notes": "Community server (kumoproductions, MIT, 0.3.x, active). No socket port is used, so it does not clash with the other DCC bridges. Set AE_MCP_READONLY=1 in the server env to inspect without changes."
+    },
+    {
+      "id": "premiere-pro",
+      "name": "Adobe Premiere Pro (community)",
+      "category": "Editing",
+      "description": "Drive a running Premiere Pro: projects, bins, sequences, clips, transitions, effects, markers, captions and export, through a CEP panel bridge.",
+      "server": {
+        "enabled": true,
+        "transport": "stdio",
+        "command": "npx",
+        "args": [
+          "-y",
+          "adobe-premiere-pro-mcp@1.2.8"
+        ],
+        "auth": "none",
+        "env": {
+          "PREMIERE_MCP_TELEMETRY": "0",
+          "PREMIERE_MCP_UPDATE_CHECK": "0"
+        }
+      },
+      "env_keys": [],
+      "requires": [
+        "node",
+        "premiere-pro"
+      ],
+      "setup_steps": "Installs the CEP bridge panel into Premiere (Premiere Pro 2020+, Node.js 20+). 1) `npm install -g adobe-premiere-pro-mcp@1.2.8`. 2) Run the package's own Windows installer WITHOUT the extra client configs (the default also rewrites Claude Desktop and VS Code configs): `powershell -NoProfile -ExecutionPolicy Bypass -File \"$(npm root -g)\\adobe-premiere-pro-mcp\\scripts\\install-windows.ps1\" -SkipBuild -SkipCopilotConfig -SkipClaudeDesktopConfig`. It copies the panel to `%APPDATA%\\Adobe\\CEP\\extensions\\MCPBridgeCEP` and sets the CEP debug flag (`PlayerDebugMode=1` under `HKCU:\\Software\\Adobe\\CSXS.<n>`) so the unsigned panel loads. 3) Restart Premiere, open Window > Extensions > MCP Bridge (CEP), set the bridge directory the installer printed (default under `%USERPROFILE%\\.premiere-mcp-bridge`), and press Start. 4) Check with the `verify_premiere_connection` tool before editing. The bridge is file-based, there is no network port.",
+      "default_selected": false,
+      "notes": "Community server (hetpatel-11, MIT, active). Telemetry and update checks are switched off in the server env here. The default tool list is small (search_tools, invoke_tool); add PREMIERE_MCP_TOOLSET=full to the server env to list every tool. The npm package is the one named adobe-premiere-pro-mcp; a different project publishes `premiere-pro-mcp` with the same command name."
+    },
+    {
+      "id": "davinci-resolve",
+      "name": "DaVinci Resolve (community)",
+      "category": "Editing",
+      "description": "Control DaVinci Resolve Studio through its official scripting API: projects, media pool, timelines, color, Fusion, Fairlight, render queue.",
+      "server": {
+        "enabled": true,
+        "transport": "stdio",
+        "command": "npx",
+        "args": [
+          "-y",
+          "davinci-resolve-mcp@4.10.0",
+          "server"
+        ],
+        "auth": "none"
+      },
+      "env_keys": [],
+      "requires": [
+        "node",
+        "python",
+        "davinci-resolve"
+      ],
+      "setup_steps": "Needs DaVinci Resolve STUDIO 18.5+ (Blackmagic only allows external scripting in Studio; the free edition works only through an in-app bridge script on Resolve 21.0.x, not on 21.1) and Python 3.10-3.13 (3.12 is safest; pin with DAVINCI_RESOLVE_MCP_PYTHON). 1) In Resolve: Preferences > System > General > External scripting using: Local, then restart Resolve. 2) Run once `npx -y davinci-resolve-mcp@4.10.0 setup --clients manual`: it builds a managed Python venv under the user app-data folder and detects the Resolve paths (it sets nothing for other AI clients with `--clients manual`). If detection fails set `RESOLVE_SCRIPT_API=C:\\ProgramData\\Blackmagic Design\\DaVinci Resolve\\Support\\Developer\\Scripting`, `RESOLVE_SCRIPT_LIB=C:\\Program Files\\Blackmagic Design\\DaVinci Resolve\\fusionscript.dll` and add `%RESOLVE_SCRIPT_API%\\Modules` to PYTHONPATH. 3) Start Resolve, open a project, then check with the project-info tool. `npx -y davinci-resolve-mcp@4.10.0 doctor` reports Python or path faults.",
+      "default_selected": false,
+      "notes": "Community server (samuelgursky, MIT, very active, ~3.7k stars, 37 tools in the default compound mode). Talks to Resolve in process, no network port, no clash with the other bridges. Resolve must be running for the live tools."
+    },
+    {
+      "id": "cavalry",
+      "name": "Cavalry (community)",
+      "category": "Motion / Video",
+      "description": "Control Cavalry, the 2D motion design app: layers, attributes, keyframes, render queue, frame and viewport captures, bundled API reference.",
+      "server": {
+        "enabled": true,
+        "transport": "stdio",
+        "command": "uv",
+        "args": [
+          "run",
+          "cavalry-mcp"
+        ],
+        "auth": "none",
+        "cwd": "${AGENTY_ROOT}/config/mcp_bundles/cavalry"
+      },
+      "env_keys": [],
+      "requires": [
+        "uv",
+        "git",
+        "cavalry"
+      ],
+      "setup_steps": "Not on PyPI: the agent clones and pins it. Cavalry 2.4+ (tested on 2.7.2). 1) `git clone https://github.com/m18h/cavalry-mcp.git config/mcp_bundles/cavalry`, then `git -C config/mcp_bundles/cavalry checkout cca9e49213f93b171058ebfa3fdff6919e65b2fa` (pin), then `uv sync --directory config/mcp_bundles/cavalry`. 2) Install the bridge script into Cavalry: `uv run --directory config/mcp_bundles/cavalry cavalry-mcp install-bridge` (copies cavalry-mcp-bridge.js to `%APPDATA%\\Cavalry\\Scripts`). 3) In Cavalry open Scripts > cavalry-mcp-bridge.js once per session: a small window says \"Listening on http://127.0.0.1:8722\" and has to stay open (this step is a menu click the user does; it cannot be scripted).",
+      "default_selected": false,
+      "notes": "Community server (m18h, MIT, small and young: one author, 6 commits, July 2026). Cavalry has no official MCP server from Scene Group. Bridge port 8722 (change with CAVALRY_BRIDGE_PORT in the server env); no clash with 9876/9877/7001. Optional knowledge-base search: `uv sync --extra kb`."
+    },
+    {
       "id": "playwright",
       "name": "Playwright Browser",
       "category": "Utilities",
