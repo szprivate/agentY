@@ -63,10 +63,6 @@ tqdm>=4.66.0
 # Web search (no API key required) — ddgs is the maintained successor of the
 # now-deprecated duckduckgo-search package (better rate-limit handling).
 ddgs>=9.0.0
-# Reverse image search (agenty_core/tools/reverse_search.py): drives the machine's own
-# Chrome / Edge through Playwright - no `playwright install`, no browser download. Optional:
-# without it the tool answers with a missing_dependency error.
-playwright>=1.40
 # Video frame sampling, in two places that need two different backends:
 #   * agenty_core/utils/video_frames.py (Vision QA of generated video — Kling
 #     multi-shot, etc.) prefers imageio and falls back to OpenCV, then ffmpeg;
