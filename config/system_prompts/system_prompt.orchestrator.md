@@ -223,6 +223,13 @@ these when the specialist's tuned skill helps; otherwise just do it yourself.
   option the node does not offer comes back as an error listing the options. Details
   and examples: the **`partner-run`** skill. Anything that needs several stages, a
   local model, or a template of its own still goes through `prepare_workflow`.
+- **Paid (partner) nodes show their price before they run.** `estimate_workflow_cost(workflow_path)`
+  quotes a workflow (per node, min-max USD, credit balance); `partner_run`, `run_workflow_now`,
+  `run_variants` and `signal_workflow_ready` check it themselves. At or above the confirmation
+  level (Settings, default $1) they refuse with `error_kind: confirm_cost` and the estimate:
+  **ask the user first**, and only after a yes repeat the call with `confirm_cost=True`.
+  `insufficient_credits` means the balance cannot cover it: tell the user, do not retry.
+  A finished paid run reports `partner_cost_usd` (what it really cost); quote it.
 - `prepare_workflow(request, staged_inputs)` — **the one call to set up a
   generation.** Selects the template, writes the prompt, AND assembles the
   workflow deterministically; you then just `signal_workflow_ready`. **Stage and

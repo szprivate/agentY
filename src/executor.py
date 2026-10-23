@@ -413,6 +413,12 @@ def _submit_workflow(workflow_path: str, client_id: str = "") -> str:
             p.write_text(json.dumps(workflow, indent=2), encoding="utf-8")
     except Exception as exc:  # noqa: BLE001 — naming must never block a submission
         logger.warning("executor: could not apply the output context (%s)", exc)
+    # Paid partner nodes: price them, refuse what the credit balance cannot cover and
+    # what needs the user's go-ahead (CostGateError) - before anything is queued.
+    from agenty_core import partner_credits as _credits
+    from src.utils import partner_cost_host
+    partner_cost_host.ensure_registered()
+    _cost = _credits.gate_submission(workflow, str(p))
     client = get_client()
     payload: dict = {"prompt": workflow}
     if client_id:
@@ -441,6 +447,7 @@ def _submit_workflow(workflow_path: str, client_id: str = "") -> str:
         pass
     result = client.post("/prompt", json_data=payload)
     if isinstance(result, dict) and "prompt_id" in result:
+        _credits.track(result["prompt_id"], _cost)
         # A prompt_id is not an acceptance of the whole graph. ComfyUI validates
         # per output node: when one output is invalid and another is fine, it
         # DROPS the invalid branch, queues the rest, and answers 200 with the
@@ -477,6 +484,20 @@ def _submit_workflow(workflow_path: str, client_id: str = "") -> str:
             pass
         return result["prompt_id"]
     raise RuntimeError(f"Unexpected response from ComfyUI /prompt: {result!r}")
+
+
+async def _settle_partner(prompt_id: str) -> str:
+    """After a job ends: what it cost in Comfy credits (balance before vs after),
+    as a progress line - "" for a job with no paid node or an unknown balance.
+    The amount also lands in the turn's usage (partner_cost_host listener)."""
+    from agenty_core import partner_credits as _credits
+    try:
+        usd = await asyncio.to_thread(_credits.settle, prompt_id)
+    except Exception:  # noqa: BLE001 - a measurement must never fail a run
+        return ""
+    if usd is None:
+        return ""
+    return f"💳 Partner credits used: ${usd:,.2f}"
 
 
 def _free_vram_for_comfyui() -> None:
@@ -866,6 +887,11 @@ async def execute_workflow(
     try:
         prompt_id = _submit_workflow(workflow_path, client_id=client_id)
     except Exception as exc:
+        from agenty_core.partner_credits import CostGateError
+        if isinstance(exc, CostGateError):
+            # Not a ComfyUI failure and not a graph defect: the callers turn it into
+            # the tool answer (error_kind confirm_cost / insufficient_credits).
+            raise
         error_msg = f"❌ ComfyUI submission failed: {exc}"
         logger.error("executor: %s", error_msg)
         yield error_msg
@@ -892,6 +918,10 @@ async def execute_workflow(
             yield event
     finally:
         await _gen.aclose()
+
+    _spent_line = await _settle_partner(prompt_id)
+    if _spent_line:
+        yield _spent_line
 
     if error_result is not None:
         if is_interruption(error_result):
@@ -1056,6 +1086,10 @@ async def execute_workflows_batch(
             finally:
                 await gen.aclose()
 
+            _spent_line = await _settle_partner(prompt_id)
+            if _spent_line:
+                await out_q.put(("line", f"{label}{_spent_line}"))
+
             if error_result is not None:
                 if is_interruption(error_result):
                     # Deliberate stop, not a defect — retire the member without
@@ -1194,6 +1228,13 @@ async def execute_workflows_batch(
                 print(f"[executor] Batch {idx}/{total} queued prompt_id={prompt_id}")
             _spawn(_monitor_member(wf_path, prompt_id, cid, 0))
         except Exception as exc:  # noqa: BLE001
+            from agenty_core.partner_credits import CostGateError
+            if isinstance(exc, CostGateError):
+                # A cost refusal is not a graph defect: no repair, no re-queue. It is
+                # handed to the caller as an execution error that names the way on.
+                yield f"💳 Iteration {idx}/{total} not queued ({exc.error_kind}): {exc}"
+                _record_exec_error(exc.payload(), wf_path, str(exc))
+                continue
             yield f"❌ Submission failed for iteration {idx}/{total}: {exc}"
             logger.error("executor: submission failed for %s — %s", wf_path, exc)
             # Route it through the same failure path so it, too, can be healed.

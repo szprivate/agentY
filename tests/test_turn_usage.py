@@ -40,10 +40,18 @@ class Counting(_InTurn):
         turn_usage.add(2000, 150, 1400, 100, 0.02)
         got = turn_usage.take_changed()
         self.assertEqual(got, {"input": 3000, "output": 200, "cache_read": 2000, "cache_write": 100,
-                               "cache_hit": 0.667, "cost": 0.03, "calls": 2, "last_call": 0})
+                               "cache_hit": 0.667, "cost": 0.03, "partner_cost": 0.0,
+                               "calls": 2, "last_call": 0})
         self.assertIsNone(turn_usage.take_changed(), "unchanged: not sent again")
         turn_usage.add(10, 1)
         self.assertEqual(turn_usage.take_changed()["input"], 3010)
+
+    def test_partner_credits_are_counted_apart_from_the_llm_cost(self):
+        turn_usage.add(500, 20, d_cost=0.004)
+        turn_usage.add_partner(2.38)
+        turn_usage.add_partner(-1.0)                      # never subtracts
+        got = turn_usage.take_changed()
+        self.assertEqual((got["cost"], got["partner_cost"]), (0.004, 2.38))
 
     def test_a_model_without_a_price_has_no_cost_rather_than_a_free_one(self):
         turn_usage.add(500, 20, d_cost=None)

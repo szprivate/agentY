@@ -63,6 +63,8 @@ tqdm>=4.66.0
 # Web search (no API key required) — ddgs is the maintained successor of the
 # now-deprecated duckduckgo-search package (better rate-limit handling).
 ddgs>=9.0.0
+# Evaluates the JSONata price formulas of paid ComfyUI partner nodes (agenty_core/partner_credits.py).
+jsonata-python>=0.7.1
 # Video frame sampling, in two places that need two different backends:
 #   * agenty_core/utils/video_frames.py (Vision QA of generated video — Kling
 #     multi-shot, etc.) prefers imageio and falls back to OpenCV, then ffmpeg;

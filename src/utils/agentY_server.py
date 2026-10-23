@@ -3514,6 +3514,24 @@ def _parse_token_usage(from_ts: float | None, to_ts: float | None) -> dict:
     return _aggregate_token_usage(_accept)
 
 
+def _partner_cost_in(accept) -> float:
+    """USD of partner (API) credits measured inside the scope *accept* passes."""
+    path = _project_root() / ".logs" / "partner_cost.jsonl"
+    total = 0.0
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    row = json.loads(line)
+                    if accept(float(row["ts"])):
+                        total += float(row.get("usd") or 0.0)
+                except (ValueError, KeyError, TypeError):
+                    continue
+    except OSError:
+        return 0.0
+    return round(total, 4)
+
+
 def _aggregate_token_usage(accept) -> dict:
     """Aggregate the token-usage log by model, keeping lines *accept(ts)* passes.
 
@@ -3649,6 +3667,9 @@ def _aggregate_token_usage(accept) -> dict:
     for r in rows + [total]:
         for k in ("cost", "cost_reported", "cost_estimated"):
             r[k] = round(r[k], 4)
+    # Comfy credits spent on paid partner nodes, measured from the balance (see
+    # agenty_core.partner_credits). Apart from the LLM cost above, never summed into it.
+    total["partner_cost"] = _partner_cost_in(accept)
 
     return {
         "ok": True,

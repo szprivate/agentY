@@ -71,7 +71,7 @@ def _validation_errors(workflow_path: str) -> list:
 
 
 @tool
-def signal_workflow_ready(workflow_path: str) -> str:
+def signal_workflow_ready(workflow_path: str, confirm_cost: bool = False) -> str:
     """Signal that the workflow is fully assembled and validated, ready for execution.
 
     Call this as your **final step** once ``update_workflow()`` returns ``status: "ok"``.
@@ -83,6 +83,12 @@ def signal_workflow_ready(workflow_path: str) -> str:
     the execution queue; the pipeline submits them to ComfyUI in order.
 
     Do NOT call ``submit_prompt`` — this tool replaces it.
+
+    Paid (partner) nodes show their price first: a workflow at or above the
+    confirmation level (default $1) answers ``status: "not_ready"``, ``error_kind:
+    "confirm_cost"`` and the estimate, and is NOT queued - tell the user the price,
+    ask, and signal again with ``confirm_cost=True`` only after a yes. One the credit
+    balance cannot cover answers ``insufficient_credits``.
 
     Answers ``status: "not_ready"`` with ``dead_nodes`` when the graph carries nodes
     ComfyUI would never execute (their output read by nobody). Fix each one and call
@@ -96,6 +102,7 @@ def signal_workflow_ready(workflow_path: str) -> str:
         workflow_path: File path to the validated workflow JSON
                        (the same path returned by ``get_workflow_template`` or
                        ``save_workflow`` and used in ``update_workflow``).
+        confirm_cost: True only once the user has agreed to the estimated cost.
     """
     from src.utils.workflow_signal import (MAX_INVALID_REFUSALS, append_workflow_path,
                                            dead_nodes_refused_once, execution_hold,
@@ -175,6 +182,16 @@ def signal_workflow_ready(workflow_path: str) -> str:
     if dead:
         _note(f"⚠️ Running anyway with {len(dead)} node(s) that will never execute: "
               + ", ".join(f"{d['node_id']} ({d['class_type']})" for d in dead))
+
+    # Price check while the agent still has the turn: at the end of it, a refusal
+    # could only be reported, not answered.
+    try:
+        from src.utils import partner_cost_host as _pch
+        refusal = _pch.gate([resolved], confirm_cost)
+        if refusal:
+            return json.dumps({**refusal, "status": "not_ready", "workflow_path": resolved})
+    except Exception:  # noqa: BLE001 - a failed check never stops a render
+        pass
 
     append_workflow_path(resolved)
     # A dry run still queues here — the path is what the end-of-turn summary

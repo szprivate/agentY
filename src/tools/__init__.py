@@ -188,6 +188,8 @@ from agenty_core.tools.deadline_farm import submit_to_deadline, deadline_job_sta
 # The orchestrator's own copy is the pipeline closure of the same name (it runs the graph
 # through run_workflow_now); this one serves every agent that holds the plain core tool.
 from agenty_core.tools.partner_run import partner_run  # noqa: F401,E402
+# Price a workflow's paid (partner) nodes in Comfy credits before it runs (agenty_core.tools.comfyui).
+from agenty_core.tools.comfyui import estimate_workflow_cost  # noqa: F401,E402
 # N independent variants of one workflow duplicated, patched and queued together
 # (agenty_core.tools.variants); the orchestrator uses the pipeline closure of the same name.
 from agenty_core.tools.variants import run_variants  # noqa: F401,E402
@@ -239,7 +241,7 @@ _SHARED_CORE_TOOLS = [
     # the Deadline render farm: submit a workflow as a job, follow it, look at the pools
     "submit_to_deadline", "deadline_job_status", "deadline_farm_info",
     # one partner (API) node built from its schema and run directly
-    "partner_run", "run_variants",
+    "partner_run", "run_variants", "estimate_workflow_cost",
     # per-project memory — moved to the shared layer (a Claude Desktop session on
     # the same ComfyUI now reads and writes the same facts the panel does), so it
     # arrives as a plain callable and needs wrapping like every other core tool.
@@ -523,6 +525,7 @@ ORCHESTRATOR_TOOLS: list = [
     get_comfyui_dirs,
     get_agent_output_dirs,
     submit_prompt,
+    estimate_workflow_cost,
     # The MCP servers' own tools arrive unlabelled and only when their server
     # connected; this is how the orchestrator can tell a capability that is missing
     # from one that is merely switched off or waiting to be authorized.

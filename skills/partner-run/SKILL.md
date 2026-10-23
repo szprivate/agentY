@@ -9,7 +9,9 @@ allowed-tools: partner_run, run_variants, upload_image, analyze_image, get_node_
 `partner_run(node_type, inputs, settings, save, name, run=True)` replaces: search the
 catalog -> `prepare_workflow` -> validate -> `signal_workflow_ready`. It reads the node's
 schema, loads each file into the slot you name, sets the widgets, adds the save node,
-validates and **runs** it (partner credits - once per request, never to test). The outputs
+validates and **runs** it (partner credits - once per request, never to test; the price shows
+before it runs, and above the confirmation level you ask the user, then repeat with
+`confirm_cost=True`). The outputs
 come back like `run_workflow_now`'s and land on the canvas. Do not also signal the file.
 
 ## When

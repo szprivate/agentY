@@ -2228,7 +2228,7 @@ class Pipeline:
             })
 
         @_tool
-        async def run_workflow_now(workflow_path: str) -> str:
+        async def run_workflow_now(workflow_path: str, confirm_cost: bool = False) -> str:
             """Run a validated workflow NOW (synchronously) and return its output paths.
 
             Use this ONLY to CHAIN stages — when you need one workflow's OUTPUT as
@@ -2243,11 +2243,21 @@ class Pipeline:
             For a single, terminal generation use ``signal_workflow_ready`` instead;
             do NOT also signal a workflow you already ran here.
 
+            Paid (partner) nodes show their price first: a graph at or above the
+            confirmation level (default $1) is refused with ``error_kind:
+            confirm_cost`` and its estimate - tell the user the price, ask, and run
+            again with ``confirm_cost=True`` only after a yes. A graph the credit
+            balance cannot cover is refused as ``insufficient_credits``. The result
+            carries ``estimate_usd`` and, once a paid run is done, ``partner_cost_usd``.
+
             Args:
                 workflow_path: Absolute path to a validated workflow JSON file
                     (assemble + validate it first, exactly as for signalling).
+                confirm_cost: True only once the user has agreed to the estimated cost.
             """
             from src.executor import execute_workflow as _execute_workflow
+            from agenty_core import partner_credits as _credits
+            from src.utils import partner_cost_host as _pch
 
             if self._hook_run_stopped:
                 return json.dumps({
@@ -2278,6 +2288,12 @@ class Pipeline:
             base = self._session.current_output_paths
             before = len(base)
             brief = self._last_brainbriefing_json or "{}"
+            # Price first, while the agent still has the turn to ask the user.
+            refusal = await asyncio.to_thread(_pch.gate, [workflow_path], confirm_cost)
+            if refusal:
+                return json.dumps({**refusal, "workflow_path": workflow_path})
+            _estimate = await asyncio.to_thread(_pch.estimate_of, [workflow_path])
+            _spent_before = _credits.turn_total()
             try:
                 async for _line in _execute_workflow(
                     workflow_path, brief, user_message="", verbose=self._verbose,
@@ -2291,6 +2307,8 @@ class Pipeline:
                     _push_progress(str(_line))
                     if self._verbose:
                         print(f"[run_workflow_now] {_line}")
+            except _credits.CostGateError as gate_err:
+                return json.dumps({**gate_err.payload(), "workflow_path": workflow_path})
             except Exception as exc:  # noqa: BLE001
                 return json.dumps({"error": f"execution failed: {exc}"})
             new = list(base[before:])
@@ -2313,10 +2331,16 @@ class Pipeline:
             }
             if products.get("waiting"):
                 result["products_for"] = products["waiting"]
+            if _estimate:
+                result["estimate_usd"] = _estimate
+                _spent = round(_credits.turn_total() - _spent_before, 4)
+                if _spent > 0:
+                    result["partner_cost_usd"] = _spent
             return json.dumps(result)
 
         @_tool
-        async def run_variants(workflow_path: str, variants: list, run: bool = True) -> str:
+        async def run_variants(workflow_path: str, variants: list, run: bool = True,
+                               confirm_cost: bool = False) -> str:
             """Make and run N independent variants of ONE workflow in a single call.
 
             "Give me 4 versions", "try three lightings", "the same shot for each of
@@ -2343,8 +2367,13 @@ class Pipeline:
                 workflow_path: Path of the validated base workflow.
                 variants: List of variant objects.
                 run: False to build and validate only.
+                confirm_cost: True only once the user has agreed to the estimated cost.
+                    With paid (partner) nodes the variants' prices are added up; at or
+                    above the confirmation level (default $1) the call is refused with
+                    ``error_kind: confirm_cost`` and the estimate until the user said yes.
             """
             from agenty_core.tools.variants import prepare_variants as _prepare_variants
+            from src.utils import partner_cost_host as _pch
             from src.executor import execute_workflow as _execute_workflow
 
             if self._hook_run_stopped:
@@ -2358,6 +2387,13 @@ class Pipeline:
             gate = self._plan_gate_refusal() or self._review_gate_refusal(inline=True)
             if gate:
                 return json.dumps(gate)
+            # Ten cheap paid variants are one expensive decision: the gate judges the sum.
+            refusal = await asyncio.to_thread(_pch.gate, ready, confirm_cost)
+            if refusal:
+                return json.dumps({**prepared, **refusal, "ran": False})
+            _estimate = await asyncio.to_thread(_pch.estimate_of, ready)
+            if _estimate:
+                prepared["estimate_usd"] = _estimate
             hooks = [h for h in (self._canvas_hooks or []) if isinstance(h, dict)]
             _only = hooks[0] if len(hooks) == 1 else None
             self._tag_run_outputs(_only)
@@ -2397,7 +2433,8 @@ class Pipeline:
 
         @_tool
         async def partner_run(node_type: str, inputs: dict | None = None, settings: dict | None = None,
-                              save: str = "auto", name: str = "", run: bool = True) -> str:
+                              save: str = "auto", name: str = "", run: bool = True,
+                              confirm_cost: bool = False) -> str:
             """Build and run ONE partner (API) node directly - no template search.
 
             THE route when the request names a partner model or node: Seedance,
@@ -2428,6 +2465,12 @@ class Pipeline:
             and validates (returns ``workflow_path``).
 
             Runs on the user's partner credits: once per request, never to test.
+            The price shows before it runs (``estimate_usd``; ``run=False`` returns
+            it without running). At or above the confirmation level (default $1) the
+            run is refused with ``error_kind: confirm_cost`` and the estimate: tell
+            the user the price, ask, and call again with ``confirm_cost=True`` only
+            after a yes. A run the balance cannot cover is ``insufficient_credits``.
+            A finished run reports ``partner_cost_usd`` (what it really cost).
             It runs now (like ``run_workflow_now``): do not ALSO signal the file.
             When a hook chain or review gate stands, the same gates apply.
 
@@ -2438,17 +2481,22 @@ class Pipeline:
                 save: "image", "video" or "auto".
                 name: Short name for the output files.
                 run: False to build and validate only.
+                confirm_cost: True only once the user has agreed to the estimated cost.
             """
             from agenty_core.tools.partner_run import prepare_partner_workflow as _prepare
+            from src.utils import partner_cost_host as _pch
 
             prepared = await asyncio.to_thread(_prepare, node_type, inputs, settings, save, name)
             if prepared.get("status") != "ready":
                 return json.dumps(prepared)
+            _estimate = await asyncio.to_thread(_pch.estimate_of, [prepared["workflow_path"]])
+            if _estimate:
+                prepared["estimate_usd"] = _estimate
             if not run:
                 return json.dumps({**prepared, "ran": False})
             _push_progress(f"▶ {prepared.get('node')}: built "
                            f"({len(prepared.get('loaders') or [])} file input(s)); running.")
-            ran = await run_workflow_now(workflow_path=prepared["workflow_path"])
+            ran = await run_workflow_now(workflow_path=prepared["workflow_path"], confirm_cost=confirm_cost)
             try:
                 ran = json.loads(ran)
             except (TypeError, ValueError):

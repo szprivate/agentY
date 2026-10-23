@@ -652,6 +652,14 @@ max_download_mb = 250
 [costs]
 reconcile = false
 
+# Paid ComfyUI partner (API) nodes spend Comfy credits. Every run is priced from the
+# nodes' own price formulas before it is submitted. A run that costs more than the
+# credit balance is refused; one whose estimated maximum is at or above
+# `confirm_above_usd` is held until the user has agreed (the agent asks, then repeats
+# the call with confirm_cost=true). Below it, the run goes ahead and reports the price.
+[partner_credits]
+confirm_above_usd = 1.0
+
 # History compaction — keeps a long conversation as quick as a new one.
 # Between turns (in the background, never while you wait): tool output that is no
 # longer recent is cut to its start, and if the history is still over the budget,

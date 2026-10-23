@@ -21,7 +21,8 @@ _SLOT = "turn_usage"
 
 def _blank() -> dict:
     return {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0,
-            "cost": 0.0, "calls": 0, "priced": False, "last_call": 0, "_sent": -1, "_rev": 0}
+            "cost": 0.0, "calls": 0, "priced": False, "last_call": 0, "partner_cost": 0.0,
+            "_sent": -1, "_rev": 0}
 
 
 def _state(scope) -> dict:
@@ -54,6 +55,16 @@ def add(d_in: int = 0, d_out: int = 0, d_cache_read: int = 0, d_cache_write: int
         s["_rev"] += 1
 
 
+def add_partner(usd: float) -> None:
+    """Count what a paid partner (API) run cost in Comfy credits, in the current
+    turn. Kept apart from ``cost``, which is the LLM tokens only."""
+    scope = turn_scope.current()
+    with scope.lock:
+        s = _state(scope)
+        s["partner_cost"] += max(0.0, float(usd or 0.0))
+        s["_rev"] += 1
+
+
 def snapshot(scope=None) -> dict:
     """The turn's totals as the panel shows them."""
     scope = scope or turn_scope.current()
@@ -68,6 +79,8 @@ def snapshot(scope=None) -> dict:
             # share of the input that was read from the provider's cache
             "cache_hit": round(s["cache_read"] / total_in, 3) if total_in else 0.0,
             "cost": round(s["cost"], 4) if s["priced"] else None,
+            # Comfy credits spent on paid partner nodes (not part of ``cost``)
+            "partner_cost": round(s["partner_cost"], 4),
             "calls": s["calls"],
             # input of the orchestrator's latest call (0: none yet)
             "last_call": s["last_call"],
