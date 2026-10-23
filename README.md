@@ -23,11 +23,31 @@ An AI agent that builds and runs [ComfyUI](https://github.com/comfyanonymous/Com
 - **Tagging system** — name a reference once (`#hero_face`) and use it in any prompt or hook.
 - **Memory** — long-term memory across sessions, per-project notes, and chat history that survives restarts.
 - **Slack support** — follow and drive the same conversation from a DM (optional, off by default).
-- **MCP, both ways** — uses tools from external MCP servers (Magnific, Blender, …) and ships its own MCP server for Claude Desktop ([agentY-mcp](https://github.com/szprivate/agentY-mcp)).
+- **3D apps** — builds models in Blender, Maya and Houdini (photo to model, destruction sims) and checks proportions against the photo.
+- **MCP, both ways** — uses tools from external MCP servers (Magnific, Blender, Nuke, After Effects, …; presets in the installer and Settings) and ships its own MCP server for Claude Desktop ([agentY-mcp](https://github.com/szprivate/agentY-mcp)).
 - **Sees your canvas** — reads and edits the open graph, takes screenshots of it, fetches web reference images onto it.
 - **Model management** — finds, checks and downloads the model files a workflow needs from Hugging Face.
 - **Your own templates and skills** — register any workflow as a template; save a procedure as a skill.
 - **Settings in ComfyUI** — keys, model choices, MCP servers and token cost per model, all in one panel.
+
+---
+
+## What's new in 1.3
+
+- **3D apps** — Blender, Maya and Houdini are driven through `dcc_build` (one build script, run live in the open app or as a headless batch). `dcc_silhouette_check` compares proportions to the photo by numbers and gates the detail and look stages; `measure_reference` (MoGe) reads metric points, camera height and field of view from one photo.
+- **Photo to model** — the `model-from-reference` skill builds a model from a photo in stages. Demo: the St. Peter-Ording stilt house, modelled from one photo in Blender, rebuilt in Maya, destroyed in Houdini.
+- **Destruction** — the `dcc-destruction-houdini` skill: fracture, constraints, directed collapse, POP dust / Pyro, Vellum cloth, flipbook.
+- **Reverse image search** — `reverse_image_search` asks Yandex and Bing (through your installed Chrome or Edge) for other photos of the same object. Optional; the installer offers it.
+- **Model routing** — `list_models` / `switch_model`, plus routing rules (Settings ▸ Models) that suggest a stronger model for certain skills or tool packs. Only models you have are named, and the agent asks before switching unless auto-switch is on.
+- **MCP presets** — add Blender, Maya, Houdini, Nuke, After Effects, Premiere Pro, DaVinci Resolve, Cavalry, AYON and more from the installer or Settings; `${VAR}` in a server URL is expanded.
+- **Installer** — LLM providers, MCP presets, reverse image search and the bEpic viewer are now set up in the installer ([Installation](#2-run-the-installer-recommended)).
+- **Settings** — API keys merged into one services view (pick the service first; unknown OpenAI-compatible services can be registered as custom LLM providers), empty keys hidden, a Deadline section, Slack tokens in the Slack section, and one allowed-users setting (`SLACK_ALLOWED_USERS`).
+- **Worlds and viewer** — World Labs Atlas worlds can be flown through in the viewer (WASD), Atlas concurrency limits are retried and explained, plus `render_camera_move`, `show_in_viewer`, a Gaussian splat trainer and an orbit rig for turntables.
+- **Deadline** — send ComfyUI workflows to a Deadline 10 farm and follow the job ([docs/deadline.md](docs/deadline.md)).
+- **Ayon (early)** — `ayon_*` tools read and write the Ayon addon's node data; publishing still needs you to press Publish in Ayon ([docs/ayon.md](docs/ayon.md)).
+- **Turn API** — another program can start a turn on a running agentY and read the result ([docs/turn-api.md](docs/turn-api.md)).
+- **agentY-mcp** — loads agentY's `.env` and offers the full shared tool set.
+- **Sturdier runs** — MCP sessions reconnect with per-call timeouts, cut-off turns carry on, and several downloads show as one bar in the run card.
 
 ---
 
@@ -68,12 +88,19 @@ one pass:
 1. checks for `git` + `uv`;
 2. **updates agentY itself** to the remote's newest commit, then clones the sibling repos it needs — **agentY-core** (required) and **agentY-mcp** (optional) — next to `agentY` if they aren't there already, and fast-forwards them if they are;
 3. creates agentY's `.venv` (via `uv`, on Python 3.12), sorts out **torch** — on Windows it offers the CUDA build when it sees an NVIDIA GPU, because the wheel on PyPI is CPU-only and that makes SAM3 grounding take about a minute a call; on a Mac the PyPI wheel already carries Metal, so it just reports whether MPS was found — and installs `requirements.txt` (which pulls in `agentY-core` editable);
-4. copies `.env_example` → `.env` and **prompts** you for `HF_TOKEN`, `ANTHROPIC_API_KEY`, and the optional `COMFYUI_API_KEY` / `DASHSCOPE_API_KEY` (Enter keeps an existing value);
+4. copies `.env_example` → `.env`, then runs three menus and asks for `HF_TOKEN` and the optional `COMFYUI_API_KEY` (Enter keeps an existing value) — see [The menus](#the-installer-menus) below;
 5. asks which **memory embedder** long-term memory should use (a built-in local one, Ollama, or a provider you have a key for);
-   Step 4 also offers the optional features that are not in `requirements.txt`: **reverse image search** (finds more photos of the same object on the web; uses your installed Chrome or Edge, a ~40 MB Python package, no browser download). The answer is kept in `config/optional_deps.json`; the launcher's dependency sync installs the package again if the venv is rebuilt, and does nothing if you declined. To change your mind, run the installer again or `.venv\Scripts\python.exe -m pip install playwright`.
-6. **finds your ComfyUI** (auto-detects common paths, otherwise asks) and clones **agentY-comfyuiConnect** and the **bEpic viewer** (`ComfyUI-ImageViewer`, agentY's standard viewer) into its `custom_nodes/`, optionally pointing `settings.local.json` at your ComfyUI URL;
+6. **finds your ComfyUI** (auto-detects common paths, otherwise asks) and clones **agentY-comfyuiConnect** into its `custom_nodes/`. It also looks for the **bEpic viewer** (`szprivate/ComfyUI-ImageViewer`, agentY's standard viewer) under any folder name there (ComfyUI-Manager names it `comfyui-imageviewer`) and clones it only when missing. Optionally it points `settings.local.json` at your ComfyUI URL;
 7. sets up **agentY-mcp**'s own venv + `.env` and reuses the tokens you just entered;
 8. **checks the result** — every dependency agentY names is import-tested in the venv that will run it, and anything missing is listed with what it costs.
+
+#### The installer menus
+
+Lists use the keyboard: **Up/Down** move, **Space** ticks, **A** ticks or clears all, **Enter** confirms. Without an interactive console the installer asks for numbers instead (`1,3`, `none`, or Enter to keep what is pre-ticked). With `-NonInteractive` / `--non-interactive` nothing is asked.
+
+- **LLM providers** — "Which LLM providers will you use?" Anthropic, OpenAI, Gemini, DashScope, Ollama. A key is asked only for each ticked one. Pre-ticked: the providers whose key is already in `.env` (Anthropic on a first install). Ollama needs no key. Re-run the installer, or use Settings, to add a provider later; other OpenAI-compatible services can be added in Settings.
+- **MCP presets** — extra tools from the preset catalog (Blender, Maya, Houdini, Nuke, After Effects, Premiere Pro, DaVinci Resolve, Cavalry, AYON, and others). Nothing is pre-ticked; Enter with none ticked adds nothing. Ticked presets are written to `config/mcp.json`, their keys are asked, and steps in another application (such as a Blender add-on) are printed rather than done for you; the agent can finish them too. Add presets later in Settings ▸ MCP servers ▸ Add from presets.
+- **Optional features** — **reverse image search** (finds more photos of the same object on the web; uses your installed Chrome or Edge, a ~40 MB Python package, no browser download). Ticked from the start; a re-run starts from your earlier answer. The answer is kept in `config/optional_deps.json`; the launcher's dependency sync installs the package again if the venv is rebuilt, and does nothing if you declined. To change your mind, run the installer again.
 
 **Updating an existing install** is the same command: run the installer again.
 It brings all the checkouts — agentY, agenty_core, the sidebar extension — to the
