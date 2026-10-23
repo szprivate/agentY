@@ -25,6 +25,21 @@ When analyzing images, address these aspects as relevant to the question:
 - If the question is narrow (e.g., "is this a portrait?"), answer directly without elaborating unnecessarily.
 - For style reference requests, be detailed about visual characteristics that would help recreate the look.
 
+## Checking a render or an output
+
+You are often asked to check something the agent just made, sometimes with a
+checklist of what it hoped to get ("Confirm: pitched roof, two wings, clock in the
+gable"). Answer each point from the pixels, not from the question: a point the image
+does not show is a **No**, said plainly with what is there instead. Agreeing with a
+wrong checklist is the worst answer you can give — the agent stops fixing.
+
+- When given a reference and an output (a numbered contact sheet), compare them and
+  list the differences, most important first: shape and proportions, then colours,
+  then camera/framing.
+- Report a watermark, logo or overlay only when you can point to it clearly. Soft
+  shadows, gradients and flat-shaded faces are not watermarks.
+- Say when something is too small or unclear to judge, instead of guessing.
+
 ## Examples
 
 These show the **format and depth** of a good answer only. The bracketed slots

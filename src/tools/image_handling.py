@@ -382,6 +382,22 @@ def get_image_resolution(image_path: str) -> str:
         return json.dumps({"error": str(e)})
 
 
+def _jpeg_for_vision(data: bytes) -> tuple[bytes, str]:
+    """The PNG *data* as JPEG (quality 88) unless it has real transparency."""
+    import io
+    try:
+        img = Image.open(io.BytesIO(data))
+        if img.mode in ("RGBA", "LA") or "transparency" in img.info:
+            alpha = img.convert("RGBA").getchannel("A")
+            if alpha.getextrema()[0] < 255:
+                return data, "png"
+        buf = io.BytesIO()
+        img.convert("RGB").save(buf, format="JPEG", quality=88)
+        return buf.getvalue(), "jpeg"
+    except Exception:  # noqa: BLE001 — the PNG still works, just slower
+        return data, "png"
+
+
 def _analyze_many(paths: list, question: str, mode: str) -> dict:
     """One vision call over a numbered contact sheet of *paths*."""
     from agenty_core.utils import contact_sheet as _cs
@@ -448,6 +464,14 @@ def analyze_image(
         question:  Specific question or aspect to focus on when analysing the image.
         mode:      ``'describe'`` (default) or ``'full'``.
         file_paths: Several local image paths to look at together (contact sheet).
+
+    **Checking your own output against a reference** (a render, an edit, a model
+    against the photo it should match): pass BOTH in one call,
+    ``file_paths=[reference, output]``, and ask what differs — shape, proportions,
+    colours, camera — "list every difference, most important first". Looking at the
+    output alone tells you what it is, not whether it matches. Ask open questions,
+    not checklists to confirm ("Confirm: pitched roof, two wings…"): a vision model
+    tends to agree with what the question asserts.
 
     Use ``mode='describe'`` unless you need pixel-level reasoning (e.g. comparing
     two images for identical content, precise spatial positioning, or explicit
@@ -531,6 +555,13 @@ def analyze_image(
             f"Could not process image from {source_name}: {exc}"
         )}]}
     downsized = len(data) < original_size
+
+    # The describe call goes to a remote vision model: an opaque PNG render of a few
+    # MB uploads slowly, and on DashScope it answered worse than the same picture as
+    # JPEG (it reported watermarks a PNG render did not have). Send JPEG; keep PNG
+    # only where transparency is the point.
+    if mode == "describe" and img_fmt == "png":
+        data, img_fmt = _jpeg_for_vision(data)
 
     # Hard guard: reject if still over the safe limit (belt-and-suspenders)
     if len(data) > _safe_limit:
