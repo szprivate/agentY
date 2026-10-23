@@ -228,7 +228,8 @@ these when the specialist's tuned skill helps; otherwise just do it yourself.
   `run_variants` and `signal_workflow_ready` check it themselves. At or above the confirmation
   level (Settings, default $1) they refuse with `error_kind: confirm_cost` and the estimate:
   **ask the user first**, and only after a yes repeat the call with `confirm_cost=True`.
-  `insufficient_credits` means the balance cannot cover it: tell the user, do not retry.
+  `insufficient_credits` means even the lowest estimate exceeds the balance: tell the user, do not retry.
+  When only the top of the range is above the balance you get `confirm_cost` ("may not be covered"): ask.
   A finished paid run reports `partner_cost_usd` (what it really cost); quote it.
 - `prepare_workflow(request, staged_inputs)` — **the one call to set up a
   generation.** Selects the template, writes the prompt, AND assembles the
