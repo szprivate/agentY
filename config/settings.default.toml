@@ -601,8 +601,6 @@ enabled = false
 # Where the mirror posts. Blank = the DM with the first allowed user, which is
 # what you want; set a channel id only if the whole team should see the pipeline.
 channel = ""
-# Fallback for SLACK_ALLOWED_USERS, if you would rather keep the list in settings.
-allowed_users = []
 # What the Slack thread under each turn carries. The answer and any generated
 # media are always posted; these two are the detail the panel keeps in collapsible
 # blocks — turn them off for a quieter channel.

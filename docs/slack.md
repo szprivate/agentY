@@ -105,11 +105,12 @@ Under **Slack** in the settings dialog (`[slack]` in `config/settings.default.to
 |---|---|
 | `enabled` | off by default; applies at the next agent start |
 | `channel` | blank = the DM with the first allowed user; set a channel id to post there instead |
-| `allowed_users` | alternative to `SLACK_ALLOWED_USERS` |
 | `show_tools` | show tool calls in the thread |
 | `show_thinking` | show the agent's reasoning in the thread |
 | `max_upload_mb` | larger files are named instead of uploaded |
 | `max_download_mb` | largest attachment the agent accepts |
+
+Who may drive the agent is one list: `SLACK_ALLOWED_USERS`, the field in the same Slack section. The old settings key `slack.allowed_users` still works when that variable is empty, but logs a warning and is ignored once the variable is set - move the ids over.
 
 ---
 

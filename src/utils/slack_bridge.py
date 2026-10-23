@@ -860,7 +860,18 @@ def start(*, start_turn, answer, interject, downloads_dir=None) -> bool:
         logger.warning("slack: SDK unavailable (%s) — bridge not started", exc)
         return False
 
-    allowed = _env_list("SLACK_ALLOWED_USERS") or list(_setting("allowed_users", []) or [])
+    # One list: SLACK_ALLOWED_USERS (Settings > Slack). The old settings key
+    # slack.allowed_users is still honoured when the variable is empty, so no setup
+    # breaks, but it is off the settings page: two lists where only one counts is how
+    # someone gets removed from the wrong one and stays allowed.
+    allowed = _env_list("SLACK_ALLOWED_USERS")
+    legacy = list(_setting("allowed_users", []) or [])
+    if legacy:
+        logger.warning("slack: settings key slack.allowed_users is deprecated%s - put the "
+                       "member ids in SLACK_ALLOWED_USERS (Settings > Slack) and delete it",
+                       "" if not allowed else " and IGNORED (SLACK_ALLOWED_USERS is set)")
+        if not allowed:
+            allowed = legacy
     if not allowed:
         _complain("Slack bridge: SLACK_ALLOWED_USERS is empty — it will connect "
                   "but refuse every message. Anyone able to DM the bot could "
