@@ -517,7 +517,8 @@ class WhereItIsWired(unittest.TestCase):
         defaults = tomllib.loads((ROOT / "config" / "settings.default.toml").read_text(encoding="utf-8"))
         want = {f"{k}_{r}": "" for k in mn.KINDS for r in ("load", "save")}
         want.update(image_save="bEpicSendToViewer", video_save="bEpicSendToViewer",
-                    model_save="bEpicSendToViewer", viewer_tab="agentY", video_as="video", sequence_format="png")
+                    model_save="bEpicSendToViewer", viewer_tab="agentY", video_as="video", sequence_format="png",
+                    viewer_open_edit=True)
         self.assertEqual(defaults["media_nodes"], want)
         self.assertIn("update_channel", defaults, "the table must not swallow the settings after it")
 

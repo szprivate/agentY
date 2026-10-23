@@ -27,6 +27,8 @@ def me(origin="panel", remembered=(), fresh=None, named=None, hooks=None, graph=
     obj._turn_origin = lambda: origin
     obj._user_opened_turn = lambda: Pipeline._user_opened_turn(obj)
     obj._match_named_templates = lambda text: named
+    obj._SUPPRESSED_TEMPLATES = Pipeline._SUPPRESSED_TEMPLATES
+    obj._user_named_template = lambda name, text: Pipeline._user_named_template(obj, name, text)
     return obj
 
 
