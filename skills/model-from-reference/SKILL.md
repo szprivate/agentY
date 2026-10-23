@@ -1,7 +1,7 @@
 ---
 name: model-from-reference
 description: Model a building, object or set in a 3D app (Blender, Maya or Houdini) so that it matches a reference photo — the way a 3D artist does it - measure the photo, match the camera, block out grey shapes until the silhouette and proportions match, THEN details, THEN materials and light. Use for "model this house / object / room in Blender from this photo", "rebuild this in 3D", "make a 3D version of this picture", "match this reference in Blender".
-allowed-tools: dcc_build dcc_silhouette_check measure_reference blender__execute_blender_code blender__render_viewport_to_path blender__get_objects_summary blender__get_screenshot_of_window_as_image analyze_image get_image_resolution run_script write_text_file read_text_file show_in_panel
+allowed-tools: dcc_build dcc_silhouette_check measure_reference reverse_image_search blender__execute_blender_code blender__render_viewport_to_path blender__get_objects_summary blender__get_screenshot_of_window_as_image analyze_image get_image_resolution run_script write_text_file read_text_file show_in_panel
 ---
 
 # Model from a reference photo
@@ -91,6 +91,19 @@ wrong, change the script and call `dcc_build` again.
    is wrong.
 7. Write the table into the script as constants, with where each came from, and the yaw of the
    receding edges.
+
+## 1b Other views of the same object (when the photo hides sides)
+
+A photo shows one or two sides; a building's back and far side are guesses unless you find more pictures.
+When sides are hidden (almost always for a building), `load_tools("web_more")` if `reverse_image_search` is not
+in your list, then call `reverse_image_search(image=<the photo path>, download_dir=<agent references folder>/<subject>)`.
+It takes about a minute. Look at EVERY downloaded picture and keep only those that clearly show the SAME object:
+matching distinctive features (for a building: the same roof shape, windows, clock, mast, balcony). Reject
+similar-looking others and copies of the input photo. For each kept picture write down which side it shows and what
+it adds (window layout, stair, bracing, details) and use it for the hidden sides in stages 3 and 4. The input photo
+stays the ONLY source for the silhouette check: measured points come from the photo, never from the extra views.
+If nothing matches, say so and continue from the photo alone. If it returns `error_kind: "missing_dependency"`
+(the optional Playwright package is missing), continue without it and tell the user once.
 
 ## 2 Match the camera first
 
