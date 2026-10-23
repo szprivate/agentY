@@ -93,6 +93,9 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
             "build script (live in the open app, or headless in batch) and check the silhouette by numbers; measure the photo with MoGe "
             "(read the `model-from-reference` skill first)",
             ("dcc_build", "dcc_silhouette_check", "measure_reference")),
+    "routing": ("see which models are available and what each role runs, and move the orchestrator (or a "
+                "tier) to another one - always after the user agrees (see 'Switching models')",
+                ("list_models", "switch_model")),
     "ayon": ("the studio's Ayon pipeline, when ComfyUI was launched through Ayon: which project / folder / task "
              "and frame range this session is in, load a published product into the canvas, mark an output "
              "for publish, open the Ayon Publisher (the user presses Publish) - see docs/ayon.md",

@@ -1020,39 +1020,15 @@ def _orchestrator_supports_vision() -> bool:
                              env_var="ORCHESTRATOR_LLM") or "")
     except Exception:  # noqa: BLE001
         return False
-    provider, _, model = raw.lower().partition(",")
-    provider = provider.strip()
-    model = (model or provider).strip()
-    # Operator overrides first, in both directions. Model families move faster
-    # than any list kept here, and both mistakes are costly now that this gates
-    # what gets sent: a missed multimodal model silently stops images reaching
-    # something that could read them, and a wrongly-assumed one breaks every
-    # turn of a conversation. Whoever runs the model knows; let them say.
+    # A model this conversation was moved to with switch_model(scope="conversation")
+    # is what will read the images, whatever the settings say.
     try:
-        from src.utils.settings import load_settings
-        _llm = load_settings().get("llm") or {}
-        for pattern in (_llm.get("text_only_models") or []):
-            if str(pattern).lower().strip() and str(pattern).lower().strip() in model:
-                return False
-        for pattern in (_llm.get("vision_models") or []):
-            if str(pattern).lower().strip() and str(pattern).lower().strip() in model:
-                return True
-    except Exception:  # noqa: BLE001 — settings must never break the check
+        from src.utils import model_routing
+        raw = model_routing.conversation_spec() or raw
+    except Exception:  # noqa: BLE001 - routing must never cost a turn
         pass
-    # Providers whose current models are multimodal across the board.
-    if provider in ("claude", "anthropic", "bedrock", "google", "gemini"):
-        return True
-    # A custom provider says so itself (llm.custom_providers.<id>.vision).
-    try:
-        from src.utils import custom_providers as _cp  # noqa: PLC0415
-        if (_cp.get(provider) or {}).get("vision"):
-            return True
-    except Exception:  # noqa: BLE001
-        pass
-    # Otherwise require an explicit vision marker in the model id.
-    markers = ("-vl", "vl-", "vl:", "vision", "omni", "4o", "gpt-4.1", "o4-",
-               "llava", "minicpm-v", "gemma3", "gemma-3", "pixtral", "internvl", "moondream")
-    return any(m in model for m in markers)
+    from src.utils.vision_capability import supports_vision
+    return supports_vision(raw)
 
 
 # ── Content builder (text + attached images/videos -> Strands content blocks) ─
@@ -1242,6 +1218,13 @@ def _restore_state(pipeline, thread_id: str) -> None:
             if source != "cache":
                 logger.info("conversation %s: restored %d message(s) from the %s",
                             thread_id, len(history), source)
+    # The model this conversation was moved to with switch_model(scope="conversation")
+    # sits under the orchestrator again; one left by another conversation comes off.
+    try:
+        from src.utils import model_routing
+        model_routing.sync_thread(getattr(pipeline, "_orchestrator_agent", None), thread_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("model routing: seat not synced: %s", exc)
     # Rebuild the generated-image gallery into the session so /images and
     # "use image 2" references work after a restart.
     sess = getattr(pipeline, "_session", None)

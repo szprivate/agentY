@@ -275,7 +275,7 @@ api_key_max_age_days = 30
 # this process: a program, evaluated Python, and code cloned from the internet.
 # The prompt appears in the agentY panel with the exact command, and offers
 # "allow once" or "allow for this session". Empty list = never ask.
-ask_before_tools = ["run_script", "iterate", "install_custom_node"]
+ask_before_tools = ["run_script", "iterate", "install_custom_node", "switch_model"]
 # How long a prompt waits for an answer before declining by itself.
 tool_prompt_timeout_seconds = 120
 # What to do when a tool needs approval and no panel is open to give it — a turn
@@ -423,6 +423,37 @@ vision_max_parallel = 0
 video_max_parallel = 0
 qa_checker = ""
 coder = ""
+
+# MODEL ROUTING. The orchestrator can list the available models and switch its own
+# (the list_models / switch_model tools), and a rule below tells it WHEN to suggest a
+# switch. No extra model call is involved: when the orchestrator loads a matching
+# skill or tool pack, or calls a matching tool, the host adds one line to that tool's
+# result - "for this task, <model> is recommended (<why>). Ask the user whether to
+# switch" - once per conversation per rule. A rule that names a model that is not
+# available right now is silent: nothing is ever invented.
+#   auto_switch = true  switches the conversation without asking (rules only; the
+#                       orchestrator still asks before any other switch_model call
+#                       unless it is also true). Default off.
+#   when    = {skill = "..."} or {tool_pack = "..."} or {tool = "..."}
+#   role    = which tier/role the rule is about ("orchestrator" is the one a
+#             conversation switch can move)
+#   suggest = "provider,model", or a list in preference order (first available wins)
+# Measured on one 3D modelling task: claude-opus-5-5 passed every check in 9 min and
+# 29 calls; deepseek-v4.1-flash needed ~85 min, ~235 calls and two rounds of feedback.
+[llm.routing]
+auto_switch = false
+
+[[llm.routing.rules]]
+when = { skill = "model-from-reference" }
+role = "orchestrator"
+suggest = "claude,claude-opus-5-5"
+why = "modelling from a reference photo needs sustained 3D reasoning; a stronger model finished it in a ninth of the time"
+
+[[llm.routing.rules]]
+when = { tool_pack = "dcc" }
+role = "orchestrator"
+suggest = "claude,claude-opus-5-5"
+why = "driving Blender / Maya / Houdini builds is long, multi-step work where a stronger model needs far fewer attempts"
 
 # REASONING per agent: the model thinks before it answers. Better decisions,
 # slower and more tokens — worth it where few calls decide a lot (the lead),

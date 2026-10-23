@@ -83,7 +83,7 @@ def fingerprint() -> dict[str, str]:
         except Exception as exc:  # noqa: BLE001
             fp[role] = f"<unresolvable: {exc}>"
     shared = dict((_settings() or {}).get("llm") or {})
-    for per_role in ("tiers", "pipeline", "thinking", "thinking_roles"):
+    for per_role in ("tiers", "pipeline", "thinking", "thinking_roles", "routing"):
         shared.pop(per_role, None)
     encoded = json.dumps(shared, sort_keys=True, default=str).encode("utf-8")
     fp[PROVIDERS] = hashlib.sha1(encoded).hexdigest()

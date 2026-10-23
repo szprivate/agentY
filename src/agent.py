@@ -886,7 +886,7 @@ class ToolPermissionHookProvider:
             settings = _load_settings() or {}
             sec = settings.get("security") or {}
             ask_for = sec.get("ask_before_tools", list(tp.DEFAULT_ASK_TOOLS))
-            if not isinstance(ask_for, (list, tuple)) or name not in ask_for:
+            if not tp.must_ask(name, tu.get("input", {}) or {}, ask_for):
                 return
 
             decision = tp.request(
@@ -2462,6 +2462,7 @@ def create_orchestrator_agent(
     from src.utils.interject_hook import InterjectHookProvider
     orch_hooks = [TokenUsageHookProvider(role="orchestrator"), ToolActivityHookProvider(role="orchestrator"),
                   MagnificWatchHookProvider(), ComfyUIInterruptHook(), InterjectHookProvider(),
+                  *_routing_hooks(),
                   *mcp_hooks, *extra_hooks]
     # The common changes to a graph go through change_graph first (splice_first).
     try:
@@ -2485,6 +2486,15 @@ def create_orchestrator_agent(
     agent._agentskills_plugin = skills_plugin
     agent._tool_packs = _held_packs
     return agent
+
+
+def _routing_hooks() -> list:
+    """The rule check that suggests a better model (src/utils/model_routing.py)."""
+    try:
+        from src.utils.model_routing import ModelRoutingHook
+        return [ModelRoutingHook()] if ModelRoutingHook is not None else []
+    except Exception:  # noqa: BLE001
+        return []
 
 
 def build_lead_model(system_prompt: str):
@@ -2517,10 +2527,11 @@ def _subagent_full_tools() -> list:
         spawn_subagent as _sp,
         create_custom_node as _cn,
         list_generated_nodes as _lgn,
+        list_models as _lm, switch_model as _sm,
         start_shot as _ss, message_shot as _ms, shot_status as _sst,
         stop_shot as _sts, set_sequence_notes as _ssn, close_shot as _cls,
     )
-    _meta = {id(_cs), id(_ls), id(_rs), id(_sp), id(_cn), id(_lgn),
+    _meta = {id(_cs), id(_ls), id(_rs), id(_sp), id(_cn), id(_lgn), id(_lm), id(_sm),
              id(_ss), id(_ms), id(_sst), id(_sts), id(_ssn), id(_cls)}
     return [t for t in _OT if id(t) not in _meta]
 

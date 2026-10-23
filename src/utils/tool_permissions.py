@@ -40,7 +40,7 @@ from dataclasses import dataclass
 # process. Reading a file, searching the web and editing a graph are all
 # recoverable; running a program, evaluating Python and installing a package from
 # the internet are not, and the last of those runs code from a stranger.
-DEFAULT_ASK_TOOLS = ("run_script", "iterate", "install_custom_node")
+DEFAULT_ASK_TOOLS = ("run_script", "iterate", "install_custom_node", "switch_model")
 
 # How long a question stays on screen before it answers itself.
 DEFAULT_TIMEOUT = 120.0
@@ -108,10 +108,38 @@ def describe(tool_name: str, tool_input: dict) -> str:
         src = str(data.get("source", "")).strip()
         pip = "" if data.get("run_pip") is False else "  (and pip install its requirements)"
         return f"git clone {src}{pip}"
+    if tool_name == "switch_model":
+        reason = str(data.get("reason", "")).strip()
+        return (f"switch {data.get('role') or 'orchestrator'} to {data.get('model', '?')} "
+                f"({data.get('scope') or 'conversation'})" + (f" - {reason}" if reason else ""))
     try:
         return json.dumps(data, ensure_ascii=False)[:400]
     except (TypeError, ValueError):
         return str(data)[:400]
+
+
+def must_ask(tool_name: str, tool_input: dict, ask_list) -> bool:
+    """Whether a call to *tool_name* stops for approval.
+
+    ``switch_model`` is special: a proposal (no ``confirm``) changes nothing, a
+    return to the configured model (``model="default"``) only undoes, and with
+    ``llm.routing.auto_switch`` the user has already said yes to rule-driven
+    switches. Every other switch asks, even when an older ``ask_before_tools`` in
+    settings.local.json never heard of the tool: a list written before the tool
+    existed must not quietly make it free.
+    """
+    if tool_name == "switch_model":
+        data = tool_input if isinstance(tool_input, dict) else {}
+        if not data.get("confirm") or str(data.get("model", "")).strip().lower() == "default":
+            return False
+        try:
+            from src.utils import model_routing
+            if model_routing.auto_switch():
+                return False
+        except Exception:  # noqa: BLE001
+            pass
+        return True
+    return isinstance(ask_list, (list, tuple)) and tool_name in ask_list
 
 
 def reset_session() -> None:

@@ -81,6 +81,7 @@ from src.tools.huggingface import (  # noqa: F401
 )
 from src.tools.file_tools import read_text_file, write_text_file  # noqa: F401
 from src.tools.iterate import iterate  # noqa: F401
+from src.tools.model_switching import list_models, switch_model  # noqa: F401
 # NOTE: the deterministic-assembly tool (agenty_core.tools.assembly_deterministic)
 # is intentionally NOT re-exported here. The free-agent orchestrator assembles via
 # apply_brainbriefing + LLM-supervised patch/validate; the old headless
@@ -627,6 +628,8 @@ ORCHESTRATOR_TOOLS: list = [
     list_batch_jobs,
     # Iteration + math
     iterate,
+    list_models,           # which models exist, and what each role runs
+    switch_model,          # propose / make a model switch (asks the user first)
     calculator,
     # Self-extension meta-tools
     create_skill,

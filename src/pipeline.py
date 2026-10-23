@@ -93,7 +93,7 @@ from src.utils.debug_log import trace as _trace
 _ORCH_PARTIALS_DIR = Path(__file__).parent.parent / "config" / "system_prompts" / "orchestrator"
 # In this order, whichever of them a turn has: the same turns get the same text.
 _TURN_GUIDES = ("canvas_hooks", "review_halt", "canvas_nodes", "input_images", "project_memory",
-                "prompt_loop", "plan_approval", "autonomy")
+                "prompt_loop", "plan_approval", "autonomy", "model_routing")
 _TURN_GUIDES_HEAD = "\n\n# For this kind of turn\n\n"
 
 # How many of a conversation's outputs each turn lists in full (the newest).
@@ -7071,6 +7071,15 @@ class Pipeline:
         if loop_block:
             guides.append("prompt_loop")
             pin = pin + "[PROMPT LOOP]\n" + loop_block + "\n"
+
+        # Model routing: told only where a rule exists, so a setup without rules pays
+        # nothing. The tools are in the "routing" pack either way.
+        try:
+            from src.utils import model_routing
+            if model_routing.rules():
+                guides.append("model_routing")
+        except Exception:  # noqa: BLE001 - guidance, never a reason to lose a turn
+            pass
 
         # Plan approval — only where someone actually asked to be asked. Resolved
         # here, once, from the three places such a standing rule can live (the

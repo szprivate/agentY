@@ -337,7 +337,7 @@ class TheDefaultList(unittest.TestCase):
         are not.
         """
         self.assertEqual(set(tp.DEFAULT_ASK_TOOLS),
-                         {"run_script", "iterate", "install_custom_node"})
+                         {"run_script", "iterate", "install_custom_node", "switch_model"})
 
     def test_the_settings_file_agrees_with_the_code(self):
         """A default that drifted would be a gate that quietly stopped covering
