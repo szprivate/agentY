@@ -7371,6 +7371,13 @@ class Pipeline:
         # nodes has to go through — scoping to the hooks would otherwise make
         # every node outside the hook's branch invisible and uneditable.
         self._canvas_graph = canvas_prompt if isinstance(canvas_prompt, dict) else {}
+        # The same dict, for tools outside this class (the ayon_* tools read the AYON nodes off it and add the
+        # nodes they place, so the graph stays the one the other canvas tools see).
+        try:
+            from agenty_core.utils import turn_scope as _ts_canvas
+            _ts_canvas.current().set("canvas_prompt", self._canvas_graph)
+        except Exception:  # noqa: BLE001
+            pass
         # Sequence / shot named on the canvas (an AYON context node, else an
         # agentY context node): where this turn's files go and what they are called.
         try:

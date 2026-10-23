@@ -93,6 +93,10 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
             "build script (live in the open app, or headless in batch) and check the silhouette by numbers; measure the photo with MoGe "
             "(read the `model-from-reference` skill first)",
             ("dcc_build", "dcc_silhouette_check", "measure_reference")),
+    "ayon": ("the studio's Ayon pipeline, when ComfyUI was launched through Ayon: which project / folder / task "
+             "and frame range this session is in, load a published product into the canvas, mark an output "
+             "for publish, open the Ayon Publisher (the user presses Publish) - see docs/ayon.md",
+             ("ayon_context", "ayon_load", "ayon_mark_publish", "ayon_publish", "ayon_open_tool")),
     # Added 2026-10-22 (speed-ups): the least-called of what stayed always-on - in 22,000 orchestrator
     # tool calls each of these was called 0-2 % of the time, and together they were ~7,000 tokens of
     # definitions on every call. A direct call to a held tool still loads its pack and runs.

@@ -37,11 +37,15 @@ class ServicesCatalog(unittest.TestCase):
     def test_the_named_services_are_there(self):
         by = {s["key_env"]: s for s in self.services}
         for key in ("DASHSCOPE_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY",
-                    "COMFYUI_API_KEY", "HF_TOKEN", "WORLDLABS_API_KEY", "SLACK_BOT_TOKEN"):
+                    "COMFYUI_API_KEY", "HF_TOKEN", "WORLDLABS_API_KEY", "SLACK_BOT_TOKEN",
+                    "AYON_API_KEY"):
             self.assertIn(key, by)
         self.assertEqual(by["DASHSCOPE_API_KEY"]["url_env"], "DASHSCOPE_BASE_URL")
         self.assertEqual(by["DASHSCOPE_API_KEY"]["default_url"],
                          "https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
+        self.assertEqual(by["AYON_API_KEY"]["url_env"], "AYON_SERVER_URL")
+        self.assertEqual(by["AYON_API_KEY"]["default_url"], "https://bepic.ayon.app")  # the studio server
+        self.assertIn("service-user", by["AYON_API_KEY"]["hint"])
         self.assertEqual([f["env"] for f in by["SLACK_BOT_TOKEN"]["fields"]],
                          ["SLACK_APP_TOKEN", "SLACK_ALLOWED_USERS"])
 

@@ -3209,6 +3209,8 @@ _KNOWN_ENV_KEYS = [
     "HF_TOKEN", "ANTHROPIC_API_KEY", "COMFYUI_API_KEY",
     "DASHSCOPE_API_KEY", "DASHSCOPE_BASE_URL",
     "WORLDLABS_API_KEY",
+    # Ayon pipeline (service-user key; see docs/ayon.md)
+    "AYON_API_KEY", "AYON_SERVER_URL",
     # Deadline render farm (all optional; see docs/deadline.md)
     "DEADLINE_PATH", "DEADLINE_REPOSITORY", "DEADLINE_WEBSERVICE_URL", "DEADLINE_COMFYUI_PATH",
     "DEADLINE_COMFYUI_POOL", "DEADLINE_GROUP", "DEADLINE_OUTPUT_DIR",
@@ -3249,6 +3251,10 @@ _BUILTIN_SERVICES = [
      "help_url": "https://huggingface.co/settings/tokens"},
     {"id": "worldlabs", "label": "World Labs", "key_env": "WORLDLABS_API_KEY",
      "help_url": "https://platform.worldlabs.ai/api-keys"},
+    {"id": "ayon", "label": "Ayon", "key_env": "AYON_API_KEY", "url_env": "AYON_SERVER_URL",
+     "default_url": "https://bepic.ayon.app",
+     "help_url": "https://ayon.ynput.io/docs/",
+     "hint": "The service-user API key of your Ayon server (Settings -> Users -> a service user), not your own login. The URL defaults to the studio server https://bepic.ayon.app; change it for another studio. Used by the ayon-mcp server (projects, versions, comments). See docs/ayon.md."},
     {"id": "slack", "label": "Slack", "key_env": "SLACK_BOT_TOKEN",
      "help_url": "https://api.slack.com/apps",
      "hint": "Bot token (xoxb-...). The app-level token needs connections:write. SLACK_ALLOWED_USERS is "
