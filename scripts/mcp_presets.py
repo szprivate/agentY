@@ -47,6 +47,8 @@ def load_catalog(path: Path | None = None) -> list[dict]:
             "env_keys": [k for k in (p.get("env_keys") or []) if isinstance(k, dict) and k.get("key")],
             "requires": [str(r) for r in (p.get("requires") or [])],
             "setup_steps": str(p.get("setup_steps") or ""),
+            # Good to know, nothing to do: shown, but never starts an agent turn.
+            "notes": str(p.get("notes") or ""),
             "default_selected": bool(p.get("default_selected")),
         })
     return out
@@ -217,7 +219,7 @@ def _main(argv: list[str] | None = None) -> int:
         for k in p["env_keys"]:
             print(_row(k["key"], k.get("label") or k["key"], k.get("help_url") or "", "1" if k.get("optional") else "0"))
     elif a.cmd == "steps":
-        print(p["setup_steps"])
+        print("\n".join(t for t in (p["setup_steps"], p["notes"]) if t))
     elif a.cmd == "warmup":
         ok, msg = warmup(p)
         print(msg)

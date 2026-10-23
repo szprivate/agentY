@@ -28,7 +28,8 @@
         "blender"
       ],
       "setup_steps": "This server is a .mcpb bundle, and it needs the Blender add-on. Do both:\n1. The server: install the Blender MCP bundle (v1.0.3, Blender Lab, .mcpb from https://www.blender.org/lab/mcp-server/) from Settings > MCP servers > Install bundle (.mcpb). It unpacks into config/mcp_bundles/blender, which is where this preset's entry expects it.\n2. The add-on: download the Blender Lab add-on https://projects.blender.org/lab/blender_mcp/releases/download/v1.0.3/mcp-1.0.3.zip and install it into Blender 5.1 or newer with `blender -c extension install-file -r user_default --enable <path-to-mcp-1.0.3.zip>`. Then set the add-on preference use_autostart=True (add-on id bl_ext.user_default.mcp) and save the preferences (`bpy.ops.wm.save_userpref()`), so the add-on opens its socket whenever Blender starts.\nBlender must be running for the server to connect: the add-on listens on port 9876.",
-      "default_selected": true
+      "default_selected": true,
+      "notes": ""
     },
     {
       "id": "elevenlabs",
@@ -59,7 +60,8 @@
         "uv"
       ],
       "setup_steps": "",
-      "default_selected": true
+      "default_selected": true,
+      "notes": ""
     },
     {
       "id": "magnific",
@@ -75,7 +77,8 @@
       "env_keys": [],
       "requires": [],
       "setup_steps": "",
-      "default_selected": true
+      "default_selected": true,
+      "notes": ""
     },
     {
       "id": "remotion",
@@ -96,8 +99,9 @@
       "requires": [
         "node"
       ],
-      "setup_steps": "Node.js LTS: `winget install OpenJS.NodeJS.LTS`. First run downloads the package.",
-      "default_selected": true
+      "setup_steps": "",
+      "default_selected": true,
+      "notes": "Node.js LTS: `winget install OpenJS.NodeJS.LTS`. First run downloads the package."
     },
     {
       "id": "houdini",
@@ -121,7 +125,8 @@
         "houdini"
       ],
       "setup_steps": "1) `winget install astral-sh.uv`. 2) Install the plugin into Houdini prefs without touching other AI clients: `uv tool install houdini-mcp-server==0.7.7` then `houdinimcp-install --houdini-version <e.g. 21.0> --harness none --yes` (use `--dry-run` first to preview; `--prefs-dir PATH` if prefs are not in Documents). 3) Restart Houdini; the plugin opens a local TCP server on localhost:9877. If Houdini is closed the bridge starts headless hython (set HOUDINIMCP_NO_HEADLESS=1 to disable). Remove with `houdinimcp-install --uninstall`.",
-      "default_selected": false
+      "default_selected": false,
+      "notes": ""
     },
     {
       "id": "maya",
@@ -143,7 +148,8 @@
         "maya"
       ],
       "setup_steps": "1) `winget install astral-sh.uv`. 2) Download https://raw.githubusercontent.com/GimbalGoats/GG_MayaMCP/main/scripts/enable_commandport.py and run the whole file once in Maya's Python Script Editor (or call it from userSetup.py to open the port on every start). Default port 7001. 3) Verify from the agent with health_check / scene_info. Raw script execution stays disabled unless opted in (https://gimbalgoats.github.io/GG_MayaMCP/).",
-      "default_selected": false
+      "default_selected": false,
+      "notes": ""
     },
     {
       "id": "unity",
@@ -169,7 +175,8 @@
         "unity"
       ],
       "setup_steps": "1) `winget install astral-sh.uv`. 2) In the Unity project add to Packages/manifest.json dependencies: `\"com.coplaydev.unity-mcp\": \"https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#v10.3.0\"` (tag exists) or use Package Manager > Add from git URL with the same URL. 3) Open Unity, then Window > MCP for Unity and check the bridge shows connected (skip its 'Configure All Detected Clients'; agentY launches the server itself). The server finds the editor automatically when both run.",
-      "default_selected": false
+      "default_selected": false,
+      "notes": ""
     },
     {
       "id": "nuke",
@@ -197,7 +204,8 @@
         "nuke"
       ],
       "setup_steps": "The agent does the clone and the add-on copy itself (the installer only prints this). Not on PyPI (PyPI `nuke-mcp` is an unrelated joke package - never install it). 1) `git clone https://github.com/dughogan/nuke_mcp.git config/mcp_bundles/nuke` then `git -C config/mcp_bundles/nuke checkout 761ea9e` (pin). 2) Copy nuke_mcp_addon.py to `%USERPROFILE%\\.nuke\\python\\` (create the folder). 3) Add to `%USERPROFILE%\\.nuke\\init.py`: `nuke.pluginAddPath(\"./python\")` and `import nuke_mcp_addon`; add to menu.py: `nuke.toolbar(\"Nodes\").addCommand('NukeMCP/NukeMCP Panel','nuke_mcp_addon.show_panel()')`. 4) Start Nuke, open the NukeMCP panel and start the socket server (localhost:9876). Run nuke_mcp_server.py directly, not main.py (main.py prints banners to stdout, which corrupts the stdio protocol). fastmcp comes from `uv run --with fastmcp`. Port 9876 is also used by some other DCC bridges; run one at a time.",
-      "default_selected": false
+      "default_selected": false,
+      "notes": ""
     },
     {
       "id": "playwright",
@@ -219,8 +227,9 @@
       "requires": [
         "node"
       ],
-      "setup_steps": "Install Node LTS (`winget install OpenJS.NodeJS.LTS`). If no Chrome: `npx -y playwright install chromium` and add `--browser`,`chromium` to args. Add `--headless` for no visible window.",
-      "default_selected": true
+      "setup_steps": "",
+      "default_selected": true,
+      "notes": "Install Node LTS (`winget install OpenJS.NodeJS.LTS`). If no Chrome: `npx -y playwright install chromium` and add `--browser`,`chromium` to args. Add `--headless` for no visible window."
     },
     {
       "id": "context7",
@@ -241,8 +250,9 @@
       "requires": [
         "node"
       ],
-      "setup_steps": "Works anonymously with rate limits; a free key from https://context7.com/dashboard raises limits (README passes it as `--api-key <key>` in args; env var name not confirmed, so no env key is declared).",
-      "default_selected": false
+      "setup_steps": "",
+      "default_selected": false,
+      "notes": "Works anonymously with rate limits; a free key from https://context7.com/dashboard raises limits (README passes it as `--api-key <key>` in args; env var name not confirmed, so no env key is declared)."
     },
     {
       "id": "figma",
@@ -275,7 +285,8 @@
         "node"
       ],
       "setup_steps": "",
-      "default_selected": false
+      "default_selected": false,
+      "notes": ""
     },
     {
       "id": "notion",
@@ -290,8 +301,9 @@
       },
       "env_keys": [],
       "requires": [],
-      "setup_steps": "Authorize once in agentY Settings (browser OAuth, dynamic client registration). The hosted server has no bearer-token mode; for token auth use local `npx.cmd -y @notionhq/notion-mcp-server@2.5.2` with env NOTION_TOKEN (integration token from https://www.notion.so/profile/integrations).",
-      "default_selected": false
+      "setup_steps": "",
+      "default_selected": false,
+      "notes": "Authorize once in agentY Settings (browser OAuth, dynamic client registration). The hosted server has no bearer-token mode; for token auth use local `npx.cmd -y @notionhq/notion-mcp-server@2.5.2` with env NOTION_TOKEN (integration token from https://www.notion.so/profile/integrations)."
     },
     {
       "id": "github",
@@ -316,8 +328,9 @@
         }
       ],
       "requires": [],
-      "setup_steps": "Create a fine-grained token with only the scopes needed (read-only is enough for browsing).",
-      "default_selected": false
+      "setup_steps": "",
+      "default_selected": false,
+      "notes": "Create a fine-grained token with only the scopes needed (read-only is enough for browsing)."
     },
     {
       "id": "fal",
@@ -332,8 +345,9 @@
       },
       "env_keys": [],
       "requires": [],
-      "setup_steps": "Authorize once in agentY Settings (browser sign-in). If OAuth fails in agentY, a web-search snippet described a header-key mode on https://mcp.fal.ai/mcp (Authorization bearer key from https://fal.ai/dashboard/keys); sources conflict, test the OAuth entry first.",
-      "default_selected": false
+      "setup_steps": "",
+      "default_selected": false,
+      "notes": "Authorize once in agentY Settings (browser sign-in). If OAuth fails in agentY, a web-search snippet described a header-key mode on https://mcp.fal.ai/mcp (Authorization bearer key from https://fal.ai/dashboard/keys); sources conflict, test the OAuth entry first."
     },
     {
       "id": "meshy",
@@ -365,7 +379,8 @@
         "node"
       ],
       "setup_steps": "",
-      "default_selected": false
+      "default_selected": false,
+      "notes": ""
     },
     {
       "id": "comfy-cloud",
@@ -380,8 +395,9 @@
       },
       "env_keys": [],
       "requires": [],
-      "setup_steps": "Authorize once in agentY Settings (Comfy account OAuth). Headless alternative: auth `header`, headers {\"X-API-Key\":\"${COMFY_API_KEY}\"} with a key from https://platform.comfy.org/profile/api-keys (starts comfyui-).",
-      "default_selected": false
+      "setup_steps": "",
+      "default_selected": false,
+      "notes": "Authorize once in agentY Settings (Comfy account OAuth). Headless alternative: auth `header`, headers {\"X-API-Key\":\"${COMFY_API_KEY}\"} with a key from https://platform.comfy.org/profile/api-keys (starts comfyui-)."
     }
   ]
 }
