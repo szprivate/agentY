@@ -105,3 +105,5 @@ config/key_ages.json
 
 # downloaded helper programs (Brush, the splat trainer)
 /tools/
+# Which optional packages the installer was told to add (scripts/optional_deps.py)
+config/optional_deps.json

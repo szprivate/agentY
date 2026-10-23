@@ -43,6 +43,7 @@ LOCK_NAME = "requirements.lock"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import check_env  # noqa: E402  (a sibling script, not a package)
+import optional_deps  # noqa: E402
 import core_dir   # noqa: E402
 
 
@@ -147,6 +148,11 @@ def main(argv: list) -> int:
             print(core_dir.MESSAGES[moved], flush=True)
     except Exception as exc:  # noqa: BLE001 - never the reason a start fails
         print(f"[core] Could not check the tool layer's folder name: {exc}", flush=True)
+
+    try:
+        optional_deps.ensure()   # only what the installer was told to add; no pip call when it imports
+    except Exception as exc:  # noqa: BLE001 - never the reason a start fails
+        print(f"[optional] Could not check the optional packages: {exc}", flush=True)
 
     current = fingerprint()
     stamp = read_stamp()

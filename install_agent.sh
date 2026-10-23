@@ -765,6 +765,45 @@ EOF
   fi
 }
 
+# Packages that only add a capability are offered here, not put in
+# requirements.txt; scripts/optional_deps.py keeps the answer in
+# config/optional_deps.json and scripts/sync_deps.py honours it on every start.
+# Ticked from the start; a re-run starts from the earlier answer.
+install_optional_deps() {
+  local py tool name label hint choice i
+  local -a O_IDS=() O_LABELS=() O_CHOICE=() yes=()
+  py="$(venv_python "$PROJECT_ROOT")"; tool="$PROJECT_ROOT/scripts/optional_deps.py"
+  if [ ! -x "$py" ] || [ ! -f "$tool" ]; then info "Optional packages skipped (no venv python or scripts/optional_deps.py)"; return 0; fi
+  SM_LABELS=(); SM_HINTS=(); SM_SEL=()
+  while IFS='|' read -r name label hint choice; do
+    [ -z "$name" ] && continue
+    O_IDS+=("$name"); O_LABELS+=("$label"); O_CHOICE+=("$choice")
+    SM_LABELS+=("$label  ($hint)"); SM_HINTS+=(""); SM_SEL+=("$([ "$choice" = "0" ] && echo 0 || echo 1)")
+  done <<EOF
+$("$py" "$tool" list)
+EOF
+  [ "${#O_IDS[@]}" -eq 0 ] && return 0
+  if [ "$NON_INTERACTIVE" = "1" ]; then
+    for ((i = 0; i < ${#O_IDS[@]}; i++)); do [ "${O_CHOICE[$i]}" = "1" ] && yes+=("$i"); done   # keep an earlier yes
+  else
+    SM_TITLE="Optional features (Space ticks, Enter confirms; add them later by running the installer again)"
+    SM_NONE_SILENT=1
+    select_many
+    SM_NONE_SILENT=0
+    for ((i = 0; i < ${#O_IDS[@]}; i++)); do
+      case " $SM_RESULT " in
+        *" $i "*) "$py" "$tool" set "${O_IDS[$i]}" yes; yes+=("$i") ;;
+        *)        "$py" "$tool" set "${O_IDS[$i]}" no ;;
+      esac
+    done
+  fi
+  for i in "${yes[@]+"${yes[@]}"}"; do
+    info "Installing ${O_LABELS[$i]}"
+    if "$py" "$tool" install "${O_IDS[$i]}"; then success "${O_LABELS[$i]} ready"
+    else fail "${O_LABELS[$i]} could not be installed - agentY works without it; run the installer again to retry"; fi
+  done
+}
+
 # =============================================================================
 echo
 plain "  agentY stack installer" "$C_CYAN"
@@ -970,6 +1009,7 @@ select_llm_providers "$ENV_FILE"
 HF_TOKEN_VAL="$(read_secret "$ENV_FILE" "HF_TOKEN"          "Hugging Face token (gated model downloads)"      "Create at https://huggingface.co/  (account -> Access Tokens)")"
 COMFY_KEY_VAL="$(read_secret "$ENV_FILE" "COMFYUI_API_KEY"  "ComfyUI API key (optional - auth / API nodes)"   "https://platform.comfy.org/profile/api-keys  - blank for a local ComfyUI")"
 install_mcp_presets "$ENV_FILE"
+install_optional_deps
 success "agentY .env ready ($ENV_FILE)"
 
 # -- 5. Long-term memory embedder ----------------------------------------------

@@ -941,6 +941,42 @@ function Install-McpPresets {
     }
 }
 
+function Install-OptionalDeps {
+    # Packages that only add a capability are offered here, not put in
+    # requirements.txt; scripts/optional_deps.py keeps the answer in
+    # config/optional_deps.json and scripts/sync_deps.py honours it on every start.
+    # Ticked from the start; a re-run starts from the earlier answer.
+    $py = Get-VenvPython $ProjectRoot
+    $tool = Join-Path $ProjectRoot "scripts\optional_deps.py"
+    if (-not ((Test-Path $py) -and (Test-Path $tool))) { Write-Info "Optional packages skipped (no venv python or scripts\optional_deps.py)"; return }
+    $env:PYTHONIOENCODING = "utf-8"
+    $opts = @()
+    foreach ($line in @(& $py $tool list)) {
+        $f = ([string]$line) -split '[|]', 4
+        if ($f.Count -lt 4) { continue }
+        $opts += [pscustomobject]@{ Id = $f[0]; Label = $f[1]; Hint = $f[2]; Choice = $f[3] }
+    }
+    if (-not $opts.Count) { return }
+    $yes = @()
+    if ($NonInteractive) {
+        $yes = @($opts | Where-Object { $_.Choice -eq "1" })   # keep an earlier yes; ask nothing
+    } else {
+        $items = @($opts | ForEach-Object { @{ Label = "$($_.Label)  ($($_.Hint))"; Hint = ""; Selected = ($_.Choice -ne "0") } })
+        $picked = @(Select-Many "Optional features (Space ticks, Enter confirms; add them later by running the installer again)" $items -NoneWhenSilent)
+        for ($i = 0; $i -lt $opts.Count; $i++) {
+            $on = $picked -contains $i
+            & $py $tool set $opts[$i].Id $(if ($on) { "yes" } else { "no" })
+            if ($on) { $yes += $opts[$i] }
+        }
+    }
+    foreach ($o in $yes) {
+        Write-Info "Installing $($o.Label)"
+        & $py $tool install $o.Id
+        if ($LASTEXITCODE -eq 0) { Write-Success "$($o.Label) ready" }
+        else { Write-Fail "$($o.Label) could not be installed - agentY works without it; run the installer again to retry" }
+    }
+}
+
 # =============================================================================
 Write-Host ""
 Write-Host "  agentY stack installer" -ForegroundColor Cyan
@@ -1014,6 +1050,7 @@ Select-LlmProviders -EnvFile $EnvFile
 $hfToken  = Read-Secret $EnvFile "HF_TOKEN"          "Hugging Face token (gated model downloads)"       "Create at https://huggingface.co/  (account -> Access Tokens)"
 $comfyKey = Read-Secret $EnvFile "COMFYUI_API_KEY"   "ComfyUI API key (optional - auth / API nodes)"    "https://platform.comfy.org/profile/api-keys  - blank for a local ComfyUI"
 Install-McpPresets -EnvFile $EnvFile
+Install-OptionalDeps
 Write-Success "agentY .env ready ($EnvFile)"
 
 # -- 5. Long-term memory embedder ----------------------------------------------
