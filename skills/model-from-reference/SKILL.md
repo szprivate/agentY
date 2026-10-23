@@ -1,7 +1,7 @@
 ---
 name: model-from-reference
 description: Model a building, object or set in a 3D app (Blender, Maya or Houdini) so that it matches a reference photo — the way a 3D artist does it - measure the photo, match the camera, block out grey shapes until the silhouette and proportions match, THEN details, THEN materials and light. Use for "model this house / object / room in Blender from this photo", "rebuild this in 3D", "make a 3D version of this picture", "match this reference in Blender".
-allowed-tools: dcc_build dcc_silhouette_check blender__execute_blender_code blender__render_viewport_to_path blender__get_objects_summary blender__get_screenshot_of_window_as_image analyze_image get_image_resolution run_script write_text_file read_text_file show_in_panel
+allowed-tools: dcc_build dcc_silhouette_check measure_reference blender__execute_blender_code blender__render_viewport_to_path blender__get_objects_summary blender__get_screenshot_of_window_as_image analyze_image get_image_resolution run_script write_text_file read_text_file show_in_panel
 ---
 
 # Model from a reference photo
@@ -69,8 +69,17 @@ wrong, change the script and call `dcc_build` again.
 4. Pick ONE scale anchor of known size: a door (~2.0 m), a railing (~1.0 m), a step
    (~0.18 m), a person (~1.75 m), a storey (~2.7 m). Pixels between two lines at the same
    depth divided by the anchor's pixels gives metres.
-5. Write the table into the script as constants. Note which parts face the camera, which
-   recede, and which project toward it (a wing in front, a balcony on that wing...).
+5. Measure it in 3D with `measure_reference(image_path, points, pairs)` (MoGe, runs on the
+   local ComfyUI, cached per image). Give it the points you read off the grid as
+   `{name, px:[x_frac, y_from_top_frac]}` and the pairs you need as `[nameA, nameB]`
+   (ground contact -> deck line, left end -> right end, deck -> ridge). It returns the
+   camera's field of view, the camera height above the ground, the horizon line, each
+   point in metres and each pair's distance and height difference - and it shows which
+   parts are nearer the camera (a wing that projects toward it, a balcony in front).
+   Its metres are approximate (often 10-40 % off for a subject 20-30 m away): keep its
+   field of view, horizon and RATIOS, and set the absolute scale from your one anchor.
+6. Write the table into the script as constants, with where each came from. Note which
+   parts face the camera, which recede, and which project toward it.
 
 ## 2 Match the camera first
 
@@ -81,7 +90,7 @@ wrong, change the script and call `dcc_build` again.
   Positive `shift_y` moves the frame UP, so the subject moves DOWN in the picture.
 - Camera height: whatever sits ON the horizon line in the photo is at eye height. If the
   horizon cuts the stilts 1.5 m above the sand, the camera is at 1.5 m.
-- Distance: `d = real_width / (2 * tan(hfov / 2) * width_fraction)`. Start at 50 mm.
+- Lens: use the field of view `measure_reference` returned (vertical fov for a portrait frame). Distance: `d = real_width / (2 * tan(hfov / 2) * width_fraction)`.
 - Aim with `(target - cam.location).to_track_quat('-Z', 'Y')`. Hand-written Euler angles
   are how a camera ends up rolled, or pointing backwards at an empty frame.
 - The camera lives in the build script too (the check uses the scene camera, Houdini: the first camera in

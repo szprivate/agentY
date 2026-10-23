@@ -90,9 +90,9 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
                 "atlas_render_view", "atlas_open_in_viewer", "atlas_capture_around", "train_splat",
                 "splat_training_status")),
     "dcc": ("model a building / object / room in Blender, Maya or Houdini from a reference photo: run the one "
-            "build script (live in the open app, or headless in batch) and check the silhouette by numbers "
+            "build script (live in the open app, or headless in batch) and check the silhouette by numbers; measure the photo with MoGe "
             "(read the `model-from-reference` skill first)",
-            ("dcc_build", "dcc_silhouette_check")),
+            ("dcc_build", "dcc_silhouette_check", "measure_reference")),
     # Added 2026-10-22 (speed-ups): the least-called of what stayed always-on - in 22,000 orchestrator
     # tool calls each of these was called 0-2 % of the time, and together they were ~7,000 tokens of
     # definitions on every call. A direct call to a held tool still loads its pack and runs.

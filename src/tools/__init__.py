@@ -170,6 +170,8 @@ from agenty_core.tools.splat_train import train_splat, splat_training_status  # 
 # Rebuild a model in Blender / Maya / Houdini from ONE script file, and check its proportions against a
 # photo by projecting key points through the scene camera (agenty_core.tools.dcc).
 from agenty_core.tools.dcc import dcc_build, dcc_silhouette_check  # noqa: F401,E402
+# Measure a reference photo with MoGe (fov, camera height, metric points) via the local ComfyUI.
+from agenty_core.tools.reference_measure import measure_reference  # noqa: F401,E402
 # Send ComfyUI workflows to the on-prem Deadline render farm and follow them (agenty_core.tools.deadline_farm).
 from agenty_core.tools.deadline_farm import submit_to_deadline, deadline_job_status, deadline_farm_info  # noqa: F401,E402
 # Build and run one partner (API) node directly from its schema (agenty_core.tools.partner_run).
@@ -221,7 +223,7 @@ _SHARED_CORE_TOOLS = [
     # all-round Atlas capture, and a Gaussian splat trained from it (local, Brush)
     "atlas_capture_around", "train_splat", "splat_training_status",
     # modelling from a reference photo in Blender / Maya / Houdini: one build script, a numeric silhouette check
-    "dcc_build", "dcc_silhouette_check",
+    "dcc_build", "dcc_silhouette_check", "measure_reference",
     # the Deadline render farm: submit a workflow as a job, follow it, look at the pools
     "submit_to_deadline", "deadline_job_status", "deadline_farm_info",
     # one partner (API) node built from its schema and run directly
@@ -587,6 +589,7 @@ ORCHESTRATOR_TOOLS: list = [
     splat_training_status, # check on / finish a splat training
     dcc_build,             # run the one build script in Blender / Maya / Houdini (live or batch), save, render a still
     dcc_silhouette_check,  # project key points through the scene camera, compare with the photo by numbers
+    measure_reference,     # MoGe on the reference photo: fov, camera height, horizon, metric points
     submit_to_deadline,    # send a workflow to the Deadline farm (dedicated ComfyUI pool)
     deadline_job_status,   # follow a farm job, fetch its outputs
     deadline_farm_info,    # pools / workers / the ComfyUI pool
