@@ -91,7 +91,8 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
                 "splat_training_status")),
     "dcc": ("model a building / object / room in Blender, Maya or Houdini from a reference photo: run the one "
             "build script (live in the open app, or headless in batch) and check the silhouette by numbers; measure the photo with MoGe "
-            "(read the `model-from-reference` skill first)",
+            "(read the `model-from-reference` skill first); destroy a model in Houdini with a rigid-body sim, dust, smoke and cloth "
+            "(read the `dcc-destruction-houdini` skill first)",
             ("dcc_build", "dcc_silhouette_check", "measure_reference")),
     "routing": ("see which models are available and what each role runs, and move the orchestrator (or a "
                 "tier) to another one - always after the user agrees (see 'Switching models')",

@@ -1008,6 +1008,8 @@ _ORCH_SKILL_NAMES = [
     # Modelling to match a reference photo in Blender (MCP): measure, camera,
     # blockout, detail, look - one build script rebuilt every pass.
     "model-from-reference",
+    # Destruction in Houdini: fracture, constraints, RBD sim, dust / smoke, cloth, flipbook.
+    "dcc-destruction-houdini",
 ]
 
 
