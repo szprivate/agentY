@@ -1,0 +1,387 @@
+{
+  "presets": [
+    {
+      "id": "blender",
+      "name": "Blender",
+      "category": "3D / DCC",
+      "description": "Drive a running Blender: scenes, objects, materials, Python, full API docs. Its add-on listens on port 9876, shared with the Nuke bridge: run one at a time.",
+      "server": {
+        "enabled": true,
+        "transport": "stdio",
+        "command": "uv",
+        "args": [
+          "run",
+          "blender-mcp"
+        ],
+        "auth": "none",
+        "cwd": "${AGENTY_ROOT}/config/mcp_bundles/blender",
+        "bundle": {
+          "name": "Blender",
+          "version": "1.0.3",
+          "dir": "config/mcp_bundles/blender",
+          "signed": false
+        }
+      },
+      "env_keys": [],
+      "requires": [
+        "uv",
+        "blender"
+      ],
+      "setup_steps": "This server is a .mcpb bundle, and it needs the Blender add-on. Do both:\n1. The server: install the Blender MCP bundle (v1.0.3, Blender Lab, .mcpb from https://www.blender.org/lab/mcp-server/) from Settings > MCP servers > Install bundle (.mcpb). It unpacks into config/mcp_bundles/blender, which is where this preset's entry expects it.\n2. The add-on: download the Blender Lab add-on https://projects.blender.org/lab/blender_mcp/releases/download/v1.0.3/mcp-1.0.3.zip and install it into Blender 5.1 or newer with `blender -c extension install-file -r user_default --enable <path-to-mcp-1.0.3.zip>`. Then set the add-on preference use_autostart=True (add-on id bl_ext.user_default.mcp) and save the preferences (`bpy.ops.wm.save_userpref()`), so the add-on opens its socket whenever Blender starts.\nBlender must be running for the server to connect: the add-on listens on port 9876.",
+      "default_selected": true
+    },
+    {
+      "id": "elevenlabs",
+      "name": "ElevenLabs",
+      "category": "Audio / Voice",
+      "description": "Text-to-speech, voice cloning, sound effects, audio isolation and transcription.",
+      "server": {
+        "enabled": true,
+        "transport": "stdio",
+        "command": "uvx",
+        "args": [
+          "elevenlabs-mcp==0.12.2"
+        ],
+        "auth": "none",
+        "env": {
+          "ELEVENLABS_API_KEY": "${ELEVENLABS_API_KEY}"
+        }
+      },
+      "env_keys": [
+        {
+          "key": "ELEVENLABS_API_KEY",
+          "label": "ElevenLabs API key",
+          "help_url": "https://elevenlabs.io/app/settings/api-keys",
+          "optional": false
+        }
+      ],
+      "requires": [
+        "uv"
+      ],
+      "setup_steps": "",
+      "default_selected": true
+    },
+    {
+      "id": "magnific",
+      "name": "Magnific",
+      "category": "Image / Video services",
+      "description": "Magnific upscaling, relighting, image/video generation and stock via its hosted MCP.",
+      "server": {
+        "enabled": true,
+        "transport": "http",
+        "url": "https://mcp.magnific.com",
+        "auth": "oauth"
+      },
+      "env_keys": [],
+      "requires": [],
+      "setup_steps": "",
+      "default_selected": true
+    },
+    {
+      "id": "remotion",
+      "name": "Remotion",
+      "category": "Motion / Video",
+      "description": "Create and render programmatic motion graphics and titles with Remotion.",
+      "server": {
+        "enabled": true,
+        "transport": "stdio",
+        "command": "npx",
+        "args": [
+          "-y",
+          "remotion-mcp@1.0.5"
+        ],
+        "auth": "none"
+      },
+      "env_keys": [],
+      "requires": [
+        "node"
+      ],
+      "setup_steps": "Node.js LTS: `winget install OpenJS.NodeJS.LTS`. First run downloads the package.",
+      "default_selected": true
+    },
+    {
+      "id": "houdini",
+      "name": "Houdini",
+      "category": "3D / DCC",
+      "description": "Inspect and edit a live Houdini session: nodes, parms, cooks, viewport captures, offline docs.",
+      "server": {
+        "enabled": true,
+        "transport": "stdio",
+        "command": "uvx",
+        "args": [
+          "--from",
+          "houdini-mcp-server==0.7.7",
+          "houdinimcp-bridge"
+        ],
+        "auth": "none"
+      },
+      "env_keys": [],
+      "requires": [
+        "uv",
+        "houdini"
+      ],
+      "setup_steps": "1) `winget install astral-sh.uv`. 2) Install the plugin into Houdini prefs without touching other AI clients: `uv tool install houdini-mcp-server==0.7.7` then `houdinimcp-install --houdini-version <e.g. 21.0> --harness none --yes` (use `--dry-run` first to preview; `--prefs-dir PATH` if prefs are not in Documents). 3) Restart Houdini; the plugin opens a local TCP server on localhost:9877. If Houdini is closed the bridge starts headless hython (set HOUDINIMCP_NO_HEADLESS=1 to disable). Remove with `houdinimcp-install --uninstall`.",
+      "default_selected": false
+    },
+    {
+      "id": "maya",
+      "name": "Maya",
+      "category": "3D / DCC",
+      "description": "Control Autodesk Maya through its commandPort: scene, modeling, shading, animation, viewport capture.",
+      "server": {
+        "enabled": true,
+        "transport": "stdio",
+        "command": "uvx",
+        "args": [
+          "maya-mcp==0.6.1"
+        ],
+        "auth": "none"
+      },
+      "env_keys": [],
+      "requires": [
+        "uv",
+        "maya"
+      ],
+      "setup_steps": "1) `winget install astral-sh.uv`. 2) Download https://raw.githubusercontent.com/GimbalGoats/GG_MayaMCP/main/scripts/enable_commandport.py and run the whole file once in Maya's Python Script Editor (or call it from userSetup.py to open the port on every start). Default port 7001. 3) Verify from the agent with health_check / scene_info. Raw script execution stays disabled unless opted in (https://gimbalgoats.github.io/GG_MayaMCP/).",
+      "default_selected": false
+    },
+    {
+      "id": "unity",
+      "name": "Unity",
+      "category": "3D / Real-time",
+      "description": "Control the Unity Editor: scenes, assets, scripts, components, play mode.",
+      "server": {
+        "enabled": true,
+        "transport": "stdio",
+        "command": "uvx",
+        "args": [
+          "--from",
+          "mcpforunityserver==10.3.0",
+          "mcp-for-unity",
+          "--transport",
+          "stdio"
+        ],
+        "auth": "none"
+      },
+      "env_keys": [],
+      "requires": [
+        "uv",
+        "unity"
+      ],
+      "setup_steps": "1) `winget install astral-sh.uv`. 2) In the Unity project add to Packages/manifest.json dependencies: `\"com.coplaydev.unity-mcp\": \"https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#v10.3.0\"` (tag exists) or use Package Manager > Add from git URL with the same URL. 3) Open Unity, then Window > MCP for Unity and check the bridge shows connected (skip its 'Configure All Detected Clients'; agentY launches the server itself). The server finds the editor automatically when both run.",
+      "default_selected": false
+    },
+    {
+      "id": "nuke",
+      "name": "Nuke (community)",
+      "category": "VFX / Compositing",
+      "description": "Create, wire and render Nuke node graphs and run Nuke Python. Its add-on listens on port 9876, shared with the Blender bridge: run one at a time.",
+      "server": {
+        "enabled": true,
+        "transport": "stdio",
+        "command": "uv",
+        "args": [
+          "run",
+          "--with",
+          "fastmcp",
+          "python",
+          "nuke_mcp_server.py"
+        ],
+        "auth": "none",
+        "cwd": "${AGENTY_ROOT}/config/mcp_bundles/nuke"
+      },
+      "env_keys": [],
+      "requires": [
+        "uv",
+        "git",
+        "nuke"
+      ],
+      "setup_steps": "The agent does the clone and the add-on copy itself (the installer only prints this). Not on PyPI (PyPI `nuke-mcp` is an unrelated joke package - never install it). 1) `git clone https://github.com/dughogan/nuke_mcp.git config/mcp_bundles/nuke` then `git -C config/mcp_bundles/nuke checkout 761ea9e` (pin). 2) Copy nuke_mcp_addon.py to `%USERPROFILE%\\.nuke\\python\\` (create the folder). 3) Add to `%USERPROFILE%\\.nuke\\init.py`: `nuke.pluginAddPath(\"./python\")` and `import nuke_mcp_addon`; add to menu.py: `nuke.toolbar(\"Nodes\").addCommand('NukeMCP/NukeMCP Panel','nuke_mcp_addon.show_panel()')`. 4) Start Nuke, open the NukeMCP panel and start the socket server (localhost:9876). Run nuke_mcp_server.py directly, not main.py (main.py prints banners to stdout, which corrupts the stdio protocol). fastmcp comes from `uv run --with fastmcp`. Port 9876 is also used by some other DCC bridges; run one at a time.",
+      "default_selected": false
+    },
+    {
+      "id": "playwright",
+      "name": "Playwright Browser",
+      "category": "Utilities",
+      "description": "Drive a real browser: open pages, click, screenshot, read the DOM.",
+      "server": {
+        "enabled": true,
+        "transport": "stdio",
+        "command": "npx",
+        "args": [
+          "-y",
+          "@playwright/mcp@0.0.83",
+          "--isolated"
+        ],
+        "auth": "none"
+      },
+      "env_keys": [],
+      "requires": [
+        "node"
+      ],
+      "setup_steps": "Install Node LTS (`winget install OpenJS.NodeJS.LTS`). If no Chrome: `npx -y playwright install chromium` and add `--browser`,`chromium` to args. Add `--headless` for no visible window.",
+      "default_selected": true
+    },
+    {
+      "id": "context7",
+      "name": "Context7 Docs",
+      "category": "Utilities",
+      "description": "Up-to-date library/API documentation lookup for the coding subagent.",
+      "server": {
+        "enabled": true,
+        "transport": "stdio",
+        "command": "npx",
+        "args": [
+          "-y",
+          "@upstash/context7-mcp@4.2.0"
+        ],
+        "auth": "none"
+      },
+      "env_keys": [],
+      "requires": [
+        "node"
+      ],
+      "setup_steps": "Works anonymously with rate limits; a free key from https://context7.com/dashboard raises limits (README passes it as `--api-key <key>` in args; env var name not confirmed, so no env key is declared).",
+      "default_selected": false
+    },
+    {
+      "id": "figma",
+      "name": "Figma",
+      "category": "Design",
+      "description": "Read Figma files, frames, layout and styles for design-to-image/video work.",
+      "server": {
+        "enabled": true,
+        "transport": "stdio",
+        "command": "npx",
+        "args": [
+          "-y",
+          "figma-developer-mcp@0.13.2",
+          "--stdio"
+        ],
+        "auth": "none",
+        "env": {
+          "FIGMA_API_KEY": "${FIGMA_API_KEY}"
+        }
+      },
+      "env_keys": [
+        {
+          "key": "FIGMA_API_KEY",
+          "label": "Figma personal access token",
+          "help_url": "https://www.figma.com/developers/api#access-tokens",
+          "optional": false
+        }
+      ],
+      "requires": [
+        "node"
+      ],
+      "setup_steps": "",
+      "default_selected": false
+    },
+    {
+      "id": "notion",
+      "name": "Notion",
+      "category": "Utilities",
+      "description": "Search and edit Notion pages and databases (briefs, shot lists, asset trackers).",
+      "server": {
+        "enabled": true,
+        "transport": "http",
+        "url": "https://mcp.notion.com/mcp",
+        "auth": "oauth"
+      },
+      "env_keys": [],
+      "requires": [],
+      "setup_steps": "Authorize once in agentY Settings (browser OAuth, dynamic client registration). The hosted server has no bearer-token mode; for token auth use local `npx.cmd -y @notionhq/notion-mcp-server@2.5.2` with env NOTION_TOKEN (integration token from https://www.notion.so/profile/integrations).",
+      "default_selected": false
+    },
+    {
+      "id": "github",
+      "name": "GitHub",
+      "category": "Utilities",
+      "description": "Browse repos, issues, PRs and code; find and read custom-node sources.",
+      "server": {
+        "enabled": true,
+        "transport": "http",
+        "url": "https://api.githubcopilot.com/mcp/",
+        "auth": "header",
+        "headers": {
+          "Authorization": "Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}"
+        }
+      },
+      "env_keys": [
+        {
+          "key": "GITHUB_PERSONAL_ACCESS_TOKEN",
+          "label": "GitHub personal access token",
+          "help_url": "https://github.com/settings/personal-access-tokens/new",
+          "optional": false
+        }
+      ],
+      "requires": [],
+      "setup_steps": "Create a fine-grained token with only the scopes needed (read-only is enough for browsing).",
+      "default_selected": false
+    },
+    {
+      "id": "fal",
+      "name": "fal",
+      "category": "Image / Video services",
+      "description": "Run fal-hosted image, video, audio and 3D models with pricing and job control.",
+      "server": {
+        "enabled": true,
+        "transport": "http",
+        "url": "https://mcp.fal.ai/mcp-relay",
+        "auth": "oauth"
+      },
+      "env_keys": [],
+      "requires": [],
+      "setup_steps": "Authorize once in agentY Settings (browser sign-in). If OAuth fails in agentY, a web-search snippet described a header-key mode on https://mcp.fal.ai/mcp (Authorization bearer key from https://fal.ai/dashboard/keys); sources conflict, test the OAuth entry first.",
+      "default_selected": false
+    },
+    {
+      "id": "meshy",
+      "name": "Meshy",
+      "category": "3D / DCC",
+      "description": "Generate 3D models, textures, rigs and animations from text or images.",
+      "server": {
+        "enabled": true,
+        "transport": "stdio",
+        "command": "npx",
+        "args": [
+          "-y",
+          "@meshy-ai/meshy-mcp-server@0.6.0"
+        ],
+        "auth": "none",
+        "env": {
+          "MESHY_API_KEY": "${MESHY_API_KEY}"
+        }
+      },
+      "env_keys": [
+        {
+          "key": "MESHY_API_KEY",
+          "label": "Meshy API key (starts msy_)",
+          "help_url": "https://www.meshy.ai/developers/keys",
+          "optional": false
+        }
+      ],
+      "requires": [
+        "node"
+      ],
+      "setup_steps": "",
+      "default_selected": false
+    },
+    {
+      "id": "comfy-cloud",
+      "name": "Comfy Cloud",
+      "category": "Image / Video services",
+      "description": "Run templates and partner models (Kling, Veo, Flux...) on Comfy Cloud GPUs.",
+      "server": {
+        "enabled": true,
+        "transport": "http",
+        "url": "https://cloud.comfy.org/mcp",
+        "auth": "oauth"
+      },
+      "env_keys": [],
+      "requires": [],
+      "setup_steps": "Authorize once in agentY Settings (Comfy account OAuth). Headless alternative: auth `header`, headers {\"X-API-Key\":\"${COMFY_API_KEY}\"} with a key from https://platform.comfy.org/profile/api-keys (starts comfyui-).",
+      "default_selected": false
+    }
+  ]
+}

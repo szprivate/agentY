@@ -5299,6 +5299,42 @@ def _build_app():
             logger.error("mcp test failed: %s", exc, exc_info=True)
             return jsonify({"ok": False, "error": str(exc), "needs_auth": False}), 500
 
+    @app.route("/agentY/mcp/presets", methods=["GET", "OPTIONS"])
+    def mcp_presets_route():
+        # Settings > MCP servers > Add from presets: the shared catalog
+        # (config/mcp_presets.json), each preset marked installed when its id is
+        # already a server in config/mcp.json.
+        if request.method == "OPTIONS":
+            return "", 204
+        from src.tools.mcp_tools import load_mcp_config
+        from src.utils import mcp_preset_install as mpi
+        try:
+            return jsonify({"ok": True, "presets": mpi.catalog(load_mcp_config().get("servers") or {})})
+        except Exception as exc:  # noqa: BLE001
+            logger.error("mcp presets failed: %s", exc, exc_info=True)
+            return jsonify({"ok": False, "error": str(exc)}), 500
+
+    @app.route("/agentY/mcp/presets/install", methods=["POST", "OPTIONS"])
+    def mcp_preset_install_route():
+        # Keys to .env, the entry into config/mcp.json (as the MCP save does), one
+        # connection test, and an agentY turn for whatever is left outside the config.
+        if request.method == "OPTIONS":
+            return "", 204
+        body = request.get_json(silent=True) or {}
+        secrets = body.get("secrets") if isinstance(body.get("secrets"), dict) else {}
+        from src.tools.mcp_tools import load_mcp_config, save_mcp_config, test_server
+        from src.utils import mcp_preset_install as mpi
+        try:
+            payload, status = mpi.install(
+                str(body.get("id") or "").strip(), secrets,
+                load_config=load_mcp_config, save_config=save_mcp_config,
+                update_env=_update_env_file, test_server=test_server,
+                start_turn=_api_start_turn, get_env=lambda k: os.environ.get(k, ""))
+            return jsonify(payload), status
+        except Exception as exc:  # noqa: BLE001
+            logger.error("mcp preset install failed: %s", exc, exc_info=True)
+            return jsonify({"ok": False, "error": str(exc)}), 500
+
     # ── Threads ────────────────────────────────────────────────────────────
     @app.route("/agentY/threads", methods=["GET", "POST", "OPTIONS"])
     def threads():

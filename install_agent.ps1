@@ -704,6 +704,198 @@ function Select-Embedder {
     }
 }
 
+function Test-MenuConsole {
+    # Arrow keys need a real console: input not piped, a window to redraw in.
+    if ($NonInteractive) { return $false }
+    try {
+        if ([Console]::IsInputRedirected -or [Console]::IsOutputRedirected) { return $false }
+        $null = [Console]::CursorTop
+        $null = [Console]::WindowWidth
+        return $true
+    } catch { return $false }
+}
+
+function Select-Many {
+    # A multi-select list: Up/Down move, Space ticks, Enter confirms ('a' ticks or
+    # clears all). Returns the chosen indexes (an [int[]], possibly empty).
+    # $Items: hashtables with Label, Hint (optional) and Selected.
+    # Without an interactive console it asks for numbers instead ("1,3"; Enter =
+    # keep the pre-ticked ones). With -NonInteractive it asks nothing and returns
+    # the pre-ticked items, or none when $NoneWhenSilent is set.
+    param([string]$Title, [object[]]$Items, [switch]$NoneWhenSilent)
+    $n = $Items.Count
+    $sel = New-Object 'bool[]' $n
+    for ($i = 0; $i -lt $n; $i++) { $sel[$i] = [bool]$Items[$i].Selected }
+    $result = { $o = @(); for ($i = 0; $i -lt $n; $i++) { if ($sel[$i]) { $o += $i } }; $o }
+    if ($n -eq 0) { return @() }
+    if ($NonInteractive) {
+        if ($NoneWhenSilent) { return @() }
+        return (& $result)
+    }
+    Write-Host ""
+    Write-Host "  $Title" -ForegroundColor White
+    if (-not (Test-MenuConsole)) {
+        for ($i = 0; $i -lt $n; $i++) {
+            $mark = if ($sel[$i]) { "*" } else { " " }
+            Write-Host ("   {0}{1}) {2}" -f $mark, ($i + 1), $Items[$i].Label) -ForegroundColor White
+            if ($Items[$i].Hint) { Write-Host "         $($Items[$i].Hint)" -ForegroundColor DarkGray }
+        }
+        $keep = (@(& $result) | ForEach-Object { $_ + 1 }) -join ","
+        $tries = 0
+        while ($true) {
+            $tries++
+            $ans = (Read-Answer "    Numbers separated by commas, 'none', or Enter = [$keep]").Trim()
+            if (-not $ans) { return (& $result) }
+            if ($ans -match '^(none|n|no)$') { return @() }
+            $picked = @(); $bad = $false
+            foreach ($t in ($ans -split '[,\s]+' | Where-Object { $_ })) {
+                $k = 0
+                if ([int]::TryParse($t, [ref]$k) -and $k -ge 1 -and $k -le $n) { $picked += ($k - 1) } else { $bad = $true }
+            }
+            if (-not $bad) { return @($picked | Sort-Object -Unique) }
+            if ($tries -ge 5) { Write-Info "No valid answer - keeping [$keep]."; return (& $result) }
+            Write-Fail "Type numbers from the list, e.g. 1,3"
+        }
+    }
+    Write-Host "    Up/Down move, Space ticks, A ticks all, Enter confirms" -ForegroundColor DarkGray
+    $cur = 0
+    $rows = $n + 0
+    $width = [Math]::Max(20, [Console]::WindowWidth - 1)
+    $draw = {
+        for ($i = 0; $i -lt $n; $i++) {
+            $line = ("  {0} [{1}] {2}" -f $(if ($i -eq $cur) { ">" } else { " " }), $(if ($sel[$i]) { "x" } else { " " }), $Items[$i].Label)
+            if ($Items[$i].Hint -and $i -eq $cur) { $line += "  - " + $Items[$i].Hint }
+            if ($line.Length -gt $width) { $line = $line.Substring(0, $width) }
+            Write-Host $line.PadRight($width) -ForegroundColor $(if ($i -eq $cur) { "Cyan" } else { "White" })
+        }
+    }
+    $cursorWas = $true
+    try { $cursorWas = [Console]::CursorVisible; [Console]::CursorVisible = $false } catch { }
+    try {
+        & $draw
+        $top = [Console]::CursorTop - $n          # right even when drawing scrolled the window
+        while ($true) {
+            $key = [Console]::ReadKey($true)
+            switch ($key.Key) {
+                'UpArrow'   { $cur = ($cur + $n - 1) % $n }
+                'DownArrow' { $cur = ($cur + 1) % $n }
+                'Spacebar'  { $sel[$cur] = -not $sel[$cur] }
+                'A'         { $all = $sel -contains $false; for ($i = 0; $i -lt $n; $i++) { $sel[$i] = $all } }
+                'Enter'     { return (& $result) }
+            }
+            [Console]::SetCursorPosition(0, [Math]::Max(0, $top))
+            & $draw
+        }
+    } finally {
+        try { [Console]::CursorVisible = $cursorWas } catch { }
+    }
+}
+
+# The LLM providers agentY can run its agents on: the provider token of a
+# 'provider,model' setting (src/agent.py: ollama, anthropic, the DashScope
+# aliases, openai, google/gemini) and the key each one reads. Ollama is local.
+$Script:LlmProviders = @(
+    @{ id = "anthropic"; label = "Anthropic (Claude) - recommended"; keys = @("ANTHROPIC_API_KEY");
+       text = "Anthropic API key (Claude)"; help = "Create at https://platform.claude.com/" },
+    @{ id = "dashscope"; label = "Alibaba Model Studio (DashScope, Qwen)"; keys = @("DASHSCOPE_API_KEY");
+       text = "DashScope / Alibaba Model Studio key"; help = "For Qwen models: https://bailian.console.alibabacloud.com/" },
+    @{ id = "openai";    label = "OpenAI (GPT)"; keys = @("OPENAI_API_KEY");
+       text = "OpenAI API key"; help = "Create at https://platform.openai.com/api-keys" },
+    @{ id = "google";    label = "Google (Gemini)"; keys = @("GEMINI_API_KEY", "GOOGLE_API_KEY");
+       text = "Gemini API key"; help = "Create at https://aistudio.google.com/apikey" },
+    @{ id = "ollama";    label = "Ollama (local models, no key)"; keys = @();
+       text = ""; help = "" }
+)
+
+function Select-LlmProviders {
+    # Which providers to ask for keys. Ticked from the start: the ones whose key is
+    # already in .env (Anthropic when there is none yet). Asks the key of each
+    # ticked one only; the rest of .env is left alone.
+    param([string]$EnvFile)
+    $items = @()
+    $anySet = $false
+    foreach ($p in $Script:LlmProviders) {
+        $set = $false
+        foreach ($k in $p.keys) { if (-not (Test-Placeholder (Get-EnvValue $EnvFile $k))) { $set = $true } }
+        if ($set) { $anySet = $true }
+        $items += @{ Label = $p.label; Selected = $set; Hint = $(if ($set) { "key already in .env" } else { "" }) }
+    }
+    if (-not $anySet) { $items[0].Selected = $true }
+    $picked = @(Select-Many "Which LLM providers will you use? (a key is asked for each ticked one)" $items)
+    foreach ($i in $picked) {
+        $p = $Script:LlmProviders[$i]
+        if (-not $p.keys.Count) {
+            if (-not $NonInteractive) { Write-Info "Ollama needs no key. Install it from https://ollama.com/ and start it before agentY." }
+            continue
+        }
+        $key = $p.keys[0]
+        # Gemini also reads GOOGLE_API_KEY: an existing one counts as set.
+        foreach ($k in $p.keys) { if (-not (Test-Placeholder (Get-EnvValue $EnvFile $k))) { $key = $k; break } }
+        $null = Read-Secret $EnvFile $key $p.text $p.help
+    }
+}
+
+function Install-McpPresets {
+    # Offer the catalog in config/mcp_presets.json; scripts/mcp_presets.py does the
+    # merge into config/mcp.json so the logic exists once. Nothing here asks for
+    # an add-on to be installed into a desktop app: those steps are printed.
+    param([string]$EnvFile)
+    $py = Get-VenvPython $ProjectRoot
+    $tool = Join-Path $ProjectRoot "scripts\mcp_presets.py"
+    if (-not ((Test-Path $py) -and (Test-Path $tool))) { Write-Info "MCP presets skipped (no venv python or scripts\mcp_presets.py)"; return }
+    if ($NonInteractive) { Write-Info "Non-interactive: no MCP presets added. Add them later in Settings > MCP servers."; return }
+    $env:PYTHONIOENCODING = "utf-8"
+    $presets = @()
+    foreach ($line in @(& $py $tool list)) {
+        $f = ([string]$line) -split '[|]', 5
+        if ($f.Count -lt 5) { continue }
+        $presets += [pscustomobject]@{ Id = $f[0]; Name = $f[1]; Category = $f[2]; Default = ($f[3] -eq "1"); Description = $f[4] }
+    }
+    if (-not $presets.Count) { return }
+    $items = @($presets | ForEach-Object { @{ Label = "$($_.Name)  [$($_.Category)]"; Hint = $_.Description; Selected = $_.Default } })
+    $picked = @(Select-Many "MCP servers to add (extra tools for the agent; Enter with none ticked adds nothing)" $items -NoneWhenSilent)
+    if (-not $picked.Count) { Write-Info "No MCP presets chosen - add them later in Settings > MCP servers."; return }
+    $ids = @($picked | ForEach-Object { $presets[$_].Id })
+    foreach ($id in $ids) {
+        foreach ($line in @(& $py $tool keys $id)) {
+            $f = ([string]$line) -split '[|]', 4
+            if ($f.Count -lt 4) { continue }
+            $label = "$($f[1]) (for MCP preset $id)" + $(if ($f[3] -eq "1") { " - optional" } else { "" })
+            $null = Read-Secret $EnvFile $f[0] $label $f[2]
+        }
+    }
+    $later = @()
+    foreach ($line in @(& $py $tool apply @ids)) {
+        $f = ([string]$line) -split '[|]', 2
+        if ($f.Count -lt 2) { continue }
+        switch ($f[0]) {
+            "added"   { Write-Success "MCP server '$($f[1])' added to config\mcp.json" }
+            "skipped" { Write-Info "MCP server '$($f[1])' is already configured - kept as it is" }
+            "needs_bundle" {
+                Write-Info "MCP server '$($f[1])' needs its .mcpb bundle first - not written to config\mcp.json yet"
+                $st = (@(& $py $tool steps $f[1]) -join "`n").Trim()
+                if ($st) { $later += [pscustomobject]@{ Id = $f[1]; Steps = $st } }
+            }
+            default   { Write-Fail "Unknown MCP preset '$($f[1])'" }
+        }
+        if ($f[0] -in @("unknown", "needs_bundle")) { continue }
+        $warm = (@(& $py $tool warmup $f[1]) | Select-Object -Last 1)
+        if ($LASTEXITCODE -ne 0) { Write-Info "Could not pre-fetch '$($f[1])' ($warm) - it is fetched on first use" }
+        elseif ($warm -and $warm -ne "nothing to fetch") { Write-Success "Pre-fetched '$($f[1])'" }
+        $steps = (@(& $py $tool steps $f[1]) -join "`n").Trim()
+        if ($steps) { $later += [pscustomobject]@{ Id = $f[1]; Steps = $steps } }
+    }
+    if ($later.Count) {
+        Write-Host ""
+        Write-Host "  Finish later (the installer does not touch other applications):" -ForegroundColor White
+        foreach ($l in $later) {
+            Write-Host "    $($l.Id):" -ForegroundColor Cyan
+            foreach ($s in ($l.Steps -split "`n")) { Write-Host "      $s" -ForegroundColor DarkGray }
+        }
+        Write-Info "Or ask the agent: it can do these steps for you once it runs (Settings > MCP servers > Add from presets does it too)."
+    }
+}
+
 # =============================================================================
 Write-Host ""
 Write-Host "  agentY stack installer" -ForegroundColor Cyan
@@ -773,10 +965,10 @@ if ($NonInteractive) {
 } else {
     Write-Host "  Press Enter to keep an existing value or skip an optional one." -ForegroundColor DarkGray
 }
+Select-LlmProviders -EnvFile $EnvFile
 $hfToken  = Read-Secret $EnvFile "HF_TOKEN"          "Hugging Face token (gated model downloads)"       "Create at https://huggingface.co/  (account -> Access Tokens)"
-$null     = Read-Secret $EnvFile "ANTHROPIC_API_KEY" "Anthropic API key (Claude) - recommended"         "Create at https://platform.claude.com/"
 $comfyKey = Read-Secret $EnvFile "COMFYUI_API_KEY"   "ComfyUI API key (optional - auth / API nodes)"    "https://platform.comfy.org/profile/api-keys  - blank for a local ComfyUI"
-$null     = Read-Secret $EnvFile "DASHSCOPE_API_KEY" "DashScope / Alibaba Model Studio key (optional)"  "For Qwen models: https://bailian.console.alibabacloud.com/"
+Install-McpPresets -EnvFile $EnvFile
 Write-Success "agentY .env ready ($EnvFile)"
 
 # -- 5. Long-term memory embedder ----------------------------------------------

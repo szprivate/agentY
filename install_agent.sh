@@ -513,6 +513,212 @@ find_comfyui() {   # $1 = hint -> echoes the resolved root, or nothing
   done
 }
 
+# -- Multi-select menu --------------------------------------------------------
+# select_many: Up/Down (or k/j) move, Space ticks, 'a' ticks all, Enter confirms.
+#   in : SM_TITLE; SM_LABELS, SM_HINTS, SM_SEL = parallel arrays (SM_SEL is 0/1)
+#   out: SM_RESULT = the chosen indexes, space separated (possibly empty)
+# Without an interactive terminal it asks for numbers instead ("1,3"; Enter =
+# keep the pre-ticked ones). With --non-interactive it asks nothing and returns the
+# pre-ticked items, or none when SM_NONE_SILENT=1. SM_ASSUME_TTY=1 forces the
+# key-driven menu on piped input (the tests drive it that way).
+SM_TITLE=""; SM_LABELS=(); SM_HINTS=(); SM_SEL=(); SM_RESULT=""; SM_NONE_SILENT=0
+
+sm_collect() {
+  local i; SM_RESULT=""
+  for ((i = 0; i < ${#SM_LABELS[@]}; i++)); do
+    [ "${SM_SEL[$i]}" = "1" ] && SM_RESULT="$SM_RESULT $i"
+  done
+  SM_RESULT="${SM_RESULT# }"
+}
+
+sm_draw() {   # $1 = cursor row  $2 = "redraw": move up first
+  local i n=${#SM_LABELS[@]} cur="$1" mark line cols
+  cols="$(tput cols 2>/dev/null || echo 80)"
+  [ "${2:-}" = "redraw" ] && printf '\033[%dA' "$n"
+  for ((i = 0; i < n; i++)); do
+    mark=" "; [ "${SM_SEL[$i]}" = "1" ] && mark="x"
+    line="  $([ "$i" = "$cur" ] && echo ">" || echo " ") [$mark] ${SM_LABELS[$i]}"
+    [ "$i" = "$cur" ] && [ -n "${SM_HINTS[$i]:-}" ] && line="$line  - ${SM_HINTS[$i]}"
+    line="${line:0:$((cols - 1))}"
+    if [ "$i" = "$cur" ]; then printf '\033[2K\033[36m%s\033[0m\n' "$line"; else printf '\033[2K%s\n' "$line"; fi
+  done
+}
+
+select_many() {
+  local n=${#SM_LABELS[@]} i cur=0 key rest ans tok keep bad tries=0 picked
+  sm_collect
+  [ "$n" -eq 0 ] && { SM_RESULT=""; return 0; }
+  if [ "$NON_INTERACTIVE" = "1" ]; then
+    [ "$SM_NONE_SILENT" = "1" ] && SM_RESULT=""
+    return 0
+  fi
+  echo; plain "  $SM_TITLE" "$C_WHITE"
+  if [ "${SM_ASSUME_TTY:-0}" != "1" ] && { [ ! -t 0 ] || [ ! -t 1 ] || ! command -v tput >/dev/null 2>&1 || [ "${TERM:-dumb}" = "dumb" ]; }; then
+    for ((i = 0; i < n; i++)); do
+      mark=" "; [ "${SM_SEL[$i]}" = "1" ] && mark="*"
+      printf '   %s%d) %s\n' "$mark" "$((i + 1))" "${SM_LABELS[$i]}"
+      [ -n "${SM_HINTS[$i]:-}" ] && printf '         %s\n' "${SM_HINTS[$i]}"
+    done
+    keep=""; for i in $SM_RESULT; do keep="$keep,$((i + 1))"; done; keep="${keep#,}"
+    while :; do
+      tries=$((tries + 1))
+      printf '%s' "    Numbers separated by commas, 'none', or Enter = [$keep]: "
+      ans=""; IFS= read -r ans || ans=""
+      ans="$(printf '%s' "$ans" | sed 's/^ *//;s/ *$//')"
+      [ -z "$ans" ] && return 0
+      case "$ans" in none|n|no) SM_RESULT=""; return 0 ;; esac
+      picked=""; bad=0
+      for tok in $(printf '%s' "$ans" | tr ',' ' '); do
+        case "$tok" in
+          ''|*[!0-9]*) bad=1 ;;
+          *) if [ "$tok" -ge 1 ] && [ "$tok" -le "$n" ]; then picked="$picked $((tok - 1))"; else bad=1; fi ;;
+        esac
+      done
+      if [ "$bad" = "0" ]; then
+        SM_RESULT="$(printf '%s\n' $picked | sort -nu | tr '\n' ' ' | sed 's/ *$//')"
+        return 0
+      fi
+      if [ "$tries" -ge 5 ]; then info "No valid answer - keeping [$keep]."; return 0; fi
+      fail "Type numbers from the list, e.g. 1,3"
+    done
+  fi
+  plain "    Up/Down move, Space ticks, A ticks all, Enter confirms" "$C_GRAY"
+  trap 'printf "\033[?25h\n"; exit 130' INT
+  printf '\033[?25l'
+  sm_draw "$cur"
+  while :; do
+    key=""
+    IFS= read -rsn1 key || { key=""; }          # EOF confirms rather than spinning
+    case "$key" in
+      $'\033')
+        rest=""; IFS= read -rsn2 -t 1 rest || true
+        case "$rest" in
+          '[A'|'OA') cur=$(((cur + n - 1) % n)) ;;
+          '[B'|'OB') cur=$(((cur + 1) % n)) ;;
+        esac ;;
+      k) cur=$(((cur + n - 1) % n)) ;;
+      j) cur=$(((cur + 1) % n)) ;;
+      ' ') if [ "${SM_SEL[$cur]}" = "1" ]; then SM_SEL[$cur]=0; else SM_SEL[$cur]=1; fi ;;
+      a|A)
+        ans=0; for ((i = 0; i < n; i++)); do [ "${SM_SEL[$i]}" = "0" ] && ans=1; done   # any unticked: tick all, else clear
+        for ((i = 0; i < n; i++)); do SM_SEL[$i]=$ans; done ;;
+      '') break ;;                              # Enter (read strips the newline)
+    esac
+    sm_draw "$cur" redraw
+  done
+  printf '\033[?25h'; trap - INT
+  sm_collect
+}
+
+# -- LLM providers ------------------------------------------------------------
+# The providers agentY can run its agents on: the provider token of a
+# 'provider,model' setting (src/agent.py: ollama, anthropic, the DashScope
+# aliases, openai, google/gemini) and the key each one reads. Ollama is local.
+# id|label|key variables (comma)|question|help
+LLM_PROVIDERS='anthropic|Anthropic (Claude) - recommended|ANTHROPIC_API_KEY|Anthropic API key (Claude)|Create at https://platform.claude.com/
+dashscope|Alibaba Model Studio (DashScope, Qwen)|DASHSCOPE_API_KEY|DashScope / Alibaba Model Studio key|For Qwen models: https://bailian.console.alibabacloud.com/
+openai|OpenAI (GPT)|OPENAI_API_KEY|OpenAI API key|Create at https://platform.openai.com/api-keys
+google|Google (Gemini)|GEMINI_API_KEY,GOOGLE_API_KEY|Gemini API key|Create at https://aistudio.google.com/apikey
+ollama|Ollama (local models, no key)||Ollama|'
+
+# Which providers to ask for keys. Ticked from the start: the ones whose key is
+# already in .env (Anthropic when there is none yet). Asks the key of each ticked
+# one only; the rest of .env is left alone.
+select_llm_providers() {   # $1 = .env
+  local env_file="$1" id label keys q help k isset any=0 i
+  local -a P_KEYS=() P_Q=() P_HELP=()
+  SM_LABELS=(); SM_HINTS=(); SM_SEL=()
+  while IFS='|' read -r id label keys q help; do
+    [ -z "$id" ] && continue
+    isset=0
+    for k in ${keys//,/ }; do is_placeholder "$(get_env_value "$env_file" "$k")" || isset=1; done
+    [ "$isset" = "1" ] && any=1
+    SM_LABELS+=("$label"); SM_SEL+=("$isset")
+    SM_HINTS+=("$([ "$isset" = "1" ] && echo "key already in .env")")
+    P_KEYS+=("$keys"); P_Q+=("$q"); P_HELP+=("$help")
+  done <<EOF
+$LLM_PROVIDERS
+EOF
+  [ "$any" = "0" ] && SM_SEL[0]=1
+  SM_TITLE="Which LLM providers will you use? (a key is asked for each ticked one)"
+  SM_NONE_SILENT=0
+  select_many
+  for i in $SM_RESULT; do
+    if [ -z "${P_KEYS[$i]}" ]; then
+      [ "$NON_INTERACTIVE" = "1" ] || info "Ollama needs no key. Install it from https://ollama.com/ and start it before agentY."
+      continue
+    fi
+    k="${P_KEYS[$i]%%,*}"
+    # Gemini also reads GOOGLE_API_KEY: an existing one counts as set.
+    for id in ${P_KEYS[$i]//,/ }; do is_placeholder "$(get_env_value "$env_file" "$id")" || { k="$id"; break; }; done
+    read_secret "$env_file" "$k" "${P_Q[$i]}" "${P_HELP[$i]}" >/dev/null
+  done
+}
+
+# -- MCP presets --------------------------------------------------------------
+# Offers the catalog in config/mcp_presets.json; scripts/mcp_presets.py does the
+# merge into config/mcp.json so the logic exists once. Nothing here asks for an
+# add-on to be installed into a desktop app: those steps are printed.
+install_mcp_presets() {   # $1 = .env
+  local env_file="$1" py tool id name cat def desc key label help opt line state warm steps
+  py="$(venv_python "$PROJECT_ROOT")"; tool="$PROJECT_ROOT/scripts/mcp_presets.py"
+  if [ ! -x "$py" ] || [ ! -f "$tool" ]; then info "MCP presets skipped (no venv python or scripts/mcp_presets.py)"; return 0; fi
+  if [ "$NON_INTERACTIVE" = "1" ]; then info "Non-interactive: no MCP presets added. Add them later in Settings > MCP servers."; return 0; fi
+  local -a P_IDS=() chosen=() later_id=() later_steps=()
+  SM_LABELS=(); SM_HINTS=(); SM_SEL=()
+  while IFS='|' read -r id name cat def desc; do
+    [ -z "$id" ] && continue
+    P_IDS+=("$id"); SM_LABELS+=("$name  [$cat]"); SM_HINTS+=("$desc"); SM_SEL+=("$def")
+  done <<EOF
+$("$py" "$tool" list)
+EOF
+  [ "${#P_IDS[@]}" -eq 0 ] && return 0
+  SM_TITLE="MCP servers to add (extra tools for the agent; Enter with none ticked adds nothing)"
+  SM_NONE_SILENT=1
+  select_many
+  SM_NONE_SILENT=0
+  if [ -z "$SM_RESULT" ]; then info "No MCP presets chosen - add them later in Settings > MCP servers."; return 0; fi
+  for line in $SM_RESULT; do chosen+=("${P_IDS[$line]}"); done
+  for id in "${chosen[@]}"; do
+    while IFS='|' read -r -u 3 key label help opt; do
+      [ -z "$key" ] && continue
+      label="$label (for MCP preset $id)"; [ "$opt" = "1" ] && label="$label - optional"
+      read_secret "$env_file" "$key" "$label" "$help" >/dev/null
+    done 3<<EOF
+$("$py" "$tool" keys "$id")
+EOF
+  done
+  while IFS='|' read -r -u 3 state id; do
+    case "$state" in
+      added)   success "MCP server '$id' added to config/mcp.json" ;;
+      skipped) info "MCP server '$id' is already configured - kept as it is" ;;
+      needs_bundle) info "MCP server '$id' needs its .mcpb bundle first - not written to config/mcp.json yet"
+                    steps="$("$py" "$tool" steps "$id")"
+                    [ -n "$steps" ] && { later_id+=("$id"); later_steps+=("$steps"); }
+                    continue ;;
+      *)       fail "Unknown MCP preset '$id'"; continue ;;
+    esac
+    if warm="$("$py" "$tool" warmup "$id" 2>&1 | tail -n 1)"; then
+      [ -n "$warm" ] && [ "$warm" != "nothing to fetch" ] && success "Pre-fetched '$id'"
+    else
+      info "Could not pre-fetch '$id' ($warm) - it is fetched on first use"
+    fi
+    steps="$("$py" "$tool" steps "$id")"
+    if [ -n "$steps" ]; then later_id+=("$id"); later_steps+=("$steps"); fi
+  done 3<<EOF
+$("$py" "$tool" apply "${chosen[@]}")
+EOF
+  if [ "${#later_id[@]}" -gt 0 ]; then
+    echo; plain "  Finish later (the installer does not touch other applications):" "$C_WHITE"
+    local i
+    for ((i = 0; i < ${#later_id[@]}; i++)); do
+      plain "    ${later_id[$i]}:" "$C_CYAN"
+      printf '%s\n' "${later_steps[$i]}" | sed 's/^/      /'
+    done
+    info "Or ask the agent: it can do these steps for you once it runs (Settings > MCP servers > Add from presets does it too)."
+  fi
+}
+
 # =============================================================================
 echo
 plain "  agentY stack installer" "$C_CYAN"
@@ -714,10 +920,10 @@ if [ "$NON_INTERACTIVE" = "1" ]; then
 else
   plain "  Press Enter to keep an existing value or skip an optional one." "$C_GRAY"
 fi
+select_llm_providers "$ENV_FILE"
 HF_TOKEN_VAL="$(read_secret "$ENV_FILE" "HF_TOKEN"          "Hugging Face token (gated model downloads)"      "Create at https://huggingface.co/  (account -> Access Tokens)")"
-read_secret "$ENV_FILE" "ANTHROPIC_API_KEY" "Anthropic API key (Claude) - recommended"        "Create at https://platform.claude.com/" >/dev/null
 COMFY_KEY_VAL="$(read_secret "$ENV_FILE" "COMFYUI_API_KEY"  "ComfyUI API key (optional - auth / API nodes)"   "https://platform.comfy.org/profile/api-keys  - blank for a local ComfyUI")"
-read_secret "$ENV_FILE" "DASHSCOPE_API_KEY" "DashScope / Alibaba Model Studio key (optional)" "For Qwen models: https://bailian.console.alibabacloud.com/" >/dev/null
+install_mcp_presets "$ENV_FILE"
 success "agentY .env ready ($ENV_FILE)"
 
 # -- 5. Long-term memory embedder ----------------------------------------------
