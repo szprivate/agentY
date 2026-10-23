@@ -1,10 +1,24 @@
 ---
 name: model-from-reference
-description: Model a building, object or set in a 3D app (Blender through its MCP) so that it matches a reference photo — the way a 3D artist does it - measure the photo, match the camera, block out grey shapes until the silhouette and proportions match, THEN details, THEN materials and light. Use for "model this house / object / room in Blender from this photo", "rebuild this in 3D", "make a 3D version of this picture", "match this reference in Blender".
-allowed-tools: blender__execute_blender_code blender__render_viewport_to_path blender__get_objects_summary blender__get_screenshot_of_window_as_image analyze_image get_image_resolution run_script write_text_file read_text_file show_in_panel
+description: Model a building, object or set in a 3D app (Blender, Maya or Houdini) so that it matches a reference photo — the way a 3D artist does it - measure the photo, match the camera, block out grey shapes until the silhouette and proportions match, THEN details, THEN materials and light. Use for "model this house / object / room in Blender from this photo", "rebuild this in 3D", "make a 3D version of this picture", "match this reference in Blender".
+allowed-tools: dcc_build dcc_silhouette_check blender__execute_blender_code blender__render_viewport_to_path blender__get_objects_summary blender__get_screenshot_of_window_as_image analyze_image get_image_resolution run_script write_text_file read_text_file show_in_panel
 ---
 
 # Model from a reference photo
+
+Two tools do the work (in the `dcc` tool pack: `load_tools("dcc")` if they are not in your list):
+`dcc_build` runs your one build script in the app, `dcc_silhouette_check` checks the proportions by
+numbers. You may NOT replace either with live edits or with judging by eye.
+
+| app | live (the app the user has open) | batch (a fresh headless process, saves a scene file) |
+|---|---|---|
+| Blender (Z up) | yes, through the Blender MCP add-on (port 9876) | `blender -b`, saves a .blend |
+| Maya (Y up) | yes, if its commandPort is open (port 7001) | `mayapy`, saves a .ma |
+| Houdini (Y up) | no: batch only | `hython`, saves a .hip |
+
+`mode="live"` changes the scene the user is looking at; `mode="batch"` never touches it. Prefer live in Blender
+when the user has it open, batch otherwise. Coordinates are always the app's own (Blender Z up, Maya and
+Houdini Y up): the build script, the camera and the check points all use the same ones.
 
 The order is the whole method. Never build geometry and materials in one go: when the
 proportions are wrong, every material, every detail and every light has to be redone
@@ -14,7 +28,7 @@ with them. Work in stages, and do not leave a stage until its check passes.
 |---|---|---|
 | 1 Measure | read positions off the photo, turn them into metres | a dimension table exists |
 | 2 Camera | match the photo's camera before any geometry | horizon and frame match |
-| 3 Blockout | plain grey boxes and slabs, no detail, no colour | the silhouette check passes |
+| 3 Blockout | plain grey boxes and slabs, no detail, no colour | `dcc_silhouette_check` passes |
 | 4 Detail | windows, railings, bracing, trim, props | the detail check passes |
 | 5 Look | materials, sun, sky, final render | colours and light match |
 
@@ -25,16 +39,24 @@ Keep the whole model in ONE Python file, `output/scripts/<name>_build.py` (write
 where it came from (`DECK_Z = 3.3  # deck top: 0.22 of image height above the sand line`).
 The script first deletes its own collection, then builds everything from the constants.
 
-Run it with `blender__execute_blender_code`:
+EVERY pass goes through `dcc_build` with that one file. Never run the geometry with
+`execute_blender_code` or any other live call:
 
-```python
-p = r"<abs path>/output/scripts/<name>_build.py"
-exec(compile(open(p, encoding="utf-8").read(), p, "exec"))
+```
+dcc_build(script_path="<abs path>/output/scripts/<name>_build.py", app="blender", mode="live",
+          render_to="<abs path>/output/<name>_blockout.png", render_engine="fast", resolution="800x600")
 ```
 
+It runs the whole file, returns the script's own error line if it fails (fix the constant or the line, run
+again), the objects it made, and a fast render (Blender Workbench, Maya hardware, Houdini OpenGL). In batch
+mode add `save_to` (or take the default) and keep the `saved` path it returns: the check and later renders open it.
+`render_engine="final"` is Cycles / Arnold / Karma, for stage 5 only.
+
 A correction is a changed constant and a re-run: the scene is rebuilt clean every time.
-Never patch the live scene object by object over many calls; leftovers pile up (stray
-blocks, doubled parts) and you lose track of what is really there.
+The Blender MCP tools (`execute_blender_code`, `get_objects_summary`, screenshots) are for INSPECTING only:
+reading a bounding box, listing what is there. Never patch the scene object by object over many calls;
+leftovers pile up (stray blocks, doubled parts) and you lose track of what is really there. If the scene is
+wrong, change the script and call `dcc_build` again.
 
 ## 1 Measure the photo
 
@@ -62,6 +84,9 @@ blocks, doubled parts) and you lose track of what is really there.
 - Distance: `d = real_width / (2 * tan(hfov / 2) * width_fraction)`. Start at 50 mm.
 - Aim with `(target - cam.location).to_track_quat('-Z', 'Y')`. Hand-written Euler angles
   are how a camera ends up rolled, or pointing backwards at an empty frame.
+- The camera lives in the build script too (the check uses the scene camera, Houdini: the first camera in
+  /obj, or the one you name). In Maya the lens shift is the camera's film offset, in Houdini its window
+  offset; a Maya camera must be set renderable (or named in `camera=`).
 - Which side of the subject is the camera on? A wall you can see means the camera is on
   that wall's side. Check this against the photo before moving on.
 
@@ -74,11 +99,26 @@ Gable roofs: build each roof plane from its four vertices (eave left, eave right
 right, ridge left) so the ridge is the highest edge. A rotated slab overshoots its ridge
 and turns the roof into an inverted V.
 
-**The silhouette check, by numbers, not by eye.** Project key points into the camera with
-`bpy_extras.object_utils.world_to_camera_view(scene, cam, point)` and compare the
-(x, 1 - y) fractions with your measurements: ground line, deck line, ridge, mast top, left
-and right extents. Every one within ~0.03 of the photo before you go on. This check cannot
-hallucinate, so it decides; the picture comparison below finds what the numbers missed.
+**The silhouette check, by numbers, not by eye. This stage is not passed until `dcc_silhouette_check`
+passes.** Pick 6-12 key points of the model (ground contact, deck corner, eave, ridge ends, mast top, left
+and right extents of each part) and write where each sits in the photo, as fractions read off your grid
+(x from the left, y from the TOP):
+
+```
+dcc_silhouette_check(app="blender", mode="live", tolerance=0.03, points=[
+  {"name": "deck front-left corner", "world": [-3.0, 0.0, 3.3], "target": [0.21, 0.62]},
+  {"name": "ridge left end",         "world": [-2.5, 1.0, 6.1], "target": [0.30, 0.35]},
+  {"name": "mast top",               "world": [0.0, 0.0, 9.0],  "target": [0.52, 0.08]}])
+```
+
+`world` is read from the build script's constants (the app's own coordinates). In batch mode also pass
+`scene=` the `saved` path from `dcc_build`. The answer lists every point with dx, dy (projected minus photo),
+pass or fail, and a hint, the worst first. Read `overall_hint` first: when every point is off the same way,
+the camera is wrong (height, distance, aim, lens shift), not the model, so fix the camera constants before
+touching any mass. Then fix the worst point's constant in the script, run `dcc_build`, run the check again.
+Do not move on to stage 4 while `overall_pass` is false, and do not argue a failure away by eye: the numbers
+decide, the picture comparison below finds what they missed. If a point cannot be checked (hidden in the
+photo), leave it out instead of guessing its target.
 
 Then compare pictures: `analyze_image(file_paths=[reference, render], mode='full')` when
 your model can see images, otherwise mode `describe`. Ask open questions ("List the
@@ -89,7 +129,8 @@ to confirm. If a comparison says something is missing or extra, check it in the 
 ## 4 Detail
 
 Windows and doors where the photo has them (count them), railings, bracing, stairs,
-trim, props. Re-run the silhouette check; details must not move the masses.
+trim, props. All of it goes in the same build script, through `dcc_build`. Re-run
+`dcc_silhouette_check` with the same points; details must not move the masses.
 
 ## 5 Look
 
@@ -98,9 +139,11 @@ trim, props. Re-run the silhouette check; details must not move the masses.
 - Use the "Standard" view transform for colours that match the photo. AgX and Filmic wash
   out saturated colours such as a blue sky or orange wood.
 - Sun direction from the photo's shadows. The side facing the camera is usually lit.
-- Final render: Cycles, GPU, 64-128 samples with denoising is plenty. Save as `<name>_final.png`.
+- Final render: `dcc_build(..., render_engine="final", render_to="<name>_final.png")` (Cycles with
+  denoising in Blender, Arnold in Maya, Karma in Houdini). Camera, lens and aspect are those the check passed.
 
 ## Report
 
 Show the final render next to the photo. List what still differs honestly; do not rate
-your own match ("6/10"), and do not claim a measurement you did not check.
+your own match ("6/10"), and do not claim a measurement you did not check: quote the last
+`dcc_silhouette_check` result (points, worst distance) as the measurement.
