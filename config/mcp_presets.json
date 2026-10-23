@@ -4,7 +4,7 @@
       "id": "blender",
       "name": "Blender",
       "category": "3D / DCC",
-      "description": "Drive a running Blender: scenes, objects, materials, Python, full API docs. Its add-on listens on port 9876, shared with the Nuke bridge: run one at a time.",
+      "description": "Drive a running Blender: scenes, objects, materials, Python, full API docs. Its add-on listens on port 9876.",
       "server": {
         "enabled": true,
         "transport": "stdio",
@@ -180,22 +180,20 @@
     },
     {
       "id": "nuke",
-      "name": "Nuke (community)",
+      "name": "Nuke",
       "category": "VFX / Compositing",
-      "description": "Create, wire and render Nuke node graphs and run Nuke Python. Its add-on listens on port 9876, shared with the Blender bridge: run one at a time.",
+      "description": "Create, connect and configure nodes in a running Nuke session, render Write nodes, run Nuke Python (destructive actions ask first). Nuke 15+, verified on 17. Bridge on port 54321.",
       "server": {
         "enabled": true,
         "transport": "stdio",
         "command": "uv",
         "args": [
+          "--directory",
+          "${AGENTY_ROOT}/config/mcp_bundles/nuke-mcp",
           "run",
-          "--with",
-          "fastmcp",
-          "python",
-          "nuke_mcp_server.py"
+          "nuke-mcp"
         ],
-        "auth": "none",
-        "cwd": "${AGENTY_ROOT}/config/mcp_bundles/nuke"
+        "auth": "none"
       },
       "env_keys": [],
       "requires": [
@@ -203,9 +201,9 @@
         "git",
         "nuke"
       ],
-      "setup_steps": "The agent does the clone and the add-on copy itself (the installer only prints this). Not on PyPI (PyPI `nuke-mcp` is an unrelated joke package - never install it). 1) `git clone https://github.com/dughogan/nuke_mcp.git config/mcp_bundles/nuke` then `git -C config/mcp_bundles/nuke checkout 761ea9e` (pin). 2) Copy nuke_mcp_addon.py to `%USERPROFILE%\\.nuke\\python\\` (create the folder). 3) Add to `%USERPROFILE%\\.nuke\\init.py`: `nuke.pluginAddPath(\"./python\")` and `import nuke_mcp_addon`; add to menu.py: `nuke.toolbar(\"Nodes\").addCommand('NukeMCP/NukeMCP Panel','nuke_mcp_addon.show_panel()')`. 4) Start Nuke, open the NukeMCP panel and start the socket server (localhost:9876). Run nuke_mcp_server.py directly, not main.py (main.py prints banners to stdout, which corrupts the stdio protocol). fastmcp comes from `uv run --with fastmcp`. Port 9876 is also used by some other DCC bridges; run one at a time.",
-      "default_selected": false,
-      "notes": ""
+      "setup_steps": "kleer001/nuke-mcp (MIT), pinned to commit 6cbed80a2f35b997263fc51c988c5bb1405657fd. Not on PyPI (the PyPI `nuke-mcp` is an unrelated joke package - never pip install it).\n1. `git clone https://github.com/kleer001/nuke-mcp.git \"<agentY root>/config/mcp_bundles/nuke-mcp\"` then `git -C <that dir> checkout 6cbed80a2f35b997263fc51c988c5bb1405657fd`.\n2. `uv sync` in that folder (needs uv: `winget install astral-sh.uv`).\n3. Copy `nuke_addon/nuke_mcp_addon.py` into the user's Nuke folder `%USERPROFILE%\\.nuke\\`.\n4. Make it start with Nuke: append to `%USERPROFILE%\\.nuke\\menu.py` (create it if missing; do not duplicate the block):\n   `# --- nuke-mcp (agentY) ---` / `import nuke_mcp_addon` / `nuke_mcp_addon.start()` / `# --- end nuke-mcp ---`\n5. Restart Nuke: a NukeMCP panel appears and listens on port 54321. Then test the server; `uv run nuke-mcp --discover` lists the Nuke installs and licences it finds.\nWithout a running Nuke, `uv run nuke-mcp --headless` can launch Nuke without a GUI (needs a Nuke licence).",
+      "notes": "Replaces the earlier dughogan/nuke_mcp preset (no licence, last update Nov 2025, port 9876 shared with Blender).",
+      "default_selected": false
     },
     {
       "id": "after-effects",
