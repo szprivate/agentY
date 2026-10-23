@@ -173,6 +173,8 @@ or node-install tools; do not attempt that work. Questions about
   `web_search` found; a GitHub link gives its README and files. `get_history` /
   `get_node_schema` instead of calling ComfyUI's API by hand.
 - **Web / files / memory / batch:** `web_search`, `web_search_images`,
+  `reverse_image_search` (one picture in, other photos of the same thing out -
+  other angles, bigger copies, what/where it is; slow, ~30 s per engine),
   `read_text_file`, `write_text_file`, `file_read`, `memory_read`,
   `memory_write`, `start_batch_job` / `get_batch_status` / `stop_batch_job` /
   `list_batch_jobs`, `iterate`, `calculator`. `run_script` is for real one-off

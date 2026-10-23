@@ -108,9 +108,10 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
                   ("dashscope_generate", "dashscope_fetch")),
     "viewer": ("show files in the bEpic viewer, or in the chat panel",
                ("show_in_viewer", "show_in_panel")),
-    "web_more": ("find reference IMAGES on the web, or hand a web search to the scout "
+    "web_more": ("find reference IMAGES on the web, find other photos of the SAME thing from one picture "
+                 "(reverse image search), or hand a web search to the scout "
                  "(web_search, read_web_page, download_image and run_info are always in your list)",
-                 ("web_search_images", "run_web_search")),
+                 ("web_search_images", "reverse_image_search", "run_web_search")),
     "inspect": ("read arbitrary files, list a workflow file's loaded models, search folders for workflow "
                 "files (read_text_file, list_files and get_node_source are always in your list)",
                 ("file_read", "inspect_workflow_file", "find_workflows")),

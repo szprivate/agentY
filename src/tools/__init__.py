@@ -151,6 +151,10 @@ from agenty_core.tools.workspace_tools import (  # noqa: F401,E402
     get_node_source, list_files, find_workflows, media_info, video_frames, read_web_page,
 )
 
+# Find other photos of the same thing from one picture (agenty_core.tools.reverse_search); drives the
+# system Chrome through Playwright, an optional dependency.
+from agenty_core.tools.reverse_search import reverse_image_search  # noqa: F401,E402
+
 # Image / video generation on the user's own DashScope key, not Comfy credits
 # (agenty_core.tools.dashscope_generate).
 from agenty_core.tools.dashscope_generate import dashscope_generate, dashscope_fetch  # noqa: F401,E402
@@ -242,6 +246,7 @@ _SHARED_CORE_TOOLS = [
     "project_memory_read", "project_memory_write", "project_memory_forget",
     # file / shell / web
     "read_text_file", "write_text_file", "run_script", "web_search", "web_search_images",
+    "reverse_image_search",
     # batch
     "start_batch_job", "get_batch_status", "stop_batch_job", "list_batch_jobs",
 ]
@@ -283,6 +288,7 @@ INFO_TOOLS: list = [
     # Web search
     web_search,
     web_search_images,
+    reverse_image_search,   # other photos of the same thing, from one picture
     download_image,   # fetch a found reference image to disk
 ]
 
@@ -294,6 +300,7 @@ INFO_TOOLS: list = [
 SEARCH_WEB_TOOLS: list = [
     web_search,
     web_search_images,
+    reverse_image_search,   # other photos / angles of the same thing from one picture
     download_image,      # stage a found image into ComfyUI's input dir
     analyze_image,       # verify a candidate matches the need
     get_image_resolution,
@@ -613,6 +620,7 @@ ORCHESTRATOR_TOOLS: list = [
     run_script,
     web_search,
     web_search_images,
+    reverse_image_search,  # other photos of the same thing from one picture (Yandex / Bing visual search)
     # Long-term memory (across projects: how the user works, what we've learned)
     memory_read,
     memory_write,
