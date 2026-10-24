@@ -36,7 +36,7 @@ An AI agent that builds and runs [ComfyUI](https://github.com/comfyanonymous/Com
 
 - **3D apps** — Blender, Maya and Houdini are driven through `dcc_build` (one build script, run live in the open app or as a headless batch). `dcc_silhouette_check` compares proportions to the photo by numbers and gates the detail and look stages; `measure_reference` (MoGe) reads metric points, camera height and field of view from one photo.
 - **Photo to model** — the `model-from-reference` skill builds a model from a photo in stages. Demo: the St. Peter-Ording stilt house, modelled from one photo in Blender, rebuilt in Maya, destroyed in Houdini.
-- **Destruction** — the `dcc-destruction-houdini` skill: fracture, constraints, directed collapse, POP dust / Pyro, Vellum cloth, flipbook.
+- **Destruction** — the `dcc-destruction-houdini` skill: fracture, constraints, directed collapse, POP dust, Vellum cloth, flipbook.
 - **Reverse image search** — `reverse_image_search` asks Yandex and Bing (through your installed Chrome or Edge) for other photos of the same object. Optional; the installer offers it.
 - **Model routing** — `list_models` / `switch_model`, plus routing rules (Settings ▸ Models) that suggest a stronger model for certain skills or tool packs. Only models you have are named, and the agent asks before switching unless auto-switch is on.
 - **MCP presets** — add Blender, Maya, Houdini, Nuke, After Effects, Premiere Pro, DaVinci Resolve, Cavalry, AYON and more from the installer or Settings; `${VAR}` in a server URL is expanded.
