@@ -2,7 +2,7 @@
 import unittest
 
 _NAMES = ["atlas_create_world", "atlas_expand_world", "atlas_rebuild_world_mesh", "atlas_splat_to_mesh",
-          "atlas_fetch", "atlas_list", "atlas_render_view", "atlas_open_in_viewer"]
+          "atlas_fetch", "atlas_list", "atlas_render_view", "atlas_open_in_viewer", "marble_create_world", "marble_export"]
 
 
 class Registered(unittest.TestCase):
@@ -19,6 +19,7 @@ class Registered(unittest.TestCase):
         self.assertIn("worldlabs-atlas", agent._ORCH_SKILL_NAMES)
         self.assertTrue(agent._skill_sources(["worldlabs-atlas"]))
         self.assertIn("WORLDLABS_API_KEY", agentY_server._KNOWN_ENV_KEYS)
+        self.assertIn("WLT_MARBLE_API_KEY", agentY_server._KNOWN_ENV_KEYS)
 
 
 if __name__ == "__main__":

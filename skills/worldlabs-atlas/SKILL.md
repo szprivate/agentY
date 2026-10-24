@@ -1,7 +1,7 @@
 ---
 name: worldlabs-atlas
-description: Make a 3D scene from a picture or a text prompt with World Labs Atlas (a depth mesh in the picture's camera), grow it with new views, use it as the set for render_camera_move, and render single new views of it from any camera (consistent backgrounds). Use for "turn this image into a 3D world with Atlas / World Labs", "make a courtyard world from a prompt", "extend the scene sideways", "image to Atlas world to camera move to control video", "same room from another angle", "a new shot of this background", "render this view with Atlas", "a full 360 environment", "make a Gaussian splat of this place", "explorable 3D scene from this picture".
-allowed-tools: atlas_create_world atlas_expand_world atlas_rebuild_world_mesh atlas_splat_to_mesh atlas_fetch atlas_list atlas_render_view atlas_open_in_viewer atlas_capture_around train_splat splat_training_status render_camera_move show_in_viewer
+description: Make a 3D scene from a picture or a text prompt with World Labs Atlas (a depth mesh in the picture's camera), grow it with new views, use it as the set for render_camera_move, and render single new views of it from any camera (consistent backgrounds). Use for "turn this image into a 3D world with Atlas / World Labs", "make a courtyard world from a prompt", "extend the scene sideways", "image to Atlas world to camera move to control video", "same room from another angle", "a new shot of this background", "render this view with Atlas", "a full 360 environment", "make a Gaussian splat of this place", "explorable 3D scene from this picture", "make a splat in Marble", "Marble world from these images", "export the splat as SPZ / PLY", "splat to mesh".
+allowed-tools: atlas_create_world atlas_expand_world atlas_rebuild_world_mesh atlas_splat_to_mesh atlas_fetch atlas_list atlas_render_view atlas_open_in_viewer atlas_capture_around train_splat splat_training_status marble_create_world marble_export render_camera_move show_in_viewer
 ---
 
 # World Labs Atlas: picture or prompt -> 3D scene -> camera move
@@ -77,7 +77,7 @@ so say what you are about to spend (one call = one task) and do not loop.
    A splat from the first picture alone (or a few views) is a flat shell: capture first.
 
 Other tools: `atlas_rebuild_world_mesh` (free, offline: finer/lighter mesh, cut the sky with
-`max_depth`), `atlas_splat_to_mesh` (a Marble `.spz` -> GLB), `atlas_list` (scenes here, or the
+`max_depth`), `atlas_splat_to_mesh` (a Marble world name, a `.spz` or a `.ply` -> GLB), `atlas_list` (scenes here, or the
 project's API jobs), `atlas_fetch(operation_id)` (it also finishes a timed-out `atlas_render_view`: download, upscale, publish).
 
 Errors (`error_kind`): `timeout` -> call `atlas_fetch` with the `operation_id`, do not resubmit;
@@ -88,3 +88,40 @@ needs scopes tasks.create, operations.read, assets.create, assets.read; `rate_li
 
 Upscale errors do not lose the render: the 1280x720 picture is saved and the result carries `upscale_error`
 (ComfyUI down, or no model in `models/upscale_models`); say so and offer to retry with `upscale_model=...`.
+
+## Marble or Atlas or Brush? (a splat world)
+
+World Labs has two services, with their own keys and credits. Pick by what the user needs:
+
+- **Atlas** (everything above): exact camera views, painting the view you look through, growing a world
+  view by view, a depth mesh for `render_camera_move`.
+- **Marble** (`marble_create_world`, `marble_export`): a READY navigable Gaussian-splat world from one
+  to four pictures, no training: SPZ (full ~2M splats, 500k, 100k), PLY, a collider mesh, a panorama.
+  Use it for "give me a splat of this", an export for another app, or a splat to turn into a mesh.
+  It invents what the pictures do not show on its own: you cannot aim cameras at it.
+- **Brush** (`atlas_capture_around` + `train_splat`): for real photos or our own capture sets, when the
+  splat must stay faithful to views we hold (local GPU, no credits).
+
+Marble steps:
+1. **Price it first, say the price, then run it.** One call = one world, ~5 minutes, billed to the World API
+   balance (1,250 credits per US$): marble-1.1 1,600 credits (US$ 1.3), marble-1.1-plus (default, the newest;
+   there is no "Marble 2" in this API) 1,600 to 3,100 (up to US$ 2.5), marble-1.0-draft 150-250 for a quick
+   look. `marble_create_world(..., dry_run=true)` prints the request and the price and spends nothing.
+   Do not loop and do not re-run to compare unless asked.
+2. **From an Atlas world:** `marble_create_world(name="room_marble", atlas_world="room")` takes up to 4
+   posed views spread round the compass (azimuths worked out from their cameras; 8 with
+   `reconstruct_images=true`, which stays closer to the pictures). From pictures:
+   `marble_create_world(name, images=[...])` (several only if they show the SAME place; `azimuths=[0,180]`
+   if you know where each looks: 0 front, 90 right, 180 back, 270 left). A `prompt` is optional.
+3. **Files** land in `output/3d_scenes/marble/<name>/` (`world.json`, `splat_full_res.spz`, thumbnail) and
+   the splat opens in the viewer. `marble_export(name, format="ply"|"spz", resolution="full"|"500k"|"100k",
+   collider_mesh=true)` fetches more of it (free; PLY comes from World Labs, else it is converted here;
+   `metric=true` gives metres with the floor at y = 0). It also collects a creation that timed out.
+4. **A mesh:** `atlas_splat_to_mesh(splat_path="<marble world name>")` (also a `.spz` or a `.ply` path) ->
+   `mesh.glb` in the same folder. Billed to the Atlas credits.
+5. **Axes:** files are raw OpenCV (x right, y DOWN, z forward) - the same Y-down frame as `train_splat`'s
+   `.ply`; the viewer turns it upright. Scale is not metres (see `semantics`). For an OpenGL tool negate Y and Z.
+
+Marble errors: `auth` -> the Marble API needs its OWN key, `WLT_MARBLE_API_KEY` (the Atlas key is refused
+with 401); `balance` -> credits at platform.worldlabs.ai/billing; `content_refusal` -> change the
+picture / prompt; `timeout` -> `marble_export(name)` collects it, do not resubmit.

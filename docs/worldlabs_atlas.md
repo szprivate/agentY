@@ -1,4 +1,4 @@
-# World Labs Atlas (Marble 2 beta Developer API)
+# World Labs Atlas (Marble 2 beta Developer API); Marble splat worlds below
 
 Tools: `atlas_create_world`, `atlas_expand_world`, `atlas_rebuild_world_mesh`, `atlas_splat_to_mesh`,
 `atlas_fetch`, `atlas_list` (`agenty_core/tools/worldlabs_atlas.py`, also in agentY-mcp; skill
@@ -115,3 +115,60 @@ reader), `api`.
 `atlasMasked` / `atlasChisel` are not wrapped; `splats2Mesh` and the `.spz` upload path are only mock-tested; the
 multi-image `images2PosedRGBD` reconstruction and `atlas_expand_world` with several moves were not run live beyond one
 view; GLB loading in the bEpic viewer itself was not exercised (the GLB parses in trimesh / pygltflib).
+
+## Marble (the World API): splat worlds, SPZ / PLY export
+
+Tools: `marble_create_world`, `marble_export` (`agenty_core/tools/worldlabs_marble.py`; SPZ / PLY code in
+`splat_formats.py`; agentY-mcp offers both). Researched 2026-10-25 from the public docs; the paid path has NOT been run.
+
+**Findings (sources)**
+- A separate service from Atlas: `https://api.worldlabs.ai/marble/v1`, same `WLT-Api-Key` header, async operations
+  polled with `GET /operations/{operation_id}` (~5 min per world). [docs.worldlabs.ai/api](https://docs.worldlabs.ai/api/index.md),
+  [OpenAPI](https://docs.worldlabs.ai/api/reference/openapi.md).
+- **Our Atlas key is refused by it: a free `GET /credits` with the Atlas key answered 401 (2026-10-25)**, while the same
+  key works on the Atlas API. The World API needs its own key from platform.worldlabs.ai, set as `WLT_MARBLE_API_KEY`
+  (`WORLDLABS_MARBLE_API_KEY`); the Atlas key is only the fallback. Credits are separate too (API credits are not the web
+  app's). [pricing](https://docs.worldlabs.ai/api/pricing.md)
+- **Models** (`model`): `marble-1.1-plus` (newest, largest worlds), `marble-1.1`, `marble-1.0`, `marble-1.0-draft`.
+  **There is no "Marble 2" in this API**: the models page and the release notes (latest entry 2026-04-02: Marble 1.1 /
+  1.1 Plus) do not mention it; "Marble 2 beta" is World Labs' name for the Atlas developer API, which has no
+  world-generation task (tasks: atlasTextToImage, images2PosedRGBD, atlasGenerate, atlasMasked, atlasChisel,
+  splats2Mesh). [models](https://docs.worldlabs.ai/api/models.md), [release notes](https://docs.worldlabs.ai/marble/release-notes.md),
+  [Atlas reference](https://atlas-beta.worldlabs.ai/docs/api-reference). Default of the tool: `marble-1.1-plus`.
+- **Cost** (credits, 1,250 per US$, min purchase US$ 5, no expiry): draft 150 (pano) / 230 (text, image) / 250 (multi-image,
+  video); `marble-1.0` and `marble-1.1` 1,500 / 1,580 / 1,600; `marble-1.1-plus` the same plus 0-1,500 for world size
+  (so 1,600-3,100 for multi-image, up to US$ 2.5). PLY splat export: free. HQ mesh export (GLB): 3,500 credits (not wrapped).
+  The finished operation carries `cost.total_credits`, which the tool reports. `GET /credits` gives the balance (free);
+  `marble_create_world` reads it first and refuses if it is below the minimum.
+- **Inputs** (`world_prompt.type`): `text`; `image` (`image_prompt`, optional `text_prompt`, `is_pano` auto/true/false);
+  `multi-image` (`multi_image_prompt`: list of `{azimuth?, content}`, 4 images, 8 with `reconstruct_images`; the only pose is
+  `azimuth` in degrees, 0 front / 90 right / 180 back / 270 left - no pitch, no full camera pose); `video`. A content is
+  `{source: "uri"|"media_asset"|"data_base64", ...}`. Local files go through `POST /media-assets:prepare_upload` (jpg,
+  png, webp) and a PUT to the signed URL; that is what the tool does. Other body fields: `display_name` (64), `seed`,
+  `tags`, `permission` (private by default).
+- **Assets** of a World: `assets.splats.spz_urls` {`100k`, `500k`, `full_res`}, `assets.splats.semantics_metadata`
+  {`metric_scale_factor`, `ground_plane_offset`}, `assets.mesh.collider_mesh_url` (GLB, 100-200k triangles),
+  `assets.imagery.pano_url` (2560x1280 equirectangular PNG), `assets.thumbnail_url`, `caption`. PLY: `POST /worlds/{id}:export`
+  `{asset_type: "splats", format: "ply", resolution: full_res|500k|150k|100k}`, synchronous, the result `url` is the file.
+  [export](https://docs.worldlabs.ai/api/reference/worlds/export.md), [file specs](https://docs.worldlabs.ai/marble/export/specs.md)
+- **Axes:** SPZ assets are `marble_raw_opencv` (x right, y down, z forward); Marble's own viewer applies a 180 degree turn
+  about X, which is also what the bEpic viewer (Spark) does to every splat, so a Marble splat and a `train_splat` `.ply`
+  (Y down) load the same way and nothing is flipped here. For an OpenGL tool negate Y and Z. `semantics_metadata` is metric
+  scale + ground only: centres x factor then minus `ground_plane_offset` on Y, log-scales + ln(factor) (`marble_export(metric=true)`
+  does this). [rendering-spz](https://docs.worldlabs.ai/api/rendering-spz.md)
+
+**What agentY does**
+- `marble_create_world(name, images=[...] | atlas_world="room", prompt, model, ...)` -> `output/3d_scenes/marble/<name>/`
+  with `world.json` (world id, operation, cost, scale metadata, inputs), `splat_full_res.spz` and sidecars, opens it in
+  the viewer. With `atlas_world` it picks up to 4 posed views spread round the compass and works each view's azimuth out from
+  its camera. `dry_run=true` returns the request and the price and spends nothing. A timeout leaves `world.json` as `pending`.
+- `marble_export(name, format, resolution, collider_mesh, metric, refresh)`: SPZ at full / 500k / 100k, PLY (World Labs'
+  own export, else converted from the SPZ with `splat_formats`), collider mesh; collects a pending creation.
+- `splat_formats.py`: pure-numpy SPZ v2/v3 reader, v3 writer, PLY reader/writer (no new dependency; the PyPI `spz` package
+  is a 0.0.1 placeholder). SPZ v4 (zstd streams) is refused with a pointer to the PLY export.
+- `atlas_splat_to_mesh(splat_path)` takes a Marble world name (its SPZ, fetched if absent; `mesh.glb` lands in that world's
+  folder), a `.spz`, or a `.ply` (converted to SPZ first, axes unchanged).
+
+**Not verified live:** every call above is stub-tested only. Unconfirmed: that the Marble key works with the endpoints
+as documented, the `data_base64` content shape (the tool uploads media assets instead), whether Marble SPZ files are
+version 2/3 (the reader handles those) and that `splats2Mesh` reads a Marble SPZ in its raw axes.

@@ -3201,7 +3201,7 @@ def _list_models_now() -> dict:
 _KNOWN_ENV_KEYS = [
     "HF_TOKEN", "ANTHROPIC_API_KEY", "COMFYUI_API_KEY",
     "DASHSCOPE_API_KEY", "DASHSCOPE_BASE_URL",
-    "WORLDLABS_API_KEY",
+    "WORLDLABS_API_KEY", "WLT_MARBLE_API_KEY",
     # Ayon pipeline (service-user key; see docs/ayon.md)
     "AYON_API_KEY", "AYON_SERVER_URL",
     # Deadline render farm (all optional; see docs/deadline.md)
@@ -3244,6 +3244,9 @@ _BUILTIN_SERVICES = [
      "help_url": "https://huggingface.co/settings/tokens"},
     {"id": "worldlabs", "label": "World Labs", "key_env": "WORLDLABS_API_KEY",
      "help_url": "https://platform.worldlabs.ai/api-keys"},
+    {"id": "worldlabs_marble", "label": "World Labs Marble (World API)", "key_env": "WLT_MARBLE_API_KEY",
+     "help_url": "https://platform.worldlabs.ai/api-keys",
+     "hint": "The Marble World API (splat worlds) is a separate service from Atlas and refuses the Atlas key; create a World API key on the platform. Its credits are separate too."},
     {"id": "ayon", "label": "Ayon", "key_env": "AYON_API_KEY", "url_env": "AYON_SERVER_URL",
      "default_url": "https://bepic.ayon.app",
      "help_url": "https://ayon.ynput.io/docs/",
