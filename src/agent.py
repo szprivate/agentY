@@ -1010,6 +1010,8 @@ _ORCH_SKILL_NAMES = [
     "model-from-reference",
     # Destruction in Houdini: fracture, constraints, RBD sim, dust / smoke, cloth, flipbook.
     "dcc-destruction-houdini",
+    # Editable motion graphics: write a scene (data), the viewer edits it, Remotion renders it.
+    "motion-graphics-scene",
 ]
 
 

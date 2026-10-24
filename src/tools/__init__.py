@@ -163,6 +163,8 @@ from agenty_core.tools.dashscope_generate import dashscope_generate, dashscope_f
 from agenty_core.tools.show_in_viewer import show_in_viewer, set_default_tab_provider as _set_viewer_tab  # noqa: F401,E402
 # Fly a camera through a 3D scene in the viewer and render the move (agenty_core.tools.previz_shot).
 from agenty_core.tools.previz_shot import render_camera_move  # noqa: F401,E402
+# Editable motion graphics: a scene file (data) checked, previewed and rendered with Remotion.
+from agenty_core.tools.motion_graphics import mg_scene_validate, mg_scene_preview_frame, mg_render  # noqa: F401,E402
 # A 3D scene from a picture or a prompt with World Labs Atlas (agenty_core.tools.worldlabs_atlas).
 from agenty_core.tools.worldlabs_atlas import (  # noqa: F401,E402
     atlas_create_world, atlas_expand_world, atlas_rebuild_world_mesh, atlas_splat_to_mesh, atlas_fetch, atlas_list,
@@ -229,6 +231,8 @@ _SHARED_CORE_TOOLS = [
     "show_in_viewer",
     # animate a camera through a 3D scene in the viewer and render the move
     "render_camera_move",
+    # editable motion graphics: write a *.mgscene.json scene, check it, look at stills, render it with Remotion
+    "mg_scene_validate", "mg_scene_preview_frame", "mg_render",
     # a 3D scene from a picture / prompt with World Labs Atlas
     "atlas_create_world", "atlas_expand_world", "atlas_rebuild_world_mesh", "atlas_splat_to_mesh",
     "atlas_fetch", "atlas_list", "atlas_render_view", "atlas_open_in_viewer",
@@ -594,6 +598,9 @@ ORCHESTRATOR_TOOLS: list = [
     dashscope_fetch,     # collect one that timed out
     show_in_viewer,      # "show me clip 3 in the viewer" / "open the edit"
     render_camera_move,  # fly a camera through a 3D scene in the viewer, render the move (control video)
+    mg_scene_validate,   # motion graphics: check a *.mgscene.json scene
+    mg_scene_preview_frame,  # ... look at stills / a contact sheet of it
+    mg_render,           # ... render it to a video with the generic Remotion renderer
     atlas_create_world,  # World Labs Atlas: picture / prompt -> posed depth mesh (GLB)
     atlas_expand_world,  # Atlas invents more views at new cameras and grows the mesh
     atlas_rebuild_world_mesh,

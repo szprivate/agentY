@@ -6,6 +6,10 @@ allowed-tools: add_mcp_server, use_mcp_server, list_mcp_servers, get_agent_outpu
 
 # Remotion
 
+> For titles, lower thirds, logo reveals and animated text / shapes / pictures use the
+> `motion-graphics-scene` skill first: it writes an EDITABLE scene file (the user changes layers and
+> keyframes in the viewer's Motion panel). Use free-React Remotion below only for what a scene cannot say.
+
 Remotion renders a React component to video, frame by frame. Use it for designed
 motion graphics (text, shapes, charts, titles, edits of existing clips) — not for
 photoreal generation, which stays with ComfyUI.

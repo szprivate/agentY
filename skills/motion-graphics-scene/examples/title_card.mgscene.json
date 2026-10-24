@@ -1,0 +1,172 @@
+{
+ "mgscene": 1,
+ "name": "Title card",
+ "comp": {
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "duration": 120,
+  "background": "#0a0a0a"
+ },
+ "layers": [
+  {
+   "id": "ring",
+   "name": "Ring",
+   "type": "shape",
+   "shape": "ellipse",
+   "size": [
+    640,
+    640
+   ],
+   "fill": null,
+   "stroke": "#ff6a1a",
+   "strokeWidth": 3,
+   "position": [
+    960,
+    540
+   ],
+   "opacity": 60,
+   "tracks": {
+    "trimEnd": [
+     {
+      "f": 0,
+      "v": 0,
+      "ease": "easeOut"
+     },
+     {
+      "f": 50,
+      "v": 1
+     }
+    ],
+    "rotation": [
+     {
+      "f": 0,
+      "v": -90,
+      "ease": "linear"
+     },
+     {
+      "f": 120,
+      "v": 30
+     }
+    ]
+   }
+  },
+  {
+   "id": "title",
+   "name": "Title",
+   "type": "text",
+   "text": "THE WAY OUT",
+   "weight": 800,
+   "fontSize": 150,
+   "align": "center",
+   "fill": "#f2f2ee",
+   "position": [
+    960,
+    520
+   ],
+   "tracks": {
+    "tracking": [
+     {
+      "f": 8,
+      "v": 60,
+      "ease": "easeOut"
+     },
+     {
+      "f": 60,
+      "v": 6
+     }
+    ],
+    "opacity": [
+     {
+      "f": 8,
+      "v": 0,
+      "ease": "linear"
+     },
+     {
+      "f": 30,
+      "v": 100
+     }
+    ]
+   }
+  },
+  {
+   "id": "rule",
+   "name": "Rule",
+   "type": "shape",
+   "shape": "rect",
+   "size": [
+    520,
+    4
+   ],
+   "fill": "#ff6a1a",
+   "position": [
+    960,
+    620
+   ],
+   "tracks": {
+    "scale": [
+     {
+      "f": 40,
+      "v": [
+       0,
+       100
+      ],
+      "ease": "easeOut"
+     },
+     {
+      "f": 70,
+      "v": [
+       100,
+       100
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": "sub",
+   "name": "Subtitle",
+   "type": "text",
+   "text": "A SHORT FILM",
+   "weight": 400,
+   "fontSize": 34,
+   "tracking": 14,
+   "align": "center",
+   "fill": "#ff6a1a",
+   "position": [
+    960,
+    690
+   ],
+   "tracks": {
+    "opacity": [
+     {
+      "f": 58,
+      "v": 0,
+      "ease": "linear"
+     },
+     {
+      "f": 78,
+      "v": 100
+     }
+    ],
+    "position": [
+     {
+      "f": 58,
+      "v": [
+       960,
+       706
+      ],
+      "ease": "easeOut"
+     },
+     {
+      "f": 78,
+      "v": [
+       960,
+       690
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}

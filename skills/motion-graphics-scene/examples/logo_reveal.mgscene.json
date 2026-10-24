@@ -1,0 +1,197 @@
+{
+ "mgscene": 1,
+ "name": "Logo reveal",
+ "comp": {
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "duration": 96,
+  "background": "#f1ede4"
+ },
+ "layers": [
+  {
+   "id": "mark",
+   "name": "Mark",
+   "type": "group",
+   "position": [
+    760,
+    540
+   ],
+   "tracks": {
+    "scale": [
+     {
+      "f": 0,
+      "v": [
+       0,
+       0
+      ],
+      "ease": "backOut"
+     },
+     {
+      "f": 24,
+      "v": [
+       100,
+       100
+      ]
+     }
+    ],
+    "rotation": [
+     {
+      "f": 0,
+      "v": -30,
+      "ease": "easeOut"
+     },
+     {
+      "f": 30,
+      "v": 0
+     }
+    ]
+   }
+  },
+  {
+   "id": "disc",
+   "name": "Disc",
+   "type": "shape",
+   "shape": "ellipse",
+   "parent": "mark",
+   "size": [
+    220,
+    220
+   ],
+   "fill": "#ff6a1a"
+  },
+  {
+   "id": "ring",
+   "name": "Ring",
+   "type": "shape",
+   "shape": "ellipse",
+   "parent": "mark",
+   "size": [
+    300,
+    300
+   ],
+   "fill": null,
+   "stroke": "#1a1a1a",
+   "strokeWidth": 8,
+   "tracks": {
+    "trimEnd": [
+     {
+      "f": 10,
+      "v": 0,
+      "ease": "easeInOut"
+     },
+     {
+      "f": 44,
+      "v": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "slash",
+   "name": "Slash",
+   "type": "shape",
+   "shape": "rect",
+   "parent": "mark",
+   "size": [
+    18,
+    150
+   ],
+   "fill": "#f1ede4",
+   "rotation": 35,
+   "tracks": {
+    "scale": [
+     {
+      "f": 30,
+      "v": [
+       100,
+       0
+      ],
+      "ease": "easeOut"
+     },
+     {
+      "f": 46,
+      "v": [
+       100,
+       100
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": "word",
+   "name": "Wordmark",
+   "type": "text",
+   "text": "FORGE",
+   "weight": 800,
+   "fontSize": 190,
+   "tracking": 10,
+   "align": "left",
+   "fill": "#1a1a1a",
+   "position": [
+    960,
+    540
+   ],
+   "revealDir": "right",
+   "tracks": {
+    "reveal": [
+     {
+      "f": 30,
+      "v": 0,
+      "ease": "easeOut"
+     },
+     {
+      "f": 60,
+      "v": 1
+     }
+    ],
+    "position": [
+     {
+      "f": 30,
+      "v": [
+       920,
+       540
+      ],
+      "ease": "easeOut"
+     },
+     {
+      "f": 60,
+      "v": [
+       960,
+       540
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": "tag",
+   "name": "Tagline",
+   "type": "text",
+   "text": "MADE TO MOVE",
+   "weight": 400,
+   "fontSize": 36,
+   "tracking": 16,
+   "align": "left",
+   "fill": "#6b665c",
+   "position": [
+    966,
+    650
+   ],
+   "tracks": {
+    "opacity": [
+     {
+      "f": 56,
+      "v": 0,
+      "ease": "linear"
+     },
+     {
+      "f": 76,
+      "v": 100
+     }
+    ]
+   }
+  }
+ ]
+}

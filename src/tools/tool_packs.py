@@ -94,6 +94,10 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
             "(read the `model-from-reference` skill first); destroy a model in Houdini with a rigid-body sim, dust, smoke and cloth "
             "(read the `dcc-destruction-houdini` skill first)",
             ("dcc_build", "dcc_silhouette_check", "measure_reference")),
+    "motion": ("editable motion graphics (titles, lower thirds, logo reveals, animated text / shapes / images): "
+               "write a *.mgscene.json scene as DATA, check it, look at stills, render it with Remotion; the user edits "
+               "the same file in the viewer's Motion panel (read the `motion-graphics-scene` skill first)",
+               ("mg_scene_validate", "mg_scene_preview_frame", "mg_render")),
     "routing": ("see which models are available and what each role runs, and move the orchestrator (or a "
                 "tier) to another one - always after the user agrees (see 'Switching models')",
                 ("list_models", "switch_model")),

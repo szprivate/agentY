@@ -1,0 +1,204 @@
+{
+ "mgscene": 1,
+ "name": "Lower third",
+ "comp": {
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "duration": 90,
+  "background": "#16161b"
+ },
+ "layers": [
+  {
+   "id": "lt",
+   "name": "Lower third",
+   "type": "group",
+   "tracks": {
+    "position": [
+     {
+      "f": 0,
+      "v": [
+       0,
+       0
+      ],
+      "ease": "smooth"
+     },
+     {
+      "f": 68,
+      "v": [
+       0,
+       0
+      ],
+      "ease": "easeIn"
+     },
+     {
+      "f": 86,
+      "v": [
+       -1100,
+       0
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": "panel",
+   "name": "Panel",
+   "type": "shape",
+   "shape": "rect",
+   "parent": "lt",
+   "size": [
+    820,
+    124
+   ],
+   "radius": 6,
+   "fill": "#0c0c0f",
+   "position": [
+    530,
+    880
+   ],
+   "revealDir": "right",
+   "tracks": {
+    "reveal": [
+     {
+      "f": 4,
+      "v": 0,
+      "ease": "easeOut"
+     },
+     {
+      "f": 22,
+      "v": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "bar",
+   "name": "Accent bar",
+   "type": "shape",
+   "shape": "rect",
+   "parent": "lt",
+   "size": [
+    10,
+    124
+   ],
+   "fill": "#ff6a1a",
+   "position": [
+    125,
+    880
+   ],
+   "tracks": {
+    "scale": [
+     {
+      "f": 0,
+      "v": [
+       100,
+       0
+      ],
+      "ease": "backOut"
+     },
+     {
+      "f": 12,
+      "v": [
+       100,
+       100
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": "name",
+   "name": "Name",
+   "type": "text",
+   "parent": "lt",
+   "text": "SEBASTIAN ZILIUS",
+   "weight": 700,
+   "fontSize": 54,
+   "tracking": 3,
+   "align": "left",
+   "fill": "#ffffff",
+   "position": [
+    165,
+    866
+   ],
+   "revealDir": "right",
+   "tracks": {
+    "reveal": [
+     {
+      "f": 12,
+      "v": 0,
+      "ease": "easeOut"
+     },
+     {
+      "f": 28,
+      "v": 1
+     }
+    ],
+    "position": [
+     {
+      "f": 12,
+      "v": [
+       145,
+       866
+      ],
+      "ease": "easeOut"
+     },
+     {
+      "f": 28,
+      "v": [
+       165,
+       866
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": "role",
+   "name": "Role",
+   "type": "text",
+   "parent": "lt",
+   "text": "VFX SUPERVISOR  /  bEpic",
+   "weight": 400,
+   "fontSize": 26,
+   "tracking": 6,
+   "align": "left",
+   "fill": "#ff6a1a",
+   "position": [
+    167,
+    912
+   ],
+   "tracks": {
+    "opacity": [
+     {
+      "f": 22,
+      "v": 0,
+      "ease": "linear"
+     },
+     {
+      "f": 34,
+      "v": 100
+     }
+    ],
+    "position": [
+     {
+      "f": 22,
+      "v": [
+       167,
+       924
+      ],
+      "ease": "easeOut"
+     },
+     {
+      "f": 34,
+      "v": [
+       167,
+       912
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}

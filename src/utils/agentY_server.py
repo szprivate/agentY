@@ -595,6 +595,16 @@ def _deliver_atlas_render(path: str) -> None:
         logger.warning("could not deliver the Atlas render %s: %s", path, exc)
 
 
+def _deliver_mg_render(path: str) -> None:
+    """A finished viewer-asked motion-graphics render, with no turn around it (see mg_render_jobs)."""
+    try:
+        staged = _stage_into_comfy_input(path)
+        media_sink.note(path, "Motion")
+        _deliver_elsewhere(path, "video", staged, "Motion graphics render", None, "motion", "")
+    except Exception as exc:  # noqa: BLE001 - delivery must never cost the render
+        logger.warning("could not deliver the motion render %s: %s", path, exc)
+
+
 def _deliver_elsewhere(path: str, kind: str, staged: str | None, role: str,
                        index, origin: str, thread_id: str) -> None:
     """Everything a turn's ``output`` event does not do on its own.
@@ -4834,6 +4844,25 @@ def _build_app():
             return jsonify(_atlas_jobs.public(job))
         try:
             return jsonify({"ok": True, **_atlas_jobs.start(request.get_json(silent=True))})
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+
+    # A motion-graphics render the viewer's Motion panel asked for (through ComfyUI: the viewer has no Node or
+    # agenty_core). The core tool is the one the agent's mg_render runs; see src.utils.mg_render_jobs.
+    from src.utils.mg_render_jobs import MgRenderJobs as _MgRenderJobs
+    _mg_jobs = _MgRenderJobs(deliver=_deliver_mg_render)
+
+    @app.route("/agentY/mg_render", methods=["GET", "POST", "OPTIONS"])
+    def mg_render_route():
+        if request.method == "OPTIONS":
+            return "", 204
+        if request.method == "GET":
+            job = _mg_jobs.get(request.args.get("id") or "")
+            if job is None:
+                return jsonify({"error": "unknown render"}), 404
+            return jsonify(_mg_jobs.public(job))
+        try:
+            return jsonify({"ok": True, **_mg_jobs.start(request.get_json(silent=True))})
         except ValueError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
 
