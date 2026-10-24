@@ -98,6 +98,11 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
                "write a *.mgscene.json scene as DATA, check it, look at stills, render it with Remotion; the user edits "
                "the same file in the viewer's Motion panel (read the `motion-graphics-scene` skill first)",
                ("mg_scene_validate", "mg_scene_preview_frame", "mg_render")),
+    "lora": ("train a LoRA (a person, pet, product, style or motion) for an image or video model: build and caption the "
+             "dataset, have the USER approve it in the viewer, train locally or hosted, follow the run, stop it "
+             "(read the `lora-training` skill first)",
+             ("lora_dataset_prepare", "lora_dataset_set_captions", "lora_dataset_review", "train_lora",
+              "lora_training_status", "lora_training_stop")),
     "routing": ("see which models are available and what each role runs, and move the orchestrator (or a "
                 "tier) to another one - always after the user agrees (see 'Switching models')",
                 ("list_models", "switch_model")),
