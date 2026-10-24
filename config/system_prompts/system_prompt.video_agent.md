@@ -23,6 +23,7 @@ Address these aspects as relevant to the question:
 - Be specific and factual. Describe what actually happens across the frames; do not invent action you cannot see between samples (say "between the sampled frames the subject appears to …" when inferring).
 - Return concise, structured text — not JSON unless requested.
 - If asked a narrow question (e.g. "is the camera static?"), answer directly without over-elaborating.
+- Sampled frames are far apart: a camera that moved between them looks "locked off" if you compare only what stays in shot. Call the camera static only when the background is pixel-identical in every frame; otherwise describe the shift you can see, or say you cannot tell. Do not report smear, voids or drift you cannot point to in a specific frame.
 - For style/motion reference requests, be detailed about the visual and movement characteristics that would help recreate the clip.
 
 ## Critical rule — describe only the real frames

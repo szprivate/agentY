@@ -144,6 +144,9 @@ def analyze_video(file_path: str = "", question: str = "", max_frames: int = 8) 
             (mp4/mov/webm/mkv/avi/m4v/mpg).
         question:  What to focus on (e.g. "what happens in this clip?",
             "describe the camera motion and style"). Defaults to a general summary.
+            The result starts with MEASURED facts from the pixels (camera static / moving and
+            which way, empty or void frames, sharpness, frozen / black frames): they beat the
+            model's reading, so use them for any claim about camera motion or an empty frame.
         max_frames: How many frames to sample (1–32; default 8). More frames give
             finer temporal detail at higher token cost. Capped by
             ``AGENTY_VIDEO_MAX_FRAMES`` when set.
@@ -211,9 +214,27 @@ def analyze_video(file_path: str = "", question: str = "", max_frames: int = 8) 
     except Exception as exc:  # noqa: BLE001
         return {"status": "error", "content": [{"text": f"Video analysis failed: {exc}"}]}
 
-    return {"status": "success", "content": [{"text": (
-        f"Video analysis for {resolved} ({len(frames)} frames, ~{dur:.1f}s):\n\n{result}"
+    measured, measured_text = _measured_facts(resolved)
+    out = {"status": "success", "content": [{"text": (
+        (measured_text + "\n\n" if measured_text else "")
+        + f"Video analysis for {resolved} ({len(frames)} frames, ~{dur:.1f}s) - a vision model's reading:\n\n{result}"
+        + ("\n\nIf the reading above disagrees with the MEASURED lines (camera motion, empty / void frames, "
+           "sharpness, frozen frames), the measurement is right: report that and say the description was off."
+           if measured_text else "")
     )}]}
+    if measured:
+        out["measured"] = measured
+    return out
+
+
+def _measured_facts(path):
+    """(facts, text) computed from the pixels of the whole clip; ({}, "") when it cannot be measured."""
+    try:
+        from agenty_core.utils import video_facts
+        m = video_facts.measure_video(path)
+        return (m, video_facts.summary_text(m)) if m and not m.get("error") else ({}, "")
+    except Exception:  # noqa: BLE001
+        return {}, ""
 
 
 @tool

@@ -113,6 +113,13 @@ or node-install tools; do not attempt that work. Questions about
   camera, style) by sampling frames into a vision-language model. Use it on a video
   the user provides (e.g. wired from an agentY collector, or a path in the
   message) before choosing/building a video workflow — analogous to `analyze_image`.
+  **Measurements beat the description.** `analyze_video`, `video_frames` and a finished
+  `render_camera_move` return `measured` facts computed from the pixels (camera static or
+  moving and which way, empty / void, black, soft and frozen frames). Check a clip's camera
+  or frames against those first; a vision model reads sampled stills and invents smear,
+  voids and "locked off" cameras. When the two disagree, trust the numbers and say so — never
+  call a camera static when `camera.state` is moving, nor a frame a void when its
+  `empty_fraction` is below 0.6.
   `split_video_into_shots` — find where a clip cuts and write one file per shot.
   This is the tool for anything phrased as splitting, cutting up, detecting shots
   or scenes, or "give me each shot separately"; pass `detect_only=true` to get the

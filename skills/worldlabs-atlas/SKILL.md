@@ -43,6 +43,20 @@ so say what you are about to spend (one call = one task) and do not loop.
    `add_to_world=true` renders, or `atlas_expand_world`.
    Not for a camera MOVE (that is `render_camera_move`, a clip of the mesh), and not when the user only
    wants to look around: that is the viewer.
+   **Frames - read this before any absolute camera key.** `forward` / `right` / `up` / `yaw` / `pitch` /
+   `roll` are ALWAYS relative to the picture's camera. Absolute `position` + `look_at` keys are read in
+   `frame`: `"picture"` = metres from the picture camera (it is the origin, looking down -Z, Y up),
+   `"world"` = the scene's own coordinates. For a mesh (`world.glb`, MoGe, SHARP) the two are the same. A
+   trained Gaussian splat lives in the Atlas world's absolute frame, where the picture camera stands at
+   about y = 1.01, NOT at the origin: so for a splat name the `frame` (it is refused otherwise), or use
+   relative moves. The result echoes the resolved `keys`, the `picture_camera` and the `scene_bounds`
+   (floor, top, box): read them. A path under the floor, outside the room or looking at nothing is
+   refused with the numbers (`camera_outside_scene`) instead of rendered - fix the keys, do not pass
+   `check=False`. Splat fly-through, room, picture camera at y = 1.01: relative
+   `render_camera_move(name, model="<splat>.ply", moves=[{"t":0},{"t":4.5,"forward":2.2,"right":0.4,"up":-0.3}])`
+   or absolute in the splat's coordinates `frame="world"`, `moves=[{"t":0,"position":[-0.1,0.71,-0.4],
+   "look_at":[-0.2,0.71,-2.4]},{"t":4.5,"position":[0.45,0.79,-2.3],"look_at":[1.2,0.79,-4.15]}]` (eye height
+   ~0.7-0.8, the room's floor at 0). Look at the viewer's own coordinates before inventing keys.
 5. **Let the user pick the camera.** `atlas_open_in_viewer(world)` opens the world in the viewer's 3D view,
    looking through a 16:9 camera at the first picture's viewpoint. The user navigates (Alt + mouse) and
    presses **Render with Atlas** in the Previz panel (upscale choice, "add to world"); the picture lands in
