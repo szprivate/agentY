@@ -18,6 +18,7 @@
     "model-from-reference": "Names show_in_panel / load_tools (host panel) and blender__* tools (the Blender MCP server, only when it is connected).",
     "seedance-reference": "Names check_node_types (host); use get_node_schema over MCP.",
     "custom-node-from-github": "Names file_read (host); read_text_file does the same over MCP.",
+    "lora-training": "Names send_to_slack (host) for the contact sheet; over MCP put the contact sheet in the reply. The dataset panel needs the bEpic viewer; without it the review is a chat approval.",
     "image-downsize": "Names file_read (host); read_text_file does the same over MCP."
   }
 }
