@@ -176,7 +176,7 @@ def drift_note() -> str:
 
 # ── the Claude Code plugin (agentY-mcp) ──────────────────────────────────────
 # Paths in agentY-mcp that a release rewrites, and nothing else.
-PLUGIN_PATHS = ("skills", "skills.sync.json", "manifest.json", ".claude-plugin")
+PLUGIN_PATHS = ("skills", "skills.sync.json", "manifest.json", ".claude-plugin", "core.pin")
 
 
 def _mcp_python(mcp: Path) -> str | None:
