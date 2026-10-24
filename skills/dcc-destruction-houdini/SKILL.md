@@ -1,10 +1,10 @@
 ---
 name: dcc-destruction-houdini
-description: Destroy a 3D model in Houdini with a rigid-body (RBD) simulation — a building, a set or an object collapsing, breaking apart, being knocked over — plus dust or smoke and simple cloth, rendered as a flipbook or with Karma. Use for "make the house collapse", "destroy this in Houdini", "RBD destruction", "fracture and simulate", "add dust / smoke to the collapse", "render the destruction from another camera".
+description: Destroy a 3D model in Houdini with a rigid-body (RBD) simulation — a building, a set or an object collapsing, breaking apart, being knocked over — plus dust and simple cloth, rendered as an OpenGL flipbook (or Karma for a single frame). Use for "make the house collapse", "destroy this in Houdini", "RBD destruction", "fracture and simulate", "add dust to the collapse", "render the destruction from another camera".
 allowed-tools: dcc_build video_frames media_info analyze_image run_script write_text_file read_text_file show_in_panel
 ---
 
-# Destruction in Houdini (RBD, dust, smoke, cloth)
+# Destruction in Houdini (RBD, dust, cloth)
 
 Houdini has no live mode: everything runs headless through `dcc_build(app="houdini", mode="batch")`
 (in the `dcc` tool pack: `load_tools("dcc")` if it is not in your list). You write ONE Python script
@@ -13,114 +13,161 @@ edit to that script and a new `dcc_build` call. Never hand-patch a scene.
 
 ## The script
 
-One file, parameters at the top, steps you can switch on and off, e.g. through an environment
-variable the script reads (`dcc_build` passes its environment to hython):
+One file, parameters at the top, steps you can switch on and off, cached per step. Per-run settings
+(which steps, which camera, sim numbers) go in the `params` argument of `dcc_build`, which the script
+reads with
 
-    STEPS = os.environ.get("SHOT_STEPS", "source,fracture,sim,dust,cloth,render,encode").split(",")
+    params = globals().get("DCC_PARAMS") or json.loads(os.environ.get("DCC_PARAMS", "{}"))
+    STEPS = params.get("steps", "source,fracture,sim,flags,render,encode").split(",")
 
-so a camera or look change re-runs only `render,encode` from the caches. Cache every step to
-`.bgeo.sc` files in an output folder; never keep a sim only in memory.
+(`DCC_PARAMS_FILE` has the same JSON for large params.) Do not use side `.json` files or inherited
+environment variables for this: an old file silently changes a later call. A camera or look change
+re-runs only `render` and `encode` from the caches. Cache every step to `.bgeo.sc` files.
 
-- Pass `timeout_minutes` to `dcc_build` (fracture + sim + render easily exceed the default).
+- `timeout_minutes` (default 15 min, max 480) for long calls; `frames="1-96"` renders a sequence
+  through the OpenGL ROP when the script does not render itself.
 - Pass a scratch `save_to` for render-only reruns, so the delivered `.hip` is not overwritten.
-- Houdini's output only comes back when the run ends: write your own log file with a line per step
-  and per N frames (time, piece count, bbox), and read it when a run takes long or hangs.
-- Test on 3 frames (start, middle, end) before every full run. Look at them yourself
-  (`video_frames` / `analyze_image`) before you render the sequence.
+- Output only comes back when the run ends: write your own log file with a line per step.
+- **A node error does not fail the call.** A VEX compile error shows up only as text in `stdout_tail`
+  / `error` of a call that still says `ok: true` or fails later: read `stdout_tail` every time, and
+  print `node.errors()` for the nodes you cook. In VEX always assign `prim()`, `point()`,
+  `findattribval()` to a TYPED local first (`float a = prim(1,"x",i);`): used inside an expression
+  they are ambiguous or silently read only the x component.
+- Render and encode in SEPARATE calls: hython keeps the cache files open while rendering, and an
+  encode in the same process failed with "Too many open files" (a truncated mp4). After encoding,
+  verify the frame count (`media_info`, or `ffprobe -count_frames`), never trust the log line.
+- Test on a few frames before every full run and look at them (`video_frames` makes a contact sheet
+  from a video or a folder of frames).
 
 ## 1 Source
 
-- Bring the model in as USD (export from Blender / Maya with `dcc_build`). Read the stage's up axis
-  and `metersPerUnit` and convert to Houdini's Y up, metres.
+- Bring the model in as USD. Read the stage's up axis and `metersPerUnit`, convert to Y up, metres.
 - USD mesh prims arrive as `<object>/<object>_NNN`: use the parent name as the piece name.
-- Frame 1 must show the intact model. Check it before anything else.
+- A mesh of lap siding is one mesh with many boards: split it into connected components, each a piece.
+- Frame 1 must show the intact model. Check it first.
 
-## 2 Fracture (before the sim)
+## 2 Fracture: one material per structural element
 
-- `rbdmaterialfracture` per material class: wood for walls / decks / beams (grain along each member,
-  cuts across it), glass for windows (many small shards), concrete for masonry.
-- Keep wood fracture coarse: `wood_graindetailsize` around 0.3. The default 0.05 can use 50+ GB of
-  RAM or hang. Cap splinter length and noise, or the rest pose already looks shattered.
-- Do not fracture long structural members (posts, beams, masts) into segments when they should act
-  as members: keep them whole and let the joints break.
-- Small parts (gutters, clocks, antennas, rails) stay whole. A wall that fractures into spikes stays
-  whole or gets a coarse cut (few big pieces, no splinters).
-- Give every piece a unique name traceable to its source mesh, and tag it (class, which part of the
-  building, upper body vs. substructure) for the constraints.
+`rbdmaterialfracture::3.0`, wood mode, **Fracture per Piece on** (else the grain follows the wrong
+axis). Grain lines run along each piece's longest axis, cuts across it; splinter density/length pull
+points off the cut planes; randomness on grain and cut spacing breaks the regularity. Look at the
+building and give each element type its own settings (numbers from a 12 m stilt house):
 
-## 3 Constraints: what holds, what gives
+| element | fracture |
+|---|---|
+| siding / cladding boards (thin) | one cut across (about 0.75 m), a grain split (0.09 m), short splinters |
+| deck / floor | planks 0.27 m wide along the long axis, a cut across every 1.9 m |
+| wall sheathing | panels about 1.1 m, light splinters |
+| roof | panels about 1.3 m (between rafters), no grain split |
+| posts, mast, girders (thick) | NOT equal segments: 1–2 jagged cuts (2.3–3.2 m spacing), 2–3 long slivers, the longest splinters |
+| braces | one mid snap |
+| glass | scatter points 5, radial cracks 8, min width 0.11 |
+| gutters, rails, clock, antennas | stay whole |
+| a triangular gable wall | stays whole (wood fracture fills it into a box / spikes) |
 
-`rbdconstraintsfromrules` builds bonds between touching pieces; a wrangle on the constraint network
-sets each bond's type and strength. One network can mix types per bond:
+Rules that held: keep `wood_graindetailsize` at 0.15 or more (the default 0.05 used 50+ GB or hung);
+keep splinters short on thin panels (they poke out of both faces); drop pieces whose centre is
+outside their source box (stray debris); give every piece a unique name (`<source>__<fragment>`) and
+per-piece attributes the constraints need (class, source, upper body or substructure, section).
+Mark the fracture's cut faces with a prim attribute `cutface` (the faces in the node's `*inside*`
+groups). More pieces cost sim time roughly linearly: 1,500 pieces, 0.3 s/frame; 3,800 pieces, 0.75 s/frame.
 
-- Glue: `constraint_name="Glue"`, `strength`, `impulse_halflife`, `propagate_rate`.
-- Hard: `constraint_name="Hard"`, `constraint_type="position"` (pin joint, rotation free) or `"all"`.
-- Soft: `constraint_name="Soft"`, `stiffness`, `dampingratio`, `enableangular`, `angularstiffness`,
-  `enableplasticity`, `plasticthreshold`, `plasticrate` — use these between large sections of a
-  body so it bends and keeps the bend (a house sagging over an edge).
+## 3 Joints follow how the building is built
 
-Patterns that worked:
-- Strong glue inside the part that should survive (e.g. each room of a house, x30–x40), much
-  weaker in the substructure, and near zero along a seam where it should tear.
-- Glass excluded from strong glue so it always shatters.
+`rbdconstraintsfromrules` (surface, small search radius) builds the bonds; a prim wrangle on the
+constraint network (input 2 = the pieces) sets each bond's type and strength by PAIR TYPE. One network
+mixes types per bond; Glue: `strength`, `impulse_halflife`, `propagate_rate`; Hard: `constraint_name`
+"Hard", `constraint_type` "position" (pin) or "all"; Soft: `stiffness`, `dampingratio`,
+`enableangular`, `angularstiffness`, `enableplasticity`, `plasticthreshold`.
 
-## 4 How it fails (direction without a visible push)
+- Inside one board / beam (same source): the strongest glue (material), breaks only along the
+  fracture pattern.
+- Board → framing behind it ("nails"): weak (about 0.35x), so boards tear off whole or in halves.
+- Board → board (laps): about 0.6x.
+- Post ↔ girder, brace ends (bolted joints): strong, but they are the progressively weakened ones
+  (below), so braces pull out and the frame racks.
+- The upper body (cabin, roof, deck): strong glue inside each section, spring (Soft) bonds between
+  neighbouring sections of a long body so it bends and stays bent (plasticity), a very soft bond at a
+  seam where it should tear. Glass is left out of strong glue so it always shatters.
+- Posts that held (6x glue between their own segments) kept the racking; without it they crumbled.
 
-- Weakening glue alone does NOT make a braced structure fall: it stands on friction.
-- To make it collapse under its own weight: ramp the strength of the joints and bracing down over
-  time (`@Frame` in the constraint wrangle; enable constraint updates on the solver), starting at
-  one end and moving across (start time keyed to x) — that reads as a collapse front.
-- Pick the direction with a slight sideways gravity on the Bullet solver (`gravityx` about 1 m/s²):
-  invisible as a push, but it drifts loose pieces a little (keep it small).
-- A visible external force (a wave, a ram) is a moving collider: it must be a PACKED primitive with
-  an animated packed transform (pack, then a transform SOP with expressions), plugged into the
-  Bullet solver SOP's FOURTH input, with `collision_overwritefromsop` on. Animated points of an
-  unpacked box do nothing; the third input ignores it. A static collider that overlaps the
-  structure props it up: never leave one in the geometry.
-- Lower friction / bounce settle: friction about 0.9, bounce about 0.05 so it doesn't rock back.
+## 4 How it fails (no visible push)
 
-## 5 Solver
+- Weakening glue alone does not make a braced structure fall (it stands on friction).
+- Directed collapse under its own weight: ramp the joints' and bracing's strength down with `@Frame`
+  (enable constraint updates on the solver), starting at one end and moving across (start time keyed
+  to x, 20–40 frames end to end). That reads as a collapse front. Add a slight sideways gravity on
+  the Bullet solver (`gravityx`, about 2 m/s² = 6° with a strong structure; 1 m/s² was enough for a
+  weak one) to choose the direction, and FADE it out after the landing (an expression on the gravity
+  parm), otherwise the wreck keeps sliding sideways.
+- A visible external force (wave, ram) is a moving collider: a PACKED primitive with an animated packed
+  transform, in the solver's FOURTH input, `collision_overwritefromsop` on. Animated points of an
+  unpacked box do nothing. A static collider overlapping the structure props it up.
+- Friction about 0.9, bounce about 0.05 so it doesn't rock back.
 
-RBD Bullet Solver SOP, ground plane on at y = 0, a few substeps. It cooks frame by frame in order
-(`hou.setFrame` for each frame). Useful outputs: the per-piece output (positions and velocities)
-and the constraint-network output, whose bonds disappear as they break.
+## 5 Impact-driven break-up (two passes)
 
-Typical times at about 2,000–3,000 pieces: fracture 10–20 s, sim 0.3 s per frame.
+Pass 1 is the baseline sim: record when each source part first hits the ground (a piece below 0.9 m
+losing >= 1.6 m/s in a frame, read from the solver's per-piece output) and write `impacts.json`;
+also the frame the house body lands (about the 15th percentile of its parts' first hits). Pass 2 is
+the same sim with a per-part glue drop from its impact frame (3-frame ramp) and for the whole body from
+its landing frame (a few frames of random spread). The structure holds exactly as in pass 1 until
+then, so the lean and the rack are unchanged. Factors by pair type: joints between parts about 1.5%,
+glue inside a part by element (boards 12%, posts/beams 30%, panels and roofs 6%). So boards tear off,
+panels split, beams hold longer.
 
-## 6 Dust and smoke
+## 6 Intact until it breaks
 
-- Events: bonds that disappear between frames (break points) and pieces near the ground that lose
-  a lot of speed in one frame (impacts). Write them per frame as points with `v`, size, opacity.
-- Dust particles: a dopnet with `popobject` → `popsolver::2.0` (input 1), and `popsource::2.0` →
-  `popwind` → `popwrangle` into solver input 2. `popsource` with `emittype=0` (all points),
-  `impulserate=1`, `constantactivate=0` inherits the event points' attributes. `popwind.turb` is an
-  integer. Read the result back with `dopimport`. Sand colour, rise then settle, fade with age.
-- Smoke: Pyro (smoke only, no flame) sourced from the same events, coarse voxels (0.08–0.15 m),
-  ground collision, light buoyancy and wind. Check how it renders on one frame first.
+Fracture leaves tan cut faces and splinter chips on the surface. Hide them until a part breaks: a
+`breaks` step fits the best rigid motion (Kabsch / SVD) of each original member's points (group by the
+piece name without its fragment suffix) and records the first frame the residual RMS exceeds about
+0.05–0.12 m (0.04 flagged soft-joined sections that merely bend); at render, delete the `cutface`
+prims of a member until that frame. Frame 1 is then spotless; broken parts show their splinters.
 
-## 7 Cloth (flags, sails, tarps)
+## 7 Solver
 
-Vellum cloth, coarse (a few hundred points, 2 substeps). Attach it to an RBD-driven part with a
-second `vellumconstraints` node set to attach (`constrainttype=7`): cloth in input 1, the cloth
-constraints in input 2, the target geometry (read from the sim cache each frame) in input 3; feed
-the same target to the `vellumsolver` input 3. Use `maxdistcheck=1` with a small `maxdist` so only
-the points near the pole attach (without it every point attaches). Collide with the debris.
+RBD Bullet Solver SOP, ground plane at y = 0, 4 substeps. It cooks frame by frame in order.
+Outputs: geometry, the constraint network (bonds disappear as they break), per-piece point cloud
+(output 4: position and velocity).
 
-## 8 Render
+## 8 Dust and cloth
 
-- OpenGL ROP flipbook: about 0.1 s per frame — the default for iterating. It draws per-point colour
-  (`Cd` on points; move prim colours onto unique points), discs for particles (`particle=3`,
-  `transparency=1`, `pscale` as size, point `Alpha`). Point `Alpha` applies to the whole merged
-  geometry: give everything else `Alpha=1` or it vanishes. `pointsize=0` hides stray points.
-  `backfacecull=0` for cloth.
-- Low cameras need a shadowless fill light (otherwise undersides are black), a very large ground
-  plane (no visible edge) and smaller dust near the lens.
-- Karma: a minute or more per frame on CPU at 960x540 for a scene like this. Render ONE frame first
-  and show it before committing to a sequence.
-- Several cameras: the camera is just a node; re-run only the render step per camera from the cache.
-- Encode with ffmpeg to mp4, keep a few stills, delete the raw frames.
+- Dust: events = bonds that disappeared between frames and pieces that hit the ground. Write them as
+  one point file per frame (`v`, `pscale0`, `a0`). POP network (`popobject` → `popsolver::2.0`,
+  `popsource::2.0` → `popwind` → `popwrangle` into solver input 2; `emittype=0`, `impulserate=1`,
+  `constantactivate=0`); `popwind.turb` is an integer; read back with `dopimport`. Fade/grow in the
+  wrangle. Render as discs. More puffs near a seam that tears.
+- **Pyro was tried and dropped:** Pyro (sparse, smoke only, 0.14 m voxels) looked low-res and
+  flickered in the OpenGL flipbook. Karma renders it properly but took about 250 s per frame
+  (CPU; "XPU" fell back to CPU), too slow for a sequence. Use the POP discs.
+- Flags / cloth: Vellum, coarse (about 200 points, 2 substeps). Attach to the RBD part with a second
+  `vellumconstraints` set to attach (`constrainttype=7`): cloth in input 1, cloth constraints in
+  input 2, the target (the mast read from the sim cache each frame) in input 3 and the same target in
+  the `vellumsolver` input 3. `maxdistcheck=1` with a small `maxdist` (about 0.16 m); without it every
+  point attaches. The `pin` constraint type did nothing here. Cook frame by frame in order.
 
-## 9 Show the result
+## 9 Render (OpenGL flipbook)
 
-Show a contact sheet of the clip (start, failure, mid-collapse, landing, settle) and say what reads
-and what doesn't. Ask before a long final render.
+- OpenGL ROP: about 0.1–0.4 s per frame, the default. It draws per-point colour (`Cd` on POINTS: make
+  points unique per face and promote the prim colours), discs for particles (`particle=3`,
+  `transparency=1`, `pscale`, point `Alpha`). A point `Alpha` applies to the whole merged geometry:
+  give everything else `Alpha=1`. `pointsize=0` hides stray points; `backfacecull=0` for cloth.
+- Low cameras: a shadowless fill light along the camera's view direction (else undersides are
+  black), a ground plane thousands of metres wide (no edge), smaller dust near the lens.
+- Several cameras: the camera is a node. A moving camera is Hscript `fit($FF, ...)` expressions on
+  translate/rotate. A follow camera: a key per frame; the look-at is the Gaussian-smoothed centroid of
+  the house body pieces from the sim cache (sigma about 9 frames) plus a small dolly. Re-render only the
+  render step per camera from the cache, with its own output name.
+- Karma for a still: about 80 s per frame at 960x540 CPU without volumes. Render ONE frame first and
+  show it before a sequence.
+- Encode with ffmpeg to mp4 (separate call), keep a few stills, delete the raw frames.
+
+## 10 What to expect (about 3,800 pieces, 144 frames at 960x540)
+
+Fracture 12 s; each of the two sim passes about 105 s; breaks step 20 s; Vellum flags 45 s; dust 3 s;
+OpenGL render 35–50 s per camera; encode 1 s. A full re-run through `dcc_build` is about 3–4 minutes.
+
+## 11 Show the result
+
+Show a contact sheet (start, failure, lean, landing, settle) and say what reads and what does not.
+Check frame 1 in a close-up, the break close-ups, the ends of the clip. Ask before a long final render.
