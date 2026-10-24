@@ -1635,9 +1635,11 @@ class Pipeline:
 
             base = getattr(self, "_canvas_base_prompt", None)
             if not base:
+                from src.utils import server_mode as _server_mode
                 return json.dumps({
                     "error": "no on-canvas graph is loaded for this turn — "
                              "apply_canvas_hooks is only valid with a [CANVAS HOOKS] block."
+                             + (" " + _server_mode.NO_CANVAS if _server_mode.headless() else "")
                 })
             if self._hook_run_stopped:
                 return json.dumps({

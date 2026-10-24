@@ -57,6 +57,10 @@ def request(kind: str, payload: dict | None = None, timeout: float = 20.0) -> di
     nobody answered in time — which is what a closed tab looks like from here, and
     is a normal answer rather than a fault.
     """
+    from src.utils import server_mode
+    if server_mode.headless():
+        # No page will ever answer; say so now instead of after the timeout.
+        return server_mode.no_canvas_error(str(kind or ""))
     pid = uuid.uuid4().hex[:12]
     event = threading.Event()
     entry = {"event": event, "reply": None, "answered": False,

@@ -87,7 +87,7 @@ def _agent_server_url_defaults() -> tuple[str, int]:
     host, port = "127.0.0.1", default_agent_port()
     try:
         from urllib.parse import urlsplit
-        from src.utils.settings import agent_server_url
+        from src.utils.settings import agent_server_url, load_settings
 
         url = agent_server_url().strip()
         if url:
@@ -98,6 +98,11 @@ def _agent_server_url_defaults() -> tuple[str, int]:
                 host = parts.hostname
             if parts.port:
                 port = parts.port
+        # A server install says where to listen in [server] bind_host (or
+        # AGENTY_BIND_HOST); blank keeps the host of agent_server_url.
+        bind = str((load_settings().get("server") or {}).get("bind_host") or "").strip()
+        if bind:
+            host = bind
     except Exception:
         pass
     return host, port

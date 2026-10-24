@@ -17,7 +17,9 @@ class Registered(unittest.TestCase):
             self.assertIn(n, tool_packs.PACKS["farm"][1])
         self.assertIn("deadline-farm", agent._ORCH_SKILL_NAMES)
         self.assertTrue(agent._skill_sources(["deadline-farm"]))
-        for k in ("DEADLINE_COMFYUI_POOL", "DEADLINE_OUTPUT_DIR", "DEADLINE_WEBSERVICE_URL"):
+        for k in ("DEADLINE_COMFYUI_POOL", "DEADLINE_OUTPUT_DIR", "DEADLINE_WEBSERVICE_URL",
+                  "DEADLINE_ROUTE_RUNS", "DEADLINE_FETCH_DIR", "DEADLINE_MAX_WAIT_MINUTES",
+                  "SLACK_ALLOWED_CHANNELS", "SLACK_APPROVERS"):
             self.assertIn(k, agentY_server._KNOWN_ENV_KEYS)
 
 

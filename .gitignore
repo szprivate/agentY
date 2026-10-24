@@ -107,3 +107,4 @@ config/key_ages.json
 /tools/
 # Which optional packages the installer was told to add (scripts/optional_deps.py)
 config/optional_deps.json
+config/users.json

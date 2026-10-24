@@ -419,6 +419,12 @@ def _submit_workflow(workflow_path: str, client_id: str = "") -> str:
     from src.utils import partner_cost_host
     partner_cost_host.ensure_registered()
     _cost = _credits.gate_submission(workflow, str(p))
+    # Routed to the Deadline farm (settings deadline.route_runs / DEADLINE_ROUTE_RUNS, off by
+    # default): everything above is shared - the graph is prepared the same way and the cost gate
+    # applies - only the queueing differs. The reference stands in for a prompt_id.
+    if _routed_to_farm():
+        from agenty_core.utils import farm_run
+        return farm_run.submit(workflow, name=p.stem)
     client = get_client()
     payload: dict = {"prompt": workflow}
     if client_id:
@@ -486,10 +492,31 @@ def _submit_workflow(workflow_path: str, client_id: str = "") -> str:
     raise RuntimeError(f"Unexpected response from ComfyUI /prompt: {result!r}")
 
 
+def _routed_to_farm() -> bool:
+    """Do runs go to the Deadline farm instead of the local ComfyUI? Off unless asked for."""
+    try:
+        from agenty_core.utils import farm_run
+        from src.utils.settings import load_settings
+        return farm_run.enabled(bool((load_settings().get("deadline") or {}).get("route_runs", False)))
+    except Exception:  # noqa: BLE001 - never let the switch break a local run
+        return False
+
+
+def _job_stream(prompt_id: str, client_id: str, **kw):
+    """Progress events for a submitted job: the farm's for a ``farm:`` reference, ComfyUI's otherwise."""
+    from agenty_core.utils import farm_run
+    if farm_run.is_farm_ref(prompt_id):
+        return farm_run.stream(prompt_id, max_wait_s=farm_run.max_wait_seconds())
+    from agenty_core.utils.comfyui_progress import stream_comfyui_job
+    return stream_comfyui_job(prompt_id, client_id, **kw)
+
+
 async def _settle_partner(prompt_id: str) -> str:
     """After a job ends: what it cost in Comfy credits (balance before vs after),
     as a progress line - "" for a job with no paid node or an unknown balance.
     The amount also lands in the turn's usage (partner_cost_host listener)."""
+    if str(prompt_id).startswith("farm:"):
+        return ""            # the worker's own key paid; there is no local balance to compare
     from agenty_core import partner_credits as _credits
     try:
         usd = await asyncio.to_thread(_credits.settle, prompt_id)
@@ -877,12 +904,14 @@ async def execute_workflow(
         brainbriefing = {}
 
     # ── 1. Submit ──────────────────────────────────────────────────────────
-    _free_vram_for_comfyui()
-    _clear_comfyui_history()  # scope history to this run (no stale prior outputs)
+    farm = _routed_to_farm()
+    if not farm:
+        _free_vram_for_comfyui()
+        _clear_comfyui_history()  # scope history to this run (no stale prior outputs)
     workflow_path, _fit_lines = _fit_to_briefing(workflow_path, qa_briefing)
     for _line in _fit_lines:
         yield _line
-    yield "🚀 Submitting workflow to ComfyUI…"
+    yield "🚀 Submitting workflow to the Deadline farm…" if farm else "🚀 Submitting workflow to ComfyUI…"
     client_id = uuid.uuid4().hex
     try:
         prompt_id = _submit_workflow(workflow_path, client_id=client_id)
@@ -905,8 +934,8 @@ async def execute_workflow(
     node_titles = _load_node_titles(workflow_path)
     history: dict | None = None
     error_result: dict | None = None
-    _gen = stream_comfyui_job(prompt_id, client_id, node_titles=node_titles,
-                              console=_console_lines())
+    _gen = _job_stream(prompt_id, client_id, node_titles=node_titles,
+                       console=_console_lines())
     try:
         async for event in _gen:
             if isinstance(event, dict):
@@ -1066,8 +1095,8 @@ async def execute_workflows_batch(
             history: dict | None = None
             error_result: dict | None = None
             node_titles = _load_node_titles(wf_path)
-            gen = stream_comfyui_job(prompt_id, cid, node_titles=node_titles,
-                                     console=_console_lines())
+            gen = _job_stream(prompt_id, cid, node_titles=node_titles,
+                              console=_console_lines())
             try:
                 async for event in gen:
                     if isinstance(event, dict):
@@ -1212,8 +1241,9 @@ async def execute_workflows_batch(
         await out_q.put(("qa", ("done", wf_path, "", "")))
 
     # ── Phase 1: submit every workflow, spawn a concurrent monitor for each ─
-    _free_vram_for_comfyui()
-    _clear_comfyui_history()  # once per batch — scope history to this run only
+    if not _routed_to_farm():
+        _free_vram_for_comfyui()
+        _clear_comfyui_history()  # once per batch — scope history to this run only
     outstanding = 0
     for idx, wf_path in enumerate(workflow_paths, 1):
         yield f"🚀 Queuing iteration {idx}/{total}…"

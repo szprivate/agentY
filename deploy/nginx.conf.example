@@ -1,0 +1,31 @@
+# nginx in front of agentY. TLS certificates from certbot (or yours).
+# Add the name to config/settings.local.json:
+#   "security": {"allowed_hosts": ["agenty.example.com"], "user_tokens": true}
+server {
+    listen 443 ssl http2;
+    server_name agenty.example.com;
+    ssl_certificate     /etc/letsencrypt/live/agenty.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/agenty.example.com/privkey.pem;
+
+    # Uploads (the turn API takes paths, not files, so this can stay small).
+    client_max_body_size 5m;
+
+    location / {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # Server-Sent Events: no buffering, no timeout.
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 1h;
+        proxy_set_header Connection "";
+    }
+}
+server {
+    listen 80;
+    server_name agenty.example.com;
+    return 301 https://$host$request_uri;
+}

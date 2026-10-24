@@ -153,6 +153,18 @@ def granted_for_session() -> list[str]:
         return sorted(_SESSION_GRANTS)
 
 
+# Somebody other than the panel who can be asked: the Slack bridge, on a server
+# where the people asking are not at the host's screen. ``fn(thread_id, tool,
+# summary, timeout) -> {"allowed": bool, "note": str} | None`` - None means "not
+# mine to ask", and the panel (or the unattended policy) decides as it always did.
+_REMOTE_ASKER = None
+
+
+def set_remote_asker(fn) -> None:
+    global _REMOTE_ASKER
+    _REMOTE_ASKER = fn
+
+
 def has_listener(within: float = 30.0) -> bool:
     """Has the panel asked for questions recently enough to answer one?"""
     with _LOCK:
@@ -214,6 +226,20 @@ def request(tool_name: str, tool_input: dict, *, timeout: float = DEFAULT_TIMEOU
     with _LOCK:
         if allow_session and name in _SESSION_GRANTS:
             return Decision(True, "allowed for this session", remembered=True)
+
+    remote = _REMOTE_ASKER
+    # A host set to run unattended with "allow" has already said yes to everything;
+    # asking anyway would make that setting mean something else on a server.
+    if remote is not None and not (unattended_allows and not has_listener()):
+        try:
+            tid = _asking_conversation().get("thread_id", "")
+            reply = remote(tid, name, describe(name, tool_input), float(timeout or 0))
+        except Exception:  # noqa: BLE001 - a broken asker must not decide for the user
+            reply = None
+        if isinstance(reply, dict):
+            if reply.get("allowed"):
+                return Decision(True, str(reply.get("note") or "approved in Slack"))
+            return Decision(False, str(reply.get("note") or "declined in Slack."))
 
     if not has_listener():
         if unattended_allows:

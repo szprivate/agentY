@@ -409,6 +409,16 @@ try {
         }
     }
 
+    # ── Where to listen ─────────────────────────────────────────────────────
+    # -BindHost wins, then server.bind_host / AGENTY_BIND_HOST (a server install),
+    # then loopback - which is what every desktop install has always had.
+    if (-not $PSBoundParameters.ContainsKey('BindHost')) {
+        try {
+            $cfgHost = (& python -c "from src.utils.settings import load_settings; print((load_settings().get('server') or {}).get('bind_host') or '')" 2>$null | Out-String).Trim()
+            if ($cfgHost) { $BindHost = $cfgHost }
+        } catch { }
+    }
+
     # ── Free the target port ────────────────────────────────────────────────
     # A previous host whose Ctrl+C didn't fully stop it can linger; on Windows
     # SO_REUSEADDR then lets that stale instance keep answering with OLD code, so
