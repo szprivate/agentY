@@ -174,6 +174,8 @@ from agenty_core.tools.atlas_render import atlas_render_view, atlas_open_in_view
 # Capture an Atlas world all round; train a Gaussian splat from posed views locally (Brush).
 from agenty_core.tools.atlas_capture import atlas_capture_around  # noqa: F401,E402
 from agenty_core.tools.splat_train import train_splat, splat_training_status  # noqa: F401,E402
+# World Labs Marble: a ready splat world from pictures (no training), SPZ / PLY export.
+from agenty_core.tools.worldlabs_marble import marble_create_world, marble_export  # noqa: F401,E402
 # Rebuild a model in Blender / Maya / Houdini from ONE script file, and check its proportions against a
 # photo by projecting key points through the scene camera (agenty_core.tools.dcc).
 from agenty_core.tools.dcc import dcc_build, dcc_silhouette_check  # noqa: F401,E402
@@ -245,6 +247,8 @@ _SHARED_CORE_TOOLS = [
     "atlas_fetch", "atlas_list", "atlas_render_view", "atlas_open_in_viewer",
     # all-round Atlas capture, and a Gaussian splat trained from it (local, Brush)
     "atlas_capture_around", "train_splat", "splat_training_status",
+    # World Labs Marble: splat worlds from pictures, SPZ / PLY export
+    "marble_create_world", "marble_export",
     # modelling from a reference photo in Blender / Maya / Houdini: one build script, a numeric silhouette check
     "dcc_build", "dcc_silhouette_check", "measure_reference",
     # the studio's Ayon pipeline: session context, load a published product, mark an output for publish, open the Publisher
@@ -624,6 +628,8 @@ ORCHESTRATOR_TOOLS: list = [
     atlas_capture_around,  # Atlas views all round a place (for a 360 environment / splat)
     train_splat,           # Gaussian splat from posed views (an Atlas world), trained locally with Brush
     splat_training_status, # check on / finish a splat training
+    marble_create_world,   # World Labs Marble: pictures (or an Atlas world) -> a ready splat world (paid; dry_run prices it)
+    marble_export,         # Marble world files: SPZ / PLY at a resolution, collider mesh
     lora_dataset_prepare,  # LoRA training: build + caption a dataset (the user approves it before training)
     lora_dataset_set_captions,
     lora_dataset_review,   # opens the viewer's Dataset panel; the turn ends and waits for the user's approval
