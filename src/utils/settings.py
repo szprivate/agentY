@@ -123,8 +123,51 @@ def load_settings(*, refresh: bool = False) -> dict:
     with _lock:
         if _cache is not None and not refresh:
             return _cache
-        _cache = _deep_merge(load_defaults(), load_local())
+        _cache = apply_env_overrides(_deep_merge(load_defaults(), load_local()))
         return _cache
+
+
+# A server has no settings dialog: it is configured by its service manager's
+# environment. These variables name a few settings that differ per machine, so a
+# container or a systemd unit can place ComfyUI and the storage without a
+# settings.local.json. Unset (the default) changes nothing.
+ENV_OVERRIDES = {
+    "AGENTY_COMFYUI_URL": ("comfyui_url",),
+    "AGENTY_COMFYUI_MODELS_DIR": ("comfyui_models_dir",),
+    "AGENTY_COMFYUI_USER_DIR": ("comfyui_user_dir",),
+    "AGENTY_COMFYUI_DIR": ("comfyui_dir",),
+    "AGENTY_OUTPUT_DIR": ("output_dir",),
+    "AGENTY_OUTPUT_WORKFLOWS_DIR": ("output_workflows_dir",),
+    "AGENTY_HEADLESS": ("server", "headless"),
+    "AGENTY_BIND_HOST": ("server", "bind_host"),
+}
+_BOOL_ENV = {"AGENTY_HEADLESS"}
+
+
+def apply_env_overrides(cfg: dict, env: dict | None = None) -> dict:
+    """*cfg* with the environment's per-machine settings laid over it.
+
+    Only variables that are set and non-empty count, so an install that sets none
+    of them gets exactly the file-based settings it always had.
+    """
+    import os
+
+    env = os.environ if env is None else env
+    for name, path in ENV_OVERRIDES.items():
+        raw = str(env.get(name) or "").strip()
+        if not raw:
+            continue
+        value: object = raw.lower() in ("1", "true", "yes", "on") if name in _BOOL_ENV else raw
+        node = cfg
+        for key in path[:-1]:
+            if not isinstance(node.get(key), dict):
+                node[key] = {}
+            node = node[key]
+        node[path[-1]] = value
+    # agenty_core's ComfyUI client reads COMFYUI_URL; keep the two in step.
+    if str(env.get("AGENTY_COMFYUI_URL") or "").strip() and env is os.environ:
+        os.environ.setdefault("COMFYUI_URL", str(env["AGENTY_COMFYUI_URL"]).strip())
+    return cfg
 
 
 def invalidate() -> None:

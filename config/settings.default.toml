@@ -260,6 +260,13 @@ check_origin = true
 # page load; a script or another machine has to be given it deliberately. Turn off
 # only if an old sidebar extension locks you out, and update the extension instead.
 require_token = true
+# Per-user access tokens for the HTTP side (turn API, viewers, scripts), kept in
+# config/users.json by scripts/agenty_users.py. When there is at least one user,
+# a request must carry one of their tokens (Authorization: Bearer <token> or
+# X-AgentY-Token) besides the checks above; the panel's own session token keeps
+# working on loopback. Behind a reverse proxy, list the public name in
+# allowed_hosts. false = off, nothing changes. Env: AGENTY_USER_TOKENS=1.
+user_tokens = false
 # Extra origins allowed to call this host, e.g. ["http://studio.local:8188"].
 # Only needed when the panel is served from somewhere this cannot work out itself.
 allowed_origins = []
@@ -612,6 +619,29 @@ briefing_dir = "./config/qa/"
 [refine]
 max_runs = 4
 
+# Running agentY as a service on a server (docs/server.md). Everything here is
+# off or blank by default, and a blank value means exactly what the desktop
+# install has always done.
+[server]
+# Address the chat host binds to. Blank = the host of `agent_server_url`
+# (127.0.0.1). "0.0.0.0" listens on every interface: put a reverse proxy with TLS
+# in front of it (docs/server.md) and turn `security.user_tokens` on. A launcher
+# flag (-BindHost / --host) or AGENTY_UI_HOST wins over this. Env: AGENTY_BIND_HOST.
+bind_host = ""
+# Headless: no ComfyUI browser tab is expected. Finished media is not dropped
+# onto a canvas as loader nodes (Slack and the output folder get it instead), the
+# agent is not made to wait for a canvas snapshot that cannot come, and the canvas
+# tools answer in words that say so. Env: AGENTY_HEADLESS=1.
+headless = false
+# How many turns started from Slack (or the turn API) run at the same time; more
+# wait in a queue and are told their position. Bounded by `parallel_chats`.
+# Each running turn has an agent of its own (see parallel_chats), so this is not
+# a safety margin against corruption - it is how much LLM work, and how many
+# provider rate limits, one team may use at once.
+max_running_turns = 2
+# Turns allowed to wait. A request over this is refused, not queued forever.
+max_queued_turns = 20
+
 # Slack — a SECOND line into agentY, never a replacement for the sidebar panel.
 # Turns are mirrored to your Slack DM as they run, including the ones you start in
 # the panel (that is the point: queue a video at the desk, watch it finish from a
@@ -643,6 +673,24 @@ max_upload_mb = 45
 # sent to the agent. Anything larger is refused with a note in the DM rather
 # than half-downloaded.
 max_download_mb = 250
+# ── Channels (docs/slack.md, "Channels") ─────────────────────────────────────
+# Answer an @mention in these channels (ids, "C0123ABCD"), one thread per
+# request. Blank = DMs only, as before. Env: SLACK_ALLOWED_CHANNELS (comma
+# separated) is added to this list.
+channels = []
+# false: only the people in SLACK_ALLOWED_USERS may ask, in a channel too.
+# true: any member of an allowed channel may ask; SLACK_ALLOWED_USERS then only
+# decides who may use DMs and who may approve.
+channel_members_may_ask = false
+# Besides the person who asked, these Slack member ids may approve what a turn
+# waits on (installing a node or an MCP server, a plan, a review stop).
+# Env: SLACK_APPROVERS is added to this list.
+approvers = []
+# true: a DM request waits in the same line as channel requests (and several
+# conversations may run at once) instead of being answered with "busy".
+queue_dm_turns = false
+# How long a tool approval asked in Slack waits for a yes before it counts as no.
+approval_timeout_seconds = 600
 
 # Cost overview. Per-call costs the provider states itself (OpenRouter) are always
 # used in place of the estimate. `reconcile` additionally asks Anthropic / OpenAI

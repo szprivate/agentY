@@ -1,0 +1,17 @@
+# Caddy in front of agentY: TLS from Let's Encrypt, nothing else to configure.
+# Replace the name; add it to config/settings.local.json:
+#   "security": {"allowed_hosts": ["agenty.example.com"], "user_tokens": true}
+agenty.example.com {
+	# The chat stream is Server-Sent Events: do not buffer or time it out.
+	reverse_proxy 127.0.0.1:5000 {
+		flush_interval -1
+		transport http {
+			read_timeout 0
+			response_header_timeout 0
+		}
+	}
+	# Optional: keep the interactive pages and settings off the public name.
+	# (They need a token anyway.)
+	# @private path /agentY/settings* /agentY/log_viewer* /agentY/memory_viewer*
+	# respond @private 404
+}

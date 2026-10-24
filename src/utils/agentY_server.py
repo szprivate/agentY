@@ -72,6 +72,7 @@ from src.utils import interject_bus
 from agenty_core.utils import turn_scope
 from src.utils.pipeline_pool import ConversationBusy, PipelinePool, PoolTimeout
 from src.utils import turn_bus
+from src.utils import server_mode as _server_mode
 from src.utils import turn_watchdog as _wd
 from src.utils.media_loaders import candidates as _loader_candidates
 from src.utils.models import AgentSession
@@ -161,6 +162,8 @@ def request_canvas(wait: float = _CANVAS_WAIT) -> dict:
     anyway — it just has to be told what it is looking at.
     """
     global _canvas_wanted_until
+    if _server_mode.headless():
+        return {}                     # no page to ask: do not wait for one
     with _canvas_lock:
         before = _canvas_cache.get("ts", 0.0)
         if before and time.time() - before < _CANVAS_FRESH:
@@ -365,6 +368,8 @@ def _canvas_switch(env_var: str, setting: str) -> bool:
     feature rather than protect anything, and a canvas that quietly stopped
     receiving results looks like a broken agent, not a setting.
     """
+    if _server_mode.headless():
+        return False                  # a canvas switch means nothing without a canvas
     env = os.environ.get(env_var, "").strip().lower()
     if env in ("1", "true", "yes", "on"):
         return True
@@ -3300,11 +3305,13 @@ def _env_path() -> Path:
 # The rules live in src.utils.api_guard (pure, and tested there); this is the
 # Flask end of them: read the settings, read the request, ask.
 from src.utils import api_guard as _api_guard  # noqa: E402
+from src.utils import user_auth as _user_auth  # noqa: E402
 from src.utils import key_age as _key_age  # noqa: E402
 
 # The port actually bound, recorded at startup. Needed to tell an Origin on our
 # own port (a viewer page we served) from one that merely claims to be local.
 _bound_port: int = 0
+_bound_host: str = ""
 
 
 def set_bound_port(port: int) -> None:
@@ -3369,12 +3376,21 @@ def _guard_verdict(request) -> tuple[bool, str]:
     except Exception:  # noqa: BLE001
         comfy = "http://127.0.0.1:8188"
 
+    # Per-user tokens (a server install): a request that carries one is let in
+    # as that person, and the name travels with it (flask.g.agenty_user).
+    user = None
+    token = request.headers.get(_api_guard.TOKEN_HEADER, "")
+    if _user_auth.enabled():
+        token = _user_auth.bearer_or_header(request.headers) or token
+        user = _user_auth.match_token(token)
+
     result = _api_guard.verdict(
         method=request.method,
         path=request.path,
         host_header=request.headers.get("Host", ""),
         origin=request.headers.get("Origin", ""),
-        token=request.headers.get(_api_guard.TOKEN_HEADER, ""),
+        token=token,
+        user_ok=user is not None,
         expected_token=_api_guard.session_token(_project_root()),
         agent_port=_bound_port,
         comfyui_url=comfy,
@@ -3386,6 +3402,7 @@ def _guard_verdict(request) -> tuple[bool, str]:
     try:
         if g is not None:
             g._agentY_verdict = result
+            g.agenty_user = user
     except Exception:  # noqa: BLE001
         pass
     return result
@@ -4481,7 +4498,7 @@ def _build_app():
             # pages). Without this a response allowed for one origin can be
             # replayed to another out of the browser cache.
             resp.headers["Vary"] = "Origin"
-        resp.headers["Access-Control-Allow-Headers"] = f"Content-Type, {_api_guard.TOKEN_HEADER}"
+        resp.headers["Access-Control-Allow-Headers"] = f"Content-Type, Authorization, {_api_guard.TOKEN_HEADER}"
         resp.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
         # A preflight the browser re-asks for on every request is a visible stall
         # on a panel that polls; ten minutes is short enough that a settings
@@ -4547,7 +4564,13 @@ def _build_app():
         # project_root lets the panel tell the ComfyUI extension where this host
         # lives (browser-mediated self-registration), so the "Start server" button
         # can relaunch it later with no env var or manual config.
-        return jsonify({"status": "ok", "pipeline": _agent_ref is not None,
+        extra = {}
+        if request.args.get("deep", "").lower() in ("1", "true", "yes"):
+            # For a service manager or a proxy's upstream check: the facts a
+            # server install cares about. Not in the default answer, which the
+            # panel polls every few seconds and which stays exactly as it was.
+            extra["server"] = _server_health()
+        return jsonify({**extra, "status": "ok", "pipeline": _agent_ref is not None,
                         # Conversations with a turn running now — the green dot in
                         # the panel's conversation list — and how many may run.
                         "running_threads": running_threads(),
@@ -4679,13 +4702,29 @@ def _build_app():
         if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
             return jsonify({"error": "attachments must be a list of file paths"}), 400
         try:
+            from flask import g
             rid, tid = _api_start_turn(body.get("message"), paths,
                                        body.get("thread_id") or body.get("conversation") or "",
-                                       body.get("title") or "")
+                                       body.get("title") or "",
+                                       user=getattr(g, "agenty_user", None))
         except ValueError as exc:
             busy = "already running" in str(exc)
-            return jsonify({"error": str(exc)}), (409 if busy else 400)
-        return jsonify({"turn_id": rid, "conversation": tid, "status": "running"}), 202
+            full = "queue is full" in str(exc)
+            return jsonify({"error": str(exc)}), (409 if busy else 429 if full else 400)
+        out = {"turn_id": rid, "conversation": tid, "status": "running"}
+        ticket = _api_tickets.get(rid)
+        if ticket is not None and ticket.state == "queued":
+            from src.utils import turn_queue
+            out.update(status="queued", position=turn_queue.shared().position(ticket))
+        return jsonify(out), 202
+
+    @app.route("/agentY/queue", methods=["GET", "OPTIONS"])
+    def api_queue():
+        """Who is running and who is waiting, in order. Read-only."""
+        if request.method == "OPTIONS":
+            return "", 204
+        from src.utils import turn_queue
+        return jsonify(turn_queue.shared().snapshot())
 
     @app.route("/agentY/turns/<rid>", methods=["GET", "OPTIONS"])
     def api_turn(rid):
@@ -4701,6 +4740,11 @@ def _build_app():
         if wait:
             turn_bus.wait(rid, wait)
         out = turn_api.current(rid)
+        ticket = _api_tickets.get(rid)
+        if out is None and ticket is not None and ticket.state == "queued":
+            from src.utils import turn_queue
+            return jsonify({"turn_id": rid, "status": "queued",
+                            "position": turn_queue.shared().position(ticket)})
         if out is None:
             return jsonify({"error": "unknown turn (finished turns are kept for the "
                             "last 100, and not across a host restart)"}), 404
@@ -6113,6 +6157,8 @@ def start_agentY_server(agent, host: str = "127.0.0.1", port: int | None = None)
     # Before the app: the guard reads it on the very first request, and the token
     # file must exist before the panel asks ComfyUI for it.
     set_bound_port(port)
+    global _bound_host
+    _bound_host = str(host)
     _api_guard.session_token(_project_root())
     _note_key_ages()
     _configure_shell_sandbox()
@@ -6208,7 +6254,9 @@ def _slack_compact(thread_id: str) -> str:
     return uuid.uuid4().hex
 
 
-def _slack_start_turn(text: str, image_paths: list, thread_id: str = "") -> str:
+def _slack_start_turn(text: str, image_paths: list, thread_id: str = "",
+                      requester: dict | None = None,
+                      slack_root: tuple | None = None) -> str:
     """Run a turn asked for from Slack, in the conversation it belongs to.
 
     *thread_id* comes from the Slack thread the message was posted in. Empty
@@ -6226,6 +6274,18 @@ def _slack_start_turn(text: str, image_paths: list, thread_id: str = "") -> str:
     thread_id = str(thread_id or "")
     if not thread_id or cs.get_thread(thread_id) is None:
         thread_id = cs.create_thread(title="New chat")
+    # A request asked for in a Slack channel: the conversation lives in that
+    # thread, belongs to the person who asked, and starts from what the team
+    # has told the agent to remember about them and the project.
+    run_text = text
+    if slack_root and slack_root[0] and slack_root[1] and not cs.get_slack_thread(thread_id):
+        cs.set_slack_thread(thread_id, str(slack_root[0]), str(slack_root[1]))
+    if requester and requester.get("user"):
+        from src.utils import team_store
+        team_store.set_requester(thread_id, **requester)
+        ctx = team_store.context_block(requester)
+        if ctx:
+            run_text = ctx + "\n\n" + text
     if text:
         cs.add_message(thread_id, "user", text)
     # Ask the browser what is on the canvas. Without this a Slack turn has no
@@ -6237,8 +6297,9 @@ def _slack_start_turn(text: str, image_paths: list, thread_id: str = "") -> str:
     q: queue.Queue = queue.Queue()
     rid = uuid.uuid4().hex
     threading.Thread(target=_run_pipeline_stream,
-                     args=(thread_id, text, list(image_paths or []), q, rid),
-                     kwargs={"origin": "slack", "canvas_provider": request_canvas},
+                     args=(thread_id, run_text, list(image_paths or []), q, rid),
+                     kwargs={"origin": "slack",
+                             "canvas_provider": None if _server_mode.headless() else request_canvas},
                      name="agentY-slack-turn", daemon=True).start()
     # Nothing reads this queue: Slack is fed by the bus, not by the stream. Drain
     # it anyway, or the turn blocks on a queue that fills and never empties.
@@ -6246,8 +6307,42 @@ def _slack_start_turn(text: str, image_paths: list, thread_id: str = "") -> str:
     return rid
 
 
+_api_tickets: dict = {}          # turn id -> queue Ticket of a request that waited
+
+
+def _server_health() -> dict:
+    """What `/agentY/health?deep=1` adds: mode, queue, Slack, and whether ComfyUI answers."""
+    from src.utils import slack_bridge, turn_queue
+    out: dict = {"headless": _server_mode.headless(),
+                 "user_tokens": _user_auth.enabled(),
+                 "bind": _bound_host or None}
+    snap = turn_queue.shared().snapshot()
+    out["queue"] = {"limit": snap["limit"], "running": len(snap["running"]),
+                    "waiting": len(snap["queued"])}
+    bridge = slack_bridge.current()
+    out["slack"] = {"enabled": slack_bridge.enabled(), "connected": bridge is not None,
+                    "channels": len(getattr(bridge, "allowed_channels", []) or [])}
+    try:
+        import urllib.request
+        from src.utils.settings import load_settings
+        base = str(load_settings().get("comfyui_url", "http://127.0.0.1:8188")).rstrip("/")
+        t0 = time.time()
+        with urllib.request.urlopen(base + "/system_stats", timeout=2) as resp:
+            out["comfyui"] = {"url": base, "ok": resp.status == 200,
+                              "ms": int((time.time() - t0) * 1000)}
+    except Exception as exc:  # noqa: BLE001 - "down" is the answer, not an error
+        out["comfyui"] = {"ok": False, "error": type(exc).__name__}
+    return out
+
+
+def _use_api_queue() -> bool:
+    """Do turn-API requests wait in the shared line? Only on a server install
+    (headless, or per-user tokens): a desktop host starts them at once, as ever."""
+    return _server_mode.headless() or _user_auth.enabled()
+
+
 def _api_start_turn(text: str, image_paths: list, thread_id: str = "",
-                    title: str = "") -> tuple[str, str]:
+                    title: str = "", user: dict | None = None) -> tuple[str, str]:
     """Run a turn asked for through the turn API (``POST /agentY/turns``): the same
     orchestrator, skills and hooks as a panel turn, with nobody streaming it.
 
@@ -6273,13 +6368,42 @@ def _api_start_turn(text: str, image_paths: list, thread_id: str = "",
     if not thread_id:
         thread_id = cs.create_thread(title=(str(title).strip() or "New chat")[:120])
     cs.add_message(thread_id, "user", text)
-    q: queue.Queue = queue.Queue()
     rid = uuid.uuid4().hex
-    threading.Thread(target=_run_pipeline_stream,
-                     args=(thread_id, text, [str(p) for p in image_paths or []], q, rid),
-                     kwargs={"origin": "api", "canvas_provider": request_canvas},
-                     name="agentY-api-turn", daemon=True).start()
-    threading.Thread(target=_drain_queue, args=(q,), daemon=True).start()
+    run_text = text
+    if user and user.get("name"):
+        # Whose turn this is: for the usage ledger and for who may answer for it.
+        from src.utils import team_store
+        who = {"user": user["name"], "channel": "", "project": "", "name": user["name"]}
+        team_store.set_requester(thread_id, **who)
+        ctx = team_store.context_block(who)
+        if ctx:
+            run_text = ctx + "\n\n" + text
+    paths = [str(p) for p in image_paths or []]
+
+    def _go() -> str:
+        q: queue.Queue = queue.Queue()
+        threading.Thread(target=_run_pipeline_stream,
+                         args=(thread_id, run_text, paths, q, rid),
+                         kwargs={"origin": "api",
+                                 "canvas_provider": None if _server_mode.headless()
+                                 else request_canvas},
+                         name="agentY-api-turn", daemon=True).start()
+        threading.Thread(target=_drain_queue, args=(q,), daemon=True).start()
+        return rid
+
+    if not _use_api_queue():
+        _go()
+        return rid, thread_id
+    from src.utils import turn_queue
+    try:
+        ticket = turn_queue.shared().submit(_go, text=text, thread_id=thread_id, label="api",
+                                            user=(user or {}).get("name", ""))
+    except turn_queue.QueueFull as exc:
+        raise ValueError(f"the queue is full ({exc}); try again in a few minutes")
+    if ticket.state == turn_queue.QUEUED:
+        if len(_api_tickets) > 500:
+            _api_tickets.clear()
+        _api_tickets[rid] = ticket
     return rid, thread_id
 
 

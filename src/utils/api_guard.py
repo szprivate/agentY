@@ -263,12 +263,16 @@ def verdict(*, method: str, path: str, host_header: str, origin: str,
             allowed_hosts: tuple[str, ...] = (),
             allowed_origins: tuple[str, ...] = (),
             check_origin: bool = True,
-            require_token: bool = True) -> tuple[bool, str]:
+            require_token: bool = True,
+            user_ok: bool = False) -> tuple[bool, str]:
     """Allow this request? Returns ``(ok, reason)``; *reason* is empty when ok.
 
     Pure, so the rules can be tested without a server and without a browser —
     which matters more here than anywhere else in the codebase, because the
     interesting cases are all the ones a manual test cannot produce.
+
+    *user_ok* is a per-user token that the caller has already matched (see
+    ``user_auth``): it stands in for the session token, nothing else changes.
     """
     if str(method or "").upper() == "OPTIONS":
         return True, ""
@@ -297,6 +301,8 @@ def verdict(*, method: str, path: str, host_header: str, origin: str,
                                "security.allowed_origins if it is really yours.")
 
     if require_token and str(path or "") not in PUBLIC_PATHS:
+        if user_ok:
+            return True, ""
         if not expected_token:
             return True, ""      # nothing to check against; origin rules still applied
         if not secrets.compare_digest(str(token or ""), str(expected_token)):

@@ -27,7 +27,7 @@ set -uo pipefail
 # and 5000 is the one port a Mac cannot have: ControlCenter's AirPlay Receiver
 # holds it and answers there. --port still overrides everything.
 PORT=""
-BIND_HOST="127.0.0.1"
+BIND_HOST=""
 DEBUG=0
 NO_UPDATE=0
 LLM_QUERY_TEMPLATES=""
@@ -476,6 +476,12 @@ except Exception:
     print("")
 PY
 )"
+fi
+# Where to listen: --host wins, then server.bind_host / AGENTY_BIND_HOST (a server
+# install), then loopback - which is what every desktop install has always had.
+if [ -z "$BIND_HOST" ]; then
+  BIND_HOST="$(python -c "from src.utils.settings import load_settings; print((load_settings().get('server') or {}).get('bind_host') or '')" 2>/dev/null | tr -d '\r\n')"
+  [ -z "$BIND_HOST" ] && BIND_HOST="127.0.0.1"
 fi
 if [ -z "$PORT" ]; then
   # Settings unreadable. Say so rather than starting somewhere nobody expects.

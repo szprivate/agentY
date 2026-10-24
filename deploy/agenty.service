@@ -1,0 +1,39 @@
+# systemd unit for an agentY server host (Linux). Copy to /etc/systemd/system/agenty.service,
+# edit the three marked lines, then:
+#
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now agenty
+#   journalctl -u agenty -f
+#
+# The host listens on loopback; put a reverse proxy with TLS in front of it
+# (deploy/Caddyfile.example or deploy/nginx.conf.example). See docs/server.md.
+[Unit]
+Description=agentY host (Slack-first server)
+After=network-online.target
+Wants=network-online.target
+# If ComfyUI runs on this machine as its own unit, uncomment:
+# After=comfyui.service
+
+[Service]
+Type=simple
+# 1. the account that owns the checkout (not root)
+User=agenty
+# 2. the agentY checkout
+WorkingDirectory=/srv/agenty/agentY
+# Secrets and per-machine settings live in this file, not in the unit. See deploy/agenty.env.example.
+EnvironmentFile=/etc/agenty/agenty.env
+# 3. the venv's python; --host/--port can be left out when the env file sets them
+ExecStart=/srv/agenty/agentY/.venv/bin/python -m src.agenty_ui_server --port 5000
+Restart=on-failure
+RestartSec=5
+# The host drains a turn on SIGTERM; give it a moment.
+TimeoutStopSec=30
+# Hardening that does not get in the way of ComfyUI's output folders:
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+# Writes are needed in the checkout (memory/, output/, .logs/) and where outputs go:
+ReadWritePaths=/srv/agenty /mnt/shared
+
+[Install]
+WantedBy=multi-user.target

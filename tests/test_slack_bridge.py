@@ -550,8 +550,14 @@ class InboundEventTest(unittest.TestCase):
     def test_a_bot_post_is_not(self):
         self.assertFalse(is_actionable(self._ev(bot_id="B1")))
 
-    def test_a_channel_message_is_not(self):
-        self.assertFalse(is_actionable(self._ev(channel_type="channel")))
+    def test_a_channel_message_is_parsed_but_the_bridge_decides(self):
+        """Channels are parsed now (for @mentions); whether the channel is one the
+        bridge answers in, and whether it was a mention, is route()'s call -
+        see tests/test_slack_channels.py."""
+        self.assertTrue(is_actionable(self._ev(channel_type="channel")))
+        b = _bridge(start_turn=lambda t, f, tid="": "r1")
+        out = b.route("U_ME", "hello", channel="C1", channel_type="channel", mentioned=True)
+        self.assertEqual(out["action"], "ignored")     # C1 is not in slack.channels
 
     def test_something_that_is_not_a_message_is_not(self):
         self.assertFalse(is_actionable(self._ev(type="reaction_added")))
