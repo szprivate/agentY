@@ -25,6 +25,7 @@ user change one thing. What the panel previews is exactly what renders.
 5. `mg_render(scene_path)` (mp4 next to the scene; `format="mov"` keeps transparency when
    `comp.background` is null; `webm`, `gif`). The first render after install takes minutes (npm
    install, browser download); later ones take seconds. Tell the user the path.
+   The render also writes a poster PNG (`<name>.png`, result field `poster`) that carries the scene; that PNG opens in the Motion panel on its own (right-click > Edit in Motion). Tell the user both paths.
 6. When the user edited the scene in the panel (it saves the same file), `read_text_file` it again
    before changing it - never overwrite their changes from memory.
 
