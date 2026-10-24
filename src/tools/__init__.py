@@ -174,11 +174,20 @@ from agenty_core.tools.atlas_render import atlas_render_view, atlas_open_in_view
 # Capture an Atlas world all round; train a Gaussian splat from posed views locally (Brush).
 from agenty_core.tools.atlas_capture import atlas_capture_around  # noqa: F401,E402
 from agenty_core.tools.splat_train import train_splat, splat_training_status  # noqa: F401,E402
+# World Labs Marble: a ready splat world from pictures (no training), SPZ / PLY export.
+from agenty_core.tools.worldlabs_marble import marble_create_world, marble_export  # noqa: F401,E402
 # Rebuild a model in Blender / Maya / Houdini from ONE script file, and check its proportions against a
 # photo by projecting key points through the scene camera (agenty_core.tools.dcc).
 from agenty_core.tools.dcc import dcc_build, dcc_silhouette_check  # noqa: F401,E402
 # Measure a reference photo with MoGe (fov, camera height, metric points) via the local ComfyUI.
 from agenty_core.tools.reference_measure import measure_reference  # noqa: F401,E402
+# LoRA training: prepare a dataset, the user's review gate, train locally (ai-toolkit / musubi-tuner) or hosted (fal),
+# follow and stop it (agenty_core.tools.lora_training). The host lends it the Vision agent as captioner and
+# watches the detached trainer for notifications (src/tools/lora_host.py).
+from agenty_core.tools.lora_training import (  # noqa: F401,E402
+    lora_dataset_prepare, lora_dataset_set_captions, lora_dataset_review, train_lora, lora_training_status,
+    lora_training_stop,
+)
 # Pipeline actions for a ComfyUI session launched through Ayon (agenty_core.tools.ayon; docs/ayon.md). The host
 # lends it the canvas the panel posted and the panel's graph edits (src/tools/ayon_host.py).
 from agenty_core.tools.ayon import ayon_context, ayon_load, ayon_mark_publish, ayon_publish, ayon_open_tool  # noqa: F401,E402
@@ -238,10 +247,15 @@ _SHARED_CORE_TOOLS = [
     "atlas_fetch", "atlas_list", "atlas_render_view", "atlas_open_in_viewer",
     # all-round Atlas capture, and a Gaussian splat trained from it (local, Brush)
     "atlas_capture_around", "train_splat", "splat_training_status",
+    # World Labs Marble: splat worlds from pictures, SPZ / PLY export
+    "marble_create_world", "marble_export",
     # modelling from a reference photo in Blender / Maya / Houdini: one build script, a numeric silhouette check
     "dcc_build", "dcc_silhouette_check", "measure_reference",
     # the studio's Ayon pipeline: session context, load a published product, mark an output for publish, open the Publisher
     "ayon_context", "ayon_load", "ayon_mark_publish", "ayon_publish", "ayon_open_tool",
+    # LoRA training: dataset, the user's review gate, local / hosted trainers, status, stop
+    "lora_dataset_prepare", "lora_dataset_set_captions", "lora_dataset_review", "train_lora", "lora_training_status",
+    "lora_training_stop",
     # the Deadline render farm: submit a workflow as a job, follow it, look at the pools
     "submit_to_deadline", "deadline_job_status", "deadline_farm_info",
     # one partner (API) node built from its schema and run directly
@@ -262,6 +276,8 @@ for _n in _SHARED_CORE_TOOLS:
 # reach ComfyUI only when it ends (workflow_handoff.queue).
 from src.tools.workflow_handoff import queue, withdraw_workflow  # noqa: E402,F401
 del _n
+from src.tools import lora_host as _lora_host  # noqa: E402
+_lora_host.install()
 
 # ---------------------------------------------------------------------------
 # Info-agent tools – read-only; answers questions about capabilities/models/workflows.
@@ -612,6 +628,14 @@ ORCHESTRATOR_TOOLS: list = [
     atlas_capture_around,  # Atlas views all round a place (for a 360 environment / splat)
     train_splat,           # Gaussian splat from posed views (an Atlas world), trained locally with Brush
     splat_training_status, # check on / finish a splat training
+    marble_create_world,   # World Labs Marble: pictures (or an Atlas world) -> a ready splat world (paid; dry_run prices it)
+    marble_export,         # Marble world files: SPZ / PLY at a resolution, collider mesh
+    lora_dataset_prepare,  # LoRA training: build + caption a dataset (the user approves it before training)
+    lora_dataset_set_captions,
+    lora_dataset_review,   # opens the viewer's Dataset panel; the turn ends and waits for the user's approval
+    train_lora,            # local (ai-toolkit / musubi) or hosted (fal, asks for the price) training, in the background
+    lora_training_status,
+    lora_training_stop,
     dcc_build,             # run the one build script in Blender / Maya / Houdini (live or batch), save, render a still
     dcc_silhouette_check,  # project key points through the scene camera, compare with the photo by numbers
     measure_reference,     # MoGe on the reference photo: fov, camera height, horizon, metric points

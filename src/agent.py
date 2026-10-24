@@ -1012,6 +1012,8 @@ _ORCH_SKILL_NAMES = [
     "dcc-destruction-houdini",
     # Editable motion graphics: write a scene (data), the viewer edits it, Remotion renders it.
     "motion-graphics-scene",
+    # Training a LoRA: dataset, the user's approval, local / hosted trainers, reading the signals.
+    "lora-training",
 ]
 
 
