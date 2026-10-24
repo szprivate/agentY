@@ -7,6 +7,10 @@ agentY-mcp and ComfyUI-ImageViewer (the bEpic viewer) - that only work as a set.
   sibling it was made with;
 * ``requirements.lock`` records the Python package versions it was tested with
   (used as pip constraints by the installers and the launcher);
+* before anything is tagged, the Claude Code plugin in agentY-mcp is brought up to the
+  release: its skills are mirrored from agentY (scripts/sync_plugin_skills.py), its plugin,
+  marketplace and .mcpb versions are set to the release version, the manifest is validated,
+  and that is committed and pushed on agentY-mcp's branch (--dry-run reports it);
 * every repository gets the tag ``v<version>``, a GitHub release, and its
   ``stable`` branch moved to that commit.
 
@@ -170,6 +174,79 @@ def drift_note() -> str:
         return ""
 
 
+# ── the Claude Code plugin (agentY-mcp) ──────────────────────────────────────
+# Paths in agentY-mcp that a release rewrites, and nothing else.
+PLUGIN_PATHS = ("skills", "skills.sync.json", "manifest.json", ".claude-plugin")
+
+
+def _mcp_python(mcp: Path) -> str | None:
+    for rel in (".venv/Scripts/python.exe", ".venv/bin/python"):
+        if (Path(mcp) / rel).is_file():
+            return str(Path(mcp) / rel)
+    return None
+
+
+def _update_manifest(mcp: Path, *args) -> subprocess.CompletedProcess:
+    py = _mcp_python(mcp)
+    if py is None:
+        raise RuntimeError(f"{mcp} has no .venv - run the installer (or: uv venv; uv pip install -r requirements.txt) there first")
+    return subprocess.run([py, "scripts/update_manifest.py", *args], cwd=str(mcp), capture_output=True,
+                          text=True, encoding="utf-8", errors="replace")
+
+
+def plugin_prepare(version: str, mcp: Path, dry_run: bool) -> tuple:
+    """Make the Claude Code plugin in agentY-mcp match this release: the skills mirrored from
+    agentY, the plugin / marketplace / .mcpb versions set to ``version`` and the .mcpb tool list
+    current, the plugin manifest validated - committed to agentY-mcp on its branch and pushed,
+    BEFORE the repositories are tagged. Returns ``(ok, lines)``. With ``dry_run`` nothing is written.
+
+    Refuses (rather than guessing) when those paths already hold uncommitted changes: the
+    commit would sweep somebody's work into a release."""
+    import sync_plugin_skills as sps
+
+    lines: list = []
+    cfg = sps.load_config()
+    try:
+        before = sps.changes(ROOT / "skills", mcp, cfg["exclude"])
+    except ValueError as e:
+        return False, [f"plugin skills cannot be synced: {e}"]
+    dirty = _git(mcp, "status", "--porcelain", "--", *PLUGIN_PATHS, check=False)
+    if dirty:
+        return False, ["agentY-mcp has uncommitted changes in the plugin files - commit or discard them first:",
+                       *["  " + l for l in dirty.splitlines()[:10]]]
+    lines.append("  plugin skills: " + ("in sync" if sps.is_clean(before) else "would be synced (" + sps.describe(before) + ")"))
+    try:
+        if dry_run:
+            off = _update_manifest(mcp, "--check", "--version", version)
+            lines.append("  plugin versions / tool list: " + ("current" if off.returncode == 0 else
+                         "would be updated to " + version + " (" + off.stdout.strip().splitlines()[0] + ")"))
+            ok = _update_manifest(mcp, "--validate")
+            lines.append("  plugin manifest: " + (ok.stdout.strip().splitlines() or ["?"])[-1])
+            return ok.returncode == 0, lines + ["  would commit and push these in agentY-mcp before tagging"]
+        sps.sync(ROOT / "skills", mcp, cfg["exclude"])
+        done = _update_manifest(mcp, "--version", version, "--validate")
+    except RuntimeError as e:
+        return False, lines + [str(e)]
+    lines.append("  " + " | ".join(l.strip() for l in done.stdout.strip().splitlines()) if done.stdout.strip() else "  versions set")
+    if done.returncode != 0:
+        # the paths were clean before, so put them back: nothing is committed, a rerun starts clean
+        _git(mcp, "checkout", "-q", "--", *PLUGIN_PATHS, check=False)
+        _git(mcp, "clean", "-fdq", "--", "skills", check=False)
+        return False, lines + ["the plugin manifest is not valid (claude plugin validate) - fix it in agentY-mcp, then run again"]
+    # refresh the index of skills/ first: on Windows/macOS git keeps the OLD case of a renamed folder
+    _git(mcp, "rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", "skills", check=False)
+    _git(mcp, "add", "--", *PLUGIN_PATHS)
+    if _git(mcp, "status", "--porcelain", "--", *PLUGIN_PATHS, check=False):
+        _git(mcp, "commit", "-q", "-m", f"Plugin for release v{version}: skills mirrored from agentY, versions set\n\n"
+             "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>")
+        branch = _git(mcp, "branch", "--show-current")
+        _git(mcp, "push", "-q", "origin", f"HEAD:refs/heads/{branch}")
+        lines.append(f"  agentY-mcp: plugin committed and pushed ({_git(mcp, 'rev-parse', '--short', 'HEAD')})")
+    else:
+        lines.append("  agentY-mcp: plugin already current, nothing to commit")
+    return True, lines
+
+
 # ── making ───────────────────────────────────────────────────────────────────
 def build_lock(python: str = sys.executable) -> str:
     """requirements.lock: every package pinned, for Windows, macOS and Linux, at
@@ -224,6 +301,12 @@ def release(version: str, dry_run: bool = False, lock: bool = True, notes: str =
             problems.append(f"{name}: the checked-out commit is not pushed")
     if problems:
         print("Cannot release:\n  " + "\n  ".join(problems)); return 2
+
+    print(f"Claude Code plugin (agentY-mcp):")
+    ok, plugin_lines = plugin_prepare(version, dirs["agentY-mcp"], dry_run)
+    print("\n".join(plugin_lines))
+    if not ok:
+        print("Cannot release: the plugin is not ready (see above)."); return 2
 
     repos = {n: {"tag": tag, "commit": _git(dirs[n], "rev-parse", "HEAD")} for n in SIBLINGS}
     manifest = render_manifest(version, datetime.date.today().isoformat(), repos)

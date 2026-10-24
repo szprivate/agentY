@@ -11,6 +11,10 @@ rebuilt venv still knows what was asked for):
 * false - declined: nothing is ever installed;
 * absent - never asked: nothing is installed.
 
+An entry with ``"kind": "action"`` is not a package but a one-time setup the
+installer runs when it is ticked (``claude_code_plugin``). It starts UNticked,
+is never run by ``ensure`` (the launcher), and ``install`` is idempotent.
+
 Stdlib only; the installers call it with the venv's interpreter:
 
     python scripts/optional_deps.py list                    # name|label|hint|choice
@@ -39,7 +43,16 @@ OPTIONAL = {
         "hint": ("finds more photos of the same object on the web; uses your installed "
                  "Chrome or Edge, ~40 MB Python package, no browser download"),
     },
+    "claude_code_plugin": {
+        "kind": "action",
+        "label": "Set up agentY for Claude Code",
+        "hint": ("adds agentY's tools, skills and agents to Claude Code through the agentY-mcp plugin; "
+                 "needs the claude CLI, else the two commands are printed"),
+    },
 }
+
+PLUGIN_MARKETPLACE = "agentY"
+PLUGIN_ID = "agenty@" + PLUGIN_MARKETPLACE
 
 
 def read_choices(path: Path = None) -> dict:
@@ -58,7 +71,45 @@ def write_choice(name: str, wanted: bool, path: Path = None) -> None:
     path.write_text(json.dumps(choices, indent=2) + "\n", encoding="utf-8")
 
 
+def plugin_commands(mcp_path, claude: str = "claude") -> list:
+    """The two commands that set up the plugin from the local agentY-mcp checkout (read in place,
+    so a later `git pull` of agentY-mcp is also the plugin update)."""
+    return [[claude, "plugin", "marketplace", "add", str(mcp_path)],
+            [claude, "plugin", "install", PLUGIN_ID]]
+
+
+def install_plugin() -> int:
+    mcp = ROOT.parent / "agentY-mcp"
+    claude = shutil.which("claude")
+    shown = plugin_commands(mcp)
+    if not (mcp / ".claude-plugin" / "plugin.json").is_file():
+        print(f"[optional] agentY-mcp with its Claude Code plugin was not found at {mcp}; update it "
+              "(re-run the installer), then run:", flush=True)
+    elif claude is None:
+        print("[optional] The claude CLI is not on PATH. When Claude Code is installed, run:", flush=True)
+    else:
+        for cmd in plugin_commands(mcp, claude):
+            try:
+                done = subprocess.run(cmd, cwd=str(ROOT))
+            except OSError as exc:
+                print(f"[optional] Could not run {' '.join(shown[0][:3])}: {exc}", flush=True)
+                break
+            if done.returncode != 0:
+                print("[optional] That did not work; run these yourself:", flush=True)
+                break
+        else:
+            print("[optional] agentY is set up in Claude Code (restart it, or /reload-plugins). "
+                  "Updating agentY-mcp updates the plugin.", flush=True)
+            return 0
+        print(chr(10).join("    " + " ".join(c) for c in shown), flush=True)
+        return 1
+    print(chr(10).join("    " + " ".join(c) for c in shown), flush=True)
+    return 0
+
+
 def installed(name: str) -> bool:
+    if OPTIONAL[name].get("kind") == "action":
+        return False
     try:
         return importlib.util.find_spec(OPTIONAL[name]["module"]) is not None
     except (ImportError, ValueError):
@@ -74,6 +125,8 @@ def install_command(name: str, python: str = None) -> list:
 
 
 def install(name: str) -> int:
+    if name == "claude_code_plugin":
+        return install_plugin()
     try:
         return subprocess.run(install_command(name), cwd=str(ROOT)).returncode
     except OSError as exc:
@@ -83,7 +136,8 @@ def install(name: str) -> int:
 
 def wanted_and_missing(choices: dict = None) -> list:
     choices = read_choices() if choices is None else choices
-    return [n for n in OPTIONAL if choices.get(n) is True and not installed(n)]
+    return [n for n in OPTIONAL if OPTIONAL[n].get("kind") != "action"
+            and choices.get(n) is True and not installed(n)]
 
 
 def ensure() -> int:
@@ -106,6 +160,8 @@ def main(argv: list) -> int:
         choices = read_choices()
         for name, o in OPTIONAL.items():
             c = choices.get(name)
+            if c is None and o.get("kind") == "action":
+                c = False                      # an action starts unticked
             print("|".join([name, o["label"], o["hint"], "" if c is None else ("1" if c else "0")]))
         return 0
     if cmd == "set" and len(argv) == 3 and argv[1] in OPTIONAL:

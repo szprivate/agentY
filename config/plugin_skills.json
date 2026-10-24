@@ -1,0 +1,23 @@
+{
+  "_comment": "Which of agentY's skills (skills/) are copied into the agentY-mcp Claude Code plugin by scripts/sync_plugin_skills.py. 'exclude' lists host-only skills with the reason; 'notes' lists skills that ARE shipped but mention a host-only tool in part of their text.",
+  "exclude": {
+    "orchestrator-skills": "A folder of sub-skills (canvas-refine-loop, remotion, self-extension) for the agentY host's own orchestrator: they use refine_canvas_until, create_skill and the panel. It has no SKILL.md of its own.",
+    "canvas-layout": "Drives the agentY panel's canvas tools (arrange_canvas, group_canvas_nodes, auto_group_canvas, save_canvas_workflow, load_tools); the MCP server has none of them.",
+    "hook-pipeline": "Builds hook chains with the host's canvas-graph tools (edit_canvas_graph, delete_canvas_nodes, get_canvas_node); the MCP server only reads the selection and sets node parameters.",
+    "spawn-subagent": "Uses the host's spawn_subagent / run_planner and signal_workflow_ready. A Claude Code session delegates with its own subagents (see agents/).",
+    "batch-handoff": "Hands a batch to the host's Executor with signal_workflow_ready / upload_image_multiple. In MCP use run_variants, execute_workflows_batch or start_batch_job.",
+    "image-batch": "Writes multiprompt.json for the host pipeline's batch hand-off (see batch-handoff); nothing in the MCP server reads it."
+  },
+  "notes": {
+    "assemble-new-workflow": "Ends with the host's signal_workflow_ready; over MCP, finish with validate_workflow and execute_workflow.",
+    "partner-run": "Mentions the host's signal_workflow_ready hand-off; partner_run itself runs the node.",
+    "story-synopsis": "Mentions signal_workflow_ready; the writing is plain text over MCP.",
+    "video-gemini-motionpromptgeneration": "Mentions signal_workflow_ready; use execute_workflow over MCP.",
+    "camera-move-control": "Names run_world_builder, a host tool; over MCP build the world with atlas_create_world.",
+    "dcc-destruction-houdini": "Names show_in_panel / load_tools (host panel); the dcc_build part works over MCP.",
+    "model-from-reference": "Names show_in_panel / load_tools (host panel) and blender__* tools (the Blender MCP server, only when it is connected).",
+    "seedance-reference": "Names check_node_types (host); use get_node_schema over MCP.",
+    "custom-node-from-github": "Names file_read (host); read_text_file does the same over MCP.",
+    "image-downsize": "Names file_read (host); read_text_file does the same over MCP."
+  }
+}

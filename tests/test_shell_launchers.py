@@ -104,6 +104,17 @@ class SelectMany(unittest.TestCase):
 
 
 @unittest.skipIf(BASH is None, "no bash on PATH")
+class OptionalFeatures(unittest.TestCase):
+    """The optional-features step: packages start ticked, the Claude Code setup action starts off."""
+
+    def test_optional_features(self):
+        out = subprocess.run([BASH, str(SHELL_DIR / "optional_features_test.sh"), str(ROOT)],
+                             capture_output=True, text=True, timeout=300)
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn("0 failed", out.stdout)
+
+
+@unittest.skipIf(BASH is None, "no bash on PATH")
 @unittest.skipIf(shutil.which("git") is None, "no git on PATH")
 class UpdateRepo(unittest.TestCase):
     """The startup update against real repositories.

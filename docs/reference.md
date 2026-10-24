@@ -76,6 +76,25 @@ It releases each repository at the commit it has checked out, writes
 `release.toml` and `requirements.lock`, tags, moves `main` and `stable`, and
 creates the GitHub releases (needs the `gh` CLI).
 
+**The Claude Code plugin.** agentY-mcp is also a Claude Code plugin (tools, skills,
+agents, commands; audit in `docs/plugin_audit.md` there). Its `skills/` is a mirror of
+agentY's `skills/`, made by `scripts/sync_plugin_skills.py` (host-only skills are listed
+with a reason in `config/plugin_skills.json`; a shipped skill that names a tool the MCP
+server lacks needs a note there, a test checks). A release does this first, for
+`--dry-run` too (reported, nothing written): it syncs the skills, sets the plugin,
+marketplace and `.mcpb` versions to the release version, refreshes the `.mcpb` tool list,
+runs `claude plugin validate`, and commits and pushes that on agentY-mcp's branch before
+tagging, so the tagged commit is the plugin as released. It refuses to start when
+agentY-mcp has uncommitted changes in those files, and stops if the manifest is invalid.
+Between releases, `scripts/sync_plugin_skills.py --check` says whether the plugin is
+stale; agentY-mcp's tests fail on drift too.
+
+Users set the plugin up with the installer's optional step "Set up agentY for Claude
+Code" (off by default; it runs `claude plugin marketplace add <agentY-mcp>` and
+`claude plugin install agenty@agentY`, or prints those two commands when the `claude`
+CLI is not on PATH). The marketplace is the local checkout, read in place, so the
+launcher's `git pull` of agentY-mcp updates the plugin.
+
 **The tool layer's name.** The repository and folder are `agentY-core`; the
 Python package inside is `agenty_core`. An install from before the rename is
 moved over on its next start: the folder is renamed and a link is left under the
