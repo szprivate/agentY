@@ -29,7 +29,78 @@
       ],
       "setup_steps": "This server is a .mcpb bundle, and it needs the Blender add-on. Do both:\n1. The server: install the Blender MCP bundle (v1.0.3, Blender Lab, .mcpb from https://www.blender.org/lab/mcp-server/) from Settings > MCP servers > Install bundle (.mcpb). It unpacks into config/mcp_bundles/blender, which is where this preset's entry expects it.\n2. The add-on: download the Blender Lab add-on https://projects.blender.org/lab/blender_mcp/releases/download/v1.0.3/mcp-1.0.3.zip and install it into Blender 5.1 or newer with `blender -c extension install-file -r user_default --enable <path-to-mcp-1.0.3.zip>`. Then set the add-on preference use_autostart=True (add-on id bl_ext.user_default.mcp) and save the preferences (`bpy.ops.wm.save_userpref()`), so the add-on opens its socket whenever Blender starts.\nBlender must be running for the server to connect: the add-on listens on port 9876.",
       "default_selected": true,
-      "notes": ""
+      "notes": "",
+      "params": {
+        "port": 9876
+      },
+      "setup": [
+        {
+          "id": "uv",
+          "type": "ensure_tool",
+          "tool": "uv"
+        },
+        {
+          "id": "bundle",
+          "type": "install_bundle",
+          "name": "blender",
+          "version": "1.0.3",
+          "url": "https://projects.blender.org/lab/blender_mcp/releases/download/v1.0.3/blender-1.0.3.mcpb",
+          "sha256": "d6fe04dd17767f7c7fb452142f1f0e6787db575db49f3976a166142683b5b97e"
+        },
+        {
+          "id": "entry",
+          "type": "ensure_entry",
+          "needs": [
+            "bundle"
+          ],
+          "env_if_param_changed": {
+            "BLENDER_MCP_PORT": "port"
+          }
+        },
+        {
+          "id": "blender",
+          "type": "find_app",
+          "app": "blender",
+          "min_version": "5.1"
+        },
+        {
+          "id": "addon_zip",
+          "type": "download",
+          "url": "https://projects.blender.org/lab/blender_mcp/releases/download/v1.0.3/mcp-1.0.3.zip",
+          "sha256": "a7a9da816192502e5a0a202a396444e266b47d8fc4f74ad4698048bd43040707",
+          "dest": "${DOWNLOADS}/blender-mcp-addon-1.0.3.zip"
+        },
+        {
+          "id": "addon",
+          "type": "install_addon",
+          "app": "blender",
+          "zip": "${addon_zip.path}",
+          "addon_id": "mcp",
+          "needs": [
+            "blender",
+            "addon_zip"
+          ],
+          "note": "add-on id bl_ext.user_default.mcp; autostart on, port from params"
+        },
+        {
+          "id": "test",
+          "type": "test",
+          "needs": [
+            "uv",
+            "entry"
+          ]
+        },
+        {
+          "id": "running",
+          "type": "launch_and_wait",
+          "app": "blender",
+          "port": "${params.port}",
+          "needs": [
+            "blender",
+            "addon"
+          ]
+        }
+      ]
     },
     {
       "id": "elevenlabs",
@@ -126,7 +197,56 @@
       ],
       "setup_steps": "1) `winget install astral-sh.uv`. 2) Install the plugin into Houdini prefs without touching other AI clients: `uv tool install houdini-mcp-server==0.7.7` then `houdinimcp-install --houdini-version <e.g. 21.0> --harness none --yes` (use `--dry-run` first to preview; `--prefs-dir PATH` if prefs are not in Documents). 3) Restart Houdini; the plugin opens a local TCP server on localhost:9877. If Houdini is closed the bridge starts headless hython (set HOUDINIMCP_NO_HEADLESS=1 to disable). Remove with `houdinimcp-install --uninstall`.",
       "default_selected": false,
-      "notes": ""
+      "notes": "",
+      "params": {
+        "port": 9877
+      },
+      "setup": [
+        {
+          "id": "uv",
+          "type": "ensure_tool",
+          "tool": "uv"
+        },
+        {
+          "id": "houdini",
+          "type": "find_app",
+          "app": "houdini",
+          "min_version": "20.0"
+        },
+        {
+          "id": "addon",
+          "type": "install_addon",
+          "app": "houdini",
+          "dependency": "houdini-mcp-server==0.7.7",
+          "needs": [
+            "uv",
+            "houdini"
+          ]
+        },
+        {
+          "id": "entry",
+          "type": "ensure_entry"
+        },
+        {
+          "id": "test",
+          "type": "test",
+          "needs": [
+            "uv",
+            "entry"
+          ]
+        },
+        {
+          "id": "running",
+          "type": "launch_and_wait",
+          "app": "houdini",
+          "port": "${params.port}",
+          "needs": [
+            "houdini",
+            "addon"
+          ],
+          "note": "without Houdini the bridge starts headless hython"
+        }
+      ]
     },
     {
       "id": "maya",
@@ -149,7 +269,63 @@
       ],
       "setup_steps": "1) `winget install astral-sh.uv`. 2) Download https://raw.githubusercontent.com/GimbalGoats/GG_MayaMCP/main/scripts/enable_commandport.py and run the whole file once in Maya's Python Script Editor (or call it from userSetup.py to open the port on every start). Default port 7001. 3) Verify from the agent with health_check / scene_info. Raw script execution stays disabled unless opted in (https://gimbalgoats.github.io/GG_MayaMCP/).",
       "default_selected": false,
-      "notes": ""
+      "notes": "",
+      "params": {
+        "port": 7001
+      },
+      "setup": [
+        {
+          "id": "uv",
+          "type": "ensure_tool",
+          "tool": "uv"
+        },
+        {
+          "id": "maya",
+          "type": "find_app",
+          "app": "maya",
+          "min_version": "2022"
+        },
+        {
+          "id": "script",
+          "type": "download",
+          "url": "https://raw.githubusercontent.com/GimbalGoats/GG_MayaMCP/5234c6ae5d0a37029b90ff4ade40dca55e1f2ca6/scripts/enable_commandport.py",
+          "sha256": "95faaea26f8ff721e6be41fe718e2b80ac9b4e2f54f4fc3c362173c661fd1d6d",
+          "dest": "${DOWNLOADS}/maya-mcp/enable_commandport.py"
+        },
+        {
+          "id": "addon",
+          "type": "install_addon",
+          "app": "maya",
+          "source": "${script.path}",
+          "needs": [
+            "maya",
+            "script"
+          ],
+          "note": "copies the script into the Maya scripts folder and opens the commandPort from userSetup.py"
+        },
+        {
+          "id": "entry",
+          "type": "ensure_entry"
+        },
+        {
+          "id": "test",
+          "type": "test",
+          "needs": [
+            "uv",
+            "entry"
+          ]
+        },
+        {
+          "id": "running",
+          "type": "launch_and_wait",
+          "app": "maya",
+          "port": "${params.port}",
+          "needs": [
+            "maya",
+            "addon"
+          ]
+        }
+      ]
     },
     {
       "id": "unity",
@@ -176,7 +352,53 @@
       ],
       "setup_steps": "1) `winget install astral-sh.uv`. 2) In the Unity project add to Packages/manifest.json dependencies: `\"com.coplaydev.unity-mcp\": \"https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#v10.3.0\"` (tag exists) or use Package Manager > Add from git URL with the same URL. 3) Open Unity, then Window > MCP for Unity and check the bridge shows connected (skip its 'Configure All Detected Clients'; agentY launches the server itself). The server finds the editor automatically when both run.",
       "default_selected": false,
-      "notes": ""
+      "notes": "",
+      "params": {
+        "project": ""
+      },
+      "setup": [
+        {
+          "id": "uv",
+          "type": "ensure_tool",
+          "tool": "uv"
+        },
+        {
+          "id": "unity",
+          "type": "find_app",
+          "app": "unity"
+        },
+        {
+          "id": "package",
+          "type": "install_addon",
+          "app": "unity",
+          "dependency": "com.coplaydev.unity-mcp",
+          "dependency_url": "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#v10.3.0",
+          "needs": [
+            "unity"
+          ],
+          "note": "needs params.project: the Unity project folder"
+        },
+        {
+          "id": "entry",
+          "type": "ensure_entry"
+        },
+        {
+          "id": "bridge",
+          "type": "manual",
+          "message": "Open the project in Unity, then Window > MCP for Unity and check the bridge shows connected (skip 'Configure All Detected Clients'; agentY starts the server itself).",
+          "needs": [
+            "package"
+          ]
+        },
+        {
+          "id": "test",
+          "type": "test",
+          "needs": [
+            "uv",
+            "entry"
+          ]
+        }
+      ]
     },
     {
       "id": "nuke",
@@ -203,7 +425,88 @@
       ],
       "setup_steps": "kleer001/nuke-mcp (MIT), pinned to commit 6cbed80a2f35b997263fc51c988c5bb1405657fd. Not on PyPI (the PyPI `nuke-mcp` is an unrelated joke package - never pip install it).\n1. `git clone https://github.com/kleer001/nuke-mcp.git \"<agentY root>/config/mcp_bundles/nuke-mcp\"` then `git -C <that dir> checkout 6cbed80a2f35b997263fc51c988c5bb1405657fd`.\n2. `uv sync` in that folder (needs uv: `winget install astral-sh.uv`).\n3. Copy `nuke_addon/nuke_mcp_addon.py` into the user's Nuke folder `%USERPROFILE%\\.nuke\\`.\n4. Make it start with Nuke: append to `%USERPROFILE%\\.nuke\\menu.py` (create it if missing; do not duplicate the block):\n   `# --- nuke-mcp (agentY) ---` / `import nuke_mcp_addon` / `nuke_mcp_addon.start()` / `# --- end nuke-mcp ---`\n5. Restart Nuke: a NukeMCP panel appears and listens on port 54321. Then test the server; `uv run nuke-mcp --discover` lists the Nuke installs and licences it finds.\nWithout a running Nuke, `uv run nuke-mcp --headless` can launch Nuke without a GUI (needs a Nuke licence).",
       "notes": "Replaces the earlier dughogan/nuke_mcp preset (no licence, last update Nov 2025, port 9876 shared with Blender).",
-      "default_selected": false
+      "default_selected": false,
+      "params": {
+        "port": 54321
+      },
+      "setup": [
+        {
+          "id": "uv",
+          "type": "ensure_tool",
+          "tool": "uv"
+        },
+        {
+          "id": "git",
+          "type": "ensure_tool",
+          "tool": "git"
+        },
+        {
+          "id": "clone",
+          "type": "git_clone",
+          "url": "https://github.com/kleer001/nuke-mcp.git",
+          "commit": "6cbed80a2f35b997263fc51c988c5bb1405657fd",
+          "dest": "${BUNDLES}/nuke-mcp",
+          "needs": [
+            "git"
+          ]
+        },
+        {
+          "id": "sync",
+          "type": "run",
+          "cmd": [
+            "uv",
+            "sync"
+          ],
+          "cwd": "${BUNDLES}/nuke-mcp",
+          "skip_if_exists": "${BUNDLES}/nuke-mcp/.venv",
+          "needs": [
+            "uv",
+            "clone"
+          ]
+        },
+        {
+          "id": "entry",
+          "type": "ensure_entry",
+          "needs": [
+            "clone"
+          ]
+        },
+        {
+          "id": "nuke",
+          "type": "find_app",
+          "app": "nuke",
+          "min_version": "15.0"
+        },
+        {
+          "id": "addon",
+          "type": "install_addon",
+          "app": "nuke",
+          "source": "${BUNDLES}/nuke-mcp/nuke_addon/nuke_mcp_addon.py",
+          "needs": [
+            "clone",
+            "nuke"
+          ],
+          "note": "copies the add-on into ~/.nuke and starts it from menu.py"
+        },
+        {
+          "id": "test",
+          "type": "test",
+          "needs": [
+            "sync",
+            "entry"
+          ]
+        },
+        {
+          "id": "running",
+          "type": "launch_and_wait",
+          "app": "nuke",
+          "port": "${params.port}",
+          "needs": [
+            "nuke",
+            "addon"
+          ]
+        }
+      ]
     },
     {
       "id": "after-effects",
@@ -227,7 +530,45 @@
       ],
       "setup_steps": "No panel or plugin is needed. One setting in After Effects (2024-2026, Node.js 24+): Edit > Preferences > Scripting & Expressions > turn ON \"Allow Scripts to Write Files and Access Network\" (without it the tools fail). Open the project in After Effects before the first call; if After Effects is not in a standard Adobe folder set AE_MCP_EXE to the AfterFX.exe path in the server env. Only one After Effects instance is supported without extra work (AfterFX.exe -m needs a startup script, see the project README). Try it on a copy of the .aep first: it can modify the open project.",
       "default_selected": false,
-      "notes": "Community server (kumoproductions, MIT, 0.3.x, active). No socket port is used, so it does not clash with the other DCC bridges. Set AE_MCP_READONLY=1 in the server env to inspect without changes."
+      "notes": "Community server (kumoproductions, MIT, 0.3.x, active). No socket port is used, so it does not clash with the other DCC bridges. Set AE_MCP_READONLY=1 in the server env to inspect without changes.",
+      "params": {},
+      "setup": [
+        {
+          "id": "node",
+          "type": "ensure_tool",
+          "tool": "node",
+          "min_version": "24",
+          "hint": "Node.js 24 or newer (nodejs.org)"
+        },
+        {
+          "id": "ae",
+          "type": "find_app",
+          "app": "after-effects",
+          "min_version": "2024"
+        },
+        {
+          "id": "scripting",
+          "type": "install_addon",
+          "app": "after-effects",
+          "needs": [
+            "ae"
+          ],
+          "note": "turns on 'Allow Scripts to Write Files and Access Network' in the AE preferences file"
+        },
+        {
+          "id": "entry",
+          "type": "ensure_entry"
+        },
+        {
+          "id": "test",
+          "type": "test",
+          "needs": [
+            "node",
+            "entry"
+          ],
+          "note": "open the project in After Effects before the first tool call"
+        }
+      ]
     },
     {
       "id": "premiere-pro",
@@ -255,7 +596,63 @@
       ],
       "setup_steps": "Installs the CEP bridge panel into Premiere (Premiere Pro 2020+, Node.js 20+). 1) `npm install -g adobe-premiere-pro-mcp@1.2.8`. 2) Run the package's own Windows installer WITHOUT the extra client configs (the default also rewrites Claude Desktop and VS Code configs): `powershell -NoProfile -ExecutionPolicy Bypass -File \"$(npm root -g)\\adobe-premiere-pro-mcp\\scripts\\install-windows.ps1\" -SkipBuild -SkipCopilotConfig -SkipClaudeDesktopConfig`. It copies the panel to `%APPDATA%\\Adobe\\CEP\\extensions\\MCPBridgeCEP` and sets the CEP debug flag (`PlayerDebugMode=1` under `HKCU:\\Software\\Adobe\\CSXS.<n>`) so the unsigned panel loads. 3) Restart Premiere, open Window > Extensions > MCP Bridge (CEP), set the bridge directory the installer printed (default under `%USERPROFILE%\\.premiere-mcp-bridge`), and press Start. 4) Check with the `verify_premiere_connection` tool before editing. The bridge is file-based, there is no network port.",
       "default_selected": false,
-      "notes": "Community server (hetpatel-11, MIT, active). Telemetry and update checks are switched off in the server env here. The default tool list is small (search_tools, invoke_tool); add PREMIERE_MCP_TOOLSET=full to the server env to list every tool. The npm package is the one named adobe-premiere-pro-mcp; a different project publishes `premiere-pro-mcp` with the same command name."
+      "notes": "Community server (hetpatel-11, MIT, active). Telemetry and update checks are switched off in the server env here. The default tool list is small (search_tools, invoke_tool); add PREMIERE_MCP_TOOLSET=full to the server env to list every tool. The npm package is the one named adobe-premiere-pro-mcp; a different project publishes `premiere-pro-mcp` with the same command name.",
+      "params": {},
+      "setup": [
+        {
+          "id": "node",
+          "type": "ensure_tool",
+          "tool": "node",
+          "min_version": "20"
+        },
+        {
+          "id": "premiere",
+          "type": "find_app",
+          "app": "premiere-pro",
+          "min_version": "2020"
+        },
+        {
+          "id": "package",
+          "type": "npm_fetch",
+          "package": "adobe-premiere-pro-mcp@1.2.8",
+          "dest": "${DOWNLOADS}/premiere-pro-mcp",
+          "needs": [
+            "node"
+          ]
+        },
+        {
+          "id": "panel",
+          "type": "install_addon",
+          "app": "premiere-pro",
+          "source": "${DOWNLOADS}/premiere-pro-mcp/package/cep-plugin",
+          "debug_mode": true,
+          "needs": [
+            "premiere",
+            "package"
+          ],
+          "note": "CEP panel into the user CEP folder + PlayerDebugMode for the current user"
+        },
+        {
+          "id": "entry",
+          "type": "ensure_entry"
+        },
+        {
+          "id": "start",
+          "type": "manual",
+          "message": "Restart Premiere Pro, open Window > Extensions > MCP Bridge (CEP), keep the Temp Directory it shows and press Start. Then check with the verify_premiere_connection tool.",
+          "needs": [
+            "panel"
+          ]
+        },
+        {
+          "id": "test",
+          "type": "test",
+          "needs": [
+            "node",
+            "entry"
+          ]
+        }
+      ]
     },
     {
       "id": "davinci-resolve",
@@ -281,7 +678,93 @@
       ],
       "setup_steps": "Needs DaVinci Resolve STUDIO 18.5+ (Blackmagic only allows external scripting in Studio; the free edition works only through an in-app bridge script on Resolve 21.0.x, not on 21.1) and Python 3.10-3.13 (3.12 is safest; pin with DAVINCI_RESOLVE_MCP_PYTHON). 1) In Resolve: Preferences > System > General > External scripting using: Local, then restart Resolve. 2) Run once `npx -y davinci-resolve-mcp@4.10.0 setup --clients manual`: it builds a managed Python venv under the user app-data folder and detects the Resolve paths (it sets nothing for other AI clients with `--clients manual`). If detection fails set `RESOLVE_SCRIPT_API=C:\\ProgramData\\Blackmagic Design\\DaVinci Resolve\\Support\\Developer\\Scripting`, `RESOLVE_SCRIPT_LIB=C:\\Program Files\\Blackmagic Design\\DaVinci Resolve\\fusionscript.dll` and add `%RESOLVE_SCRIPT_API%\\Modules` to PYTHONPATH. 3) Start Resolve, open a project, then check with the project-info tool. `npx -y davinci-resolve-mcp@4.10.0 doctor` reports Python or path faults.",
       "default_selected": false,
-      "notes": "Community server (samuelgursky, MIT, very active, ~3.7k stars, 37 tools in the default compound mode). Talks to Resolve in process, no network port, no clash with the other bridges. Resolve must be running for the live tools."
+      "notes": "Community server (samuelgursky, MIT, very active, ~3.7k stars, 37 tools in the default compound mode). Talks to Resolve in process, no network port, no clash with the other bridges. Resolve must be running for the live tools.",
+      "params": {},
+      "setup": [
+        {
+          "id": "node",
+          "type": "ensure_tool",
+          "tool": "node",
+          "min_version": "18"
+        },
+        {
+          "id": "python",
+          "type": "ensure_tool",
+          "tool": "python",
+          "min_version": "3.10",
+          "hint": "Python 3.10-3.13 (3.12 is safest)"
+        },
+        {
+          "id": "resolve",
+          "type": "find_app",
+          "app": "davinci-resolve",
+          "min_version": "18.5"
+        },
+        {
+          "id": "studio",
+          "type": "manual",
+          "message": "DaVinci Resolve scripting needs the STUDIO edition (the free edition does not allow external scripting). Confirm you run Studio, then in Resolve set Preferences > System > General > External scripting using: Local, and restart Resolve.",
+          "needs": [
+            "resolve"
+          ]
+        },
+        {
+          "id": "api",
+          "type": "set_env",
+          "name": "RESOLVE_SCRIPT_API",
+          "value": "C:\\ProgramData\\Blackmagic Design\\DaVinci Resolve\\Support\\Developer\\Scripting",
+          "only_on": "win",
+          "needs": [
+            "resolve"
+          ]
+        },
+        {
+          "id": "lib",
+          "type": "set_env",
+          "name": "RESOLVE_SCRIPT_LIB",
+          "value": "${resolve.root}\\fusionscript.dll",
+          "only_on": "win",
+          "needs": [
+            "resolve"
+          ]
+        },
+        {
+          "id": "venv",
+          "type": "run",
+          "cmd": [
+            "npx",
+            "-y",
+            "davinci-resolve-mcp@4.10.0",
+            "setup",
+            "--clients",
+            "manual"
+          ],
+          "skip_if_ok": [
+            "npx",
+            "-y",
+            "davinci-resolve-mcp@4.10.0",
+            "doctor"
+          ],
+          "needs": [
+            "node",
+            "python",
+            "resolve"
+          ],
+          "timeout": 1200
+        },
+        {
+          "id": "entry",
+          "type": "ensure_entry"
+        },
+        {
+          "id": "test",
+          "type": "test",
+          "needs": [
+            "node",
+            "entry"
+          ]
+        }
+      ]
     },
     {
       "id": "cavalry",
@@ -307,7 +790,87 @@
       ],
       "setup_steps": "Not on PyPI: the agent clones and pins it. Cavalry 2.4+ (tested on 2.7.2). 1) `git clone https://github.com/m18h/cavalry-mcp.git config/mcp_bundles/cavalry`, then `git -C config/mcp_bundles/cavalry checkout cca9e49213f93b171058ebfa3fdff6919e65b2fa` (pin), then `uv sync --directory config/mcp_bundles/cavalry`. 2) Install the bridge script into Cavalry: `uv run --directory config/mcp_bundles/cavalry cavalry-mcp install-bridge` (copies cavalry-mcp-bridge.js to `%APPDATA%\\Cavalry\\Scripts`). 3) In Cavalry open Scripts > cavalry-mcp-bridge.js once per session: a small window says \"Listening on http://127.0.0.1:8722\" and has to stay open (this step is a menu click the user does; it cannot be scripted).",
       "default_selected": false,
-      "notes": "Community server (m18h, MIT, small and young: one author, 6 commits, July 2026). Cavalry has no official MCP server from Scene Group. Bridge port 8722 (change with CAVALRY_BRIDGE_PORT in the server env); no clash with 9876/9877/7001. Optional knowledge-base search: `uv sync --extra kb`."
+      "notes": "Community server (m18h, MIT, small and young: one author, 6 commits, July 2026). Cavalry has no official MCP server from Scene Group. Bridge port 8722 (change with CAVALRY_BRIDGE_PORT in the server env); no clash with 9876/9877/7001. Optional knowledge-base search: `uv sync --extra kb`.",
+      "params": {
+        "port": 8722
+      },
+      "setup": [
+        {
+          "id": "uv",
+          "type": "ensure_tool",
+          "tool": "uv"
+        },
+        {
+          "id": "git",
+          "type": "ensure_tool",
+          "tool": "git"
+        },
+        {
+          "id": "clone",
+          "type": "git_clone",
+          "url": "https://github.com/m18h/cavalry-mcp.git",
+          "commit": "cca9e49213f93b171058ebfa3fdff6919e65b2fa",
+          "dest": "${BUNDLES}/cavalry",
+          "needs": [
+            "git"
+          ]
+        },
+        {
+          "id": "sync",
+          "type": "run",
+          "cmd": [
+            "uv",
+            "sync"
+          ],
+          "cwd": "${BUNDLES}/cavalry",
+          "skip_if_exists": "${BUNDLES}/cavalry/.venv",
+          "needs": [
+            "uv",
+            "clone"
+          ]
+        },
+        {
+          "id": "entry",
+          "type": "ensure_entry",
+          "needs": [
+            "clone"
+          ]
+        },
+        {
+          "id": "cavalry",
+          "type": "find_app",
+          "app": "cavalry",
+          "min_version": "2.4"
+        },
+        {
+          "id": "bridge",
+          "type": "install_addon",
+          "app": "cavalry",
+          "source": "${BUNDLES}/cavalry/src/cavalry_mcp/js/cavalry-mcp-bridge.js",
+          "needs": [
+            "clone",
+            "cavalry"
+          ],
+          "note": "copies the bridge script into Cavalry's Scripts folder"
+        },
+        {
+          "id": "open",
+          "type": "manual",
+          "message": "In Cavalry open Scripts > cavalry-mcp-bridge.js once per session: a small window says 'Listening on http://127.0.0.1:${params.port}' and has to stay open (a menu click, it cannot be scripted).",
+          "unless_port": "${params.port}",
+          "needs": [
+            "bridge"
+          ]
+        },
+        {
+          "id": "test",
+          "type": "test",
+          "needs": [
+            "sync",
+            "entry"
+          ]
+        }
+      ]
     },
     {
       "id": "playwright",

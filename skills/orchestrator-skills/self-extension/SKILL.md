@@ -51,8 +51,10 @@ allowed-tools: add_mcp_server, use_mcp_server, create_skill, list_skills, remove
   the committed `skills/` set is likewise a human decision — surface it, don't do
   it silently.
 - Never write to `.env` or `config/` except through the settings UI path — and
-  `add_mcp_server`, the one sanctioned tool for it: when the user asks you to
-  install/add an MCP server, call it with the start command, address or README JSON.
+  `install_mcp_preset` (a catalog preset or an approved drafted recipe; see the
+  `mcp-recipes` skill) and `add_mcp_server`, the sanctioned tools for it: when the user
+  asks you to install/add an MCP server, prefer a preset, otherwise call `add_mcp_server`
+  with the start command, address or README JSON.
   It shows the user exactly what will run and waits for their approval every time,
   tests the server, saves it (keys to `.env`) and connects it; then `use_mcp_server`.
   Never `run_script`/npm or hand-edit `config/mcp.json` for this.

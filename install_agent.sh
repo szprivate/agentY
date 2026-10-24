@@ -754,10 +754,32 @@ EOF
   done 3<<EOF
 $("$py" "$tool" apply "${chosen[@]}")
 EOF
+  # Presets with a setup recipe (scripts/mcp_setup.py) are set up here, the same way Settings and
+  # the agent do it: every step looks first and skips what is done. Asked once.
+  local -a recipe_ids=() setup_flags=()
+  local ran_setup=" " ans
+  for id in "${chosen[@]}"; do
+    [ "$("$py" "$tool" hasrecipe "$id")" = "1" ] && recipe_ids+=("$id")
+  done
+  if [ "${#recipe_ids[@]}" -gt 0 ]; then
+    echo; info "These can be set up for you: ${recipe_ids[*]} (downloads, the add-on inside the app, its preferences, a connection test; your other settings are not touched)."
+    read -r -p "  Set them up now? [Y/n] " ans || ans=""
+    case "$ans" in
+      n|N|no|NO) ;;
+      *)
+        read -r -p "  May the setup install missing tools (uv, Node.js, git) system-wide? [y/N] " ans || ans=""
+        case "$ans" in y|Y|yes|YES) setup_flags+=(--allow-system) ;; esac
+        read -r -p "  May it start the apps and wait for them to connect? [y/N] " ans || ans=""
+        case "$ans" in y|Y|yes|YES) setup_flags+=(--launch) ;; esac
+        "$py" "$tool" setup "${recipe_ids[@]}" "${setup_flags[@]}" || info "Some steps failed; run the preset's setup again from Settings > MCP servers (Run setup), or ask the agent."
+        ran_setup=" ${recipe_ids[*]} " ;;
+    esac
+  fi
   if [ "${#later_id[@]}" -gt 0 ]; then
     echo; plain "  Finish later (the installer does not touch other applications):" "$C_WHITE"
     local i
     for ((i = 0; i < ${#later_id[@]}; i++)); do
+      case "$ran_setup" in *" ${later_id[$i]} "*) continue ;; esac
       plain "    ${later_id[$i]}:" "$C_CYAN"
       printf '%s\n' "${later_steps[$i]}" | sed 's/^/      /'
     done

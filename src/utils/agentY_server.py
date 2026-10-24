@@ -5588,16 +5588,35 @@ def _build_app():
         secrets = body.get("secrets") if isinstance(body.get("secrets"), dict) else {}
         from src.tools.mcp_tools import load_mcp_config, save_mcp_config, test_server
         from src.utils import mcp_preset_install as mpi
-        try:
-            payload, status = mpi.install(
-                str(body.get("id") or "").strip(), secrets,
-                load_config=load_mcp_config, save_config=save_mcp_config,
+        pid = str(body.get("id") or "").strip()
+        recheck = bool(body.get("recheck"))
+
+        def run(progress=None):
+            return mpi.install(
+                pid, secrets, load_config=load_mcp_config, save_config=save_mcp_config,
                 update_env=_update_env_file, test_server=test_server,
-                start_turn=_api_start_turn, get_env=lambda k: os.environ.get(k, ""))
+                start_turn=_api_start_turn, get_env=lambda k: os.environ.get(k, ""),
+                progress=progress, recheck=recheck, dry_run=bool(body.get("dry_run")))
+        try:
+            from scripts import mcp_presets as _mp
+            preset = _mp.find(pid)
+            if preset is not None and preset.get("setup") and (recheck or pid not in load_mcp_config().get("servers", {})):
+                # A recipe can take minutes (downloads, an app starting): run it as a job, poll for the steps.
+                return jsonify({"ok": True, "job": mpi.start_job(run, label=f"MCP preset: {preset['name']}")})
+            payload, status = run()
             return jsonify(payload), status
         except Exception as exc:  # noqa: BLE001
             logger.error("mcp preset install failed: %s", exc, exc_info=True)
             return jsonify({"ok": False, "error": str(exc)}), 500
+
+    @app.route("/agentY/mcp/presets/jobs/<jid>", methods=["GET", "OPTIONS"])
+    def mcp_preset_job_route(jid):
+        # Progress and, at the end, the result of an Install / Run setup job.
+        if request.method == "OPTIONS":
+            return "", 204
+        from src.utils import mcp_preset_install as mpi
+        rec = mpi.job(jid)
+        return (jsonify(rec), 200) if rec else (jsonify({"ok": False, "error": "unknown job"}), 404)
 
     # ── Threads ────────────────────────────────────────────────────────────
     @app.route("/agentY/threads", methods=["GET", "POST", "OPTIONS"])

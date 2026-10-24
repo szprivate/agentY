@@ -125,8 +125,13 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
     "inspect": ("read arbitrary files, list a workflow file's loaded models, search folders for workflow "
                 "files (read_text_file, list_files and get_node_source are always in your list)",
                 ("file_read", "inspect_workflow_file", "find_workflows")),
-    "mcp": ("see which MCP servers are set up and whether each is loaded, or install a new one",
-            ("list_mcp_servers", "add_mcp_server")),
+    "mcp": ("see which MCP servers are set up and whether each is loaded, install one the user asks for (the "
+            "preset catalog first: install_mcp_preset sets the whole thing up, app add-on included; a server "
+            "that is not in it: draft_mcp_recipe, then the user's yes), re-check a preset's setup, install a "
+            ".mcpb bundle, or see which creative apps (Blender, Houdini, Maya, Nuke, After Effects, Premiere, "
+            "Resolve, Cavalry, Unity) are installed and which version",
+            ("list_mcp_servers", "add_mcp_server", "list_mcp_presets", "install_mcp_preset", "setup_mcp_preset",
+             "draft_mcp_recipe", "install_mcp_bundle", "find_app_installs")),
     "dirs": ("where ComfyUI keeps its folders (models, input, output) and where agentY saves what it makes",
              ("get_comfyui_dirs", "get_agent_output_dirs")),
     # Pinned by the pipeline on the turns they belong to (CONTEXT_PACKS).

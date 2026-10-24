@@ -19,6 +19,7 @@ tool: :class:`MCPOnDemandHook` hands the call its tool.
 """
 from __future__ import annotations
 
+import json
 import logging
 
 from strands import tool
@@ -31,6 +32,7 @@ logger = logging.getLogger("agentY.mcp")
 
 SEP = "__"
 TOOL_NAME = "use_mcp_server"
+INSTALL_TOOLS = ("install_mcp_preset", "setup_mcp_preset")
 # Tool lists by server, for the client they came from (filled at startup by
 # load_mcp_tools): the tool objects are shared by every pooled agent.
 _LISTS = _mcp._LISTS
@@ -96,6 +98,18 @@ def servers_in(messages, servers: set | None = None) -> set:
             name = use.get("name")
             if name == TOOL_NAME:
                 wanted = str((use.get("input") or {}).get("server") or "").strip()
+                if wanted in servers:
+                    found.add(wanted)
+            elif name in INSTALL_TOOLS:
+                # install_mcp_preset / setup_mcp_preset load the server they installed into the agent
+                # (src/tools/mcp_setup_tools.py): the conversation keeps it on the next turn.
+                inp = use.get("input") or {}
+                wanted = str(inp.get("preset_id") or "").strip()
+                if not wanted and str(inp.get("recipe") or "").lstrip().startswith("{"):
+                    try:
+                        wanted = str(json.loads(inp["recipe"]).get("id") or "")
+                    except ValueError:
+                        wanted = ""
                 if wanted in servers:
                     found.add(wanted)
             else:

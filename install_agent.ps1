@@ -930,6 +930,26 @@ function Install-McpPresets {
         $steps = (@(& $py $tool steps $f[1]) -join "`n").Trim()
         if ($steps) { $later += [pscustomobject]@{ Id = $f[1]; Steps = $steps } }
     }
+    # Presets with a setup recipe (scripts/mcp_setup.py) are set up here, the same way Settings and
+    # the agent do it: every step looks first and skips what is done. Asked once.
+    $recipeIds = @($ids | Where-Object { @(& $py $tool hasrecipe $_)[0] -eq "1" })
+    $ranSetup = @()
+    if ($recipeIds.Count) {
+        Write-Host ""
+        Write-Info "These can be set up for you: $($recipeIds -join ', ') (downloads, the add-on inside the app, its preferences, a connection test; your other settings are not touched)."
+        $a = (Read-Answer "Set them up now? [Y/n]").Trim().ToLower()
+        if ($a -ne "n" -and $a -ne "no") {
+            $flags = @()
+            $s = (Read-Answer "May the setup install missing tools (uv, Node.js, git) system-wide with winget? [y/N]").Trim().ToLower()
+            if ($s -eq "y" -or $s -eq "yes") { $flags += "--allow-system" }
+            $l = (Read-Answer "May it start the apps and wait for them to connect? [y/N]").Trim().ToLower()
+            if ($l -eq "y" -or $l -eq "yes") { $flags += "--launch" }
+            & $py $tool setup @recipeIds @flags
+            if ($LASTEXITCODE -ne 0) { Write-Info "Some steps failed; run the preset's setup again from Settings > MCP servers (Run setup), or ask the agent." }
+            $ranSetup = $recipeIds
+        }
+    }
+    $later = @($later | Where-Object { $ranSetup -notcontains $_.Id })
     if ($later.Count) {
         Write-Host ""
         Write-Host "  Finish later (the installer does not touch other applications):" -ForegroundColor White

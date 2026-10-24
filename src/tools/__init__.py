@@ -93,6 +93,9 @@ from src.tools.memory_tools import memory_read, memory_write  # noqa: F401
 # stays here rather than in the shared core layer.
 from src.tools.mcp_tools import list_mcp_servers  # noqa: F401
 from src.tools.mcp_install import add_mcp_server  # noqa: F401
+from src.tools.mcp_setup_tools import (  # noqa: F401
+    install_mcp_preset, setup_mcp_preset, list_mcp_presets, draft_mcp_recipe, install_mcp_bundle,
+)
 from src.tools.project_memory import (project_memory_forget,  # noqa: F401
                                       project_memory_read, project_memory_write)
 from src.tools.web_search import web_search, web_search_images  # noqa: F401
@@ -179,6 +182,7 @@ from agenty_core.tools.worldlabs_marble import marble_create_world, marble_expor
 # Rebuild a model in Blender / Maya / Houdini from ONE script file, and check its proportions against a
 # photo by projecting key points through the scene camera (agenty_core.tools.dcc).
 from agenty_core.tools.dcc import dcc_build, dcc_silhouette_check  # noqa: F401,E402
+from agenty_core.tools.app_installs import find_app_installs  # noqa: F401,E402
 # Measure a reference photo with MoGe (fov, camera height, metric points) via the local ComfyUI.
 from agenty_core.tools.reference_measure import measure_reference  # noqa: F401,E402
 # LoRA training: prepare a dataset, the user's review gate, train locally (ai-toolkit / musubi-tuner) or hosted (fal),
@@ -251,6 +255,8 @@ _SHARED_CORE_TOOLS = [
     "marble_create_world", "marble_export",
     # modelling from a reference photo in Blender / Maya / Houdini: one build script, a numeric silhouette check
     "dcc_build", "dcc_silhouette_check", "measure_reference",
+    # which creative apps are installed here, and which version is the newest
+    "find_app_installs",
     # the studio's Ayon pipeline: session context, load a published product, mark an output for publish, open the Publisher
     "ayon_context", "ayon_load", "ayon_mark_publish", "ayon_publish", "ayon_open_tool",
     # LoRA training: dataset, the user's review gate, local / hosted trainers, status, stop
@@ -552,6 +558,14 @@ ORCHESTRATOR_TOOLS: list = [
     list_mcp_servers,
     # "Install the X MCP": asks the user, tests, saves, connects.
     add_mcp_server,
+    # "Install the X MCP" for a catalog preset (or an approved drafted recipe): the Settings Install
+    # button's code path - config entry, the preset's setup recipe, connection test, tools in your list.
+    install_mcp_preset,
+    setup_mcp_preset,
+    list_mcp_presets,
+    draft_mcp_recipe,
+    install_mcp_bundle,
+    find_app_installs,
     # Models: is it installed, where is it on HuggingFace, download it into the
     # folder ComfyUI loads that kind from. On the orchestrator and not only on the
     # repair specialists, because "download the missing models" is something users

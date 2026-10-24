@@ -18,44 +18,77 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parent.parent
 CATALOG = ROOT / "config" / "mcp_presets.json"
 CONFIG = ROOT / "config" / "mcp.json"
+LOCAL_CATALOG = ROOT / "config" / "mcp_presets.local.json"
 
 
-def load_catalog(path: Path | None = None) -> list[dict]:
-    """The presets, each with its optional parts filled in. A missing or unreadable
-    catalog is an empty list; an entry without an id or a server is left out."""
+def _normalise(p: dict) -> dict | None:
+    if not isinstance(p, dict) or not p.get("id") or not isinstance(p.get("server"), dict):
+        return None
+    return {
+        "id": str(p["id"]), "name": str(p.get("name") or p["id"]),
+        "category": str(p.get("category") or ""), "description": str(p.get("description") or ""),
+        "server": p["server"],
+        "env_keys": [k for k in (p.get("env_keys") or []) if isinstance(k, dict) and k.get("key")],
+        "requires": [str(r) for r in (p.get("requires") or [])],
+        "setup_steps": str(p.get("setup_steps") or ""),
+        # The structured recipe scripts/mcp_setup.py runs, and its defaults (${params.x}).
+        "setup": [s for s in (p.get("setup") or []) if isinstance(s, dict)],
+        "params": p.get("params") if isinstance(p.get("params"), dict) else {},
+        # Good to know, nothing to do: shown, but never starts an agent turn.
+        "notes": str(p.get("notes") or ""),
+        "default_selected": bool(p.get("default_selected")),
+    }
+
+
+def _read_presets(path: Path) -> list[dict]:
     try:
-        data = json.loads(Path(path or CATALOG).read_text(encoding="utf-8"))
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
     out = []
     for p in (data.get("presets") if isinstance(data, dict) else None) or []:
-        if not isinstance(p, dict) or not p.get("id") or not isinstance(p.get("server"), dict):
-            continue
-        out.append({
-            "id": str(p["id"]), "name": str(p.get("name") or p["id"]),
-            "category": str(p.get("category") or ""), "description": str(p.get("description") or ""),
-            "server": p["server"],
-            "env_keys": [k for k in (p.get("env_keys") or []) if isinstance(k, dict) and k.get("key")],
-            "requires": [str(r) for r in (p.get("requires") or [])],
-            "setup_steps": str(p.get("setup_steps") or ""),
-            # Good to know, nothing to do: shown, but never starts an agent turn.
-            "notes": str(p.get("notes") or ""),
-            "default_selected": bool(p.get("default_selected")),
-        })
+        n = _normalise(p)
+        if n:
+            if isinstance(p, dict) and p.get("approved_hash"):
+                n["approved_hash"] = str(p["approved_hash"])
+            out.append(n)
     return out
 
 
-def find(preset_id: str, path: Path | None = None) -> dict | None:
-    return next((p for p in load_catalog(path) if p["id"] == preset_id), None)
+def load_catalog(path: Path | None = None, local_path: Path | None = None) -> list[dict]:
+    """The presets, each with its optional parts filled in. A missing or unreadable
+    catalog is an empty list; an entry without an id or a server is left out.
+
+    Presets the user approved in chat (``config/mcp_presets.local.json``) follow the
+    official ones, marked ``local``. On an id clash the official preset wins. When the
+    official catalog is given explicitly (tests) the local file is only read if
+    *local_path* is too."""
+    official = _read_presets(path or CATALOG)
+    if path is not None and local_path is None:
+        return official
+    taken = {p["id"] for p in official}
+    for p in _read_presets(local_path or LOCAL_CATALOG):
+        if p["id"] in taken:
+            logger.warning("local MCP preset '%s' ignored: the official catalog has that id", p["id"])
+            continue
+        p["local"] = True
+        official.append(p)
+    return official
+
+
+def find(preset_id: str, path: Path | None = None, local_path: Path | None = None) -> dict | None:
+    return next((p for p in load_catalog(path, local_path) if p["id"] == preset_id), None)
 
 
 def read_config(path: Path | None = None) -> dict:
@@ -196,6 +229,12 @@ def _main(argv: list[str] | None = None) -> int:
     for name in ("keys", "steps", "warmup"):
         sub.add_parser(name).add_argument("id")
     sub.add_parser("apply").add_argument("ids", nargs="+")
+    sub.add_parser("hasrecipe").add_argument("id")
+    st = sub.add_parser("setup", help="run the setup recipes of presets (scripts/mcp_setup.py)")
+    st.add_argument("ids", nargs="+")
+    st.add_argument("--dry-run", action="store_true")
+    st.add_argument("--allow-system", action="store_true", help="allow winget installs of uv / Node / git")
+    st.add_argument("--launch", action="store_true", help="allow starting an app and waiting for its port")
     a = ap.parse_args(argv)
     cat = Path(a.catalog) if a.catalog else None
     if a.cmd == "list":
@@ -206,6 +245,29 @@ def _main(argv: list[str] | None = None) -> int:
             for p in presets:
                 print(_row(p["id"], p["name"], p["category"], "1" if p["default_selected"] else "0", p["description"]))
         return 0
+    if a.cmd == "hasrecipe":
+        p = find(a.id, cat)
+        print("1" if p and p.get("setup") else "0")
+        return 0
+    if a.cmd == "setup":
+        if str(ROOT) not in sys.path:
+            sys.path.insert(0, str(ROOT))
+        from scripts import mcp_setup as ms
+        worst, left = 0, []
+        for pid in a.ids:
+            rep = ms.run_setup(pid, dry_run=a.dry_run, allow_system=a.allow_system, launch=a.launch,
+                               config_path=Path(a.config) if a.config else None,
+                               catalog_path=cat)
+            pub = ms.public(rep)
+            print(ms.format_report(pub))
+            worst = max(worst, 0 if rep["ok"] else 1)
+            left += [f"{pid}: {m}" for m in pub["needs_user"]]
+        if left:
+            print()
+            print("Left for you:")
+            for line in left:
+                print("  - " + line)
+        return worst
     if a.cmd == "apply":
         res = apply(a.ids, cat, Path(a.config) if a.config else None)
         for i, state in res.items():
