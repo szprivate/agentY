@@ -3212,6 +3212,7 @@ _KNOWN_ENV_KEYS = [
     # Deadline render farm (all optional; see docs/deadline.md)
     "DEADLINE_PATH", "DEADLINE_REPOSITORY", "DEADLINE_WEBSERVICE_URL", "DEADLINE_COMFYUI_PATH",
     "DEADLINE_COMFYUI_POOL", "DEADLINE_GROUP", "DEADLINE_OUTPUT_DIR",
+    "DEADLINE_ROUTE_RUNS", "DEADLINE_FETCH_DIR", "DEADLINE_MAX_WAIT_MINUTES",
     "OPENAI_API_KEY", "OPENAI_BASE_URL", "GEMINI_API_KEY", "GEMINI_BASE_URL",
     # Slack bridge. Listed here so the settings UI offers the three fields the
     # workspace side cannot be set up without, rather than sending someone to a
@@ -3219,6 +3220,8 @@ _KNOWN_ENV_KEYS = [
     # machine. SLACK_ALLOWED_USERS is not a secret and is deliberately not named
     # like one — it renders as a plain, readable field.
     "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_ALLOWED_USERS",
+    # Slack channels (docs/slack.md): where @mentions are answered, who may approve.
+    "SLACK_ALLOWED_CHANNELS", "SLACK_APPROVERS",
 ]
 
 

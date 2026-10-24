@@ -36,14 +36,24 @@ agentY sends `DEADLINE_GROUP` with the job as an extra filter, but the pool is t
 
 ## 2. Install the plugin into the repository
 
-The plugin is in this repo: `deadline/plugins/ComfyUI/` (`ComfyUI.py`, `.param`, `.options`). Copy the folder to the
-repository's custom plugins folder, e.g.
+The plugin is in this repo: `deadline/plugins/ComfyUI/` (`ComfyUI.py`, `.param`, `.options`). **You** install it
+(agentY never writes into the repository) with the script, from the agentY checkout:
 
 ```
-<repository>\custom\plugins\ComfyUI        (\\bepic-storage01\farm\deadline\custom\plugins\ComfyUI)
+.venv/Scripts/python.exe scripts/install_deadline_plugin.py --dry-run     # shows what would change, writes nothing
+.venv/Scripts/python.exe scripts/install_deadline_plugin.py                # installs / updates
+.venv/Scripts/python.exe scripts/install_deadline_plugin.py --uninstall    # moves it out again
 ```
 
-Workers pick it up on their next job (they sync the plugin from the repository). No icon is needed.
+It finds the repository from `--repository`, then `DEADLINE_REPOSITORY`, then `deadlinecommand -GetRepositoryRoot`,
+copies the three files to `<repository>\custom\plugins\ComfyUI` (for this studio
+`\\bepic-storage01\farm\deadline\custom\plugins\ComfyUI`) and checks the copy byte for byte. An older copy that differs
+is moved to `<repository>\custom\_backup\ComfyUI-<time>` first (not left in `plugins\`, so Deadline does not list it).
+Run it again after every agentY update that touches `deadline/plugins/ComfyUI/`. It creates no pool and assigns no
+worker; the commands for that are printed at the end and are in section 1.
+
+Workers pick the plugin up on their next job (they sync it from the repository). No icon is needed. By hand,
+copying the folder to the same place does the same.
 
 Then **Monitor > Tools > Configure Plugins > ComfyUI** (Super User) and set:
 
@@ -81,6 +91,9 @@ All optional; set them in `.env` (the settings dialog's `.env` section lists the
 | `DEADLINE_COMFYUI_PATH` | ComfyUI folder on the workers, sent with each job (a plugin setting for the OS wins) |
 | `DEADLINE_OUTPUT_DIR` | **required**: a folder the workers can write (network path); each job gets a subfolder, input files go to `_inputs/` there |
 | `DEADLINE_PRIORITY` | default priority (50) |
+| `DEADLINE_ROUTE_RUNS` | `1`/`0`: send the agent's normal runs to the farm (section 5). Overrides the setting `deadline.route_runs` |
+| `DEADLINE_FETCH_DIR` | with routed runs: copy the results here (next to your other outputs) instead of using them in place on the share |
+| `DEADLINE_MAX_WAIT_MINUTES` | with routed runs: stop waiting (and suspend the job) after this long; default 240, 0 = never |
 
 With neither a Web Service nor `deadlinecommand`, the tools answer "Deadline not configured".
 
@@ -93,3 +106,43 @@ With neither a Web Service nor `deadlinecommand`, the tools answer "Deadline not
 
 If it fails: the task's log in Monitor shows ComfyUI's own log lines and, at the end, ComfyUI's error text
 (`execution_error` with node and exception). A startup failure includes the tail of ComfyUI's log.
+
+## 5. Sending the agent's normal runs to the farm
+
+The three tools above are explicit: you ask for "render this on the farm". Routing makes it the default. Turn on
+`deadline.route_runs` in `config/settings.local.json` (or `DEADLINE_ROUTE_RUNS=1` in `.env`; the variable wins, so
+`0` switches it off again without touching settings). **It is off by default.**
+
+```json
+{ "deadline": { "route_runs": true } }
+```
+
+With it on, `execute_workflow`, `execute_workflows_batch` and the chained stages of a hook run (`run_workflow_now`)
+queue each workflow as a Deadline job instead of the local ComfyUI. Everything else about a run is unchanged:
+
+| step | how it works on the farm |
+|---|---|
+| preparing the graph | the same as locally (autogrow wires, chosen save nodes, output naming, viewer tab) |
+| cost gate for partner nodes | the same, before anything is queued |
+| submission | one job per workflow on the dedicated `comfyui` pool; refused (with the setup hint) if the pool is missing or empty |
+| progress | "queued, waiting for a free worker" / "rendering 1/1 - 40%" lines, in the panel and in Slack, plus a reminder every minute while it waits |
+| results | the files the plugin wrote to `DEADLINE_OUTPUT_DIR\<name>_<time>\` are handed to the same collection step as a local run's: QA against your briefing, the viewer, the canvas, the Slack upload, the output tags. With `DEADLINE_FETCH_DIR` set they are copied there first and *those* paths are used |
+| a failure | the plugin's ComfyUI error text is parsed back into node id / node type / exception, so the repair loop works as it does locally |
+| Stop | suspends the job (it stays in Monitor; nothing is deleted) and the plugin interrupts ComfyUI on the worker |
+| a batch | every member is its own job, so they render on different machines at the same time; a failed member is healed and resubmitted like a local one |
+
+What it needs, besides sections 1-3: **the output folder must be visible to the agentY host under the same path the
+workers wrote** (`DEADLINE_OUTPUT_DIR` as the host sees it: a UNC path on Windows, a mount on Linux with Deadline path
+mapping for the workers). If the host cannot open a result path, the run says "Could not resolve ..." for it.
+
+What it does not do: it does not turn on for runs a person queues in ComfyUI's own Queue button (those are not agentY's);
+and partner-node credit settlement is not measured for farm jobs (the worker's own key pays).
+
+Use it with a server host ([server.md](server.md)): a Slack request, queued in the turn queue, renders on the farm, and the
+files come back into the thread.
+
+### What is untested
+
+Everything here is tested against a stand-in for Deadline's status calls and for the plugin's output manifest, not
+against your farm: the pool `comfyui` does not exist yet and the plugin is not installed. Before relying on it, do
+section 4 with a tiny workflow, then turn routing on for one run and watch it in Monitor.

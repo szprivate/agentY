@@ -619,6 +619,18 @@ briefing_dir = "./config/qa/"
 [refine]
 max_runs = 4
 
+# Rendering on a Deadline 10 farm (docs/deadline.md). The farm tools (submit_to_deadline,
+# deadline_job_status, deadline_farm_info) work without this; it only decides whether
+# the agent's NORMAL runs go there.
+[deadline]
+# OFF by default. On: execute_workflow / execute_workflows_batch queue each workflow as
+# a Deadline job on the dedicated ComfyUI pool instead of the local ComfyUI, follow it,
+# and collect the files the workers wrote to DEADLINE_OUTPUT_DIR through the usual path
+# (QA, the viewer, Slack, the canvas). DEADLINE_* connection settings go in .env; the
+# environment variable DEADLINE_ROUTE_RUNS (1/0) overrides this switch. The pool must
+# exist and hold workers, or the run is refused with how to set it up.
+route_runs = false
+
 # Running agentY as a service on a server (docs/server.md). Everything here is
 # off or blank by default, and a blank value means exactly what the desktop
 # install has always done.
