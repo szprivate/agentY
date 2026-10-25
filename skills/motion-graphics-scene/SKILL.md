@@ -50,7 +50,7 @@ Needs Node.js 18+ on the machine; if `mg_render` says it is missing, say so and 
 ```json
 {"id":"title","name":"Title","type":"text","parent":"grp","in":0,"out":90,"hidden":false,"locked":false,
  "blend":"normal", "anchor":[0,0],"position":[960,540],"scale":[100,100],"rotation":0,"opacity":100,
- "text":"THE WAY OUT","fontSize":120,"weight":800,"tracking":6,"align":"center","fill":"#ffffff",
+ "text":"LOW TIDE","fontSize":120,"weight":800,"tracking":6,"align":"center","fill":"#ffffff",
  "tracks":{"opacity":[{"f":0,"v":0,"ease":"linear"},{"f":20,"v":100}]}}
 ```
 
