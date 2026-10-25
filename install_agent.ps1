@@ -687,7 +687,7 @@ function Select-ExecutionMode {
     Write-Host "    local   this machine's GPU only (today's behaviour)" -ForegroundColor White
     Write-Host "    hybrid  locally when the models are installed and fit, else on Comfy Cloud" -ForegroundColor White
     Write-Host "    cloud   Comfy Cloud - no GPU needed here" -ForegroundColor White
-    Write-Host "  Partner API nodes (Seedance, GPT Image, Kling ...) run through ComfyUI in every mode." -ForegroundColor DarkGray
+    Write-Host "  Partner API models (Seedance, GPT Image, Kling ...) run on the providers' servers in every mode." -ForegroundColor DarkGray
     $default = if ($saved) { $saved } else { $rec }
     $label = if ($saved) { "keep $saved" } else { "recommended: $rec" }
     $ans = (Read-Answer "    Mode [local/hybrid/cloud] (Enter = $label)").Trim().ToLower()

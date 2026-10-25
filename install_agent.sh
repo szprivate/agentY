@@ -602,7 +602,7 @@ select_execution_mode() {   # $1 = settings.local.json -> echoes the chosen mode
     plain "    local   this machine's GPU only (today's behaviour)" "$C_WHITE"
     plain "    hybrid  locally when the models are installed and fit, else on Comfy Cloud" "$C_WHITE"
     plain "    cloud   Comfy Cloud - no GPU needed here" "$C_WHITE"
-    plain "  Partner API nodes (Seedance, GPT Image, Kling ...) run through ComfyUI in every mode." "$C_GRAY"
+    plain "  Partner API models (Seedance, GPT Image, Kling ...) run on the providers' servers in every mode." "$C_GRAY"
   } >&2
   default="${saved:-$rec}"
   if [ -n "$saved" ]; then label="keep $saved"; else label="recommended: $rec"; fi
