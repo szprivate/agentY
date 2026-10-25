@@ -124,7 +124,7 @@ class InstallerParity(unittest.TestCase):
             self.assertIn("Where should open-weight models", text)
             self.assertIn("[local/hybrid/cloud]", text)
             self.assertIn("--set-mode", text)
-            self.assertIn("Partner API nodes", text)
+            self.assertIn("Partner API models", text)
 
     def test_both_ask_for_the_comfy_key_in_hybrid_and_cloud(self):
         for text in self.texts():
