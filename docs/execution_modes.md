@@ -85,8 +85,11 @@ nodes, viewer, Slack).
 Before every cloud run (`agenty_core.utils.cloud_run.gate`):
 
 - the balance is read; below `execution.min_balance_usd` (default $0.50) the run is refused (`insufficient_credits`);
-- the estimate is the partner nodes' price badges plus `execution.cloud_gpu_run_usd` (default $0.10 per open-weight run;
-  Comfy Cloud publishes no price quote, so this is a rough placeholder);
+- the estimate is the partner nodes' price badges plus GPU time: Comfy Cloud bills it per second (standard
+  workflows on an RTX 6000 Pro: about 0.27 credits/s, $0.077/min, $4.62/h), so the estimate is
+  `execution.cloud_gpu_usd_per_second` times an expected runtime of `cloud_gpu_min_seconds` (20) to
+  `cloud_gpu_max_seconds_image` (120) or `cloud_gpu_max_seconds_video` (600) - about $0.03-0.15 for an image
+  and up to $0.77 for a video run;
 - an estimate at or above the partner confirmation level (`confirm_above_usd`, default $1) is refused with
   `confirm_cost` until the user says yes; then the agent repeats it with `confirm_cost=True`;
 - afterwards the real spend is measured and added to the turn's usage like partner spend.

@@ -648,10 +648,14 @@ mode = "local"
 vram_margin_gb = 2.0
 # Cloud runs: refused when the Comfy credit balance is below this (USD) ...
 min_balance_usd = 0.50
-# ... and an open-weight run counts as this much GPU time (USD, a rough placeholder: Comfy
-# Cloud quotes no price; the real spend is measured from the balance afterwards). A run at or
-# above the partner confirmation level (confirm_above_usd) asks for a yes first.
-cloud_gpu_run_usd = 0.10
+# ... and an open-weight run is estimated as GPU time: Comfy Cloud bills per second (standard
+# workflows, RTX 6000 Pro: ~0.27 credits/s = $0.077/min) times an expected runtime range, longer
+# for video. The real spend is measured from the balance afterwards. A run at or above the
+# partner confirmation level (confirm_above_usd) asks for a yes first.
+cloud_gpu_usd_per_second = 0.00128
+cloud_gpu_min_seconds = 20
+cloud_gpu_max_seconds_image = 120
+cloud_gpu_max_seconds_video = 600
 
 # Running agentY as a service on a server (docs/server.md). Everything here is
 # off or blank by default, and a blank value means exactly what the desktop
