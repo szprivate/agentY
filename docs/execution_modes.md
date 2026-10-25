@@ -11,7 +11,8 @@ hardware.
 | `cloud` | on Comfy Cloud | `COMFYUI_API_KEY` and a Comfy Cloud subscription |
 
 **Partner (API) nodes are not affected by the mode.** Seedance, GPT Image, Kling, Nano Banana and the rest need no
-GPU: in *every* mode, `local` included, they run through your local ComfyUI under the usual partner-credit checks. A
+GPU on your side: their models run on the providers' servers. In *every* mode, `local` included, the request is sent from your
+local ComfyUI under the usual partner-credit checks. A
 workflow that mixes partner nodes with open-weight models is routed by its open-weight part alone. (If no local
 ComfyUI is reachable at all, a partner-only workflow in `hybrid` / `cloud` runs on Comfy Cloud instead; the partner
 nodes work there too.)

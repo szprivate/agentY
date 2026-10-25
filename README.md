@@ -113,7 +113,7 @@ The installer detects your hardware (NVIDIA VRAM via `nvidia-smi`; on a Mac the 
 | Apple Silicon | **hybrid** |
 | no, weak (under 6 GB) or non-NVIDIA GPU on Windows; Intel Mac | **cloud** |
 
-The mode only decides where **open-weight models** run: `local` is exactly how agentY has always worked, `hybrid` runs locally when the models are on disk and fit the GPU and otherwise on Comfy Cloud, `cloud` runs them on Comfy Cloud so no GPU is needed. Partner API nodes (Seedance, GPT Image, Kling, Nano Banana ...) run through your ComfyUI in every mode. `hybrid` and `cloud` need `COMFYUI_API_KEY`. Change it any time under Settings ▸ Execution, or say "run this in the cloud" / "keep it local" for one turn. Details: [docs/execution_modes.md](docs/execution_modes.md).
+The mode only decides where **open-weight models** run: `local` runs them on this machine's GPU, `hybrid` runs locally when the models are on disk and fit the GPU and otherwise on Comfy Cloud, `cloud` runs them on Comfy Cloud so no GPU is needed. Partner API models (Seedance, GPT Image, Kling, Nano Banana ...) run on the providers' servers, sent from your ComfyUI, in every mode. `hybrid` and `cloud` need `COMFYUI_API_KEY`. Change it any time under Settings ▸ Execution, or say "run this in the cloud" / "keep it local" for one turn. Details: [docs/execution_modes.md](docs/execution_modes.md).
 
 **Updating an existing install** is the same command: run the installer again.
 It brings all the checkouts — agentY, agenty_core, the sidebar extension — to the
