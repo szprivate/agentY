@@ -3213,6 +3213,8 @@ _KNOWN_ENV_KEYS = [
     "DEADLINE_PATH", "DEADLINE_REPOSITORY", "DEADLINE_WEBSERVICE_URL", "DEADLINE_COMFYUI_PATH",
     "DEADLINE_COMFYUI_POOL", "DEADLINE_GROUP", "DEADLINE_OUTPUT_DIR",
     "DEADLINE_ROUTE_RUNS", "DEADLINE_FETCH_DIR", "DEADLINE_MAX_WAIT_MINUTES",
+    # Where open-weight models run (local / hybrid / cloud); pins the execution.mode setting
+    "AGENTY_EXECUTION_MODE",
     "OPENAI_API_KEY", "OPENAI_BASE_URL", "GEMINI_API_KEY", "GEMINI_BASE_URL",
     # Slack bridge. Listed here so the settings UI offers the three fields the
     # workspace side cannot be set up without, rather than sending someone to a

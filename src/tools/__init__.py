@@ -203,6 +203,17 @@ from agenty_core.tools.deadline_farm import submit_to_deadline, deadline_job_sta
 # The orchestrator's own copy is the pipeline closure of the same name (it runs the graph
 # through run_workflow_now); this one serves every agent that holds the plain core tool.
 from agenty_core.tools.partner_run import partner_run  # noqa: F401,E402
+# Where open-weight models run (local | hybrid | cloud) and the per-turn override (agenty_core.tools.execution_mode).
+from agenty_core.tools.execution_mode import set_execution_mode_for_turn, get_execution_mode  # noqa: F401,E402
+from agenty_core.utils import execution_mode as _execution_mode  # noqa: E402
+
+
+def _execution_settings() -> dict:
+    from src.utils.settings import load_settings
+    return load_settings().get("execution") or {}
+
+
+_execution_mode.set_settings_provider(_execution_settings)
 # Price a workflow's paid (partner) nodes in Comfy credits before it runs (agenty_core.tools.comfyui).
 from agenty_core.tools.comfyui import estimate_workflow_cost  # noqa: F401,E402
 # N independent variants of one workflow duplicated, patched and queued together
@@ -266,6 +277,8 @@ _SHARED_CORE_TOOLS = [
     "submit_to_deadline", "deadline_job_status", "deadline_farm_info",
     # one partner (API) node built from its schema and run directly
     "partner_run", "run_variants", "estimate_workflow_cost",
+    # execution modes: where open-weight models run, and "run this in the cloud" / "keep it local" for one turn
+    "set_execution_mode_for_turn", "get_execution_mode",
     # per-project memory — moved to the shared layer (a Claude Desktop session on
     # the same ComfyUI now reads and writes the same facts the panel does), so it
     # arrives as a plain callable and needs wrapping like every other core tool.
@@ -661,6 +674,8 @@ ORCHESTRATOR_TOOLS: list = [
     submit_to_deadline,    # send a workflow to the Deadline farm (dedicated ComfyUI pool)
     deadline_job_status,   # follow a farm job, fetch its outputs
     deadline_farm_info,    # pools / workers / the ComfyUI pool
+    set_execution_mode_for_turn,  # "run this in the cloud" / "keep it local": the mode for this turn
+    get_execution_mode,    # local | hybrid | cloud, key, balance, what the cloud cannot do
     # Files / shell / web
     read_text_file,
     write_text_file,

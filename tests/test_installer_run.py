@@ -84,6 +84,7 @@ class InstallerRun(unittest.TestCase):
         for name in ("install_agent.ps1", ".env_example"):
             shutil.copy(ROOT / name, folder / name)
         shutil.copy(ROOT / "scripts" / "core_dir.py", folder / "scripts" / "core_dir.py")
+        shutil.copy(ROOT / "scripts" / "hardware_profile.py", folder / "scripts" / "hardware_profile.py")
         (folder / "requirements.txt").write_text("requests\n")
         (folder / "scripts" / "check_env.py").write_text("print('check_env stub ok')\n")
 
@@ -123,10 +124,12 @@ class InstallerRun(unittest.TestCase):
         before = {"comfyui_dir": "D:\\comfy", "models": {"orchestrator": ["a", "b"]}, "auto_update": False,
                   "memory": {"embedder": {"preset": "local"}, "enabled": True}}
         self.plain_tree(json.dumps(before))
-        out = self.run_installer("-ComfyUIPath", str(self.comfy), answers="\n" * 6 + "http://10.0.0.5:8188\n" * 8)
+        out = self.run_installer("-ComfyUIPath", str(self.comfy), answers="\n" * 7 + "http://10.0.0.5:8188\n" * 8)
         self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
         after = self.settings()
         self.assertEqual(after.pop("comfyui_url", None), "http://10.0.0.5:8188")
+        # The one new question saves its answer (the recommendation, on Enter); nothing else moves.
+        self.assertIn(after.pop("execution", {}).get("mode"), ("local", "hybrid", "cloud"))
         self.assertEqual(after, before)
 
     def test_a_settings_file_it_cannot_read_is_left_alone(self):

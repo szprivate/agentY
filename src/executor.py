@@ -422,6 +422,14 @@ def _submit_workflow(workflow_path: str, client_id: str = "") -> str:
     # Routed to the Deadline farm (settings deadline.route_runs / DEADLINE_ROUTE_RUNS, off by
     # default): everything above is shared - the graph is prepared the same way and the cost gate
     # applies - only the queueing differs. The reference stands in for a prompt_id.
+    # Execution modes (settings execution.mode, off = "local"): hybrid / cloud may send the open-weight
+    # part of the run to Comfy Cloud. Partner nodes never move: they run in the local ComfyUI. See
+    # agenty_core.utils.exec_route and docs/execution_modes.md.
+    _decision = _route_decision(workflow)
+    if _decision is not None and _decision.backend == "comfy_cloud":
+        from agenty_core.utils import cloud_run
+        return cloud_run.submit(workflow, name=p.stem, dest_dir=_output_dir() / "comfy_cloud",
+                                workflow_path=str(p), open_weight=_decision.open_weight)
     if _routed_to_farm():
         from agenty_core.utils import farm_run
         return farm_run.submit(workflow, name=p.stem)
@@ -492,6 +500,46 @@ def _submit_workflow(workflow_path: str, client_id: str = "") -> str:
     raise RuntimeError(f"Unexpected response from ComfyUI /prompt: {result!r}")
 
 
+def _execution_settings() -> dict:
+    try:
+        from src.utils.settings import load_settings
+        got = load_settings().get("execution")
+        return got if isinstance(got, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _register_execution_mode() -> None:
+    from agenty_core.utils import execution_mode
+    execution_mode.set_settings_provider(_execution_settings)
+
+
+def _route_decision(workflow: dict):
+    """Where does this run execute (agenty_core.utils.exec_route)? ``None`` in local mode (nothing to decide:
+    today's path, unchanged). A :class:`RouteRefused` / :class:`CostGateError` propagates as a refusal."""
+    _register_execution_mode()
+    from agenty_core.utils import exec_route, execution_mode
+    if execution_mode.effective_mode() == "local":
+        return None
+    try:
+        return exec_route.decide(workflow)
+    except exec_route.RouteRefused:
+        raise
+    except Exception as exc:  # noqa: BLE001 - a broken probe must never stop a run that can go local
+        logger.warning("executor: execution-mode routing failed (%s); running locally", exc)
+        return None
+
+
+def _cloud_only_mode() -> bool:
+    """Cloud mode: the local ComfyUI may not even be running, so don't touch it before a submission."""
+    try:
+        _register_execution_mode()
+        from agenty_core.utils import execution_mode
+        return execution_mode.effective_mode() == "cloud"
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _routed_to_farm() -> bool:
     """Do runs go to the Deadline farm instead of the local ComfyUI? Off unless asked for."""
     try:
@@ -507,24 +555,39 @@ def _job_stream(prompt_id: str, client_id: str, **kw):
     from agenty_core.utils import farm_run
     if farm_run.is_farm_ref(prompt_id):
         return farm_run.stream(prompt_id, max_wait_s=farm_run.max_wait_seconds())
+    from agenty_core.utils import cloud_run
+    if cloud_run.is_cloud_ref(prompt_id):
+        return cloud_run.stream(prompt_id, max_wait_s=cloud_run.max_wait_seconds())
     from agenty_core.utils.comfyui_progress import stream_comfyui_job
     return stream_comfyui_job(prompt_id, client_id, **kw)
 
 
 async def _settle_partner(prompt_id: str) -> str:
-    """After a job ends: what it cost in Comfy credits (balance before vs after),
-    as a progress line - "" for a job with no paid node or an unknown balance.
-    The amount also lands in the turn's usage (partner_cost_host listener)."""
+    """After a job ends: where it ran and what it cost in Comfy credits (balance before vs after),
+    as a progress line - "" for a plain local run with no paid node or an unknown balance.
+    The amount also lands in the turn's usage (partner_cost_host listener).
+
+    With an execution mode other than local the line also says ``ran_on`` (local | comfy_cloud |
+    deadline); in plain local mode it stays what it always was."""
+    from agenty_core.utils import cloud_run
     if str(prompt_id).startswith("farm:"):
         return ""            # the worker's own key paid; there is no local balance to compare
+    if str(prompt_id).startswith("cloud:"):
+        return await asyncio.to_thread(cloud_run.settle_line, prompt_id)   # where it ran + what it cost
     from agenty_core import partner_credits as _credits
     try:
         usd = await asyncio.to_thread(_credits.settle, prompt_id)
     except Exception:  # noqa: BLE001 - a measurement must never fail a run
-        return ""
-    if usd is None:
-        return ""
-    return f"💳 Partner credits used: ${usd:,.2f}"
+        usd = None
+    spent = "" if usd is None else f"💳 Partner credits used: ${usd:,.2f}"
+    try:
+        from agenty_core.utils import execution_mode
+        _register_execution_mode()
+        if execution_mode.effective_mode() != "local":
+            return " · ".join(x for x in (cloud_run.ran_on_line("local"), spent) if x)
+    except Exception:  # noqa: BLE001
+        pass
+    return spent
 
 
 def _free_vram_for_comfyui() -> None:
@@ -905,7 +968,7 @@ async def execute_workflow(
 
     # ── 1. Submit ──────────────────────────────────────────────────────────
     farm = _routed_to_farm()
-    if not farm:
+    if not farm and not _cloud_only_mode():
         _free_vram_for_comfyui()
         _clear_comfyui_history()  # scope history to this run (no stale prior outputs)
     workflow_path, _fit_lines = _fit_to_briefing(workflow_path, qa_briefing)
@@ -949,6 +1012,9 @@ async def execute_workflow(
         await _gen.aclose()
 
     _spent_line = await _settle_partner(prompt_id)
+    if str(prompt_id).startswith("farm:"):
+        from agenty_core.utils import cloud_run
+        _spent_line = cloud_run.ran_on_line("deadline")
     if _spent_line:
         yield _spent_line
 
@@ -1116,6 +1182,9 @@ async def execute_workflows_batch(
                 await gen.aclose()
 
             _spent_line = await _settle_partner(prompt_id)
+            if str(prompt_id).startswith("farm:"):
+                from agenty_core.utils import cloud_run
+                _spent_line = cloud_run.ran_on_line("deadline")
             if _spent_line:
                 await out_q.put(("line", f"{label}{_spent_line}"))
 
@@ -1241,7 +1310,7 @@ async def execute_workflows_batch(
         await out_q.put(("qa", ("done", wf_path, "", "")))
 
     # ── Phase 1: submit every workflow, spawn a concurrent monitor for each ─
-    if not _routed_to_farm():
+    if not _routed_to_farm() and not _cloud_only_mode():
         _free_vram_for_comfyui()
         _clear_comfyui_history()  # once per batch — scope history to this run only
     outstanding = 0

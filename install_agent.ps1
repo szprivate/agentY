@@ -33,6 +33,11 @@
 .PARAMETER SkipMcp
     Do not clone / set up the agentY-mcp sibling repo.
 
+.PARAMETER ExecutionMode
+    local | hybrid | cloud: where open-weight models run (docs/execution_modes.md). Skips the
+    question and saves the answer. Without it the installer detects the hardware, recommends a mode and asks
+    once; with -NonInteractive it changes nothing (local).
+
 .PARAMETER SkipComfyNode
     Do not touch ComfyUI (skip locating it and installing the sidebar node).
 
@@ -64,6 +69,7 @@ param(
     [string]$ParentDir     = "",
     [switch]$SkipMcp,
     [switch]$SkipComfyNode,
+    [string]$ExecutionMode = "",
     [switch]$NonInteractive,
     [switch]$SkipTorch,
     [string]$TorchIndexUrl = "https://download.pytorch.org/whl/cu128",
@@ -631,7 +637,101 @@ function Find-ComfyUI {
         $hit = Test-ComfyUIDir $c
         if ($hit) { return $hit }
     }
+    return (Find-ComfyDesktop)
+}
+
+function Find-ComfyDesktop {
+    # ComfyUI Desktop keeps its installs in <ComfyUI-Installs>\<name>\ (a ComfyUI inside, or the root itself).
+    $roots = @()
+    if ($Script:OnWindows) {
+        if ($env:LOCALAPPDATA) { $roots += (Join-Path $env:LOCALAPPDATA "Comfy-Desktop\ComfyUI-Installs") }
+        if ($env:USERPROFILE)  { $roots += (Join-Path $env:USERPROFILE "ComfyUI-Installs") }
+    } elseif ($env:HOME) {
+        $roots += (Join-Path $env:HOME "ComfyUI-Installs")
+    }
+    foreach ($r in $roots) {
+        if (-not (Test-Path $r)) { continue }
+        foreach ($d in (Get-ChildItem $r -Directory -ErrorAction SilentlyContinue)) {
+            $hit = Test-ComfyUIDir $d.FullName
+            if ($hit) { return $hit }
+        }
+    }
     return $null
+}
+
+function Select-ExecutionMode {
+    # ONE question: where should open-weight models run? The hardware is detected and a mode recommended
+    # (scripts/hardware_profile.py - the same rules for both installers); the recommendation is pre-selected.
+    # Partner (API) nodes run in the local ComfyUI in every mode. Returns the chosen mode ("" = left alone).
+    param([string]$SettingsFile)
+    $py   = Get-VenvPython $ProjectRoot
+    $prof = Join-Path $ProjectRoot "scripts\hardware_profile.py"
+    if (-not (Test-Path $prof)) { return "" }
+    if ($ExecutionMode) {
+        if ($ExecutionMode -notin @("local", "hybrid", "cloud")) { Exit-WithError "-ExecutionMode must be local, hybrid or cloud." 2 }
+        & $py $prof --set-mode $ExecutionMode --settings $SettingsFile
+        Write-Success "Execution mode: $ExecutionMode"
+        return $ExecutionMode
+    }
+    if ($NonInteractive) { return "" }
+    $rec = "local"; $why = ""
+    try {
+        $info = (& $py $prof) | ConvertFrom-Json
+        $rec = [string]$info.mode; $why = [string]$info.reason
+    } catch { Write-Info "Could not detect the hardware - assuming local." }
+    $saved = [string](& $py $prof --get-mode --settings $SettingsFile)
+    $saved = $saved.Trim()
+    Write-Host ""
+    Write-Host "  Where should open-weight models (SDXL, Flux, Wan ...) run?" -ForegroundColor White
+    if ($why) { Write-Info "Detected: $why" }
+    Write-Host "    local   this machine's GPU only (today's behaviour)" -ForegroundColor White
+    Write-Host "    hybrid  locally when the models are installed and fit, else on Comfy Cloud" -ForegroundColor White
+    Write-Host "    cloud   Comfy Cloud - no GPU needed here" -ForegroundColor White
+    Write-Host "  Partner API nodes (Seedance, GPT Image, Kling ...) run through ComfyUI in every mode." -ForegroundColor DarkGray
+    $default = if ($saved) { $saved } else { $rec }
+    $label = if ($saved) { "keep $saved" } else { "recommended: $rec" }
+    $ans = (Read-Answer "    Mode [local/hybrid/cloud] (Enter = $label)").Trim().ToLower()
+    if (-not $ans) { $ans = $default }
+    if ($ans -notin @("local", "hybrid", "cloud")) { Write-Fail "Unknown mode '$ans' - using $default."; $ans = $default }
+    & $py $prof --set-mode $ans --settings $SettingsFile
+    Write-Success "Execution mode: $ans (Settings > Execution changes it later)"
+    return $ans
+}
+
+function Install-ComfyDesktop {
+    # Offer ComfyUI Desktop, Comfy's official one-click app, when no ComfyUI was found. Never silent
+    # without a yes. Returns $true when an install command ran.
+    param([string]$Mode)
+    Write-Host ""
+    Write-Host "  No ComfyUI found. ComfyUI Desktop is Comfy's official one-click app (https://www.comfy.org/download)." -ForegroundColor White
+    if ($Mode -eq "cloud" -or $Mode -eq "hybrid") {
+        Write-Info "In $Mode mode a local ComfyUI is still useful: partner API nodes run in it without a GPU."
+    }
+    $defaultYes = ($Mode -eq "cloud" -or $Mode -eq "hybrid")
+    $hint = if ($defaultYes) { "Y/n" } else { "y/N" }
+    $ans = (Read-Answer "    Install ComfyUI Desktop now? [$hint]").Trim().ToLower()
+    $yes = if (-not $ans) { $defaultYes } else { $ans -match '^(y|yes)$' }
+    if (-not $yes) { return $false }
+    if ($Script:OnWindows -and (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Write-Info "winget install Comfy.ComfyUI-Desktop ..."
+        & winget install --id Comfy.ComfyUI-Desktop --exact --silent --accept-package-agreements --accept-source-agreements
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "ComfyUI Desktop installed."
+            Write-Info "Start it once and finish its first-run setup (it asks where to install ComfyUI and which GPU or CPU mode to use). Then run this installer again so the sidebar node is added."
+            return $true
+        }
+        Write-Fail "winget could not install it (exit $LASTEXITCODE)."
+    } elseif (-not $Script:OnWindows -and (Get-Command brew -ErrorAction SilentlyContinue)) {
+        & brew install --cask comfy
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "ComfyUI Desktop installed. Start it once, finish its setup, then run this installer again."
+            return $true
+        }
+        Write-Fail "brew could not install it."
+    }
+    Write-Info "Download it from https://www.comfy.org/download, install it, start it once, then run this installer again."
+    if ($Script:OnWindows) { try { Start-Process "https://www.comfy.org/download" } catch {} }
+    return $false
 }
 
 function Test-LocalPort {
@@ -1067,8 +1167,14 @@ if ($NonInteractive) {
     Write-Host "  Press Enter to keep an existing value or skip an optional one." -ForegroundColor DarkGray
 }
 Select-LlmProviders -EnvFile $EnvFile
+# Where do open-weight models run? Detects the hardware, recommends a mode, asks once (see Select-ExecutionMode).
+$ChosenMode = Select-ExecutionMode (Join-Path $ProjectRoot "config\settings.local.json")
 $hfToken  = Read-Secret $EnvFile "HF_TOKEN"          "Hugging Face token (gated model downloads)"       "Create at https://huggingface.co/  (account -> Access Tokens)"
-$comfyKey = Read-Secret $EnvFile "COMFYUI_API_KEY"   "ComfyUI API key (optional - auth / API nodes)"    "https://platform.comfy.org/profile/api-keys  - blank for a local ComfyUI"
+if ($ChosenMode -eq "hybrid" -or $ChosenMode -eq "cloud") {
+    $comfyKey = Read-Secret $EnvFile "COMFYUI_API_KEY"   "Comfy API key (needed for $ChosenMode mode - Comfy Cloud + API nodes)"    "https://platform.comfy.org/profile/api-keys  - Comfy Cloud needs an active subscription"
+} else {
+    $comfyKey = Read-Secret $EnvFile "COMFYUI_API_KEY"   "ComfyUI API key (optional - auth / API nodes)"    "https://platform.comfy.org/profile/api-keys  - blank for a local ComfyUI"
+}
 Install-McpPresets -EnvFile $EnvFile
 Install-OptionalDeps
 Write-Success "agentY .env ready ($EnvFile)"
@@ -1094,6 +1200,12 @@ if ($SkipComfyNode) {
                 else { $ResolvedComfy = Test-ComfyUIDir $ans.Trim() }
             }
         }
+    }
+    if (-not $ResolvedComfy -and -not $NonInteractive) {
+        # Nothing found: offer ComfyUI Desktop before only asking for a path.
+        $savedMode = [string](& (Get-VenvPython $ProjectRoot) (Join-Path $ProjectRoot "scripts\hardware_profile.py") --get-mode --settings (Join-Path $ProjectRoot "config\settings.local.json"))
+        $null = Install-ComfyDesktop -Mode $savedMode.Trim()
+        $ResolvedComfy = Find-ComfyDesktop
     }
     if (-not $ResolvedComfy -and -not $NonInteractive) {
         $entered = Read-Answer "    ComfyUI folder (contains custom_nodes\), or Enter to skip"

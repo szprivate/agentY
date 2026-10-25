@@ -631,6 +631,28 @@ max_runs = 4
 # exist and hold workers, or the run is refused with how to set it up.
 route_runs = false
 
+# Where the OPEN-WEIGHT models of a run execute (docs/execution_modes.md). Partner (API)
+# nodes - Seedance, GPT Image, Kling, Nano Banana ... - are NOT affected: they run through
+# the local ComfyUI in every mode, under the usual partner-credit checks.
+[execution]
+# "local"  (default) everything on this machine's ComfyUI, exactly as before; never uses
+#          Comfy Cloud.
+# "hybrid" locally when every model is on disk and fits the GPU's free VRAM, else on Comfy
+#          Cloud when it has the models and nodes, else a clear answer saying what is missing.
+# "cloud"  open-weight work goes to Comfy Cloud (no GPU needed here).
+# hybrid / cloud need COMFYUI_API_KEY (the Comfy API key). The installer asks once and writes
+# this; AGENTY_EXECUTION_MODE (env) pins it; "run this in the cloud" / "keep it local" in a
+# message overrides it for that turn.
+mode = "local"
+# Hybrid: GPU memory kept free on top of the models' file sizes when judging "fits" (GB).
+vram_margin_gb = 2.0
+# Cloud runs: refused when the Comfy credit balance is below this (USD) ...
+min_balance_usd = 0.50
+# ... and an open-weight run counts as this much GPU time (USD, a rough placeholder: Comfy
+# Cloud quotes no price; the real spend is measured from the balance afterwards). A run at or
+# above the partner confirmation level (confirm_above_usd) asks for a yes first.
+cloud_gpu_run_usd = 0.10
+
 # Running agentY as a service on a server (docs/server.md). Everything here is
 # off or blank by default, and a blank value means exactly what the desktop
 # install has always done.

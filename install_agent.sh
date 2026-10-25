@@ -27,6 +27,7 @@ COMFYUI_PATH=""
 PARENT_DIR=""
 SKIP_MCP=0
 SKIP_COMFY_NODE=0
+EXECUTION_MODE=""
 NON_INTERACTIVE=0
 
 C_CYAN=$'\033[36m'; C_GREEN=$'\033[32m'; C_YELLOW=$'\033[33m'
@@ -53,6 +54,11 @@ Options:
   --skip-mcp             Do not clone / set up the agentY-mcp sibling repo.
   --skip-comfy-node      Do not touch ComfyUI (skip locating it and installing the
                          sidebar node).
+  --execution-mode <m>   local | hybrid | cloud: where open-weight models run
+                         (docs/execution_modes.md). Skips the question and saves the
+                         answer. Without it the installer detects the hardware,
+                         recommends a mode and asks once; --non-interactive changes
+                         nothing (local).
   --non-interactive      Never prompt. Use existing values / defaults only.
   --help                 Show this help message and exit.
 
@@ -69,11 +75,14 @@ while [ $# -gt 0 ]; do
     --parent-dir)      PARENT_DIR="${2:-}"; shift 2 ;;
     --skip-mcp)        SKIP_MCP=1; shift ;;
     --skip-comfy-node) SKIP_COMFY_NODE=1; shift ;;
+    --execution-mode)  EXECUTION_MODE="${2:-}"; shift 2 ;;
     --non-interactive) NON_INTERACTIVE=1; shift ;;
     --help|-h)         usage; exit 0 ;;
     *) fail "Unknown option: $1"; usage; exit 2 ;;
   esac
 done
+
+case "$EXECUTION_MODE" in "" | local | hybrid | cloud) ;; *) fail "--execution-mode must be local, hybrid or cloud."; exit 2 ;; esac
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -n "$PARENT_DIR" ] || PARENT_DIR="$(dirname "$PROJECT_ROOT")"
@@ -557,6 +566,87 @@ find_comfyui() {   # $1 = hint -> echoes the resolved root, or nothing
     hit="$(test_comfyui_dir "$c")"
     if [ -n "$hit" ]; then printf '%s' "$hit"; return 0; fi
   done
+  find_comfy_desktop
+}
+
+find_comfy_desktop() {   # ComfyUI Desktop keeps its installs in ~/ComfyUI-Installs/<name>/
+  local d hit
+  for d in "${HOME:-}/ComfyUI-Installs"/*; do
+    [ -d "$d" ] || continue
+    hit="$(test_comfyui_dir "$d")"
+    if [ -n "$hit" ]; then printf '%s' "$hit"; return 0; fi
+  done
+}
+
+select_execution_mode() {   # $1 = settings.local.json -> echoes the chosen mode ("" = left alone)
+  # ONE question: where should open-weight models run? The hardware is detected and a mode recommended
+  # (scripts/hardware_profile.py - the same rules for both installers); the recommendation is pre-selected.
+  # Partner (API) nodes run in the local ComfyUI in every mode.
+  local settings="$1" py prof rec why saved default label ans
+  py="$(venv_python "$PROJECT_ROOT")"; prof="$PROJECT_ROOT/scripts/hardware_profile.py"
+  [ -f "$prof" ] || return 0
+  if [ -n "$EXECUTION_MODE" ]; then
+    case "$EXECUTION_MODE" in local | hybrid | cloud) ;; *) die "--execution-mode must be local, hybrid or cloud." 2 ;; esac
+    "$py" "$prof" --set-mode "$EXECUTION_MODE" --settings "$settings" </dev/null >&2
+    success "Execution mode: $EXECUTION_MODE" >&2
+    printf '%s' "$EXECUTION_MODE"; return 0
+  fi
+  [ "$NON_INTERACTIVE" = "1" ] && return 0
+  rec="$("$py" "$prof" --field mode 2>/dev/null </dev/null)"; [ -n "$rec" ] || rec="local"
+  why="$("$py" "$prof" --field reason 2>/dev/null </dev/null)"
+  saved="$("$py" "$prof" --get-mode --settings "$settings" 2>/dev/null </dev/null)"
+  {
+    echo
+    plain "  Where should open-weight models (SDXL, Flux, Wan ...) run?" "$C_WHITE"
+    [ -n "$why" ] && info "Detected: $why"
+    plain "    local   this machine's GPU only (today's behaviour)" "$C_WHITE"
+    plain "    hybrid  locally when the models are installed and fit, else on Comfy Cloud" "$C_WHITE"
+    plain "    cloud   Comfy Cloud - no GPU needed here" "$C_WHITE"
+    plain "  Partner API nodes (Seedance, GPT Image, Kling ...) run through ComfyUI in every mode." "$C_GRAY"
+  } >&2
+  default="${saved:-$rec}"
+  if [ -n "$saved" ]; then label="keep $saved"; else label="recommended: $rec"; fi
+  printf '    Mode [local/hybrid/cloud] (Enter = %s): ' "$label" >&2
+  IFS= read -r ans
+  ans="$(printf '%s' "${ans:-}" | tr -d '\r' | sed 's/^ *//;s/ *$//' | tr '[:upper:]' '[:lower:]')"
+  [ -n "$ans" ] || ans="$default"
+  case "$ans" in local | hybrid | cloud) ;; *) fail "Unknown mode '$ans' - using $default." >&2; ans="$default" ;; esac
+  "$py" "$prof" --set-mode "$ans" --settings "$settings" </dev/null >&2
+  success "Execution mode: $ans (Settings > Execution changes it later)" >&2
+  printf '%s' "$ans"
+}
+
+install_comfy_desktop() {   # $1 = mode -> returns 0 when an install command ran
+  # Offer ComfyUI Desktop, Comfy's official one-click app, when no ComfyUI was found. Never without a yes.
+  local mode="${1:-}" hint ans yes=0
+  echo
+  plain "  No ComfyUI found. ComfyUI Desktop is Comfy's official one-click app (https://www.comfy.org/download)." "$C_WHITE"
+  if [ "$mode" = "cloud" ] || [ "$mode" = "hybrid" ]; then
+    info "In $mode mode a local ComfyUI is still useful: partner API nodes run in it without a GPU."
+    hint="Y/n"
+  else
+    hint="y/N"
+  fi
+  printf '    Install ComfyUI Desktop now? [%s]: ' "$hint"
+  IFS= read -r ans
+  ans="$(printf '%s' "${ans:-}" | sed 's/^ *//;s/ *$//' | tr '[:upper:]' '[:lower:]')"
+  case "$ans" in
+    y | yes) yes=1 ;;
+    "") [ "$hint" = "Y/n" ] && yes=1 ;;
+  esac
+  [ "$yes" = "1" ] || return 1
+  if [ "$IS_MAC" = "1" ] && [ "$(uname -m)" = "arm64" ] && command -v brew >/dev/null 2>&1; then
+    if brew install --cask comfy; then
+      success "ComfyUI Desktop installed. Start it once, finish its setup, then run this installer again."
+      return 0
+    fi
+    fail "brew could not install it."
+  elif [ "$IS_MAC" = "1" ] && [ "$(uname -m)" != "arm64" ]; then
+    info "ComfyUI Desktop needs an Apple Silicon Mac."
+  fi
+  info "Download it from https://www.comfy.org/download, install it, start it once, then run this installer again."
+  if [ "$IS_MAC" = "1" ]; then open "https://www.comfy.org/download" >/dev/null 2>&1 || true; fi
+  return 1
 }
 
 # -- Multi-select menu --------------------------------------------------------
@@ -1029,7 +1119,13 @@ else
 fi
 select_llm_providers "$ENV_FILE"
 HF_TOKEN_VAL="$(read_secret "$ENV_FILE" "HF_TOKEN"          "Hugging Face token (gated model downloads)"      "Create at https://huggingface.co/  (account -> Access Tokens)")"
-COMFY_KEY_VAL="$(read_secret "$ENV_FILE" "COMFYUI_API_KEY"  "ComfyUI API key (optional - auth / API nodes)"   "https://platform.comfy.org/profile/api-keys  - blank for a local ComfyUI")"
+# Where do open-weight models run? Detects the hardware, recommends a mode, asks once (select_execution_mode).
+CHOSEN_MODE="$(select_execution_mode "$PROJECT_ROOT/config/settings.local.json")"
+if [ "$CHOSEN_MODE" = "hybrid" ] || [ "$CHOSEN_MODE" = "cloud" ]; then
+  COMFY_KEY_VAL="$(read_secret "$ENV_FILE" "COMFYUI_API_KEY"  "Comfy API key (needed for $CHOSEN_MODE mode - Comfy Cloud + API nodes)"   "https://platform.comfy.org/profile/api-keys  - Comfy Cloud needs an active subscription")"
+else
+  COMFY_KEY_VAL="$(read_secret "$ENV_FILE" "COMFYUI_API_KEY"  "ComfyUI API key (optional - auth / API nodes)"   "https://platform.comfy.org/profile/api-keys  - blank for a local ComfyUI")"
+fi
 install_mcp_presets "$ENV_FILE"
 install_optional_deps
 success "agentY .env ready ($ENV_FILE)"
@@ -1058,6 +1154,12 @@ else
         *) RESOLVED_COMFY="$(test_comfyui_dir "$ans")" ;;
       esac
     fi
+  fi
+  if [ -z "$RESOLVED_COMFY" ] && [ "$NON_INTERACTIVE" = "0" ]; then
+    # Nothing found: offer ComfyUI Desktop before only asking for a path.
+    SAVED_MODE="$("$(venv_python "$PROJECT_ROOT")" "$PROJECT_ROOT/scripts/hardware_profile.py" --get-mode --settings "$PROJECT_ROOT/config/settings.local.json" 2>/dev/null)"
+    install_comfy_desktop "$SAVED_MODE" || true
+    RESOLVED_COMFY="$(find_comfy_desktop)"
   fi
   if [ -z "$RESOLVED_COMFY" ] && [ "$NON_INTERACTIVE" = "0" ]; then
     printf '    ComfyUI folder (contains custom_nodes/), or Enter to skip: '

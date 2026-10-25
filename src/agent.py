@@ -1003,6 +1003,8 @@ _ORCH_SKILL_NAMES = [
     "worldlabs-atlas",
     # Rendering on the Deadline farm.
     "deadline-farm",
+    # Where open-weight models run (local / hybrid / Comfy Cloud) and the per-turn override.
+    "execution-modes",
     # One partner (API) node built from its schema and run directly (partner_run).
     "partner-run",
     # Modelling to match a reference photo in Blender (MCP): measure, camera,

@@ -88,9 +88,9 @@ one pass:
 1. checks for `git` + `uv`;
 2. **updates agentY itself** to the remote's newest commit, then clones the sibling repos it needs — **agentY-core** (required) and **agentY-mcp** (optional) — next to `agentY` if they aren't there already, and fast-forwards them if they are;
 3. creates agentY's `.venv` (via `uv`, on Python 3.12), sorts out **torch** — on Windows it offers the CUDA build when it sees an NVIDIA GPU, because the wheel on PyPI is CPU-only and that makes SAM3 grounding take about a minute a call; on a Mac the PyPI wheel already carries Metal, so it just reports whether MPS was found — and installs `requirements.txt` (which pulls in `agentY-core` editable);
-4. copies `.env_example` → `.env`, then runs three menus and asks for `HF_TOKEN` and the optional `COMFYUI_API_KEY` (Enter keeps an existing value) — see [The menus](#the-installer-menus) below;
+4. copies `.env_example` → `.env`, then runs three menus, asks **one question about where open-weight models should run** (local, hybrid or Comfy Cloud, with a recommendation from your hardware — see [Execution modes](#execution-modes) below), and asks for `HF_TOKEN` and `COMFYUI_API_KEY` (optional for local, needed for hybrid and cloud; Enter keeps an existing value) — see [The menus](#the-installer-menus) below;
 5. asks which **memory embedder** long-term memory should use (a built-in local one, Ollama, or a provider you have a key for);
-6. **finds your ComfyUI** (auto-detects common paths, otherwise asks) and clones **agentY-comfyuiConnect** into its `custom_nodes/`. It also looks for the **bEpic viewer** (`szprivate/ComfyUI-ImageViewer`, agentY's standard viewer) under any folder name there (ComfyUI-Manager names it `comfyui-imageviewer`) and clones it only when missing. Optionally it points `settings.local.json` at your ComfyUI URL;
+6. **finds your ComfyUI** (auto-detects common paths, otherwise asks) and clones **agentY-comfyuiConnect** into its `custom_nodes/`. It also looks for the **bEpic viewer** (`szprivate/ComfyUI-ImageViewer`, agentY's standard viewer) under any folder name there (ComfyUI-Manager names it `comfyui-imageviewer`) and clones it only when missing. When it finds no ComfyUI it offers to install **ComfyUI Desktop** (Comfy's one-click app: `winget` on Windows, Homebrew on an Apple Silicon Mac, otherwise the download page; it never installs without a yes). Optionally it points `settings.local.json` at your ComfyUI URL;
 7. sets up **agentY-mcp**'s own venv + `.env` and reuses the tokens you just entered;
 8. **checks the result** — every dependency agentY names is import-tested in the venv that will run it, and anything missing is listed with what it costs.
 
@@ -101,6 +101,19 @@ Lists use the keyboard: **Up/Down** move, **Space** ticks, **A** ticks or clears
 - **LLM providers** — "Which LLM providers will you use?" Anthropic, OpenAI, Gemini, DashScope, Ollama. A key is asked only for each ticked one. Pre-ticked: the providers whose key is already in `.env` (Anthropic on a first install). Ollama needs no key. Re-run the installer, or use Settings, to add a provider later; other OpenAI-compatible services can be added in Settings.
 - **MCP presets** — extra tools from the preset catalog (Blender, Maya, Houdini, Nuke, After Effects, Premiere Pro, DaVinci Resolve, Cavalry, AYON, and others). Nothing is pre-ticked; Enter with none ticked adds nothing. Ticked presets are written to `config/mcp.json`, their keys are asked, and steps in another application (such as a Blender add-on) are printed rather than done for you; the agent can finish them too. Add presets later in Settings ▸ MCP servers ▸ Add from presets.
 - **Optional features** — **reverse image search** (finds more photos of the same object on the web; uses your installed Chrome or Edge, a ~40 MB Python package, no browser download). Ticked from the start; a re-run starts from your earlier answer. The answer is kept in `config/optional_deps.json`; the launcher's dependency sync installs the package again if the venv is rebuilt, and does nothing if you declined. To change your mind, run the installer again.
+
+#### Execution modes
+
+The installer detects your hardware (NVIDIA VRAM via `nvidia-smi`; on a Mac the chip and its unified memory) and asks one question, with the recommendation pre-selected:
+
+| Hardware | Recommended |
+|---|---|
+| NVIDIA, 12 GB or more | **local** (Comfy Cloud stays available as overflow) |
+| NVIDIA, 6 to 12 GB | **hybrid** |
+| Apple Silicon | **hybrid** |
+| no, weak (under 6 GB) or non-NVIDIA GPU on Windows; Intel Mac | **cloud** |
+
+The mode only decides where **open-weight models** run: `local` is exactly how agentY has always worked, `hybrid` runs locally when the models are on disk and fit the GPU and otherwise on Comfy Cloud, `cloud` runs them on Comfy Cloud so no GPU is needed. Partner API nodes (Seedance, GPT Image, Kling, Nano Banana ...) run through your ComfyUI in every mode. `hybrid` and `cloud` need `COMFYUI_API_KEY`. Change it any time under Settings ▸ Execution, or say "run this in the cloud" / "keep it local" for one turn. Details: [docs/execution_modes.md](docs/execution_modes.md).
 
 **Updating an existing install** is the same command: run the installer again.
 It brings all the checkouts — agentY, agenty_core, the sidebar extension — to the
@@ -125,7 +138,8 @@ Useful flags:
 .\install_agent.ps1 -ComfyUIPath "D:\ai\ComfyUI"   # skip ComfyUI auto-detection
 .\install_agent.ps1 -SkipMcp                        # don't set up agentY-mcp
 .\install_agent.ps1 -SkipComfyNode                  # headless host only, no ComfyUI node
-.\install_agent.ps1 -NonInteractive                 # no prompts (CI / re-runs)
+.\install_agent.ps1 -NonInteractive                 # no prompts (CI / re-runs): keeps local, installs no ComfyUI
+.\install_agent.ps1 -ExecutionMode hybrid           # answer the execution-mode question up front
 .\install_agent.ps1 -SkipTorch                      # don't offer the CUDA torch build
 .\install_agent.ps1 -TorchIndexUrl "https://download.pytorch.org/whl/cu126"
 .\install_agent.ps1 -PythonVersion 3.13             # the Python a NEW .venv is made with (default 3.12)
@@ -136,6 +150,7 @@ Useful flags:
 ./install_agent.sh --skip-mcp
 ./install_agent.sh --skip-comfy-node
 ./install_agent.sh --non-interactive
+./install_agent.sh --execution-mode cloud
 ./install_agent.sh --help
 ```
 
@@ -254,6 +269,7 @@ Type `/` for the slash commands. Settings live in ComfyUI's **Settings → agent
 ## Documentation
 
 - [**Using agentY**](docs/using-agentY.md) — the full guide: chat, hooks, QA, settings, MCP, memory, models, troubleshooting.
+- [**Execution modes**](docs/execution_modes.md) — local, hybrid or Comfy Cloud: where open-weight models run, what it costs, what the cloud cannot do.
 - [**Slack**](docs/slack.md) — setting up the Slack bridge.
 - [**Reference**](docs/reference.md) — architecture, ports, security, what the agent may run, model tiers, macOS notes.
 
