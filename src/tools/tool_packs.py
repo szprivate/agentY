@@ -84,10 +84,10 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
                ("arrange_canvas", "group_canvas_nodes", "auto_group_canvas", "save_canvas_workflow")),
     "worlds": ("build a walkable 3D world from reference images, and fly a camera through a 3D scene "
                "to render a camera move (read the `camera-move-control` skill first); make a 3D scene "
-               "with World Labs Atlas from a picture or a prompt, and render new views of it from any camera; capture a place all round and train a Gaussian splat (a 360 environment) from it, or make a ready splat world with World Labs Marble and export SPZ / PLY (read the `worldlabs-atlas` skill first)",
+               "with World Labs Atlas from a picture or a prompt, render new views of it from any camera, and render a camera move through it with Atlas-painted frames (paid; price it with dry_run first); capture a place all round and train a Gaussian splat (a 360 environment) from it, or make a ready splat world with World Labs Marble and export SPZ / PLY (read the `worldlabs-atlas` skill first)",
                ("run_world_builder", "render_camera_move", "atlas_create_world", "atlas_expand_world",
                 "atlas_rebuild_world_mesh", "atlas_splat_to_mesh", "atlas_fetch", "atlas_list",
-                "atlas_render_view", "atlas_open_in_viewer", "atlas_capture_around", "train_splat",
+                "atlas_render_view", "atlas_render_camera_move", "atlas_open_in_viewer", "atlas_capture_around", "train_splat",
                 "splat_training_status", "marble_create_world", "marble_export")),
     "dcc": ("model a building / object / room in Blender, Maya or Houdini from a reference photo: run the one "
             "build script (live in the open app, or headless in batch) and check the silhouette by numbers; measure the photo with MoGe "

@@ -4899,6 +4899,25 @@ def _build_app():
         except ValueError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
 
+    # A camera move through an Atlas world the viewer asked for ("Render camera with Atlas"). A dry run
+    # (plan + price) is answered at once; the real run is a job polled by id. See src.utils.atlas_move_jobs.
+    from src.utils.atlas_move_jobs import AtlasMoveJobs as _AtlasMoveJobs
+    _atlas_move_jobs = _AtlasMoveJobs()
+
+    @app.route("/agentY/atlas_camera_move", methods=["GET", "POST", "OPTIONS"])
+    def atlas_camera_move():
+        if request.method == "OPTIONS":
+            return "", 204
+        if request.method == "GET":
+            job = _atlas_move_jobs.get(request.args.get("id") or "")
+            if job is None:
+                return jsonify({"error": "unknown render"}), 404
+            return jsonify(_atlas_move_jobs.public(job))
+        try:
+            return jsonify({"ok": True, **_atlas_move_jobs.start(request.get_json(silent=True))})
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+
     # A motion-graphics render the viewer's Motion panel asked for (through ComfyUI: the viewer has no Node or
     # agenty_core). The core tool is the one the agent's mg_render runs; see src.utils.mg_render_jobs.
     from src.utils.mg_render_jobs import MgRenderJobs as _MgRenderJobs

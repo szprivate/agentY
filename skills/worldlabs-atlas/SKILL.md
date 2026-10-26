@@ -1,7 +1,7 @@
 ---
 name: worldlabs-atlas
-description: Make a 3D scene from a picture or a text prompt with World Labs Atlas (a depth mesh in the picture's camera), grow it with new views, use it as the set for render_camera_move, and render single new views of it from any camera (consistent backgrounds). Use for "turn this image into a 3D world with Atlas / World Labs", "make a courtyard world from a prompt", "extend the scene sideways", "image to Atlas world to camera move to control video", "same room from another angle", "a new shot of this background", "render this view with Atlas", "a full 360 environment", "make a Gaussian splat of this place", "explorable 3D scene from this picture", "make a splat in Marble", "Marble world from these images", "export the splat as SPZ / PLY", "splat to mesh".
-allowed-tools: atlas_create_world atlas_expand_world atlas_rebuild_world_mesh atlas_splat_to_mesh atlas_fetch atlas_list atlas_render_view atlas_open_in_viewer atlas_capture_around train_splat splat_training_status marble_create_world marble_export render_camera_move show_in_viewer
+description: Make a 3D scene from a picture or a text prompt with World Labs Atlas (a depth mesh in the picture's camera), grow it with new views, use it as the set for render_camera_move, and render single new views of it from any camera (consistent backgrounds). Use for "turn this image into a 3D world with Atlas / World Labs", "make a courtyard world from a prompt", "extend the scene sideways", "image to Atlas world to camera move to control video", "same room from another angle", "a new shot of this background", "render this view with Atlas", "a full 360 environment", "make a Gaussian splat of this place", "explorable 3D scene from this picture", "make a splat in Marble", "Marble world from these images", "export the splat as SPZ / PLY", "splat to mesh", "a camera move through the Atlas world rendered with Atlas", "render the camera animation with Atlas", "high quality camera move of this place".
+allowed-tools: atlas_render_camera_move atlas_create_world atlas_expand_world atlas_rebuild_world_mesh atlas_splat_to_mesh atlas_fetch atlas_list atlas_render_view atlas_open_in_viewer atlas_capture_around train_splat splat_training_status marble_create_world marble_export render_camera_move show_in_viewer
 ---
 
 # World Labs Atlas: picture or prompt -> 3D scene -> camera move
@@ -62,6 +62,30 @@ so say what you are about to spend (one call = one task) and do not loop.
    presses **Render with Atlas** in the Previz panel (upscale choice, "add to world"); the picture lands in
    the viewer and as a loader node on the canvas. Tell them that; do not render on their behalf.
 6. `show_in_viewer` on the glb only when the user wants to look at it.
+6b. **A moving shot of the world - the Atlas camera render.** `atlas_render_camera_move(name, world, moves=[...])`
+   is the HIGH-QUALITY way to get a camera move through an Atlas world, and better than any splat trained from
+   the same views: Atlas itself paints the pictures along the path. Atlas has NO video mode (the API takes a list
+   of cameras and returns one still per camera), so the tool paints keyframes along the path (a painted view
+   every 1 / 0.5 / 0.25 s for `quality` draft / standard / high, 4-8 per task, each task sees the views the
+   earlier ones painted and they join the world) and then renders every frame through the grown world in the
+   viewer (browser tab open). The clip is `output/previz/<world>_<name>.mp4` with `measured` facts and a sidecar.
+   The moves are the `render_camera_move` format, relative to the picture camera (`frame="picture"`), or absolute
+   in the Atlas world's own coordinates (`frame="world"`); the camera must TRANSLATE (a pure pan gives Atlas no
+   depth and is refused: use `render_camera_move` for those). It works on a COPY (`<world>__<name>`) unless
+   `grow_world=true`.
+   **It costs money and the price is only an estimate**: World Labs publishes no per-task price for Atlas.
+   ALWAYS run `dry_run=true` first, tell the user the plan (tasks, painted views, `estimate` low-high in US$,
+   `estimate.basis`) and wait for a yes; only then run it with `confirm_cost=true`. A plan above the cap
+   (`max_usd`, default 5) is refused; lower the quality or shorten the move. After a timeout or a failure run the
+   SAME call again: the tasks already paid are remembered and not paid twice. The user can also press
+   **Render camera with Atlas** (Previz panel, "Atlas move") on a keyframed camera: the viewer shows the price
+   first and has its own confirm - tell them that, do not run it for them.
+   Which to use for a moving shot of an Atlas world:
+   - **free preview / layout / control video** -> `render_camera_move` through `world.glb` (or a splat): instant,
+     free, stretchy where the mesh has holes;
+   - **the shot itself** -> `atlas_render_camera_move`: painted by Atlas, consistent with the world, paid;
+   - **a look-around where the camera can go anywhere** -> `atlas_capture_around` + `train_splat` (Brush, local, no
+     credits) is a side option; a splat of ~40 painted views is softer than the painted move above.
 7. **A full 360 environment / a Gaussian splat.** Two calls, in this order:
    - `atlas_capture_around(world, prompt=...)` has Atlas paint the place ALL ROUND (about 40 views: a ring
      outwards from the middle, then ceiling and floor; 5-6 billed tasks, a few minutes). It grows outwards

@@ -75,6 +75,29 @@ session token from the connect extension's `/agent/host_info`), which runs the s
 (`src/utils/atlas_render_jobs.py`); the page polls `GET /bepic/atlas_render?id=`. The finished picture is delivered
 outside any turn: a loader node on the canvas, a toast, and the viewer's agentY tab.
 
+## A camera move painted by Atlas (`atlas_render_camera_move`)
+
+The Marble 2 Atlas beta API has **no video, trajectory or sequence mode**: `atlasGenerate` takes posed RGBD context
+frames and a list of 1280 x 720 target cameras and returns one still per camera (no maximum is published; this layer
+uses at most 8 per task). Video along a camera path exists only in World Labs' closed early-access "Atlas" omni model.
+So the move is built here (`agenty_core/tools/atlas_camera_move.py`): keyframe cameras along the path are painted by
+Atlas, a few per task, each task conditioned on the views the earlier ones painted (they are added, with depth, to a
+copy of the world), then every frame is rendered through the grown depth mesh in the bEpic viewer along the exact same
+path. At a keyframe the picture is Atlas's own; in between it is those pictures reprojected, which is stable in time
+by construction. `quality`: draft = a painted view every 1 s (8 per task), standard = 0.5 s (4 per task), high = 0.25 s.
+
+Price: World Labs publishes none for Atlas (billing docs: "check the rate card in the platform"; 1,000 credits per
+US$; no balance API). The estimate is a range from `WLT_ATLAS_CREDITS_PER_TASK` (default 100, an assumption) and
+`WLT_CREDITS_PER_USD` (1000): low = one charge per task, high = one per painted view. `max_usd` /
+`WLT_ATLAS_MOVE_MAX_USD` (default 5) refuses bigger plans; at or above `WLT_ATLAS_CONFIRM_ABOVE_USD` (default 0.25)
+`confirm_cost=true` is needed. `dry_run=true` prints the plan and spends nothing. A re-run with the same arguments
+resumes from `<work world>/moves/<name>/plan.json` without paying a task twice.
+
+The viewer: **Atlas move** (Previz panel, next to Atlas) samples the active keyframed camera frame by frame, asks
+`POST /bepic/atlas_camera_move` (dry run) for the plan and price, and only the second press sends `confirm_cost`.
+ComfyUI-ImageViewer relays to this host's `/agentY/atlas_camera_move` (`src/utils/atlas_move_jobs.py`); the page polls
+for tasks done / total and shows the clip in an "Atlas move" tab and on the canvas.
+
 ## A 360 environment and a Gaussian splat
 
 `atlas_capture_around(world, center, radius=1.0, step_deg=30, ceiling_floor=True, prompt)`
