@@ -4,6 +4,8 @@ How to drive **agentY** once it is running. For install and setup see the
 [README](../README.md); for ports, security and other internals see the
 [reference](reference.md).
 
+> 🎬 Prefer watching? Seven one-minute [**video tutorials**](tutorials.md) cover install, the panel and settings, tags and hooks, Atlas, motion graphics, Gaussian splats and LoRA training.
+
 ![agentY sidebar chat next to the ComfyUI graph](images/overview.png)
 
 ## Contents

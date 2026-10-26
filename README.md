@@ -2,7 +2,7 @@
 
 An AI agent that builds and runs [ComfyUI](https://github.com/comfyanonymous/ComfyUI) workflows from plain language. You chat with it in a **sidebar tab inside ComfyUI**; whatever it makes lands on your graph as a loader node, ready to wire into the next thing.
 
-> 📖 **New here?** The [**Using agentY guide**](docs/using-agentY.md) is a screenshot-driven tour of everything below.
+> 📖 **New here?** The [**Using agentY guide**](docs/using-agentY.md) is a screenshot-driven tour of everything below, and the [**video tutorials**](docs/tutorials.md) show the main features in about a minute each.
 
 ![agentY sidebar chat next to the ComfyUI graph](docs/images/overview.png)
 
@@ -269,6 +269,7 @@ Type `/` for the slash commands. Settings live in ComfyUI's **Settings → agent
 ## Documentation
 
 - [**Using agentY**](docs/using-agentY.md) — the full guide: chat, hooks, QA, settings, MCP, memory, models, troubleshooting.
+- [**Video tutorials**](docs/tutorials.md) — seven one-minute videos: install, panel and settings, tags and hooks, Atlas, motion graphics, Gaussian splats, LoRA training.
 - [**Execution modes**](docs/execution_modes.md) — local, hybrid or Comfy Cloud: where open-weight models run, what it costs, what the cloud cannot do.
 - [**Slack**](docs/slack.md) — setting up the Slack bridge.
 - [**Reference**](docs/reference.md) — architecture, ports, security, what the agent may run, model tiers, macOS notes.
