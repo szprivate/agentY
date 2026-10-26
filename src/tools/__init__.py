@@ -216,6 +216,17 @@ def _execution_settings() -> dict:
 
 
 _execution_mode.set_settings_provider(_execution_settings)
+# The paid Atlas camera move is experimental and off by default ([atlas] camera_move_enabled): the tool is
+# kept out of the agent's tool list below unless it is switched on.
+from agenty_core.tools import atlas_camera_move as _atlas_camera_move  # noqa: E402
+
+
+def _atlas_move_setting() -> bool:
+    from src.utils.settings import atlas_camera_move_enabled
+    return atlas_camera_move_enabled()
+
+
+_atlas_camera_move.set_enabled_provider(_atlas_move_setting)
 # Price a workflow's paid (partner) nodes in Comfy credits before it runs (agenty_core.tools.comfyui).
 from agenty_core.tools.comfyui import estimate_workflow_cost  # noqa: F401,E402
 # N independent variants of one workflow duplicated, patched and queued together
@@ -722,6 +733,10 @@ ORCHESTRATOR_TOOLS: list = [
     list_generated_nodes,
     stop,
 ]
+
+# Experimental: the paid Atlas camera move is offered only when switched on (see above).
+if not _atlas_camera_move.camera_move_enabled():
+    ORCHESTRATOR_TOOLS[:] = [t for t in ORCHESTRATOR_TOOLS if t is not atlas_render_camera_move]
 
 # ---------------------------------------------------------------------------
 # Rename-compat aliases.

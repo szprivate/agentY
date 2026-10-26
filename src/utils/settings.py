@@ -278,6 +278,23 @@ def agent_server_url(platform: str | None = None, *,
     return chosen or f"http://127.0.0.1:{default_agent_port(plat)}"
 
 
+def atlas_camera_move_enabled() -> bool:
+    """The experimental, paid Atlas camera move (`[atlas] camera_move_enabled`, off by default).
+
+    ``AGENTY_ATLAS_CAMERA_MOVE`` (1/0) wins over the setting. Off: the agent has no
+    ``atlas_render_camera_move`` tool and the host route ``/agentY/atlas_camera_move``
+    answers "disabled". Needs a restart of the host to take effect for the tool list.
+    """
+    import os
+    raw = os.environ.get("AGENTY_ATLAS_CAMERA_MOVE", "").strip().lower()
+    if raw:
+        return raw in ("1", "true", "yes", "on")
+    try:
+        return bool((load_settings().get("atlas") or {}).get("camera_move_enabled", False))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def ollama_host() -> str:
     """The Ollama server URL every caller should use.
 

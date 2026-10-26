@@ -612,6 +612,14 @@ video_frames = 3
 # sibling <name>.refs/ folder holds its mood images.
 briefing_dir = "./config/qa/"
 
+# World Labs Atlas, experimental parts. The camera move (`atlas_render_camera_move`, and the
+# viewer's "Atlas move" button) is paid and has not had a real run yet, so it is off: no agent
+# tool, no viewer button, and the host route answers "disabled". The viewer has its own matching
+# switch (Settings -> bEpic Viewer -> Experimental). Restart the host after changing this.
+# AGENTY_ATLAS_CAMERA_MOVE=1 overrides it (it is also how agentY-mcp is switched on).
+[atlas]
+camera_move_enabled = false
+
 # Refine loops — `refine_canvas_until`, the agent running the graph you have open
 # over and over until its output meets a condition you stated. Every iteration is
 # a real generation, so this is a spend ceiling and not a suggestion: the agent

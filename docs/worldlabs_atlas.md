@@ -77,6 +77,8 @@ outside any turn: a loader node on the canvas, a toast, and the viewer's agentY 
 
 ## A camera move painted by Atlas (`atlas_render_camera_move`)
 
+**Experimental, off by default.** It is paid and has not had a real run yet, so it is switched off: set `[atlas] camera_move_enabled = true` in `config/settings.default.toml` (or `settings.local.json`; `AGENTY_ATLAS_CAMERA_MOVE=1` overrides it, and is how agentY-mcp is switched on) and restart the host. Off, the agent has no `atlas_render_camera_move` tool (agentY and agentY-mcp), the `worldlabs-atlas` skill does not mention it, and `/agentY/atlas_camera_move` answers "disabled". The viewer has a matching switch (Settings -> bEpic Viewer -> Experimental: Atlas camera move) that shows the "Atlas move" button. Turn both on to try it; the skill step for the agent is not shipped while it is off (add a step 6b to `skills/worldlabs-atlas/SKILL.md` telling it to price with `dry_run=true` first and to run it only after a yes).
+
 The Marble 2 Atlas beta API has **no video, trajectory or sequence mode**: `atlasGenerate` takes posed RGBD context
 frames and a list of 1280 x 720 target cameras and returns one still per camera (no maximum is published; this layer
 uses at most 8 per task). Video along a camera path exists only in World Labs' closed early-access "Atlas" omni model.

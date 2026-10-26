@@ -4908,6 +4908,10 @@ def _build_app():
     def atlas_camera_move():
         if request.method == "OPTIONS":
             return "", 204
+        from src.utils.settings import atlas_camera_move_enabled
+        if not atlas_camera_move_enabled():
+            return jsonify({"ok": False, "error": "disabled: the Atlas camera move is experimental and off "
+                            "(set [atlas] camera_move_enabled = true in agentY's settings, then restart)"}), 409
         if request.method == "GET":
             job = _atlas_move_jobs.get(request.args.get("id") or "")
             if job is None:
