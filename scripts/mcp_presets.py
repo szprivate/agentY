@@ -25,6 +25,19 @@ import subprocess
 import sys
 from pathlib import Path
 
+try:   # imported as scripts.mcp_presets, or run as a script from scripts/
+    from scripts import tool_hints as _hints
+except ImportError:
+    try:
+        import tool_hints as _hints
+    except ImportError:   # a copy of this file on its own: the catalog text is shown as written
+        _hints = None
+
+
+def _localized(text: str) -> str:
+    return _hints.localize_hints(text) if _hints else text
+
+
 logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parent.parent
 CATALOG = ROOT / "config" / "mcp_presets.json"
@@ -41,12 +54,13 @@ def _normalise(p: dict) -> dict | None:
         "server": p["server"],
         "env_keys": [k for k in (p.get("env_keys") or []) if isinstance(k, dict) and k.get("key")],
         "requires": [str(r) for r in (p.get("requires") or [])],
-        "setup_steps": str(p.get("setup_steps") or ""),
+        # The catalog is written with winget commands; shown on a Mac or Linux they become that OS's command.
+        "setup_steps": _localized(str(p.get("setup_steps") or "")),
         # The structured recipe scripts/mcp_setup.py runs, and its defaults (${params.x}).
         "setup": [s for s in (p.get("setup") or []) if isinstance(s, dict)],
         "params": p.get("params") if isinstance(p.get("params"), dict) else {},
         # Good to know, nothing to do: shown, but never starts an agent turn.
-        "notes": str(p.get("notes") or ""),
+        "notes": _localized(str(p.get("notes") or "")),
         "default_selected": bool(p.get("default_selected")),
     }
 

@@ -45,6 +45,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts import mcp_presets as mp  # noqa: E402
+from scripts import tool_hints as th  # noqa: E402
 
 logger = logging.getLogger("agentY.mcp_setup")
 
@@ -490,15 +491,12 @@ class Ctx:
         hit = shutil.which(name)
         if hit:
             return hit
-        extra = {"uv": [self.home / ".local" / "bin", self.home / ".cargo" / "bin"],
-                 "uvx": [self.home / ".local" / "bin"],
-                 "node": [Path("C:/Program Files/nodejs")], "npm": [Path("C:/Program Files/nodejs")],
-                 "npx": [Path("C:/Program Files/nodejs")],
-                 "git": [Path("C:/Program Files/Git/cmd")]}.get(name, [])
-        for d in extra:
+        # Not on the PATH this process got (a GUI-started process on macOS has no login-shell PATH):
+        # the usual folders - Homebrew, nvm, Volta, ~/.local/bin - and on Windows the installer's folders.
+        for d in th.extra_path_dirs(self.platform, self.home):
             for ext in ("", ".exe", ".cmd"):
-                p = d / (name + ext)
-                if p.is_file():
+                p = Path(d) / (name + ext)
+                if p.is_file() and os.access(p, os.X_OK):
                     return str(p)
         return None
 
@@ -507,6 +505,7 @@ class Ctx:
             return self._run(cmd, cwd=cwd, env=env, timeout=timeout)
         exe = self.tool_path(cmd[0]) or cmd[0]
         full = {**os.environ, **(env or {})}
+        full["PATH"] = th.augmented_path(full.get("PATH", ""), self.platform, self.home)   # npm finds node, etc.
         try:
             p = subprocess.run([exe, *cmd[1:]], capture_output=True, text=True, timeout=timeout, cwd=cwd,
                                env=full, stdin=subprocess.DEVNULL, encoding="utf-8", errors="replace")
@@ -560,10 +559,8 @@ def _version_of_tool(ctx: Ctx, tool: str) -> str:
     return m.group(1) if rc == 0 and m else ""
 
 
-_WINGET = {"uv": "astral-sh.uv", "node": "OpenJS.NodeJS.LTS", "npm": "OpenJS.NodeJS.LTS", "git": "Git.Git"}
-
-
 def step_ensure_tool(ctx: Ctx, st: dict) -> dict:
+    """Find uv / node / npm / git, or install it the way THIS OS does (winget, brew), or say exactly what to run."""
     tool = st["tool"]
     from agenty_core.tools.app_installs import version_tuple
     path = ctx.tool_path(tool)
@@ -572,19 +569,23 @@ def step_ensure_tool(ctx: Ctx, st: dict) -> dict:
         if st.get("min_version") and have and version_tuple(have) < version_tuple(st["min_version"]):
             raise NeedsUser(f"{tool} {have} is installed, {st['min_version']} or newer is needed. {st.get('hint', '')}".strip())
         return R(SKIPPED, f"{tool} {have} found at {path}".replace("  ", " "), path=path)
-    winget = st.get("winget") or _WINGET.get(tool)
-    cmd = ["winget", "install", "-e", "--id", winget, "--accept-package-agreements", "--accept-source-agreements"] if winget else None
-    how = " ".join(cmd) if cmd else (st.get("hint") or f"install {tool}")
+    has_brew = bool(ctx.tool_path("brew")) if not ctx.platform.startswith("win") else False
+    cmd = th.install_command(tool, ctx.platform, has_brew=has_brew, winget_id=st.get("winget") or "")
+    text, is_cmd = th.install_hint(tool, ctx.platform, has_brew=has_brew, winget_id=st.get("winget") or "")
+    how = " ".join(cmd) if cmd else text
+    todo = (f"Run: {text}" if is_cmd else f"Install {text}") if not cmd else f"Run: {how}"
+    if st.get("hint") and not cmd:
+        todo += f" ({st['hint']})"
     if ctx.dry_run:
-        return R(PLANNED, f"{tool} is missing; would run: {how}" if ctx.allow_system else f"{tool} is missing; needs: {how}")
+        return R(PLANNED, f"{tool} is missing; would run: {how}" if ctx.allow_system and cmd else f"{tool} is missing; needs: {how}")
     permitted = ctx.allow_system or bool(ctx.interactive and ctx.ask and ctx.ask(f"{tool} is not installed. Install it system-wide with: {how} ?"))
-    if not (permitted and cmd and ctx.platform.startswith("win")):
-        raise NeedsUser(f"{tool} is not installed. Run: {how}" + (" (then start agentY's setup again)" if cmd else ""))
+    if not (permitted and cmd):
+        raise NeedsUser(f"{tool} is not installed. {todo}" + (" (then start agentY's setup again)" if cmd else ""))
     rc, out = ctx.run(cmd, timeout=900)
     if rc != 0 or not ctx.tool_path(tool):
         if rc == 0:
             raise NeedsUser(f"{tool} was installed; open a new terminal so it is on PATH, then set up again.")
-        raise StepError(f"winget install failed (exit {rc}): {(out or '').strip().splitlines()[-1:] or ['']}")
+        raise StepError(f"{cmd[0]} install failed (exit {rc}): {(out or '').strip().splitlines()[-1:] or ['']}")
     return R(DONE, f"installed {tool}", path=ctx.tool_path(tool))
 
 
@@ -605,9 +606,9 @@ def step_find_app(ctx: Ctx, st: dict) -> dict:
         raise NeedsUser(f"{label}: {why}. Install {label}" + (f" {st['min_version']} or newer" if st.get("min_version") else "")
                         + " and set the preset up again.")
     ctx.vars.update({f"{var}.path": chosen["path"], f"{var}.version": chosen["version"], f"{var}.root": chosen["root"]})
-    msg = f"{chosen['version'] or '?'} at {chosen['path']} ({why})"
+    msg = f"{chosen['version'] or 'version unknown'} at {chosen['path']} ({why})"
     if others:
-        msg += "; also found " + ", ".join(f"{o['version'] or '?'}" for o in others)
+        msg += "; also found " + ", ".join(f"{o['version'] or 'version unknown'}" for o in others)
     return R(SKIPPED, msg, **chosen)
 
 

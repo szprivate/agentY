@@ -94,7 +94,9 @@ class Catalog(unittest.TestCase):
     def test_all_nine_presets_have_a_valid_recipe(self):
         want = {"blender", "houdini", "maya", "unity", "nuke", "after-effects", "premiere-pro", "davinci-resolve", "cavalry"}
         have = {p["id"]: p for p in mp.load_catalog() if p.get("setup")}
-        self.assertEqual(want, set(have))
+        # The npx-based presets carry a one-step recipe that only checks for / installs Node.js (issue 78).
+        node_only = {pid for pid, p in have.items() if [(x["type"], x.get("tool")) for x in p["setup"]] == [("ensure_tool", "node")]}
+        self.assertEqual(want, set(have) - node_only)
         for pid, p in have.items():
             self.assertEqual(ms.validate_recipe(p), [], pid)
 

@@ -170,6 +170,13 @@
       "requires": [
         "node"
       ],
+      "setup": [
+        {
+          "id": "node",
+          "type": "ensure_tool",
+          "tool": "node"
+        }
+      ],
       "setup_steps": "",
       "default_selected": true,
       "notes": "Node.js LTS: `winget install OpenJS.NodeJS.LTS`. First run downloads the package."
@@ -892,6 +899,13 @@
       "requires": [
         "node"
       ],
+      "setup": [
+        {
+          "id": "node",
+          "type": "ensure_tool",
+          "tool": "node"
+        }
+      ],
       "setup_steps": "",
       "default_selected": true,
       "notes": "Install Node LTS (`winget install OpenJS.NodeJS.LTS`). If no Chrome: `npx -y playwright install chromium` and add `--browser`,`chromium` to args. Add `--headless` for no visible window."
@@ -914,6 +928,13 @@
       "env_keys": [],
       "requires": [
         "node"
+      ],
+      "setup": [
+        {
+          "id": "node",
+          "type": "ensure_tool",
+          "tool": "node"
+        }
       ],
       "setup_steps": "",
       "default_selected": false,
@@ -948,6 +969,13 @@
       ],
       "requires": [
         "node"
+      ],
+      "setup": [
+        {
+          "id": "node",
+          "type": "ensure_tool",
+          "tool": "node"
+        }
       ],
       "setup_steps": "",
       "default_selected": false,
@@ -1042,6 +1070,13 @@
       ],
       "requires": [
         "node"
+      ],
+      "setup": [
+        {
+          "id": "node",
+          "type": "ensure_tool",
+          "tool": "node"
+        }
       ],
       "setup_steps": "",
       "default_selected": false,
