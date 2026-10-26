@@ -186,7 +186,7 @@ class AStopRaisedWithNoPageWatching(unittest.TestCase):
     def test_the_stream_asks_before_it_skips(self):
         src = Path(self.srv.__file__).read_text(encoding="utf-8")
         gen = src.split('    @app.route("/agentY/runs/<rid>/stream"', 1)[1].split("    @app.route(", 1)[0]
-        self.assertIn('if kind == "canvas_patch" and not _watch_delivers(rid, index, ev):', gen)
+        self.assertIn('if kind == "canvas_patch" and not _watch_may_edit(t, rid, index, ev,', gen)
 
 
 if __name__ == "__main__":

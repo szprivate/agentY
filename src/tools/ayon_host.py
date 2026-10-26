@@ -28,6 +28,9 @@ def canvas_provider() -> dict | None:
     graph = _turn_graph()
     if graph:
         return graph
+    from agenty_core.utils import canvas_scope
+    if canvas_scope.detached() or canvas_scope.client_id():
+        return None             # this turn's canvas is its own or none: never another page's
     try:
         from src.utils.agentY_server import request_canvas
         snap = request_canvas(wait=0.0) or {}
@@ -42,6 +45,9 @@ def canvas_placer(ops: list[dict], reason: str) -> bool:
     from src.utils.canvas_patch import push
     if not ops:
         return False
+    from agenty_core.utils import canvas_scope
+    if canvas_scope.detached():
+        return False            # no canvas attached to this turn: nothing to place onto
     push({"op": "edit_graph", "ops": ops, "reason": reason})
     graph = _turn_graph()
     if graph is not None:           # keep the turn's graph the one the other canvas tools see

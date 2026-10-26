@@ -38,11 +38,24 @@ def _events(scope) -> deque:
     return scope.slot("canvas_patch", lambda: deque(maxlen=_MAX))
 
 
-def push(event: dict[str, Any]) -> None:
-    """Append a canvas-patch event to the current turn's buffer (thread-safe)."""
+# Patches that change the user's graph and so are confirmed by the page.
+_ACKED_OPS = (None, "edit_graph", "delete_nodes", "set_mode", "layout")
+
+
+def push(event: dict[str, Any]) -> str:
+    """Append a canvas-patch event to the current turn's buffer (thread-safe).
+
+    Returns the patch's id when the turn is bound to a page that acknowledges
+    patches (see :mod:`src.utils.canvas_ack`), else "".
+    """
     scope = turn_scope.current()
+    pid = ""
+    if scope.get("canvas_client") and event.get("op") in _ACKED_OPS:
+        from src.utils import canvas_ack
+        pid = canvas_ack.track(event)
     with scope.lock:
         _events(scope).append(event)
+    return pid
 
 
 def drain(scope=None) -> list[dict[str, Any]]:

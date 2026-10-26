@@ -72,6 +72,8 @@ from src.utils import interject_bus
 from agenty_core.utils import turn_scope
 from src.utils.pipeline_pool import ConversationBusy, PipelinePool, PoolTimeout
 from src.utils import turn_bus
+from src.utils import canvas_target
+from src.utils import canvas_ack
 from src.utils import server_mode as _server_mode
 from src.utils import turn_watchdog as _wd
 from src.utils.media_loaders import candidates as _loader_candidates
@@ -128,55 +130,95 @@ _run_registry: dict[str, dict] = {}
 # that costs a run rather than a sentence.
 _canvas_lock = threading.Lock()
 _canvas_cache: dict = {}          # {prompt, hooks, selection, ts}
-_canvas_wanted_until = 0.0        # a request is outstanding until this time
+_canvas_wanted_until = 0.0        # a request is outstanding until this time (legacy: any panel)
 _CANVAS_REQUEST_TTL = 30.0        # stop asking if nobody answers
 _CANVAS_WAIT = 8.0                # how long a Slack turn waits for a fresh one
 _CANVAS_FRESH = 20.0              # newer than this and it is worth using as-is
 _CANVAS_STALE = 180.0             # older than this and it is not worth trusting
 
 
-def canvas_wanted() -> bool:
-    """Whether the panel should post its graph on the next heartbeat."""
+_canvas_by_client: dict = {}      # client id -> the same snapshot, from that panel only
+_canvas_wanted_by: dict = {}      # client id -> a request for ITS graph is outstanding until
+
+
+def canvas_wanted(client: str = "") -> bool:
+    """Whether the panel *client* should post its graph on the next heartbeat.
+
+    With no client: whether any request is outstanding (the old, panel-agnostic
+    flag, which an older panel still polls).
+    """
+    now = time.time()
     with _canvas_lock:
-        return time.time() < _canvas_wanted_until
+        if client:
+            return now < _canvas_wanted_by.get(str(client), 0.0)
+        return now < _canvas_wanted_until or any(now < t for t in _canvas_wanted_by.values())
 
 
-def remember_canvas(prompt, hooks, selection) -> None:
-    """Cache what the panel says is on screen right now."""
+def remember_canvas(prompt, hooks, selection, client: str = "") -> None:
+    """Cache what the panel says is on screen right now (under its client id, when
+    it sent one)."""
     global _canvas_wanted_until
+    snap = {
+        "prompt": prompt if isinstance(prompt, dict) else None,
+        "hooks": [h for h in (hooks or []) if isinstance(h, dict)],
+        "selection": [n for n in (selection or []) if isinstance(n, dict)],
+        "ts": time.time(),
+    }
+    client = str(client or "")
     with _canvas_lock:
-        _canvas_cache.update({
-            "prompt": prompt if isinstance(prompt, dict) else None,
-            "hooks": [h for h in (hooks or []) if isinstance(h, dict)],
-            "selection": [n for n in (selection or []) if isinstance(n, dict)],
-            "ts": time.time(),
-        })
-        _canvas_wanted_until = 0.0
+        if client:
+            if len(_canvas_by_client) > 64:
+                _canvas_by_client.clear()
+            _canvas_by_client[client] = dict(snap)
+            _canvas_wanted_by.pop(client, None)
+        else:
+            _canvas_cache.update(snap)
+            _canvas_wanted_until = 0.0
 
 
-def request_canvas(wait: float = _CANVAS_WAIT) -> dict:
-    """Ask the panel for the live graph and wait briefly for it.
+def request_canvas(wait: float = _CANVAS_WAIT, thread_id=None, target=None) -> dict:
+    """Ask a panel for its live graph and wait briefly for it.
 
-    Returns the snapshot (possibly a stale one, possibly empty). Never raises and
-    never blocks for long: a turn that cannot see the canvas is worth running
-    anyway — it just has to be told what it is looking at.
+    With *thread_id* (every turn that has no browser of its own), the panel is the
+    one *target* names (see :mod:`src.utils.canvas_target`; default: a panel that
+    is showing that conversation) and nobody else's graph is ever returned: no
+    such panel is an empty answer, and the turn runs with no canvas. Without it,
+    the legacy panel-agnostic ask (kept for callers that only read).
+
+    Returns the snapshot (possibly a stale one, possibly empty), with the panel's
+    ``client`` id in it when it came from one. Never raises and never blocks for
+    long: a turn that cannot see the canvas is worth running anyway - it just
+    has to be told what it is looking at.
     """
     global _canvas_wanted_until
     if _server_mode.headless():
         return {}                     # no page to ask: do not wait for one
+    client = ""
+    if thread_id is not None or target is not None:
+        client = canvas_target.resolve(target, str(thread_id or ""))
+        if not client:
+            logger.info("canvas: no panel for target %r in %s (%s)", target or "conversation",
+                        thread_id, canvas_target.why_none(target, str(thread_id or "")))
+            return {}
     with _canvas_lock:
-        before = _canvas_cache.get("ts", 0.0)
+        cache = _canvas_by_client.get(client, {}) if client else _canvas_cache
+        before = cache.get("ts", 0.0)
         if before and time.time() - before < _CANVAS_FRESH:
-            return dict(_canvas_cache)     # someone just sent one; do not wait
-        _canvas_wanted_until = time.time() + _CANVAS_REQUEST_TTL
+            return {**cache, **({"client": client} if client else {})}   # just sent: do not wait
+        if client:
+            _canvas_wanted_by[client] = time.time() + _CANVAS_REQUEST_TTL
+        else:
+            _canvas_wanted_until = time.time() + _CANVAS_REQUEST_TTL
     deadline = time.time() + max(0.0, wait)
     while time.time() < deadline:
         time.sleep(0.25)
         with _canvas_lock:
-            if _canvas_cache.get("ts", 0.0) > before:
-                return dict(_canvas_cache)
+            cache = _canvas_by_client.get(client, {}) if client else _canvas_cache
+            if cache.get("ts", 0.0) > before:
+                return {**cache, **({"client": client} if client else {})}
     with _canvas_lock:
-        stale = dict(_canvas_cache)
+        cache = _canvas_by_client.get(client, {}) if client else _canvas_cache
+        stale = dict(cache)
     age = time.time() - stale.get("ts", 0.0) if stale.get("ts") else None
     if age is None or age > _CANVAS_STALE:
         # Nobody answered and what we have is old. A graph handed over as
@@ -186,7 +228,24 @@ def request_canvas(wait: float = _CANVAS_WAIT) -> dict:
         logger.info("slack: no usable canvas snapshot (age %s)",
                     "none" if age is None else f"{age:.0f}s")
         return {}
+    if client:
+        stale["client"] = client
     return stale
+
+
+# Which panel each running non-panel turn edits: request id -> client id. A turn
+# with no entry has no canvas; its canvas patches go nowhere (see run_stream).
+_turn_canvas: dict = {}
+
+
+def canvas_provider_for(thread_id: str, target=None):
+    """A ``canvas_provider`` for a turn in *thread_id* that has no browser of its
+    own: the graph of the panel *target* names, nobody else's."""
+    def _provide() -> dict:
+        return request_canvas(thread_id=thread_id, target=target)
+    _provide.thread_id = thread_id
+    _provide.target = target
+    return _provide
 
 
 # ── Slash commands (mirrors the frontend popup list) ──────────────────────────
@@ -1556,6 +1615,18 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
             canvas_prompt = snap.get("prompt")
             canvas_hooks = snap.get("hooks") or []
             canvas_selection = snap.get("selection") or []
+            if snap.get("client"):
+                # The panel whose graph this turn works on, and the only one its
+                # canvas patches are delivered to (run_stream).
+                if len(_turn_canvas) > 500:
+                    _turn_canvas.clear()
+                _turn_canvas[req_id] = str(snap["client"])
+        turn_scope.current().set("canvas_client", _turn_canvas.get(req_id, ""))
+        if origin != "panel" and not _turn_canvas.get(req_id):
+            # A turn nobody streams, and no panel to hand it a canvas: say so to
+            # the canvas tools, so they refuse with the reason instead of editing
+            # whatever tab happens to be open.
+            turn_scope.current().set("canvas_detached", getattr(canvas_provider, "target", None) or True)
         pipeline = _take_pipeline(thread_id, req_id, out_q, finished)
         if pipeline is None:
             return
@@ -1603,6 +1674,13 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
             out_q.put(None)
         if pipeline is not None and _pool is not None:
             _pool.release(pipeline)
+        # What the page showed before this turn is not what it shows now: the next
+        # turn asks again instead of planning its edits (and numbering its nodes)
+        # against a snapshot that lacks this turn's work.
+        _owner = _turn_canvas.get(req_id, "")
+        if _owner:
+            with _canvas_lock:
+                _canvas_by_client.pop(_owner, None)
         # If this turn edited the open canvas, another conversation may now.
         try:
             from src.utils import canvas_lease
@@ -4573,6 +4651,11 @@ def _build_app():
         # lives (browser-mediated self-registration), so the "Start server" button
         # can relaunch it later with no env var or manual config.
         extra = {}
+        # A panel names itself and the conversation it shows: that is what lets a
+        # turn nobody streams find ITS panel (src/utils/canvas_target.py).
+        client = request.args.get("client", "")
+        if client:
+            canvas_target.touch(client, request.args.get("thread", ""))
         if request.args.get("deep", "").lower() in ("1", "true", "yes"):
             # For a service manager or a proxy's upstream check: the facts a
             # server install cares about. Not in the default answer, which the
@@ -4590,8 +4673,22 @@ def _build_app():
                         "launcher": _launcher_name(),
                         # "post me the graph on your next tick" — how a turn with
                         # no browser behind it (Slack) gets to see the canvas.
-                        "want_canvas": canvas_wanted(),
+                        "want_canvas": canvas_wanted(client),
                         "boot_id": _BOOT_ID, "uptime": round(time.time() - _BOOT_TIME, 1)})
+
+    @app.route("/agentY/canvas_ack", methods=["POST", "OPTIONS"])
+    def canvas_patch_ack():
+        """The panel saying it applied (or could not apply) a canvas patch."""
+        if request.method == "OPTIONS":
+            return "", 204
+        body = request.get_json(silent=True) or {}
+        pid = str(body.get("patch_id") or "")
+        if not pid:
+            return jsonify({"ok": False, "error": "patch_id is required"}), 400
+        got = canvas_ack.ack(pid, bool(body.get("ok")), applied=body.get("applied"),
+                             missed=[str(m) for m in (body.get("missed") or [])][:10],
+                             error=str(body.get("error") or "")[:300])
+        return jsonify({"ok": True, "accepted": got})
 
     @app.route("/agentY/canvas", methods=["POST", "OPTIONS"])
     def canvas_snapshot():
@@ -4600,8 +4697,11 @@ def _build_app():
         if request.method == "OPTIONS":
             return "", 204
         body = request.get_json(silent=True) or {}
+        client = str(body.get("client") or "")
+        if client:
+            canvas_target.touch(client, str(body.get("thread_id") or ""))
         remember_canvas(body.get("canvas_prompt"), body.get("canvas_hooks"),
-                        body.get("canvas_selection"))
+                        body.get("canvas_selection"), client=client)
         return jsonify({"ok": True})
 
     @app.route("/agentY/commands", methods=["GET"])
@@ -4681,7 +4781,8 @@ def _build_app():
                 # the collector stayed as an earlier run left it, and the agent
                 # was then told it held the approved set. Those few patches go to
                 # the first page watching, once.
-                if kind == "canvas_patch" and not _watch_delivers(rid, index, ev):
+                if kind == "canvas_patch" and not _watch_may_edit(t, rid, index, ev,
+                                                                  request.args.get("client", "")):
                     continue
                 if kind == "output":
                     ev = {**ev, "drop": False}
@@ -4711,10 +4812,14 @@ def _build_app():
             return jsonify({"error": "attachments must be a list of file paths"}), 400
         try:
             from flask import g
+            canvas = body.get("canvas") or ""
+            if not isinstance(canvas, str):
+                raise ValueError('canvas must be "none", "conversation" or a panel client id')
             rid, tid = _api_start_turn(body.get("message"), paths,
                                        body.get("thread_id") or body.get("conversation") or "",
                                        body.get("title") or "",
-                                       user=getattr(g, "agenty_user", None))
+                                       user=getattr(g, "agenty_user", None),
+                                       canvas=canvas)
         except ValueError as exc:
             busy = "already running" in str(exc)
             full = "queue is full" in str(exc)
@@ -4950,6 +5055,8 @@ def _build_app():
         Returns promptly when a probe arrives, and always within `wait`.
         """
         from src.utils import canvas_probe
+        if request.args.get("client"):
+            canvas_target.touch(request.args["client"], request.args.get("thread", ""))
         try:
             wait = float(request.args.get("wait", "25") or 25)
         except (TypeError, ValueError):
@@ -4957,7 +5064,7 @@ def _build_app():
         wait = max(0.0, min(wait, 55.0))    # under any sane proxy read timeout
         deadline = time.time() + wait
         while True:
-            probe = canvas_probe.take()
+            probe = canvas_probe.take(request.args.get("client", ""))
             if probe is not None:
                 return jsonify({"ok": True, "probe": probe})
             if time.time() >= deadline:
@@ -5972,7 +6079,10 @@ def _build_app():
 
         # The panel just told us what is on its canvas. Keep it: a Slack turn a
         # moment later has no browser of its own to ask, and this one is free.
-        remember_canvas(canvas_prompt, canvas_hooks, canvas_selection)
+        _client = str(body.get("client_id") or "")
+        if _client:
+            canvas_target.touch(_client, thread_id)
+        remember_canvas(canvas_prompt, canvas_hooks, canvas_selection, client=_client)
 
         # Persist the user's message (raw text).
         if message:
@@ -6019,6 +6129,8 @@ def _build_app():
         # Normal turn → run the pipeline and stream SSE.
         q: queue.Queue = queue.Queue()
         rid = uuid.uuid4().hex
+        if _client:
+            _turn_canvas[rid] = _client       # its canvas probes go to this page
         threading.Thread(target=_run_pipeline_stream,
                          args=(thread_id, message, image_paths, q, rid),
                          kwargs={"canvas_prompt": canvas_prompt, "canvas_hooks": canvas_hooks,
@@ -6349,7 +6461,8 @@ def _slack_start_turn(text: str, image_paths: list, thread_id: str = "",
     threading.Thread(target=_run_pipeline_stream,
                      args=(thread_id, run_text, list(image_paths or []), q, rid),
                      kwargs={"origin": "slack",
-                             "canvas_provider": None if _server_mode.headless() else request_canvas},
+                             "canvas_provider": None if _server_mode.headless()
+                             else canvas_provider_for(thread_id)},
                      name="agentY-slack-turn", daemon=True).start()
     # Nothing reads this queue: Slack is fed by the bus, not by the stream. Drain
     # it anyway, or the turn blocks on a queue that fills and never empties.
@@ -6392,7 +6505,8 @@ def _use_api_queue() -> bool:
 
 
 def _api_start_turn(text: str, image_paths: list, thread_id: str = "",
-                    title: str = "", user: dict | None = None) -> tuple[str, str]:
+                    title: str = "", user: dict | None = None,
+                    canvas: str = "") -> tuple[str, str]:
     """Run a turn asked for through the turn API (``POST /agentY/turns``): the same
     orchestrator, skills and hooks as a panel turn, with nobody streaming it.
 
@@ -6400,7 +6514,13 @@ def _api_start_turn(text: str, image_paths: list, thread_id: str = "",
     only (the panel follows it from /agentY/runs when that conversation is open),
     and it asks the open panel for the canvas. Raises ``ValueError`` for what is
     not a turn: nothing to say, a slash command, or a conversation already busy.
+
+    *canvas* is the turn's canvas target (:mod:`src.utils.canvas_target`):
+    ``"none"``, ``"conversation"`` (the default: a panel that shows this
+    conversation, if one does) or the client id of one such panel. A turn with no
+    panel behind it has no canvas, and says so when it reaches for one.
     """
+    canvas = canvas_target.normalize(canvas)
     text = str(text or "").strip()
     if not text:
         raise ValueError("message is empty")
@@ -6436,7 +6556,7 @@ def _api_start_turn(text: str, image_paths: list, thread_id: str = "",
                          args=(thread_id, run_text, paths, q, rid),
                          kwargs={"origin": "api",
                                  "canvas_provider": None if _server_mode.headless()
-                                 else request_canvas},
+                                 else canvas_provider_for(thread_id, canvas)},
                          name="agentY-api-turn", daemon=True).start()
         threading.Thread(target=_drain_queue, args=(q,), daemon=True).start()
         return rid
@@ -6482,8 +6602,14 @@ def _start_background_turn(thread_id: str, text: str, *, origin: str,
     q: queue.Queue = queue.Queue()
     rid = uuid.uuid4().hex
     kwargs = {"origin": origin, "dry_run": bool(dry_run)}
+    # The canvas of a shot's conversation is its lead's: the panel that shows the
+    # lead is the one asked, not whichever page is open.
+    try:
+        lead = (cs.shot_of(thread_id) or {}).get("lead_id") or thread_id
+    except Exception:  # noqa: BLE001
+        lead = thread_id
     if origin == "shots":
-        kwargs["canvas_provider"] = request_canvas
+        kwargs["canvas_provider"] = canvas_provider_for(lead)
     else:
         # A BRANCH of a hook pipeline is handed its own stages of the open graph;
         # a plain shot still has no canvas and builds its own workflow.
@@ -6493,7 +6619,7 @@ def _start_background_turn(thread_id: str, text: str, *, origin: str,
         except Exception:  # noqa: BLE001
             scope = []
         if scope:
-            kwargs["canvas_provider"] = _branch_canvas(scope)
+            kwargs["canvas_provider"] = _branch_canvas(scope, lead)
     threading.Thread(target=_run_pipeline_stream,
                      args=(thread_id, text, [], q, rid),
                      kwargs=kwargs,
@@ -6535,7 +6661,33 @@ def _watch_delivers(rid: str, index: int, event: dict) -> bool:
     return True
 
 
-def _branch_canvas(hook_ids: list):
+def _watch_may_edit(turn, rid: str, index: int, event: dict, client: str) -> bool:
+    """May this canvas patch of a watched turn reach the page *client*?
+
+    A turn started from a panel streams to that panel, and a second page only
+    watches (:func:`_watch_delivers`). A turn nobody streams (API, Slack, a shot)
+    edits ONE panel: the one it took its graph from. Every other page - a user's
+    own tab, a script's browser - gets none of its edits, whatever it is
+    watching. The owning page gets all of them, once each.
+    """
+    if getattr(turn, "origin", "panel") == "panel":
+        return _watch_delivers(rid, index, event)
+    owner = _turn_canvas.get(str(rid), "")
+    if not owner or owner != str(client or ""):
+        return False
+    if event.get("patch_id") and canvas_ack.expired(event["patch_id"]):
+        return False             # the agent was told it failed: do not apply it now
+    key = (str(rid), int(index))
+    with _watch_lock:
+        if key in _watch_sent:
+            return False
+        if len(_watch_sent) > 5000:
+            _watch_sent.clear()
+        _watch_sent.add(key)
+    return True
+
+
+def _branch_canvas(hook_ids: list, thread_id: str = ""):
     """A canvas provider for a branch: the open graph, with only its own stages.
 
     The graph itself is whole - what a stage touches is worked out from it, and a
@@ -6544,7 +6696,7 @@ def _branch_canvas(hook_ids: list):
     """
     def _provide() -> dict:
         from src.utils import shots as _shots
-        snap = dict(request_canvas() or {})
+        snap = dict(request_canvas(thread_id=thread_id) or {}) if thread_id else {}
         snap["hooks"] = _shots.scoped_hooks(snap.get("hooks") or [], hook_ids)
         snap["selection"] = []
         return snap

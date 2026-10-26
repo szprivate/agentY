@@ -682,6 +682,66 @@ def interrupted_turn_note(result) -> str:
             "it again._")
 
 
+
+def _no_graph_msg(suffix: str = "") -> str:
+    """Why a canvas tool has nothing to work on this turn.
+
+    A turn nobody streams (the turn API, Slack, a shot) has a canvas only
+    when a panel was bound to it at its start (src/utils/canvas_target.py).
+    Without one the answer says so and names the safe way out, instead of
+    the bare "no graph is open", which reads as a transient state to retry.
+    """
+    try:
+        from agenty_core.utils import turn_scope as _ts
+        detached = _ts.current().get("canvas_detached")
+    except Exception:  # noqa: BLE001
+        detached = None
+    if detached:
+        from src.utils import canvas_target as _ct
+        why = ""
+        if isinstance(detached, str) and detached != "True":
+            why = f" ({_ct.why_none(detached, '')})"
+        return ("no canvas attached to this turn" + why + ": it was not started from a ComfyUI "
+                "panel and none is showing this conversation, so there is no open workflow "
+                "of the user's to edit. Build the workflow into a new file (prepare_workflow / "
+                "save_workflow) and, if it should be seen, open it in a new tab with "
+                "open_workflow_in_canvas - do not retry this tool.")
+    return "no graph is open on the canvas this turn" + suffix + "."
+
+
+async def _patch_unconfirmed(pid: str) -> dict | None:
+    """Wait for the page to confirm canvas patch *pid*; None when it did.
+
+    A patch is fire-and-forget on its own: the tool used to say "applied" the
+    moment it was queued, whether or not any page drew it. For a turn bound to a
+    page that acknowledges patches (see src/utils/canvas_ack.py) the tool waits
+    for that page, and when none answers the result says the edit is NOT on any
+    canvas - so the agent falls back to a workflow file instead of reporting
+    success it does not have. "" (an untracked patch) counts as confirmed.
+    """
+    if not pid:
+        return None
+    from agenty_core.utils import turn_scope as _ts
+    from src.utils import canvas_ack, turn_bus
+    t = turn_bus.turn(_ts.current().request_id)
+    patient = bool(t is not None and t.origin != "panel")      # the page must first pick the turn up
+    ack = await asyncio.to_thread(canvas_ack.wait, pid, 25.0 if patient else 12.0)
+    if ack.get("ok"):
+        return None
+    missed = ack.get("missed") or []
+    if ack.get("timeout"):
+        why = "no ComfyUI page confirmed it in time"
+    else:
+        why = ack.get("error") or ("the page could not apply it: " + "; ".join(missed) if missed
+                                   else "the page could not apply it")
+    return {"status": "not_applied", "applied": False,
+            "error": f"NOT applied to any canvas: {why}. The edit did not land and nothing changed on "
+                     "the user's canvas.",
+            "what_to_do": "Do not report this as done. Build the workflow into a file (prepare_workflow / "
+                          "save_workflow) and show it with open_workflow_in_canvas, or tell the user the "
+                          "canvas could not be edited."}
+
+
 class Pipeline:
     """Chains Query Templates → Assemble Workflow with logging and JSON validation.
 
@@ -2633,7 +2693,10 @@ class Pipeline:
                 })
             _patch = {"op": "delete_nodes", "node_ids": [n["node_id"] for n in impact["found"]],
                       "reason": str(reason or "").strip()}
-            _push_patch(_patch)
+            _pid = _push_patch(_patch)
+            _bad = await _patch_unconfirmed(_pid)
+            if _bad:
+                return json.dumps(_bad)
             self._canvas_note_patch(_patch)
             names = ", ".join(f"#{n['node_id']} {n['class_type']}"
                               + (f' "{n["title"]}"' if n["title"] else "")
@@ -2706,7 +2769,7 @@ class Pipeline:
             nid = str(node_id or "").strip().lstrip("#")
             graph = getattr(self, "_canvas_graph", None)
             if not isinstance(graph, dict) or not graph:
-                return json.dumps({"error": "no graph is open on the canvas this turn."})
+                return json.dumps({"error": _no_graph_msg()})
             if not self._canvas_full_graph():
                 selected = {str(n.get("id")) for n in (self._canvas_selection or [])}
                 if nid not in selected:
@@ -2728,7 +2791,11 @@ class Pipeline:
             self._canvas_edit_rejected = None
             self._canvas_graph = res["graph"]
             why = str(reason or "").strip() or f"#{nid} {old_cls} → {class_type}"
-            _push_patch({"op": "edit_graph", "ops": res["ops"], "reason": why})
+            _pid = _push_patch({"op": "edit_graph", "ops": res["ops"], "reason": why})
+            _bad = await _patch_unconfirmed(_pid)
+            if _bad:
+                self._canvas_graph = graph
+                return json.dumps(_bad)
             self._canvas_edits = (getattr(self, "_canvas_edits", None) or []) + [
                 f"replaced #{nid} {old_cls} with {class_type}"]
             _seen = set(getattr(self, "_canvas_touched", None) or ()) | set(res["touched"])
@@ -2821,7 +2888,7 @@ class Pipeline:
                     (o.get("op") == "add" and str(o.get("class_type")) in _pipeline_nodes)
                     or o.get("op") == "connect") for o in ops)
             if not isinstance(graph, dict) or (not graph and not _from_nothing):
-                return json.dumps({"error": "no graph is open on the canvas this turn.",
+                return json.dumps({"error": _no_graph_msg(),
                                    "what_to_do": "Build a new workflow with prepare_workflow instead."})
             if graph and not self._canvas_full_graph():
                 selected = {str(n.get("id")) for n in (self._canvas_selection or [])}
@@ -2844,7 +2911,11 @@ class Pipeline:
                                    "note": "Nothing was changed. Fix these and send the whole list again."})
             self._canvas_edit_rejected = None
             self._canvas_graph = res["graph"]
-            _push_patch({"op": "edit_graph", "ops": res["ops"], "reason": str(reason or "").strip()})
+            _pid = _push_patch({"op": "edit_graph", "ops": res["ops"], "reason": str(reason or "").strip()})
+            _bad = await _patch_unconfirmed(_pid)
+            if _bad:
+                self._canvas_graph = graph
+                return json.dumps(_bad)
             self._canvas_edits = (getattr(self, "_canvas_edits", None) or []) + [
                 "rewired / added nodes" + (f" ({str(reason).strip()})" if str(reason or "").strip() else "")]
             unwired = {n: u for n in res["touched"] if n in res["graph"]
@@ -2998,7 +3069,7 @@ class Pipeline:
             # The open canvas.
             graph = getattr(self, "_canvas_graph", None)
             if not isinstance(graph, dict) or not graph:
-                return json.dumps({"status": "cannot", "error": "no graph is open on the canvas this turn.",
+                return json.dumps({"status": "cannot", "error": _no_graph_msg(),
                                    "what_to_do": "Pass workflow_path to change a workflow file instead."})
             got = _gs.splice(graph, operation, params, schemas)
             if not got.get("ok"):
@@ -3639,7 +3710,7 @@ class Pipeline:
             graph = getattr(self, "_canvas_graph", None)
             has_canvas = isinstance(graph, dict) and (bool(graph) or bool(getattr(self, "_open_workflows", None)))
             if not has_canvas:
-                return json.dumps({"error": "no graph is open on the canvas this turn.",
+                return json.dumps({"error": _no_graph_msg(),
                                    "what_to_do": "Show the workflow with open_workflow_in_canvas instead, "
                                                  "and tell the user it opened in a tab of its own."})
             try:
@@ -3677,8 +3748,12 @@ class Pipeline:
                 # beside that hook) and, for a large one, the subgraph to fold it into.
                 _block = {**(_block or {}), "stage": {"hook_node_id": _hid, "name": _name,
                                                       "collapse": _fold}}
-            _push_patch({"op": "edit_graph", "ops": res["ops"], "reason": str(reason or "").strip(),
-                         "block": _block})
+            _pid = _push_patch({"op": "edit_graph", "ops": res["ops"], "reason": str(reason or "").strip(),
+                                "block": _block})
+            _bad = await _patch_unconfirmed(_pid)
+            if _bad:
+                self._canvas_graph = graph
+                return json.dumps(_bad)
             # From here on this conversation works in the open graph (see
             # AgentSession.open_graph_mode) until the user asks otherwise.
             try:
@@ -3975,7 +4050,7 @@ class Pipeline:
             from src.utils import canvas_edit as _ce
             graph = getattr(self, "_canvas_graph", None)
             if not isinstance(graph, dict) or not graph:
-                return json.dumps({"error": "no graph is open on the canvas this turn, or it is empty.",
+                return json.dumps({"error": _no_graph_msg(", or it is empty"),
                                    "what_to_do": "Ask the user to open the workflow in ComfyUI, or build one "
                                                  "with prepare_workflow."})
             if node_ids:
@@ -4072,7 +4147,10 @@ class Pipeline:
                             "error": f"node(s) {', '.join(outside)} are not in the current canvas "
                                      f"selection, so they cannot be switched off.",
                             "what_to_do": "Ask the user to select the nodes the change touches."})
-            _push_patch({"op": "set_mode", "node_ids": ids, "mode": mode, "reason": str(reason or "").strip()})
+            _pid = _push_patch({"op": "set_mode", "node_ids": ids, "mode": mode, "reason": str(reason or "").strip()})
+            _bad = await _patch_unconfirmed(_pid)
+            if _bad:
+                return json.dumps(_bad)
             self._canvas_edits = (getattr(self, "_canvas_edits", None) or []) + [
                 f"{mode}: node(s) {', '.join(ids)}" + (f" ({str(reason).strip()})" if str(reason or "").strip() else "")]
             _push_progress(f"🔧 Canvas: {len(ids)} node(s) set to {mode}" + (f" — {reason}" if reason else ""))
@@ -4130,7 +4208,7 @@ class Pipeline:
             ids = list(dict.fromkeys(ids))
             graph = getattr(self, "_canvas_graph", None)
             if not isinstance(graph, dict) or not graph:
-                return json.dumps({"error": "no graph is open on the canvas this turn."})
+                return json.dumps({"error": _no_graph_msg()})
             refused = _layout_scope(ids)
             if refused:
                 return refused
@@ -4177,7 +4255,7 @@ class Pipeline:
             from src.utils import canvas_layout as _cl
             graph = getattr(self, "_canvas_graph", None)
             if not isinstance(graph, dict) or not graph:
-                return json.dumps({"error": "no graph is open on the canvas this turn."})
+                return json.dumps({"error": _no_graph_msg()})
             if isinstance(groups, str):
                 try:
                     groups = json.loads(groups)
@@ -4228,7 +4306,7 @@ class Pipeline:
             from src.utils import canvas_layout as _cl
             graph = getattr(self, "_canvas_graph", None)
             if not isinstance(graph, dict) or not graph:
-                return json.dumps({"error": "no graph is open on the canvas this turn."})
+                return json.dumps({"error": _no_graph_msg()})
             if not self._canvas_full_graph():
                 selected = {str(n.get("id")) for n in (self._canvas_selection or [])}
                 graph = {k: v for k, v in graph.items() if k in selected}
@@ -4496,7 +4574,11 @@ class Pipeline:
                 "params": params,
                 "node_title": node.get("title") or node.get("type") or "",
             }
+            self._last_patch_id = ""
             _where = self._send_canvas_value(_patch)
+            _bad = await _patch_unconfirmed(self._last_patch_id)
+            if _bad:
+                return json.dumps(_bad)
             self._canvas_note_patch(_patch)
             self._note_loop_write(node_id, params)
             result = {
@@ -5117,9 +5199,7 @@ class Pipeline:
                 })
             base = getattr(self, "_canvas_base_prompt", None)
             if not isinstance(base, dict) or not base:
-                return json.dumps({"error": "no graph is open in the ComfyUI canvas this "
-                                   "turn — open the workflow the loop should run, then "
-                                   "retry."})
+                return json.dumps({"error": _no_graph_msg() + " Open the workflow the loop should run, then retry."})
 
             target, refusal = _loop.choose_target(base, node_id, param)
             if refusal:
@@ -6427,7 +6507,7 @@ class Pipeline:
         from src.utils.canvas_patch import push as _push_patch
         branch = self._branch_info()
         if not branch:
-            _push_patch(patch)
+            self._last_patch_id = _push_patch(patch)
             return ""
         try:
             from src.utils import branch_canvas as _bc

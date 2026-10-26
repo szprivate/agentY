@@ -457,7 +457,7 @@ class Branches(_Host):
         from src.utils import agentY_server as srv
         snap = {"prompt": {"7": {}}, "hooks": list(self.HOOKS), "selection": ["7"], "ts": 1.0}
         with mock.patch.object(srv, "request_canvas", return_value=snap):
-            got = srv._branch_canvas(["8", "9"])()
+            got = srv._branch_canvas(["8", "9"], "lead")()
         self.assertEqual([h["hook_node_id"] for h in got["hooks"]], ["8", "9"])
         self.assertEqual(got["prompt"], {"7": {}})              # the graph stays whole
         self.assertEqual(got["selection"], [])

@@ -45,7 +45,7 @@ class _Base(unittest.TestCase):
             srv.cs, "get_slack_thread",
             lambda tid: ({"channel": self.bound[tid][0], "root_ts": self.bound[tid][1]}
                          if tid in self.bound else None)))
-        self.enterContext(mock.patch.object(srv, "request_canvas", lambda wait=0: {}))
+        self.enterContext(mock.patch.object(srv, "request_canvas", lambda wait=0, **kw: {}))
         self.enterContext(mock.patch.object(srv, "_drain_queue", lambda q: None))
 
 
@@ -78,7 +78,7 @@ class SlackChannelTurnTest(_Base):
         self._start()
         self.assertEqual(self.ran[0]["message"], "make a poster")
         self.assertEqual(self.bound, {})
-        self.assertIs(self.ran[0]["canvas_provider"], srv.request_canvas)
+        self.assertEqual(self.ran[0]["canvas_provider"].thread_id, "t_new")   # ITS conversation only
 
     def test_a_headless_turn_asks_for_no_canvas(self):
         with mock.patch.object(server_mode, "headless", return_value=True):

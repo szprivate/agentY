@@ -116,9 +116,12 @@ def bake_hooks_to_canvas(stages: list, links: list | None = None) -> str:
     # replacing it — see web/agent_canvas.js (graph.extra.agentY_add).
     baked["extra"] = {**(baked.get("extra") or {}), "agentY_add": True}
 
+    from agenty_core.utils import canvas_scope as _cs
+    if _cs.detached():
+        return json.dumps({"status": "error", "error": _cs.NO_CANVAS})
     try:
         from agenty_core.tools.comfyui import get_client
-        resp = get_client().post("/agent/load_workflow", json_data={"workflow": baked})
+        resp = get_client().post("/agent/load_workflow", json_data=_cs.aim({"workflow": baked}))
         opened = isinstance(resp, dict) and bool(resp.get("ok"))
     except Exception as e:  # noqa: BLE001
         return json.dumps({"status": "partial",

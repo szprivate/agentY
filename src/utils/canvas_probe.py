@@ -61,9 +61,20 @@ def request(kind: str, payload: dict | None = None, timeout: float = 20.0) -> di
     if server_mode.headless():
         # No page will ever answer; say so now instead of after the timeout.
         return server_mode.no_canvas_error(str(kind or ""))
+    # Which page is asked: the one this turn belongs to. A turn nobody streams and
+    # that has no panel behind it must not borrow whichever tab is open.
+    from agenty_core.utils import turn_scope
+    scope = turn_scope.current()
+    client = str(scope.get("canvas_client", "") or "")
+    if scope.get("canvas_detached") and not client:
+        return {"error": "no canvas attached to this turn - no ComfyUI page belongs to it, "
+                         "so there is nothing to look at or save. Work on a workflow file "
+                         "instead, or open it in a new tab with open_workflow_in_canvas.",
+                "no_canvas": True}
     pid = uuid.uuid4().hex[:12]
     event = threading.Event()
     entry = {"event": event, "reply": None, "answered": False,
+             "client": client,
              "request": {"probe_id": pid, "kind": str(kind or ""),
                          "payload": dict(payload or {})}}
     with _LOCK:
@@ -83,7 +94,7 @@ def request(kind: str, payload: dict | None = None, timeout: float = 20.0) -> di
             _SERVED.pop(pid, None)
 
 
-def take() -> dict | None:
+def take(client: str = "") -> dict | None:
     """The next probe waiting to be answered, or ``None``.
 
     Called by the panel's long-poll. A probe already handed out is held back
@@ -100,6 +111,10 @@ def take() -> dict | None:
             # is handed a question that already has its answer, and the probe
             # actually waiting behind it is never served at all.
             if entry["answered"] or pid in _SERVED:
+                continue
+            # A probe for a particular page goes to that page; one with no page
+            # in mind (a panel turn from an older panel) to whoever asks.
+            if entry.get("client") and entry["client"] != str(client or ""):
                 continue
             _SERVED[pid] = now
             return dict(entry["request"])

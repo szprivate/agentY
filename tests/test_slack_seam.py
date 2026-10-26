@@ -101,7 +101,7 @@ class SeamTest(unittest.TestCase):
         srv._canvas_cache.clear()
         self.addCleanup(srv._canvas_cache.clear)
         self.enterContext(mock.patch.object(
-            srv, "request_canvas", lambda wait=0: dict(srv._canvas_cache)))
+            srv, "request_canvas", lambda wait=0, **kw: dict(srv._canvas_cache)))
         self.enterContext(mock.patch.object(srv.cs, "add_message", lambda *a, **k: 1))
         self.enterContext(mock.patch.object(srv.cs, "get_thread",
                                             lambda tid: {"id": tid} if tid else None))
