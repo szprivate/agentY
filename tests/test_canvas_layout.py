@@ -202,6 +202,32 @@ class Tools(unittest.TestCase):
         self.assertEqual([g["title"] for g in patch["groups"]], [c["title"] for c in out["chunks"]])
         self.assertTrue(pipe._canvas_edits)
 
+    def test_an_unconfirmed_layout_is_not_applied_and_not_recorded(self):
+        from agenty_core.utils import turn_scope
+        from src.utils import canvas_ack
+        tok = turn_scope.enter(turn_scope.Scope("rq", "A"))
+        self.addCleanup(turn_scope.leave, tok)
+        turn_scope.current().set("canvas_client", "page-1")
+        with mock.patch.object(canvas_ack, "wait", lambda pid, t: {"ok": False, "timeout": True}):
+            out, pipe = self._call("arrange_canvas")
+            grouped, _ = self._call("group_canvas_nodes", groups=[{"title": "T", "node_ids": ["1"]}])
+        for res in (out, grouped):
+            self.assertEqual(res["status"], "not_applied")
+            self.assertIn("NOT applied to any canvas", res["error"])
+        self.assertFalse(pipe._canvas_edits, "an edit that did not land is not recorded")
+
+    def test_a_confirmed_layout_is_applied(self):
+        from agenty_core.utils import turn_scope
+        from src.utils import canvas_ack
+        tok = turn_scope.enter(turn_scope.Scope("rq", "A"))
+        self.addCleanup(turn_scope.leave, tok)
+        turn_scope.current().set("canvas_client", "page-1")
+        with mock.patch.object(canvas_ack, "wait", lambda pid, t: {"ok": True}):
+            out, _ = self._call("arrange_canvas")
+        self.assertEqual(out["status"], "applied")
+        (patch,) = self._layout_patches()
+        self.assertTrue(patch["patch_id"])
+
     def test_a_tiny_graph_is_not_split(self):
         pipe = pipeline_stub(_canvas_graph={"1": _graph()["1"]}, _canvas_selection=[], _canvas_edits=[])
         out, _ = self._call("auto_group_canvas", pipe=pipe, apply=True)

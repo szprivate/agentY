@@ -4171,13 +4171,18 @@ class Pipeline:
                                       "to lay out the selection."})
             return ""
 
-        def _push_layout(groups: list, arrange, reason: str, summary: str) -> None:
+        async def _push_layout(groups: list, arrange, reason: str, summary: str) -> dict | None:
+            """Send a layout patch; the not-applied answer when no page confirms it."""
             from src.utils.canvas_patch import push as _push_patch
-            _push_patch({"op": "layout", "groups": groups, "arrange": arrange,
-                         "reason": str(reason or "").strip()})
+            _pid = _push_patch({"op": "layout", "groups": groups, "arrange": arrange,
+                                "reason": str(reason or "").strip()})
+            _bad = await _patch_unconfirmed(_pid)
+            if _bad:
+                return _bad
             self._canvas_edits = (getattr(self, "_canvas_edits", None) or []) + [
                 summary + (f" ({str(reason).strip()})" if str(reason or "").strip() else "")]
             _push_progress("🧭 Canvas layout: " + summary + (f" - {reason}" if reason else ""))
+            return None
 
         @_tool
         async def arrange_canvas(node_ids: list | None = None, reason: str = "") -> str:
@@ -4217,8 +4222,10 @@ class Pipeline:
                 if not ids:
                     return json.dumps({"error": "nothing is selected and the whole canvas is not visible to you.",
                                        "what_to_do": "Ask the user to select the nodes to tidy."})
-            _push_layout([], {"node_ids": ids or None}, reason,
+            _bad = await _push_layout([], {"node_ids": ids or None}, reason,
                          f"arranged {len(ids)} node(s)" if ids else "arranged the whole canvas")
+            if _bad:
+                return json.dumps(_bad)
             return json.dumps({"status": "applied", "arranged": ids or "all",
                                "message": "Laid out on the live canvas (left to right, no overlaps); "
                                           "the user can undo with Ctrl+Z."})
@@ -4275,8 +4282,10 @@ class Pipeline:
             if refused:
                 return refused
             titles = ", ".join(s["title"] for s in specs)
-            _push_layout(specs, {"node_ids": None, "only_groups": True} if arrange else None, reason,
+            _bad = await _push_layout(specs, {"node_ids": None, "only_groups": True} if arrange else None, reason,
                          f"grouped: {titles}")
+            if _bad:
+                return json.dumps(_bad)
             return json.dumps({"status": "applied", "groups": [s["title"] for s in specs],
                                "message": "Groups drawn on the live canvas"
                                           + (" and the grouped nodes laid out without overlaps" if arrange else "")
@@ -4326,8 +4335,10 @@ class Pipeline:
             if _held:
                 return _held
             specs = [{"title": c["title"], "node_ids": c["node_ids"], "color": c["color"]} for c in chunks]
-            _push_layout(specs, {"node_ids": None, "only_groups": True} if arrange else None, reason,
+            _bad = await _push_layout(specs, {"node_ids": None, "only_groups": True} if arrange else None, reason,
                          "split into " + ", ".join(s["title"] for s in specs))
+            if _bad:
+                return json.dumps(_bad)
             out["status"] = "applied"
             out["message"] = "Groups drawn on the live canvas; the user can undo with Ctrl+Z."
             return json.dumps(out)
