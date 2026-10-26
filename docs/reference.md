@@ -109,6 +109,18 @@ the panel finds it without configuration.
 To pin a port, set `agent_server_url` in `config/settings.local.json`, set
 `AGENTY_UI_PORT`, or pass `-Port` / `--port` to the launcher for one run.
 
+### ComfyUI alive but port 8188 not listening (Windows)
+
+Symptom: the ComfyUI process is running, but nothing connects and `netstat -ano | findstr :8188`
+shows no `LISTENING` line. The ComfyUI log has `Accept failed on a socket` right before,
+usually with `OSError: [WinError 64]`. Cause: on Windows asyncio's Proactor loop closes the
+listening socket for good when one client resets while being accepted (CPython gh-93821); a
+storm of aborted connections from browsers or tests is enough. The agentY ComfyUI extension
+patches this at startup (`_proactor_accept.py` in agentY-comfyuiConnect): such accept errors
+are logged once as `accept ... failed with a transient error ... still listening` and
+serving continues. If you see the symptom with the extension installed, ComfyUI has not yet
+been restarted with that version. The agentY host on :5000 is Flask/werkzeug and is not affected.
+
 ## Security
 
 The host listens on localhost only. Three protections are on by default, all
