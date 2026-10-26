@@ -60,7 +60,12 @@ chat) with the captions and trigger word and wait for "approve". Only then
 `train_lora(dataset, model=..., backend=...)`; use `dry_run=True` first when anything is uncertain: it shows the
 pre-flight (free GPU memory, disk - never C:, base model present, backend installed) without starting.
 - Local backends are installed into their own venv on the job's first stage (several GB, takes a while).
-- A missing base model: tell the user the size, and only with a yes pass `allow_download=True`.
+- A missing base model: tell the user the size, and only with a yes pass `allow_download=True`.
+- `train_lora` returns at once with a job id and refuses a repeat: `already_running` (a run on this dataset is
+  still going: follow it with `lora_training_status`, do not start another) and `already_trained` (a finished run,
+  e.g. v3, has the same dataset, model and steps: tell the user and ask). Only on the user's explicit wish pass
+  `new_run=True`. Never start a run twice because the panel looked unchanged: the Training tab switches to a new run
+  by itself and names it (v1...vN).
 - **Hosted (`fal`) costs money.** The result `confirm_cost` carries the estimate (an estimate; fal.ai/pricing is
   the truth). Tell the user the price, wait for a yes, call again with `confirm_cost=True`.
 - The job runs detached and survives a restart. Tell the user it started and that the Training tab of the
