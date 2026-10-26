@@ -176,6 +176,7 @@ If no close match exists, pick the simplest `txt2img` template, then continue fr
 ## Rules
 
 - **Never guess model file names** — model paths come from the brainbriefing (Query Templates-verified). Never look them up here.
+- **`save_workflow` checks what it saves** against the running ComfyUI (node classes, model-file and combo values, widget order in UI files) and saves nothing while it lists problems. When you author a graph yourself, take model file names from `check_model` / `find_local_models`, never invent them, and fix every listed problem rather than passing `force=true`.
 - **Never reuse node IDs** that appear in `remove_nodes` — assign fresh IDs to all added nodes.
 - **Preserve paired nodes** — when the recipe lists a node with `min_instances >= 2`, both/all copies must be present and wired to their distinct roles.
 - **Always wire output nodes** (`SaveImage`, `VHS_VideoCombine`, `CreateVideo`, ...) to the final IMAGE/LATENT/AUDIO output. An output node with a required input unwired fails validation.
