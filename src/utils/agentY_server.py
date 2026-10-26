@@ -3285,9 +3285,9 @@ _KNOWN_ENV_KEYS = [
     "HF_TOKEN", "ANTHROPIC_API_KEY", "COMFYUI_API_KEY",
     "DASHSCOPE_API_KEY", "DASHSCOPE_BASE_URL",
     "WORLDLABS_API_KEY", "WLT_MARBLE_API_KEY",
-    # Ayon pipeline (service-user key; see docs/ayon.md)
+    # Ayon pipeline (service-user key; see docs/dev/ayon.md)
     "AYON_API_KEY", "AYON_SERVER_URL",
-    # Deadline render farm (all optional; see docs/deadline.md)
+    # Deadline render farm (all optional; see docs/setup/deadline.md)
     "DEADLINE_PATH", "DEADLINE_REPOSITORY", "DEADLINE_WEBSERVICE_URL", "DEADLINE_COMFYUI_PATH",
     "DEADLINE_COMFYUI_POOL", "DEADLINE_GROUP", "DEADLINE_OUTPUT_DIR",
     "DEADLINE_ROUTE_RUNS", "DEADLINE_FETCH_DIR", "DEADLINE_MAX_WAIT_MINUTES",
@@ -3300,7 +3300,7 @@ _KNOWN_ENV_KEYS = [
     # machine. SLACK_ALLOWED_USERS is not a secret and is deliberately not named
     # like one — it renders as a plain, readable field.
     "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_ALLOWED_USERS",
-    # Slack channels (docs/slack.md): where @mentions are answered, who may approve.
+    # Slack channels (docs/setup/slack.md): where @mentions are answered, who may approve.
     "SLACK_ALLOWED_CHANNELS", "SLACK_APPROVERS",
 ]
 
@@ -3338,11 +3338,11 @@ _BUILTIN_SERVICES = [
     {"id": "ayon", "label": "Ayon", "key_env": "AYON_API_KEY", "url_env": "AYON_SERVER_URL",
      "default_url": "https://bepic.ayon.app",
      "help_url": "https://ayon.ynput.io/docs/",
-     "hint": "The service-user API key of your Ayon server (Settings -> Users -> a service user), not your own login. The URL defaults to the studio server https://bepic.ayon.app; change it for another studio. Used by the ayon-mcp server (projects, versions, comments). See docs/ayon.md."},
+     "hint": "The service-user API key of your Ayon server (Settings -> Users -> a service user), not your own login. The URL defaults to the studio server https://bepic.ayon.app; change it for another studio. Used by the ayon-mcp server (projects, versions, comments). See docs/dev/ayon.md."},
     {"id": "slack", "label": "Slack", "key_env": "SLACK_BOT_TOKEN",
      "help_url": "https://api.slack.com/apps",
      "hint": "Bot token (xoxb-...). The app-level token needs connections:write. SLACK_ALLOWED_USERS is "
-             "who may talk to the bot: empty means every message is refused. See docs/slack.md.",
+             "who may talk to the bot: empty means every message is refused. See docs/setup/slack.md.",
      "fields": [{"env": "SLACK_APP_TOKEN", "label": "App-level token (xapp-...)", "secret": True},
                 {"env": "SLACK_ALLOWED_USERS", "label": "Allowed Slack member ids", "secret": False}]},
 ]
@@ -4798,7 +4798,7 @@ def _build_app():
     # the panel would (same orchestrator, skills, hooks) and fold its events from
     # the turn bus into that answer (src/utils/turn_api.py). They sit behind the
     # same admission guard as everything else: Host/Origin rules, and the session
-    # token a local client reads from the .agenty_token file (see docs/turn-api.md).
+    # token a local client reads from the .agenty_token file (see docs/integrations/turn-api.md).
     @app.route("/agentY/turns", methods=["GET", "POST", "OPTIONS"])
     def api_turns():
         if request.method == "OPTIONS":

@@ -16,7 +16,7 @@ list it as a plugin; delete it when you are happy). Workers pick the new files u
 next job.
 
 Afterwards, in Deadline Monitor: Tools > Configure Plugins > ComfyUI, set the ComfyUI folder for
-your workers; and create the pool (see the commands printed at the end, or docs/deadline.md).
+your workers; and create the pool (see the commands printed at the end, or docs/setup/deadline.md).
 """
 from __future__ import annotations
 
@@ -163,7 +163,7 @@ Next, in Deadline (not done by this script):
        deadlinecommand -GetSlaveNamesInPool {pool}
   3. In agentY's .env: DEADLINE_OUTPUT_DIR (a folder the workers can write), and DEADLINE_PATH or
      DEADLINE_WEBSERVICE_URL. Then ask agentY "is the farm ready?" (deadline_farm_info).
-  See docs/deadline.md.
+  See docs/setup/deadline.md.
 """
 
 

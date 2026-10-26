@@ -8,7 +8,7 @@
 `add` prints the person's token ONCE. Only a digest is kept in config/users.json,
 so a lost token is replaced (run `add` again for the same name), not recovered.
 The token goes in `Authorization: Bearer <token>` (or `X-AgentY-Token`). It only
-means anything when `security.user_tokens` is on - see docs/server.md.
+means anything when `security.user_tokens` is on - see docs/setup/server.md.
 """
 from __future__ import annotations
 

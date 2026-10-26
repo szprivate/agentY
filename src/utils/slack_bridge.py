@@ -24,7 +24,7 @@ is worse than any of them:
 Transport is Socket Mode, so nothing has to be reachable from the internet: the
 host opens an outbound WebSocket to Slack. Off unless both tokens are set.
 
-Setup (see ``docs/slack.md``)::
+Setup (see ``docs/setup/slack.md``)::
 
     SLACK_BOT_TOKEN=xoxb-…     bot token; scopes: chat:write, files:write,
                                im:history, im:read, im:write, users:read
@@ -330,7 +330,7 @@ class SlackBridge:
         self.allowed = list(allowed_users if allowed_users is not None
                             else _env_list("SLACK_ALLOWED_USERS"))
         self.default_channel = default_channel
-        # Channels (docs/slack.md): where an @mention is answered, who besides the
+        # Channels (docs/setup/slack.md): where an @mention is answered, who besides the
         # requester may approve, and the line turns wait in. All empty by default,
         # which is the DM-only bridge it has always been.
         self.allowed_channels = list(allowed_channels if allowed_channels is not None

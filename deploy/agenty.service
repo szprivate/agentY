@@ -6,7 +6,7 @@
 #   journalctl -u agenty -f
 #
 # The host listens on loopback; put a reverse proxy with TLS in front of it
-# (deploy/Caddyfile.example or deploy/nginx.conf.example). See docs/server.md.
+# (deploy/Caddyfile.example or deploy/nginx.conf.example). See docs/setup/server.md.
 [Unit]
 Description=agentY host (Slack-first server)
 After=network-online.target

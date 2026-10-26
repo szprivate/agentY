@@ -907,7 +907,7 @@ are checked), `max_references`, `video_frames`, `briefing_dir`.
 
 Off by default. Turned on, every turn is mirrored to your Slack DM as it runs, and
 a DM back drives the same conversation. You can send images and video as inputs,
-and ask the agent to send you files. Setup: [docs/slack.md](slack.md).
+and ask the agent to send you files. Setup: [docs/setup/slack.md](setup/slack.md).
 
 ---
 

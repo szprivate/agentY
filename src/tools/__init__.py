@@ -194,7 +194,7 @@ from agenty_core.tools.lora_training import (  # noqa: F401,E402
     lora_dataset_prepare, lora_dataset_set_captions, lora_dataset_review, train_lora, lora_training_status,
     lora_training_stop,
 )
-# Pipeline actions for a ComfyUI session launched through Ayon (agenty_core.tools.ayon; docs/ayon.md). The host
+# Pipeline actions for a ComfyUI session launched through Ayon (agenty_core.tools.ayon; docs/dev/ayon.md). The host
 # lends it the canvas the panel posted and the panel's graph edits (src/tools/ayon_host.py).
 from agenty_core.tools.ayon import ayon_context, ayon_load, ayon_mark_publish, ayon_publish, ayon_open_tool  # noqa: F401,E402
 from src.tools import ayon_host as _ayon_host  # noqa: E402

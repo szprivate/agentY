@@ -139,11 +139,11 @@ The host also warns at startup when a key in `.env` is older than
 `security.api_key_max_age_days` (30; `0` turns it off).
 
 Other programs (Claude Code, MCP clients) can start turns on a running host and read
-the result back: see [turn-api.md](turn-api.md).
+the result back: see [turn-api.md](integrations/turn-api.md).
 
 To run the host on a server for a team (binding beyond loopback, a service, TLS behind a
 reverse proxy, a token per person, headless mode, a visible turn queue), see
-[server.md](server.md); for Slack channels with several people, [slack.md](slack.md).
+[server.md](setup/server.md); for Slack channels with several people, [slack.md](setup/slack.md).
 
 ## What the agent may run
 

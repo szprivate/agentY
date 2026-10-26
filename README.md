@@ -43,9 +43,9 @@ An AI agent that builds and runs [ComfyUI](https://github.com/comfyanonymous/Com
 - **Installer** — LLM providers, MCP presets, reverse image search and the bEpic viewer are now set up in the installer ([Installation](#2-run-the-installer-recommended)).
 - **Settings** — API keys merged into one services view (pick the service first; unknown OpenAI-compatible services can be registered as custom LLM providers), empty keys hidden, a Deadline section, Slack tokens in the Slack section, and one allowed-users setting (`SLACK_ALLOWED_USERS`).
 - **Worlds and viewer** — World Labs Atlas worlds can be flown through in the viewer (WASD), Atlas concurrency limits are retried and explained, plus `render_camera_move`, `show_in_viewer`, a Gaussian splat trainer and an orbit rig for turntables.
-- **Deadline** — send ComfyUI workflows to a Deadline 10 farm and follow the job ([docs/deadline.md](docs/deadline.md)).
-- **Ayon (early)** — `ayon_*` tools read and write the Ayon addon's node data; publishing still needs you to press Publish in Ayon ([docs/ayon.md](docs/ayon.md)).
-- **Turn API** — another program can start a turn on a running agentY and read the result ([docs/turn-api.md](docs/turn-api.md)).
+- **Deadline** — send ComfyUI workflows to a Deadline 10 farm and follow the job ([docs/setup/deadline.md](docs/setup/deadline.md)).
+- **Ayon (early)** — `ayon_*` tools read and write the Ayon addon's node data; publishing still needs you to press Publish in Ayon ([docs/dev/ayon.md](docs/dev/ayon.md)).
+- **Turn API** — another program can start a turn on a running agentY and read the result ([docs/integrations/turn-api.md](docs/integrations/turn-api.md)).
 - **agentY-mcp** — loads agentY's `.env` and offers the full shared tool set.
 - **Sturdier runs** — MCP sessions reconnect with per-call timeouts, cut-off turns carry on, and several downloads show as one bar in the run card.
 
@@ -271,7 +271,7 @@ Type `/` for the slash commands. Settings live in ComfyUI's **Settings → agent
 - [**Using agentY**](docs/using-agentY.md) — the full guide: chat, hooks, QA, settings, MCP, memory, models, troubleshooting.
 - [**Video tutorials**](docs/tutorials.md) — seven one-minute videos: install, panel and settings, tags and hooks, Atlas, motion graphics, Gaussian splats, LoRA training.
 - [**Execution modes**](docs/execution_modes.md) — local, hybrid or Comfy Cloud: where open-weight models run, what it costs, what the cloud cannot do.
-- [**Slack**](docs/slack.md) — setting up the Slack bridge.
+- [**Slack**](docs/setup/slack.md) — setting up the Slack bridge.
 - [**Reference**](docs/reference.md) — architecture, ports, security, what the agent may run, model tiers, macOS notes.
 
 ---

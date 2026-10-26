@@ -1,7 +1,7 @@
 """Smoke test of the ayon tools against a LIVE Ayon session.
 
 Run it only against a session the USER started from the Ayon launcher (project i002_ai_rnd, folder
-agentRND/agentRND_0010, task ai; see docs/ayon.md section 9). It never starts anything.
+agentRND/agentRND_0010, task ai; see docs/dev/ayon.md section 9). It never starts anything.
 
     .venv\\Scripts\\python.exe scripts\\ayon_smoke.py                       # context, ping, canvas read
     .venv\\Scripts\\python.exe scripts\\ayon_smoke.py --path W:\\x\\imageMain_v003.png --product imageMain   # plus a dry-run load
@@ -42,7 +42,7 @@ def main() -> int:
 
     ctx = show("ayon_context", ayon.ayon_context())
     if ctx.get("status") != "ok":
-        print("\nFAIL: no Ayon session. Start ComfyUI from the Ayon launcher first (docs/ayon.md section 9).")
+        print("\nFAIL: no Ayon session. Start ComfyUI from the Ayon launcher first (docs/dev/ayon.md section 9).")
         return 1
     session = ctx["session"]
     ok = True
@@ -54,7 +54,7 @@ def main() -> int:
         flag = "ok" if got == want else "DIFFERENT"
         print(f"launch {key}: {got!r} (expected {want!r}) {flag}")
     if not session["same_comfyui_as_agenty"]:
-        print("note: agentY's COMFYUI_URL is not this session's ComfyUI (see docs/ayon.md section 2)")
+        print("note: agentY's COMFYUI_URL is not this session's ComfyUI (see docs/dev/ayon.md section 2)")
     print("canvas:", ctx["canvas"]["source"], "- AYON Context node", ctx["canvas"]["context_node"])
 
     if args.path:

@@ -108,7 +108,7 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
                 ("list_models", "switch_model")),
     "ayon": ("the studio's Ayon pipeline, when ComfyUI was launched through Ayon: which project / folder / task "
              "and frame range this session is in, load a published product into the canvas, mark an output "
-             "for publish, open the Ayon Publisher (the user presses Publish) - see docs/ayon.md",
+             "for publish, open the Ayon Publisher (the user presses Publish) - see docs/dev/ayon.md",
              ("ayon_context", "ayon_load", "ayon_mark_publish", "ayon_publish", "ayon_open_tool")),
     # Added 2026-10-22 (speed-ups): the least-called of what stayed always-on - in 22,000 orchestrator
     # tool calls each of these was called 0-2 % of the time, and together they were ~7,000 tokens of

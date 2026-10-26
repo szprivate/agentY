@@ -29,7 +29,7 @@ By default the host binds to `127.0.0.1`. To change that, in order of priority:
 
 `0.0.0.0` listens on every interface. Do that only behind a reverse proxy or on a
 network you trust, with `security.user_tokens` on. A request is checked three ways before
-it gets in (see [Security](reference.md#security)): the `Host` header must be an IP, `localhost`
+it gets in (see [Security](../reference.md#security)): the `Host` header must be an IP, `localhost`
 or a name in `security.allowed_hosts`; a browser `Origin` must match the `Host`; and the
 request needs a token.
 

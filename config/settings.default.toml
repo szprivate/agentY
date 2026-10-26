@@ -627,7 +627,7 @@ camera_move_enabled = false
 [refine]
 max_runs = 4
 
-# Rendering on a Deadline 10 farm (docs/deadline.md). The farm tools (submit_to_deadline,
+# Rendering on a Deadline 10 farm (docs/setup/deadline.md). The farm tools (submit_to_deadline,
 # deadline_job_status, deadline_farm_info) work without this; it only decides whether
 # the agent's NORMAL runs go there.
 [deadline]
@@ -665,13 +665,13 @@ cloud_gpu_min_seconds = 20
 cloud_gpu_max_seconds_image = 120
 cloud_gpu_max_seconds_video = 600
 
-# Running agentY as a service on a server (docs/server.md). Everything here is
+# Running agentY as a service on a server (docs/setup/server.md). Everything here is
 # off or blank by default, and a blank value means exactly what the desktop
 # install has always done.
 [server]
 # Address the chat host binds to. Blank = the host of `agent_server_url`
 # (127.0.0.1). "0.0.0.0" listens on every interface: put a reverse proxy with TLS
-# in front of it (docs/server.md) and turn `security.user_tokens` on. A launcher
+# in front of it (docs/setup/server.md) and turn `security.user_tokens` on. A launcher
 # flag (-BindHost / --host) or AGENTY_UI_HOST wins over this. Env: AGENTY_BIND_HOST.
 bind_host = ""
 # Headless: no ComfyUI browser tab is expected. Finished media is not dropped
@@ -701,7 +701,7 @@ max_queued_turns = 20
 #
 # SLACK_ALLOWED_USERS has no default and is not optional: anyone able to DM the bot
 # could otherwise run generations, tools and scripts on this machine. Empty means
-# the bridge connects and refuses every message. See docs/slack.md.
+# the bridge connects and refuses every message. See docs/setup/slack.md.
 [slack]
 # OFF by default. Turning it on takes effect on the next agent start.
 enabled = false
@@ -719,7 +719,7 @@ max_upload_mb = 45
 # sent to the agent. Anything larger is refused with a note in the DM rather
 # than half-downloaded.
 max_download_mb = 250
-# ── Channels (docs/slack.md, "Channels") ─────────────────────────────────────
+# ── Channels (docs/setup/slack.md, "Channels") ─────────────────────────────────────
 # Answer an @mention in these channels (ids, "C0123ABCD"), one thread per
 # request. Blank = DMs only, as before. Env: SLACK_ALLOWED_CHANNELS (comma
 # separated) is added to this list.

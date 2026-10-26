@@ -25,7 +25,7 @@ No workflow, no ComfyUI run, no Comfy credits.
 | video, image to video | `wan2.7-i2v`, `wan2.6-i2v-flash`, `happyhorse-1.0-i2v`; cheapest `wan2.2-i2v-flash` (480P, 5 s) |
 | video, reference to video | `wan2.7-r2v`, `wan2.6-r2v-flash`, `happyhorse-1.0-r2v`: name subjects character1, character2... in the prompt |
 
-Full list and parameters: `docs/dashscope_generation.md`. An unknown id comes back as
+Full list and parameters: `docs/integrations/dashscope_generation.md`. An unknown id comes back as
 `error_kind: unknown_model`.
 
 ## Use

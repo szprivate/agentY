@@ -11,7 +11,7 @@ not reveal a usable token; the token itself is shown once, when it is made, by
 enough - there is no password to brute-force.
 
 This host is meant to sit behind a reverse proxy that terminates TLS (see
-``docs/server.md``); a token over plain HTTP on an open network is a token on the
+``docs/setup/server.md``); a token over plain HTTP on an open network is a token on the
 wire.
 """
 from __future__ import annotations
