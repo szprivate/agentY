@@ -55,6 +55,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import sys
 import threading
 import time
@@ -494,7 +495,18 @@ def _start_callback_server(port: int) -> dict:
 
 # ── transport ────────────────────────────────────────────────────────────────
 
-def _transport_callable(sc: dict, provider):
+def _stdio_env(env: dict) -> dict:
+    from scripts import tool_hints
+    return tool_hints.stdio_env(env)
+
+
+def _which_tool(command: str):
+    """``shutil.which`` over the PATH plus the usual node / uv folders (see scripts/tool_hints.py)."""
+    from scripts import tool_hints
+    return shutil.which(command, path=tool_hints.augmented_path())
+
+
+def _transport_callable(sc: dict, provider, errlog=None):
     transport = str(sc.get("transport", "http") or "http").lower()
     if transport in ("http", "streamable-http", "streamable_http"):
         from mcp.client.streamable_http import streamablehttp_client
@@ -512,9 +524,13 @@ def _transport_callable(sc: dict, provider):
         # there (``--token=${MCP_X_TOKEN}``). ``cwd`` is the bundle's own folder.
         params = StdioServerParameters(
             command=_expand(sc["command"]), args=[_expand(a) for a in (sc.get("args") or [])],
-            env=_expand_map(sc.get("env")) or None,
+            # A process started from the Finder / ComfyUI has no login-shell PATH on macOS: add Homebrew,
+            # nvm, Volta and ~/.local/bin so npx / uvx are found.  (scripts/tool_hints.py)
+            env=_stdio_env(_expand_map(sc.get("env"))),
             cwd=_stdio_cwd(sc),
         )
+        if errlog is not None:   # the server's own stderr goes to its log, not the console
+            return lambda: stdio_client(params, errlog=errlog)
         return lambda: stdio_client(params)
     raise ValueError(f"unknown transport {transport!r}")
 
@@ -531,11 +547,175 @@ def _harden_client(name: str, client) -> None:
                           lambda text: _STATUS.__setitem__(name, text))
 
 
+# ── start-up failures: one friendly line, the detail in a log file ───────────
+
+_CONNECT_LOCK = threading.RLock()
+_ATTEMPT_OFFSET: dict[str, int] = {}
+_REASONS: dict[str, str] = {}
+_NO_ENV_CHECK = {"PYTHON", "AGENTY_ROOT", "COMFYUI_URL"}
+_VAR_HINTS = {
+    "BEPIC_WORLDS_DIR": "the bEpic Worlds pack isn't in this machine's ComfyUI custom_nodes "
+                        "(or ComfyUI isn't running)",
+}
+_COMMAND_HINTS = {
+    "uv": "install uv (https://docs.astral.sh/uv/)", "uvx": "install uv (https://docs.astral.sh/uv/)",
+    "npx": "install Node.js (https://nodejs.org)", "npm": "install Node.js (https://nodejs.org)",
+    "node": "install Node.js (https://nodejs.org)",
+}
+
+
+class McpUnavailable(Exception):
+    """A server that cannot start on this machine, with the plain reason why."""
+
+
+def mcp_log_path(name: str) -> Path:
+    return _ROOT / ".logs" / f"mcp_{re.sub(r'[^A-Za-z0-9_.-]', '_', str(name))}.log"
+
+
+def _log_rel(name: str) -> str:
+    return f".logs/{mcp_log_path(name).name}"
+
+
+def _write_log(name: str, text: str) -> None:
+    try:
+        path = mcp_log_path(name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8", errors="replace") as f:
+            f.write(text if text.endswith("\n") else text + "\n")
+    except OSError:
+        pass
+
+
+def _open_errlog(name: str):
+    """The file a stdio server's stderr is written to; marks where this attempt starts."""
+    try:
+        path = mcp_log_path(name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        f = open(path, "a", encoding="utf-8", errors="replace")
+        f.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} starting MCP server {name} ===\n")
+        f.flush()
+        _ATTEMPT_OFFSET[name] = os.fstat(f.fileno()).st_size
+        return f
+    except OSError:
+        return None
+
+
+def _log_tail(name: str) -> str:
+    """What the server wrote to stderr at the start of the latest attempt."""
+    try:
+        with open(mcp_log_path(name), "rb") as f:
+            f.seek(_ATTEMPT_OFFSET.get(name, 0))
+            return f.read(6000).decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+@contextlib.contextmanager
+def _capture_client_logs(name: str):
+    """strands logs a full traceback on a failed start-up; send it to the server's log."""
+    lg = logging.getLogger("strands.tools.mcp.mcp_client")
+    with _CONNECT_LOCK:
+        try:
+            fh = logging.FileHandler(mcp_log_path(name), encoding="utf-8")
+        except OSError:
+            fh = None
+        saved = (lg.handlers[:], lg.propagate)
+        if fh is not None:
+            lg.handlers, lg.propagate = [fh], False
+        try:
+            yield
+        finally:
+            lg.handlers, lg.propagate = saved
+            if fh is not None:
+                fh.close()
+
+
+def _preset_env_keys(name: str) -> list[tuple[str, bool]]:
+    try:
+        from scripts import mcp_presets as mp
+        preset = mp.find(name)
+    except Exception:  # noqa: BLE001
+        return []
+    return [(str(k["key"]), bool(k.get("optional"))) for k in (preset or {}).get("env_keys") or []]
+
+
+def _missing_env(name: str, sc: dict) -> list[str]:
+    """Keys the server needs that nothing on this machine sets: the preset's
+    required ``env_keys`` plus every ``${VAR}`` in the entry (cwd excepted: its
+    own check names the folder)."""
+    keys = _preset_env_keys(name)
+    optional = {k for k, opt in keys if opt}
+    wanted = [k for k, opt in keys if not opt]
+    env = sc.get("env") if isinstance(sc.get("env"), dict) else {}
+    headers = sc.get("headers") if isinstance(sc.get("headers"), dict) else {}
+    parts = [sc.get("command"), sc.get("url"), *(sc.get("args") or []), *env.values(), *headers.values()]
+    for part in parts:
+        wanted += [m.group(1) for m in _ENV_REF.finditer(str(part or ""))]
+    out: list[str] = []
+    for var in wanted:
+        if var in out or var in optional or var in _NO_ENV_CHECK:
+            continue
+        if not _var(var):
+            out.append(var)
+    return out
+
+
+def _check_startable(name: str, sc: dict) -> None:
+    """Refuse to start a server that cannot work here, before spawning anything."""
+    missing = _missing_env(name, sc)
+    if missing:
+        hints = "; ".join(_VAR_HINTS[v] for v in missing if v in _VAR_HINTS)
+        raise McpUnavailable(f"needs {', '.join(missing)} in .env" + (f" ({hints})" if hints else ""))
+    if str(sc.get("transport", "http") or "http").lower() == "stdio":
+        command = _expand(sc.get("command") or "")
+        if command and _which_tool(command) is None:
+            base = os.path.splitext(os.path.basename(command))[0].lower()
+            hint = _COMMAND_HINTS.get(base)
+            raise McpUnavailable(f"command '{command}' not found" + (f" - {hint}" if hint else ""))
+
+
+_VARNAME = r"[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+"
+_ENV_LINE = re.compile(rf"\b({_VARNAME})\b[^\n]{{0,60}}?(?:is required|required|not set|is missing|missing)"
+                       rf"|(?:missing|set|requires?)\s+(?:the\s+)?({_VARNAME})\b")
+
+
+def _friendly_reason(name: str, sc: dict, exc: BaseException) -> str:
+    """A short plain-language cause for a failed start-up (never a traceback)."""
+    if isinstance(exc, McpUnavailable):
+        return str(exc)
+    sc = sc if isinstance(sc, dict) else {}
+    leaf = _leaf_error(exc)
+    tail = _log_tail(name)
+    text = f"{leaf}\n{exc}\n{tail}"
+    if isinstance(exc, FileNotFoundError) and "its folder" in str(exc):
+        return " ".join(str(exc).split())[:200]
+    m = _ENV_LINE.search(tail) or _ENV_LINE.search(text)
+    if m:
+        return f"needs {m.group(1) or m.group(2)} in .env"
+    cmd = _expand(sc.get("command") or "")
+    if isinstance(exc, FileNotFoundError) or re.search(r"WinError 2|No such file or directory|command not found", text):
+        base = os.path.splitext(os.path.basename(cmd))[0].lower()
+        hint = _COMMAND_HINTS.get(base)
+        return f"command '{cmd or '?'}' not found" + (f" - {hint}" if hint else "")
+    if re.search(r"did not start in|timed out|TimeoutError|Timeout", text):
+        return "no answer in time (the first start can be slow while its package downloads - try again)"
+    if re.search(r"ModuleNotFoundError|No module named|Cannot find module|ERR_MODULE_NOT_FOUND|E404|"
+                 r"No solution found|Failed to (?:download|fetch|resolve)|not found in the package registry", text):
+        return "its package isn't installed or couldn't be downloaded"
+    if re.search(r"Connection closed|connection refused|ConnectError|All connection attempts failed", text, re.I):
+        stdio = str(sc.get("transport", "http")).lower() == "stdio"
+        return "the server exited right after starting" if stdio else "the server is not reachable"
+    return " ".join(leaf.split())[:160]
+
+
 def _connect(name: str, sc: dict, interactive: bool):
     """Connect to one server and return ``(client, tools)``. Raises ``_AuthRequired``
-    for an OAuth server with no usable token (silent mode)."""
+    for an OAuth server with no usable token (silent mode), ``McpUnavailable`` for one
+    that cannot start here (missing key / command). Other failures are logged in full
+    to ``.logs/mcp_<name>.log`` and re-raised for ``_friendly_reason`` to summarise."""
     from strands.tools.mcp import MCPClient
 
+    _check_startable(name, sc)
     auth = str(sc.get("auth", "none") or "none").lower()
     provider = None
     holder = None
@@ -551,11 +731,14 @@ def _connect(name: str, sc: dict, interactive: bool):
         provider = _make_oauth_provider(name, sc["url"], interactive, holder, port)
 
     quiet = contextlib.nullcontext() if interactive else _quiet_auth_required()
+    is_stdio = str(sc.get("transport", "http") or "http").lower() == "stdio"
+    errlog = _open_errlog(name) if is_stdio else None
     try:
-        client = MCPClient(_transport_callable(sc, provider), prefix=f"{name}_")
-        with quiet:
-            client.start()
-            tools = client.list_tools_sync()
+        with _capture_client_logs(name):
+            client = MCPClient(_transport_callable(sc, provider, errlog), prefix=f"{name}_")
+            with quiet:
+                client.start()
+                tools = client.list_tools_sync()
         _harden_client(name, client)
         return client, tools
     except Exception as exc:  # noqa: BLE001
@@ -563,8 +746,18 @@ def _connect(name: str, sc: dict, interactive: bool):
         # it back into the clean signal callers branch on.
         if _contains_auth_required(exc):
             raise _AuthRequired() from None
+        import traceback
+        _write_log(name, "".join(traceback.format_exception(exc)))
+        if errlog is not None:
+            errlog.close()
+            errlog = None
         raise
     finally:
+        if errlog is not None:   # connected: the server process keeps writing to it
+            try:
+                errlog.flush()
+            except OSError:
+                pass
         if provider is not None:
             _save_discovery(name, provider)
         if holder is not None and holder.get("server") is not None:
@@ -612,8 +805,12 @@ def load_mcp_tools() -> list:
                 "stored token expired and could not be refreshed" if stale
                 else "needs authorization")
         except Exception as exc:  # noqa: BLE001
-            _STATUS[name] = f"error: {exc}"
-            logger.warning("mcp[%s]: connect failed: %s", name, exc)
+            reason = _friendly_reason(name, sc, exc)
+            if isinstance(exc, McpUnavailable):
+                _write_log(name, f"{time.strftime('%Y-%m-%d %H:%M:%S')} not started: {reason}")
+            _REASONS[name] = reason
+            _STATUS[name] = f"error: {reason}"
+            logger.warning("MCP %s: not connected — %s (details: %s)", name, reason, _log_rel(name))
     return tools
 
 
@@ -701,7 +898,7 @@ def test_server(name: str, sc: dict, secrets: dict | None = None) -> dict:
         return {"ok": False, "needs_auth": True,
                 "error": "This server signs in through the browser."}
     except Exception as exc:  # noqa: BLE001
-        message = _leaf_error(exc)
+        message = _friendly_reason(name, sc, exc)
         return {"ok": False, "error": message,
                 "needs_auth": bool(_WANTS_CREDENTIALS.search(message))}
     finally:
@@ -891,4 +1088,7 @@ def mcp_status() -> dict:
             "auth": sc.get("auth", "none"),
             "state": state,
         }
+        if state and state.startswith("error"):
+            out[name]["reason"] = _REASONS.get(name) or state.partition(":")[2].strip()
+            out[name]["log"] = _log_rel(name)
     return out
