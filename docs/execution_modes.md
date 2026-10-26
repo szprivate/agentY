@@ -49,7 +49,13 @@ ComfyUI is installed. A re-run keeps an earlier answer on Enter.
 (https://www.comfy.org/download): on Windows `winget install --id Comfy.ComfyUI-Desktop --exact --silent`, on an Apple
 Silicon Mac `brew install --cask comfy`, otherwise the download page opens. It asks first (default yes for hybrid / cloud,
 no for local). Desktop creates its ComfyUI only when started once, so start it, finish its first-run setup, and run the
-installer again to add the sidebar node (it looks in `ComfyUI-Installs` for Desktop's installs).
+installer again to add the sidebar node.
+
+**Several ComfyUI installs?** The installer lists every one it can find (the usual folders, Desktop's `ComfyUI-Installs`,
+the data folder named in Desktop's `config.json` (`basePath`), and ComfyUI processes that are running), each with its
+version or git commit, and you pick one by number, type another path, or press Enter to skip. It installs the sidebar node
+only into the one you chose; if you decline them all, nothing is installed and the summary says so. With `-NonInteractive`
+it uses `-ComfyUIPath`, or the only install found, and otherwise installs nothing.
 In `cloud` mode a local ComfyUI is still useful because partner API nodes run in it without a GPU. A ComfyUI with no
 usable GPU has to be started with `--cpu` (the flag exists in ComfyUI's `main.py`; CPU is for everything, slow, which
 does not matter for partner nodes).

@@ -554,28 +554,133 @@ test_comfyui_dir() {   # $1 = path -> echoes the resolved root, or nothing
   done
 }
 
-find_comfyui() {   # $1 = hint -> echoes the resolved root, or nothing
-  local hint="${1:-}" c hit
-  for c in "$hint" \
-           "$PARENT_DIR/ComfyUI" "$PARENT_DIR/comfyui" \
+# Every ComfyUI this machine has: COMFY_FOUND is one resolved root per line (no
+# duplicates, COMFY_PHYS holds the same roots with symlinks resolved so two routes to
+# one folder count once). The installer never installs into one of them on its own:
+# choose_comfyui lists them and the user picks. COMFY_FOUND is a string, not an
+# array - bash 3.2 under `set -u` rejects an empty array expansion.
+COMFY_FOUND=""; COMFY_PHYS=""
+add_comfy() {   # $1 = a ComfyUI root (or a wrapper folder) -> appended once, if it is one
+  local hit phys
+  hit="$(test_comfyui_dir "${1:-}")"
+  [ -n "$hit" ] || return 0
+  phys="$(cd "$hit" 2>/dev/null && pwd -P)"; [ -n "$phys" ] || phys="$hit"
+  case "
+$COMFY_PHYS
+" in *"
+$phys
+"*) return 0 ;; esac
+  COMFY_FOUND="${COMFY_FOUND:+$COMFY_FOUND
+}$hit"
+  COMFY_PHYS="${COMFY_PHYS:+$COMFY_PHYS
+}$phys"
+}
+
+# ComfyUI Desktop keeps its data folder (custom_nodes/, models/ ...) wherever the user put it on
+# first run and records that as "basePath" in its config.json: ~/Library/Application Support/
+# ComfyUI/config.json on macOS, ~/.config/ComfyUI/config.json on Linux.
+comfy_desktop_base_paths() {   # echoes each basePath, one per line
+  local cfg
+  for cfg in "${HOME:-}/Library/Application Support/ComfyUI/config.json" \
+             "${XDG_CONFIG_HOME:-${HOME:-}/.config}/ComfyUI/config.json"; do
+    [ -f "$cfg" ] || continue
+    sed -n 's/.*"basePath"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$cfg"
+  done
+}
+
+# Running ComfyUI processes: the folder of the main.py they were started with.
+comfy_process_lines() {   # echoes one command line per process (tests replace this)
+  ps -axo command= 2>/dev/null
+}
+comfy_from_processes() {   # echoes the folders (paths without spaces)
+  comfy_process_lines | grep -i 'main\.py' | grep -i comfy \
+    | sed -n 's/.*[[:space:]]\(\/[^[:space:]]*\)\/main\.py.*/\1/p'
+}
+
+find_all_comfyui() {   # $1 = hint -> fills COMFY_FOUND
+  local c line
+  COMFY_FOUND=""; COMFY_PHYS=""
+  [ -z "${1:-}" ] || add_comfy "$1"
+  for c in "$PARENT_DIR/ComfyUI" "$PARENT_DIR/comfyui" \
            "${HOME:-}/ComfyUI" "${HOME:-}/comfyui" \
            "${HOME:-}/Documents/ComfyUI" "${HOME:-}/Documents/comfyui" \
            "${HOME:-}/Library/Application Support/ComfyUI" \
            "/Applications/ComfyUI"; do
-    [ -n "$c" ] || continue
-    hit="$(test_comfyui_dir "$c")"
-    if [ -n "$hit" ]; then printf '%s' "$hit"; return 0; fi
+    add_comfy "$c"
   done
-  find_comfy_desktop
+  for c in "${HOME:-}/ComfyUI-Installs"/*; do add_comfy "$c"; done
+  while IFS= read -r line; do [ -z "$line" ] || add_comfy "$line"; done <<EOF_BASE
+$(comfy_desktop_base_paths)
+EOF_BASE
+  while IFS= read -r line; do [ -z "$line" ] || add_comfy "$line"; done <<EOF_PROC
+$(comfy_from_processes)
+EOF_PROC
 }
 
-find_comfy_desktop() {   # ComfyUI Desktop keeps its installs in ~/ComfyUI-Installs/<name>/
-  local d hit
-  for d in "${HOME:-}/ComfyUI-Installs"/*; do
-    [ -d "$d" ] || continue
-    hit="$(test_comfyui_dir "$d")"
-    if [ -n "$hit" ]; then printf '%s' "$hit"; return 0; fi
-  done
+comfy_label() {   # $1 = root -> "v0.3.60, git abc1234" (whatever can be told without starting it)
+  local v c out=""
+  v="$(sed -n "s/^__version__[[:space:]]*=[[:space:]]*[\"']\([^\"']*\)[\"'].*/\1/p" "$1/comfyui_version.py" 2>/dev/null | head -n 1)"
+  [ -z "$v" ] || out="v$v"
+  if [ -e "$1/.git" ]; then
+    c="$(git -C "$1" rev-parse --short HEAD 2>/dev/null)"
+    [ -z "$c" ] || out="${out:+$out, }git $c"
+  fi
+  if [ -z "$out" ]; then
+    if [ -f "$1/main.py" ]; then out="version unknown"; else out="data folder only (ComfyUI Desktop keeps the code in its app)"; fi
+  fi
+  printf '%s' "$out"
+}
+
+# Sets RESOLVED_COMFY to the install the USER chose ("" = none). $1 = --comfyui-path.
+# Declining everything installs nothing: no other folder is ever substituted.
+# Non-interactive: the --comfyui-path folder, or the only install found; several found
+# and no path given means there is nothing to choose with, so nothing is installed.
+choose_comfyui() {
+  local hint="${1:-}" hinted n=0 i line ans pick="" lc
+  RESOLVED_COMFY=""
+  hinted="$(test_comfyui_dir "$hint")"
+  if [ -n "$hinted" ]; then COMFY_FOUND="$hinted"   # a path given on the command line is the choice
+  else find_all_comfyui ""; fi
+  if [ -n "$COMFY_FOUND" ]; then n="$(printf '%s\n' "$COMFY_FOUND" | wc -l | tr -d ' ')"; fi
+  if [ -n "$hint" ] && [ -z "$hinted" ]; then
+    fail "--comfyui-path $hint does not look like a ComfyUI install (no custom_nodes/ in it)."
+  fi
+  [ "$n" -gt 0 ] || return 0
+  if [ "$NON_INTERACTIVE" = "1" ]; then
+    if [ "$n" = "1" ]; then RESOLVED_COMFY="$COMFY_FOUND"; success "Found ComfyUI: $RESOLVED_COMFY"
+    else
+      info "$n ComfyUI installs found and none chosen (--non-interactive): not installing the sidebar node."
+      info "Pass --comfyui-path <dir> to pick one:"
+      printf '%s\n' "$COMFY_FOUND" | while IFS= read -r line; do plain "       $line" "$C_WHITE"; done
+    fi
+    return 0
+  fi
+  if [ "$n" = "1" ]; then success "Found ComfyUI: $COMFY_FOUND  ($(comfy_label "$COMFY_FOUND"))"
+  else
+    success "Found $n ComfyUI installs:"
+    i=0
+    while IFS= read -r line; do
+      i=$((i+1)); plain "    $i) $line  ($(comfy_label "$line"))" "$C_WHITE"
+    done <<EOF_LIST
+$COMFY_FOUND
+EOF_LIST
+  fi
+  if [ "$n" = "1" ]; then printf '    Use this ComfyUI? [Y/n] (or type another path): '
+  else printf '    Install the sidebar node into which one? [1-%s], type a path, or Enter to skip: ' "$n"; fi
+  IFS= read -r ans
+  ans="$(printf '%s' "${ans:-}" | tr -d '\r' | sed 's/^ *//;s/ *$//')"
+  lc="$(printf '%s' "$ans" | tr '[:upper:]' '[:lower:]')"
+  case "$lc" in
+    "") [ "$n" = "1" ] && pick="$COMFY_FOUND" ;;
+    y | yes) [ "$n" = "1" ] && pick="$COMFY_FOUND" ;;
+    n | no | s | skip) ;;
+    *[!0-9]*) pick="$(test_comfyui_dir "$ans")"
+              [ -n "$pick" ] || fail "That folder doesn't look like a ComfyUI install - skipping." ;;
+    *) if [ "$lc" -ge 1 ] 2>/dev/null && [ "$lc" -le "$n" ]; then pick="$(printf '%s\n' "$COMFY_FOUND" | sed -n "${lc}p")"
+       else fail "There is no number $ans in the list - skipping."; fi ;;
+  esac
+  RESOLVED_COMFY="$pick"
+  return 0
 }
 
 select_execution_mode() {   # $1 = settings.local.json -> echoes the chosen mode ("" = left alone)
@@ -1140,28 +1245,14 @@ RESOLVED_COMFY=""
 if [ "$SKIP_COMFY_NODE" = "1" ]; then
   info "Skipping ComfyUI node install (--skip-comfy-node)"
 else
-  RESOLVED_COMFY="$(test_comfyui_dir "$COMFYUI_PATH")"
-  [ -n "$RESOLVED_COMFY" ] || RESOLVED_COMFY="$(find_comfyui "$COMFYUI_PATH")"
-  if [ -n "$RESOLVED_COMFY" ]; then
-    success "Found ComfyUI: $RESOLVED_COMFY"
-    if [ "$NON_INTERACTIVE" = "0" ]; then
-      printf '    Use this ComfyUI? [Y/n] (or type another path): '
-      IFS= read -r ans
-      ans="$(printf '%s' "${ans:-}" | sed 's/^ *//;s/ *$//')"
-      case "$(printf '%s' "$ans" | tr '[:upper:]' '[:lower:]')" in
-        "" | y | yes) ;;
-        n | no) RESOLVED_COMFY="" ;;
-        *) RESOLVED_COMFY="$(test_comfyui_dir "$ans")" ;;
-      esac
-    fi
-  fi
-  if [ -z "$RESOLVED_COMFY" ] && [ "$NON_INTERACTIVE" = "0" ]; then
-    # Nothing found: offer ComfyUI Desktop before only asking for a path.
+  # The user picks the ComfyUI; nothing is installed into one they did not choose.
+  choose_comfyui "$COMFYUI_PATH"
+  if [ -z "$RESOLVED_COMFY" ] && [ -z "$COMFY_FOUND" ] && [ "$NON_INTERACTIVE" = "0" ]; then
+    # No ComfyUI on this machine at all: offer ComfyUI Desktop, then ask for a path.
+    # A fresh Desktop install is never picked up silently - it has to be started once
+    # and the installer run again.
     SAVED_MODE="$("$(venv_python "$PROJECT_ROOT")" "$PROJECT_ROOT/scripts/hardware_profile.py" --get-mode --settings "$PROJECT_ROOT/config/settings.local.json" 2>/dev/null)"
     install_comfy_desktop "$SAVED_MODE" || true
-    RESOLVED_COMFY="$(find_comfy_desktop)"
-  fi
-  if [ -z "$RESOLVED_COMFY" ] && [ "$NON_INTERACTIVE" = "0" ]; then
     printf '    ComfyUI folder (contains custom_nodes/), or Enter to skip: '
     IFS= read -r entered
     entered="$(printf '%s' "${entered:-}" | sed 's/^ *//;s/ *$//')"
@@ -1230,7 +1321,7 @@ PY
       fi
     fi
   else
-    info "No ComfyUI configured. Install the node later:"
+    info "No ComfyUI was chosen - the sidebar node was NOT installed. Install it later:"
     plain "       git clone https://github.com/szprivate/agentY-comfyuiConnect  <ComfyUI>/custom_nodes/agentY-comfyuiConnect" "$C_WHITE"
   fi
 fi
@@ -1265,7 +1356,8 @@ plain "  Installed:" "$C_CYAN"
 plain "    - agentY        $PROJECT_ROOT"
 plain "    - agentY-core   $PARENT_DIR/agentY-core  (editable dependency)"
 [ "$SKIP_MCP" = "0" ] && [ -f "$MCP_DIR/requirements.txt" ] && plain "    - agentY-mcp    $MCP_DIR"
-[ -n "$RESOLVED_COMFY" ] && plain "    - sidebar node  $RESOLVED_COMFY/custom_nodes/agentY-comfyuiConnect"
+if [ -n "$RESOLVED_COMFY" ]; then plain "    - sidebar node  $RESOLVED_COMFY/custom_nodes/agentY-comfyuiConnect"
+else plain "    - sidebar node  NOT installed (no ComfyUI was chosen)" "$C_YELLOW"; fi
 echo
 plain "  Next steps:" "$C_CYAN"
 plain "    1. Start the agent chat host:" "$C_YELLOW"

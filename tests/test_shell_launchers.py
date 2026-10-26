@@ -115,6 +115,27 @@ class OptionalFeatures(unittest.TestCase):
 
 
 @unittest.skipIf(BASH is None, "no bash on PATH")
+class ComfyChoice(unittest.TestCase):
+    """GitHub issue 79: every ComfyUI is found and listed, the user picks, declining installs nothing."""
+
+    def test_comfy_discovery_and_choice(self):
+        out = subprocess.run([BASH, str(SHELL_DIR / "comfy_choice_test.sh"), str(ROOT)],
+                             capture_output=True, text=True, timeout=300)
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn("0 failed", out.stdout)
+
+    def test_stage_6_never_falls_back_to_an_install_nobody_chose(self):
+        """The bug: after 'no' and a declined Desktop offer the script looked Desktop's folders up AGAIN and
+        installed there. The only way into RESOLVED_COMFY is choose_comfyui or a typed path."""
+        sh = (ROOT / "install_agent.sh").read_text(encoding="utf-8")
+        stage = sh.split('header "6 / 8', 1)[1].split('header "7 / 8', 1)[0]
+        self.assertNotIn("find_comfy_desktop", sh)
+        self.assertIn("choose_comfyui", stage)
+        self.assertNotIn("find_all_comfyui", stage)
+        self.assertIn("NOT installed", sh.split("# -- Done", 1)[1])
+
+
+@unittest.skipIf(BASH is None, "no bash on PATH")
 @unittest.skipIf(shutil.which("git") is None, "no git on PATH")
 class UpdateRepo(unittest.TestCase):
     """The startup update against real repositories.

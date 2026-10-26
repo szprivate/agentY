@@ -120,6 +120,16 @@ class InstallerRun(unittest.TestCase):
         recorded = json.loads((node / ".agenty_host.json").read_text(encoding="utf-8"))["project_root"]
         self.assertTrue(os.path.samefile(recorded, self.agent), recorded)
 
+    def test_declining_the_comfyui_installs_nothing_and_says_so(self):
+        """GitHub issue 79: 'n' to the ComfyUI offered must not end with the node installed somewhere else."""
+        self.plain_tree()
+        out = self.run_installer("-ComfyUIPath", str(self.comfy), answers="\n" * 6 + "n\n" + "\n" * 8)   # the 7th prompt is the ComfyUI one
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn("Setup complete", out.stdout)
+        self.assertFalse((self.comfy / "custom_nodes" / "agentY-comfyuiConnect").exists())
+        self.assertIn("NOT installed (no ComfyUI was chosen)", out.stdout)
+        self.assertIn("No ComfyUI was chosen", out.stdout)
+
     def test_a_rerun_keeps_what_the_settings_file_holds(self):
         before = {"comfyui_dir": "D:\\comfy", "models": {"orchestrator": ["a", "b"]}, "auto_update": False,
                   "memory": {"embedder": {"preset": "local"}, "enabled": True}}
@@ -270,6 +280,97 @@ class InstallerRun(unittest.TestCase):
         self.assertEqual(_git(self.agent, "log", "--format=%s", "-1"), "mine")
 
 
+PS_HARNESS = r"""
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version 3.0
+$Script:OnWindows = $true
+function Write-Success { param($m) }
+function Write-Info { param($m) }
+function Write-Fail { param($m) [Console]::Error.WriteLine("FAILMSG $m") }
+function Write-Host { param($Object, $ForegroundColor) [Console]::Error.WriteLine("LIST $Object") }
+function Read-Answer { param([string]$Prompt) $v = [Console]::In.ReadLine(); if ($null -eq $v) { return "" } return [string]$v }
+. '__BLOCK__'
+$base = '__BASE__'
+function Get-ComfyCandidatePaths { return @("$base\home\ComfyUI", "$base\home\Documents\ComfyUI", "$base\home\ComfyUI-Installs", "$base\nothing") }
+function Get-ComfyDesktopBasePaths { return @("$base\elsewhere\mydata", "$base\home\Documents\ComfyUI") }
+function Get-ComfyProcessLines { return @("C:\py\python.exe $base\proc\ComfyUI\main.py --port 8188", "python other.py") }
+__BODY__
+"""
+
+
+@unittest.skipUnless(sys.platform == "win32" and POWERSHELL, "needs Windows PowerShell")
+class InstallerComfyChoicePs(unittest.TestCase):
+    """install_agent.ps1's ComfyUI discovery and choice, run on their own against fake folders (issue 79)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="agy-comfy-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        for rel in ("home/ComfyUI", "home/Documents/ComfyUI", "home/ComfyUI-Installs/desk1",
+                    "elsewhere/mydata", "proc/ComfyUI", "single/ComfyUI"):
+            (self.tmp / rel / "custom_nodes").mkdir(parents=True)
+        (self.tmp / "home/ComfyUI/comfyui_version.py").write_text('__version__ = "0.3.60"\n')
+        text = (ROOT / "install_agent.ps1").read_text(encoding="utf-8")
+        block = text.split("# == ComfyUI discovery", 1)[1].split("# == end ComfyUI discovery", 1)[0]
+        self.block = self.tmp / "block.ps1"
+        self.block.write_text("# ==" + block, encoding="utf-8")
+
+    def ps(self, body, answers=""):
+        script = (PS_HARNESS.replace("__BLOCK__", str(self.block)).replace("__BASE__", str(self.tmp))
+                  .replace("__BODY__", body))
+        f = self.tmp / "run.ps1"
+        f.write_text(script, encoding="utf-8")
+        out = subprocess.run([POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(f)],
+                             input=answers, capture_output=True, text=True, timeout=120)
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        return out.stdout.strip().splitlines(), out.stderr
+
+    def test_every_install_is_found_once_with_a_label(self):
+        lines, _ = self.ps('$a = @(Find-AllComfyUI ""); $a.Count; ($a | % { $_.Label }) -join "|"')
+        self.assertEqual(lines[0], "5")                       # the basePath equal to Documents\ComfyUI counts once
+        self.assertIn("v0.3.60", lines[1])
+        self.assertIn("data folder only", lines[1])
+
+    def test_the_user_picks_by_number(self):
+        lines, _ = self.ps('$r = Select-ComfyUI -Hint "" -NonInteractive $false; $r.Path; $r.Found', answers="2\n")
+        self.assertEqual(lines[1], "5")
+        self.assertTrue(lines[0].startswith(str(self.tmp)))
+        first, _ = self.ps('$r = Select-ComfyUI -Hint "" -NonInteractive $false; $r.Path', answers="1\n")
+        self.assertNotEqual(first[0], lines[0])
+
+    def test_declining_everything_picks_nothing(self):
+        for answer in ("\n", "s\n", "n\n", "9\n", "0\n"):
+            with self.subTest(answer=answer):
+                lines, _ = self.ps('$r = Select-ComfyUI -Hint "" -NonInteractive $false; "[" + $r.Path + "]"', answers=answer)
+                self.assertEqual(lines[-1], "[]")
+
+    def test_a_typed_path_is_used_only_when_it_is_a_comfyui(self):
+        good = str(self.tmp / "proc" / "ComfyUI")
+        lines, _ = self.ps('$r = Select-ComfyUI -Hint "" -NonInteractive $false; $r.Path', answers=good + "\n")
+        self.assertEqual(lines[0], good)
+        (self.tmp / "notcomfy").mkdir()
+        lines, err = self.ps('$r = Select-ComfyUI -Hint "" -NonInteractive $false; "[" + $r.Path + "]"',
+                             answers=str(self.tmp / "notcomfy") + "\n")
+        self.assertEqual(lines[-1], "[]")
+        self.assertIn("look like a ComfyUI", err)
+
+    def test_a_single_install_is_confirmed_and_can_be_declined(self):
+        one = self.tmp / "single" / "ComfyUI"
+        body = ('function Get-ComfyCandidatePaths { return @("%s") }; function Get-ComfyDesktopBasePaths { return @() }; '
+                'function Get-ComfyProcessLines { return @() }; '
+                '$r = Select-ComfyUI -Hint "" -NonInteractive $false; "[" + $r.Path + "]"' % one)
+        yes, _ = self.ps(body, answers="\n")
+        self.assertEqual(yes[-1], "[%s]" % one)
+        no, _ = self.ps(body, answers="n\n")
+        self.assertEqual(no[-1], "[]")
+
+    def test_non_interactive_never_chooses_among_several(self):
+        lines, _ = self.ps('$r = Select-ComfyUI -Hint "" -NonInteractive $true; "[" + $r.Path + "]"')
+        self.assertEqual(lines[-1], "[]")
+        path = str(self.tmp / "elsewhere" / "mydata")
+        lines, _ = self.ps('$r = Select-ComfyUI -Hint "%s" -NonInteractive $true; $r.Path' % path)
+        self.assertEqual(lines[-1], path)
+
+
 class InstallerText(unittest.TestCase):
     """What can be held without running it, on any platform."""
 
@@ -286,6 +387,19 @@ class InstallerText(unittest.TestCase):
             with self.subTest(installer=name):
                 self.assertNotIn("pull --ff-only }", (ROOT / name).read_text(encoding="utf-8", errors="replace"))
                 self.assertNotIn('pull --ff-only ||', (ROOT / name).read_text(encoding="utf-8", errors="replace"))
+
+    def test_both_installers_list_the_installs_and_never_fall_back(self):
+        ps1 = (ROOT / "install_agent.ps1").read_text(encoding="utf-8", errors="replace")
+        sh = (ROOT / "install_agent.sh").read_text(encoding="utf-8")
+        for name, text in (("ps1", ps1), ("sh", sh)):
+            with self.subTest(installer=name):
+                self.assertIn("Install the sidebar node into which one?", text)
+                self.assertIn("NOT installed (no ComfyUI was chosen)", text)
+                self.assertIn("basePath", text)            # ComfyUI Desktop's config.json
+                self.assertIn("ComfyUI-Installs", text)
+                self.assertIn("main.py", text)             # running processes
+                self.assertNotIn("Find-ComfyDesktop", text)
+                self.assertNotIn("find_comfy_desktop", text)
 
     def test_the_sh_installer_parses(self):
         bash = shutil.which("bash")

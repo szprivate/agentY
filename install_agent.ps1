@@ -607,57 +607,162 @@ function Ensure-EnvFile {
     return $envFile
 }
 
+# == ComfyUI discovery (the tests run this block on its own) ==================
 function Test-ComfyUIDir {
     param([string]$Path)
-    if (-not $Path -or -not (Test-Path $Path)) { return $null }
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $null }
     # Accept the ComfyUI root, or a common wrapper folder one level up.
     foreach ($cand in @($Path, (Join-Path $Path "ComfyUI"), (Join-Path $Path "ComfyUI_windows_portable\ComfyUI"))) {
-        if (Test-Path (Join-Path $cand "custom_nodes")) { return (Resolve-Path $cand).Path }
+        if (Test-Path -LiteralPath (Join-Path $cand "custom_nodes")) { return (Resolve-Path -LiteralPath $cand).Path }
     }
     return $null
 }
 
-function Find-ComfyUI {
-    param([string]$Hint)
-    $candidates = @()
-    if ($Hint) { $candidates += $Hint }
+function Get-ComfyCandidatePaths {
+    # The places a ComfyUI usually lives (tests replace this).
+    $c = @()
     if ($Script:OnWindows) {
         foreach ($drive in @("D:", "E:", "C:")) {
-            $candidates += @(
+            $c += @(
                 "$drive\ai\ComfyUI", "$drive\AI\ComfyUI", "$drive\ComfyUI",
                 "$drive\ai\comfyui__", "$drive\ai\ComfyUI_windows_portable\ComfyUI",
                 "$drive\ComfyUI_windows_portable\ComfyUI"
             )
         }
-        if ($env:USERPROFILE) { $candidates += "$env:USERPROFILE\ComfyUI" }
-    } else {
-        if ($env:HOME) { $candidates += @("$env:HOME/ComfyUI", "$env:HOME/comfyui") }
+        if ($env:USERPROFILE) {
+            $c += @("$env:USERPROFILE\ComfyUI", "$env:USERPROFILE\Documents\ComfyUI")
+            $c += (Join-Path $env:USERPROFILE "ComfyUI-Installs")
+        }
+        if ($env:LOCALAPPDATA) { $c += (Join-Path $env:LOCALAPPDATA "Comfy-Desktop\ComfyUI-Installs") }
+    } elseif ($env:HOME) {
+        $c += @("$env:HOME/ComfyUI", "$env:HOME/comfyui", "$env:HOME/Documents/ComfyUI", (Join-Path $env:HOME "ComfyUI-Installs"))
     }
-    foreach ($c in $candidates) {
-        $hit = Test-ComfyUIDir $c
-        if ($hit) { return $hit }
-    }
-    return (Find-ComfyDesktop)
+    return $c
 }
 
-function Find-ComfyDesktop {
-    # ComfyUI Desktop keeps its installs in <ComfyUI-Installs>\<name>\ (a ComfyUI inside, or the root itself).
-    $roots = @()
-    if ($Script:OnWindows) {
-        if ($env:LOCALAPPDATA) { $roots += (Join-Path $env:LOCALAPPDATA "Comfy-Desktop\ComfyUI-Installs") }
-        if ($env:USERPROFILE)  { $roots += (Join-Path $env:USERPROFILE "ComfyUI-Installs") }
-    } elseif ($env:HOME) {
-        $roots += (Join-Path $env:HOME "ComfyUI-Installs")
+function Get-ComfyDesktopBasePaths {
+    # ComfyUI Desktop records the folder it keeps custom_nodes\ and models\ in as "basePath" in its
+    # config.json: %APPDATA%\ComfyUI on Windows (tests replace this).
+    $out = @()
+    $cfgs = @()
+    if ($env:APPDATA) { $cfgs += (Join-Path $env:APPDATA "ComfyUI\config.json") }
+    if ($env:HOME)    { $cfgs += @("$env:HOME/Library/Application Support/ComfyUI/config.json", "$env:HOME/.config/ComfyUI/config.json") }
+    foreach ($cfg in $cfgs) {
+        if (-not (Test-Path -LiteralPath $cfg)) { continue }
+        try {
+            $j = Get-Content -LiteralPath $cfg -Raw -ErrorAction Stop | ConvertFrom-Json
+            if ($j.PSObject.Properties['basePath'] -and $j.basePath) { $out += [string]$j.basePath }
+        } catch {}
     }
-    foreach ($r in $roots) {
-        if (-not (Test-Path $r)) { continue }
-        foreach ($d in (Get-ChildItem $r -Directory -ErrorAction SilentlyContinue)) {
-            $hit = Test-ComfyUIDir $d.FullName
-            if ($hit) { return $hit }
+    return $out
+}
+
+function Get-ComfyProcessLines {
+    # Command lines of running processes that mention main.py (tests replace this). Never fatal.
+    try {
+        if ($Script:OnWindows) {
+            return @(Get-CimInstance Win32_Process -Filter "CommandLine like '%main.py%'" -ErrorAction Stop |
+                     ForEach-Object { [string]$_.CommandLine })
+        }
+        return @(& ps -axo command= 2>$null)
+    } catch { return @() }
+}
+
+function Get-ComfyLabel {
+    # What can be told about an install without starting it: "v0.3.60, git abc1234".
+    param([string]$Root)
+    $out = ""
+    $vf = Join-Path $Root "comfyui_version.py"
+    if (Test-Path -LiteralPath $vf) {
+        $m = [regex]::Match([string](Get-Content -LiteralPath $vf -Raw -ErrorAction SilentlyContinue), '__version__\s*=\s*["'']([^"'']+)')
+        if ($m.Success) { $out = "v" + $m.Groups[1].Value }
+    }
+    if ((Test-Path -LiteralPath (Join-Path $Root ".git")) -and (Get-Command git -ErrorAction SilentlyContinue)) {
+        $c = [string](& git -C $Root rev-parse --short HEAD 2>$null)
+        if ($c.Trim()) { $out = (@($out, "git $($c.Trim())") | Where-Object { $_ }) -join ", " }
+    }
+    if (-not $out) {
+        $out = if (Test-Path -LiteralPath (Join-Path $Root "main.py")) { "version unknown" } else { "data folder only (ComfyUI Desktop keeps the code in its app)" }
+    }
+    return $out
+}
+
+function Find-AllComfyUI {
+    # Every ComfyUI that can be found, as objects with Path and Label, no duplicates. Nothing is chosen here.
+    param([string]$Hint)
+    $found = New-Object System.Collections.Generic.List[string]
+    $seen  = @{}
+    $add = {
+        param($p)
+        $hit = Test-ComfyUIDir $p
+        if (-not $hit) { return }
+        $key = $hit.TrimEnd('\', '/').ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { return }
+        $seen[$key] = $true
+        $found.Add($hit)
+    }
+    if ($Hint) { & $add $Hint }
+    foreach ($c in (Get-ComfyCandidatePaths)) {
+        if (-not $c -or -not (Test-Path -LiteralPath $c)) { continue }
+        & $add $c
+        # A folder of installs (ComfyUI-Installs\<name>\): each child is a candidate.
+        if ($c -match 'Installs') {
+            foreach ($d in (Get-ChildItem -LiteralPath $c -Directory -ErrorAction SilentlyContinue)) { & $add $d.FullName }
         }
     }
-    return $null
+    foreach ($b in (Get-ComfyDesktopBasePaths)) { & $add $b }
+    foreach ($line in (Get-ComfyProcessLines)) {
+        if ($line -notmatch 'comfy') { continue }
+        # "C:\Program Files\x\main.py" (quoted, may hold spaces), or a plain C:\x\main.py / /x/main.py token.
+        if ($line -match '"([^"]+?)[\\/]main\.py"' -or $line -match '(?:^|\s)((?:[A-Za-z]:)?[\\/][^\s"]*?)[\\/]main\.py') { & $add $Matches[1] }
+    }
+    return @($found | ForEach-Object { [pscustomobject]@{ Path = $_; Label = (Get-ComfyLabel $_) } })
 }
+
+function Select-ComfyUI {
+    # Returns @{ Path = <the install the USER chose, or $null>; Found = <how many were found> }.
+    # Declining everything installs nothing - no other folder is ever substituted. Non-interactive:
+    # the -ComfyUIPath folder, or the only install found; several found and no path given means
+    # there is nothing to choose with, so nothing is installed.
+    param([string]$Hint, [bool]$NonInteractive)
+    $hinted = Test-ComfyUIDir $Hint
+    if ($Hint -and -not $hinted) { Write-Fail "-ComfyUIPath $Hint does not look like a ComfyUI install (no custom_nodes\ in it)." }
+    if ($hinted) { $all = @([pscustomobject]@{ Path = $hinted; Label = (Get-ComfyLabel $hinted) }) }
+    else { $all = @(Find-AllComfyUI "") }
+    $n = $all.Count
+    $res = @{ Path = $null; Found = $n }
+    if ($n -eq 0) { return $res }
+    if ($NonInteractive) {
+        if ($n -eq 1) { $res.Path = $all[0].Path; Write-Success "Found ComfyUI: $($res.Path)" }
+        else {
+            Write-Info "$n ComfyUI installs found and none chosen (-NonInteractive): not installing the sidebar node."
+            Write-Info "Pass -ComfyUIPath <dir> to pick one:"
+            foreach ($a in $all) { Write-Host "       $($a.Path)" -ForegroundColor White }
+        }
+        return $res
+    }
+    if ($n -eq 1) {
+        Write-Success "Found ComfyUI: $($all[0].Path)  ($($all[0].Label))"
+        $ans = (Read-Answer "    Use this ComfyUI? [Y/n] (or type another path)").Trim()
+    } else {
+        Write-Success "Found $n ComfyUI installs:"
+        for ($i = 0; $i -lt $n; $i++) { Write-Host ("    {0}) {1}  ({2})" -f ($i + 1), $all[$i].Path, $all[$i].Label) -ForegroundColor White }
+        $ans = (Read-Answer "    Install the sidebar node into which one? [1-$n], type a path, or Enter to skip").Trim()
+    }
+    $lc = $ans.ToLower()
+    if ($lc -match '^(n|no|s|skip)$') { return $res }
+    if (-not $lc -or $lc -match '^(y|yes)$') {
+        if ($n -eq 1) { $res.Path = $all[0].Path }
+    } elseif ($lc -match '^\d+$') {
+        $k = [int]$lc
+        if ($k -ge 1 -and $k -le $n) { $res.Path = $all[$k - 1].Path } else { Write-Fail "There is no number $ans in the list - skipping." }
+    } else {
+        $res.Path = Test-ComfyUIDir $ans
+        if (-not $res.Path) { Write-Fail "That folder doesn't look like a ComfyUI install - skipping." }
+    }
+    return $res
+}
+# == end ComfyUI discovery ====================================================
 
 function Select-ExecutionMode {
     # ONE question: where should open-weight models run? The hardware is detected and a mode recommended
@@ -1189,25 +1294,15 @@ $ResolvedComfy = $null
 if ($SkipComfyNode) {
     Write-Info "Skipping ComfyUI node install (-SkipComfyNode)"
 } else {
-    $ResolvedComfy = Test-ComfyUIDir $ComfyUIPath
-    if (-not $ResolvedComfy) { $ResolvedComfy = Find-ComfyUI $ComfyUIPath }
-    if ($ResolvedComfy) {
-        Write-Success "Found ComfyUI: $ResolvedComfy"
-        if (-not $NonInteractive) {
-            $ans = Read-Answer "    Use this ComfyUI? [Y/n] (or type another path)"
-            if ($ans.Trim() -and $ans.Trim() -notmatch '^(y|yes)$') {
-                if ($ans.Trim() -match '^(n|no)$') { $ResolvedComfy = $null }
-                else { $ResolvedComfy = Test-ComfyUIDir $ans.Trim() }
-            }
-        }
-    }
-    if (-not $ResolvedComfy -and -not $NonInteractive) {
-        # Nothing found: offer ComfyUI Desktop before only asking for a path.
+    # The user picks the ComfyUI; nothing is installed into one they did not choose.
+    $pick = Select-ComfyUI -Hint $ComfyUIPath -NonInteractive ([bool]$NonInteractive)
+    $ResolvedComfy = $pick.Path
+    if (-not $ResolvedComfy -and $pick.Found -eq 0 -and -not $NonInteractive) {
+        # No ComfyUI on this machine at all: offer ComfyUI Desktop, then ask for a path.
+        # A fresh Desktop install is never picked up silently - it has to be started once
+        # and the installer run again.
         $savedMode = [string](& (Get-VenvPython $ProjectRoot) (Join-Path $ProjectRoot "scripts\hardware_profile.py") --get-mode --settings (Join-Path $ProjectRoot "config\settings.local.json"))
         $null = Install-ComfyDesktop -Mode $savedMode.Trim()
-        $ResolvedComfy = Find-ComfyDesktop
-    }
-    if (-not $ResolvedComfy -and -not $NonInteractive) {
         $entered = Read-Answer "    ComfyUI folder (contains custom_nodes\), or Enter to skip"
         if ($entered.Trim()) {
             $ResolvedComfy = Test-ComfyUIDir $entered.Trim()
@@ -1253,7 +1348,7 @@ if ($SkipComfyNode) {
             }
         }
     } else {
-        Write-Info "No ComfyUI configured. Install the node later:"
+        Write-Info "No ComfyUI was chosen - the sidebar node was NOT installed. Install it later:"
         Write-Host  "       git clone https://github.com/szprivate/agentY-comfyuiConnect  <ComfyUI>\custom_nodes\agentY-comfyuiConnect" -ForegroundColor White
     }
 }
@@ -1287,6 +1382,8 @@ if (-not $SkipMcp -and (Test-Path (Join-Path $McpDir 'requirements.txt'))) {
 }
 if ($ResolvedComfy) {
     Write-Host "    - sidebar node  $ResolvedComfy\custom_nodes\agentY-comfyuiConnect" -ForegroundColor White
+} else {
+    Write-Host "    - sidebar node  NOT installed (no ComfyUI was chosen)" -ForegroundColor Yellow
 }
 Write-Host ""
 Write-Host "  Next steps:" -ForegroundColor Cyan
