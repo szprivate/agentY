@@ -32,6 +32,7 @@ Vision usage (requires a vision-capable model for the chosen provider — e.g.
 from __future__ import annotations
 
 import base64
+from agenty_core.dashscope_endpoints import DEFAULT_BASE_URL as _DASHSCOPE_DEFAULT_URL  # noqa: E402
 import json
 import logging
 import os
@@ -142,7 +143,7 @@ class LLMFunctions:
         if provider in _DASHSCOPE_PROVIDERS:
             ds = llm.get("dashscope", {})
             base_url = (os.environ.get("DASHSCOPE_BASE_URL")
-                        or ds.get("base_url", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"))
+                        or ds.get("base_url", _DASHSCOPE_DEFAULT_URL))
             api_key = os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("ALIBABA_API_KEY") or ""
             max_tokens = int(ds.get("max_tokens", default_max_tokens) or default_max_tokens)
             model = model or ds.get("model", "qwen-plus")

@@ -50,6 +50,7 @@ Legacy ComfyUI -> agent image-review bridge (kept)
 from __future__ import annotations
 
 import asyncio
+from agenty_core.dashscope_endpoints import DEFAULT_BASE_URL as _DASHSCOPE_DEFAULT_URL  # noqa: E402
 import json
 import logging
 import os
@@ -3284,6 +3285,7 @@ def _list_models_now() -> dict:
 _KNOWN_ENV_KEYS = [
     "HF_TOKEN", "ANTHROPIC_API_KEY", "COMFYUI_API_KEY",
     "DASHSCOPE_API_KEY", "DASHSCOPE_BASE_URL",
+    "DASHSCOPE_PAYG_API_KEY", "DASHSCOPE_PAYG_BASE_URL",
     "WORLDLABS_API_KEY", "WLT_MARBLE_API_KEY",
     # Ayon pipeline (service-user key; see docs/dev/ayon.md)
     "AYON_API_KEY", "AYON_SERVER_URL",
@@ -3313,11 +3315,16 @@ _KNOWN_ENV_KEYS = [
 _BUILTIN_SERVICES = [
     {"id": "dashscope", "label": "Alibaba Model Studio (DashScope)",
      "key_env": "DASHSCOPE_API_KEY", "url_env": "DASHSCOPE_BASE_URL",
-     "default_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+     "default_url": _DASHSCOPE_DEFAULT_URL,
      "help_url": "https://modelstudio.console.alibabacloud.com/?tab=model#/api-key",
-     "hint": "Endpoint by region: international https://dashscope-intl.aliyuncs.com/compatible-mode/v1, "
-             "China https://dashscope.aliyuncs.com/compatible-mode/v1, "
-             "US https://dashscope-us.aliyuncs.com/compatible-mode/v1. The key must belong to the same region."},
+     "hint": "The key and the endpoint must belong to the same plan and region (a mismatch answers 401). "
+             "Pick the plan and region from the list or press Detect (one free GET /models). "
+             "Token Plan and Coding Plan keys (sk-sp-...) are restricted by Alibaba to interactive coding "
+             "tools, not backends like agentY, and have no image/video generation or embeddings: for those "
+             "add a pay-as-you-go key below.",
+     "endpoints": "dashscope",
+     "fields": [{"env": "DASHSCOPE_PAYG_API_KEY", "label": "Pay-as-you-go key (generation, embeddings)", "secret": True},
+                {"env": "DASHSCOPE_PAYG_BASE_URL", "label": "Pay-as-you-go endpoint", "secret": False}]},
     {"id": "anthropic", "label": "Anthropic", "key_env": "ANTHROPIC_API_KEY",
      "help_url": "https://console.anthropic.com/settings/keys"},
     {"id": "openai", "label": "OpenAI", "key_env": "OPENAI_API_KEY", "url_env": "OPENAI_BASE_URL",
@@ -3348,6 +3355,34 @@ _BUILTIN_SERVICES = [
 ]
 
 
+def _dashscope_endpoint_list() -> list[dict]:
+    """Every documented DashScope endpoint (plan, region, url) for the Settings picker."""
+    from agenty_core import dashscope_endpoints as ep  # noqa: PLC0415
+    return [{"plan": p, "region": r, "url": u,
+             "label": f"{ep.PLAN_LABELS[p]} - {ep.REGION_LABELS.get(r, r)}"}
+            for (p, r), u in ep.ENDPOINTS.items()]
+
+
+def detect_dashscope(key: str, payg: bool = False) -> dict:
+    """Settings > Detect: which documented endpoint accepts this key (one free GET /models each,
+    tried until one answers 200). Never echoes the key."""
+    from agenty_core import dashscope_endpoints as ep  # noqa: PLC0415
+    key = (key or "").strip() or (os.environ.get("DASHSCOPE_PAYG_API_KEY", "").strip() if payg
+                                  else ep.chat_credentials()[0])
+    if not key:
+        return {"ok": False, "error": "Enter a DashScope key first (or save one)."}
+    hit = ep.detect(key)
+    if not hit:
+        return {"ok": False, "error": "No documented endpoint accepted this key. Pick the plan and "
+                                      "region by hand, or check the key."}
+    plan, region, url = hit
+    out = {"ok": True, "plan": plan, "region": region, "url": url,
+           "label": f"{ep.PLAN_LABELS[plan]} - {ep.REGION_LABELS.get(region, region)}"}
+    if plan != ep.PAYG:
+        out["warning"] = ep.TERMS_WARNING + " " + ep.PAYG_NEEDED
+    return out
+
+
 def _services() -> list[dict]:
     """The services catalog the settings payload sends: the built-in ones, then
     every env key of the MCP presets (labelled by preset name)."""
@@ -3356,7 +3391,8 @@ def _services() -> list[dict]:
         out.append({"id": s["id"], "label": s["label"], "key_env": s["key_env"],
                     "url_env": s.get("url_env", ""), "default_url": s.get("default_url", ""),
                     "help_url": s.get("help_url", ""), "hint": s.get("hint", ""),
-                    "fields": [dict(f) for f in s.get("fields", [])]})
+                    "fields": [dict(f) for f in s.get("fields", [])],
+                    "endpoints": _dashscope_endpoint_list() if s.get("endpoints") == "dashscope" else []})
     taken = {s["key_env"] for s in out} | {f["env"] for s in out for f in s["fields"]}
     try:
         from scripts import mcp_presets as _mp  # noqa: PLC0415
@@ -5678,6 +5714,18 @@ def _build_app():
             return "", 204
         body = request.get_json(silent=True) or {}
         return jsonify(test_custom_provider(str(body.get("id") or "").strip().lower()))
+
+    @app.route("/agentY/dashscope/detect", methods=["POST", "OPTIONS"])
+    def dashscope_detect_route():
+        # Settings > DashScope > Detect: plan + region of a key, by probing the documented endpoints.
+        if request.method == "OPTIONS":
+            return "", 204
+        body = request.get_json(silent=True) or {}
+        try:
+            return jsonify(detect_dashscope(str(body.get("key") or ""), bool(body.get("payg"))))
+        except Exception as exc:  # noqa: BLE001
+            logger.error("dashscope detect failed: %s", exc, exc_info=True)
+            return jsonify({"ok": False, "error": str(exc)}), 500
 
     @app.route("/agentY/mcp/test", methods=["POST", "OPTIONS"])
     def mcp_test_route():

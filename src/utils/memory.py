@@ -260,6 +260,23 @@ def _ollama_reachable() -> bool:
         return False
 
 
+def _dashscope_embedder_credentials() -> tuple[str, str, str]:
+    """(key, base_url, why_not) for the DashScope embedder: it needs a pay-as-you-go key, so
+    DASHSCOPE_PAYG_API_KEY/_BASE_URL win, else the main key and the URL the agents use - unless
+    that is a Token/Coding Plan, which offers no embeddings (the reason names the fix)."""
+    from agenty_core import dashscope_endpoints as ep
+    if (os.environ.get("DASHSCOPE_PAYG_API_KEY") or "").strip():
+        key, base, _ = ep.payg_credentials()
+        return key, base, ""
+    main = (os.environ.get("DASHSCOPE_API_KEY") or "").strip()
+    base = _provider_base_url("dashscope") or ep.DEFAULT_BASE_URL
+    if not main:
+        return "", base, "needs DASHSCOPE_API_KEY or DASHSCOPE_PAYG_API_KEY (API keys above)"
+    if ep.is_plan_key(main) or ep.plan_of_url(base) in (ep.TOKEN_PLAN, ep.CODING_PLAN):
+        return "", base, "a Token/Coding Plan key has no embeddings; set DASHSCOPE_PAYG_API_KEY (pay-as-you-go)"
+    return main, base, ""
+
+
 def embedder_choices() -> list[dict]:
     """What the settings page offers: every preset, and whether it can work here."""
     out = []
@@ -270,6 +287,9 @@ def embedder_choices() -> list[dict]:
         elif pr["provider"] == "fastembed":
             ok = _fastembed_installed()
             why = "" if ok else "needs the fastembed package (re-run the installer)"
+        elif name == "dashscope":
+            key, _base, why = _dashscope_embedder_credentials()
+            ok = bool(key)
         else:
             ok = bool(os.environ.get(pr["key_env"]))
             why = "" if ok else f"needs {pr['key_env']} (API keys above)"
@@ -336,6 +356,9 @@ def _build_config() -> dict:
             cfg_e = {"model": embed_model, "embedding_dims": embed_dims,
                      "api_key": os.environ.get(pr["key_env"], "")}
             base = _provider_base_url(preset)
+            if preset == "dashscope":
+                ds_key, ds_base, _why = _dashscope_embedder_credentials()
+                cfg_e["api_key"], base = ds_key or cfg_e["api_key"], ds_base
             if base:
                 cfg_e["openai_base_url"] = base
             embedder = {"provider": "openai", "config": cfg_e}

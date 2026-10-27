@@ -195,8 +195,48 @@ model choices look like this:
 ```
 
 Each value is `"provider,model"`: `claude`, `ollama`, `dashscope` (aliases `qwen`,
-`modelstudio`, `alibaba`), `openai`, `google` (alias `gemini`). For mainland China
-set `llm.dashscope.base_url` to `https://dashscope.aliyuncs.com/compatible-mode/v1`.
+`modelstudio`, `alibaba`), `openai`, `google` (alias `gemini`).
+
+#### DashScope: key, plan and endpoint must match
+
+Alibaba Model Studio has three kinds of access, each with its **own key and its own base URL**
+(a mismatch answers 401). The installer detects which one a key belongs to (the `sk-sp-` prefix,
+then one free `GET /models` per documented endpoint) and writes `DASHSCOPE_BASE_URL` to `.env`;
+Settings > Connections has a plan/region picker and a Detect button. Non-interactive installs only
+detect, else keep the default (Singapore pay-as-you-go).
+
+| Access | Key | Region | `DASHSCOPE_BASE_URL` |
+|---|---|---|---|
+| Pay-as-you-go | workspace key | Singapore (default) | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` |
+| | | Beijing | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+| | | US (Virginia) | `https://dashscope-us.aliyuncs.com/compatible-mode/v1` |
+| | | Hong Kong | `https://cn-hongkong.dashscope.aliyuncs.com/compatible-mode/v1` |
+| Token Plan | `sk-sp-...` | Singapore | `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` |
+| | | Beijing | `https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1` |
+| Coding Plan | `sk-sp-...` | Singapore | `https://coding-intl.dashscope.aliyuncs.com/v1` |
+| | | Beijing | `https://coding.dashscope.aliyuncs.com/v1` |
+
+Workspace-dedicated hosts (`https://{WorkspaceId}.{region}.maas.aliyuncs.com/compatible-mode/v1`,
+also Tokyo and Frankfurt) are pay-as-you-go too; set `DASHSCOPE_BASE_URL` by hand. The table lives
+in `agenty_core/dashscope_endpoints.py`; nothing else hardcodes a host.
+
+**Terms caveat.** Alibaba restricts Token Plan and Coding Plan keys to interactive AI coding tools.
+Its docs list "automated scripts, application backends calling the API directly" as unsupported
+and call use outside that scope "a violation or abuse" (subscription suspension, key ban). agentY is
+a backend, so a plan key here may break Alibaba's terms; the installer says so. Also, the plans
+document only the chat APIs: **image/video generation** (`dashscope_generate`, the native
+`/api/v1`) and **embeddings** (`text-embedding-v4`, long-term memory) need a pay-as-you-go key.
+Set it beside the main one:
+
+```
+DASHSCOPE_API_KEY=sk-sp-...                # chat models (the plan)
+DASHSCOPE_BASE_URL=https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
+DASHSCOPE_PAYG_API_KEY=sk-...              # generation + embeddings
+DASHSCOPE_PAYG_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+```
+
+Generation and the DashScope embedder use the `PAYG` pair when set, else the main pair; a plan key
+alone is refused with a message naming `DASHSCOPE_PAYG_API_KEY`.
 
 A value resolves as: CLI flag → environment variable → `settings.local.json` →
 `settings.default.toml` → built-in default.

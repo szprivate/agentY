@@ -862,12 +862,28 @@ openai|OpenAI (GPT)|OPENAI_API_KEY|OpenAI API key|Create at https://platform.ope
 google|Google (Gemini)|GEMINI_API_KEY,GOOGLE_API_KEY|Gemini API key|Create at https://aistudio.google.com/apikey
 ollama|Ollama (local models, no key)||Ollama|'
 
+# DashScope sells pay-as-you-go, Token Plan and Coding Plan access: each has its own key AND its
+# own base URL (a mismatch answers 401). scripts/dashscope_setup.py detects the plan from the key
+# (sk-sp- prefix, then one free GET /models per documented endpoint), says which it picked, writes
+# DASHSCOPE_BASE_URL, and for a plan key explains the terms and offers a pay-as-you-go key
+# (DASHSCOPE_PAYG_API_KEY) for image/video generation and embeddings. Non-interactive: detect only.
+set_dashscope_endpoint() {   # $1 = .env  $2 = "embedder-only" or nothing
+  local env_file="$1" py tool
+  local -a args
+  py="$(venv_python "$PROJECT_ROOT")"; tool="$PROJECT_ROOT/scripts/dashscope_setup.py"
+  if [ ! -x "$py" ] || [ ! -f "$tool" ]; then info "DashScope endpoint not checked (no venv python or scripts/dashscope_setup.py)"; return 0; fi
+  args=("$tool" --env "$env_file")
+  [ "$NON_INTERACTIVE" = "1" ] && args+=(--non-interactive)
+  [ "${2:-}" = "embedder-only" ] && args+=(--embedder)
+  PYTHONIOENCODING=utf-8 "$py" "${args[@]}" || info "DashScope endpoint check failed (continuing). Set DASHSCOPE_BASE_URL in Settings > Connections if needed."
+}
+
 # Which providers to ask for keys. Ticked from the start: the ones whose key is
 # already in .env (Anthropic when there is none yet). Asks the key of each ticked
 # one only; the rest of .env is left alone.
 select_llm_providers() {   # $1 = .env
   local env_file="$1" id label keys q help k isset any=0 i
-  local -a P_KEYS=() P_Q=() P_HELP=()
+  local -a P_ID=() P_KEYS=() P_Q=() P_HELP=()
   SM_LABELS=(); SM_HINTS=(); SM_SEL=()
   while IFS='|' read -r id label keys q help; do
     [ -z "$id" ] && continue
@@ -876,7 +892,7 @@ select_llm_providers() {   # $1 = .env
     [ "$isset" = "1" ] && any=1
     SM_LABELS+=("$label"); SM_SEL+=("$isset")
     SM_HINTS+=("$([ "$isset" = "1" ] && echo "key already in .env")")
-    P_KEYS+=("$keys"); P_Q+=("$q"); P_HELP+=("$help")
+    P_ID+=("$id"); P_KEYS+=("$keys"); P_Q+=("$q"); P_HELP+=("$help")
   done <<EOF
 $LLM_PROVIDERS
 EOF
@@ -893,6 +909,7 @@ EOF
     # Gemini also reads GOOGLE_API_KEY: an existing one counts as set.
     for id in ${P_KEYS[$i]//,/ }; do is_placeholder "$(get_env_value "$env_file" "$id")" || { k="$id"; break; }; done
     read_secret "$env_file" "$k" "${P_Q[$i]}" "${P_HELP[$i]}" >/dev/null
+    [ "${P_ID[$i]}" = "dashscope" ] && set_dashscope_endpoint "$env_file"
   done
 }
 
@@ -1129,6 +1146,7 @@ select_embedder() {   # $1 = .env  $2 = settings.local.json
       val="$(read_secret "$env_file" "$pick_key" "$pick_key for the memory embedder" "")"
       if [ -z "$val" ]; then fail "That embedder needs $pick_key. Pick another, or enter the key."; continue; fi
     fi
+    [ "$pick" = "dashscope" ] && set_dashscope_endpoint "$env_file" embedder-only
     set_embedder_preset "$local_settings" "$pick"
     success "Memory embedder: $pick (settings.local.json)"
     [ "$pick" = "local" ] && info "Its model downloads into models/embeddings/ the first time memory is used."

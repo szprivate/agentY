@@ -8,6 +8,7 @@ Two-agent pipeline:
 """
 
 import datetime
+from agenty_core.dashscope_endpoints import DEFAULT_BASE_URL as _DASHSCOPE_DEFAULT_URL  # noqa: E402
 import json
 import logging
 import os
@@ -1123,7 +1124,7 @@ def _build_model(*, role: str, llm: str, system_prompt: str,
         OpenAIModel = capturing_openai_model()
         model_id = dashscope_model or str(_cfg("DASHSCOPE_MODEL", "dashscope", "model", default="qwen-plus"))
         base_url = str(_cfg("DASHSCOPE_BASE_URL", "dashscope", "base_url",
-                            default="https://dashscope-intl.aliyuncs.com/compatible-mode/v1"))
+                            default=_DASHSCOPE_DEFAULT_URL))
         api_key = os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("ALIBABA_API_KEY") or ""
         if not api_key:
             print(f"[agentY:{role}] WARNING: DASHSCOPE_API_KEY not set — Model Studio calls will fail.")

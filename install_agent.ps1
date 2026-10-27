@@ -947,6 +947,7 @@ function Select-Embedder {
             $val = Read-Secret $EnvFile $pick.key "$($pick.key) for the memory embedder" ""
             if (-not $val) { Write-Fail "That embedder needs $($pick.key). Pick another, or enter the key."; continue }
         }
+        if ($pick.id -eq "dashscope") { Set-DashScopeEndpoint -EnvFile $EnvFile -EmbedderOnly }
         Set-EmbedderPreset $LocalSettings $pick.id | Out-Null
         Write-Success "Memory embedder: $($pick.id) (settings.local.json)"
         if ($pick.id -eq "local") { Write-Info "Its model downloads into models\embeddings\ the first time memory is used." }
@@ -1057,6 +1058,25 @@ $Script:LlmProviders = @(
        text = ""; help = "" }
 )
 
+function Set-DashScopeEndpoint {
+    # DashScope sells pay-as-you-go, Token Plan and Coding Plan access: each has its own key AND its
+    # own base URL (a mismatch answers 401). scripts/dashscope_setup.py detects the plan from the
+    # key (sk-sp- prefix, then one free GET /models per documented endpoint), says which it picked,
+    # writes DASHSCOPE_BASE_URL, and for a plan key explains the terms and offers a pay-as-you-go
+    # key (DASHSCOPE_PAYG_API_KEY) for image/video generation and embeddings. -NonInteractive asks
+    # nothing: detect only.
+    param([string]$EnvFile, [switch]$EmbedderOnly)
+    $py = Get-VenvPython $ProjectRoot
+    $tool = Join-Path $ProjectRoot "scripts\dashscope_setup.py"
+    if (-not ((Test-Path $py) -and (Test-Path $tool))) { Write-Info "DashScope endpoint not checked (no venv python or scripts\dashscope_setup.py)"; return }
+    $env:PYTHONIOENCODING = "utf-8"
+    $a = @($tool, "--env", $EnvFile)
+    if ($NonInteractive) { $a += "--non-interactive" }
+    if ($EmbedderOnly) { $a += "--embedder" }
+    & $py @a | Out-Host
+    if ($LASTEXITCODE -ne 0) { Write-Info "DashScope endpoint check returned $LASTEXITCODE (continuing). Set DASHSCOPE_BASE_URL in Settings > Connections if needed." }
+}
+
 function Select-LlmProviders {
     # Which providers to ask for keys. Ticked from the start: the ones whose key is
     # already in .env (Anthropic when there is none yet). Asks the key of each
@@ -1082,6 +1102,7 @@ function Select-LlmProviders {
         # Gemini also reads GOOGLE_API_KEY: an existing one counts as set.
         foreach ($k in $p.keys) { if (-not (Test-Placeholder (Get-EnvValue $EnvFile $k))) { $key = $k; break } }
         $null = Read-Secret $EnvFile $key $p.text $p.help
+        if ($p.id -eq "dashscope") { Set-DashScopeEndpoint -EnvFile $EnvFile }
     }
 }
 

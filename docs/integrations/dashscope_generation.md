@@ -6,9 +6,12 @@ the DashScope bill and not on Comfy credits. Files go to ComfyUI's `agent/images
 with an `.agenty.json` sidecar.
 
 ## Endpoint
-`DASHSCOPE_BASE_URL` (the compatible-mode URL the LLM layer uses) is reduced to its host and
-`/api/v1` is appended; without it `https://dashscope-intl.aliyuncs.com/api/v1`. Both the workspace
-host (`ws-....maas.aliyuncs.com`) and the intl host were tested and behave the same.
+The native API needs a pay-as-you-go key (Token Plan / Coding Plan have none): `DASHSCOPE_PAYG_API_KEY`
+with `DASHSCOPE_PAYG_BASE_URL`, else `DASHSCOPE_API_KEY` with `DASHSCOPE_BASE_URL`. The compatible-mode
+URL is reduced to its host and `/api/v1` is appended (`agenty_core.dashscope_endpoints.native_url`);
+without any URL the default is Singapore, `https://dashscope-intl.aliyuncs.com/api/v1`. Both the
+workspace host (`ws-....maas.aliyuncs.com`) and the intl host were tested and behave the same. See
+"DashScope: key, plan and endpoint must match" in `docs/reference.md`.
 
 | Step | Request |
 |---|---|

@@ -15,6 +15,7 @@ Usage
 from __future__ import annotations
 
 import asyncio
+from agenty_core.dashscope_endpoints import DEFAULT_BASE_URL as _DASHSCOPE_DEFAULT_URL  # noqa: E402
 import contextlib
 import dataclasses
 import json
@@ -10036,7 +10037,7 @@ class Pipeline:
         if p in {"dashscope", "modelstudio", "qwen", "alibaba"}:
             base_url = os.environ.get("DASHSCOPE_BASE_URL") or str(
                 (llm.get("dashscope") or {}).get(
-                    "base_url", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"))
+                    "base_url", _DASHSCOPE_DEFAULT_URL))
             api_key = os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("ALIBABA_API_KEY") or ""
             return base_url, api_key
         if p in {"openai", "gpt"}:
