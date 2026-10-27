@@ -2319,6 +2319,7 @@ class Pipeline:
                 confirm_cost: True only once the user has agreed to the estimated cost.
             """
             from src.executor import execute_workflow as _execute_workflow
+            from src.executor import NO_OUTPUT_MARKER as _NO_OUTPUT_MARKER
             from agenty_core import partner_credits as _credits
             from src.utils import partner_cost_host as _pch
 
@@ -2357,11 +2358,16 @@ class Pipeline:
                 return json.dumps({**refusal, "workflow_path": workflow_path})
             _estimate = await asyncio.to_thread(_pch.estimate_of, [workflow_path])
             _spent_before = _credits.turn_total()
+            _why_empty = ""
             try:
                 async for _line in _execute_workflow(
                     workflow_path, brief, user_message="", verbose=self._verbose,
                     collected_paths=base, qa_briefing=self._qa_briefing,
                 ):
+                    if isinstance(_line, str) and _line.startswith("❌"):
+                        _why_empty = _line.lstrip("❌ ").strip()
+                    elif isinstance(_line, str) and _NO_OUTPUT_MARKER in _line:
+                        _why_empty = _line.split(_NO_OUTPUT_MARKER, 1)[1].strip()
                     # Surface each executor line in the chat panel too — this runs
                     # inside a tool call, so the pipeline's own event loop isn't
                     # draining meanwhile; the progress buffer (drained live by the
@@ -2390,8 +2396,12 @@ class Pipeline:
                     "chain: upload_image one of these paths and bind it to the next "
                     "stage's loader, then run that stage."
                     + self._products_note(products)
-                ) if new else "Workflow ran but produced no output files.",
+                ) if new else ("Workflow ran but produced no output files"
+                               + (": " + _why_empty if _why_empty else ".")),
             }
+            if not new and _why_empty:
+                result["status"] = "no_outputs"
+                result["reason"] = _why_empty
             if products.get("waiting"):
                 result["products_for"] = products["waiting"]
             if _estimate:

@@ -622,6 +622,60 @@ def _clear_comfyui_history() -> None:
         logger.debug("executor: could not clear ComfyUI history: %s", exc)
 
 
+NO_OUTPUT_MARKER = "[no output files]"
+
+
+def why_no_outputs(history: dict, workflow_path: str = "") -> str:
+    """Say what happened when a finished job left no output files.
+
+    "Done, no outputs" told the agent nothing, so it re-ran the same graph. The
+    history knows: the job errored, every output node was served from ComfyUI's
+    cache, a saver wrote nothing (the bEpic viewer with ``save_to_output`` off only
+    buffers), or no output node ran at all.
+    """
+    entries = [e for e in (history or {}).values() if isinstance(e, dict)]
+    messages: list = []
+    status_str = ""
+    for e in entries:
+        st = e.get("status")
+        if isinstance(st, dict):
+            status_str = str(st.get("status_str") or status_str)
+            messages.extend(st.get("messages") or [])
+    for m in messages:
+        if isinstance(m, (list, tuple)) and len(m) == 2 and m[0] == "execution_error"                 and isinstance(m[1], dict):
+            d = m[1]
+            return (f"ComfyUI execution error in node {d.get('node_id')} ({d.get('node_type')}): "
+                    f"{d.get('exception_message') or d.get('exception_type') or 'unknown'}")
+    if status_str == "error":
+        return "ComfyUI reported the job as failed (status error) but gave no execution_error message."
+    cached: set[str] = set()
+    for m in messages:
+        if isinstance(m, (list, tuple)) and len(m) == 2 and m[0] == "execution_cached"                 and isinstance(m[1], dict):
+            cached.update(str(n) for n in (m[1].get("nodes") or []))
+    out_nodes = {str(n) for e in entries for n in (e.get("outputs") or {})}
+    if out_nodes and out_nodes <= cached:
+        return ("All outputs were cached - nothing new was run: ComfyUI found the same inputs "
+                "as an earlier run and returned no new files. Change an input (prompt, seed, "
+                "image) that actually feeds the output node and run again.")
+    # Savers that run but write nothing: the viewer with save_to_output off.
+    silent: list[str] = []
+    try:
+        wf = json.loads(Path(str(workflow_path).strip()).read_text(encoding="utf-8"))
+        for nid, node in (wf.items() if isinstance(wf, dict) else []):
+            if isinstance(node, dict) and node.get("class_type") == "bEpicSendToViewer"                     and not (node.get("inputs") or {}).get("save_to_output"):
+                silent.append(str(nid))
+    except Exception:  # noqa: BLE001
+        pass
+    if silent:
+        return (f"The output node(s) {', '.join(silent)} (bEpicSendToViewer) have save_to_output "
+                "off, so they only buffer for the viewer and write no file. Turn save_to_output on.")
+    if out_nodes:
+        return (f"Output node(s) {', '.join(sorted(out_nodes))} ran but produced no image, video or "
+                "audio file.")
+    return ("No output node ran: the graph has no output (save/preview/viewer) node reached by a "
+            "wire, or its inputs were not connected.")
+
+
 def _extract_output_files(history: dict) -> list[dict]:
     """Return a flat list of ``{"filename", "subfolder", "type", "node_id"}`` dicts
     from a stripped history response.
@@ -772,7 +826,7 @@ async def _process_completed_job(
     # compared against; wire the input into the QA hook if that's what you want.
     output_files = _extract_output_files(history)
     if not output_files:
-        yield f"{pfx}⚠️ No output files found in ComfyUI history."
+        yield f"{pfx}⚠️ No output files found in ComfyUI history. {NO_OUTPUT_MARKER} " +             why_no_outputs(history, workflow_path)
         logger.warning("executor: no output files in history for prompt_id=%s", prompt_id)
         return
 
