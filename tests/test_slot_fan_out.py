@@ -58,6 +58,21 @@ HOOK = {"hook_node_id": "37", "targets": [
      "to_input_type": "STRING"}]}
 
 
+def setUpModule():
+    """Wiring a FILE onto a connection input asks the machine which loader it has
+    (``image_loader_node`` reads ComfyUI). The answer must not depend on whether
+    a ComfyUI happens to be running, so it is fixed here."""
+    global _loader_patch
+    _loader_patch = mock.patch.object(
+        ch, "image_loader_node",
+        side_effect=lambda path: {"class_type": "LoadImage", "inputs": {"image": path}})
+    _loader_patch.start()
+
+
+def tearDownModule():
+    _loader_patch.stop()
+
+
 def build(base, resolutions):
     labels: list = []
     prompts, notes = ch.build_batch(

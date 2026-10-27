@@ -131,6 +131,7 @@ class RunTest(_Case):
         collected: list = []
         touched = {"vram": 0, "history": 0}
         with mock.patch.object(executor, "_routed_to_farm", return_value=True), \
+                mock.patch.object(executor, "_get_comfyui_output_dir", return_value=self.dir), \
                 mock.patch.object(executor, "_submit_workflow", return_value="farm:J1"), \
                 mock.patch.object(executor, "_free_vram_for_comfyui",
                                   lambda: touched.__setitem__("vram", touched["vram"] + 1)), \
