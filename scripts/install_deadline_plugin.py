@@ -70,7 +70,7 @@ def find_repository(explicit: str = "") -> tuple:
     exe = _deadlinecommand()
     if exe:
         try:
-            out = subprocess.run([exe, "-GetRepositoryRoot"], capture_output=True, text=True,
+            out = subprocess.run([exe, "-GetRepositoryRoot"], capture_output=True, text=True, encoding="utf-8", errors="replace",
                                  timeout=60).stdout.strip()
             if out and not out.lower().startswith("error"):
                 return out.splitlines()[-1].strip(), "deadlinecommand -GetRepositoryRoot"

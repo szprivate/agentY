@@ -351,7 +351,7 @@ def _compatibility(manifest: dict, config: dict):
 
 def _version_of(executable: str):
     try:
-        proc = subprocess.run([executable, "--version"], capture_output=True, text=True, timeout=8)
+        proc = subprocess.run([executable, "--version"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8)
     except (OSError, subprocess.SubprocessError):
         return None
     found = re.search(r"\d+\.\d+(?:\.\d+)?", (proc.stdout or "") + (proc.stderr or ""))

@@ -49,7 +49,7 @@ def _runner(command: str) -> str:
 
 def _npm_latest(package: str) -> str:
     out = subprocess.run(["npm.cmd" if sys.platform == "win32" else "npm", "view", package, "version"],
-                         capture_output=True, text=True, timeout=30)
+                         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
     return out.stdout.strip().splitlines()[-1].strip() if out.returncode == 0 and out.stdout.strip() else ""
 
 

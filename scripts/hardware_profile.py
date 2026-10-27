@@ -38,7 +38,7 @@ HYBRID_MIN_MIB = int(5.5 * 1024)
 
 def _run(cmd: list, timeout: float = 8.0) -> str:
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        out = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
         return out.stdout if out.returncode == 0 else ""
     except Exception:  # noqa: BLE001 - a missing tool is an answer, not an error
         return ""

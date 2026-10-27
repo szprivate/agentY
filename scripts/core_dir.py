@@ -74,7 +74,7 @@ def make_link(link, target) -> None:
         except (ImportError, AttributeError, OSError):
             pass
         done = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)],
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, encoding="utf-8", errors="replace")
         if done.returncode != 0:
             raise OSError(done.stderr.strip() or done.stdout.strip() or "mklink failed")
         return

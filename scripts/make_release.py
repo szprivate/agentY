@@ -127,7 +127,7 @@ def channel(env=None, settings: Path | None = None) -> str:
 
 
 def _git(cwd, *args, check=True) -> str:
-    done = subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True)
+    done = subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True, encoding="utf-8", errors="replace")
     if check and done.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} in {cwd}: {done.stderr.strip() or done.stdout.strip()}")
     return done.stdout.strip()
@@ -251,7 +251,7 @@ def plugin_prepare(version: str, mcp: Path, dry_run: bool) -> tuple:
 def build_lock(python: str = sys.executable) -> str:
     """requirements.lock: every package pinned, for Windows, macOS and Linux, at
     the versions installed in this environment where it has them."""
-    frozen = subprocess.run(["uv", "pip", "freeze", "--python", python], capture_output=True, text=True, check=True).stdout
+    frozen = subprocess.run(["uv", "pip", "freeze", "--python", python], capture_output=True, text=True, encoding="utf-8", errors="replace", check=True).stdout
     keep = []
     for line in frozen.splitlines():
         if not line or line.startswith("-e ") or "@ file:" in line or line.lower().startswith("agenty-core"):
@@ -268,7 +268,7 @@ def build_lock(python: str = sys.executable) -> str:
         out = subprocess.run(
             ["uv", "pip", "compile", *sources, "--universal", "--python-version", "3.12",
              "-c", str(tmp / "installed.txt"), "--no-header", "--no-annotate", "-q"],
-            capture_output=True, text=True)
+            capture_output=True, text=True, encoding="utf-8", errors="replace")
         if out.returncode != 0:
             raise RuntimeError("uv pip compile failed:\n" + out.stderr.strip())
     header = (
@@ -338,11 +338,11 @@ def release(version: str, dry_run: bool = False, lock: bool = True, notes: str =
         # is the right answer.
         for line in dict.fromkeys((default_branch(path), STABLE)):
             moved = subprocess.run(["git", "-C", str(path), "push", "-q", "origin",
-                                    f"{tag}^{{commit}}:refs/heads/{line}"], capture_output=True, text=True)
+                                    f"{tag}^{{commit}}:refs/heads/{line}"], capture_output=True, text=True, encoding="utf-8", errors="replace")
             if moved.returncode != 0:
                 print(f"  ! {name}: could not move `{line}` to {tag}: {moved.stderr.strip()}")
         made = subprocess.run(["gh", "release", "create", tag, "--title", f"agentY {version}", "--notes", body,
-                               "--verify-tag"], cwd=str(path), capture_output=True, text=True)
+                               "--verify-tag"], cwd=str(path), capture_output=True, text=True, encoding="utf-8", errors="replace")
         print(f"  {name}: tagged, {default_branch(path)} and stable moved" + (", GitHub release made" if made.returncode == 0
                                                     else f" - GitHub release FAILED: {made.stderr.strip()}"))
     return 0

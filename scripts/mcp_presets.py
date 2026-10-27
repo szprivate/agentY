@@ -220,7 +220,7 @@ def warmup(preset: dict, timeout: int = 120) -> tuple[bool, str]:
     if exe is None:
         return False, f"{cmd[0]} is not installed"
     try:
-        run = subprocess.run([exe, *cmd[1:]], capture_output=True, text=True, timeout=timeout,
+        run = subprocess.run([exe, *cmd[1:]], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
                              stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired:
         return True, "fetched (it started instead of printing and was stopped)"

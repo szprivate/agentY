@@ -58,7 +58,7 @@ def card_bytes() -> int:
     """The memory of the largest NVIDIA card, 0 when there is none to ask."""
     try:
         out = subprocess.run(["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
-                             capture_output=True, text=True, timeout=6).stdout
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=6).stdout
         sizes = [int(float(line.strip())) for line in out.splitlines() if line.strip()]
         return max(sizes) * 2 ** 20 if sizes else 0
     except Exception as exc:  # noqa: BLE001
