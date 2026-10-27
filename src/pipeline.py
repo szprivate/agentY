@@ -6186,6 +6186,9 @@ class Pipeline:
         and re-drive (:meth:`_cut_off_input`).
         """
         try:
+            _msgs = getattr(self._orchestrator_agent, "messages", None)
+            if last["workflow_path"] not in work_guard.turn_targets(_msgs, msg_start):
+                return ""                    # an older file the turn only patched: not this turn's work
             from strands.types.exceptions import ContextWindowOverflowException
             stops = (MaxTokensReachedException, ContextWindowOverflowException)
         except Exception:  # noqa: BLE001

@@ -73,6 +73,36 @@ def last_file_edit(messages, start: int = 0) -> dict | None:
     return last
 
 
+def turn_targets(messages, start: int = 0) -> set[str]:
+    """Workflow files this turn itself produced: a ``workflow_path`` in the result
+    of any tool other than the edit tools (prepare_workflow, generate_new_workflow,
+    duplicate_workflow, fix_workflow_assembly ...). A file the turn merely patched
+    - an older one from a previous turn - is not the turn's target, and a failed
+    edit of it must not set off a repair, a hand-off or a run nobody asked for."""
+    names: dict[str, str] = {}
+    out: set[str] = set()
+    for msg in list(messages or [])[max(0, int(start or 0)):]:
+        if not isinstance(msg, dict):
+            continue
+        for block in msg.get("content") or []:
+            if not isinstance(block, dict):
+                continue
+            use = block.get("toolUse")
+            if isinstance(use, dict):
+                names[str(use.get("toolUseId"))] = str(use.get("name") or "")
+                continue
+            res = block.get("toolResult")
+            if not isinstance(res, dict) or names.get(str(res.get("toolUseId"))) in _EDIT_TOOLS:
+                continue
+            try:
+                data = json.loads(_result_text(block))
+            except (TypeError, ValueError):
+                continue
+            if isinstance(data, dict) and data.get("workflow_path"):
+                out.add(str(data["workflow_path"]))
+    return out
+
+
 def graph_note(unwired: dict, hints: dict | None = None) -> str:
     """The list for the note: one line per node, each unfed input with where it
     could be wired from."""

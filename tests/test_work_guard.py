@@ -112,7 +112,8 @@ class AtTheEndOfTheTurn(unittest.TestCase):
         self.assertEqual(self._ask(pipe, done=wg.MAX_REDRIVES), "")
 
     def test_a_file_that_did_not_validate_goes_to_the_repair_first(self):
-        msgs = [_use("c", "update_workflow"),
+        msgs = [_use("p", "prepare_workflow"), _res("p", {"status": "needs_fix", "workflow_path": "w.json"}),
+                _use("c", "update_workflow"),
                 _res("c", {"status": "error", "workflow_path": "w.json", "local_errors": ["Node 19: unconnected"]})]
         pipe = self._pipe(messages=msgs)
         calls = []
@@ -127,8 +128,29 @@ class AtTheEndOfTheTurn(unittest.TestCase):
         self.assertIn("signal_workflow_ready", note)
         self.assertEqual(self._ask(pipe), "")                 # once per file
 
-    def test_and_says_so_when_the_repair_could_not(self):
+    def test_an_older_file_the_turn_only_patched_is_never_repaired(self):
         msgs = [_use("c", "update_workflow"),
+                _res("c", {"status": "error", "workflow_path": "old.json", "local_errors": ["Node 22: bad"]})]
+        pipe = self._pipe(messages=msgs)
+        calls = []
+
+        async def repair(path, problems=None, **kw):
+            calls.append(path)
+            return {"status": "ready", "workflow_path": path}
+        pipe._run_fix_workflow_assembly = repair
+        self.assertEqual(self._ask(pipe), "")
+        self.assertEqual(calls, [])
+
+    def test_turn_targets_ignore_the_edit_tools_own_results(self):
+        msgs = [_use("c", "update_workflow"), _res("c", {"status": "error", "workflow_path": "old.json"}),
+                _use("p", "generate_new_workflow"), _res("p", {"workflow_path": "new.json"})]
+        self.assertEqual(wg.turn_targets(msgs), {"new.json"})
+        self.assertEqual(wg.turn_targets(msgs, start=2), {"new.json"})
+        self.assertEqual(wg.turn_targets(msgs, start=4), set())
+
+    def test_and_says_so_when_the_repair_could_not(self):
+        msgs = [_use("p", "prepare_workflow"), _res("p", {"status": "needs_fix", "workflow_path": "w.json"}),
+                _use("c", "update_workflow"),
                 _res("c", {"status": "error", "workflow_path": "w.json", "local_errors": ["Node 19: unconnected"]})]
         pipe = self._pipe(messages=msgs)
 
