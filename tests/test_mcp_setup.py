@@ -58,6 +58,8 @@ class Runner:
         for key, ans in self.answers.items():
             if key in text:
                 return ans(cmd) if callable(ans) else ans
+        if cmd[-1:] == ["--version"]:
+            return 0, "v1.0.0"       # a tool that runs answers its version
         return 0, ""
 
 
@@ -94,11 +96,25 @@ class Catalog(unittest.TestCase):
     def test_all_nine_presets_have_a_valid_recipe(self):
         want = {"blender", "houdini", "maya", "unity", "nuke", "after-effects", "premiere-pro", "davinci-resolve", "cavalry"}
         have = {p["id"]: p for p in mp.load_catalog() if p.get("setup")}
-        # The npx-based presets carry a one-step recipe that only checks for / installs Node.js (issue 78).
-        node_only = {pid for pid, p in have.items() if [(x["type"], x.get("tool")) for x in p["setup"]] == [("ensure_tool", "node")]}
-        self.assertEqual(want, set(have) - node_only)
+        self.assertLessEqual(want, set(have))
         for pid, p in have.items():
             self.assertEqual(ms.validate_recipe(p), [], pid)
+
+    def test_every_recipe_writes_the_entry_and_ends_with_a_connection_test(self):
+        """A recipe that only checks a tool proves nothing ("complete" with no server); every preset in the
+        catalog has to write its entry and then connect to it and list its tools."""
+        for p in mp.load_catalog():
+            with self.subTest(preset=p["id"]):
+                types = [s["type"] for s in p.get("setup") or []]
+                self.assertIn("ensure_entry", types)
+                self.assertEqual(types[-1] if types[-1] != "launch_and_wait" else types[-2], "test")
+                self.assertLess(types.index("ensure_entry"), max(i for i, t in enumerate(types) if t == "test"))
+
+    def test_first_run_downloads_get_a_long_enough_test(self):
+        for p in mp.load_catalog():
+            if p["server"].get("command") in ("npx", "uvx") and not any(x["type"] == "find_app" for x in p["setup"]):
+                test = [s for s in p["setup"] if s["type"] == "test"][-1]
+                self.assertGreaterEqual(test.get("timeout", 0), 120, p["id"])
 
     def test_pins_are_present(self):
         for p in mp.load_catalog():
@@ -261,6 +277,53 @@ class Tools(Tmp):
         rep = self.run_recipe(steps2, run=Runner({"--version": (0, "v22.1.0")}))
         self.assertEqual(self.status(rep)["n"], "needs_user")
         self.assertIn("24 or newer", rep["needs_user"][0])
+
+    def test_ensure_tool_found_must_run_and_report_a_version(self):
+        steps = [{"id": "t", "type": "ensure_tool", "tool": "uv"}]
+        rep = self.run_recipe(steps, which=lambda n: "/x/" + n, run=Runner({"--version": (0, "uv 0.5.1")}))
+        self.assertEqual(self.status(rep)["t"], "skipped")
+        self.assertIn("uv 0.5.1 found at /x/uv", rep["steps"][0]["message"])
+        # found, but it does not start (exit code) / answers nothing
+        for ans in ((1, "boom"), (0, ""), (127, "no such file")):
+            rep = self.run_recipe(steps, which=lambda n: "/x/" + n, run=Runner({"--version": ans}), platform="win32")
+            self.assertEqual(self.status(rep)["t"], "needs_user", ans)
+            self.assertIn("uv at /x/uv does not run", rep["needs_user"][0])
+            self.assertIn("winget install", rep["needs_user"][0])
+
+    def test_broken_tool_is_repaired_with_winget_when_allowed(self):
+        state = {"fixed": False}
+        def version(cmd):
+            return (0, "v22.1.0") if state["fixed"] else (1, "")
+        runner = Runner({"winget": lambda c: (state.update(fixed=True) or (0, "ok")), "--version": version})
+        steps = [{"id": "n", "type": "ensure_tool", "tool": "node"}]
+        rep = self.run_recipe(steps, which=lambda n: "/x/" + n, run=runner, allow_system=True, platform="win32")
+        self.assertEqual(self.status(rep)["n"], "done", rep)
+        self.assertIn("repaired node", rep["steps"][0]["message"])
+        self.assertIn("OpenJS.NodeJS.LTS", " ".join(next(c for c in runner.calls if c[0] == "winget")))
+        # dry run says so without running anything
+        r2 = Runner({"--version": (1, "")})
+        rep = self.run_recipe(steps, which=lambda n: "/x/" + n, run=r2, allow_system=True, dry_run=True, platform="win32")
+        self.assertEqual(self.status(rep)["n"], "planned")
+        self.assertIn("does not run", rep["steps"][0]["message"])
+        self.assertFalse([c for c in r2.calls if c[0] == "winget"])
+
+    def test_node_needs_npm_and_npx_next_to_it(self):
+        steps = [{"id": "n", "type": "ensure_tool", "tool": "node"}]
+        rep = self.run_recipe(steps, which=lambda n: None if n == "npx" else "/x/" + n, platform="win32")
+        self.assertEqual(self.status(rep)["n"], "needs_user")
+        self.assertIn("incomplete: npx is missing", rep["needs_user"][0])
+        runner = Runner({"npm --version": (1, "")})
+        rep = self.run_recipe(steps, which=lambda n: "/x/" + n, run=runner, platform="win32")
+        self.assertEqual(self.status(rep)["n"], "needs_user")
+        self.assertIn("npm does not run", rep["needs_user"][0])
+        ok = self.run_recipe(steps, which=lambda n: "/x/" + n)
+        self.assertEqual(self.status(ok)["n"], "skipped")
+        self.assertIn("node 1.0.0 found", ok["steps"][0]["message"])
+
+    def test_the_version_is_always_read_and_shown(self):
+        steps = [{"id": "g", "type": "ensure_tool", "tool": "git"}]
+        rep = self.run_recipe(steps, which=lambda n: "/x/" + n, run=Runner({"--version": (0, "git version 2.45.1.windows.1")}))
+        self.assertIn("git 2.45.1 found", rep["steps"][0]["message"])
 
     def test_ensure_tool_installs_with_winget_only_when_allowed(self):
         state = {"have": False}
@@ -832,7 +895,8 @@ class Draft(Tmp):
         self.assertFalse(self.cfg.exists())
         # and the runner in dry run on it
         rep = ms.run_setup(d["id"], preset=ms.normalise_draft(d) | {"local": True, "approved_hash": out["hash"]},
-                           dry_run=True, root=self.tmp / "r", config_path=self.cfg, which=lambda n: "/x/" + n)
+                           dry_run=True, root=self.tmp / "r", config_path=self.cfg, which=lambda n: "/x/" + n,
+                           run=Runner({"--version": (0, "0.5.1")}))
         self.assertEqual({s["status"] for s in rep["steps"]}, {"skipped", "planned"})
         self.assertFalse(self.cfg.exists())
 

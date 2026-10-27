@@ -168,7 +168,8 @@ class LocalizedCatalogText(unittest.TestCase):
         for pid in ("remotion", "playwright", "context7", "figma", "meshy"):
             with self.subTest(preset=pid):
                 steps = by_id[pid]["setup"]
-                self.assertEqual([(s["type"], s["tool"]) for s in steps], [("ensure_tool", "node")])
+                self.assertEqual([(s["type"], s.get("tool")) for s in steps],
+                                 [("ensure_tool", "node"), ("ensure_entry", None), ("test", None)])
         with mock.patch.object(sys, "platform", "darwin"), mock.patch.object(th, "which", return_value=None):
             text = {p["id"]: p for p in mp.load_catalog()}["remotion"]["notes"]
         self.assertNotIn("winget", text)
@@ -209,11 +210,12 @@ class EnsureToolPerOs(tms.Tmp):
     def test_macos_with_brew_installs_after_a_yes_and_not_before(self):
         state = {"have": False, "brew": True}
         runner = tms.Runner({"brew": lambda c: (state.update(have=True) or (0, "ok"))})
-        which = self.installed(state)
+        which = self.installed(state, only=("node", "npm", "npx"))
         # allowed up front (--allow-system)
         rep = self.run_recipe(self.NODE, which=which, run=runner, platform="darwin", allow_system=True)
         self.assertEqual(self.status(rep)["node"], "done")
-        self.assertEqual(runner.calls, [["brew", "install", "node"]])
+        self.assertEqual(runner.calls[0], ["brew", "install", "node"])   # then it is probed: node, npm, npx --version
+        self.assertTrue(all(c[-1] == "--version" for c in runner.calls[1:]))
         # asked, and the answer is no: nothing runs
         state["have"] = False
         asked = []
@@ -228,7 +230,7 @@ class EnsureToolPerOs(tms.Tmp):
         runner3 = tms.Runner({"brew": lambda c: (state.update(have=True) or (0, "ok"))})
         rep = self.run_recipe(self.NODE, which=which, run=runner3, platform="darwin", interactive=True, ask=lambda q: True)
         self.assertEqual(self.status(rep)["node"], "done")
-        self.assertEqual(runner3.calls, [["brew", "install", "node"]])
+        self.assertEqual(runner3.calls[0], ["brew", "install", "node"])
 
     def test_without_permission_a_dry_run_only_plans(self):
         runner = tms.Runner()
@@ -259,6 +261,8 @@ class EnsureToolPerOs(tms.Tmp):
             with self.subTest(where=rel):
                 home = self.tmp / rel.replace("/", "_")
                 make_exe(home / rel)
+                for sib in ("npm", "npx"):
+                    make_exe((home / rel).with_name(sib))
                 with mock.patch("shutil.which", return_value=None):
                     rep = self.run_recipe(self.NODE, which=None, platform="darwin", overrides={"home": str(home)})
                 self.assertEqual(self.status(rep)["node"], "skipped", rep)

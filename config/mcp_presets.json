@@ -132,7 +132,23 @@
       ],
       "setup_steps": "",
       "default_selected": true,
-      "notes": ""
+      "notes": "",
+      "setup": [
+        {
+          "id": "uv",
+          "type": "ensure_tool",
+          "tool": "uv"
+        },
+        {
+          "id": "entry",
+          "type": "ensure_entry"
+        },
+        {
+          "id": "test",
+          "type": "test",
+          "timeout": 120
+        }
+      ]
     },
     {
       "id": "magnific",
@@ -149,7 +165,18 @@
       "requires": [],
       "setup_steps": "",
       "default_selected": true,
-      "notes": ""
+      "notes": "",
+      "setup": [
+        {
+          "id": "entry",
+          "type": "ensure_entry"
+        },
+        {
+          "id": "test",
+          "type": "test",
+          "timeout": 60
+        }
+      ]
     },
     {
       "id": "remotion",
@@ -175,6 +202,15 @@
           "id": "node",
           "type": "ensure_tool",
           "tool": "node"
+        },
+        {
+          "id": "entry",
+          "type": "ensure_entry"
+        },
+        {
+          "id": "test",
+          "type": "test",
+          "timeout": 120
         }
       ],
       "setup_steps": "",
@@ -904,6 +940,15 @@
           "id": "node",
           "type": "ensure_tool",
           "tool": "node"
+        },
+        {
+          "id": "entry",
+          "type": "ensure_entry"
+        },
+        {
+          "id": "test",
+          "type": "test",
+          "timeout": 120
         }
       ],
       "setup_steps": "",
@@ -934,6 +979,15 @@
           "id": "node",
           "type": "ensure_tool",
           "tool": "node"
+        },
+        {
+          "id": "entry",
+          "type": "ensure_entry"
+        },
+        {
+          "id": "test",
+          "type": "test",
+          "timeout": 120
         }
       ],
       "setup_steps": "",
@@ -975,6 +1029,15 @@
           "id": "node",
           "type": "ensure_tool",
           "tool": "node"
+        },
+        {
+          "id": "entry",
+          "type": "ensure_entry"
+        },
+        {
+          "id": "test",
+          "type": "test",
+          "timeout": 120
         }
       ],
       "setup_steps": "",
@@ -996,7 +1059,18 @@
       "requires": [],
       "setup_steps": "",
       "default_selected": false,
-      "notes": "Authorize once in agentY Settings (browser OAuth, dynamic client registration). The hosted server has no bearer-token mode; for token auth use local `npx.cmd -y @notionhq/notion-mcp-server@2.5.2` with env NOTION_TOKEN (integration token from https://www.notion.so/profile/integrations)."
+      "notes": "Authorize once in agentY Settings (browser OAuth, dynamic client registration). The hosted server has no bearer-token mode; for token auth use local `npx.cmd -y @notionhq/notion-mcp-server@2.5.2` with env NOTION_TOKEN (integration token from https://www.notion.so/profile/integrations).",
+      "setup": [
+        {
+          "id": "entry",
+          "type": "ensure_entry"
+        },
+        {
+          "id": "test",
+          "type": "test",
+          "timeout": 60
+        }
+      ]
     },
     {
       "id": "github",
@@ -1023,7 +1097,18 @@
       "requires": [],
       "setup_steps": "",
       "default_selected": false,
-      "notes": "Create a fine-grained token with only the scopes needed (read-only is enough for browsing)."
+      "notes": "Create a fine-grained token with only the scopes needed (read-only is enough for browsing).",
+      "setup": [
+        {
+          "id": "entry",
+          "type": "ensure_entry"
+        },
+        {
+          "id": "test",
+          "type": "test",
+          "timeout": 60
+        }
+      ]
     },
     {
       "id": "fal",
@@ -1040,7 +1125,18 @@
       "requires": [],
       "setup_steps": "",
       "default_selected": false,
-      "notes": "Authorize once in agentY Settings (browser sign-in). If OAuth fails in agentY, a web-search snippet described a header-key mode on https://mcp.fal.ai/mcp (Authorization bearer key from https://fal.ai/dashboard/keys); sources conflict, test the OAuth entry first."
+      "notes": "Authorize once in agentY Settings (browser sign-in). If OAuth fails in agentY, a web-search snippet described a header-key mode on https://mcp.fal.ai/mcp (Authorization bearer key from https://fal.ai/dashboard/keys); sources conflict, test the OAuth entry first.",
+      "setup": [
+        {
+          "id": "entry",
+          "type": "ensure_entry"
+        },
+        {
+          "id": "test",
+          "type": "test",
+          "timeout": 60
+        }
+      ]
     },
     {
       "id": "meshy",
@@ -1076,6 +1172,15 @@
           "id": "node",
           "type": "ensure_tool",
           "tool": "node"
+        },
+        {
+          "id": "entry",
+          "type": "ensure_entry"
+        },
+        {
+          "id": "test",
+          "type": "test",
+          "timeout": 120
         }
       ],
       "setup_steps": "",
@@ -1097,7 +1202,18 @@
       "requires": [],
       "setup_steps": "",
       "default_selected": false,
-      "notes": "Authorize once in agentY Settings (Comfy account OAuth). Headless alternative: auth `header`, headers {\"X-API-Key\":\"${COMFY_API_KEY}\"} with a key from https://platform.comfy.org/profile/api-keys (starts comfyui-)."
+      "notes": "Authorize once in agentY Settings (Comfy account OAuth). Headless alternative: auth `header`, headers {\"X-API-Key\":\"${COMFY_API_KEY}\"} with a key from https://platform.comfy.org/profile/api-keys (starts comfyui-).",
+      "setup": [
+        {
+          "id": "entry",
+          "type": "ensure_entry"
+        },
+        {
+          "id": "test",
+          "type": "test",
+          "timeout": 60
+        }
+      ]
     },
     {
       "id": "ayon",
@@ -1130,7 +1246,18 @@
       "requires": [],
       "setup_steps": "",
       "notes": "Server side, once, by an AYON admin: install the ayon-mcp addon on the AYON server and create a service for it (Services > New Service > AYON MCP Server); it then answers at https://<server>/api/mcp in tunnel mode. Use a service user's key with only the projects and rights the agent should have; set AYON_MCP_READ_ONLY on the service to start read-only. Without the server-side service: run the Docker image ynput/ayon-mcp (port 8088, /mcp) and point the URL there.",
-      "default_selected": false
+      "default_selected": false,
+      "setup": [
+        {
+          "id": "entry",
+          "type": "ensure_entry"
+        },
+        {
+          "id": "test",
+          "type": "test",
+          "timeout": 60
+        }
+      ]
     }
   ]
 }

@@ -560,21 +560,42 @@ def download_file(url: str, dest: Path, sha256: str = "", size_mb: float = 0, *,
 # ── step handlers ───────────────────────────────────────────────────────────
 
 def _version_of_tool(ctx: Ctx, tool: str) -> str:
-    rc, out = ctx.run([tool, "--version"], timeout=30)
+    rc, out = ctx.run([tool, "--version"], timeout=10)
     m = re.search(r"(\d+(?:\.\d+)+)", out or "")
     return m.group(1) if rc == 0 and m else ""
 
 
+# What must run next to a tool before it counts as installed: Node's presets start with npx, and npx is npm's.
+_COMPANIONS = {"node": ("npm", "npx")}
+
+
+def _tool_problem(ctx: Ctx, tool: str, path: str) -> tuple[str, str]:
+    """``(version, problem)``: the tool at *path* has to run and report a version (10 s), and for node so do
+    npm and npx. A file on the PATH that does not start is a broken install, not a found tool."""
+    have = _version_of_tool(ctx, tool)
+    if not have:
+        return "", f"{tool} at {path} does not run (no version answer from `{tool} --version`)"
+    for extra in _COMPANIONS.get(tool, ()):
+        if not ctx.tool_path(extra):
+            return have, f"{tool} {have} at {path} is incomplete: {extra} is missing"
+        if not _version_of_tool(ctx, extra):
+            return have, f"{tool} {have} at {path} is incomplete: {extra} does not run"
+    return have, ""
+
+
 def step_ensure_tool(ctx: Ctx, st: dict) -> dict:
-    """Find uv / node / npm / git, or install it the way THIS OS does (winget, brew), or say exactly what to run."""
+    """Find uv / node / npm / git and prove it works, or install / repair it the way THIS OS does (winget, brew),
+    or say exactly what to run. "Found" means the tool runs and reports a version (node: npm and npx too)."""
     tool = st["tool"]
     from agenty_core.tools.app_installs import version_tuple
     path = ctx.tool_path(tool)
+    broken = ""
     if path:
-        have = _version_of_tool(ctx, tool) if st.get("min_version") else ""
-        if st.get("min_version") and have and version_tuple(have) < version_tuple(st["min_version"]):
-            raise NeedsUser(f"{tool} {have} is installed, {st['min_version']} or newer is needed. {st.get('hint', '')}".strip())
-        return R(SKIPPED, f"{tool} {have} found at {path}".replace("  ", " "), path=path)
+        have, broken = _tool_problem(ctx, tool, path)
+        if not broken:
+            if st.get("min_version") and version_tuple(have) < version_tuple(st["min_version"]):
+                raise NeedsUser(f"{tool} {have} is installed, {st['min_version']} or newer is needed. {st.get('hint', '')}".strip())
+            return R(SKIPPED, f"{tool} {have} found at {path}", path=path, version=have)
     has_brew = bool(ctx.tool_path("brew")) if not ctx.platform.startswith("win") else False
     cmd = th.install_command(tool, ctx.platform, has_brew=has_brew, winget_id=st.get("winget") or "")
     text, is_cmd = th.install_hint(tool, ctx.platform, has_brew=has_brew, winget_id=st.get("winget") or "")
@@ -583,16 +604,21 @@ def step_ensure_tool(ctx: Ctx, st: dict) -> dict:
     if st.get("hint") and not cmd:
         todo += f" ({st['hint']})"
     if ctx.dry_run:
-        return R(PLANNED, f"{tool} is missing; would run: {how}" if ctx.allow_system and cmd else f"{tool} is missing; needs: {how}")
-    permitted = ctx.allow_system or bool(ctx.interactive and ctx.ask and ctx.ask(f"{tool} is not installed. Install it system-wide with: {how} ?"))
+        what = broken or f"{tool} is missing"
+        return R(PLANNED, f"{what}; would run: {how}" if ctx.allow_system and cmd else f"{what}; needs: {how}")
+    lead = f"{broken}." if broken else f"{tool} is not installed."
+    permitted = ctx.allow_system or bool(ctx.interactive and ctx.ask and ctx.ask(f"{lead} {'Repair' if broken else 'Install'} it system-wide with: {how} ?"))
     if not (permitted and cmd):
-        raise NeedsUser(f"{tool} is not installed. {todo}" + (" (then start agentY's setup again)" if cmd else ""))
+        raise NeedsUser(f"{lead} {todo}" + (" (then start agentY's setup again)" if cmd else ""))
     rc, out = ctx.run(cmd, timeout=900)
     if rc != 0 or not ctx.tool_path(tool):
         if rc == 0:
             raise NeedsUser(f"{tool} was installed; open a new terminal so it is on PATH, then set up again.")
         raise StepError(f"{cmd[0]} install failed (exit {rc}): {(out or '').strip().splitlines()[-1:] or ['']}")
-    return R(DONE, f"installed {tool}", path=ctx.tool_path(tool))
+    have, still = _tool_problem(ctx, tool, ctx.tool_path(tool))
+    if still:
+        raise NeedsUser(f"{still}, even after the install. Open a new terminal so the new install is on PATH, then set up again. {todo}")
+    return R(DONE, f"{'repaired' if broken else 'installed'} {tool} {have}", path=ctx.tool_path(tool), version=have)
 
 
 def step_find_app(ctx: Ctx, st: dict) -> dict:
