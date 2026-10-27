@@ -14,6 +14,7 @@ conversation the panel is in, and does what comes back reach the phone?
 """
 
 import queue
+import time
 import unittest
 from unittest import mock
 
@@ -57,6 +58,18 @@ class FakeClient:
              + " " + " ".join(m.get("text", "") for m in self.updated)
 
 
+class _Runs(list):
+    """The turns the fake pipeline ran. A turn runs on its own thread, so the
+    test can look before it has started (flaky under load); indexing waits."""
+
+    def __getitem__(self, i):
+        if isinstance(i, int):
+            deadline = time.time() + 5
+            while time.time() < deadline and len(self) <= max(i, -i - 1):
+                time.sleep(0.01)
+        return super().__getitem__(i)
+
+
 class SeamTest(unittest.TestCase):
 
     def setUp(self):
@@ -70,7 +83,7 @@ class SeamTest(unittest.TestCase):
         turn_bus.observe(self.bridge.on_turn_event)
         self.addCleanup(turn_bus.unobserve, self.bridge.on_turn_event)
         self.addCleanup(turn_bus._active.clear)
-        self.ran = []
+        self.ran = _Runs()
 
         # The pipeline, replaced by something that runs one scripted turn through
         # the REAL bus — which is the piece under test here.
