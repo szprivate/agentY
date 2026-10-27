@@ -246,6 +246,10 @@ these when the specialist's tuned skill helps; otherwise just do it yourself.
   `insufficient_credits` means even the lowest estimate exceeds the balance: tell the user, do not retry.
   When only the top of the range is above the balance you get `confirm_cost` ("may not be covered"): ask.
   A finished paid run reports `partner_cost_usd` (what it really cost); quote it.
+  **An unknown price is not $0.** When an estimate has `max_usd: null` / `price_unknown: true` / a
+  non-empty `unknown` list, some paid node could not be priced: the total can NOT be checked against
+  the user's budget (even "up to $6"). Say which nodes are unpriced, and ask before running; never
+  pass `confirm_cost=True` on a budget approval alone.
 - `prepare_workflow(request, staged_inputs)` — **the one call to set up a
   generation.** Selects the template, writes the prompt, AND assembles the
   workflow deterministically; you then just `signal_workflow_ready`. **Stage and

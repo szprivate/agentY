@@ -69,7 +69,7 @@ def estimate_of(paths: list[str]) -> dict | None:
     ensure_registered()
     from agenty_core import partner_credits as pc
     lo = hi = 0.0
-    paid = False
+    paid = unknown = False
     for p in paths:
         try:
             est = pc.estimate_workflow(json.loads(Path(p).read_text(encoding="utf-8")))
@@ -78,5 +78,10 @@ def estimate_of(paths: list[str]) -> dict | None:
         if est["paid"]:
             paid = True
             lo += est["min_usd"]
-            hi += est["max_usd"]
-    return {"min": round(lo, 4), "max": round(hi, 4)} if paid else None
+            hi += est.get("known_max_usd", est["max_usd"]) or 0.0
+            unknown = unknown or bool(est.get("price_unknown"))
+    if not paid:
+        return None
+    # An unpriced node: the top is unknown, never $0.
+    return {"min": round(lo, 4), "max": None if unknown else round(hi, 4),
+            **({"price_unknown": True} if unknown else {})}
