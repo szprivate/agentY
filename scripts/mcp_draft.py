@@ -21,6 +21,18 @@ import re
 import urllib.request
 from typing import Callable
 
+import sys  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+# Run as a script, ``scripts`` must be THIS checkout's folder: another folder called ``scripts`` earlier
+# on the path (a dependency's stray top-level folder, another checkout) would otherwise win the import.
+_ROOT_DIR = Path(__file__).resolve().parent.parent
+if not sys.path or sys.path[0] != str(_ROOT_DIR):
+    sys.path.insert(0, str(_ROOT_DIR))
+_pkg = sys.modules.get("scripts")
+if _pkg is not None and str(_ROOT_DIR / "scripts") not in [str(Path(p)) for p in (getattr(_pkg, "__path__", None) or [])]:
+    del sys.modules["scripts"]
+
 from scripts import mcp_setup as ms
 
 _UA = {"User-Agent": "agentY-recipe-draft"}

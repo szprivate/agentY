@@ -25,6 +25,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Run as a script, ``scripts`` must be THIS checkout's folder: another folder called ``scripts`` earlier
+# on the path (a dependency's stray top-level folder, another checkout) would otherwise win the import.
+_ROOT_DIR = Path(__file__).resolve().parent.parent
+if not sys.path or sys.path[0] != str(_ROOT_DIR):
+    sys.path.insert(0, str(_ROOT_DIR))
+_pkg = sys.modules.get("scripts")
+if _pkg is not None and str(_ROOT_DIR / "scripts") not in [str(Path(p)) for p in (getattr(_pkg, "__path__", None) or [])]:
+    del sys.modules["scripts"]
+
 try:   # imported as scripts.mcp_presets, or run as a script from scripts/
     from scripts import tool_hints as _hints
 except ImportError:
