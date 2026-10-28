@@ -1,4 +1,4 @@
-![agentY sidebar chat next to the ComfyUI graph](docs/images/agenty_logo.png)
+![agentY sidebar chat next to the ComfyUI graph](docs/images/agenty_logo_small.png)
 
 agentY ([aˈɡɛnt  ʏpsilɔn]) is an AI agent harness designed to assist with Visual Effects (VFX) work and image generation.
 
