@@ -31,7 +31,7 @@ git clone -b stable https://github.com/szprivate/agentY.git
 cd agentY
 ```
 
-### 2. Run the installer (recommended)
+### 2. Run the installer
 
 ```powershell
 .\install_agent.ps1     # Windows
