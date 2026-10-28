@@ -106,17 +106,22 @@ def _watch() -> None:
                     rq["dumped"] = True
                     slow.append((dict(rq), held))
         for rq, held in slow:
+            # Capture the stacks BEFORE writing anything: the stuck request may be
+            # released the moment the STALL line is visible, and a dump taken after
+            # that no longer shows the frame it was stuck in.
+            dump = _dump_all_threads(f"STALL DUMP http {rq['method']} {rq['path']} held={held:.1f}s")
             _write(f"STALL http {rq['method']} {rq['path']} held={held:.1f}s "
                    f"on {rq['thread_name']} (budget {_REQUEST_BUDGET:.0f}s) — dumping all threads")
-            _write(_dump_all_threads(f"STALL DUMP http {rq['method']} {rq['path']} held={held:.1f}s"))
+            _write(dump)
         for req_id, st, held in stalled:
+            dump = _dump_all_threads(
+                f"STALL DUMP req={req_id[:8]} phase={st['phase']} held={held:.1f}s"
+            )
             _write(
                 f"STALL req={req_id[:8]} phase={st['phase']} held={held:.1f}s "
                 f"(budget {_BUDGETS.get(st['phase'], _DEFAULT_BUDGET):.0f}s) — dumping all threads"
             )
-            _write(_dump_all_threads(
-                f"STALL DUMP req={req_id[:8]} phase={st['phase']} held={held:.1f}s"
-            ))
+            _write(dump)
             dump_tasks(req_id, f"stalled in {st['phase']} for {held:.0f}s")
 
 
