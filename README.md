@@ -1,10 +1,9 @@
-# agentY
+![agentY sidebar chat next to the ComfyUI graph](docs/images/agenty_logo.png)
 
-An AI agent that builds and runs [ComfyUI](https://github.com/comfyanonymous/ComfyUI) workflows from plain language. You chat with it in a **sidebar tab inside ComfyUI**; whatever it makes lands on your graph as a loader node, ready to wire into the next thing.
+agentY is an AI agent that builds and runs [ComfyUI](https://github.com/comfyanonymous/ComfyUI) workflows from plain language. You chat with it in a **sidebar tab inside ComfyUI**; whatever it makes lands on your graph as a loader node, ready to wire into the next thing.
 
 > 📖 **New here?** The [**Using agentY guide**](docs/using-agentY.md) is a screenshot-driven tour of everything below, and the [**video tutorials**](docs/tutorials.md) show the main features in about a minute each.
 
-![agentY sidebar chat next to the ComfyUI graph](docs/images/overview.png)
 
 ---
 
