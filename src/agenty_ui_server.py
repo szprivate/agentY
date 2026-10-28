@@ -439,7 +439,15 @@ def main() -> None:
         signal.signal(signal.SIGTERM, _handle)
     except (ValueError, AttributeError):
         pass  # SIGTERM not settable on some platforms/threads
-    stop.wait()
+    # Wake every few seconds to check the listener: a server thread that died
+    # left this process alive with the port closed, which looked like a hang.
+    from src.utils.agentY_server import server_failure
+    while not stop.wait(5.0):
+        why = server_failure()
+        if why:
+            print(f"[agenty-ui] FATAL: {why}. Exiting so the launcher can start a fresh host "
+                  f"(details in .logs/host.log).", file=sys.stderr)
+            sys.exit(3)
 
 
 if __name__ == "__main__":

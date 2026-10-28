@@ -62,6 +62,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import uuid
 from pathlib import Path
 
@@ -2782,9 +2783,9 @@ def _switch_model(args: list[str]) -> list[dict]:
 
     from src.agent import _DASHSCOPE_PROVIDERS, _OPENAI_PROVIDERS, _GEMINI_PROVIDERS
     from src.utils import custom_providers as _cprov
-    if provider not in ({"claude", "ollama"} | _DASHSCOPE_PROVIDERS | _OPENAI_PROVIDERS | _GEMINI_PROVIDERS
-                         | set(_cprov.load())):
-        return [_sys(f"❌ Unknown provider `{provider}`. Use `claude`, `ollama`, "
+    if provider not in ({"claude", "ollama", "strata"} | _DASHSCOPE_PROVIDERS | _OPENAI_PROVIDERS
+                         | _GEMINI_PROVIDERS | set(_cprov.load())):
+        return [_sys(f"❌ Unknown provider `{provider}`. Use `claude`, `ollama`, `strata`, "
                      "`dashscope`, `openai`, or `google`.")]
 
     # Resolve the target into the setting it writes and the roles it affects.
@@ -3245,6 +3246,21 @@ def _list_models_now() -> dict:
                 groups[entry["label"]] = []
     except Exception as exc:  # noqa: BLE001
         logger.debug("custom providers unavailable: %s", exc)
+
+    # Strata (a local model server, src/utils/strata.py): what it has loaded, and
+    # the configured model when it is not running - GPU sharing stops it for every
+    # render, and the menus must not lose it then.
+    try:
+        from src.utils import strata as _strata  # noqa: PLC0415
+        _st_ids: list[str] = []
+        if _port_open(_strata.config()["base_url"]):
+            _st_ids = [m["id"] for m in _strata.models(timeout=3.0)]
+        _st_conf = _strata.config()["model"]
+        if _st_conf not in _st_ids:
+            _st_ids.append(_st_conf)
+        groups[_strata.LABEL] = [[f"strata,{mid}", mid] for mid in _st_ids]
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Strata model list unavailable: %s", exc)
 
     # Ollama has no static fallback — its models are known only from a live query,
     # so any miss (daemon not up yet, a slow /api/tags under GPU load) drops the
@@ -5715,6 +5731,35 @@ def _build_app():
         body = request.get_json(silent=True) or {}
         return jsonify(test_custom_provider(str(body.get("id") or "").strip().lower()))
 
+    @app.route("/agentY/strata/test", methods=["POST", "OPTIONS"])
+    def strata_test_route():
+        # Settings > Strata > Test: GET /v1/models of the local server.
+        if request.method == "OPTIONS":
+            return "", 204
+        from src.utils import strata as _strata  # noqa: PLC0415
+        return jsonify(_strata.test())
+
+    @app.route("/agentY/strata/control", methods=["POST", "OPTIONS"])
+    def strata_control_route():
+        # Settings > Strata > Start / Stop (in the background; the page polls test).
+        if request.method == "OPTIONS":
+            return "", 204
+        from src.utils import strata as _strata  # noqa: PLC0415
+        body = request.get_json(silent=True) or {}
+        return jsonify(_strata.control(str(body.get("action") or "")))
+
+    @app.route("/agentY/strata/yield", methods=["POST", "OPTIONS"])
+    def strata_yield_route():
+        # The panel is about to queue the canvas (Queue button, prompt loop): when a
+        # role runs on Strata, it steps aside first. Returns at once when unused.
+        if request.method == "OPTIONS":
+            return "", 204
+        from src.utils import strata as _strata  # noqa: PLC0415
+        try:
+            return jsonify(_strata.yield_for_browser_queue())
+        except Exception as exc:  # noqa: BLE001 - the queue goes ahead regardless
+            return jsonify({"used": False, "stopped": False, "error": str(exc)})
+
     @app.route("/agentY/dashscope/detect", methods=["POST", "OPTIONS"])
     def dashscope_detect_route():
         # Settings > DashScope > Detect: plan + region of a key, by probing the documented endpoints.
@@ -6330,6 +6375,72 @@ def _register_with_comfyui(port: int = 0) -> None:
     threading.Thread(target=_do, name="agentY-register-host", daemon=True).start()
 
 
+_server_failed: str = ""   # set when the listener is gone for good; main() exits on it
+_SERVE_MAX_RESTARTS = 5
+
+
+def _host_log(msg: str) -> None:
+    """One line to .logs/host.log - the listener's own life, apart from the turn trace.
+
+    The console window is the only other place an error from the server thread
+    went, and nobody reads it after the fact.
+    """
+    line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n"
+    try:
+        path = _project_root() / ".logs" / "host.log"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(line)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _serve_resilient(host: str, port: int, app, make=None, max_restarts: int = _SERVE_MAX_RESTARTS,
+                     pause: float = 1.0) -> None:
+    """Serve until the process ends; rebuild the listener if it dies.
+
+    A listener that stops (bind failure, an error out of the accept loop) used to
+    leave the process alive and the port closed: the main thread kept waiting on
+    a daemon thread that was gone. Now the loop re-binds, and when it cannot, it
+    records ``_server_failed`` so main() exits with a clear line instead.
+    """
+    global _server_failed
+    if make is None:
+        from werkzeug.serving import make_server as make
+    attempts = 0
+    while True:
+        srv = None
+        try:
+            srv = make(host, port, app, threaded=True)
+            logger.info("agentY chat host ready on http://%s:%d", host, port)
+            _host_log(f"listening on {host}:{port}")
+            srv.serve_forever()
+            # serve_forever only returns after shutdown(); nobody calls it, so
+            # treat a return as the listener ending.
+            _host_log("serve_forever returned without a shutdown request")
+        except BaseException as exc:  # noqa: BLE001
+            logger.error("agentY server crashed: %s", exc, exc_info=True)
+            _host_log(f"listener died: {type(exc).__name__}: {exc}\n{traceback.format_exc()}")
+        finally:
+            try:
+                if srv is not None:
+                    srv.server_close()
+            except Exception:  # noqa: BLE001
+                pass
+        attempts += 1
+        if attempts > max_restarts:
+            _server_failed = f"listener on {host}:{port} died {attempts} times; giving up"
+            _host_log(_server_failed)
+            return
+        _host_log(f"re-binding {host}:{port} (attempt {attempts}/{max_restarts})")
+        time.sleep(pause)
+
+
+def server_failure() -> str:
+    """Why the listener is gone for good, or "" while it serves (or is retrying)."""
+    return _server_failed
+
+
 def start_agentY_server(agent, host: str = "127.0.0.1", port: int | None = None) -> bool:
     """Start the agentY bridge + chat host in a background daemon thread.
 
@@ -6387,13 +6498,7 @@ def start_agentY_server(agent, host: str = "127.0.0.1", port: int | None = None)
     _refresh_models_in_background()
 
     def _run():
-        try:
-            from werkzeug.serving import make_server
-            srv = make_server(host, port, app, threaded=True)
-            logger.info("agentY chat host ready on http://%s:%d", host, port)
-            srv.serve_forever()
-        except Exception as exc:
-            logger.error("agentY server crashed: %s", exc, exc_info=True)
+        _serve_resilient(host, port, app)
 
     _server_thread = threading.Thread(target=_run, name="agentY-bridge-server", daemon=True)
     _server_thread.start()
