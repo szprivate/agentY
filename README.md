@@ -48,25 +48,6 @@ agentY ([aˈɡɛnt  ʏpsilɔn]) is an AI agent harness designed to assist with V
 
 ---
 
-## What's new in 1.3
-
-- **3D apps** — Blender, Maya and Houdini are driven through `dcc_build` (one build script, run live in the open app or as a headless batch). `dcc_silhouette_check` compares proportions to the photo by numbers and gates the detail and look stages; `measure_reference` (MoGe) reads metric points, camera height and field of view from one photo.
-- **Photo to model** — the `model-from-reference` skill builds a model from a photo in stages. Demo: the St. Peter-Ording stilt house, modelled from one photo in Blender, rebuilt in Maya, destroyed in Houdini.
-- **Destruction** — the `dcc-destruction-houdini` skill: fracture, constraints, directed collapse, POP dust, Vellum cloth, flipbook.
-- **Reverse image search** — `reverse_image_search` asks Yandex and Bing (through your installed Chrome or Edge) for other photos of the same object. Optional; the installer offers it.
-- **Model routing** — `list_models` / `switch_model`, plus routing rules (Settings ▸ Models) that suggest a stronger model for certain skills or tool packs. Only models you have are named, and the agent asks before switching unless auto-switch is on.
-- **MCP presets** — add Blender, Maya, Houdini, Nuke, After Effects, Premiere Pro, DaVinci Resolve, Cavalry, AYON and more from the installer or Settings; `${VAR}` in a server URL is expanded.
-- **Installer** — LLM providers, MCP presets, reverse image search and the bEpic viewer are now set up in the installer ([Installation](#2-run-the-installer-recommended)).
-- **Settings** — API keys merged into one services view (pick the service first; unknown OpenAI-compatible services can be registered as custom LLM providers), empty keys hidden, a Deadline section, Slack tokens in the Slack section, and one allowed-users setting (`SLACK_ALLOWED_USERS`).
-- **Worlds and viewer** — World Labs Atlas worlds can be flown through in the viewer (WASD), Atlas concurrency limits are retried and explained, plus `render_camera_move`, `show_in_viewer`, a Gaussian splat trainer and an orbit rig for turntables.
-- **Deadline** — send ComfyUI workflows to a Deadline 10 farm and follow the job ([docs/setup/deadline.md](docs/setup/deadline.md)).
-- **Ayon (early)** — `ayon_*` tools read and write the Ayon addon's node data; publishing still needs you to press Publish in Ayon ([docs/dev/ayon.md](docs/dev/ayon.md)).
-- **Turn API** — another program can start a turn on a running agentY and read the result ([docs/integrations/turn-api.md](docs/integrations/turn-api.md)).
-- **agentY-mcp** — loads agentY's `.env` and offers the full shared tool set.
-- **Sturdier runs** — MCP sessions reconnect with per-call timeouts, cut-off turns carry on, and several downloads show as one bar in the run card.
-
----
-
 ## Requirements
 
 - **Windows**, or **macOS 14+ on Apple Silicon** (on a Mac run `xcode-select --install` first)
