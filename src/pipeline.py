@@ -2402,6 +2402,11 @@ class Pipeline:
             if not new and _why_empty:
                 result["status"] = "no_outputs"
                 result["reason"] = _why_empty
+                if _why_empty.startswith("ComfyUI stopped"):
+                    # ComfyUI died / hung mid-run: the reason already names any
+                    # partial (possibly truncated) file. Say it is not a retry case.
+                    result["status"] = "comfyui_stopped"
+                    result["message"] = _why_empty
             if products.get("waiting"):
                 result["products_for"] = products["waiting"]
             if _estimate:

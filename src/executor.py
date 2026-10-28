@@ -1077,6 +1077,13 @@ async def execute_workflow(
             # A deliberate stop, not a defect — do NOT record it or repair it.
             yield "🛑 Execution interrupted — not a workflow error; nothing to repair."
             return
+        if error_result.get("comfyui_stopped"):
+            # ComfyUI died / hung mid-run: not a workflow defect, so nothing to
+            # repair - say so plainly and hand back what is on disk.
+            error_msg = f"❌ {error_result.get('error')}"
+            logger.error("executor: %s", error_msg)
+            yield error_msg
+            return
         error_msg = f"❌ ComfyUI execution error: {error_result.get('error')}"
         logger.error("executor: %s", error_msg)
         yield error_msg
@@ -1248,6 +1255,11 @@ async def execute_workflows_batch(
                     # recording an error or triggering a heal.
                     await out_q.put(("line", f"{label}🛑 Execution interrupted — "
                                              f"skipping (not a workflow error)."))
+                    await out_q.put(("member", ("interrupted", wf_path, heals, None)))
+                    return
+                if error_result.get("comfyui_stopped"):
+                    # ComfyUI itself died / hung: healing the workflow cannot help.
+                    await out_q.put(("line", f"{label}❌ {error_result.get('error')}"))
                     await out_q.put(("member", ("interrupted", wf_path, heals, None)))
                     return
                 # The monitor already printed the node's own message when it had
