@@ -1,6 +1,23 @@
 ![agentY sidebar chat next to the ComfyUI graph](docs/images/agenty_logo.png)
 
-agentY is an AI agent that builds and runs [ComfyUI](https://github.com/comfyanonymous/ComfyUI) workflows from plain language. You chat with it in a **sidebar tab inside ComfyUI**; whatever it makes lands on your graph as a loader node, ready to wire into the next thing.
+agentY ([aˈɡɛnt  ʏpsilɔn]) is an AI agent harness designed to assist with Visual Effects (VFX) work and image generation.
+
+**Interface & Integration:**
+- Operates via its own side panel inside ComfyUI or through external applications like Claude Desktop.
+- Includes a detachable image, video, and 3D viewer directly within ComfyUI for real-time visual feedback.
+
+**Core Capabilities:**
+- Builds and drives ComfyUI workflows and multi-step image generation pipelines.
+- Controls 3D and VFX software (Blender, Maya, Houdini, Nuke) via Model Context Protocol (MCP) connections.
+- Creates motion graphics using Remotion and edits video content.
+- Trains LoRAs and Gaussian Splats through 3rd-party applications.
+- Generates entire 3D worlds from single images using WorldLabs Astra.
+
+**Extensibility:**
+- Easily install MCPs using preset settings or by instructing the agent directly.
+
+**LLM Compatibility:** 
+- Supports a wide range of providers, including Claude, GPT, Qwen, DeepSeek, and local inference options like Ollama and Strata.
 
 > 📖 **New here?** The [**Using agentY guide**](docs/using-agentY.md) is a screenshot-driven tour of everything below, and the [**video tutorials**](docs/tutorials.md) show the main features in about a minute each.
 
