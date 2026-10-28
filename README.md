@@ -272,6 +272,7 @@ Type `/` for the slash commands. Settings live in ComfyUI's **Settings → agent
 - [**Video tutorials**](docs/tutorials.md) — seven one-minute videos: install, panel and settings, tags and hooks, Atlas, motion graphics, Gaussian splats, LoRA training.
 - [**Execution modes**](docs/execution_modes.md) — local, hybrid or Comfy Cloud: where open-weight models run, what it costs, what the cloud cannot do.
 - [**Slack**](docs/setup/slack.md) — setting up the Slack bridge.
+- [**Strata**](docs/setup/strata.md) — a local model for the agents, sharing one GPU with ComfyUI.
 - [**Reference**](docs/reference.md) — architecture, ports, security, what the agent may run, model tiers, macOS notes.
 
 ---

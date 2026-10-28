@@ -194,8 +194,11 @@ model choices look like this:
 }
 ```
 
-Each value is `"provider,model"`: `claude`, `ollama`, `dashscope` (aliases `qwen`,
+Each value is `"provider,model"`: `claude`, `ollama`, `strata`, `dashscope` (aliases `qwen`,
 `modelstudio`, `alibaba`), `openai`, `google` (alias `gemini`).
+
+`strata` is a local model server (Qwen 3.6 35B on one GPU) that agentY stops before a render and
+starts again afterwards: [setup/strata.md](setup/strata.md).
 
 #### DashScope: key, plan and endpoint must match
 
@@ -255,7 +258,7 @@ the registry entry goes to `llm.custom_providers.<id>` in `config/settings.local
 ```
 
 The id is the lowercased service name and may not be a built-in provider name (`claude`, `anthropic`,
-`dashscope`/`qwen`/`alibaba`/`modelstudio`, `openai`/`gpt`, `google`/`gemini`, `ollama`, `bedrock`). A tier
+`dashscope`/`qwen`/`alibaba`/`modelstudio`, `openai`/`gpt`, `google`/`gemini`, `ollama`, `strata`, `bedrock`). A tier
 then reads `"mercury,<model id>"`. The model menus list the models from `GET {url}/models`; if that fails the
 provider is still offered and a model id can be typed. Under Connections the provider has a **Test** button
 and a **Remove** button (Remove drops the registry entry; the keys stay in `.env` until removed under

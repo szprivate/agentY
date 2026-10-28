@@ -527,6 +527,42 @@ think = false
 # is rendering or has something queued.
 unload_before_render = true
 
+# Strata (https://github.com/Niko1221/Strata): a local model server with an
+# OpenAI-compatible API. A tier names it like any provider:
+# "strata,qwen3.6-35b-a3b-ud-q4_k_xl". No key on localhost (STRATA_API_KEY in .env
+# if yours wants one); STRATA_BASE_URL in .env overrides base_url.
+# Guide: docs/setup/strata.md.
+[llm.strata]
+base_url = "http://127.0.0.1:8080/v1"
+# The model the menus offer when Strata is not running (its /v1/models lists the
+# loaded one when it is).
+model = "qwen3.6-35b-a3b-ud-q4_k_xl"
+max_tokens = 8192
+# Reasoning for EVERY Strata agent. Off by default, and it should stay off for
+# tool loops: with it on, Qwen 3.6 invented a tool call, took twice as long and
+# lost the prompt cache. Sent as chat_template_kwargs.enable_thinking; a role set
+# to think in [llm.thinking] still thinks.
+think = false
+# The model reads images (Qwen 3.6 does).
+vision = true
+# Start and stop it. launcher = the strata command (or a wrapper that sets its
+# data folders - see the guide); blank = "strata" on PATH. launch_args are what
+# "strata <args>" starts the model with; --parallel 1 on a 32 GB card.
+launcher = 'D:\AI\tools\strata\strata-d.cmd'
+launch_args = "launch --family qwen36 --model UD-Q4_K_XL --context 128k --parallel 1 --no-tui --yes"
+# Start Strata by itself when an agent needs it and it is not running.
+autostart = true
+# One GPU for Strata AND ComfyUI: Strata takes the whole card, so just before a
+# graph that needs the card is queued it is stopped (strata launch --stop), and
+# it is started again with the next agent call once ComfyUI's queue is empty.
+# Only when a role runs on Strata. false = it stays running (a second GPU).
+gpu_sharing = true
+# Seconds a start may take before the call fails (a first load can take minutes).
+start_timeout = 600
+# Seconds one call may wait for its answer. --parallel 1 serves one call at a
+# time and queues the rest, so agents that run side by side wait their turn.
+request_timeout = 1800
+
 [llm.anthropic]
 model = "claude-haiku-4-5"
 max_tokens = 16384

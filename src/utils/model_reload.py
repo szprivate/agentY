@@ -49,7 +49,7 @@ PROVIDERS = "__providers__"
 # An environment variable a model client reads when it is BUILT. A new API key does
 # not reach an agent already holding the old one, and no fingerprint of model
 # names can see it changed, so any of these changing rebuilds everything.
-_CLIENT_ENV_MARKERS = ("ANTHROPIC", "DASHSCOPE", "OPENAI", "GEMINI", "GOOGLE", "OLLAMA")
+_CLIENT_ENV_MARKERS = ("ANTHROPIC", "DASHSCOPE", "OPENAI", "GEMINI", "GOOGLE", "OLLAMA", "STRATA")
 
 
 def env_affects_clients(keys) -> bool:

@@ -1,7 +1,7 @@
 """Custom OpenAI-compatible LLM providers (Mercury, OpenRouter, Together, vLLM, LM Studio...).
 
 A provider agentY does not know is registered in the settings as
-``llm.custom_providers.<id> = {label, key_env, url_env, vision}``
+``llm.custom_providers.<id> = {label, key_env, url_env, vision, extra_body?}``
 (config/settings.local.json). The key and the URL stay in .env, under the
 variables named by ``key_env`` and ``url_env``. A tier then names it like any other
 provider: ``"mercury,model-id"``.
@@ -21,7 +21,7 @@ _ID = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 # sets are added to these at check time (reserved()).
 _STATIC_RESERVED = frozenset({
     "claude", "anthropic", "dashscope", "modelstudio", "qwen", "alibaba", "openai", "gpt",
-    "google", "gemini", "ollama", "bedrock", "azure", "vertex", "local", "none", "auto", "all",
+    "google", "gemini", "ollama", "strata", "bedrock", "azure", "vertex", "local", "none", "auto", "all",
 })
 
 
@@ -55,8 +55,13 @@ def validate(pid: str, entry: dict) -> str:
 
 
 def normalize(pid: str, entry: dict) -> dict:
-    return {"label": str(entry.get("label") or pid), "key_env": str(entry["key_env"]),
-            "url_env": str(entry["url_env"]), "vision": bool(entry.get("vision"))}
+    out = {"label": str(entry.get("label") or pid), "key_env": str(entry["key_env"]),
+           "url_env": str(entry["url_env"]), "vision": bool(entry.get("vision"))}
+    # Request fields of the provider's own, sent with every call (a vLLM or
+    # llama.cpp server's chat_template_kwargs, say). Only an object is kept.
+    if isinstance(entry.get("extra_body"), dict) and entry["extra_body"]:
+        out["extra_body"] = dict(entry["extra_body"])
+    return out
 
 
 def load(settings: dict | None = None) -> dict:

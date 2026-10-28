@@ -101,6 +101,14 @@ def supports_vision(spec: str) -> bool:
         pass
     if provider in ("claude", "anthropic", "bedrock", "google", "gemini"):
         return True
+    if provider == "strata":
+        # Strata's model says so in its /v1/models; the setting stands in for it
+        # (llm.strata.vision, on for Qwen 3.6).
+        try:
+            from src.utils import strata as _strata
+            return bool(_strata.config()["vision"])
+        except Exception:  # noqa: BLE001
+            return False
     try:
         from src.utils import custom_providers as _cp
         if (_cp.get(provider) or {}).get("vision"):

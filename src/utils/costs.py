@@ -226,19 +226,26 @@ def _env_price(model_id: str, provider: str) -> Optional[Tuple[float, float]]:
     return None
 
 
+# Providers whose models run on this machine: free. The third value of
+# _extract_meta ("is_ollama") means "local" - the name predates Strata.
+_LOCAL_PROVIDERS = frozenset({"ollama", "strata"})
+
+
 def _extract_meta(obj) -> Tuple[str, str, bool]:
     if hasattr(obj, "_brain") and obj._brain is not None:
         obj = obj._brain
 
     meta = getattr(obj, "_cost_meta", None)
     if isinstance(meta, dict):
-        return meta.get("provider", ""), meta.get("model_id", ""), bool(meta.get("is_ollama", False))
+        provider = meta.get("provider", "")
+        local = bool(meta.get("is_ollama", False)) or str(provider or "").lower() in _LOCAL_PROVIDERS
+        return provider, meta.get("model_id", ""), local
 
     model = getattr(obj, "model", None)
     if model is not None:
         model_id = getattr(model, "model_id", None) or getattr(model, "id", None) or ""
         provider = getattr(model, "provider", "") or ""
-        is_ollama = provider == "ollama"
+        is_ollama = str(provider).lower() in _LOCAL_PROVIDERS
         return provider, str(model_id or ""), is_ollama
 
     return "", "", False
@@ -299,7 +306,7 @@ def _load_pricing_overrides() -> dict:
 def get_model_prices_for(obj) -> Tuple[float, float]:
     """Return (input_usd_per_token, output_usd_per_token) for the model in *obj*.
 
-    Returns (0.0, 0.0) for Ollama models. Precedence: env var >
+    Returns (0.0, 0.0) for local models (Ollama, Strata). Precedence: env var >
     config/pricing.json (models) > built-in tables > config/pricing.json
     (provider_defaults) > built-in provider default.
     """
@@ -335,7 +342,7 @@ def get_model_prices_for(obj) -> Tuple[float, float]:
         return over["providers"][pk]
 
     # 5. Provider-level defaults
-    if provider in ("ollama",):
+    if provider in _LOCAL_PROVIDERS:
         return (0.0, 0.0)
     if "claude" in model_id.lower() or provider in ("claude", "anthropic"):
         return _mtok(3.00, 15.00)   # Sonnet-class default

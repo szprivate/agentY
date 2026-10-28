@@ -244,6 +244,16 @@ _DASHSCOPE_PROVIDERS = {"dashscope", "modelstudio", "qwen", "alibaba"}
 _OPENAI_PROVIDERS = {"openai", "gpt"}
 _GEMINI_PROVIDERS = {"google", "gemini"}
 from src.utils import custom_providers as _custom_providers  # noqa: E402
+# Models that run on this machine: no price, nothing billed ("is_ollama" in the
+# cost metadata predates the second one).
+_LOCAL_PROVIDERS = frozenset({"ollama", "strata"})
+# Every graph agentY queues passes agenty_core's prompt hook; Strata's steps the
+# local model aside when it holds the card (a no-op unless a role runs on Strata).
+try:
+    from src.utils import strata as _strata_mod  # noqa: E402
+    _strata_mod.install()
+except Exception:  # noqa: BLE001
+    pass
 
 
 class AnthropicModel(_BaseAnthropicModel):
@@ -1184,6 +1194,16 @@ def _build_model(*, role: str, llm: str, system_prompt: str,
             params=gm_params,
         )
         print(f"[agentY:{role}] Using Google Gemini — {model_id} (thinking={want_think})")
+    elif llm == "strata":
+        # Strata, a local model server (src/utils/strata.py): the OpenAI client with
+        # Qwen's thinking switch in the request, and every call through the gate
+        # that shares the GPU with ComfyUI.
+        from src.utils import strata as _strata  # noqa: PLC0415
+        _st = _strata.config()
+        model_id = dashscope_model or _st["model"]
+        _st_think = want_think or _provider_think("STRATA_THINK", "strata", "think")
+        model = _strata.build_model(model_id, max_tokens=max_tokens, think=_st_think)
+        print(f"[agentY:{role}] Using Strata (local, {_st['base_url']}) — {model_id} (thinking={_st_think})")
     elif llm in _custom_providers.load():
         # A registered OpenAI-compatible service (llm.custom_providers): the same
         # client as OpenAI, pointed at its own URL and key. The model id is the
@@ -1195,10 +1215,15 @@ def _build_model(*, role: str, llm: str, system_prompt: str,
         model_id = dashscope_model
         if not model_id:
             raise RuntimeError(f"{_cp['label']}: no model id - write the tier as \"{llm},<model id>\"")
+        _cp_params: dict = {"max_tokens": max_tokens or 8192}
+        if _cp.get("extra_body"):
+            # Fields of its own (llm.custom_providers.<id>.extra_body), e.g. a
+            # chat_template_kwargs switch a vLLM or llama.cpp server reads.
+            _cp_params["extra_body"] = dict(_cp["extra_body"])
         model = OpenAIModel(
             client_args={"api_key": api_key, "base_url": base_url},
             model_id=model_id,
-            params={"max_tokens": max_tokens or 8192},
+            params=_cp_params,
         )
         print(f"[agentY:{role}] Using {_cp['label']} (OpenAI-compatible, {base_url}) — {model_id}")
     else:
@@ -1260,7 +1285,7 @@ def _wrap_agent(*, role: str, llm: str, model, model_id: str, system_prompt: str
         "system_prompt": system_prompt,
         "tools": tools,
         "conversation_manager": SlidingWindowConversationManager(window_size=window_size),
-        "hooks": [TokenUsageHookProvider(role=role, is_ollama=(llm == "ollama"))],
+        "hooks": [TokenUsageHookProvider(role=role, is_ollama=(llm in _LOCAL_PROVIDERS))],
         # Disable Strands' default PrintingCallbackHandler.  Both entry points
         # consume agents via stream_async — Chainlit renders the yielded events
         # in the web UI, and the CLI (Pipeline.run) collects them into the
@@ -1349,7 +1374,7 @@ def _wrap_agent(*, role: str, llm: str, model, model_id: str, system_prompt: str
         agent._cost_meta = {
             "provider": llm,
             "model_id": model_id,
-            "is_ollama": (llm == "ollama"),
+            "is_ollama": (llm in _LOCAL_PROVIDERS),   # a local model: no bill
         }
         agent._is_claude = (llm != "ollama")
     except Exception:
