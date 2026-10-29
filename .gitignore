@@ -109,3 +109,23 @@ config/key_ages.json
 config/optional_deps.json
 config/users.json
 config/mcp_presets.local.json
+
+# ── Secrets audit 2026-10-29: things that must never be addable ─────────────
+# Key/credential files of any name, and private keys.
+keys*.txt
+*.pem
+*.p12
+*.pfx
+id_rsa*
+# Conversation / memory databases and archives of them: full chat history,
+# tool results (which have held .env contents) and prompts.
+memory.zip
+*.sqlite
+*.sqlite3
+*.db
+# Logs (message history, token logs, MCP server logs) and tool caches.
+/logs/
+.logs/
+.playwright-mcp/
+.cache/
+.remotion/
