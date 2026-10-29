@@ -236,7 +236,7 @@ class ThePrompt(unittest.TestCase):
 
 class ThePromptCheck(unittest.TestCase):
 
-    def _run(self, answers, paths=("a.png", "b.png", "clip.mp4"), prompts=None):
+    def _run(self, answers, paths=("a.png", "b.png", "clip.mp4"), prompts=None, checks=True):
         prompts = prompts or {"a.png": "a lighthouse keeper", "b.png": "a red fox in snow"}
         asked = []
 
@@ -245,8 +245,15 @@ class ThePromptCheck(unittest.TestCase):
             return {"shows": {"type": "noul", "noul": answers[len(asked) - 1]}}
         with _models("clef-flash"), _local(), mock.patch.object(dm, "ask", side_effect=ask), \
                 mock.patch.object(dm, "prompt_of_file", side_effect=lambda p: prompts.get(p, "")), \
-                mock.patch.object(dm, "_encoded", return_value="QUJD"):
+                mock.patch.object(dm, "_encoded", return_value="QUJD"), \
+                mock.patch("src.utils.self_check_guard.checks_on", return_value=checks):
             return dm.prompt_check(list(paths)), asked
+
+    def test_output_checks_off_means_no_check(self):
+        """Settings > Output checks > qa > enabled off: no picture is looked at."""
+        found, asked = self._run([0.04, 0.91], checks=False)
+        self.assertEqual(found, [])
+        self.assertEqual(asked, [])
 
     def test_a_picture_that_does_not_show_its_prompt_is_named(self):
         found, asked = self._run([0.04, 0.91])

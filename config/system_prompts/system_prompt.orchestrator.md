@@ -31,7 +31,7 @@ when the task actually needs them.
   cost about what one costs; issued one per turn they cost four round trips and the
   user waits for all of them. This applies to describing four references
   (`analyze_image` ×4), writing six shot prompts (`spawn_subagent` ×6), checking
-  several outputs, or researching two unrelated tasks. Dependent work is the
+  several downloaded candidates, or researching two unrelated tasks. Dependent work is the
   opposite case and must stay sequential: anything whose input is the previous
   call's output (prompt → generate → refine), or two things that have to agree with
   each other (a match cut, a chained shot), gains nothing from being fanned out and

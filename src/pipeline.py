@@ -94,7 +94,8 @@ from src.utils.debug_log import trace as _trace
 _ORCH_PARTIALS_DIR = Path(__file__).parent.parent / "config" / "system_prompts" / "orchestrator"
 # In this order, whichever of them a turn has: the same turns get the same text.
 _TURN_GUIDES = ("canvas_hooks", "review_halt", "canvas_nodes", "input_images", "project_memory",
-                "prompt_loop", "plan_approval", "autonomy", "model_routing")
+                "prompt_loop", "plan_approval", "autonomy", "model_routing",
+                "output_checks_off")
 _TURN_GUIDES_HEAD = "\n\n# For this kind of turn\n\n"
 
 # How many of a conversation's outputs each turn lists in full (the newest).
@@ -267,6 +268,21 @@ _MAX_LATE_REDRIVES = 5
 # How many times one turn is re-driven after the model was cut off (output limit /
 # window overflow) before the error is shown to the user.
 _MAX_CUT_OFF_REDRIVES = 3
+
+
+def _self_checks_off(user_text: str, session) -> bool:
+    """Start the turn's self-check guard; True when output checks are switched off.
+
+    The guard (src/utils/self_check_guard.py) reads this turn's message and the
+    outputs it produces from the turn's scope; the answer decides whether the
+    ``output_checks_off`` guide goes into the prompt.
+    """
+    try:
+        from src.utils import self_check_guard as _scg
+        _scg.begin_turn(user_text, lambda: list(getattr(session, "current_output_paths", None) or []))
+        return not _scg.checks_on()
+    except Exception:  # noqa: BLE001 - guidance, never a reason to lose a turn
+        return False
 
 
 def _interject_pending() -> bool:
@@ -2466,7 +2482,7 @@ class Pipeline:
             Kling, GPT Image, Nano Banana / Gemini image, Ideogram, Meshy, Veo,
             Runway ... Read the node's own schema, load the files, wire them to
             the right slots, add the save node, validate, run - in this ONE call
-            (then QA the outputs like any render). Do not search templates, call
+            (the outputs are staged like any render's). Do not search templates, call
             prepare_workflow or hand-build the graph for such a request.
 
             ``node_type``: the class name (``ByteDance2FirstLastFrameNode``) or the
@@ -7089,6 +7105,8 @@ class Pipeline:
         pin = ""
         # The guidance this turn's blocks call for, by name (_set_turn_guides).
         guides: list = []
+        if _self_checks_off(user_text, self._session):
+            guides.append("output_checks_off")
         if self._open_graph_mode():
             pin = _OPEN_GRAPH_NOTE + "\n\n"
         try:

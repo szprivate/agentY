@@ -19,7 +19,8 @@ count on Ollama next to a hosted provider. Each use is ``"auto"`` by default:
   a question only a local orchestrator gets wrong;
 * the *prompt check* is used whenever Ollama answers on this machine, whatever
   the orchestrator runs on - a hosted model renders pictures that miss their
-  prompt just as a local one does.
+  prompt just as a local one does. It is an output check, so it never runs while
+  output checks are switched off (``qa.enabled``), whatever it is set to.
 
 **The weights come on first use.** They are no part of any install. The first
 time a use is wanted and its model is not there, the download starts through
@@ -353,6 +354,11 @@ def prompt_check(paths, cfg: dict | None = None) -> list[dict]:
     ``[{"path", "prompt", "probability"}]``. Empty when all do, when none carries
     a prompt, or when there is no decision model to ask."""
     cfg = cfg or settings()
+    # Looking at finished pictures is an output check: Settings > Output checks
+    # > qa > enabled off means none runs on its own (src/utils/self_check_guard.py).
+    from src.utils.self_check_guard import checks_on
+    if not checks_on():
+        return []
     model = model_for("prompt_check", cfg)
     if not model:
         return []

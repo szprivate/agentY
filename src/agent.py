@@ -2504,6 +2504,13 @@ def create_orchestrator_agent(
         orch_hooks.append(SpliceFirstHook())
     except Exception:  # noqa: BLE001
         pass
+    # With output checks switched off, no analyze_image on its own fresh renders
+    # unless the user asked (src/utils/self_check_guard.py).
+    try:
+        from src.utils.self_check_guard import SelfCheckGuardHookProvider
+        orch_hooks.append(SelfCheckGuardHookProvider())
+    except Exception:  # noqa: BLE001
+        pass
 
     agent = _make_agent(
         role="orchestrator",
