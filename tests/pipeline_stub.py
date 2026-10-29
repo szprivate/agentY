@@ -173,6 +173,11 @@ def pipeline_stub(**over):
     base.update(over)
     ns = SimpleNamespace(**base)
     for name in _BOUND:
+        if name in over:
+            # The test handed in its own version (e.g. _canvas_full_graph=lambda:
+            # True). Binding the real method over it would make the test read
+            # this machine's settings instead, and pass or fail by machine.
+            continue
         fn = getattr(Pipeline, name)
         # A staticmethod takes no self; binding one would feed it the namespace.
         static = isinstance(inspect.getattr_static(Pipeline, name), staticmethod)
