@@ -20,7 +20,11 @@ Chat UI
     GET  /agentY/threads                       list saved conversations
     POST /agentY/threads                       create a thread            -> {id}
     GET  /agentY/threads/<id>                   thread messages + gallery
-    DELETE /agentY/threads/<id>                 delete a thread
+    DELETE /agentY/threads/<id>                 delete a thread (409 while a turn runs)
+    GET  /agentY/threads?detail=1               ... with size and first-message preview
+    GET  /agentY/threads/search?q=              title + message-content search
+    POST /agentY/threads/<id>/rename            {title}
+    POST /agentY/threads/delete                 {ids} bulk; running ones skipped
     POST /agentY/threads/clear                  delete all (keep ?current)
     POST /agentY/upload                         multipart image attachment -> {path}
     POST /agentY/chat        (SSE)              stream a turn; body {thread_id,message,image_paths}
@@ -5881,7 +5885,7 @@ def _build_app():
             body = request.get_json(silent=True) or {}
             tid = cs.create_thread(title=body.get("title") or "New chat")
             return jsonify({"id": tid})
-        threads_list = cs.list_threads()
+        threads_list = cs.list_threads_detail() if request.args.get("detail") else cs.list_threads()
         running = set(running_threads())
         if isinstance(threads_list, list):
             for t in threads_list:
@@ -5894,6 +5898,10 @@ def _build_app():
         if request.method == "OPTIONS":
             return "", 204
         if request.method == "DELETE":
+            # A conversation with a turn running is refused, not stopped: deleting
+            # under a live turn would have it write into a thread that is gone.
+            if tid in set(running_threads()):
+                return jsonify({"ok": False, "error": "a turn is running in this conversation; stop it first"}), 409
             cs.delete_thread(tid)
             _thread_brain_cache.pop(tid, None)
             return jsonify({"ok": True})
@@ -5918,6 +5926,39 @@ def _build_app():
                                       if float(m.get("created_at") or 0) > saved]
                                      if saved is not None else [])
         return jsonify(t)
+
+    @app.route("/agentY/threads/<tid>/rename", methods=["POST", "OPTIONS"])
+    def thread_rename(tid):
+        if request.method == "OPTIONS":
+            return "", 204
+        title = " ".join(str((request.get_json(silent=True) or {}).get("title") or "").split())[:120]
+        if not title:
+            return jsonify({"ok": False, "error": "title is required"}), 400
+        if cs.get_thread(tid) is None:
+            return jsonify({"ok": False, "error": "not found"}), 404
+        cs.rename_thread(tid, title)
+        return jsonify({"ok": True, "title": title})
+
+    @app.route("/agentY/threads/search", methods=["GET", "OPTIONS"])
+    def threads_search():
+        if request.method == "OPTIONS":
+            return "", 204
+        return jsonify(cs.search_threads(request.args.get("q", "")))
+
+    @app.route("/agentY/threads/delete", methods=["POST", "OPTIONS"])
+    def threads_delete():
+        """Bulk delete, one call. Conversations with a turn running are REFUSED
+        (listed under ``skipped``), the rest are deleted."""
+        if request.method == "OPTIONS":
+            return "", 204
+        ids = [str(i) for i in ((request.get_json(silent=True) or {}).get("ids") or []) if i]
+        running = set(running_threads())
+        skipped = [i for i in ids if i in running]
+        todo = [i for i in ids if i not in running]
+        n = cs.delete_threads(todo)
+        for i in todo:
+            _thread_brain_cache.pop(i, None)
+        return jsonify({"deleted": n, "deleted_ids": todo, "skipped": skipped})
 
     @app.route("/agentY/threads/<tid>/panel", methods=["POST", "OPTIONS"])
     def thread_panel(tid):

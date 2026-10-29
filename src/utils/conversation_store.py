@@ -252,6 +252,75 @@ def delete_thread(thread_id: str) -> None:
         conn.execute("DELETE FROM threads WHERE id=?", (thread_id,))
 
 
+def list_threads_detail(limit: int = 1000) -> list[dict[str, Any]]:
+    """Every thread with what the Manage-conversations page shows: message count,
+    the size of its messages (characters), and the first user message as a preview."""
+    init_db()
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT t.id, t.title, t.created_at, t.updated_at,
+                   (SELECT COUNT(*) FROM messages m WHERE m.thread_id = t.id) AS message_count,
+                   (SELECT COALESCE(SUM(LENGTH(m.content)), 0) FROM messages m
+                     WHERE m.thread_id = t.id) AS size_chars,
+                   (SELECT SUBSTR(m.content, 1, 200) FROM messages m
+                     WHERE m.thread_id = t.id AND m.role = 'user'
+                     ORDER BY m.id LIMIT 1) AS preview
+            FROM threads t
+            ORDER BY t.updated_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def search_threads(query: str, limit: int = 50) -> list[dict[str, Any]]:
+    """Threads whose title or any message contains *query* (case-insensitive).
+
+    A LIKE scan: conversations are a few hundred rows of text in a local file, so
+    this is cheap, and a snippet of the first matching message comes back with it.
+    """
+    q = (query or "").strip()
+    if not q:
+        return []
+    init_db()
+    like = "%" + q.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT t.id, t.title, t.updated_at,
+                   (SELECT SUBSTR(m.content, 1, 160) FROM messages m
+                     WHERE m.thread_id = t.id AND m.content LIKE ? ESCAPE '!'
+                     ORDER BY m.id LIMIT 1) AS snippet
+            FROM threads t
+            WHERE t.title LIKE ? ESCAPE '!'
+               OR EXISTS (SELECT 1 FROM messages m
+                           WHERE m.thread_id = t.id AND m.content LIKE ? ESCAPE '!')
+            ORDER BY t.updated_at DESC
+            LIMIT ?
+            """,
+            (like, like, like, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_threads(ids) -> int:
+    """Delete the given threads in one transaction. Returns how many existed."""
+    ids = [str(i) for i in (ids or []) if i]
+    if not ids:
+        return 0
+    init_db()
+    n = 0
+    with _connect() as conn:
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            cur = conn.execute(
+                "DELETE FROM threads WHERE id IN (%s)" % ",".join("?" * len(chunk)), chunk)
+            n += cur.rowcount or 0
+    return n
+
+
 def delete_all_threads(except_id: Optional[str] = None) -> int:
     """Delete every thread (optionally keeping *except_id*). Returns count deleted."""
     init_db()
