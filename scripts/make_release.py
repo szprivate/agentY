@@ -27,7 +27,9 @@ New work goes to each repository's `dev` branch first. A release takes the
 tested `dev` commits and moves the default branch (`main`; `master` in
 agentY-core and ComfyUI-ImageViewer) and `stable` to them, in all five repositories under one version
 number. Every repository is released at the commit it has checked out, which
-must already be pushed. Run the tests first; this does not.
+must already be pushed. Run the tests first; this does not. It does check, with
+scripts/check_committed_tree.py, that each HEAD as committed compiles (and that
+agentY's src.pipeline / src.agenty_ui_server import), and refuses otherwise.
 """
 from __future__ import annotations
 
@@ -301,6 +303,18 @@ def release(version: str, dry_run: bool = False, lock: bool = True, notes: str =
             problems.append(f"{name}: the checked-out commit is not pushed")
     if problems:
         print("Cannot release:\n  " + "\n  ".join(problems)); return 2
+
+    # What gets tagged is the commit, not this disk. A working tree can carry the
+    # uncommitted half of a change (v1.8.7-v1.8.10 shipped a src/pipeline.py that
+    # did not parse) or a folder whose case differs from the index; tests run here
+    # pass anyway. So check each HEAD as `git archive` exports it.
+    print("Committed trees (each HEAD exported, compiled, agentY imported):")
+    import check_committed_tree
+    broken = check_committed_tree.check_stack(dirs)
+    if broken:
+        print("  " + "\n  ".join(broken))
+        print("Cannot release: a committed tree is broken (see above) - commit what is missing."); return 2
+    print("  ok")
 
     print(f"Claude Code plugin (agentY-mcp):")
     ok, plugin_lines = plugin_prepare(version, dirs["agentY-mcp"], dry_run)

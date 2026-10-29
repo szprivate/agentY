@@ -76,6 +76,16 @@ It releases each repository at the commit it has checked out, writes
 `release.toml` and `requirements.lock`, tags, moves `main` and `stable`, and
 creates the GitHub releases (needs the `gh` CLI).
 
+Before any of that it checks what is committed, not what is on the disk:
+`scripts/check_committed_tree.py --stack` exports each repository's HEAD with
+`git archive`, compiles every `.py`, runs `node --check` on every `.js`/`.mjs`,
+checks that agentY's skill folders are named (case included) as their skills,
+and imports `src.pipeline` and `src.agenty_ui_server` against the exported
+agentY-core. A working tree can hold the uncommitted half of a change that the
+tests then pass on; v1.8.7–v1.8.10 shipped a `src/pipeline.py` that did not
+parse that way. A failing check stops the release, `--dry-run` too.
+`tests/test_committed_tree.py` runs the agentY part with the test suite.
+
 **The Claude Code plugin.** agentY-mcp is also a Claude Code plugin (tools, skills,
 agents, commands; audit in `docs/plugin_audit.md` there). Its `skills/` is a mirror of
 agentY's `skills/`, made by `scripts/sync_plugin_skills.py` (host-only skills are listed
