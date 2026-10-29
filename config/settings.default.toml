@@ -282,7 +282,8 @@ api_key_max_age_days = 30
 # this process: a program, evaluated Python, and code cloned from the internet.
 # The prompt appears in the agentY panel with the exact command, and offers
 # "allow once" or "allow for this session". Empty list = never ask.
-ask_before_tools = ["run_script", "iterate", "install_custom_node", "switch_model"]
+ask_before_tools = ["run_script", "iterate", "install_custom_node", "switch_model",
+                    "run_python_node", "dcc_build"]
 # How long a prompt waits for an answer before declining by itself.
 tool_prompt_timeout_seconds = 120
 # What to do when a tool needs approval and no panel is open to give it — a turn

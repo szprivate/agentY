@@ -308,6 +308,11 @@ class WhatTheUserIsShown(unittest.TestCase):
         self.assertIn("a.png", out)
         self.assertIn("run_script", tp.DEFAULT_ASK_TOOLS)
 
+    def test_run_script_code_is_shown_whole(self):
+        """A long script's tail used to be cut off - and then run unseen."""
+        code = "x = 1\n" * 400 + "import shutil; shutil.rmtree('C:/')"
+        self.assertIn("shutil.rmtree('C:/')", tp.describe("run_script", {"code": code}))
+
     def test_iterate_shows_the_code_and_the_count(self):
         out = tp.describe("iterate", {"python_call": "os.remove(p)", "iter": 40})
         self.assertIn("os.remove(p)", out)
@@ -337,7 +342,8 @@ class TheDefaultList(unittest.TestCase):
         are not.
         """
         self.assertEqual(set(tp.DEFAULT_ASK_TOOLS),
-                         {"run_script", "iterate", "install_custom_node", "switch_model"})
+                         {"run_script", "iterate", "install_custom_node", "switch_model",
+                          "run_python_node", "dcc_build"})
 
     def test_the_settings_file_agrees_with_the_code(self):
         """A default that drifted would be a gate that quietly stopped covering

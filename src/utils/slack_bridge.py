@@ -656,7 +656,16 @@ class SlackBridge:
         sent, missing, too_large = [], [], []
         for raw in paths or []:
             p = Path(str(raw))
-            if not p.is_file():
+            try:
+                from agenty_core.utils.path_guard import is_secret
+                secret = is_secret(p)
+            except Exception:  # noqa: BLE001
+                secret = False
+            if secret:
+                # .env, tokens, keys: never posted, whoever asked (a prompt-
+                # injected turn can ask for exactly this).
+                missing.append(f"{raw} (holds credentials - not sent)")
+            elif not p.is_file():
                 missing.append(str(raw))
             elif p.stat().st_size > limit:
                 too_large.append(str(p))

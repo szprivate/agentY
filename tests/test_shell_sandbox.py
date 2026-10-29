@@ -93,17 +93,22 @@ class WhatIsRefused(unittest.TestCase):
             with self.subTest(cmd=cmd):
                 argv, why = sandbox.check_command(cmd)
                 self.assertIsNone(argv, cmd)
-                self.assertIn("outside", why)
+                self.assertTrue("outside" in why or "credentials" in why, why)
 
-    def test_the_env_file_is_not_special_cased_and_does_not_need_to_be(self):
-        """.env IS inside the project, so `cat .env` passes the path check.
+    def test_the_env_file_is_refused_by_name(self):
+        """.env IS inside the project, so the path rule alone let `cat .env` through.
 
-        Recorded deliberately: the path rule is about where, not what, and the
-        thing standing between the agent and the key file is the approval prompt,
-        not this. Anyone reading these tests should know that.
+        It used to be recorded here as deliberate - the approval prompt was the
+        wall - but on a machine where run_script is not asked about, a turn did
+        read the keys. The bare name is now refused (agenty_core.utils.path_guard);
+        python -c can still spell it some other way, which is why every tool result
+        is also redacted on its way to the model.
         """
-        argv, _ = sandbox.check_command("cat .env")
-        self.assertIsNotNone(argv)
+        for cmd in ("cat .env", "type .env", "cat config/settings.local.json"):
+            with self.subTest(cmd=cmd):
+                argv, why = sandbox.check_command(cmd)
+                self.assertIsNone(argv, cmd)
+                self.assertIn("credentials", why)
 
 
 class ShellOperators(unittest.TestCase):

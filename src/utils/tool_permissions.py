@@ -40,7 +40,11 @@ from dataclasses import dataclass
 # process. Reading a file, searching the web and editing a graph are all
 # recoverable; running a program, evaluating Python and installing a package from
 # the internet are not, and the last of those runs code from a stranger.
-DEFAULT_ASK_TOOLS = ("run_script", "iterate", "install_custom_node", "switch_model")
+# run_python_node evaluates Python inside ComfyUI and dcc_build runs a script
+# inside Blender/Maya/Houdini (bpy and friends hold os and subprocess): both are
+# "evaluated Python" as much as iterate is.
+DEFAULT_ASK_TOOLS = ("run_script", "iterate", "install_custom_node", "switch_model",
+                     "run_python_node", "dcc_build")
 
 # How long a question stays on screen before it answers itself.
 DEFAULT_TIMEOUT = 120.0
@@ -96,7 +100,9 @@ def describe(tool_name: str, tool_input: dict) -> str:
         code = str(data.get("code", "") or "").strip()
         if code:
             args = str(data.get("args", "") or "").strip()
-            shown = code if len(code) <= 1200 else code[:1200] + " ... (+%d characters)" % (len(code) - 1200)
+            # All of it. The tail of a long script used to be cut off here and run
+            # unseen - approving the first 1200 characters approved the rest.
+            shown = code
             return "python (inline code)" + (f"  args: {args}" if args else "") + ": " + shown
         return str(data.get("command", "")).strip()
     if tool_name == "add_mcp_server" and data.get("summary"):

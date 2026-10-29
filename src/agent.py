@@ -1367,6 +1367,14 @@ def _wrap_agent(*, role: str, llm: str, model, model_id: str, system_prompt: str
         from src.utils.interject_hook import SpecialistInterjectHook
         if not any(isinstance(h, SpecialistInterjectHook) for h in _hooks):
             _hooks.append(SpecialistInterjectHook(role))
+    # Every agent, and LAST: after-tool callbacks run in reverse, so this masks
+    # secrets in a tool result before any other hook or the history sees it.
+    try:
+        from src.utils.redact_hook import RedactSecretsHook
+        if not any(isinstance(h, RedactSecretsHook) for h in _hooks):
+            _hooks.append(RedactSecretsHook())
+    except Exception as _rd_exc:  # noqa: BLE001
+        logging.getLogger("agentY.redact").warning("secret redaction not installed: %s", _rd_exc)
     agent_kwargs["hooks"] = _hooks
     agent = Agent(**agent_kwargs)
     # Attach light-weight cost metadata so callers can compute run cost.
