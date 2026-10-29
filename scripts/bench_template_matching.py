@@ -53,8 +53,8 @@ EXTRA: list[tuple[str, str | None, str | None]] = [
     ("wan 2.1 text to video", r"text_to_video_wan$|wan2\.1.*t2v|wan_vace_14B_t2v", r"^text_to_video_wan$"),
     ("WAN-2.2 first and last frame video", r"wan2_2_14B_flf2v|key-frames|looped_restyler",
      r"^video_wan2_2_14B_flf2v$"),
-    ("Qwen-Image-Edit-2511: replace the sky", r"2511|multiangle|^image_edit$|angles|systms", r"^image_qwen_image_edit_2511$"),
-    ("qwen image edit 2511, edit this photo: make it night", r"2511|multiangle|^image_edit$|angles|systms", r"^image_qwen_image_edit_2511$"),
+    ("Qwen-Image-Edit-2511: replace the sky", r"(?i)2511|multiangle|^image_edit$|angle|systms", r"^image_qwen_image_edit_2511$"),
+    ("qwen image edit 2511, edit this photo: make it night", r"(?i)2511|multiangle|^image_edit$|angle|systms", r"^image_qwen_image_edit_2511$"),
     ("Qwen Image 2512 text to image of a castle", r"2512", r"^image_qwen_Image_2512$"),
     ("qwen image edit 2509 edit: add a hat", r"2509|angles|image_to_real|light_migration", r"^image_qwen_image_edit_2509$"),
     # wrong / unknown versions: no pin
@@ -75,7 +75,10 @@ EXTRA: list[tuple[str, str | None, str | None]] = [
     # brands / families
     ("flux dev text to image of a cat", r"flux_?1?_?dev|flux_dev", r"^flux_dev_full_text_to_image$"),
     ("SDXL text to image of a lighthouse", r"sdxl", r"^image_sdxl_simple$"),
-    ("a z-image turbo image of a dog, 8 steps", r"z_?image_turbo|zimage_turbo", r"^image_z_image_turbo$"),
+    # basic_switch_node and story_refs_only are Z-Image Turbo text-to-image graphs too
+    # (main file z_image_turbo_bf16), as the harness label of EX03 counts them.
+    ("a z-image turbo image of a dog, 8 steps", r"z_?image_turbo|zimage_turbo|^basic_switch_node$|^story_refs_only$",
+     r"^image_z_image_turbo$"),
     ("FLUX.2 Klein image edit: change the jacket to red", r"klein|all_in_one", None),
     # written out by name
     ("use image_qwen_image_2512_with_2steps_lora for this", r"^image_qwen_image_2512_with_2steps_lora$",
