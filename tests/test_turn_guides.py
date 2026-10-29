@@ -148,3 +148,31 @@ class AClaudeOrchestrator(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WithARealAgentAndTheSkillsPlugin(unittest.TestCase):
+    """A Strands agent keeps its prompt as content blocks. Written back as one
+    string, the skills plugin's block was merged away, the plugin could not find
+    it and appended the skills list again: once per turn, for the life of the
+    host (night_20261029: 74k -> 330k tokens on the first call of a NEW thread)."""
+
+    def test_the_prompt_does_not_grow_from_turn_to_turn(self):
+        from strands import Agent
+        from strands.hooks import BeforeInvocationEvent
+        from strands.vended_plugins.skills import AgentSkills
+        plugin = AgentSkills(skills=[])
+        plugin._generate_skills_xml = lambda: "<available_skills>one</available_skills>"
+        agent = Agent(model=mock.MagicMock(stateful=False), system_prompt=BASE,
+                      plugins=[plugin], callback_handler=None)
+        p = pipeline_stub(_orchestrator_agent=agent)
+        sizes = []
+        for names in ([], ["canvas_hooks"], [], ["canvas_hooks"], []):
+            p._set_turn_guides(names)
+            plugin._on_before_invocation(BeforeInvocationEvent(agent=agent, invocation_state={}))
+            got = agent.system_prompt
+            self.assertEqual(got.count("<available_skills>"), 1)
+            self.assertEqual(got.count(pl._TURN_GUIDES_HEAD.strip()), 1 if names else 0)
+            sizes.append(len(got))
+        self.assertEqual(sizes[0], sizes[2])
+        self.assertEqual(sizes[2], sizes[4])
+        self.assertEqual(sizes[1], sizes[3])

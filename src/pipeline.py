@@ -6291,6 +6291,25 @@ class Pipeline:
         agent = getattr(self, "_orchestrator_agent", None)
         inline = os.environ.get("AGENTY_GUIDES_INLINE", "0") == "1" or self._orch_is_local()
         try:
+            # A Strands agent keeps its prompt as content blocks, and the skills
+            # plugin finds its own block again by exact match each turn. Writing
+            # the prompt back as ONE string merged that block away, so the plugin
+            # appended the skills list once more every turn: +3k tokens per turn,
+            # for the life of the host (74k -> 330k per call over one night).
+            # So: the guidance is a block of its own, and the others stay as they are.
+            content = getattr(agent, "system_prompt_content", None)
+            if isinstance(content, list) and content and all(isinstance(b, dict) for b in content):
+                had = getattr(agent, "_turn_guides_text", "") or ""
+                blocks = [b for b in content if not (had and b.get("text") == had)]
+                texts = [] if inline else [
+                    t for t in (_orch_partial(n) for n in _TURN_GUIDES if n in names) if t]
+                block = (_TURN_GUIDES_HEAD + "\n\n".join(texts)) if texts else ""
+                if block:
+                    blocks.append({"text": block})
+                if blocks != content:
+                    agent.system_prompt = blocks
+                agent._turn_guides_text = block
+                return bool(block) or not inline
             prompt = agent.system_prompt
             if inline:
                 # Whatever an earlier turn (on another model) put there comes out.
