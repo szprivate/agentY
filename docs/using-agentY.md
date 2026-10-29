@@ -353,6 +353,13 @@ standard viewer: the installer puts it beside the sidebar extension and
   for a range), right-click ▸ **Approve for agentY**. The review collector is filled
   with exactly those and the run continues, as if you had edited the collector and
   pressed **Continue with these**.
+- **Point at renders.** Whatever you pick in the history (<kbd>Ctrl</kbd>+click
+  several, pin two in a comparison, or click one older snapshot open) goes with
+  your next message: "use the selected ones as references", "upscale this one" -
+  the agent gets their file paths, what agentY recorded each to be, and the run
+  that made it. ComfyUI's own **Media Assets** sidebar works the same way. A strip
+  you have not touched and a closed viewer send nothing. Mid-turn the agent reads
+  the pick again with `get_history_selection`.
 
 ### Tagging a reference
 

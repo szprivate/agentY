@@ -88,6 +88,8 @@ _BOUND = (
     "_orch_is_local",
     "_drop_old_guides",
     "_build_orchestrator_input",
+    "_history_selection",
+    "_describe_history_selection",
     "_format_image_gallery",
     "_unfinished_intent_input",
     "_unfinished_work_input",

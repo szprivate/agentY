@@ -6338,6 +6338,10 @@ class Pipeline:
                 pins.add("graph")
         except Exception:  # noqa: BLE001
             pins.add("graph")
+        # Something picked in a history panel: get_history_selection (in the
+        # viewer pack) re-reads it mid-turn.
+        if self._history_selection().get("items"):
+            pins.add("viewer")
         try:
             agent._tool_packs_pinned = pins
         except Exception:  # noqa: BLE001
@@ -6965,6 +6969,46 @@ class Pipeline:
             )
         return lines
 
+    def _history_selection(self) -> dict:
+        """This turn's history-panel pick, resolved to files once per turn.
+
+        The panel sends it with the message (``history_selection``; the server
+        puts it on the turn's scope); :mod:`agenty_core.tools.history_selection`
+        resolves paths, runs and sidecar roles. ``{}`` when nothing is picked.
+        """
+        try:
+            from agenty_core.utils import turn_scope
+            scope = turn_scope.current()
+            done = scope.get("history_selection_resolved")
+            if isinstance(done, dict):
+                return done
+            raw = scope.get("history_selection")
+            res: dict = {}
+            if isinstance(raw, dict) and raw:
+                from agenty_core.tools.history_selection import resolve
+                res = resolve(raw)
+            scope.set("history_selection_resolved", res)
+            return res
+        except Exception as exc:  # noqa: BLE001 - never cost the user a turn
+            if getattr(self, "_verbose", False):
+                print(f"pipeline: history selection skipped ({exc}).")
+            return {}
+
+    def _describe_history_selection(self) -> str:
+        """The ``[HISTORY SELECTION]`` block, or "" when nothing is picked."""
+        res = self._history_selection()
+        if not res.get("items"):
+            return ""
+        try:
+            from agenty_core.tools.history_selection import describe_lines
+            where, lines = describe_lines(res)
+        except Exception:  # noqa: BLE001
+            return ""
+        text = _orch_partial("history_selection")
+        if not (text and lines):
+            return ""
+        return text.replace("{where}", where or "a history panel").replace("{list}", lines)
+
     def _describe_canvas_selection(self) -> str:
         """Render the selected canvas nodes + their params as a context block.
 
@@ -7109,6 +7153,16 @@ class Pipeline:
                 pin += sel_block + "\n\n"
             if graph_block:
                 pin += graph_block + "\n\n"
+
+        # What the user picked in a history panel (the bEpic viewer's strip,
+        # ComfyUI's assets sidebar): "use the selected ones" points at files, not
+        # nodes. Present only when something is picked (history_selection.md).
+        hist_block = self._describe_history_selection()
+        if hist_block:
+            pin += hist_block + "\n\n"
+            if any(i.get("path") and i.get("kind") in ("image", "video")
+                   for i in self._history_selection().get("items") or []):
+                guides.append("input_images")
 
         # Several workflows open in ComfyUI's tabs. Silent for the ordinary
         # single-tab case (see describe_open_workflows) — it speaks up only when

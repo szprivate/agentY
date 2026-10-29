@@ -164,6 +164,9 @@ from agenty_core.tools.dashscope_generate import dashscope_generate, dashscope_f
 # Load files into the bEpic viewer on request (agenty_core.tools.show_in_viewer);
 # the default tab follows Settings > media_nodes.viewer_tab.
 from agenty_core.tools.show_in_viewer import show_in_viewer, set_default_tab_provider as _set_viewer_tab  # noqa: F401,E402
+# What the user picked in a history panel (the bEpic viewer's strip, ComfyUI's assets
+# sidebar), read live mid-turn (agenty_core.tools.history_selection).
+from agenty_core.tools.history_selection import get_history_selection  # noqa: F401,E402
 # Fly a camera through a 3D scene in the viewer and render the move (agenty_core.tools.previz_shot).
 from agenty_core.tools.previz_shot import render_camera_move  # noqa: F401,E402
 # Editable motion graphics: a scene file (data) checked, previewed and rendered with Remotion.
@@ -266,6 +269,8 @@ _SHARED_CORE_TOOLS = [
     "dashscope_generate", "dashscope_fetch",
     # show files in the bEpic viewer, open an edit in its Edit panel
     "show_in_viewer",
+    # what the user picked in a history panel, read live
+    "get_history_selection",
     # animate a camera through a 3D scene in the viewer and render the move
     "render_camera_move",
     # editable motion graphics: write a *.mgscene.json scene, check it, look at stills, render it with Remotion
@@ -653,6 +658,7 @@ ORCHESTRATOR_TOOLS: list = [
     dashscope_generate,  # image/video on the user's own DashScope key (not Comfy credits)
     dashscope_fetch,     # collect one that timed out
     show_in_viewer,      # "show me clip 3 in the viewer" / "open the edit"
+    get_history_selection,  # "use the selected ones": what is picked in a history panel right now
     render_camera_move,  # fly a camera through a 3D scene in the viewer, render the move (control video)
     mg_scene_validate,   # motion graphics: check a *.mgscene.json scene
     mg_scene_preview_frame,  # ... look at stills / a contact sheet of it

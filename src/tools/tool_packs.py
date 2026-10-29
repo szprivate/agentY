@@ -116,8 +116,9 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
     "dashscope": ("make an image or video on the user's own DashScope key (not Comfy credits) and "
                   "collect one that timed out",
                   ("dashscope_generate", "dashscope_fetch")),
-    "viewer": ("show files in the bEpic viewer, or in the chat panel",
-               ("show_in_viewer", "show_in_panel")),
+    "viewer": ("show files in the bEpic viewer, or in the chat panel; read again what the user has "
+               "picked in a history panel (pinned whenever something is)",
+               ("show_in_viewer", "show_in_panel", "get_history_selection")),
     "web_more": ("find reference IMAGES on the web, find other photos of the SAME thing from one picture "
                  "(reverse image search), or hand a web search to the scout "
                  "(web_search, read_web_page, download_image and run_info are always in your list)",
