@@ -7192,6 +7192,16 @@ class Pipeline:
             if tabs_block:
                 pin += tabs_block + "\n\n"
 
+        # `#tag` in the message itself (the sidebar composer has the same `#` menu as
+        # the hook prompts): say which node / file each named reference is.
+        try:
+            from src.utils.chat_tags import describe_chat_tags
+            tags_block = describe_chat_tags(user_text, getattr(self, "_canvas_graph", None))
+            if tags_block:
+                pin += tags_block + "\n\n"
+        except Exception:  # noqa: BLE001
+            pass
+
         # Input-image handling guidance — attached only when the user has input
         # images to stage or generated images to reference (else it's dead weight).
         has_input_images = bool(getattr(self._session, "last_user_input_images", None)) \
