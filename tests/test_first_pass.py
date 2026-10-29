@@ -27,13 +27,20 @@ CATALOG = ["audio_stable_audio_example", "canny_to_image_z_image_turbo", "sd3.5_
            "api_kling2_6_t2v", "depth_to_image_z_image_turbo"]
 
 
-def _match(text):
-    fake = SimpleNamespace(_brand_index_cache=None, _verbose=False)
-    fake._template_brand_index = lambda: Pipeline._template_brand_index(fake)
+def _fake():
+    fake = SimpleNamespace(_catalog_names_cache=None, _verbose=False)
+    fake._catalog_template_names = lambda: Pipeline._catalog_template_names(fake)
+    fake._wants_local = Pipeline._wants_local
+    fake._template_is_api = lambda name: False
+    return fake
+
+
+def _match(text, catalog=CATALOG):
     import json
     from unittest import mock
+    fake = _fake()
     with mock.patch("agenty_core.tools.comfyui.get_workflow_catalog",
-                    return_value=json.dumps({n: "" for n in CATALOG})):
+                    return_value=json.dumps({n: "" for n in catalog})):
         out = Pipeline._match_named_templates(fake, text)
     return out[1] if out else None
 
@@ -106,19 +113,48 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class SettingsAndVersionsDoNotPin(unittest.TestCase):
+class PinByTheNamedModel(unittest.TestCase):
     """EX04, night_20261029: "8 steps" pinned a Qwen-Image 2512 two-step LoRA graph
-    to a Qwen Image EDIT 2511 request, and its LoRA (not installed) was downloaded."""
+    to a Qwen Image EDIT 2511 request, and its LoRA (not installed) was downloaded.
+    A template is now pinned by the model the request names (the recipe DB's model
+    names, to the version) and the job it asks for - not by its file name's words."""
 
-    def test_steps_and_another_version_number_do_not_pin(self):
+    NAMES = ["image_qwen_image_2512_with_2steps_lora", "image_qwen_image_edit_2511", "image_qwen_Image_2512",
+             "video_ltx2_t2v", "video_ltx2_5_t2v", "api_ltx2_5_t2v", "ltxv_text_to_video",
+             "video_wan2_2_14B_t2v", "video_wan2.1_alpha_t2v_14B", "upscale_using_model"]
+
+    def test_ex04_pins_the_edit_2511_graph_not_2512(self):
+        out = _match("Build a Qwen Image Edit 2511 workflow that uses the Lightning 8-step LoRA: "
+                     "8 steps, CFG 1. Save the edited image.", self.NAMES)
+        self.assertEqual(out, ["image_qwen_image_edit_2511"])
+
+    def test_qwen_image_2512_is_the_2512_graphs(self):
+        out = _match("a Qwen Image 2512 text-to-image of a lighthouse", self.NAMES)
+        self.assertEqual(out, ["image_qwen_Image_2512", "image_qwen_image_2512_with_2steps_lora"])
+
+    def test_cx10_ltx_2_is_never_ltxv_0_9(self):
+        out = _match("Build an LTX-2 text-to-video workflow for 'a hummingbird' and save the video.", self.NAMES)
+        self.assertEqual(out, ["video_ltx2_t2v"])
+
+    def test_cx15_a_local_ltx_2_5_request_keeps_the_local_template(self):
+        fake = _fake()
+        fake._template_is_api = lambda name: name.startswith("api_")
         import json
         from unittest import mock
-        names = ["image_qwen_image_2512_with_2steps_lora", "image_qwen_image_edit_2511"]
-        fake = SimpleNamespace(_brand_index_cache=None, _verbose=False)
-        fake._template_brand_index = lambda: Pipeline._template_brand_index(fake)
         with mock.patch("agenty_core.tools.comfyui.get_workflow_catalog",
-                        return_value=json.dumps({n: "" for n in names})):
+                        return_value=json.dumps({n: "" for n in self.NAMES})):
             out = Pipeline._match_named_templates(
-                fake, "Build a Qwen Image Edit 2511 workflow that uses the Lightning 8-step LoRA: "
-                      "8 steps, CFG 1.")
-        self.assertNotIn("image_qwen_image_2512_with_2steps_lora", (out or ("", []))[1])
+                fake, "Build a local LTX 2.5 text-to-video workflow (not the LTX API nodes), "
+                      "upscale the latent 2x with the LTX 2.5 latent spatial upscaler.")
+        self.assertEqual(out[1], ["video_ltx2_5_t2v"])
+
+    def test_wan_versions(self):
+        self.assertEqual(_match("a Wan 2.2 text-to-video", self.NAMES), ["video_wan2_2_14B_t2v"])
+        self.assertEqual(_match("a wan 2.1 text-to-video", self.NAMES), ["video_wan2.1_alpha_t2v_14B"])
+
+    def test_no_model_named_no_pin(self):
+        self.assertIsNone(_match("a lighthouse at dusk, 8 steps, cfg 1, seed 2", self.NAMES))
+
+    def test_an_exact_template_name_pins(self):
+        self.assertEqual(_match("use image_qwen_image_2512_with_2steps_lora for this", self.NAMES),
+                         ["image_qwen_image_2512_with_2steps_lora"])

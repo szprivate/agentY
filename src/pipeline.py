@@ -594,70 +594,13 @@ def _is_affirmative(text: str) -> bool:
 # ---------------------------------------------------------------------------
 # Hard-constraint extraction (guided orchestrator)
 # ---------------------------------------------------------------------------
-# Generic task/plumbing words that appear in template names but carry no
-# "brand" identity. Everything left after stripping these is a distinctive
-# model/template name (flux, wan, qwen, kling, nano, banana, vace, krea, …) —
-# exactly what a user means when they say "use Nano Banana".
-_ORCH_STOP_TOKENS: frozenset[str] = frozenset({
-    "image", "images", "video", "videos", "edit", "editing", "editor", "workflow",
-    "workflows", "basic", "simple", "advanced", "standard", "default", "api",
-    "t2i", "i2v", "v2v", "t2v", "flf", "txt2img", "img2img", "text", "to", "and",
-    "the", "with", "from", "for", "gen", "generation", "generate", "model", "models",
-    "upscale", "upscaler", "upscaling", "portrait", "lighting", "camera", "motion",
-    "style", "background", "remove", "removal", "swap", "face", "inpaint",
-    "inpainting", "outpaint", "outpainting", "control", "controlnet", "lora",
-    "sampler", "sampling", "latent", "vae", "clip", "encode", "decode", "load",
-    "save", "node", "nodes", "example", "examples", "template", "templates",
-    "comfy", "comfyui", "ref", "reference", "start", "frame", "multishot", "multi",
-    "shot", "shots", "sequence", "clip", "clips", "audio", "sound", "speech",
-    "first", "last", "single", "dual", "batch", "run", "versions", "variations",
-    "new", "old", "pro", "plus", "mini", "small", "large", "base", "full", "high",
-    "low", "res", "quality", "fast", "turbo", "lite", "light", "photo", "picture",
-    # Ordinary words and techniques, not brands. A template name made of these
-    # names a JOB, and a request that mentions the job is not asking for that
-    # template: "Stable Diffusion 1.5" pinned audio_stable_audio_example, "canny"
-    # pinned the Z-Image and SD3.5 canny templates and so forbade an SD 1.5
-    # ControlNet, and "built using both models" pinned upscale_using_model to a
-    # Wan text-to-video request. Benchmarked: 5 of 15 first-attempt failures.
-    "stable", "diffusion", "using", "use", "switch", "film", "grain", "prompt",
-    "prompts", "refiner", "refine", "canny", "depth", "pose", "openpose", "lineart",
-    "scribble", "sketch", "normal", "segment", "segmentation", "mask", "matte",
-    "hires", "fix", "detail", "detailer", "enhance", "enhancer", "restore",
-    "color", "colour", "colorize", "blur", "sharpen", "noise", "denoise", "tile",
-    "tiled", "crop", "resize", "scale", "merge", "blend", "composite", "layer",
-    "layers", "separation", "transfer", "interpolation", "interpolate", "extend",
-    "loop", "animate", "animation", "character", "product", "object", "scene",
-    "room", "interior", "logo", "poster", "anime", "cartoon", "realistic",
-    "cinematic", "mesh", "rotate", "rotation", "relight", "expand",
-    # Sampler settings and weight formats: "8 steps" pinned
-    # image_qwen_image_2512_with_2steps_lora (a Qwen-Image 2512 T2I graph, with a
-    # LoRA that is not installed) to a Qwen Image EDIT 2511 request (EX04).
-    "step", "steps", "cfg", "seed", "int", "fp8", "bf16", "fp16", "fp32",
-})
-
-
-def _split_identifier(name: str) -> str:
-    """Insert spaces at camelCase and letter/digit boundaries.
-
-    Template names are camelCase / snake blends — ``imageEdit_nano_banana2`` and
-    ``NanoBanana2_outpaintUpscale`` must both yield the words *nano* and *banana*
-    (not blobs like ``nanobanana2``) so a plain "use Nano Banana" matches.
-    """
-    s = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", name)          # camelCase → camel Case
-    s = re.sub(r"(?<=[A-Za-z])(?=[0-9])", " ", s)          # banana2 → banana 2
-    s = re.sub(r"(?<=[0-9])(?=[A-Za-z])", " ", s)          # 3x → 3 x
-    return s
-
-
-def _brand_tokens(name: str) -> list[str]:
-    """Return the distinctive (brand/model) tokens of a template name.
-
-    Splits camelCase/snake/digit boundaries, drops the generic task words in
-    ``_ORCH_STOP_TOKENS``, pure digits, and 1-2 char fragments — leaving the
-    identifying tokens (e.g. ``imageEdit_nano_banana2`` → ``['nano', 'banana']``).
-    """
-    toks = re.findall(r"[a-z0-9]+", _split_identifier(name).lower())
-    return [t for t in toks if t not in _ORCH_STOP_TOKENS and len(t) >= 3 and not t.isdigit()]
+# A template counts as named when the request names the MODEL it is built on (to
+# the version) and the job it does - matched against the model names the recipe
+# DB and catalog use, in agenty_core.utils.model_names - or when the template is
+# written out by name. Words of a template's file name no longer count: "8 steps"
+# pinned image_qwen_image_2512_with_2steps_lora to a Qwen Image Edit 2511 request
+# (EX04, night_20261029), "canny" and "film grain" pinned templates for the job
+# the request merely mentioned.
 
 
 # ---------------------------------------------------------------------------
@@ -6456,72 +6399,56 @@ class Pipeline:
             if self._verbose:
                 print(f"pipeline: orchestrator learnings trigger failed ({exc}).")
 
-    def _template_brand_index(self) -> dict[str, set[str]]:
-        """Return {template_name: {brand_tokens}} for every catalog template.
-
-        Built once per pipeline from the local workflow catalog (no ComfyUI
-        server call). Used to detect when the user explicitly names a template.
-        """
-        idx = getattr(self, "_brand_index_cache", None)
-        if idx is not None:
-            return idx
-        idx = {}
+    def _catalog_template_names(self) -> list[str]:
+        """Every catalog template's name, read once per pipeline (no ComfyUI call)."""
+        names = getattr(self, "_catalog_names_cache", None)
+        if names is not None:
+            return names
+        names = []
         try:
             from agenty_core.tools.comfyui import get_workflow_catalog as _cat
             catalog = json.loads(_cat() or "{}")
             if isinstance(catalog, dict):
-                for name in catalog:
-                    # Every name, even one with no brand tokens: those can still
-                    # be named literally (see _match_named_templates).
-                    idx[name] = set(_brand_tokens(str(name)))
+                names = [str(n) for n in catalog]
         except Exception as exc:  # noqa: BLE001
             if getattr(self, "_verbose", False):
-                print(f"pipeline: brand-index build failed ({exc}); template pinning off.")
-        self._brand_index_cache = idx
-        return idx
+                print(f"pipeline: catalog read failed ({exc}); template pinning off.")
+        self._catalog_names_cache = names
+        return names
 
     def _match_named_templates(self, user_text: str) -> tuple[str, list[str]] | None:
-        """Detect an explicitly-named template in *user_text*.
+        """The catalog templates *user_text* holds the researcher to, or None.
 
-        Returns ``(phrase, [template_names])`` when the user's words contain all
-        brand tokens of one or more templates (highest-specificity match wins), or
-        None. A single-token match must be ≥4 chars to avoid incidental hits.
+        ``(phrase, [template_names])``: a template written out by name; else the
+        templates built on the model the request names, to the version, that do
+        the job it asks for (agenty_core.utils.model_names.pin_templates - the
+        recipe DB's model names are the vocabulary). Nothing named, nothing pinned.
         """
-        index = self._template_brand_index()
-        if not index:
+        catalog = self._catalog_template_names()
+        if not catalog:
             return None
         # A template written out by name ("build image_sdxl_simple") is the
-        # plainest way to name one, and it no longer depends on its words being
-        # brands — a name made of ordinary words has no brand tokens at all.
-        low = user_text.lower()
-        literal = sorted(n for n in index if len(n) >= 6 and re.search(r"(?<![\w.-])" + re.escape(n.lower()) + r"(?![\w-])", low))
+        # plainest way to name one, whatever its name is made of.
+        low = (user_text or "").lower()
+        literal = sorted(n for n in catalog if len(n) >= 6 and re.search(
+            r"(?<![\w.-])" + re.escape(n.lower()) + r"(?![\w-])", low))
         if literal:
             return literal[0], literal
-        msg = set(re.findall(r"[a-z0-9]+", low))
-        if not msg:
+        try:
+            from agenty_core.utils.model_names import pin_templates
+            pinned = pin_templates(user_text or "", catalog=catalog)
+        except Exception as exc:  # noqa: BLE001
+            if getattr(self, "_verbose", False):
+                print(f"pipeline: model-name matching failed ({exc}); no template pinned.")
             return None
-        best: list[tuple[str, set[str]]] = []
-        best_score = 0
-        for name, toks in index.items():
-            if not toks or not toks <= msg:
-                continue
-            # A model version in the name (2511, 2512) must be the one asked for:
-            # "Qwen Image Edit 2511" is not a request for the 2512 template.
-            nums = {t for t in re.findall(r"[0-9]+", name) if len(t) >= 3}
-            if not nums <= msg:
-                continue
-            score = len(toks)
-            if score == 1 and max(len(t) for t in toks) < 4:
-                continue
-            if score > best_score:
-                best_score, best = score, [(name, toks)]
-            elif score == best_score:
-                best.append((name, toks))
-        if not best:
+        if not pinned:
             return None
-        names = sorted({n for n, _ in best})
-        phrase = " ".join(sorted(best[0][1]))
-        return phrase, names
+        names = list(pinned["templates"])
+        # "a local LTX 2.5 ... not the LTX API nodes": the API twin is not a choice.
+        if self._wants_local(user_text or ""):
+            local = [n for n in names if not self._template_is_api(n)]
+            names = local or names
+        return " / ".join(pinned["named"]), names
 
     def _keeplive_prompt(self) -> dict:
         """The graph a written value's run queues: the stage(s) it was written into.
