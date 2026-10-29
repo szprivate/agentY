@@ -217,3 +217,70 @@ class OneBudgetForTheWholeJobTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AsStrandsRunsIt(unittest.TestCase):
+    """Strands fires the after-call hook for a cancelled call too, with the refusal
+    as its result. Counted as an answer, it broke the run of identical answers and
+    the next copy ran again (CX10, night_20261029: refused, ran, refused, ran ...)."""
+
+    def _provider(self):
+        with mock.patch.object(rg, "settings", return_value={"enabled": True, "same_call": 3,
+                                                                  "per_tool": 1000}):
+            provider = rg.RepeatGuardHookProvider()
+            provider._start(None)
+        return provider
+
+    def _call(self, provider, args):
+        event = SimpleNamespace(tool_use={"name": "run_script", "input": args}, cancel_tool=False)
+        provider._before(event)
+        cancel = event.cancel_tool
+        result = ({"status": "error", "content": [{"text": cancel}]} if cancel
+                  else {"status": "success", "content": [{"text": "same"}]})
+        provider._after(SimpleNamespace(tool_use=event.tool_use, result=result,
+                                        cancel_message=cancel or None))
+        return bool(cancel)
+
+    def test_once_refused_the_call_stays_refused(self):
+        provider = self._provider()
+        a, b = {"code": "scan gemma"}, {"code": "scan proj_linear"}
+        ran = [not self._call(provider, a if i % 2 == 0 else b) for i in range(40)]
+        self.assertEqual(sum(ran), 6)                      # three answers each, then never again
+
+
+def _round(i, name="run_script", args=None):
+    uid = f"t{i}"
+    return [{"role": "assistant", "content": [{"toolUse": {"toolUseId": uid, "name": name,
+                                                           "input": args or {"code": "scan"}}}]},
+            {"role": "user", "content": [{"toolResult": {"toolUseId": uid, "status": "success",
+                                                         "content": [{"text": "same"}]}}]}]
+
+
+class RepeatedRoundsLeaveTheHistory(unittest.TestCase):
+    """DashScope refuses a history with the same call over many rounds, and the
+    conversation stays refused for every later turn."""
+
+    def test_the_first_and_the_last_copy_stay(self):
+        msgs = [{"role": "user", "content": [{"text": "build it"}]}]
+        for i in range(6):
+            msgs += _round(i)
+        msgs.append({"role": "assistant", "content": [{"text": "done"}]})
+        self.assertEqual(rg.collapse_repeats(msgs), 4)
+        ids = [m["content"][0]["toolUse"]["toolUseId"] for m in msgs if "toolUse" in m["content"][0]]
+        self.assertEqual(ids, ["t0", "t5"])
+        self.assertEqual([m["role"] for m in msgs], ["user", "assistant", "user", "assistant", "user", "assistant"])
+
+    def test_two_copies_and_other_calls_are_left_alone(self):
+        msgs = [{"role": "user", "content": [{"text": "x"}]}]
+        msgs += _round(0) + _round(1) + _round(2, args={"code": "other"})
+        before = list(msgs)
+        self.assertEqual(rg.collapse_repeats(msgs), 0)
+        self.assertEqual(msgs, before)
+
+    def test_words_around_the_call_do_not_make_it_another_round(self):
+        msgs = [{"role": "user", "content": [{"text": "x"}]}]
+        for i in range(4):
+            r = _round(i)
+            r[0]["content"].insert(0, {"text": "checking again"})
+            msgs += r
+        self.assertEqual(rg.collapse_repeats(msgs), 2)

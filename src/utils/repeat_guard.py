@@ -123,6 +123,49 @@ class Turn:
         self._answers.setdefault(self.key(name, args), []).append(_digest(_result_text(result)))
 
 
+def collapse_repeats(messages: list) -> int:
+    """Drop the middle copies of a tool round repeated three or more times.
+
+    A round is an assistant message of tool calls (and any words around them) plus the user message
+    that carries their results. Of each set of identical rounds (same tools, same
+    arguments) the first - the real answer - and the last - usually this guard's
+    refusal - stay. DashScope rejects a request whose history holds the same call
+    over many rounds ("Repetitive tool calls detected", CX10, night_20261029), and
+    the history stays poisoned: the next two turns of that conversation died on
+    their first model call. Returns how many rounds were dropped.
+    """
+    rounds: dict[tuple, list[int]] = {}
+    for i, msg in enumerate(messages or []):
+        if not isinstance(msg, dict) or msg.get("role") != "assistant":
+            continue
+        content = msg.get("content") or []
+        calls = [b for b in content if isinstance(b, dict) and "toolUse" in b]
+        if not calls or not all(isinstance(b, dict) and ("toolUse" in b or "text" in b
+                                                         or "reasoningContent" in b) for b in content):
+            continue
+        content = calls
+        nxt = messages[i + 1] if i + 1 < len(messages) else None
+        if not isinstance(nxt, dict) or nxt.get("role") != "user":
+            continue
+        results = nxt.get("content") or []
+        if not results or not all(isinstance(b, dict) and "toolResult" in b for b in results):
+            continue
+        ids = {str(b["toolUse"].get("toolUseId")) for b in content}
+        if {str(b["toolResult"].get("toolUseId")) for b in results} != ids:
+            continue
+        sig = tuple(sorted((str(b["toolUse"].get("name")), _digest(b["toolUse"].get("input")))
+                           for b in content))
+        rounds.setdefault(sig, []).append(i)
+    drop: set[int] = set()
+    for idx in rounds.values():
+        if len(idx) >= 3:
+            for i in idx[1:-1]:
+                drop.update((i, i + 1))
+    if drop:
+        messages[:] = [m for j, m in enumerate(messages) if j not in drop]
+    return len(drop) // 2
+
+
 def shared_turn(scope: str, cfg: dict | None = None) -> Turn:
     """The :class:`Turn` every agent working on *scope* in this turn shares.
 
@@ -160,10 +203,24 @@ class RepeatGuardHookProvider:
 
     def register_hooks(self, registry, **kwargs) -> None:  # noqa: ARG002
         from strands.hooks import BeforeInvocationEvent
-        from strands.hooks.events import AfterToolCallEvent, BeforeToolCallEvent
+        from strands.hooks.events import AfterToolCallEvent, BeforeModelCallEvent, BeforeToolCallEvent
         registry.add_callback(BeforeInvocationEvent, self._start)
         registry.add_callback(BeforeToolCallEvent, self._before)
         registry.add_callback(AfterToolCallEvent, self._after)
+        registry.add_callback(BeforeModelCallEvent, self._before_model)
+
+    def _before_model(self, event, **kwargs) -> None:  # noqa: ANN001, ARG002
+        """Keep a run of refused repeats out of what the model is sent."""
+        try:
+            if not self._on:
+                return
+            msgs = getattr(getattr(event, "agent", None), "messages", None)
+            if isinstance(msgs, list):
+                n = collapse_repeats(msgs)
+                if n:
+                    logger.info("repeat guard: dropped %d repeated tool round(s) from the history", n)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("repeat guard: collapse skipped (%s)", exc)
 
     def _start(self, event, **kwargs) -> None:  # noqa: ANN001, ARG002
         cfg = settings()
@@ -188,6 +245,13 @@ class RepeatGuardHookProvider:
     def _after(self, event, **kwargs) -> None:  # noqa: ANN001, ARG002
         try:
             if not self._on or self._turn is None:
+                return
+            # A call that was not run has no answer. Counting the refusal as one
+            # broke the run of identical answers, so the next copy of the call ran
+            # again: refused, ran, refused, ran ... (CX10, night_20261029: the
+            # same two directory scans 20+ times each, until DashScope refused
+            # the whole request).
+            if getattr(event, "cancel_message", None):
                 return
             use = getattr(event, "tool_use", None) or {}
             self._turn.answered(str(use.get("name", "")), use.get("input"), getattr(event, "result", None))

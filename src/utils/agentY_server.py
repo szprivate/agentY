@@ -1251,10 +1251,39 @@ def _halt_pending(thread_id: str) -> bool:
         return False
 
 
+def _scope_researcher(pipeline, thread_id: str) -> None:
+    """Start the researcher afresh when the conversation changes.
+
+    The primary researcher keeps its history from one prepare_workflow to the
+    next - and nothing cleared it between conversations, so every request since
+    the host started stayed in its context (night_20261029: CX15's research pass
+    carried the briefings of all 30 cases before it, TC01 onwards). Within one
+    conversation it keeps it, as before.
+    """
+    if getattr(pipeline, "_researcher_thread", None) == thread_id:
+        return
+    own = getattr(pipeline, "__dict__", {})
+    # One leased by a turn still running (another conversation, at the same time)
+    # is left alone: its history is that turn's working context.
+    busy = [s[0] for s in (own.get("_researchers_busy") or []) if s]
+    primary = getattr(pipeline, "_researcher", None)
+    for agent in [primary] + [a for _of, a in (own.get("_researcher_spares") or [])]:
+        msgs = getattr(agent, "messages", None)
+        if isinstance(msgs, list) and not any(b is agent for b in busy):
+            msgs.clear()
+    if any(b is primary for b in busy):
+        return                                  # cleared on the next switch instead
+    try:
+        pipeline._researcher_thread = thread_id
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _restore_state(pipeline, thread_id: str) -> None:
     """Restore pipeline state for *thread_id* from the memory cache + SQLite store."""
     _await_compaction(thread_id)
     _reset_pipeline_state(pipeline)
+    _scope_researcher(pipeline, thread_id)
     st = cs.load_state(thread_id)
     if st:
         if st.get("agent_session"):

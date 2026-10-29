@@ -222,3 +222,34 @@ class ResumingAfterARestart(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheResearcherBetweenConversations(unittest.TestCase):
+    """The primary researcher kept every request since the host started
+    (night_20261029: CX15's research pass carried 30 earlier cases)."""
+
+    def setUp(self):
+        for target, name, value in ((srv, "_thread_brain_cache", {}),
+                                    (srv.cs, "get_gallery", lambda tid: []),
+                                    (srv.cs, "load_state", lambda tid: None),
+                                    (srv.cs, "get_thread", lambda tid: {"messages": []})):
+            patcher = mock.patch.object(target, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.pipe = _Pipeline()
+        self.pipe._researcher = SimpleNamespace(messages=[])
+
+    def test_starts_afresh_in_another_conversation_and_keeps_it_within_one(self):
+        srv._restore_state(self.pipe, "a")
+        self.pipe._researcher.messages.append({"role": "user", "content": [{"text": "case 1"}]})
+        srv._restore_state(self.pipe, "a")
+        self.assertEqual(len(self.pipe._researcher.messages), 1)
+        srv._restore_state(self.pipe, "b")
+        self.assertEqual(self.pipe._researcher.messages, [])
+
+    def test_one_in_use_by_a_running_turn_is_left_alone(self):
+        srv._restore_state(self.pipe, "a")
+        self.pipe._researcher.messages.append({"role": "user", "content": [{"text": "working"}]})
+        self.pipe._researchers_busy = [[self.pipe._researcher, None]]
+        srv._restore_state(self.pipe, "b")
+        self.assertEqual(len(self.pipe._researcher.messages), 1)

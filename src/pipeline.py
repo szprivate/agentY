@@ -629,6 +629,10 @@ _ORCH_STOP_TOKENS: frozenset[str] = frozenset({
     "loop", "animate", "animation", "character", "product", "object", "scene",
     "room", "interior", "logo", "poster", "anime", "cartoon", "realistic",
     "cinematic", "mesh", "rotate", "rotation", "relight", "expand",
+    # Sampler settings and weight formats: "8 steps" pinned
+    # image_qwen_image_2512_with_2steps_lora (a Qwen-Image 2512 T2I graph, with a
+    # LoRA that is not installed) to a Qwen Image EDIT 2511 request (EX04).
+    "step", "steps", "cfg", "seed", "int", "fp8", "bf16", "fp16", "fp32",
 })
 
 
@@ -6501,6 +6505,11 @@ class Pipeline:
         for name, toks in index.items():
             if not toks or not toks <= msg:
                 continue
+            # A model version in the name (2511, 2512) must be the one asked for:
+            # "Qwen Image Edit 2511" is not a request for the 2512 template.
+            nums = {t for t in re.findall(r"[0-9]+", name) if len(t) >= 3}
+            if not nums <= msg:
+                continue
             score = len(toks)
             if score == 1 and max(len(t) for t in toks) < 4:
                 continue
@@ -7657,6 +7666,19 @@ class Pipeline:
             from src.utils.workflow_signal import set_execution_hold
             set_execution_hold(self._plan_gate_refusal(announce=False)
                                or self._review_gate_refusal(announce=False))
+        except Exception:  # noqa: BLE001
+            pass
+        # And what this turn changes on the canvas: a file built before those
+        # changes must not be signalled as if it carried them (stale_against_canvas).
+        try:
+            import time as _time
+            from src.utils.workflow_signal import set_canvas_probe
+
+            def _turn_canvas_edits() -> list:
+                if getattr(self, "_canvas_hooks", None) or getattr(self, "_autoloop", None):
+                    return []
+                return list(getattr(self, "_canvas_edits", None) or [])
+            set_canvas_probe(_turn_canvas_edits, _time.time())
         except Exception:  # noqa: BLE001
             pass
         current_input: Any = orch_input
@@ -10605,7 +10627,11 @@ class Pipeline:
             root = corpus_root()
             path = next((p for sub in ("comfyui_workflow_templates_custom", "comfyui_workflow_templates_official")
                          for p in [root / sub / "templates" / f"{stem}.json"] if p.is_file()), None)
-            declared = models_in_workflow(json.loads(path.read_text(encoding="utf-8"))) if path else {}
+            wf = json.loads(path.read_text(encoding="utf-8")) if path else {}
+            declared = models_in_workflow(wf) if path else {}
+            # A prompt enhancer's model is not one the render needs (template_pick).
+            from src.utils.template_pick import optional_model_files
+            optional = optional_model_files(wf)
 
             def toks(name: str) -> list[str]:
                 base = str(name).replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
@@ -10613,7 +10639,7 @@ class Pipeline:
 
             for name, info in declared.items():
                 folder = str(info.get("directory") or "")
-                if not folder or folder == "loras":
+                if not folder or folder == "loras" or name in optional:
                     continue
                 have = self._installed_models(folder)
                 if have is None:

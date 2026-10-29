@@ -104,3 +104,21 @@ class FamilyTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SettingsAndVersionsDoNotPin(unittest.TestCase):
+    """EX04, night_20261029: "8 steps" pinned a Qwen-Image 2512 two-step LoRA graph
+    to a Qwen Image EDIT 2511 request, and its LoRA (not installed) was downloaded."""
+
+    def test_steps_and_another_version_number_do_not_pin(self):
+        import json
+        from unittest import mock
+        names = ["image_qwen_image_2512_with_2steps_lora", "image_qwen_image_edit_2511"]
+        fake = SimpleNamespace(_brand_index_cache=None, _verbose=False)
+        fake._template_brand_index = lambda: Pipeline._template_brand_index(fake)
+        with mock.patch("agenty_core.tools.comfyui.get_workflow_catalog",
+                        return_value=json.dumps({n: "" for n in names})):
+            out = Pipeline._match_named_templates(
+                fake, "Build a Qwen Image Edit 2511 workflow that uses the Lightning 8-step LoRA: "
+                      "8 steps, CFG 1.")
+        self.assertNotIn("image_qwen_image_2512_with_2steps_lora", (out or ("", []))[1])

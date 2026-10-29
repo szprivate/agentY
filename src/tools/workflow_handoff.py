@@ -128,6 +128,28 @@ def signal_workflow_ready(workflow_path: str, confirm_cost: bool = False) -> str
 
     resolved = str(p.resolve())
 
+    # This turn changed the graph on the canvas, and the file signalled is older
+    # than the turn: it does not contain those changes, so it would run the graph
+    # as it was before the fix. Handed back once.
+    try:
+        from src.utils.workflow_signal import stale_against_canvas
+        edits = stale_against_canvas(resolved)
+    except Exception:  # noqa: BLE001
+        edits = []
+    if edits:
+        return json.dumps({
+            "status": "not_ready",
+            "error_kind": "file_predates_canvas_edits",
+            "workflow_path": resolved,
+            "canvas_edits": edits[:20],
+            "problem": ("NOT queued. You changed the graph on the user's canvas this turn, and "
+                        "this file was written before that: it does not contain those changes. "
+                        "Running it would run the graph as it was before your fix."),
+            "fix": ("If the canvas edits are the fix that was asked for, you are done: do not "
+                    "signal this file; say what you changed on the canvas. Signal a file only "
+                    "if you made it in this turn and it carries the change."),
+        })
+
     # Last look before anything is paid for. ComfyUI executes a graph backwards
     # from its output nodes, so a node whose output nothing reads is skipped in
     # silence — it fails no validation, local or server-side, and the run reports

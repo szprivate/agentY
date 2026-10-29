@@ -18,7 +18,8 @@ _lock = threading.Lock()
 class _State:
     """One turn's mailbox. Per turn (:mod:`agenty_core.utils.turn_scope`): two
     conversations running at once must not hand each other their workflows."""
-    __slots__ = ("pending_paths", "dead_refused", "invalid_refused", "hold", "hold_fired")
+    __slots__ = ("pending_paths", "dead_refused", "invalid_refused", "hold", "hold_fired",
+                 "canvas_probe", "turn_started", "stale_refused")
 
     def __init__(self) -> None:
         self.pending_paths: list[str] = []
@@ -29,6 +30,12 @@ class _State:
         self.invalid_refused: dict[str, int] = {}
         self.hold: dict | None = None
         self.hold_fired = False
+        # What this turn changed on the user's canvas (a callable the pipeline
+        # sets), when the turn began, and the paths already handed back for
+        # predating those changes (stale_against_canvas).
+        self.canvas_probe = None
+        self.turn_started = 0.0
+        self.stale_refused: set[str] = set()
 
 
 def _st() -> _State:
@@ -158,3 +165,47 @@ def clear_and_get() -> list[str]:
         _st().dead_refused.clear()
         _st().invalid_refused.clear()
         return paths
+
+
+def set_canvas_probe(probe, turn_started: float) -> None:
+    """Tell ``signal_workflow_ready`` how to ask what this turn changed on the canvas.
+
+    *probe* returns the list of canvas edits made this turn (empty when there were
+    none, or on a turn whose edits are part of running it: hooks, prompt loop).
+    """
+    with _lock:
+        _st().canvas_probe = probe
+        _st().turn_started = float(turn_started or 0.0)
+        _st().stale_refused = set()
+
+
+def stale_against_canvas(path: str) -> list[str]:
+    """The canvas edits *path* does not contain - said ONCE per path, else ``[]``.
+
+    Asked to fix the workflow on the canvas, the orchestrator fixed it there
+    (edit_canvas_graph) and then signalled the file it had built in an EARLIER
+    turn. That file is not the canvas: the run would have been the old graph,
+    and the fix was lost (CX15, night_20261029: the same DualCLIPLoader error
+    three times after it had been replaced on the canvas). A file written during
+    this turn is taken to be deliberate - a new build next to the edits.
+    """
+    import os
+    with _lock:
+        st = _st()
+        probe, started = st.canvas_probe, st.turn_started
+        if probe is None or not started or path in st.stale_refused:
+            return []
+    try:
+        edits = list(probe() or [])
+    except Exception:  # noqa: BLE001 - never stop a run on this
+        return []
+    if not edits:
+        return []
+    try:
+        if os.path.getmtime(path) >= started:
+            return []
+    except OSError:
+        return []
+    with _lock:
+        _st().stale_refused.add(path)
+    return edits
