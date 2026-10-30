@@ -603,12 +603,14 @@ store_dir = "memory"
 # the provider's usual variable. Env: MEMORY_EMBEDDER_PROVIDER / MEMORY_EMBED_MODEL /
 # MEMORY_EMBED_DIMS / MEMORY_EMBEDDER_BASE_URL.
 [memory.embedder]
-# The embedder, picked from the ones agentY knows: "ollama" (local
-# nomic-embed-text), "dashscope" (text-embedding-v4), "gemini"
-# (gemini-embedding-001) or "openai" (text-embedding-3-small) - each reached with
-# that provider's key and endpoint, as the agents reach it. Blank = the fields
-# below, set by hand. An embedder is not a chat model: it turns text into
-# vectors, and every provider here offers one.
+# The embedder, picked from the ones agentY knows: "local" (nomic-embed-text v1.5
+# built into agentY, no service or key), "ollama" (local nomic-embed-text),
+# "dashscope" (text-embedding-v4), "gemini" (gemini-embedding-001) or "openai"
+# (text-embedding-3-small) - each reached with that provider's key and endpoint,
+# as the agents reach it. Blank = the fields below, set by hand. An embedder is
+# not a chat model: it turns text into vectors (Anthropic offers none). When the
+# chosen one cannot work here - Ollama not running, or its key missing - memory
+# uses "local" instead and says so, re-embedding what is stored.
 preset = ""
 provider = "ollama"
 model = "nomic-embed-text"
@@ -617,8 +619,10 @@ base_url = ""
 api_key_env = ""
 
 # Leave `model` BLANK to inherit the fast_utility tier — provider, endpoint and key
-# come with it, so a DashScope setup does not silently end up pointed at OpenAI.
-# Fill these in only to run fact extraction on something else.
+# come with it, so a DashScope setup does not silently end up pointed at OpenAI,
+# and a Claude one uses Anthropic (ANTHROPIC_API_KEY). Fill these in only to run
+# fact extraction on something else (provider "ollama", "openai" or "anthropic").
+# With no usable key, memory still searches and stores; it just skips extraction.
 [memory.llm]
 provider = "ollama"
 model = ""

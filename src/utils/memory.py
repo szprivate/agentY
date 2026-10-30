@@ -7,6 +7,9 @@ agentY – FAISS memory layer (mem0).
                    or "openai" — any OpenAI-compatible endpoint incl. DashScope/
                    Qwen — so a host without Ollama can still run memory.
   • Fact-extract : configurable LLM (memory.llm); only used for infer=True writes.
+                   Claude via mem0's Anthropic provider; with no usable key the
+                   writes are stored as written and search is unaffected.
+  • No usable embedder (Ollama down, key missing) -> the built-in "local" one.
 
 Switching the embedder (or its dims) makes the existing on-disk index
 incompatible — purge memory/agenty_memory.* so it rebuilds at the new size.
@@ -320,6 +323,126 @@ def _openai_compat_cfg(kind: str, extra: dict, fallback: dict | None = None) -> 
     return cfg
 
 
+_ANTHROPIC_PROVIDERS = ("anthropic", "claude")
+
+# Why the memory LLM cannot run here ("" = it can). Search never needs the LLM;
+# only infer=True writes do, and those are stored as written instead.
+_llm_unavailable = ""
+_notified: set[str] = set()
+
+
+def _notify_once(key: str, text: str) -> None:
+    if key not in _notified:
+        _notified.add(key)
+        notify(text, level="warning")
+
+
+def _anthropic_auto_credentials() -> bool:
+    """Whether the anthropic SDK would find a credential on its own (an
+    ``ANTHROPIC_PROFILE`` / config-dir profile, or workload identity federation)."""
+    try:
+        from anthropic.lib.credentials._constants import _has_auto_discoverable_credentials
+        return bool(_has_auto_discoverable_credentials())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _anthropic_llm_cfg(model: str) -> tuple[dict, str]:
+    """mem0's native Anthropic LLM, with the credential the agents use.
+
+    The agents' Anthropic client (Strands -> anthropic SDK) reads ANTHROPIC_API_KEY,
+    or ANTHROPIC_AUTH_TOKEN, from the environment; this one is built the same way,
+    so whatever runs the agents runs fact extraction too. Returns (config, why-not).
+    """
+    import importlib.util
+    if importlib.util.find_spec("anthropic") is None:
+        return {}, "the anthropic package is not installed"
+    key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+    if not key and not (os.environ.get("ANTHROPIC_AUTH_TOKEN") or "").strip() \
+            and not _anthropic_auto_credentials():
+        return {}, "no ANTHROPIC_API_KEY for the memory LLM"
+    cfg: dict = {"model": model or "claude-haiku-4-5", "temperature": 0.1}
+    if key:
+        cfg["api_key"] = key           # else the SDK picks ANTHROPIC_AUTH_TOKEN up itself
+    return {"provider": "anthropic", "config": cfg}, ""
+
+
+def _installed_ollama_chat_model(host: str) -> str:
+    """The smallest chat model the Ollama at *host* already has, or ""."""
+    try:
+        import requests
+        models = requests.get(f"{host}/api/tags", timeout=2).json().get("models") or []
+    except Exception:  # noqa: BLE001
+        return ""
+    chat = [m for m in models if "embed" not in str(m.get("name", "")).lower()]
+    chat.sort(key=lambda m: int(m.get("size") or 0))
+    return str(chat[0].get("name") or "") if chat else ""
+
+
+def _stand_in_llm(embedder: dict, ollama_host: str, why: str) -> dict:
+    """An LLM config mem0 can build when the configured one cannot run.
+
+    Memory.__init__ builds the LLM eagerly, so a config that cannot be built
+    breaks search too. With an Ollama embedder that is running, a chat model it
+    already has extracts facts instead; otherwise a placeholder that is never
+    called (nothing connects at construction) and infer writes are stored as written.
+    """
+    global _llm_unavailable
+    if embedder.get("provider") == "ollama" and _ollama_reachable():
+        host = embedder["config"].get("ollama_base_url") or ollama_host
+        model = _installed_ollama_chat_model(host)
+        if model:
+            _llm_unavailable = ""
+            _notify_once("llm-ollama", f"[memory] The memory LLM cannot run here ({why}); "
+                         f"fact extraction uses the local Ollama model {model} instead.")
+            return {"provider": "ollama", "config": {
+                "model": model, "ollama_base_url": host, "temperature": 0.1}}
+    _llm_unavailable = why
+    _notify_once("llm-none", f"[memory] The memory LLM cannot run here ({why}). Memory "
+                 "search and writes work; writes are stored as written, without fact "
+                 "extraction. Set memory.llm in agentY settings to change that.")
+    return {"provider": "ollama", "config": {
+        "model": "unavailable", "ollama_base_url": ollama_host, "temperature": 0.1}}
+
+
+def _embedder_unusable(embedder: dict) -> str:
+    """Why the configured embedder certainly cannot work here, or "".
+
+    Only the certain cases: an OpenAI-compatible endpoint with no key, or Ollama
+    not running. A working embedder is never second-guessed.
+    """
+    prov, c = embedder.get("provider"), embedder.get("config") or {}
+    if prov == "openai" and not c.get("api_key") and not os.environ.get("OPENAI_API_KEY"):
+        return f"no API key for the embedder {c.get('model')}"
+    if prov == "ollama" and not _ollama_reachable():
+        return "Ollama is not running"
+    return ""
+
+
+def _usable_embedder(embedder: dict, dims: int) -> tuple[dict, int]:
+    """The configured embedder, or the built-in local one when it cannot work.
+
+    The switch goes through the index fingerprint (_match_index_to_embedder), so a
+    store built by another embedder is re-embedded, never searched with
+    incomparable vectors; when the configured one works again it switches back.
+    """
+    why = _embedder_unusable(embedder)
+    if not why:
+        return embedder, dims
+    if not _fastembed_installed():
+        _notify_once("emb-none", f"[memory] The memory embedder cannot work here ({why}), "
+                     "and the built-in local embedder needs the fastembed package (re-run the "
+                     "installer). Choose another in agentY Settings > Long-term memory > Embedder.")
+        return embedder, dims
+    pr = EMBEDDER_PRESETS["local"]
+    _use_local_model_dir()
+    _notify_once("emb-local", f"[memory] The memory embedder cannot work here ({why}); using the "
+                 f"built-in local embedder ({pr['model']}) instead. Pick 'local' in agentY "
+                 "Settings > Long-term memory > Embedder to make that permanent.")
+    return ({"provider": "fastembed", "config": {"model": pr["model"], "embedding_dims": int(pr["dims"])}},
+            int(pr["dims"]))
+
+
 def _build_config() -> dict:
     """Return the mem0 MemoryConfig dict sourced from env / settings.json.
 
@@ -368,8 +491,11 @@ def _build_config() -> dict:
     else:
         embedder = {"provider": "openai", "config": _openai_compat_cfg(
             "embedder", {"model": embed_model, "embedding_dims": embed_dims})}
+    embedder, embed_dims = _usable_embedder(embedder, embed_dims)
 
     # ── Fact-extraction LLM (only invoked for infer=True writes) ─────────────
+    global _llm_unavailable
+    _llm_unavailable = ""
     # With no explicit memory.llm.model, inherit the llm_functions role — resolved
     # through the model tiers, so it follows whatever the rest of the system is
     # actually using. Reading llm.pipeline.llm_functions directly is not enough:
@@ -397,15 +523,27 @@ def _build_config() -> dict:
         llm_model = mdl.strip()
     llm_provider = _mem_provider("llm")
     if not explicit_llm and inherited_provider and inherited_provider != "ollama":
-        # Anything that isn't Ollama reaches mem0 through its OpenAI-compatible path.
-        llm_provider = "openai"
+        # Claude goes through mem0's native Anthropic provider (Anthropic has no
+        # embeddings, but it can extract facts); anything else that isn't Ollama
+        # reaches mem0 through its OpenAI-compatible path.
+        llm_provider = "anthropic" if inherited_provider in _ANTHROPIC_PROVIDERS else "openai"
+    llm_unavailable = ""
     if llm_provider == "ollama":
         llm = {"provider": "ollama", "config": {
             "model": llm_model, "ollama_base_url": ollama_host, "temperature": 0.1}}
+    elif llm_provider in _ANTHROPIC_PROVIDERS:
+        llm, llm_unavailable = _anthropic_llm_cfg(llm_model)
     else:
         llm = {"provider": "openai", "config": _openai_compat_cfg(
             "llm", {"model": llm_model, "temperature": 0.1},
             fallback=_inherited_endpoint(inherited_provider) if not explicit_llm else None)}
+        if not llm["config"].get("api_key") and not os.environ.get("OPENROUTER_API_KEY"):
+            # mem0 builds this client when Memory starts - before any search - and
+            # the OpenAI client refuses to exist without a key ("Missing
+            # credentials"), which took search down with it.
+            llm_unavailable = f"no API key for the memory LLM {llm_model}"
+    if llm_unavailable:
+        llm = _stand_in_llm(embedder, ollama_host, llm_unavailable)
 
     store_dir = str(
         (_PROJECT_ROOT / _get("MEMORY_STORE_DIR", "memory", "store_dir", default="memory")).resolve()
@@ -721,10 +859,13 @@ def memory_add(
         return None
     if writes_paused():
         return None                 # see pause_writes: a benchmark is running
-    return _bounded(
-        lambda: mem0_client().add(content, user_id=session_id,
-                                  metadata=metadata or {}, infer=infer),
-        None, "add")
+
+    def _do():
+        client = mem0_client()
+        # No LLM to extract facts with: store the text as written (see _stand_in_llm).
+        return client.add(content, user_id=session_id, metadata=metadata or {},
+                          infer=bool(infer and not _llm_unavailable))
+    return _bounded(_do, None, "add")
 
 
 def memory_get_all(session_id: str = "default") -> list[dict]:
