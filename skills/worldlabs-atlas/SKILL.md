@@ -1,7 +1,7 @@
 ---
 name: worldlabs-atlas
-description: Make a 3D scene from a picture or a text prompt with World Labs Atlas (a depth mesh in the picture's camera), grow it with new views, use it as the set for render_camera_move, and render single new views of it from any camera (consistent backgrounds). Use for "turn this image into a 3D world with Atlas / World Labs", "make a courtyard world from a prompt", "extend the scene sideways", "image to Atlas world to camera move to control video", "same room from another angle", "a new shot of this background", "render this view with Atlas", "a full 360 environment", "make a Gaussian splat of this place", "explorable 3D scene from this picture", "make a splat in Marble", "Marble world from these images", "export the splat as SPZ / PLY", "splat to mesh".
-allowed-tools: atlas_create_world atlas_expand_world atlas_rebuild_world_mesh atlas_splat_to_mesh atlas_fetch atlas_list atlas_render_view atlas_open_in_viewer atlas_capture_around train_splat splat_training_status marble_create_world marble_export render_camera_move show_in_viewer
+description: Make a 3D scene from a picture or a text prompt with World Labs Atlas (a depth mesh in the picture's camera), grow it with new views, use it as the set for render_camera_move, and render single new views of it from any camera (consistent backgrounds). Use for "turn this image into a 3D world with Atlas / World Labs", "make a courtyard world from a prompt", "extend the scene sideways", "image to Atlas world to camera move to control video", "same room from another angle", "a new shot of this background", "render this view with Atlas", "a full 360 environment", "make a Gaussian splat of this place", "splat from the Atlas views", "explorable 3D scene from this picture", "make a splat in Marble", "Marble world from these images", "export the splat as SPZ / PLY", "splat to mesh".
+allowed-tools: atlas_create_world atlas_expand_world atlas_rebuild_world_mesh atlas_splat_to_mesh atlas_fetch atlas_list atlas_render_view atlas_open_in_viewer atlas_capture_around atlas_views_to_splat train_splat splat_training_status marble_create_world marble_export render_camera_move show_in_viewer
 ---
 
 # World Labs Atlas: picture or prompt -> 3D scene -> camera move
@@ -62,18 +62,31 @@ so say what you are about to spend (one call = one task) and do not loop.
    presses **Render with Atlas** in the Previz panel (upscale choice, "add to world"); the picture lands in
    the viewer and as a loader node on the canvas. Tell them that; do not render on their behalf.
 6. `show_in_viewer` on the glb only when the user wants to look at it.
-7. **A full 360 environment / a Gaussian splat.** Two calls, in this order:
+7. **A full 360 environment / a Gaussian splat.** Capture, then let World Labs build the splat:
    - `atlas_capture_around(world, prompt=...)` has Atlas paint the place ALL ROUND (about 40 views: a ring
      outwards from the middle, then ceiling and floor; 5-6 billed tasks, a few minutes). It grows outwards
      from the picture, so the unseen sides stay consistent. People in the picture get repeated all round:
      for an empty place remove them from the picture FIRST (a local image edit, e.g. Qwen-Image-Edit 2511),
      make the world from the edited picture, and say "no people" in `prompt`. `center` / `radius` for a
      place that is not a room-sized space in front of the picture.
-   - `train_splat(world)` trains a Gaussian splat from those views on the local GPU (Brush; downloaded once,
-     no API cost): ~2 min for `steps=3000` (a quick look), 10-30 min for the default 30000. It frees ComfyUI's
-     VRAM first, cleans floaters, saves a standard 3DGS `.ply` (+ a colour-only `_lite.ply`), shows a preview
-     picture and opens the splat in the viewer's 3D view. It returns `"running"` when it takes longer than
-     `wait_s`: tell the user, then `splat_training_status(name, wait_s=...)` finishes it. Do not start it twice.
+   - **Preferred:** `atlas_views_to_splat(world, dry_run=true)` first: it checks the views against each other
+     (depth reprojection; a generated view that moved a table or invented a coat is left out), lists the views
+     it would send and the price. Say the price, then `atlas_views_to_splat(world, confirm_cost=true)`: World
+     Labs reconstructs the splat from the posed views and refines it (`posedImages2Splats`): 5,000 credits
+     (US$ 5) refined, 500 (US$ 0.50) with `refine=false` for a quick draft; failed runs are free; 10-20 min.
+     8-16 well-spread, overlapping views is World Labs' starting point for one room; floor and the sides you
+     will look at must be covered. `frames="0-24,35"` / `exclude="33"` pick views by hand; `masks=<folder of
+     mask_NNN.png>` leaves parts out (e.g. the view through a window, to put another background behind it).
+     Files: `<world>/splats/<name>.spz` (Atlas world frame, Y up) and `<name>.ply` (Y down, what the viewer
+     and `render_camera_move` load); it opens in the viewer. On `timeout`: `atlas_fetch(operation_id)`.
+     One splat job per request: do not resubmit to compare unless the user asks. The view through windows and
+     open doors comes out as haze: for a clean outside, mask the openings and put a background behind them.
+   - **Local fallback** (no credits, or the user wants it local): `train_splat(world)` trains with Brush on the
+     local GPU: ~2 min for `steps=3000` (a quick look), 10-30 min for the default 30000. It frees ComfyUI's
+     VRAM first, cleans floaters, saves a standard 3DGS `.ply` (+ a colour-only `_lite.ply`) and opens it in
+     the viewer. It returns `"running"` when it takes longer than `wait_s`: tell the user, then
+     `splat_training_status(name, wait_s=...)` finishes it. Do not start it twice. It keeps every view it is
+     given: leave out the ones `atlas_views_to_splat(dry_run=true)` reports as disagreeing.
    A splat from the first picture alone (or a few views) is a flat shell: capture first.
 
 Other tools: `atlas_rebuild_world_mesh` (free, offline: finer/lighter mesh, cut the sky with
@@ -99,8 +112,18 @@ World Labs has two services, with their own keys and credits. Pick by what the u
   to four pictures, no training: SPZ (full ~2M splats, 500k, 100k), PLY, a collider mesh, a panorama.
   Use it for "give me a splat of this", an export for another app, or a splat to turn into a mesh.
   It invents what the pictures do not show on its own: you cannot aim cameras at it.
-- **Brush** (`atlas_capture_around` + `train_splat`): for real photos or our own capture sets, when the
-  splat must stay faithful to views we hold (local GPU, no credits).
+- **Atlas splat** (`atlas_capture_around` + `atlas_views_to_splat`): a splat that stays faithful to the views
+  we hold (cameras we chose, views we checked): World Labs builds and refines it (US$ 5, or 0.50 as a draft).
+  The default for a splat of an Atlas world.
+- **Brush** (`train_splat`): the same views trained on the local GPU (no credits, lower quality), or real
+  photos / a COLMAP / Nerfstudio capture set that is not an Atlas world.
+
+**The hosted World Labs MCP** (`https://api.atlas-beta.worldlabs.ai/mcp`, the `worldlabs` preset in agentY's MCP
+settings; World Labs account sign-in, no API key) only estimates a camera and depth from ONE picture
+(`list_projects`, `import_image`, `create_image_upload`, `estimate_camera_depth`, `get_operation`, `get_asset`).
+That is `atlas_create_world` without the mesh: use our tools for anything that builds or keeps a world (meshes,
+new views, capture, splats, Marble). The hosted MCP suits a client that has no agentY tools, or a quick
+camera/depth estimate in the user's own World Labs project.
 
 Marble steps:
 1. **Price it first, say the price, then run it.** One call = one world, ~5 minutes, billed to the World API

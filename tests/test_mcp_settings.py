@@ -243,5 +243,31 @@ class TestButtonTest(unittest.TestCase):
         self.assertTrue(res["needs_auth"])
 
 
+class ClientMetadataUrlTest(unittest.TestCase):
+    """A sign-in server without dynamic client registration (World Labs' Clerk) takes a client-ID metadata
+    document: the entry's oauth_client_metadata_url reaches the OAuth provider; without it nothing changes."""
+
+    def _provider(self, **kw):
+        with mock.patch.object(mt, "_seed_discovery", lambda *a: None),              mock.patch.object(mt, "_make_token_storage", lambda name: mock.Mock(expires_at=lambda: None)):
+            return mt._make_oauth_provider("worldlabs", "https://api.example/mcp", False, None, 8765, **kw)
+
+    def test_passed_through(self):
+        p = self._provider(client_metadata_url="https://agenty.example/oauth/client.json")
+        self.assertEqual(p.context.client_metadata_url, "https://agenty.example/oauth/client.json")
+
+    def test_absent_by_default(self):
+        self.assertIsNone(self._provider().context.client_metadata_url)
+
+    def test_the_worldlabs_preset_is_opt_in_and_signs_in_without_a_key(self):
+        import json
+        from pathlib import Path
+        cat = json.loads((Path(__file__).resolve().parents[1] / "config" / "mcp_presets.json").read_text(encoding="utf-8"))
+        wl = next(x for x in cat["presets"] if x["id"] == "worldlabs")
+        self.assertFalse(wl["default_selected"])
+        self.assertEqual(wl["server"]["auth"], "oauth")
+        self.assertEqual(wl["server"]["url"], "https://api.atlas-beta.worldlabs.ai/mcp")
+        self.assertEqual(wl["env_keys"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

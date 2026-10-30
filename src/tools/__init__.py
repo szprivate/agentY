@@ -182,6 +182,8 @@ from agenty_core.tools.atlas_camera_move import atlas_render_camera_move  # noqa
 # Capture an Atlas world all round; train a Gaussian splat from posed views locally (Brush).
 from agenty_core.tools.atlas_capture import atlas_capture_around  # noqa: F401,E402
 from agenty_core.tools.splat_train import train_splat, splat_training_status  # noqa: F401,E402
+# A splat built by World Labs from an Atlas world's posed views (posedImages2Splats; paid, consistency-checked).
+from agenty_core.tools.atlas_splat import atlas_views_to_splat  # noqa: F401,E402
 # World Labs Marble: a ready splat world from pictures (no training), SPZ / PLY export.
 from agenty_core.tools.worldlabs_marble import marble_create_world, marble_export  # noqa: F401,E402
 # Rebuild a model in Blender / Maya / Houdini from ONE script file, and check its proportions against a
@@ -280,6 +282,8 @@ _SHARED_CORE_TOOLS = [
     "atlas_fetch", "atlas_list", "atlas_render_view", "atlas_open_in_viewer", "atlas_render_camera_move",
     # all-round Atlas capture, and a Gaussian splat trained from it (local, Brush)
     "atlas_capture_around", "train_splat", "splat_training_status",
+    # a splat built by World Labs from the posed views (posedImages2Splats)
+    "atlas_views_to_splat",
     # World Labs Marble: splat worlds from pictures, SPZ / PLY export
     "marble_create_world", "marble_export",
     # modelling from a reference photo in Blender / Maya / Houdini: one build script, a numeric silhouette check
@@ -675,6 +679,7 @@ ORCHESTRATOR_TOOLS: list = [
     atlas_capture_around,  # Atlas views all round a place (for a 360 environment / splat)
     train_splat,           # Gaussian splat from posed views (an Atlas world), trained locally with Brush
     splat_training_status, # check on / finish a splat training
+    atlas_views_to_splat,  # World Labs builds the splat from an Atlas world's posed views (paid; preferred over Brush)
     marble_create_world,   # World Labs Marble: pictures (or an Atlas world) -> a ready splat world (paid; dry_run prices it)
     marble_export,         # Marble world files: SPZ / PLY at a resolution, collider mesh
     lora_dataset_prepare,  # LoRA training: build + caption a dataset (the user approves it before training)

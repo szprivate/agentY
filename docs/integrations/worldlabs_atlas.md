@@ -1,8 +1,8 @@
 # World Labs Atlas (Marble 2 beta Developer API); Marble splat worlds below
 
 Tools: `atlas_create_world`, `atlas_expand_world`, `atlas_rebuild_world_mesh`, `atlas_splat_to_mesh`,
-`atlas_fetch`, `atlas_list` (`agenty_core/tools/worldlabs_atlas.py`, also in agentY-mcp; skill
-`worldlabs-atlas`). Billed to the user's World Labs credits.
+`atlas_fetch`, `atlas_list` (`agenty_core/tools/worldlabs_atlas.py`), `atlas_views_to_splat`
+(`agenty_core/tools/atlas_splat.py`), all also in agentY-mcp; skill `worldlabs-atlas`. Billed to the user's World Labs credits.
 
 ## Setup
 - Key: `WORLDLABS_API_KEY` in `.env` (`WLT_API_KEY`, the docs' own name, is read too). Create it on the World Labs
@@ -22,6 +22,7 @@ Not a "prompt -> world" call. Every task is an async *operation* (`POST /tasks:<
 | `images2PosedRGBD` | `frames[].imageAsset` (url / assetId / base64 < 10 MiB), `targetResolution` | image, estimated RUB camera, linear depth EXR, confidence; several frames are reconstructed together |
 | `atlasGenerate` | posed RGBD `contextFrames`, `targetCameras` (exactly 1280x720), prompt, `returnDepth` | one new view per camera (+ depth), `promptUsed` |
 | `splats2Mesh` | a `.spz` asset | GLB mesh |
+| `posedImages2Splats` | >= 2 posed RGBD `posedFrames` (image, camera, linear-depth EXR, optional alpha mask), `refine`, `prompt` | a refined Gaussian splat (SPZ), see below |
 | `atlasMasked`, `atlasChisel` | inpainting / depth-guided generation | not wrapped |
 
 Also `/assets` (create from url/base64/upload URL, read URLs), `/operations` (list, cancel, trace), `/health`.
@@ -39,8 +40,9 @@ origin, looking down -Z, Y up. That is what `render_camera_move(model=<glb>)` as
     render_camera_move(name, model=<glb>, moves=[...], shading="clay")   # control video
     -> LTX 2.5 Layout-to-Render / Wan Fun Control (see the camera-move-control skill)
 
-The viewer already loads glb/ply/splats, so no viewer change was needed. Atlas never returns a splat; a Marble
-`.spz` goes through `atlas_splat_to_mesh`.
+The viewer already loads glb/ply/splats, so no viewer change was needed. Atlas returns a splat only through
+`posedImages2Splats` (`atlas_views_to_splat`, below); a splat (that one, or a Marble `.spz`) goes through
+`atlas_splat_to_mesh` for a mesh.
 
 ## Measured live (2026-10-20, one prompt world + one expansion + one picture world)
 - Depth EXR: single channel `Y`, float, ZIP, row 0 = top (no flip); NaN where there is no depth (sky). The mesh
@@ -109,7 +111,55 @@ step for parallax), then ceiling and floor. Batches of 8 (one `atlasGenerate` ta
 each with the 4 existing views nearest to it as context, so the unseen sides join what is already there. The
 default centre is half-way to what the first picture shows straight ahead.
 
-`train_splat(source, steps=30000, max_splats=3000000, sh_degree=3)` (`agenty_core/tools/splat_train.py`) writes
+**Preferred: World Labs builds the splat (`posedImages2Splats`).** `atlas_views_to_splat(world, frames="",
+exclude="", check_consistency=True, refine=True, masks="", dry_run, confirm_cost)` (`agenty_core/tools/atlas_splat.py`)
+sends the world's posed views to `POST /tasks:posedImages2Splats`, which reconstructs a draft splat from the views'
+depth, then refines it (renders new views, cleans them up, trains on them). Researched 2026-10-30 from
+[the task guide](https://atlas-beta.worldlabs.ai/docs/posed-images-to-splats),
+[splat best practices](https://atlas-beta.worldlabs.ai/docs/splat-best-practices) and the OpenAPI
+(`https://api.atlas-beta.worldlabs.ai/api/v2/openapi.json`):
+
+- Request: `posedFrames` (>= 2, ordered; all ONE image size), each `{imageAsset, camera, depth: {depthAsset}}`
+  (+ optional `maskAsset`: 8-bit PNG alpha, 1 keep / 0 leave out; + optional `depth.confidenceAsset`); `prompt`
+  (optional, enhanced by default; `enhancePrompt: false` skips that), `refine` (default true), `targetSplatCounts`
+  (only for a draft: one count, default 2,000,000), `webhookUrl`, `purgeContentOnOperationCompletion`. Assets are
+  project asset ids, inline base64 (< 10 MiB) or public URLs. No documented maximum frame count or resolution
+  limit; World Labs suggests 8-16 well-spread views with ~50 % overlap (>= 10 %) for one room, covering the floor
+  and every side you will look at.
+- Cameras: `PinholeCamera` = camera-to-world `position` + quaternion (x, y, z, w) with `coordinateSystem: "rub"`
+  (x right, y up, the camera looks down -Z), intrinsics `fx fy cx cy width height` on the image grid. That is how
+  `world.json` stores every frame, so world frames go in unchanged (the stored asset ids are reused; a frame
+  without them has its PNG and EXR uploaded). A pose from the viewer or the mesh frame is converted first
+  (`atlas_render.viewer_pose_to_mesh`, `worldlabs_atlas.mesh_pose_to_camera`: no axis flip, the viewer, glTF
+  and Atlas all share RUB). Depth must be the linear-depth EXR (`depthAsset`), not a log-depth PNG.
+- Output: `response.refinedSplats` {splat count: {assetId, url}} (refined) or `response.draftSplat` (draft).
+  The tool keeps the largest level: `<world>/splats/<name>.spz` (as returned), plus `<name>.ply` and
+  `<name>_lite.ply` turned 180 degrees about X (Y down, the 3DGS convention the bEpic viewer turns upright, like a
+  `train_splat` PLY), records it under `splats` in `world.json`, opens it in the viewer. (`_lite.ply` only when the
+  splat carries higher SH bands; World Labs' are colour only.)
+- Measured live 2026-10-30 (the promo's interior2 cabin, 33 views at 1280x720, refined): 17.5 min, SPZ v2,
+  2,000,000 splats, SH degree 0, 31 MB (112 MB as PLY), in the Atlas world frame (Y up, floor ~0, the first
+  camera at y 1.01): rendered through the input cameras it lines up with the views. Versus the earlier local
+  gsplat training on the same views: clearly cleaner from NEW viewpoints (no ghosted plant leaves, no floaters
+  under the bench or on the rug, crisp floor), softer and slightly drifted on the input views themselves (PSNR
+  18-21 dB against 22-34 dB for the overfitted local splat). What lies outside the windows and the open door
+  comes out as a grey haze: put a background behind it, or mask the openings.
+- Async: 10-20 minutes; submitted without `?wait`, polled with `:wait`. A timeout keeps the job in
+  `<world>/pending/`; `atlas_fetch(operation_id)` finishes it.
+- Cost: refined 5,000 credits (US$ 5), draft (`refine: false`) 500 (US$ 0.50); failed runs are free. The tool
+  refuses without `confirm_cost=True` (or the turn's cost confirmation); `dry_run=True` lists the views it would
+  send, the consistency check and the price, and spends nothing.
+- View consistency (before anything is uploaded): every view is compared, in world order (the source picture
+  first), with each view already kept that it shares at least 10 % of its sampled pixels with. Its depth is
+  reprojected into the other view and back; a pixel conflicts where one view puts a surface more than 15 % (of
+  the depth) in FRONT of what the other sees (a surface behind is occlusion, not conflict). A view whose worst
+  conflict with a kept view is over 5 % of the shared pixels is left out (`max_conflict`). On the promo's
+  interior2 world (57 views) this leaves out 29, 34, 38, 39, 40, 48, 54 and 56: 38-40 are the views that invented
+  a coat on the wall, 34 a plant-moved view that had been left out by eye before. Colour is NOT compared
+  (lighting and window content differ too much between generated views); a view that only changes what hangs on
+  a wall passes - look at the views and `exclude` by hand.
+
+**Local fallback: Brush.** `train_splat(source, steps=30000, max_splats=3000000, sh_degree=3)` (`agenty_core/tools/splat_train.py`) writes
 the world as a Nerfstudio dataset (cameras, pictures, and the depth maps unprojected as starting points) and
 trains a Gaussian splat with [Brush](https://github.com/ArthurBrussee/brush) (Apache-2.0) as a background
 process. Brush `v0.3.0` is downloaded once into `<app>/tools/brush/` (checksum checked) unless `BRUSH_PATH`
@@ -118,14 +168,15 @@ the preview. When Brush is done: huge splats and big splats in front of a camera
 turned into 3DGS axes (Y down; positions, rotations and the SH coefficients turned together) and saved as
 `output/3d_scenes/splats/<name>/<name>.ply` plus `<name>_lite.ply` (colour only), and opened in the viewer's 3D
 view through the first training camera. `splat_training_status(name)` checks on / finishes a training that
-outlived the call. A COLMAP or Nerfstudio folder works as `source` too.
+outlived the call. A COLMAP or Nerfstudio folder works as `source` too. It uses every view it is given: leave
+out the ones `atlas_views_to_splat(dry_run=True)` reports.
 
 Measured (2026-10-21, RTX 5090, 41 views at 1280x720): 3,000 steps in 1 min 42 s (2.3 M splats), 30,000 steps
 about 30 min with ComfyUI's models still on the GPU (free them: the tool does). The restaurant from one picture:
 people removed with Qwen-Image-Edit 2511, 41 views, splat holds up all round; mirrors and window glass smear.
 
 ## Cost and limits
-Atlas reports no per-task cost: the operation carries no usage / credit field, so tools return `usage: null`. Credits
+Atlas reports no per-task cost (`posedImages2Splats` has a documented flat price, above): the operation carries no usage / credit field, so tools return `usage: null`. Credits
 (1,000 per US$, no expiry) and a monthly spend limit are on the platform's Billing / Usage pages. Rate limits are
 "to be announced"; 429 / 503 are retried a few times with `Retry-After`.
 
@@ -140,6 +191,29 @@ reader), `api`.
 `atlasMasked` / `atlasChisel` are not wrapped; `splats2Mesh` and the `.spz` upload path are only mock-tested; the
 multi-image `images2PosedRGBD` reconstruction and `atlas_expand_world` with several moves were not run live beyond one
 view; GLB loading in the bEpic viewer itself was not exercised (the GLB parses in trimesh / pygltflib).
+
+## The hosted World Labs MCP server
+
+World Labs runs its own MCP server at `https://api.atlas-beta.worldlabs.ai/mcp` (streamable HTTP; listed in the
+[worldlabsai/skills](https://github.com/worldlabsai/skills) plugin's `.mcp.json`; checked 2026-10-30). Auth is
+OAuth only, a World Labs account sign-in through Clerk (`https://clerk.worldlabs.ai`, discovery at
+`/.well-known/oauth-protected-resource/mcp`); the API key is refused (401 with `WLT-Api-Key` or as a bearer).
+Its tools (per World Labs' own skill): `list_projects`, `import_image`, `create_image_upload`,
+`estimate_camera_depth`, `get_operation`, `get_asset` - **camera + depth from ONE image, nothing else**
+("the connected tools cover only this task"; everything else goes through their CLI, `@worldlabsai/cli`).
+
+Compared with agentY's tools: `estimate_camera_depth` is `images2PosedRGBD`, i.e. `atlas_create_world` without
+the mesh, the world folder and the follow-on tools. It has no new views, no capture, no splat
+(`posedImages2Splats` is not exposed), no Marble. Overlap only; nothing new except that it signs in with the
+user's account instead of a project key. Use it from a client without agentY's tools; inside agentY use ours.
+
+agentY carries it as the opt-in `worldlabs` preset (`config/mcp_presets.json`, not selected by default; OAuth
+tokens in the gitignored `config/.mcp_tokens/`; startup never opens a browser). **Caveat:** Clerk has dynamic
+client registration switched off (`POST /oauth/register` answers `feature_requires_dynamic_oauth_client_registration`)
+and advertises client-ID metadata documents instead, so agentY's sign-in fails until the server entry carries
+`oauth_client_metadata_url`: an https URL serving agentY's client metadata JSON (`client_id` = that URL,
+`redirect_uris: ["http://localhost:<redirect_port>/callback"]`). `src/tools/mcp_tools.py` passes it to the MCP
+SDK's OAuth provider. Claude Code and Claude Desktop connect to the URL directly.
 
 ## Marble (the World API): splat worlds, SPZ / PLY export
 

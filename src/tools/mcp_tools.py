@@ -408,7 +408,7 @@ def _save_discovery(name: str, provider) -> None:
 # ── OAuth provider (silent vs interactive) ───────────────────────────────────
 
 def _make_oauth_provider(name: str, url: str, interactive: bool, holder: dict | None,
-                         redirect_port: int):
+                         redirect_port: int, client_metadata_url: str | None = None):
     from mcp.client.auth import OAuthClientProvider
     from mcp.shared.auth import OAuthClientMetadata
 
@@ -447,6 +447,9 @@ def _make_oauth_provider(name: str, url: str, interactive: bool, holder: dict | 
         storage=storage,
         redirect_handler=redirect_handler,
         callback_handler=callback_handler,
+        # A server whose sign-in refuses dynamic client registration but takes a client-ID metadata
+        # document (World Labs' Clerk) needs an https URL that serves agentY's client metadata.
+        client_metadata_url=client_metadata_url or None,
     )
 
     _seed_discovery(name, provider)
@@ -728,7 +731,8 @@ def _connect(name: str, sc: dict, interactive: bool):
                 raise _AuthRequired()
         else:
             holder = _start_callback_server(port)
-        provider = _make_oauth_provider(name, sc["url"], interactive, holder, port)
+        provider = _make_oauth_provider(name, sc["url"], interactive, holder, port,
+                                        str(sc.get("oauth_client_metadata_url") or "").strip() or None)
 
     quiet = contextlib.nullcontext() if interactive else _quiet_auth_required()
     is_stdio = str(sc.get("transport", "http") or "http").lower() == "stdio"

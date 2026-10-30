@@ -1216,6 +1216,34 @@
       ]
     },
     {
+      "id": "worldlabs",
+      "name": "World Labs (hosted)",
+      "category": "3D / DCC",
+      "description": "World Labs' own hosted MCP: estimate a camera and depth from one picture in your World Labs project. agentY's Atlas / Marble tools cover far more (meshes, new views, capture, splats).",
+      "server": {
+        "enabled": true,
+        "transport": "http",
+        "url": "https://api.atlas-beta.worldlabs.ai/mcp",
+        "auth": "oauth"
+      },
+      "env_keys": [],
+      "requires": [],
+      "setup_steps": "",
+      "default_selected": false,
+      "notes": "Authorize once in agentY Settings (World Labs account sign-in; no API key). Tools: list_projects, import_image, create_image_upload, estimate_camera_depth, get_operation, get_asset (camera + depth from one image only). World Labs' sign-in (Clerk, https://clerk.worldlabs.ai) has dynamic client registration turned OFF (checked 2026-10-30) and takes client-ID metadata documents instead, so the sign-in fails until `oauth_client_metadata_url` names an https URL serving agentY's client metadata (client_id = that URL, redirect_uris [\"http://localhost:<redirect_port>/callback\"]). Claude Code / Claude Desktop connect to the same URL directly.",
+      "setup": [
+        {
+          "id": "entry",
+          "type": "ensure_entry"
+        },
+        {
+          "id": "test",
+          "type": "test",
+          "timeout": 60
+        }
+      ]
+    },
+    {
       "id": "ayon",
       "name": "AYON",
       "category": "Pipeline",
