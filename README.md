@@ -63,50 +63,19 @@ COMFYUI_API_KEY=comfyui-...     # only if your ComfyUI requires auth / uses API 
 
 ## Uninstalling
 
-An install only creates folders (no registry entries, services or shortcuts), so the
-uninstaller only removes folders, and only ones it has identified as agentY's (git origin
-`github.com/szprivate/<repo>`, or agentY marker files). It shows a plan first, with sizes
-and what it keeps, and asks before each group:
+Close ComfyUI and the agent window, then run the uninstaller from the agentY folder. It shows what it
+would remove first and asks before each step; your conversations and settings (backed up to a zip
+first) and the bEpic viewer are only removed if you say so. ComfyUI itself and your models are never
+touched.
 
 ```powershell
-.\uninstall_agent.ps1 -DryRun        # Windows: only print the plan and the checks
-.\uninstall_agent.ps1                # ... then run it for real
+.\uninstall_agent.ps1 -DryRun   # Windows: show the plan only
+.\uninstall_agent.ps1           # remove
 ```
 ```bash
-./uninstall_agent.sh --dry-run       # macOS
+./uninstall_agent.sh --dry-run  # macOS / Linux
 ./uninstall_agent.sh
 ```
-
-- **Removed (default yes):** the running host, agentY + agentY-core + agentY-mcp (code and venvs), the
-  agentY panel in ComfyUI's `custom_nodes`.
-- **Asked separately (default no):** your data (conversations, memory, settings, `.env` keys, MCP
-  tokens, output), with a backup zip next to the folder offered first; the bEpic viewer, which works
-  without agentY; `winget uninstall` of ComfyUI Desktop.
-- **Never removed:** ComfyUI itself, models, Ollama, Strata, Blender, and anything it cannot verify.
-  A folder with an agentY name but a foreign git origin is listed and left alone.
-- **Printed as hints only:** the `agentY` entry in Claude Desktop's config, `uv cache clean`, and the
-  Deadline plugin (`python scripts/install_deadline_plugin.py --uninstall`, run it **before** agentY
-  is deleted).
-- `-Yes` / `--yes` skips the questions: it removes the first group, your data after a backup, and the
-  panel, and keeps the viewer (`-IncludeViewer`, `-KeepUserData`, `-NoBackup` adjust that).
-  If something is running from these folders (ComfyUI, Claude Desktop, the agent window) it says so
-  and removes nothing - close it and run it again.
-
-It also works on **older installs** (`agenty_core`, a copied `comfyui-agent-canvas` panel, the
-Chainlit data layer) and **without the agentY folder**: pass `-Path` / `--path`, or run it from
-inside the install and it finds it. To fetch and run it on its own (dry run first):
-
-```powershell
-$u = "https://raw.githubusercontent.com/szprivate/agentY/stable/uninstall_agent.ps1"
-& ([scriptblock]::Create((irm $u))) -DryRun -Path D:\AI\agentY
-```
-```bash
-curl -fsSL https://raw.githubusercontent.com/szprivate/agentY/stable/uninstall_agent.sh -o /tmp/uninstall_agent.sh
-bash /tmp/uninstall_agent.sh --dry-run --path ~/agentY
-```
-
-(The `stable` copy exists from the first release that contains the uninstaller; until then use
-`dev` in the URL.)
 
 ## Usage
 
@@ -155,6 +124,7 @@ Type `/` for the slash commands. Settings live in ComfyUI's **Settings → agent
 ## Requirements
 
 - **Windows**, or **macOS 14+ on Apple Silicon** (on a Mac run `xcode-select --install` first)
+- **Linux** should work with the macOS scripts (`install_agent.sh`, `run_agent.sh`), but is untested.
 - **[uv](https://docs.astral.sh/uv/getting-started/installation/)** and **git** on your PATH
 - A running **ComfyUI** (default: `http://127.0.0.1:8188`)
 - At least one LLM: an **Anthropic**, **OpenAI**, **Google Gemini** or **DashScope** API key, or a local **Ollama**
@@ -174,3 +144,10 @@ Type `/` for the slash commands. Settings live in ComfyUI's **Settings → agent
 ## License
 
 MIT
+
+## Disclaimer
+
+agentY is largely vibe-coded: written with AI coding agents; the code is not human-audited. It is provided "as is",
+without warranty of any kind; you use it at your own risk. It runs code, downloads models and can
+spend money on paid APIs on your behalf, so review what it does and keep your keys' spending limits
+in place.
