@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from strands import tool
 from strands.hooks import BeforeInvocationEvent, BeforeToolCallEvent, HookProvider, HookRegistry
@@ -133,6 +134,11 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
             "Resolve, Cavalry, Unity) are installed and which version",
             ("list_mcp_servers", "add_mcp_server", "list_mcp_presets", "install_mcp_preset", "setup_mcp_preset",
              "draft_mcp_recipe", "install_mcp_bundle", "find_app_installs")),
+    "nodes": ("install a ComfyUI custom node pack the user asks for (its https GitHub link) into "
+              "custom_nodes, its requirements into ComfyUI's Python - asks the user first, never clone "
+              "with run_script; ComfyUI needs a restart afterwards, say so - or find which pack provides "
+              "a node class (pinned on a turn that asks for an install)",
+              ("install_custom_node", "find_custom_node_for")),
     "dirs": ("where ComfyUI keeps its folders (models, input, output) and where agentY saves what it makes",
              ("get_comfyui_dirs", "get_agent_output_dirs")),
     # Pinned by the pipeline on the turns they belong to (CONTEXT_PACKS).
@@ -162,6 +168,26 @@ except Exception:  # noqa: BLE001
 # Packs the pipeline loads by what the turn is, rather than the model by asking.
 CONTEXT_PACKS = ("hooks", "graph")
 _PACK_OF = {name: pack for pack, (_why, names) in PACKS.items() for name in names}
+
+
+# Packs a user's message asks for in so many words: "install this node pack",
+# "set up https://github.com/x/ComfyUI-Foo". Pinned for that turn, like the
+# context packs, so the tool is in the list without the model having to know the
+# pack exists - in the turn that showed the gap, it did not, and told the user it
+# had no way to install a node.
+_INSTALL_VERB = re.compile(r"\b(install|re-?install|set\s*up|setup|add|clone|get|update|upgrade)\b", re.I)
+_NODE_PACK_WORDS = re.compile(
+    r"node[\s_-]*packs?|custom[\s_-]*nodes?|comfyui[\s_-]*manager|"
+    r"https?://(?:www\.)?(?:github\.com|gitlab\.com|codeberg\.org|bitbucket\.org)/[^\s/]+/[^\s/]*comfy",
+    re.I)
+
+
+def packs_asked_for(text: str) -> set:
+    """The packs a user's message plainly asks for (see _NODE_PACK_WORDS)."""
+    text = str(text or "")
+    if _INSTALL_VERB.search(text) and _NODE_PACK_WORDS.search(text):
+        return {"nodes"}
+    return set()
 
 
 def enabled() -> bool:

@@ -601,6 +601,14 @@ ORCHESTRATOR_TOOLS: list = [
     draft_mcp_recipe,
     install_mcp_bundle,
     find_app_installs,
+    # "Install this node pack": clone a pack into custom_nodes and pip its
+    # requirements into ComfyUI's Python (asks the user first; ComfyUI needs a
+    # restart). Taken off the orchestrator in the assembly refactor, which left a
+    # user asking for a pack with no route but run_script - which is refused
+    # custom_nodes on purpose. Held in the `nodes` pack (src/tools/tool_packs.py),
+    # pinned on a turn that asks for an install.
+    find_custom_node_for,
+    install_custom_node,
     # Models: is it installed, where is it on HuggingFace, download it into the
     # folder ComfyUI loads that kind from. On the orchestrator and not only on the
     # repair specialists, because "download the missing models" is something users
@@ -628,8 +636,9 @@ ORCHESTRATOR_TOOLS: list = [
     # assembly). Workflow REPAIR (assembly + execution errors) and BUILD-FROM-
     # SCRATCH are the fix_workflow_assembly / generate_new_workflow specialists,
     # invoked inside prepare_workflow / the pipeline. So the orchestrator no longer
-    # carries template-load, node-inspection, apply/patch/validate or node-install
-    # tools — that whole surface moved off its critical path.
+    # carries template-load, node-inspection or apply/patch/validate tools — that
+    # whole surface moved off its critical path. (Node install came back, above:
+    # users ask for it directly.)
     # It keeps only:
     #   duplicate_workflow + update_workflow — for the batch-handoff skill
     #     (duplicate the assembled base per iteration and swap the input); these

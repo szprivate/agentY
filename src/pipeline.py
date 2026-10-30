@@ -6325,14 +6325,20 @@ class Pipeline:
                 block["text"] = text
         return removed
 
-    def _pin_tool_packs(self, lead: bool) -> None:
+    def _pin_tool_packs(self, lead: bool, user_text: str = "") -> None:
         """The tool packs this turn needs whether or not the conversation has
-        loaded them: what is on the canvas, or what kind of conversation it is,
+        loaded them: what is on the canvas, what kind of conversation it is, or
+        what the user's message plainly asks for ("install this node pack")
         already says so (src/tools/tool_packs.py)."""
         agent = getattr(self, "_orchestrator_agent", None)
         if agent is None:
             return
         pins = set()
+        try:
+            from src.tools.tool_packs import packs_asked_for
+            pins |= packs_asked_for(user_text if isinstance(user_text, str) else "")
+        except Exception:  # noqa: BLE001
+            pass
         try:
             from src.utils.canvas_hooks import _is_edit
             if any(isinstance(h, dict) and _is_edit(h) for h in (self._canvas_hooks or [])):
@@ -7662,7 +7668,7 @@ class Pipeline:
         # to produce it again.
         self._apply_hook_cache()
         self._ledger_turn_start()
-        self._pin_tool_packs(bool(getattr(self, "_lead_active", False)))
+        self._pin_tool_packs(bool(getattr(self, "_lead_active", False)), user_text)
 
         self._ensure_orch_clean_history()
         # Mark where this turn's messages begin so the learnings pass (fired on

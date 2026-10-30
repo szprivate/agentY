@@ -112,8 +112,15 @@ def describe(tool_name: str, tool_input: dict) -> str:
         return f"{str(data.get('python_call', '')).strip()}   ×{times}"
     if tool_name == "install_custom_node":
         src = str(data.get("source", "")).strip()
-        pip = "" if data.get("run_pip") is False else "  (and pip install its requirements)"
-        return f"git clone {src}{pip}"
+        pip = "" if data.get("run_pip") is False else "  (and pip install its requirements into ComfyUI's Python)"
+        into = ""
+        try:
+            from agenty_core.tools.comfyui import validate_node_pack_source
+            into = f" into custom_nodes/{validate_node_pack_source(src)[1]}"
+        except Exception:  # noqa: BLE001 - the tool refuses it itself; show the URL as given
+            pass
+        restart = "  then RESTART ComfyUI (ComfyUI-Manager reboot)" if data.get("restart") else ""
+        return f"git clone {src}{into}{pip}{restart}"
     if tool_name == "switch_model":
         reason = str(data.get("reason", "")).strip()
         return (f"switch {data.get('role') or 'orchestrator'} to {data.get('model', '?')} "

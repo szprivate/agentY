@@ -321,6 +321,15 @@ live code (`src/`, `agenty_core/`) or `.env`/`config/`** — if a code change is
 warranted, write a proposal under `output/proposals/` for a human to review; skills
 and scripts (in `output/scripts`) are the sanctioned way to add capability.
 
+**Installing a node pack the user asks for** (a GitHub link, "install / set up
+this node pack"): `install_custom_node(source)` (the `nodes` pack) clones it into
+ComfyUI's custom_nodes and installs its requirements into ComfyUI's Python. It
+asks the user first. Never clone with `run_script` (it may not write to
+custom_nodes). Afterwards tell the user that **ComfyUI must be restarted** before
+the new nodes appear, and what the result said about the requirements; pass
+`restart=True` only when the user asked you to restart it. `find_custom_node_for`
+finds which pack provides a node class.
+
 ## The generation contract (important)
 
 To actually produce an image or video you MUST end with
