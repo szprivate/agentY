@@ -2,7 +2,8 @@
 
 How to drive **agentY** once it is running. For install and setup see the
 [README](../README.md); for ports, security and other internals see the
-[reference](reference.md).
+[reference](reference.md). To remove agentY again, see
+[Uninstalling](../README.md#uninstalling).
 
 > 🎬 Prefer watching? Seven one-minute [**video tutorials**](tutorials.md) cover install, the panel and settings, tags and hooks, Atlas, motion graphics, Gaussian splats and LoRA training.
 

@@ -61,6 +61,53 @@ COMFYUI_API_KEY=comfyui-...     # only if your ComfyUI requires auth / uses API 
 ```
 
 
+## Uninstalling
+
+An install only creates folders (no registry entries, services or shortcuts), so the
+uninstaller only removes folders, and only ones it has identified as agentY's (git origin
+`github.com/szprivate/<repo>`, or agentY marker files). It shows a plan first, with sizes
+and what it keeps, and asks before each group:
+
+```powershell
+.\uninstall_agent.ps1 -DryRun        # Windows: only print the plan and the checks
+.\uninstall_agent.ps1                # ... then run it for real
+```
+```bash
+./uninstall_agent.sh --dry-run       # macOS
+./uninstall_agent.sh
+```
+
+- **Removed (default yes):** the running host, agentY + agentY-core + agentY-mcp (code and venvs), the
+  agentY panel in ComfyUI's `custom_nodes`.
+- **Asked separately (default no):** your data (conversations, memory, settings, `.env` keys, MCP
+  tokens, output), with a backup zip next to the folder offered first; the bEpic viewer, which works
+  without agentY; `winget uninstall` of ComfyUI Desktop.
+- **Never removed:** ComfyUI itself, models, Ollama, Strata, Blender, and anything it cannot verify.
+  A folder with an agentY name but a foreign git origin is listed and left alone.
+- **Printed as hints only:** the `agentY` entry in Claude Desktop's config, `uv cache clean`, and the
+  Deadline plugin (`python scripts/install_deadline_plugin.py --uninstall`, run it **before** agentY
+  is deleted).
+- `-Yes` / `--yes` skips the questions: it removes the first group, your data after a backup, and the
+  panel, and keeps the viewer (`-IncludeViewer`, `-KeepUserData`, `-NoBackup` adjust that).
+  If something is running from these folders (ComfyUI, Claude Desktop, the agent window) it says so
+  and removes nothing - close it and run it again.
+
+It also works on **older installs** (`agenty_core`, a copied `comfyui-agent-canvas` panel, the
+Chainlit data layer) and **without the agentY folder**: pass `-Path` / `--path`, or run it from
+inside the install and it finds it. To fetch and run it on its own (dry run first):
+
+```powershell
+$u = "https://raw.githubusercontent.com/szprivate/agentY/stable/uninstall_agent.ps1"
+& ([scriptblock]::Create((irm $u))) -DryRun -Path D:\AI\agentY
+```
+```bash
+curl -fsSL https://raw.githubusercontent.com/szprivate/agentY/stable/uninstall_agent.sh -o /tmp/uninstall_agent.sh
+bash /tmp/uninstall_agent.sh --dry-run --path ~/agentY
+```
+
+(The `stable` copy exists from the first release that contains the uninstaller; until then use
+`dev` in the URL.)
+
 ## Usage
 
 Start the agent:
