@@ -196,6 +196,22 @@ def sidecar_path(path) -> Path:
     return Path(str(path) + SIDECAR_SUFFIX)
 
 
+#: Sidecar keys other writers own: kept when the role record is rewritten.
+_KEPT_KEYS = ("provenance",)
+
+
+def _sidecar_lock():
+    """The lock agenty_core's provenance writer holds on a sidecar (a plain one if it is missing)."""
+    try:
+        from agenty_core.utils.provenance import SIDECAR_LOCK
+        return SIDECAR_LOCK
+    except Exception:  # noqa: BLE001
+        return _fallback_lock
+
+
+_fallback_lock = threading.RLock()
+
+
 def write_sidecar(path, role: str, **meta) -> bool:
     """Write (or refresh) the record beside *path*. Best-effort."""
     role = " ".join(str(role or "").split())[:_MAX_ROLE]
@@ -208,9 +224,17 @@ def write_sidecar(path, role: str, **meta) -> bool:
         body = {"role": role, "made_by": "agentY",
                 "when": time.strftime("%Y-%m-%dT%H:%M:%S")}
         for k, v in (meta or {}).items():
-            if v not in (None, "", [], {}):
+            if v not in (None, "", [], {}) and k not in _KEPT_KEYS:
                 body[k] = v
-        sidecar_path(p).write_text(json.dumps(body, indent=1), encoding="utf-8")
+        # The record is rewritten, but what OTHER writers keep in it stays: the
+        # provenance (agenty_core.utils.provenance - the graph that made the file,
+        # written on another thread) - under the same lock, so neither loses the other.
+        with _sidecar_lock():
+            old = read_sidecar(p)
+            for k in _KEPT_KEYS:
+                if k in old:
+                    body[k] = old[k]
+            sidecar_path(p).write_text(json.dumps(body, indent=1), encoding="utf-8")
         return True
     except Exception:  # noqa: BLE001
         return False

@@ -95,7 +95,7 @@ _ORCH_PARTIALS_DIR = Path(__file__).parent.parent / "config" / "system_prompts" 
 # In this order, whichever of them a turn has: the same turns get the same text.
 _TURN_GUIDES = ("canvas_hooks", "review_halt", "canvas_nodes", "input_images", "project_memory",
                 "prompt_loop", "plan_approval", "autonomy", "model_routing",
-                "output_checks_off")
+                "output_checks_off", "recreate_shots")
 _TURN_GUIDES_HEAD = "\n\n# For this kind of turn\n\n"
 
 # How many of a conversation's outputs each turn lists in full (the newest).
@@ -5574,6 +5574,12 @@ class Pipeline:
         # round-trip) was never used in practice and only enlarged the tool surface,
         # so it is no longer exposed. The detect_user_intent agent survives only for
         # the legacy free_agent=False router path.
+        # Recreate shots with changes (agenty_core.tools.regenerate): every shot runs
+        # through run_workflow_now above - its gates, QA, cost check and staging
+        # (src/tools/recreate_host.py). In the "recreate" tool pack.
+        from src.tools.recreate_host import make_tool as _recreate_tool
+        regenerate_from_source = _recreate_tool(self, run_workflow_now, _tool)
+
         tools = [prepare_workflow, run_info,
                  run_web_search, run_world_builder, run_planner, apply_canvas_hooks, stop_hook_run,
                  screenshot_canvas,
@@ -5590,7 +5596,7 @@ class Pipeline:
                  arrange_canvas, group_canvas_nodes, auto_group_canvas, save_canvas_workflow,
                  run_canvas,
                  loop_check, forward_outputs, name_outputs,
-                 list_agent_settings, set_agent_setting]
+                 list_agent_settings, set_agent_setting, regenerate_from_source]
         # Offered only where there is a Slack to send to. Every tool in this list
         # is described to the model on every call, so one nobody can use is a
         # standing token cost and a standing invitation to try it.
@@ -6445,10 +6451,25 @@ class Pipeline:
                 pins.add("viewer")
         except Exception:  # noqa: BLE001
             pass
+        # Clips picked in the viewer's Edit panel, or a message that asks to recreate
+        # shots: the recreate tools (and get_viewer_state, which has the clips' files).
+        if self._recreate_turn(user_text):
+            pins |= {"recreate", "viewer"}
         try:
             agent._tool_packs_pinned = pins
         except Exception:  # noqa: BLE001
             pass
+
+    def _recreate_turn(self, user_text="") -> bool:
+        """Is this a "recreate these shots with changes" turn: clips selected in the
+        viewer's Edit panel, or a message that asks for it (tool_packs.recreate_wanted)."""
+        try:
+            from agenty_core.utils import turn_scope
+            from src.tools.tool_packs import recreate_wanted
+            return recreate_wanted(user_text if isinstance(user_text, str) else "",
+                                   turn_scope.current().get("viewer_state"))
+        except Exception:  # noqa: BLE001
+            return False
 
     def _ensure_orch_clean_history(self) -> None:
         """Sanitize the orchestrator's message list (drop orphaned tool blocks,
@@ -7313,6 +7334,9 @@ class Pipeline:
         viewer_block = self._describe_viewer_state()
         if viewer_block:
             pin += viewer_block + "\n\n"
+        # Recreating selected shots: the flow (recreate_shots.md), for this turn only.
+        if self._recreate_turn(user_text):
+            guides.append("recreate_shots")
 
         # Several workflows open in ComfyUI's tabs. Silent for the ordinary
         # single-tab case (see describe_open_workflows) — it speaks up only when

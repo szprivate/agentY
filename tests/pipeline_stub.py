@@ -92,6 +92,7 @@ _BOUND = (
     "_describe_history_selection",
     "_viewer_state_lines",
     "_describe_viewer_state",
+    "_recreate_turn",
     "_drop_old_turn_blocks",
     "_format_image_gallery",
     "_unfinished_intent_input",

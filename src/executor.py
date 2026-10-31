@@ -904,6 +904,15 @@ async def _process_completed_job(
         yield f"{pfx}❌ All output downloads failed."
         return
 
+    # The graph that made each output, kept beside it (src/utils/provenance_capture.py):
+    # what "recreate this shot with one change" re-runs. On a background thread - the
+    # output folder may be a slow network share.
+    try:
+        from src.utils import provenance_capture
+        provenance_capture.capture(saved_paths, history, prompt_id, workflow_path)
+    except Exception as exc:  # noqa: BLE001 — never cost a run
+        logger.debug("executor: provenance not captured — %s", exc)
+
     # Output QA — only against the user's own briefing (see src/utils/qa.py).
     qa_failures: list[dict] = []
     if qa_briefing:

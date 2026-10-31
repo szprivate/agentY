@@ -170,6 +170,11 @@ from agenty_core.tools.history_selection import get_history_selection  # noqa: F
 # What the bEpic viewer shows (tab, item, frame, range) and the marks the user drew on it
 # (agenty_core.tools.viewer_state).
 from agenty_core.tools.viewer_state import get_viewer_state, get_viewer_annotations  # noqa: F401,E402
+# Recreate generated shots with a few changes, everything else as it was (agenty_core.tools.regenerate):
+# the parameters a file was made with, and the new versions swapped into the viewer's cut as takes.
+# regenerate_from_source itself is the pipeline's closure of the same name (src/tools/recreate_host.py),
+# which runs each shot through run_workflow_now.
+from agenty_core.tools.regenerate import recreatable_params, regenerate_from_source, swap_in_takes  # noqa: F401,E402
 # Fly a camera through a 3D scene in the viewer and render the move (agenty_core.tools.previz_shot).
 from agenty_core.tools.previz_shot import render_camera_move  # noqa: F401,E402
 # Editable motion graphics: a scene file (data) checked, previewed and rendered with Remotion.
@@ -278,6 +283,8 @@ _SHARED_CORE_TOOLS = [
     "get_history_selection",
     # what the bEpic viewer shows, and the user's annotations on it (as a mask too)
     "get_viewer_state", "get_viewer_annotations",
+    # recreate shots with changes (regenerate_from_source: the pipeline's closure runs it)
+    "recreatable_params", "regenerate_from_source", "swap_in_takes",
     # animate a camera through a 3D scene in the viewer and render the move
     "render_camera_move",
     # editable motion graphics: write a *.mgscene.json scene, check it, look at stills, render it with Remotion
@@ -679,6 +686,8 @@ ORCHESTRATOR_TOOLS: list = [
     get_history_selection,  # "use the selected ones": what is picked in a history panel right now
     get_viewer_state,    # "this frame", "the range I marked": what the viewer shows right now
     get_viewer_annotations,  # the marks the user drew in the viewer (words + coords, or a mask PNG)
+    recreatable_params,  # recreate shots: what a generated file was made with (its stored graph, compactly)
+    swap_in_takes,       # ... the new versions into the viewer's cut as takes (regenerate_from_source: pipeline)
     render_camera_move,  # fly a camera through a 3D scene in the viewer, render the move (control video)
     mg_scene_validate,   # motion graphics: check a *.mgscene.json scene
     mg_scene_preview_frame,  # ... look at stills / a contact sheet of it

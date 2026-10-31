@@ -76,6 +76,8 @@ class Packs(unittest.TestCase):
         # ...and the tools the pipeline binds to itself and hands the orchestrator.
         source = (Path(__file__).resolve().parent.parent / "src" / "pipeline.py").read_text(encoding="utf-8")
         have |= set(re.findall(r"@_?tool[^\n]*\n\s+(?:async )?def (\w+)\(", source))
+        # ...and the ones a factory builds for it (regenerate_from_source: src/tools/recreate_host.py).
+        have |= set(re.findall(r"(?m)^\s+(\w+) = _\w+_tool\(self\b", source))
         for pack, (_why, names) in tp.PACKS.items():
             for name in names:
                 with self.subTest(pack=pack, tool=name):

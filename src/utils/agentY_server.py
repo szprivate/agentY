@@ -564,12 +564,45 @@ def _copy_sidecar(src: str, staged_name: str) -> None:
     try:
         from src.utils.output_tags import read_sidecar, write_sidecar
         in_dir = _comfy_input_dir()
-        rec = read_sidecar(src)
-        if in_dir is None or not rec.get("role"):
+        if in_dir is None:
             return
-        write_sidecar(in_dir / staged_name, rec.pop("role"), **rec)
+        try:        # the run's provenance is written on a background thread
+            from src.utils import provenance_capture
+            provenance_capture.wait(10.0)
+        except Exception:  # noqa: BLE001
+            pass
+        rec = read_sidecar(src)
+        staged = in_dir / staged_name
+        prov = rec.pop("provenance", None)
+        if rec.get("role"):
+            write_sidecar(staged, rec.pop("role"), **rec)
+        if isinstance(prov, dict):
+            _copy_provenance(src, staged, prov)
     except Exception as exc:  # noqa: BLE001
         logger.debug("sidecar copy failed for %s: %s", staged_name, exc)
+
+
+def _copy_provenance(src, staged: Path, prov: dict) -> None:
+    """The staged copy keeps the graph that made the original (``.prov.json.gz`` and the
+    sidecar's ``provenance`` key, its ``graph_file`` renamed to match), so a shot
+    dropped onto the canvas can still be recreated with changes."""
+    from agenty_core.utils import provenance as pv
+    src = Path(str(src))
+    graph = src.parent / str(prov.get("graph_file") or pv.graph_path(src).name)
+    if not graph.is_file():
+        graph = pv.graph_path(src)
+    if not graph.is_file():
+        return
+    shutil.copyfile(graph, pv.graph_path(staged))
+    with pv.SIDECAR_LOCK:
+        sc = pv.sidecar_path(staged)
+        try:
+            doc = json.loads(sc.read_text(encoding="utf-8")) if sc.is_file() else {}
+        except (OSError, ValueError):
+            doc = {}
+        doc = doc if isinstance(doc, dict) else {}
+        doc["provenance"] = {**prov, "graph_file": pv.graph_path(staged).name}
+        sc.write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
 def _staged_copy(path: str) -> str | None:
@@ -1944,7 +1977,7 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
             role, declared = _output_role(p)
             staged = (_stage_into_comfy_input(p, "3d" if kind == "model" else "")
                       if kind != "file" else None)
-            if staged and role:
+            if staged:
                 _copy_sidecar(p, staged)
             # Its number in this conversation - what the panel prints on it and
             # what the agent is told it is called.

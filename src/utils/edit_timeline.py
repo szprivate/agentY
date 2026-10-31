@@ -433,7 +433,8 @@ def summary(timeline: dict) -> dict:
                      "length": round(clip_length(c), 3), "starts_at": at[i],
                      "into_it": ("cut" if not float(c.get("transition") or 0) or i == 0
                                  else f"{float(c['transition']):g}s dissolve"),
-                     **({"volume": c["volume"]} if c.get("volume") not in (None, 1, 1.0) else {})})
+                     **({"volume": c["volume"]} if c.get("volume") not in (None, 1, 1.0) else {}),
+                     **({"take": _take_label(c)} if _take_label(c) else {})})
     audio = timeline.get("audio")
     texts = [{"id": o.get("id"), "preset": o.get("preset"), "text": o.get("text"),
               "from": o.get("start"), "to": round(float(o.get("start") or 0) + float(o.get("length") or 0), 3),
@@ -469,10 +470,81 @@ def _url(path: str) -> str:
     return "file:///" + p.lstrip("/")
 
 
+# ── takes ────────────────────────────────────────────────────────────────────
+#
+# A clip recreated with changes (agenty_core.tools.regenerate, the bEpic viewer's
+# Takes menu) keeps every version it had: ``metadata.bepic.takes`` in the .otio,
+# ``[{"file", "version", "active", "note", "created", "len"?}]``, the active one being
+# the clip's media. Here a clip carries them as ``takes``; its ``src`` is the active
+# take. They are kept as they are and written back.
+
+MAX_TAKES = 50
+
+
+def _clean_takes(given) -> list:
+    """*given* as a list of takes with exactly one active (the last, when none says so)."""
+    out = []
+    for t in given if isinstance(given, list) else ():
+        if not isinstance(t, dict) or not isinstance(t.get("file"), str) or not t["file"].strip():
+            continue
+        v = t.get("version")
+        if isinstance(v, bool) or not isinstance(v, int):
+            continue
+        take = {"file": t["file"], "version": v, "active": t.get("active") is True,
+                "note": str(t.get("note") or "")[:200], "created": str(t.get("created") or "")[:40]}
+        if isinstance(t.get("len"), (int, float)) and not isinstance(t.get("len"), bool) and t["len"] > 0:
+            take["len"] = float(t["len"])
+        out.append(take)
+        if len(out) >= MAX_TAKES:
+            break
+    seen = False
+    for t in out:
+        if t["active"] and seen:
+            t["active"] = False
+        seen = seen or t["active"]
+    if out and not seen:
+        out[-1]["active"] = True
+    return out
+
+
+def _same_file(a: str, b: str) -> bool:
+    norm = lambda p: os.path.normcase(os.path.normpath(str(p or "").replace("\\", "/")))
+    return bool(a) and bool(b) and norm(a) == norm(b)
+
+
+def _takes_for(clip: dict) -> list:
+    """The clip's takes, the active one being its ``src`` - or [] when its file is none of
+    them (it was replaced by another shot, and the versions of the old one do not apply)."""
+    takes = _clean_takes(clip.get("takes"))
+    src = str(clip.get("src") or "")
+    if not takes or not any(_same_file(t["file"], src) for t in takes):
+        return []
+    for t in takes:
+        t["active"] = _same_file(t["file"], src)
+    seen = False
+    for t in takes:            # the same file twice: the first is the active one
+        if t["active"] and seen:
+            t["active"] = False
+        seen = seen or t["active"]
+    return takes
+
+
+def _take_label(clip: dict) -> str:
+    """``"v2 of 3"`` for a clip with more than one take, else ""."""
+    takes = _takes_for(clip) if clip.get("takes") else []
+    if len(takes) < 2:
+        return ""
+    active = next((t for t in takes if t["active"]), takes[-1])
+    return f"v{active['version']} of {len(takes)}"
+
+
 def _otio_clip(name: str, src: str, start: float, length: float, rate: float,
-               note: dict | None = None) -> dict:
+               note: dict | None = None, takes: list | None = None) -> dict:
+    meta = {"agentY": dict(note)} if note else {}
+    if takes:
+        meta["bepic"] = {"takes": [dict(t) for t in takes]}
     return {"OTIO_SCHEMA": "Clip.1", "name": name,
-            "metadata": {"agentY": dict(note)} if note else {}, "effects": [], "markers": [],
+            "metadata": meta, "effects": [], "markers": [],
             "source_range": _range(start, length, rate),
             "media_reference": {"OTIO_SCHEMA": "ExternalReference.1", "name": "", "metadata": {},
                                 "available_range": None, "target_url": _url(src)}}
@@ -499,7 +571,8 @@ def to_otio(timeline: dict, name: str = "agentY edit") -> dict:
         video.append(_otio_clip(c.get("label") or c.get("id") or f"clip {i + 1}", c["src"],
                                 float(c.get("in") or 0.0) + head,
                                 clip_length(c) - head - tail, rate,
-                                {"volume": c["volume"]} if c.get("volume") not in (None, 1, 1.0) else None))
+                                {"volume": c["volume"]} if c.get("volume") not in (None, 1, 1.0) else None,
+                                _takes_for(c)))
 
     def track(kind: str, label: str, children: list) -> dict:
         return {"OTIO_SCHEMA": "Track.1", "name": label, "kind": kind, "metadata": {},
@@ -663,6 +736,11 @@ def from_otio(doc: dict, base: dict | None = None) -> dict:
         volume = _agenty(child).get("volume")
         if isinstance(volume, (int, float)) and not isinstance(volume, bool):
             clip["volume"] = float(volume)
+        meta = child.get("metadata") if isinstance(child.get("metadata"), dict) else {}
+        bep = meta.get("bepic") if isinstance(meta.get("bepic"), dict) else {}
+        takes = _takes_for({"src": src, "takes": bep.get("takes")})
+        if takes:
+            clip["takes"] = takes
         clip["in"], clip["out"] = round(clip["in"], 4), round(clip["out"], 4)
         tl["clips"].append(clip)
     if not tl["clips"]:

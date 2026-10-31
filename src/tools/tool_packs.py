@@ -144,6 +144,12 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
               ("install_custom_node", "find_custom_node_for")),
     "dirs": ("where ComfyUI keeps its folders (models, input, output) and where agentY saves what it makes",
              ("get_comfyui_dirs", "get_agent_output_dirs")),
+    # Pinned when clips are selected in the viewer's Edit panel or the message asks to recreate shots
+    # (recreate_wanted); the flow is the recreate_shots guide of that turn.
+    "recreate": ("recreate generated shots with a few changes and everything else exactly as it was: the "
+                 "parameters a file was made with, the dry run (diff, cost, next version), the run, the new "
+                 "versions swapped into the viewer's cut as takes",
+                 ("recreatable_params", "regenerate_from_source", "swap_in_takes")),
     # Pinned by the pipeline on the turns they belong to (CONTEXT_PACKS).
     "farm": ("render on the studio's Deadline render farm instead of the local ComfyUI: send a workflow as a "
              "job, follow it, see the pools and workers (read the `deadline-farm` skill first)",
@@ -191,6 +197,36 @@ def packs_asked_for(text: str) -> set:
     if _INSTALL_VERB.search(text) and _NODE_PACK_WORDS.search(text):
         return {"nodes"}
     return set()
+
+
+# "recreate shot 3 with warmer light", "regenerate the selected clips", "redo these two
+# shots with a new seed" - a verb of making again, and what is made again. And the
+# viewer's own "Recreate with changes..." message (agentY-comfyuiConnect's bridge).
+_RECREATE_VERB = re.compile(
+    r"\b(re-?create|re-?generate|re-?make|re-?do|re-?render|re-?shoot|new\s+(?:version|take)s?|"
+    r"another\s+take|make\s+(?:it|them|these|those)\s+again)\b", re.I)
+_RECREATE_WHAT = re.compile(r"\b(shots?|clips?|takes?|selected|selection|these|those|them)\b", re.I)
+_RECREATE_BRIDGE = "(Recreate with changes, from the bEpic viewer's Edit panel"
+
+
+def edit_selection(viewer_state) -> list:
+    """The clips selected in the viewer's Edit panel (``viewer_state.edit.selected``,
+    a list since 2026-10-31), or []."""
+    if not isinstance(viewer_state, dict) or not viewer_state.get("open", True):
+        return []
+    sel = (viewer_state.get("edit") or {}).get("selected")
+    return [c for c in sel if isinstance(c, dict)] if isinstance(sel, list) else []
+
+
+def recreate_wanted(text: str, viewer_state=None) -> bool:
+    """A "recreate these shots with changes" turn: clips are selected in the Edit
+    panel, or the message asks for shots to be made again."""
+    if edit_selection(viewer_state):
+        return True
+    text = str(text or "")
+    if _RECREATE_BRIDGE in text:
+        return True
+    return bool(_RECREATE_VERB.search(text) and _RECREATE_WHAT.search(text))
 
 
 def enabled() -> bool:

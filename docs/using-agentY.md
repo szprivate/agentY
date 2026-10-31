@@ -746,6 +746,34 @@ itself that you changed the cut. A cut you
 started in the panel from nothing is saved under `edits/` in the output folder;
 name that file to the agent the same way.
 
+**Recreating shots with changes.** Select the shots to change: click one,
+`Ctrl`+click to add or remove one, and `Shift`+click to take a range on a track.
+Then right-click them and choose **Recreate with changes…**, and say what should
+change (*"warmer light, less grain"*, *"two seconds longer"*, *"another take"*).
+You can also type it in the chat while they are selected. agentY then makes those
+shots again with only that change. Everything else stays exactly as it was:
+model, LoRAs, size, steps and sampler, and the seed too unless you ask for a new
+one.
+
+- Before anything runs, agentY lists in the chat what changes for each shot, what
+  stays, and what it costs. A paid model asks for your go-ahead first, as usual.
+- Each new shot is saved beside its original as the next version
+  (`shot_03_v002.png`, or in the next `v###` folder of a project). Nothing is
+  overwritten.
+- The new version replaces the clip in your cut as a **take**. The clip shows its
+  version (**v2**), and right-clicking it gives **Takes ▸**: switch back to the
+  original, or between versions, at any time (`Ctrl+Z` undoes a switch).
+  **Retime to fit** plays a take of a different length at the speed that fills
+  the clip; otherwise the clip is shortened to the take. Edits you have not saved
+  yet are kept.
+- This works for every file agentY or the bEpic viewer's Send node made from now
+  on: each one keeps the graph that made it, in two small files beside it
+  (`<file>.agenty.json` and `<file>.prov.json.gz`), with API keys left out. An
+  older file can still be recreated if ComfyUI embedded its graph (PNG files
+  saved by ComfyUI's Save node, videos from Save Video / Video Combine). A file
+  with neither is named as one that can't be recreated exactly, and the other
+  shots go ahead.
+
 ### The run ledger: what is already settled
 
 A pipeline runs over many turns, and with branches in several conversations. So
