@@ -369,7 +369,8 @@ standard viewer: the installer puts it beside the sidebar extension and
 - **What you are looking at.** While the viewer is open, each message also tells the
   agent, in a few short lines, where the viewer is (docked, full screen, popped out),
   the tab, the picture or clip on screen, the frame and fps, the in/out range you
-  marked on the timeline, a comparison, a zoom or channel that is not the default,
+  marked on the timeline, a comparison (for a Contact Sheet of three or more
+  renders, just how many), a zoom or channel that is not the default,
   and how many annotations the item has - so "make this frame brighter" or "redo the
   range I marked" needs no file names. The lines are sent only when something
   changed, and an earlier turn's lines are taken out of the conversation, so they
