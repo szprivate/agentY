@@ -167,6 +167,9 @@ from agenty_core.tools.show_in_viewer import show_in_viewer, set_default_tab_pro
 # What the user picked in a history panel (the bEpic viewer's strip, ComfyUI's assets
 # sidebar), read live mid-turn (agenty_core.tools.history_selection).
 from agenty_core.tools.history_selection import get_history_selection  # noqa: F401,E402
+# What the bEpic viewer shows (tab, item, frame, range) and the marks the user drew on it
+# (agenty_core.tools.viewer_state).
+from agenty_core.tools.viewer_state import get_viewer_state, get_viewer_annotations  # noqa: F401,E402
 # Fly a camera through a 3D scene in the viewer and render the move (agenty_core.tools.previz_shot).
 from agenty_core.tools.previz_shot import render_camera_move  # noqa: F401,E402
 # Editable motion graphics: a scene file (data) checked, previewed and rendered with Remotion.
@@ -273,6 +276,8 @@ _SHARED_CORE_TOOLS = [
     "show_in_viewer",
     # what the user picked in a history panel, read live
     "get_history_selection",
+    # what the bEpic viewer shows, and the user's annotations on it (as a mask too)
+    "get_viewer_state", "get_viewer_annotations",
     # animate a camera through a 3D scene in the viewer and render the move
     "render_camera_move",
     # editable motion graphics: write a *.mgscene.json scene, check it, look at stills, render it with Remotion
@@ -672,6 +677,8 @@ ORCHESTRATOR_TOOLS: list = [
     dashscope_fetch,     # collect one that timed out
     show_in_viewer,      # "show me clip 3 in the viewer" / "open the edit"
     get_history_selection,  # "use the selected ones": what is picked in a history panel right now
+    get_viewer_state,    # "this frame", "the range I marked": what the viewer shows right now
+    get_viewer_annotations,  # the marks the user drew in the viewer (words + coords, or a mask PNG)
     render_camera_move,  # fly a camera through a 3D scene in the viewer, render the move (control video)
     mg_scene_validate,   # motion graphics: check a *.mgscene.json scene
     mg_scene_preview_frame,  # ... look at stills / a contact sheet of it

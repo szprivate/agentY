@@ -250,6 +250,12 @@ _MAX_SLACK_FILES = 10
 _orch_partial_cache: dict[str, str] = {}
 
 
+# A per-turn block that says what was on screen / picked (viewer_state.md,
+# history_selection.md): its first line opens "[VIEWER" or "[HISTORY SELECTION",
+# and it runs to the blank line the pin puts after every block.
+_TURN_BLOCK_RE = re.compile(r"(?m)^\[(VIEWER|HISTORY SELECTION)\b.*(?:\n(?!\n).*)*(?:\n\n|\n?\Z)")
+
+
 def _orch_partial(name: str) -> str:
     """Return the orchestrator guidance partial ``<name>.md`` (cached), or '' if it
     is missing/unreadable — a missing partial degrades to no guidance, never a crash."""
@@ -6325,6 +6331,37 @@ class Pipeline:
                 block["text"] = text
         return removed
 
+    @staticmethod
+    def _drop_old_turn_blocks(messages, keep_last_viewer: bool = False) -> tuple[int, bool]:
+        """Take the ``[VIEWER]`` and ``[HISTORY SELECTION]`` blocks out of the user
+        messages of EARLIER turns (every message there is when a turn starts): each
+        said what was on screen / picked for its own turn, and left in place they
+        piled up turn after turn. With *keep_last_viewer* the newest ``[VIEWER]``
+        block stays (the viewer has not changed, so this turn sends none).
+        Returns ``(removed, a viewer block is still in the history)``."""
+        hits = []
+        for msg in messages or []:
+            if not isinstance(msg, dict) or msg.get("role") != "user":
+                continue
+            for block in msg.get("content") or []:
+                if isinstance(block, dict) and isinstance(block.get("text"), str):
+                    for m in _TURN_BLOCK_RE.finditer(block["text"]):
+                        hits.append((block, m.group(1)))
+        keep = None
+        if keep_last_viewer:
+            viewer = [b for b, kind in hits if kind == "VIEWER"]
+            keep = viewer[-1] if viewer else None
+        removed = 0
+        for block in {id(b): b for b, _ in hits}.values():
+            def cut(m):
+                nonlocal removed
+                if m.group(1) == "VIEWER" and block is keep:
+                    return m.group(0)
+                removed += 1
+                return ""
+            block["text"] = _TURN_BLOCK_RE.sub(cut, block["text"])
+        return removed, keep is not None
+
     def _pin_tool_packs(self, lead: bool, user_text: str = "") -> None:
         """The tool packs this turn needs whether or not the conversation has
         loaded them: what is on the canvas, what kind of conversation it is, or
@@ -6364,6 +6401,14 @@ class Pipeline:
         # viewer pack) re-reads it mid-turn.
         if self._history_selection().get("items"):
             pins.add("viewer")
+        # Marks on the item the viewer shows: get_viewer_annotations reads them.
+        try:
+            from agenty_core.utils import turn_scope
+            vstate = turn_scope.current().get("viewer_state")
+            if isinstance(vstate, dict) and (vstate.get("annotations") or {}).get("count"):
+                pins.add("viewer")
+        except Exception:  # noqa: BLE001
+            pass
         try:
             agent._tool_packs_pinned = pins
         except Exception:  # noqa: BLE001
@@ -6385,6 +6430,16 @@ class Pipeline:
                 print(f"pipeline: took {dropped} guidance block(s) out of earlier turns' messages.")
         except Exception:  # noqa: BLE001 - never cost a turn
             pass
+        try:
+            # What the viewer showed / what was picked then is not true now. An
+            # unchanged viewer keeps the one block it last sent (and sends none).
+            lines = self._viewer_state_lines()
+            keep = bool(lines) and lines == getattr(self, "_viewer_last_lines", "")
+            dropped, self._viewer_block_kept = self._drop_old_turn_blocks(msgs, keep_last_viewer=keep)
+            if dropped and self._verbose:
+                print(f"pipeline: took {dropped} viewer / history-selection block(s) out of earlier turns.")
+        except Exception:  # noqa: BLE001 - never cost a turn
+            self._viewer_block_kept = False
         shrunk = self._shrink_old_catalogs(msgs)
         if shrunk and self._verbose:
             print(f"pipeline: shrank {shrunk} workflow catalog(s) from earlier turns.")
@@ -7031,6 +7086,34 @@ class Pipeline:
             return ""
         return text.replace("{where}", where or "a history panel").replace("{list}", lines)
 
+    def _viewer_state_lines(self) -> str:
+        """This turn's viewer state as compact key=value lines ("" when the panel
+        sent none - the viewer is closed - or it says nothing worth a line)."""
+        try:
+            from agenty_core.utils import turn_scope
+            raw = turn_scope.current().get("viewer_state")
+            if not isinstance(raw, dict) or not raw.get("open"):
+                return ""
+            from agenty_core.tools.viewer_state import describe_lines
+            return describe_lines(raw)
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _describe_viewer_state(self) -> str:
+        """The ``[VIEWER]`` block, or "" when the viewer is closed, or when it shows
+        what it showed last turn and that turn's block is still in the history."""
+        lines = self._viewer_state_lines()
+        if not lines:
+            self._viewer_last_lines = ""
+            return ""
+        if lines == getattr(self, "_viewer_last_lines", "") and getattr(self, "_viewer_block_kept", False):
+            return ""
+        text = _orch_partial("viewer_state")
+        if not text:
+            return ""
+        self._viewer_last_lines = lines
+        return text.replace("{lines}", lines)
+
     def _describe_canvas_selection(self) -> str:
         """Render the selected canvas nodes + their params as a context block.
 
@@ -7187,6 +7270,13 @@ class Pipeline:
             if any(i.get("path") and i.get("kind") in ("image", "video")
                    for i in self._history_selection().get("items") or []):
                 guides.append("input_images")
+
+        # What the bEpic viewer shows (tab, item, frame, range, marks): a few
+        # key=value lines, only while it is open and only when it changed - the
+        # previous turn's block is taken out of the history (viewer_state.md).
+        viewer_block = self._describe_viewer_state()
+        if viewer_block:
+            pin += viewer_block + "\n\n"
 
         # Several workflows open in ComfyUI's tabs. Silent for the ordinary
         # single-tab case (see describe_open_workflows) — it speaks up only when

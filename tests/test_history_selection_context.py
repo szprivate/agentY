@@ -80,7 +80,7 @@ class Plumbing(unittest.TestCase):
         self.assertIn("history_selection", inspect.signature(srv._run_pipeline_stream).parameters)
         src = inspect.getsource(srv)
         self.assertIn('turn_scope.current().set("history_selection", history_selection)', src)
-        self.assertIn('"history_selection": history_selection}', src)
+        self.assertIn('"history_selection": history_selection,', src)
 
     def test_remember_canvas_keeps_it_for_a_slack_turn(self):
         from src.utils import agentY_server as srv

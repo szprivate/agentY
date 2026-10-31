@@ -161,15 +161,16 @@ def canvas_wanted(client: str = "") -> bool:
 
 
 def remember_canvas(prompt, hooks, selection, client: str = "",
-                    history_selection=None) -> None:
+                    history_selection=None, viewer_state=None) -> None:
     """Cache what the panel says is on screen right now (under its client id, when
-    it sent one), with what is picked in a history panel."""
+    it sent one), with what is picked in a history panel and what the viewer shows."""
     global _canvas_wanted_until
     snap = {
         "prompt": prompt if isinstance(prompt, dict) else None,
         "hooks": [h for h in (hooks or []) if isinstance(h, dict)],
         "selection": [n for n in (selection or []) if isinstance(n, dict)],
         "history_selection": history_selection if isinstance(history_selection, dict) else None,
+        "viewer_state": viewer_state if isinstance(viewer_state, dict) else None,
         "ts": time.time(),
     }
     client = str(client or "")
@@ -1619,7 +1620,8 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
                          canvas_workflow: str = "",
                          loop_render: dict | None = None,
                          canvas_provider=None,
-                         history_selection: dict | None = None) -> None:
+                         history_selection: dict | None = None,
+                         viewer_state: dict | None = None) -> None:
     """Run one turn, guaranteeing the SSE queue is always terminated.
 
     *canvas_provider* (Slack) fetches the canvas once the turn has started:
@@ -1654,6 +1656,7 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
             canvas_hooks = snap.get("hooks") or []
             canvas_selection = snap.get("selection") or []
             history_selection = snap.get("history_selection")
+            viewer_state = snap.get("viewer_state")
             if snap.get("client"):
                 # The panel whose graph this turn works on, and the only one its
                 # canvas patches are delivered to (run_stream).
@@ -1665,6 +1668,9 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
         # ComfyUI's assets sidebar); the pipeline lists it at the top of the turn.
         if isinstance(history_selection, dict) and history_selection:
             turn_scope.current().set("history_selection", history_selection)
+        # What the bEpic viewer shows (only sent while it is open); a [VIEWER] block.
+        if isinstance(viewer_state, dict) and viewer_state:
+            turn_scope.current().set("viewer_state", viewer_state)
         if origin != "panel" and not _turn_canvas.get(req_id):
             # A turn nobody streams, and no panel to hand it a canvas: say so to
             # the canvas tools, so they refuse with the reason instead of editing
@@ -4795,7 +4801,8 @@ def _build_app():
             canvas_target.touch(client, str(body.get("thread_id") or ""))
         remember_canvas(body.get("canvas_prompt"), body.get("canvas_hooks"),
                         body.get("canvas_selection"), client=client,
-                        history_selection=body.get("history_selection"))
+                        history_selection=body.get("history_selection"),
+                        viewer_state=body.get("viewer_state"))
         return jsonify({"ok": True})
 
     @app.route("/agentY/commands", methods=["GET"])
@@ -6193,6 +6200,8 @@ def _build_app():
         # What is picked in a history panel (the bEpic viewer's strip, ComfyUI's
         # assets sidebar): {viewer, assets}, or null when nothing is.
         history_selection = body.get("history_selection") if isinstance(body.get("history_selection"), dict) else None
+        # What the bEpic viewer shows (tab, item, frame, range, marks); null while it is closed.
+        viewer_state = body.get("viewer_state") if isinstance(body.get("viewer_state"), dict) else None
         # ComfyUI's open workflow tabs. The graph above is the ACTIVE one and
         # cannot say whether it was one of several — so without this, "the other
         # workflow" gets answered about this one, confidently and wrongly.
@@ -6258,7 +6267,7 @@ def _build_app():
         if _client:
             canvas_target.touch(_client, thread_id)
         remember_canvas(canvas_prompt, canvas_hooks, canvas_selection, client=_client,
-                        history_selection=history_selection)
+                        history_selection=history_selection, viewer_state=viewer_state)
 
         # Persist the user's message (raw text).
         if message:
@@ -6315,7 +6324,8 @@ def _build_app():
                                  "canvas_graph": canvas_graph, "canvas_hash": canvas_hash,
                                  "canvas_workflow": canvas_workflow,
                                  "loop_render": loop_render,
-                                 "history_selection": history_selection},
+                                 "history_selection": history_selection,
+                                 "viewer_state": viewer_state},
                          daemon=True).start()
 
         return _sse_response(_stream_turn(q, rid, thread_id))

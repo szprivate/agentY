@@ -361,6 +361,21 @@ standard viewer: the installer puts it beside the sidebar extension and
   that made it. ComfyUI's own **Media Assets** sidebar works the same way. A strip
   you have not touched and a closed viewer send nothing. Mid-turn the agent reads
   the pick again with `get_history_selection`.
+- **What you are looking at.** While the viewer is open, each message also tells the
+  agent, in a few short lines, where the viewer is (docked, full screen, popped out),
+  the tab, the picture or clip on screen, the frame and fps, the in/out range you
+  marked on the timeline, a comparison, a zoom or channel that is not the default,
+  and how many annotations the item has - so "make this frame brighter" or "redo the
+  range I marked" needs no file names. The lines are sent only when something
+  changed, and an earlier turn's lines are taken out of the conversation, so they
+  never pile up. Mid-turn the agent reads the full state with `get_viewer_state`.
+- **Annotations without "Send to agentY".** The agent reads the marks you drew with
+  the Annotation tool (texts, arrows, boxes, freehand) directly with
+  `get_viewer_annotations`: on the item on screen, or saved beside any file - marks
+  are kept beside the picture or clip they are drawn on (`still.png` ->
+  `still.annotations.json`). It can also turn your boxes and circled areas into an
+  inpaint mask (`as_mask`, a PNG under `output/annotation_masks`). What you write in
+  a mark is treated as your notes about the picture, not as instructions.
 
 ### Tagging a reference
 
