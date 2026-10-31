@@ -699,8 +699,33 @@ the `.otio`. It works like an editor's timeline:
   its **waveform**; the music bed shows its waveform too.
 - **The blade** (`B`) cuts a clip where you click; `Ctrl+B` or `S` cuts at the
   playhead. `Del` deletes, `Shift+Del` closes the gap. `Ctrl+Z` / `Ctrl+Shift+Z`
-  undo and redo. `J K L` play, `I` / `O` set the range, the arrows step. The keys
-  work while the timeline has the focus (click in it); `?` lists them.
+  undo and redo. `J K L` play, the arrows step. The keys work while the timeline
+  has the focus (click in it); `?` lists them.
+- **Trimming like an editor.** Point at a cut and the pointer shows what a drag
+  will do, before you press: the side that moves is lit and its timecode is
+  shown. Left of the cut you trim the outgoing shot's end, right of it the
+  incoming shot's start; right on the cut you **roll** it (the cut moves, the
+  film keeps its length). `Alt`+drag a clip **slips** it (same place and length,
+  another part of its file; `,` and `.` slip a frame, with `Shift` a second);
+  `Alt+Shift`+drag a shot on V1 **slides** it between its neighbours. A trim
+  never runs past the end of a file; a still picture has no end, so you can pull
+  it as long as you like. The Inspector's *Timing* tab has the same as numbers:
+  start, source in and out, length.
+- **Speed and loops.** `Alt`+drag a clip's edge to **retime** it: the same part
+  of its file, played faster or slower to fill the new length (the clip shows
+  its speed, e.g. "62 %"; `Shift+R` puts it back to 100 %). `Ctrl`+drag a clip's
+  end past its file to **loop** it (`Ctrl+L` adds one more turn, `Ctrl+Shift+L` a
+  ping-pong turn); the seams are drawn on the clip. Both play in the panel and
+  render into the film; the sound of a retimed clip changes pitch with it, like
+  tape. Editing programs read the speed; the agent's edit stage plays such a
+  clip at 100 % and once.
+- **In and out.** `I` and `O` set them at the playhead, `X` around the selected
+  clip, `Alt+X` clears them; on the ruler you drag their handles, `Ctrl`+drag a
+  new range, or right-click. The range is shown on both the panel's ruler and the
+  viewer's own bar, loops playback, and is what *Export film → In–out only*,
+  *Auto edit* and *Detect cuts* work on.
+- **One playhead.** The panel's playhead and the viewer's frame bar are the same
+  position: scrubbing, playing or stepping either moves both, also popped out.
 - **Auto edit…** cuts on the beat of the music, gives every shot the same length
   or fits the cut to a length, takes the rhythm of another film, or trims each
   shot to its middle - one step each, undone with `Ctrl+Z`. **Detect cuts** finds
