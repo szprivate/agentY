@@ -679,7 +679,7 @@ def _no_graph_msg(suffix: str = "") -> str:
     return "no graph is open on the canvas this turn" + suffix + "."
 
 
-async def _patch_unconfirmed(pid: str) -> dict | None:
+async def _patch_unconfirmed(pid: str, ack_out: dict | None = None) -> dict | None:
     """Wait for the page to confirm canvas patch *pid*; None when it did.
 
     A patch is fire-and-forget on its own: the tool used to say "applied" the
@@ -688,6 +688,8 @@ async def _patch_unconfirmed(pid: str) -> dict | None:
     for that page, and when none answers the result says the edit is NOT on any
     canvas - so the agent falls back to a workflow file instead of reporting
     success it does not have. "" (an untracked patch) counts as confirmed.
+    *ack_out*, when given, receives the page's acknowledgement (what it did beyond
+    the ops - e.g. a loader it copied for room, ``duplicated``).
     """
     if not pid:
         return None
@@ -696,6 +698,8 @@ async def _patch_unconfirmed(pid: str) -> dict | None:
     t = turn_bus.turn(_ts.current().request_id)
     patient = bool(t is not None and t.origin != "panel")      # the page must first pick the turn up
     ack = await asyncio.to_thread(canvas_ack.wait, pid, 25.0 if patient else 12.0)
+    if isinstance(ack_out, dict):
+        ack_out.update(ack or {})
     if ack.get("ok"):
         return None
     missed = ack.get("missed") or []
@@ -2887,7 +2891,21 @@ class Pipeline:
                                  f"selection, so they cannot be rewired.",
                         "what_to_do": "Ask the user to select the nodes the edit touches."})
             schemas = _CanvasSchemas()
-            res = _ce.plan(graph, ops, schemas)
+            # A loader the user's graph already reads from is copied for the new
+            # branch, not crowded (canvas_edit.duplicate_sources). Should the copy
+            # not plan (a value the class no longer takes), the edit goes as asked.
+            from src.utils.agentY_server import _duplicate_canvas_sources as _dup_on
+            _dup = bool(graph) and _dup_on()
+            _copies = {}
+            res = None
+            if _dup:
+                _dops, _copies = _ce.duplicate_sources(graph, ops, schemas)
+                if _copies:
+                    res = _ce.plan(graph, _dops, schemas)
+                    if not res["ok"]:
+                        res, _copies = None, {}
+            if res is None:
+                res = _ce.plan(graph, ops, schemas)
             if not res["ok"]:
                 # Remembered until an edit goes through: a turn that ENDS here has
                 # changed nothing, whatever it then says (_unfinished_intent_input).
@@ -2896,11 +2914,22 @@ class Pipeline:
                                    "note": "Nothing was changed. Fix these and send the whole list again."})
             self._canvas_edit_rejected = None
             self._canvas_graph = res["graph"]
-            _pid = _push_patch({"op": "edit_graph", "ops": res["ops"], "reason": str(reason or "").strip()})
-            _bad = await _patch_unconfirmed(_pid)
+            _pid = _push_patch({"op": "edit_graph", "ops": res["ops"], "reason": str(reason or "").strip(),
+                                "duplicate_sources": _dup})
+            _ack = {}
+            _bad = await _patch_unconfirmed(_pid, _ack)
             if _bad:
                 self._canvas_graph = graph
                 return json.dumps(_bad)
+            # Copies of a source: the host's own (in use), and the page's (a loader
+            # standing alone with no room beside it) - which the turn's copy of the
+            # canvas learns about only from the acknowledgement.
+            _copied = {src: res["added"].get(r, r) for src, r in _copies.items()}
+            if _ack.get("duplicated"):
+                _ce.record_duplicates(res["graph"], _ack["duplicated"])
+                for d in _ack["duplicated"]:
+                    if isinstance(d, dict) and d.get("of") and d.get("id"):
+                        _copied[str(d["of"])] = str(d["id"])
             self._canvas_edits = (getattr(self, "_canvas_edits", None) or []) + [
                 "rewired / added nodes" + (f" ({str(reason).strip()})" if str(reason or "").strip() else "")]
             unwired = {n: u for n in res["touched"] if n in res["graph"]
@@ -2918,6 +2947,12 @@ class Pipeline:
             out = {"status": "applied", "added": res["added"],
                    "nodes": {n: res["graph"][n]["class_type"] for n in res["touched"] if n in res["graph"]},
                    "message": "Applied to the live canvas; the user can undo with Ctrl+Z."}
+            if _copied:
+                out["duplicated"] = _copied
+                out["message"] += (" To keep the canvas tidy the new nodes read from a copy of "
+                                   + ", ".join(f"#{s_} (copy #{d_})" for s_, d_ in _copied.items())
+                                   + ", placed with them in free space; the original and its wires "
+                                     "are unchanged. Use the copy's id for further edits of this chain.")
             if unwired:
                 # The status says it, because a status is what gets read: "applied"
                 # with a note behind it was taken for "done" (qwen3.5:9b, 2026-10-13).
@@ -2925,6 +2960,7 @@ class Pipeline:
                 out = {"status": "applied_incomplete", "still_unwired": unwired,
                        **({"wire_from": hints} if hints else {}),
                        "added": out["added"], "nodes": out["nodes"],
+                       **({"duplicated": out["duplicated"]} if out.get("duplicated") else {}),
                        "message": ("Applied to the live canvas, but the edit is NOT finished: the "
                                    "required inputs in still_unwired have nothing wired into them "
                                    "and the graph will not run. Connect each one now with another "

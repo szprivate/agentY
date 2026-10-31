@@ -173,6 +173,14 @@ hook_subgraph_min_nodes = 12
 # with many text hooks, where a node per answer buries the chain that produced
 # them. The answer is in the chat either way. Env: AGENTY_CANVAS_TEXT (1/0).
 place_text_nodes_on_canvas = true
+# When the agent wires new nodes to an image or video loader on your canvas that
+# your graph already uses, it copies that loader into free space and wires the new
+# nodes to the copy: the original and its wires stay exactly as they were, and the
+# new chain sits in a place of its own instead of behind your nodes. A loader that
+# stands alone is wired as it is when there is room beside it, and copied when
+# there is not. Off: the new nodes are always wired to the loader itself (they
+# still go into free space). Env: AGENTY_CANVAS_DUPLICATE (1/0).
+duplicate_canvas_sources = true
 # Canvas hooks: when an anchor is wired to a mid-graph node (a VAEDecode, an upscaler,
 # a mask op) its value is a tensor with no file anywhere, so the agent has nothing to
 # look at. With this on, that wire is rendered to a temp file before the turn starts —

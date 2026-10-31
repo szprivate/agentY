@@ -388,6 +388,10 @@ def plan(graph: dict, ops: list, object_info: dict) -> dict:
                      "params": params, "defaults": defaults, "near": near}
             if op.get("at") is not None and str(op.get("at")) in removed:
                 entry["at"] = str(op.get("at"))      # takes that node's place on the canvas
+            if op.get("duplicate_of") is not None and str(op.get("duplicate_of")) in g:
+                # A copy of a media source the new nodes read from (duplicate_sources):
+                # the page clones that node, preview and all, instead of a bare one.
+                entry["duplicate_of"] = str(op.get("duplicate_of"))
             resolved.append(entry)
             touched.append(nid)
 
@@ -474,6 +478,161 @@ def plan(graph: dict, ops: list, object_info: dict) -> dict:
 def _is_widget_spec(spec) -> bool:
     t = _spec_type(spec)
     return isinstance(t, list) or t in _WIDGET_TYPES or _is_dynamic(spec)
+
+
+# ── Keeping the canvas tidy: a media source in use is copied, not crowded ─────
+#
+# New nodes wired to a loader the user's graph already reads from used to be
+# dropped beside that loader - which is where the user's own graph goes on - and
+# over time the canvas filled with chains tucked behind each other's nodes. Now
+# such a source is copied: the copy carries the same file and values, the new
+# nodes are wired to the copy, and the page lays copy and chain out together in
+# free space. The original and its wires are not touched. Pure topology here; the
+# page decides where things go (web/agent_chat.js _placeChain), and also copies a
+# loader that is NOT in use when there is no room beside it, telling the host so
+# in its acknowledgement (record_duplicates).
+#
+# Same rule in the page: agent_layout.js isMediaSourceShape. Keep the two alike.
+
+MEDIA_OUTPUT_TYPES = frozenset({"IMAGE", "VIDEO", "LATENT"})
+_MEDIA_FILE_EXT = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".exr",
+                   ".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v", ".latent")
+
+
+def _hook_classes() -> set:
+    try:
+        from src.utils.canvas_hooks import _HOOK_CLASSES  # noqa: PLC0415
+        return set(_HOOK_CLASSES)
+    except Exception:  # noqa: BLE001 - without it a hook just counts as any consumer
+        return set()
+
+
+def is_media_source(graph: dict, node_id, object_info: dict) -> bool:
+    """Is *node_id* a node that loads media - an image, a video, a latent - and
+    nothing else: a LoadImage, a VHS or bEpic loader, an agentY collector?
+
+    It puts out IMAGE, VIDEO or LATENT; nothing is wired into it (so a copy with
+    the same values IS the same source); and it loads something - its class says
+    so (Load / Loader / Collector) or one of its values names a media file. An
+    EmptyLatentImage is not one: it makes a latent, it does not load one."""
+    node = (graph or {}).get(str(node_id))
+    if not isinstance(node, dict):
+        return False
+    inputs = node.get("inputs") or {}
+    if any(_is_link(v) for v in inputs.values()):
+        return False
+    cls = str(node.get("class_type") or "")
+    schema = (object_info or {}).get(cls) or {}
+    outs = {str(t) for t in (schema.get("output") or []) if isinstance(t, str)}
+    if EXEC_TYPE in outs or cls in _hook_classes():
+        return False
+    if not outs & MEDIA_OUTPUT_TYPES:
+        return False
+    low = cls.lower()
+    if "load" in low or "collector" in low:
+        return True
+    return any(isinstance(v, str) and v.lower().endswith(_MEDIA_FILE_EXT) for v in inputs.values())
+
+
+def source_consumers(graph: dict, node_id) -> list:
+    """``[(consumer id, input name)]`` for every wire out of *node_id*."""
+    nid = str(node_id)
+    return [(str(k), name) for k, node in (graph or {}).items() if isinstance(node, dict)
+            for name, v in (node.get("inputs") or {}).items() if _is_link(v) and str(v[0]) == nid]
+
+
+def duplicate_sources(graph: dict, ops: list, object_info: dict) -> tuple[list, dict]:
+    """*ops* with a copy of every media source they hang a NEW branch off that is
+    already in use, and the wires from it moved to the copy.
+
+    Returns ``(ops, {source id: ref of its copy})``. Only a branch: when the new
+    nodes also feed nodes that were there (a splice - a LoRA between loader and
+    sampler, an upscale before the save) or something is removed (a replacement),
+    the ops are returned as they came. A source a hook reads from is left alone
+    too - a hook can sweep that node's values, and a copy would not follow.
+    A source nothing reads from yet is the page's to judge (room beside it, or a
+    copy), so it is not copied here either."""
+    if not isinstance(ops, list) or not ops or not isinstance(graph, dict) or not graph:
+        return ops, {}
+    good = [o for o in ops if isinstance(o, dict)]
+    if any(str(o.get("op") or "").lower() == "remove" for o in good):
+        return ops, {}
+    fresh = {str(o.get("ref")).strip().lstrip("#") for o in good
+             if str(o.get("op") or "").lower() == "add" and o.get("ref") is not None
+             and o.get("id") is None and o.get("at") is None}
+    if not fresh:
+        return ops, {}
+
+    def ref(v) -> str:
+        return str(v).strip().lstrip("#") if v is not None else ""
+
+    connects = [o for o in good if str(o.get("op") or "").lower() == "connect"]
+    if any(ref(o.get("from")) in fresh and ref(o.get("to")) not in fresh for o in connects):
+        return ops, {}                                  # a splice, not a branch
+    hooks = _hook_classes()
+    copies: dict = {}
+    for o in connects:
+        src, dst = ref(o.get("from")), ref(o.get("to"))
+        if src in fresh or src not in graph or dst not in fresh or src in copies:
+            continue
+        users = source_consumers(graph, src)
+        if not users or not is_media_source(graph, src, object_info):
+            continue
+        if any((graph.get(u) or {}).get("class_type") in hooks for u, _ in users):
+            continue
+        name = f"copy_of_{src}"
+        while name in fresh or name in graph:
+            name += "_"
+        copies[src] = name
+    if not copies:
+        return ops, {}
+    adds = []
+    for src, name in copies.items():
+        node = graph[src]
+        schema = (object_info or {}).get(node.get("class_type")) or {}
+        specs = _specs(schema)
+        values = {k: v for k, v in (node.get("inputs") or {}).items() if not _is_link(v)}
+        # Only what the class takes: a stray key in the saved graph would reject
+        # the whole edit.
+        params = {k: v for k, v in values.items() if _input_spec(specs, k, values) is not None}
+        adds.append({"op": "add", "class_type": node["class_type"], "ref": name,
+                     "params": params, "duplicate_of": src})
+    out = []
+    for o in ops:
+        if isinstance(o, dict) and str(o.get("op") or "").lower() == "connect" \
+                and ref(o.get("from")) in copies and ref(o.get("to")) in fresh:
+            o = {**o, "from": copies[ref(o.get("from"))]}
+        out.append(o)
+    return adds + out, copies
+
+
+def record_duplicates(graph: dict, duplicates) -> dict:
+    """Bring the turn's copy of the canvas up to what the page did when it copied
+    a free-standing loader it found no room beside (see the module notes above).
+
+    *duplicates*: ``[{"of": "5", "id": "14", "wires": [[to, input, slot], ...]}]``
+    from the page's acknowledgement. In place; returned. Anything that does not
+    fit the graph is skipped - the next turn reads the canvas afresh anyway."""
+    if not isinstance(graph, dict):
+        return graph
+    for d in duplicates or []:
+        if not isinstance(d, dict):
+            continue
+        of, nid = str(d.get("of") or ""), str(d.get("id") or "")
+        src = graph.get(of)
+        if not isinstance(src, dict) or not nid or nid in graph:
+            continue
+        graph[nid] = {"class_type": src.get("class_type"),
+                      "inputs": {k: copy.deepcopy(v) for k, v in (src.get("inputs") or {}).items()
+                                 if not _is_link(v)}}
+        for w in d.get("wires") or []:
+            try:
+                to, name, slot = str(w[0]), str(w[1]), int(w[2])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if to in graph:
+                graph[to].setdefault("inputs", {})[name] = [nid, slot]
+    return graph
 
 
 def replacement_ops(graph: dict, node_id: str, class_type: str, object_info: dict,

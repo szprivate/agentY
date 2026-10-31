@@ -484,6 +484,17 @@ def _place_text_nodes_on_canvas() -> bool:
     return _canvas_switch("AGENTY_CANVAS_TEXT", "place_text_nodes_on_canvas")
 
 
+def _duplicate_canvas_sources() -> bool:
+    """When the agent wires new nodes to a loader on the canvas that is already in
+    use (or that has no room beside it), copy the loader into free space and wire
+    the new nodes to the copy, leaving the original and its wires alone?
+
+    Off: the new nodes are wired to the loader itself, and still placed in free
+    space. Same switch shape as the two above. Env: AGENTY_CANVAS_DUPLICATE (1/0).
+    """
+    return _canvas_switch("AGENTY_CANVAS_DUPLICATE", "duplicate_canvas_sources")
+
+
 def _configure_shell_sandbox() -> None:
     """Tell agenty_core which folders and programs run_script may use here.
 
@@ -4786,6 +4797,8 @@ def _build_app():
             return jsonify({"ok": False, "error": "patch_id is required"}), 400
         got = canvas_ack.ack(pid, bool(body.get("ok")), applied=body.get("applied"),
                              missed=[str(m) for m in (body.get("missed") or [])][:10],
+                             duplicated=[d for d in (body.get("duplicated") or [])
+                                         if isinstance(d, dict)][:20],
                              error=str(body.get("error") or "")[:300])
         return jsonify({"ok": True, "accepted": got})
 
