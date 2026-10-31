@@ -687,14 +687,35 @@ too: open the film there and its **Edit panel** comes up with the cut, shot by
 shot, with the dissolves, the texts and the sound.
 
 **Cutting it yourself.** In that panel you can trim a shot by dragging its edge,
-drag a shot to another place, move a text, drop in more clips from the file
-browser or the canvas, and save. That writes your cut into the `.otio`.
+drag a shot to another place, move a text, and save. That writes your cut into
+the `.otio`. It works like an editor's timeline:
+
+- **Drop clips in** from the desktop (they are copied into `input/edits`), the
+  file browser, the viewer's History, ComfyUI's queue, or a node dragged off the
+  canvas. They land where you let go - between the shots on V1, at that moment
+  on any other track, sound on a sound track - snapped to the clip edges and the
+  playhead.
+- Each clip shows **thumbnails of its frames** (more of them as you zoom in) and
+  its **waveform**; the music bed shows its waveform too.
+- **The blade** (`B`) cuts a clip where you click; `Ctrl+B` or `S` cuts at the
+  playhead. `Del` deletes, `Shift+Del` closes the gap. `Ctrl+Z` / `Ctrl+Shift+Z`
+  undo and redo. `J K L` play, `I` / `O` set the range, the arrows step. The keys
+  work while the timeline has the focus (click in it); `?` lists them.
+- **Auto edit…** cuts on the beat of the music, gives every shot the same length
+  or fits the cut to a length, takes the rhythm of another film, or trims each
+  shot to its middle - one step each, undone with `Ctrl+Z`. **Detect cuts** finds
+  where a film that is already an edit changes shot, shows the cuts as marks with
+  a sensitivity slider, and splits it there.
+- **Ask agentY…** in the same dialog sends the cut, with what you want done, to
+  the agent; its edit opens in a tab of its own, and *Take into …* brings it into
+  your cut. The agent's edit stage does not read back clips on extra tracks, the
+  Inspector's transforms or how the texts look; the dialog says when your cut
+  has any.
 
 **Render** in the panel makes the film of your cut right there, as a new file
-beside the original (`<name>_cut1.mp4`) - picture, dissolves and sound, but
-**without the texts**, which only the agent can draw. For the finished film with
-its titles, tell the agent to render your cut: it loads the file and renders
-that, rather than its own version. On the next pipeline turn it is also told by
+beside the original (`<name>_cut1.mp4`) - picture, dissolves, sound and the
+texts as they look in the panel. To have the agent take it further, tell it to
+render your cut: it loads the file and renders that, rather than its own version. On the next pipeline turn it is also told by
 itself that you changed the cut. A cut you
 started in the panel from nothing is saved under `edits/` in the output folder;
 name that file to the agent the same way.
