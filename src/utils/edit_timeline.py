@@ -573,6 +573,40 @@ def viewer_stamp(doc) -> str:
     return str(note.get("edited") or "") if isinstance(note, dict) else ""
 
 
+def otio_dropped(doc) -> list[str]:
+    """What of an OpenTimelineIO cut :func:`from_otio` does not take in, in words.
+
+    The bEpic viewer's Edit panel can retime a clip (a speed: ``metadata.bepic.speed``
+    and an OTIO ``LinearTimeWarp``) and loop it (``metadata.bepic.loop`` / ``span``).
+    This timeline has neither: such a clip comes in as the plain clip - from its in
+    point for its length on the timeline - and this says which ones.
+    """
+    out = []
+    stack = (doc or {}).get("tracks") if isinstance(doc, dict) else None
+    for track in (stack or {}).get("children") or []:
+        if not isinstance(track, dict):
+            continue
+        for child in track.get("children") or []:
+            if not isinstance(child, dict) or not str(child.get("OTIO_SCHEMA") or "").startswith("Clip"):
+                continue
+            meta = child.get("metadata") if isinstance(child.get("metadata"), dict) else {}
+            note = meta.get("bepic") if isinstance(meta.get("bepic"), dict) else {}
+            name = str(child.get("name") or "a clip")
+            speed = note.get("speed")
+            if speed is None:
+                speed = next((fx.get("time_scalar") for fx in child.get("effects") or []
+                              if isinstance(fx, dict) and str(fx.get("OTIO_SCHEMA") or "").startswith("LinearTimeWarp")),
+                             None)
+            try:
+                if speed is not None and abs(float(speed) - 1.0) > 1e-4:
+                    out.append(f"{name}: its speed ({round(float(speed) * 100)} %) - played at 100 %")
+            except (TypeError, ValueError):
+                pass
+            if note.get("loop") in ("loop", "pingpong"):
+                out.append(f"{name}: its {note['loop']} - played once, on from its in point")
+    return out
+
+
 def from_otio(doc: dict, base: dict | None = None) -> dict:
     """The timeline an OpenTimelineIO document holds.
 
@@ -584,6 +618,10 @@ def from_otio(doc: dict, base: dict | None = None) -> dict:
     """
     if not isinstance(doc, dict) or not str(doc.get("OTIO_SCHEMA") or "").startswith("Timeline"):
         raise EditError("that file is not an OpenTimelineIO timeline")
+    dropped = otio_dropped(doc)
+    if dropped:
+        import logging
+        logging.getLogger(__name__).warning("from_otio: taken in as plain clips - %s", "; ".join(dropped))
     note = _agenty(doc)
     tl = new((base or {}).get("fps") or 24.0,
              (base or {}).get("width") or note.get("width") or 1920,

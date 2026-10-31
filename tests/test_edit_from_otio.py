@@ -80,6 +80,24 @@ class ACutFromSomewhereElse(unittest.TestCase):
         video[1]["media_reference"] = {"OTIO_SCHEMA": "MissingReference.1"}
         self.assertEqual([c["label"] for c in et.from_otio(doc)["clips"]], ["close", "hall"])
 
+    def test_a_retimed_or_looped_clip_comes_in_plain_and_is_named(self):
+        doc = et.to_otio(cut())
+        video = doc["tracks"]["children"][0]["children"]
+        clips = [c for c in video if c["OTIO_SCHEMA"].startswith("Clip")]
+        clips[0].setdefault("metadata", {})["bepic"] = {"speed": 0.5}
+        clips[0].setdefault("effects", []).append({"OTIO_SCHEMA": "LinearTimeWarp.1", "name": "",
+                                                   "effect_name": "LinearTimeWarp", "metadata": {}, "time_scalar": 0.5})
+        clips[1].setdefault("metadata", {})["bepic"] = {"loop": "pingpong", "span": 1.0}
+        plain = et.from_otio(et.to_otio(cut()))
+        with self.assertLogs("src.utils.edit_timeline", level="WARNING"):
+            back = et.from_otio(doc)
+        self.assertEqual(back["clips"], plain["clips"])        # the plain clips: from the in point for their length
+        dropped = et.otio_dropped(doc)
+        self.assertEqual(len(dropped), 2)
+        self.assertIn("50 %", dropped[0])
+        self.assertIn("pingpong", dropped[1])
+        self.assertEqual(et.otio_dropped(et.to_otio(cut())), [])
+
     def test_what_is_not_a_timeline_is_said(self):
         for bad in ({}, {"OTIO_SCHEMA": "Clip.1"}, []):
             with self.assertRaisesRegex(et.EditError, "not an OpenTimelineIO timeline"):
