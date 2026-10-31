@@ -146,9 +146,8 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
              ("get_comfyui_dirs", "get_agent_output_dirs")),
     # Pinned when clips are selected in the viewer's Edit panel or the message asks to recreate shots
     # (recreate_wanted); the flow is the recreate_shots guide of that turn.
-    "recreate": ("recreate generated shots with a few changes and everything else exactly as it was: the "
-                 "parameters a file was made with, the dry run (diff, cost, next version), the run, the new "
-                 "versions swapped into the viewer's cut as takes",
+    "recreate": ("make generated shots again with a few changes, the rest exactly as it was; the new "
+                 "versions become takes in the viewer's cut",
                  ("recreatable_params", "regenerate_from_source", "swap_in_takes")),
     # Pinned by the pipeline on the turns they belong to (CONTEXT_PACKS).
     "farm": ("render on the studio's Deadline render farm instead of the local ComfyUI: send a workflow as a "
