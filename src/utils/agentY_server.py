@@ -6381,6 +6381,63 @@ def _build_app():
             return jsonify({"ok": False, "error": f"Could not tag it: {exc}"}), 500
         return jsonify({"ok": True, **entry})
 
+    # The remembered tags, for the panel's Manage tags page and the viewer's
+    # "Remove tag #name". Only the PROJECT store is touched here: a tag on an
+    # `agentY add tag` node lives in the user's graph, and the panel edits that
+    # node itself (after asking). Every route is behind the admission guard like
+    # the rest of /agentY/*; names go through the same check as tag creation.
+    def _tag_call(fn, *args):
+        from src.utils import tag_memory
+        try:
+            return jsonify({"ok": True, **fn(*args)})
+        except tag_memory.TagError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), exc.status
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("tag operation failed")
+            return jsonify({"ok": False, "error": f"The tag could not be changed: {exc}"}), 500
+
+    @app.route("/agentY/tags", methods=["GET", "OPTIONS"])
+    def tags_list():
+        if request.method == "OPTIONS":
+            return "", 204
+        from src.utils import tag_memory
+        return _tag_call(lambda: {"tags": tag_memory.list_tags()})
+
+    @app.route("/agentY/tags/rename", methods=["POST", "OPTIONS"])
+    def tags_rename():
+        if request.method == "OPTIONS":
+            return "", 204
+        from src.utils import tag_memory
+        data = request.get_json(silent=True) or {}
+        return _tag_call(tag_memory.rename_tag, data.get("tag"), data.get("to"))
+
+    @app.route("/agentY/tags/delete", methods=["POST", "OPTIONS"])
+    def tags_delete():
+        if request.method == "OPTIONS":
+            return "", 204
+        from src.utils import tag_memory
+        data = request.get_json(silent=True) or {}
+        return _tag_call(tag_memory.delete_tag, data.get("tag"))
+
+    @app.route("/agentY/tags/untag", methods=["POST", "OPTIONS"])
+    def tags_untag():
+        if request.method == "OPTIONS":
+            return "", 204
+        from src.utils import tag_memory
+        data = request.get_json(silent=True) or {}
+        return _tag_call(tag_memory.untag_file, data.get("tag"), data.get("path"))
+
+    @app.route("/agentY/tags/merge", methods=["POST", "OPTIONS"])
+    def tags_merge():
+        if request.method == "OPTIONS":
+            return "", 204
+        from src.utils import tag_memory
+        data = request.get_json(silent=True) or {}
+        return _tag_call(tag_memory.merge_tags, data.get("from"), data.get("into"),
+                         str(data.get("keep") or "into"))
+
     @app.route("/agentY/node_responses", methods=["GET", "OPTIONS"])
     def node_responses():
         if request.method == "OPTIONS":

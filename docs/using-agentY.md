@@ -349,6 +349,11 @@ standard viewer: the installer puts it beside the sidebar extension and
 - **Tag for agentY…** — right-click a picture in the viewer's history, give it a
   name, and `#name` works in any hook prompt and in the collector's `#` menu, in
   any graph: the same as an `agentY add tag` node with *remember* on.
+- **Remove tag #name** — a tagged picture wears its tags as `#name` badges in the
+  strip; right-click it ▸ **Remove tag #name** (one row per tag), or click the ×
+  on the badge. A tag that comes from an `agentY add tag` node on the canvas is
+  not removed behind your back: the viewer names the node and offers to clear its
+  tag field.
 - **Approve for agentY** — when a `review` hook has stopped the run, select the
   pictures you want (<kbd>Ctrl</kbd>+click, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+click
   for a range), right-click ▸ **Approve for agentY**. The review collector is filled
@@ -395,6 +400,13 @@ Put #hero_face in the alley, lit like #alley_light. Wide shot.
   works in other graphs too. Delete it with `/project_memory`.
 - Still wire it when the image must reach a node in your own graph, or when it is a
   mid-graph tensor rather than a file.
+
+**Manage tags** (the panel's ⋯ menu, the viewer's history filter, or the foot of
+the `#` menu) lists every tag - the canvas's tag nodes and the remembered ones -
+with where it lives and its pictures as thumbnails. Rename, merge or delete a tag,
+take one picture out of it, or open a picture in the viewer. A tag on a canvas
+node is changed in that node's tag field, after you confirm. Renaming does not
+rewrite hook prompts that already say the old `#name`: edit those yourself.
 
 ### Dry run
 

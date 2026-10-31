@@ -21,6 +21,9 @@ removing.
 
 from __future__ import annotations
 
+import os
+import re
+import threading
 from pathlib import Path
 
 # The first line is what the injected block shows for this entry, so it carries
@@ -126,6 +129,31 @@ def entry_body(tag: str, file_path: str, role: str, origin: str = "") -> str:
 
 _VIEWER_ORIGIN = "Tagged `#{tag}` for agentY from the bEpic viewer's history."
 
+# Longest name a tag may be given. The name is also the entry's file name, and a
+# name nobody can type back into a prompt is not a name.
+_MAX_NAME = 64
+
+# Every write to the store goes through this: the viewer, the Manage tags page and
+# a turn's sync can all land at once, and a rename is a write plus a delete.
+_store_lock = threading.RLock()
+
+
+def valid_name(raw) -> str:
+    """The tag *raw* names, normalised the way a tag node's field is, or ValueError.
+
+    One rule for every way a name is given - the viewer's "Tag for agentY", a
+    rename, a merge target - so a name that could be made can always be renamed
+    to, and the other way round.
+    """
+    from src.utils.canvas_hooks import normalise_tag
+
+    name = normalise_tag(raw)
+    if not name or not any(c.isalpha() for c in name):
+        raise ValueError("A tag needs a name with at least one letter, like hero_face.")
+    if len(name) > _MAX_NAME:
+        raise ValueError(f"A tag name can be at most {_MAX_NAME} characters long.")
+    return name
+
 
 def remember_file(tag: str, path: str, role: str = "") -> dict:
     """Tag one file from outside any graph - what the viewer's "Tag for agentY" does.
@@ -138,9 +166,7 @@ def remember_file(tag: str, path: str, role: str = "") -> dict:
     from agenty_core.utils.project_memory import write_entry
     from src.utils.canvas_hooks import _looks_like_media_file, normalise_tag
 
-    name = normalise_tag(tag)
-    if not name or not any(c.isalpha() for c in name):
-        raise ValueError("A tag needs a name with at least one letter, like hero_face.")
+    name = valid_name(tag)
     raw = str(path or "").strip().strip('"')
     if not raw or not Path(raw).is_file():
         raise ValueError("That picture is not on disk, so there is nothing to tag.")
@@ -148,8 +174,9 @@ def remember_file(tag: str, path: str, role: str = "") -> dict:
         raise ValueError("Only images, videos and other media files can be tagged.")
     role = " ".join(str(role or "").split())[:200]
     body = entry_body(name, raw, role, _VIEWER_ORIGIN.format(tag=name))
-    if write_entry(name, body, type="reference") is None:
-        raise ValueError("The project memory could not be written - is ComfyUI running?")
+    with _store_lock:
+        if write_entry(name, body, type="reference") is None:
+            raise ValueError("The project memory could not be written - is ComfyUI running?")
     return {"tag": name, "path": stored_path(raw), "role": role}
 
 
@@ -248,3 +275,217 @@ def resolve(tag: str, canvas: dict | None) -> dict | None:
         return dict(hit, tag=name, source="canvas")
     remembered = remembered_reference(name)
     return dict(remembered, source="memory") if remembered else None
+
+
+# ---------------------------------------------------------------------------
+# Managing remembered tags (the Manage tags page, the viewer's "Remove tag")
+# ---------------------------------------------------------------------------
+# A remembered tag is one reference entry in the project store: one name, one
+# file. The entry's file name is the name's slug ("hero_face" -> hero-face.md), so
+# the name as the user wrote it is read back from the entry's own words: both
+# origin lines quote it as `#name`. These functions are what the host's
+# /agentY/tags routes call. They never touch a canvas: a tag on an `agentY add
+# tag` node lives in the user's graph and is edited there, by the panel.
+#
+# Not journaled: the hook memory journal (hook_cache) records hook RESULTS, and a
+# tag is not one. A renamed canvas tag does change the fingerprint of a hook that
+# names it, which is right - the hook now reads a different name.
+
+_MARK = re.compile(r"`#([A-Za-z0-9_\-]+)`")
+_MAX_PATH = 4096
+
+
+class TagError(ValueError):
+    """A tag operation that cannot be done, with the HTTP status that says why."""
+
+    def __init__(self, message: str, status: int = 400):
+        super().__init__(message)
+        self.status = status
+
+
+def _slug(name: str) -> str:
+    from agenty_core.utils.project_memory import slug
+    return slug(name)
+
+
+def display_name(entry) -> str:
+    """The name a remembered tag is written with in a prompt: ``hero_face``, not
+    the file's ``hero-face``. Falls back to the file name for an entry no origin
+    line names (one the agent wrote itself)."""
+    found = ""
+    for m in _MARK.finditer(str(getattr(entry, "body", "") or "")):
+        if _slug(m.group(1)) == entry.name:
+            found = m.group(1)
+    return found or entry.name
+
+
+def origin_of(body: str) -> str:
+    """Who made a remembered tag: ``viewer``, ``canvas`` (a tag node's remember
+    switch) or ``agent``."""
+    text = str(body or "")
+    if "from the bEpic viewer" in text:
+        return "viewer"
+    if "`agentY add tag` node tagged" in text:
+        return "canvas"
+    return "agent"
+
+
+def _store_ready() -> None:
+    from agenty_core.utils.project_memory import store_dir
+    if store_dir() is None:
+        raise TagError("The project memory is not reachable - is ComfyUI running?", 503)
+
+
+def _find(tag):
+    """The reference entry *tag* names, or TagError(404)."""
+    from agenty_core.utils.project_memory import read_entry
+    from src.utils.canvas_hooks import normalise_tag
+
+    name = normalise_tag(tag)
+    key = _slug(name)
+    if not key or len(name) > 4 * _MAX_NAME:
+        raise TagError("Which tag? That is not a tag name.")
+    _store_ready()
+    entry = read_entry(key)
+    if entry is None or str(entry.type) != "reference" or not entry.file:
+        raise TagError(f"There is no remembered tag #{name}.", 404)
+    return entry
+
+
+def _same_file(a: str, b: str) -> bool:
+    def norm(p):
+        return os.path.normcase(os.path.normpath(stored_path(p))) if str(p or "").strip() else ""
+    na, nb = norm(a), norm(b)
+    return bool(na) and na == nb
+
+
+def _clean_path(path) -> str:
+    raw = str(path or "").strip().strip('"')
+    if not raw or len(raw) > _MAX_PATH or "\x00" in raw:
+        raise TagError("That is not a file path.")
+    return raw
+
+
+def _retag_body(body: str, key: str, new: str) -> str:
+    """The entry's words with every `#name` that meant this entry saying *new*."""
+    hit = [False]
+
+    def swap(m):
+        if _slug(m.group(1)) != key:
+            return m.group(0)
+        hit[0] = True
+        return f"`#{new}`"
+
+    out = _MARK.sub(swap, str(body or ""))
+    return out if hit[0] else out.rstrip() + f"\nTagged `#{new}`."
+
+
+def _item(entry) -> dict:
+    full = stored_path(entry.file)
+    return {"tag": display_name(entry), "key": entry.name, "origin": origin_of(entry.body),
+            "role": entry.summary, "path": full, "name": Path(full).name,
+            "exists": Path(full).is_file()}
+
+
+def list_tags() -> list[dict]:
+    """Every remembered tag with its file, sorted by name.
+
+    ``[{tag, key, origin, role, path, name, exists}]``. Only references that
+    name a file are tags - the rest of the store is facts, and the `#` menu does
+    not offer them either.
+    """
+    from agenty_core.utils.project_memory import list_entries
+
+    _store_ready()
+    out = [_item(e) for e in list_entries() if str(e.type) == "reference" and e.file]
+    return sorted(out, key=lambda t: t["tag"].lower())
+
+
+_RENAME_WARNING = ("Hook prompts and messages that say #{old} were not changed: "
+                   "edit them to say #{new}.")
+
+
+def _rename_locked(entry, new: str) -> dict:
+    from agenty_core.utils.project_memory import delete_entry, read_entry, write_entry
+
+    old = display_name(entry)
+    key = _slug(new)
+    if key != entry.name and read_entry(key) is not None:
+        raise TagError(f"#{new} exists already. Merge the two tags instead.", 409)
+    if write_entry(new, _retag_body(entry.body, entry.name, new), type=entry.type) is None:
+        raise TagError("The project memory could not be written.", 503)
+    if key != entry.name:
+        delete_entry(entry.name)
+    return {"tag": new, "from": old, "path": stored_path(entry.file),
+            "warning": _RENAME_WARNING.format(old=old, new=new) if old != new else ""}
+
+
+def rename_tag(tag, to) -> dict:
+    """Give a remembered tag a new name: its entry moves, its file stays tagged."""
+    new = valid_name(to)
+    with _store_lock:
+        return _rename_locked(_find(tag), new)
+
+
+def delete_tag(tag) -> dict:
+    """Forget a remembered tag. The picture itself is not touched."""
+    from agenty_core.utils.project_memory import delete_entry
+
+    with _store_lock:
+        entry = _find(tag)
+        if not delete_entry(entry.name):
+            raise TagError("The project memory could not be written.", 503)
+        return {"tag": display_name(entry), "path": stored_path(entry.file)}
+
+
+def untag_file(tag, path) -> dict:
+    """Take *tag* off one picture - the viewer's "Remove tag #name".
+
+    A remembered tag names one file, so this forgets the tag when that file is
+    the one given, and refuses (404) when the tag is on another picture: the
+    viewer must not drop a tag from a picture the user is not looking at.
+    """
+    raw = _clean_path(path)
+    with _store_lock:
+        entry = _find(tag)
+        if not _same_file(entry.file, raw):
+            raise TagError(f"#{display_name(entry)} is not on that picture.", 404)
+        return delete_tag(entry.name)
+
+
+def merge_tags(source, into, keep: str = "into") -> dict:
+    """Fold tag *source* into tag *into*; afterwards only *into* exists.
+
+    A remembered tag holds one file, so when both have one, *keep* says whose
+    picture the merged tag points at ("into", the default, or "from"); the
+    other picture is no longer tagged, and comes back as ``dropped``. When
+    *into* is not remembered yet this is a rename.
+    """
+    from agenty_core.utils.project_memory import delete_entry, read_entry, write_entry
+
+    target = valid_name(into)
+    if keep not in ("into", "from"):
+        raise TagError('keep is "into" or "from".')
+    with _store_lock:
+        src = _find(source)
+        key = _slug(target)
+        if key == src.name:
+            raise TagError("Those are the same tag.")
+        dst = read_entry(key)
+        if dst is None:
+            out = _rename_locked(src, target)
+            return dict(out, merged=True, dropped="")
+        if str(dst.type) != "reference" or not dst.file:
+            raise TagError(f"#{target} is a project fact, not a tag; it cannot be merged into.", 409)
+        name = display_name(dst)
+        if keep == "from":
+            if write_entry(name, _retag_body(src.body, src.name, name), type="reference") is None:
+                raise TagError("The project memory could not be written.", 503)
+            kept, dropped = src.file, dst.file
+        else:
+            kept, dropped = dst.file, src.file
+        delete_entry(src.name)
+        old = display_name(src)
+        return {"tag": name, "from": old, "path": stored_path(kept), "merged": True,
+                "dropped": "" if _same_file(kept, dropped) else stored_path(dropped),
+                "warning": _RENAME_WARNING.format(old=old, new=name)}
