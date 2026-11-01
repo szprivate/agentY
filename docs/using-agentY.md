@@ -747,6 +747,16 @@ the `.otio`. It works like an editor's timeline:
   asks for a name and folder and carries on in the new file, and **Open cut…**
   opens a saved `.otio` (so does double-clicking one in the file browser).
   `Ctrl+S` saves.
+- **Export to Resolve.** In the save menu, **Export to Resolve…** makes a folder
+  beside the cut with whole copies of the original clips (`media/`), a timeline
+  (`.fcpxml`), a fallback for V1 (`.edl`), an `.otio` and a `README.txt`. The dialog
+  shows the size and the free disk space, offers *Include in–out only* when a range
+  is set, names clips the free version of Resolve may not be able to read (nothing
+  is transcoded), and can be cancelled. Afterwards it gives the whole path and says
+  what was left out. In Resolve: **File → Import → Timeline…**, choose the `.fcpxml`.
+  If the folder was moved, answer Yes when Resolve asks for the media and pick
+  `media/`. Texts arrive as markers, not as drawn titles. A real import in Resolve
+  has not been tried yet, so check your first one.
 - **Gaps.** V1 can hold empty time now: a clip moved up to V2, or deleted with
   `Del`, leaves its place empty and the clips after it stay where they are. A
   gap plays and renders black (or what a higher track shows there); there is
