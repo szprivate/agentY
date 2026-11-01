@@ -693,15 +693,47 @@ the `.otio`. It works like an editor's timeline:
 
 - **Drop clips in** from the desktop (they are copied into `input/edits`), the
   file browser, the viewer's History, ComfyUI's queue, or a node dragged off the
-  canvas. They land where you let go - between the shots on V1, at that moment
-  on any other track, sound on a sound track - snapped to the clip edges and the
-  playhead.
+  canvas. They land where you let go - between the shots on V1 (or, in a gap
+  on V1, at that moment), at that moment on any other track, sound on a sound
+  track - snapped to the clip edges and the playhead.
 - Each clip shows **thumbnails of its frames** (more of them as you zoom in) and
   its **waveform**; the music bed shows its waveform too.
 - **The blade** (`B`) cuts a clip where you click; `Ctrl+B` or `S` cuts at the
-  playhead. `Del` deletes, `Shift+Del` closes the gap. `Ctrl+Z` / `Ctrl+Shift+Z`
-  undo and redo. `J K L` play, the arrows step. The keys work while the timeline
-  has the focus (click in it); `?` lists them.
+  playhead. `Del` deletes and leaves a gap, `Shift+Del` closes it up (a
+  *ripple delete*). `Ctrl+Z` / `Ctrl+Shift+Z` undo and redo. `J K L` play, the
+  arrows step. The keys work while the timeline has the focus (click in it); `?`
+  lists them.
+- **Two modes, as in Resolve.** `A` is the **Selection** mode (the default): drag
+  a clip to move it - it lies over what is at its new place and leaves a gap
+  where it was, so nothing after it moves - and drag an edge to trim just that
+  edge (a gap opens, or one is filled; a trim never pushes the next clip).
+  `Ctrl+Shift`+drag puts a clip *into* the order instead (what follows moves
+  on). `T` is the **Trim Edit** mode (the *Trim* button too): there an edge
+  drag is a **ripple** trim (the clips after it move with it), the middle of a
+  cut rolls it, the upper half of a clip (its thumbnails) **slips** it and the
+  lower half (its name) **slides** it; the pointer changes per zone and the bar
+  says which mode is on. Click an edge in Trim mode to select that edit point:
+  `,` and `.` move it a frame (`Shift`: a second), `E` moves it to the
+  playhead. `B` is the blade; `A` puts it away.
+- **Gaps.** V1 can hold empty time now: a clip moved up to V2, or deleted with
+  `Del`, leaves its place empty and the clips after it stay where they are. A
+  gap plays and renders black (or what a higher track shows there); there is
+  no dissolve into a gap. Click a gap and press `Del` to close it.
+- **Sound apart from its picture.** Right-click a film with sound and choose
+  **Unlink audio / video** (or `Ctrl+Alt+L`): its sound becomes a clip of its
+  own on a sound track (A2, or the next free one), the film's own sound is
+  muted, and each can be moved, trimmed and deleted on its own - start the
+  sound early or let it run on (a J or L cut). Select the picture and its sound
+  (`Ctrl`+click) and choose **Link clips** to tie them together again; then they
+  move, trim, cut and delete together. A small chain on a clip shows whether its
+  picture and sound are linked.
+- **Snapping.** While you drag anything - a clip, an edge, a roll, a slide, the
+  blade, the in and out, a drop, the playhead on the ruler - it snaps to the
+  nearest clip or gap edge on any track, the playhead, the in and out, a text or
+  the start, and a thin line shows where. `N` (or the magnet button) switches it
+  off and on; hold `S` while dragging to snap the other way for that drag. The
+  note button next to the magnet adds the beats of the music, once *Auto edit*
+  has read them. Moving an edit by `,` and `.` never snaps.
 - **Trimming like an editor.** Point at a cut and the pointer shows what a drag
   will do, before you press: the side that moves is lit and its timecode is
   shown. Left of the cut you trim the outgoing shot's end, right of it the
@@ -735,8 +767,9 @@ the `.otio`. It works like an editor's timeline:
 - **Ask agentY…** in the same dialog sends the cut, with what you want done, to
   the agent; its edit opens in a tab of its own, and *Take into …* brings it into
   your cut. The agent's edit stage does not read back clips on extra tracks, the
-  Inspector's transforms or how the texts look; the dialog says when your cut
-  has any.
+  Inspector's transforms or how the texts look; gaps on V1 come back closed up,
+  and a sound you unlinked is heard with its picture again (its J/L offset is
+  lost). The dialog says when your cut has any of these.
 
 **Render** in the panel makes the film of your cut right there, as a new file
 beside the original (`<name>_cut1.mp4`) - picture, dissolves, sound and the
