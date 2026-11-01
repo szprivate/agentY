@@ -114,6 +114,61 @@ class ACutFromSomewhereElse(unittest.TestCase):
         self.assertEqual(et.viewer_stamp(doc), "2026-10-12T08:00:00+00:00")
 
 
+class GapsAndSoundSplitOffInTheViewer(unittest.TestCase):
+    """The viewer's Edit panel can leave gaps on V1 and split a film's sound onto a sound track."""
+
+    @staticmethod
+    def rt(v):
+        return {"OTIO_SCHEMA": "RationalTime.1", "rate": 25, "value": v}
+
+    def gap(self, frames):
+        return {"OTIO_SCHEMA": "Gap.1", "name": "", "metadata": {}, "effects": [], "markers": [],
+                "source_range": {"OTIO_SCHEMA": "TimeRange.1", "start_time": self.rt(0), "duration": self.rt(frames)}}
+
+    def test_a_gap_on_v1_is_closed_up_and_said(self):
+        doc = et.to_otio(cut())
+        video = doc["tracks"]["children"][0]["children"]
+        video.insert(1, self.gap(50))                       # 2 s of nothing after "wide"
+        back = et.from_otio(doc)
+        self.assertEqual(back["clips"], et.from_otio(et.to_otio(cut()))["clips"])
+        self.assertEqual(et.duration(back), et.duration(cut()))
+        dropped = et.otio_dropped(doc)
+        self.assertEqual(len(dropped), 1)
+        self.assertIn("gap of 2s before close", dropped[0])
+        # And written out again: no gap (this timeline has none), the film as long as its clips.
+        again = et.to_otio(back)["tracks"]["children"][0]["children"]
+        self.assertFalse([c for c in again if c["OTIO_SCHEMA"].startswith("Gap")])
+
+    def test_a_sound_split_off_its_film_is_heard_with_its_picture_again(self):
+        doc = et.to_otio(cut())
+        video = doc["tracks"]["children"][0]["children"]
+        first = video[0]
+        first["metadata"]["bepic"] = {"link": "L1", "unlinked": True, "mute": True}
+        sound = json.loads(json.dumps(first))
+        sound["metadata"] = {"bepic": {"link": "L1", "unlinked": True}}
+        a1 = next(t for t in doc["tracks"]["children"] if t["kind"] == "Audio")
+        a2 = {"OTIO_SCHEMA": "Track.1", "name": "A2", "kind": "Audio", "metadata": {}, "source_range": None,
+              "effects": [], "markers": [], "children": [self.gap(12), sound]}
+        v2 = {"OTIO_SCHEMA": "Track.1", "name": "V2", "kind": "Video", "metadata": {}, "source_range": None,
+              "effects": [], "markers": [], "children": [json.loads(json.dumps(video[-1]))]}
+        doc["tracks"]["children"] = [doc["tracks"]["children"][0], v2, a1, a2]
+        back = et.from_otio(doc)
+        plain = et.from_otio(et.to_otio(cut()))
+        self.assertEqual(back["clips"], plain["clips"])     # the film keeps its own sound (volume 0.5 as it was)
+        self.assertEqual(back["audio"], plain["audio"])     # A2 is not taken for the bed
+        dropped = et.otio_dropped(doc)
+        self.assertTrue(any("split off" in d and "+0.48s" in d for d in dropped), dropped)
+        self.assertTrue(any("on V2 - left out" in d for d in dropped), dropped)
+        self.assertFalse(any("A2 - left out" in d for d in dropped), dropped)
+        # Its sound clip deleted in the viewer: the film stays silent.
+        doc["tracks"]["children"] = doc["tracks"]["children"][:3]
+        self.assertEqual(et.from_otio(doc)["clips"][0]["volume"], 0.0)
+        # Another sound on a further track is said to be left out.
+        a2["children"] = [self.gap(5), {**sound, "metadata": {}}]
+        doc["tracks"]["children"].append(a2)
+        self.assertTrue(any("A2 - left out" in d for d in et.otio_dropped(doc)))
+
+
 class TheLoadOperation(unittest.TestCase):
     SRC = (ROOT / "src" / "pipeline.py").read_text(encoding="utf-8")
 

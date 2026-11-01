@@ -646,6 +646,49 @@ def viewer_stamp(doc) -> str:
     return str(note.get("edited") or "") if isinstance(note, dict) else ""
 
 
+def _bepic_note(obj) -> dict:
+    meta = obj.get("metadata") if isinstance(obj, dict) else None
+    note = meta.get("bepic") if isinstance(meta, dict) else None
+    return note if isinstance(note, dict) else {}
+
+
+def _tracks_of(doc) -> list:
+    stack = (doc or {}).get("tracks") if isinstance(doc, dict) else None
+    return [t for t in (stack or {}).get("children") or []
+            if isinstance(t, dict) and str(t.get("OTIO_SCHEMA") or "").startswith("Track")]
+
+
+def _placed(track) -> list:
+    """The clips of a track with where each begins: ``[(start seconds, clip)]``."""
+    out, at = [], 0.0
+    for child in track.get("children") or []:
+        if not isinstance(child, dict):
+            continue
+        schema = str(child.get("OTIO_SCHEMA") or "")
+        if schema.startswith("Transition"):
+            continue
+        _s, length = _range_seconds(child.get("source_range"))
+        if schema.startswith("Clip"):
+            out.append((round(at, 4), child))
+        at += length
+    return out
+
+
+def _detached_sounds(doc) -> dict:
+    """The sound clips the bEpic viewer split off a film of the first video track
+    ("Unlink audio / video": the film's ``metadata.bepic.mute``, a clip of the same
+    file on a sound track, the two in one link group): ``{link: (start, clip)}``."""
+    tracks = _tracks_of(doc)
+    audio = [t for t in tracks if str(t.get("kind") or "").lower() == "audio"]
+    out = {}
+    for track in audio[1:]:                       # the first sound track is the bed
+        for at, child in _placed(track):
+            link = _bepic_note(child).get("link")
+            if isinstance(link, str) and link:
+                out.setdefault(link, (at, child))
+    return out
+
+
 def otio_dropped(doc) -> list[str]:
     """What of an OpenTimelineIO cut :func:`from_otio` does not take in, in words.
 
@@ -653,12 +696,54 @@ def otio_dropped(doc) -> list[str]:
     and an OTIO ``LinearTimeWarp``) and loop it (``metadata.bepic.loop`` / ``span``).
     This timeline has neither: such a clip comes in as the plain clip - from its in
     point for its length on the timeline - and this says which ones.
+
+    Nor has it gaps (empty time on V1 - OTIO Gaps): they are closed up, the clips
+    after one moving up. A film whose sound the panel split off onto a sound track
+    (``metadata.bepic.mute`` and a link group) is heard with its picture again, its
+    J/L offset lost; the clips of further video and sound tracks are left out.
     """
     out = []
-    stack = (doc or {}).get("tracks") if isinstance(doc, dict) else None
-    for track in (stack or {}).get("children") or []:
-        if not isinstance(track, dict):
-            continue
+    tracks = _tracks_of(doc)
+    video = [t for t in tracks if str(t.get("kind") or "Video").lower() == "video"]
+    audio = [t for t in tracks if str(t.get("kind") or "").lower() == "audio"]
+    if video:
+        at, gap = 0.0, 0.0
+        for child in video[0].get("children") or []:
+            if not isinstance(child, dict):
+                continue
+            schema = str(child.get("OTIO_SCHEMA") or "")
+            if schema.startswith("Gap"):
+                gap += _range_seconds(child.get("source_range"))[1]
+            elif schema.startswith("Clip"):
+                if gap > 0 and at > 0:
+                    out.append(f"a gap of {gap:g}s before {child.get('name') or 'a clip'} on V1 - closed up")
+                elif gap > 0:
+                    out.append(f"a gap of {gap:g}s at the start of V1 - closed up")
+                gap = 0.0
+                at += 1
+    detached = _detached_sounds(doc)
+    firsts = {}
+    for at, child in _placed(video[0]) if video else []:
+        link = _bepic_note(child).get("link")
+        if isinstance(link, str):
+            firsts[link] = (at, child)
+    for link, (at, child) in detached.items():
+        name = str(child.get("name") or "a clip")
+        if link in firsts:
+            off = at - firsts[link][0]
+            out.append(f"{name}: its sound, split off onto a sound track"
+                       + (f" ({off:+g}s from its picture)" if abs(off) > 1e-3 else "")
+                       + " - heard with its picture again")
+    for n, track in enumerate(video[1:], 2):
+        for _at, child in _placed(track):
+            out.append(f"{child.get('name') or 'a clip'} on {track.get('name') or f'V{n}'} - left out")
+    for n, track in enumerate(audio[1:], 2):
+        for _at, child in _placed(track):
+            link = _bepic_note(child).get("link")
+            if isinstance(link, str) and link in firsts and detached.get(link, (None, None))[1] is child:
+                continue
+            out.append(f"the sound {child.get('name') or 'a clip'} on {track.get('name') or f'A{n}'} - left out")
+    for track in tracks:
         for child in track.get("children") or []:
             if not isinstance(child, dict) or not str(child.get("OTIO_SCHEMA") or "").startswith("Clip"):
                 continue
@@ -692,6 +777,7 @@ def from_otio(doc: dict, base: dict | None = None) -> dict:
     if not isinstance(doc, dict) or not str(doc.get("OTIO_SCHEMA") or "").startswith("Timeline"):
         raise EditError("that file is not an OpenTimelineIO timeline")
     dropped = otio_dropped(doc)
+    detached = _detached_sounds(doc)
     if dropped:
         import logging
         logging.getLogger(__name__).warning("from_otio: taken in as plain clips - %s", "; ".join(dropped))
@@ -719,6 +805,8 @@ def from_otio(doc: dict, base: dict | None = None) -> dict:
             pending = (before, after)
             continue
         if not schema.startswith("Clip"):
+            # A gap (empty time - the bEpic viewer's V1 can hold them): this
+            # timeline has none, so it is closed up; otio_dropped says so.
             pending = None
             continue
         src = _path(child.get("media_reference"))
@@ -738,6 +826,10 @@ def from_otio(doc: dict, base: dict | None = None) -> dict:
             clip["volume"] = float(volume)
         meta = child.get("metadata") if isinstance(child.get("metadata"), dict) else {}
         bep = meta.get("bepic") if isinstance(meta.get("bepic"), dict) else {}
+        # Its sound split off in the viewer: heard with its picture again while that
+        # sound clip is there; muted (silent) when the sound clip was deleted.
+        if bep.get("mute") is True and bep.get("link") not in detached:
+            clip["volume"] = 0.0
         takes = _takes_for({"src": src, "takes": bep.get("takes")})
         if takes:
             clip["takes"] = takes
