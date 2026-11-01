@@ -701,8 +701,8 @@ the `.otio`. It works like an editor's timeline:
 - **The blade** (`B`) cuts a clip where you click; `Ctrl+B` or `S` cuts at the
   playhead. `Del` deletes and leaves a gap, `Shift+Del` closes it up (a
   *ripple delete*). `Ctrl+Z` / `Ctrl+Shift+Z` undo and redo. `J K L` play, the
-  arrows step. The keys work while the timeline has the focus (click in it); `?`
-  lists them.
+  arrows step. The keys work while the timeline has the focus (click in it). The
+  viewer's **Show Hotkeys** button (or `?`) lists them while a cut's tab is up.
 - **Two modes, as in Resolve.** `A` is the **Selection** mode (the default): drag
   a clip to move it - it lies over what is at its new place and leaves a gap
   where it was, so nothing after it moves - and drag an edge to trim just that
@@ -712,9 +712,41 @@ the `.otio`. It works like an editor's timeline:
   drag is a **ripple** trim (the clips after it move with it), the middle of a
   cut rolls it, the upper half of a clip (its thumbnails) **slips** it and the
   lower half (its name) **slides** it; the pointer changes per zone and the bar
-  says which mode is on. Click an edge in Trim mode to select that edit point:
-  `,` and `.` move it a frame (`Shift`: a second), `E` moves it to the
-  playhead. `B` is the blade; `A` puts it away.
+  says which mode is on. `B` is the blade; `A` puts it away.
+- **Trimming a cut by keys.** Click a cut, in any mode, to select that edit
+  point; what will move is marked green. Which side moves depends on where you
+  clicked: a little left of the cut the outgoing clip's edge, a little right of
+  it the incoming clip's edge, in the middle both (a roll). `,` and `.` then trim
+  it by a frame (`Shift`: a second): in Trim mode it ripples, in Selection a gap
+  opens or closes and nothing else moves. `E` moves it to the playhead.
+  `Shift`+`A` and `Shift`+`S` jump to the edit before and after and select it, so
+  you can go along the film trimming as you go: over V1, or the track of the
+  clip you have selected. `Esc` lets go of it.
+- **Moving a clip by keys.** With a clip selected and no edit point, `,` and `.`
+  move the clip a frame (`Shift`: a second). In Selection it moves into a gap and
+  stops at the next clip; in Trim mode one clip slides, its neighbours giving and
+  taking. `Alt`+`,` and `Alt`+`.` slip it instead: same place, another part of
+  the source.
+- **Selecting several.** `Ctrl`+click and `Shift`+click select across tracks,
+  picture and sound alike, the music under the film and texts too. Drag from an
+  empty place of the timeline to draw a rectangle: everything it touches on any
+  track is selected, and `Shift` adds to what was. Drag one of them and they all
+  move; `Del` takes them all out and leaves gaps, `Shift`+`Del` closes up, a
+  linked sound or picture goes along, and `Ctrl+Z` brings it all back at once.
+- **More room, more tracks.** Zoom out past the length of the film (`Ctrl`+`-`,
+  down to a quarter): there is empty timeline after the end to move or drop clips
+  onto. `Shift`+`Z` fits the film again. Drag a clip above the top video track, or
+  a sound below the bottom sound track, and let go: it gets a new track of its
+  own. This works for what you drop in from outside too.
+- **Where a cut is saved.** A new cut goes into the output folder, under
+  `edits/`; with a project and shot set on the canvas under that shot:
+  `<output>/<project>/<shot>/edits/v001/`. After every save a strip under the
+  bar gives the whole path, with **Copy path** and **Show in file browser**, and
+  the Inspector keeps it under *File*; if a save fails it says why, and the cut
+  stays marked as not saved. In the save menu, **Save cut as…** (`Ctrl+Shift+S`)
+  asks for a name and folder and carries on in the new file, and **Open cut…**
+  opens a saved `.otio` (so does double-clicking one in the file browser).
+  `Ctrl+S` saves.
 - **Gaps.** V1 can hold empty time now: a clip moved up to V2, or deleted with
   `Del`, leaves its place empty and the clips after it stay where they are. A
   gap plays and renders black (or what a higher track shows there); there is
@@ -723,10 +755,14 @@ the `.otio`. It works like an editor's timeline:
   **Unlink audio / video** (or `Ctrl+Alt+L`): its sound becomes a clip of its
   own on a sound track (A2, or the next free one), the film's own sound is
   muted, and each can be moved, trimmed and deleted on its own - start the
-  sound early or let it run on (a J or L cut). Select the picture and its sound
-  (`Ctrl`+click) and choose **Link clips** to tie them together again; then they
-  move, trim, cut and delete together. A small chain on a clip shows whether its
-  picture and sound are linked.
+  sound early or let it run on (a J or L cut). While the sound is split off, the
+  picture shows no waveform: it has none of its own. Right-click either part:
+  **Relink audio** (or `Ctrl+Alt+L`) ties them together again, keeping any offset;
+  a red number on both shows how many frames they are out of sync, and **Resync**
+  moves the sound back onto the picture. **Merge audio back into clip** removes
+  the sound clip and gives the picture its sound again. A small chain on a clip
+  shows whether its picture and sound are linked. **Link clips** still ties any
+  selected picture and sound of one file.
 - **Snapping.** While you drag anything - a clip, an edge, a roll, a slide, the
   blade, the in and out, a drop, the playhead on the ruler - it snaps to the
   nearest clip or gap edge on any track, the playhead, the in and out, a text or
