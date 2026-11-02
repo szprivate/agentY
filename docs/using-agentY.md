@@ -755,6 +755,11 @@ the `.otio`. It works like an editor's timeline:
   stretch is shaded on the ruler). Trim it with `,` / `.` while it plays and the
   loop follows the cut, so you can judge the edit as you change it. While it
   plays you see the film; stopped, a trim shows the two frames side by side.
+  In Trim mode the two frames (the outgoing clip's last, the incoming clip's first,
+  with timecodes) are also up whenever the playhead rests on a cut of the selected
+  clip's track (else V1) - after Shift+A / Shift+S, an arrow step or a scrub - and
+  go when the playhead leaves the cut, when the film plays, or when you leave Trim
+  mode. At the film's start or end only the side that exists is shown.
   Leaving Trim mode or letting go of the cut gives you the normal in / out back.
 - **Moving a clip by keys.** With a clip selected and no edit point, `,` and `.`
   move the clip a frame (`Shift`: a second). In Selection it moves into a gap and
