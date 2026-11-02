@@ -750,6 +750,18 @@ the `.otio`. It works like an editor's timeline:
   ease. The viewer plays the animation, the rendered film has it, and Export to
   Resolve hands it over as Resolve keyframes. A cut clip keeps its animation in both
   pieces. agentY's own edit stage plays clips without keyframes.
+- **Changing several clips at once.** Select several clips (`Ctrl`+click, `Shift`+click or a
+  marquee) and the Inspector says *3 clips*: a change on its *Video* or *Audio* tab goes to all
+  of them as the same value - opacity, zoom, position, rotation, cropping, a flip, a section's
+  switch, the volume - and one `Ctrl+Z` takes it back from all; dragging a slider or number is one step. It shows the
+  values of the clip you clicked last; a row where the selected clips differ shows a dash
+  instead of a number until you set it. Picture settings go to the pictures only, the volume to
+  the clips that have sound (not to stills). A row's reset resets it on all of them. The
+  keyframe diamond adds or takes away a key at the playhead on every selected clip the playhead is
+  over, and leaves the others alone; the diamond and the arrows show the clip you clicked last. A
+  row that has keyframes on a clip gets a key there, one that has none its plain value. The *Timing*
+  and *File* tabs (start, length, speed, retime, loop, order, name) change the last clicked clip only,
+  and the header says so. Selected texts share their look the same way.
 - **Playing around a cut.** In Trim mode with a cut selected, `Space` (or Play)
   plays from a second before the cut to a second after it, over and over (the
   stretch is shaded on the ruler). Trim it with `,` / `.` while it plays and the
