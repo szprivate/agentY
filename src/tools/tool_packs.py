@@ -57,10 +57,15 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
     # Added 2026-10-12, when the tool definitions had grown to ~31k of the ~41k
     # tokens every orchestrator step sent (106 tools). Each group below is a job
     # most conversations never do; together about 12k tokens.
+    # edit_cut is the one for a cut in the viewer's Edit panel (no edit node needed): without it, a
+    # 2026-11-02 turn asked to lay a voice-over into the open cut had only edit_timeline, which wants an
+    # edit node, and hand-wrote the .otio with run_script - which the open panel never saw.
     "edit": ("cut shots into a film on an `agentY edit` node: the timeline, its texts and their "
-             "presets, reading rhythm and beats, rendering the cut",
+             "presets, reading rhythm and beats, rendering the cut; and read or change the cut open in the "
+             "viewer's Edit panel (lay a voice-over, music or a clip at a time on a track, trim, move, "
+             "take out - edit_cut, no edit node needed)",
              ("edit_timeline", "render_edit", "probe_media", "read_rhythm", "read_beats",
-              "list_text_presets", "find_text_demos", "try_text_preset", "keep_text_preset")),
+              "list_text_presets", "find_text_demos", "try_text_preset", "keep_text_preset", "edit_cut")),
     "models": ("look for a model that is NOT installed, on Hugging Face - check_model and "
                "find_local_models (what IS installed) and download_hf_model are always in your list",
                ("find_hf_file", "hf_search", "hf_file", "hf_repo")),

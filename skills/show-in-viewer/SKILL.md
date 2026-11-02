@@ -1,7 +1,7 @@
 ---
 name: show-in-viewer
 description: Load files into the bEpic image viewer when the user asks to see them there, and read what it shows (frame, range, marks) - "show me clip 3 in the viewer", "open these frames side by side", "open the edit", "put the two renders in a tab". Also opens an edit's cut in the viewer's Edit panel.
-allowed-tools: show_in_viewer, get_viewer_state, get_viewer_annotations
+allowed-tools: show_in_viewer, get_viewer_state, get_viewer_annotations, edit_cut
 ---
 
 # Showing files in the viewer
@@ -28,6 +28,25 @@ An edit stage's render already opens itself this way when it finishes (Settings,
 so do not call the tool again right after a render unless the user asks.
 
 If the answer has an `error` or `refused` paths, say so plainly; do not retry with other paths.
+
+## Changing the cut in the Edit panel
+
+"Cut the voice-over into the edit", "put the music under shots 3 to 5", "trim the last shot":
+`edit_cut` reads and changes the cut open in the Edit panel (or any `.otio`, with `otio=`). No
+`agentY edit` node is needed; `edit_timeline` is only for those.
+
+- `edit_cut()` reads it: every track with its clips, each with `at`/`end` (seconds of the film),
+  `in` and `length` in its source, numbered from 1 per track.
+- Tracks: **V1** is the cut (clips one after another), **A1** the bed under the whole film,
+  **V2.. / A2..** clips placed at a moment. A voice-over or a sound effect at a time goes on
+  A2.. - `{"op": "add", "file": <vo.mp3>, "at": 8.25}` (track "" picks the first one with room;
+  `length` defaults to the rest of the file). Laying a take line by line: add each piece with its
+  own `in`/`length` into the one file at its own `at` - no ffmpeg mixdown needed.
+- `{"op": "set", "track": "A2", "clip": 2, "at": .., "length": .., "volume": ..}` moves, trims or
+  re-levels; on V1 `in`/`length` trim and ripple. `{"op": "remove", "track": .., "clip": ..}`.
+- All ops of a call are done or none. The open panel shows the change at once (Ctrl+Z undoes it).
+  Never write the `.otio` yourself with `run_script`: the panel does not see that, and its next save
+  drops it.
 
 ## Reading the viewer
 

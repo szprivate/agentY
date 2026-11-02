@@ -3503,7 +3503,9 @@ class Pipeline:
             hook = self._edit_hook(hook_node_id)
             if hook is None:
                 return json.dumps({"error": f"node {hook_node_id} is not an EDIT stage on this "
-                                            "canvas - the ids are in the [CANVAS HOOKS] block."})
+                                            "canvas - the ids are in the [CANVAS HOOKS] block. A cut "
+                                            "open in the viewer's Edit panel is read and changed "
+                                            "with edit_cut, not this."})
             ahead = self._review_ahead_refusal([str(hook_node_id)])
             if ahead:
                 return json.dumps(ahead)

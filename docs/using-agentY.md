@@ -891,6 +891,15 @@ itself that you changed the cut. A cut you
 started in the panel from nothing is saved under `edits/` in the output folder;
 name that file to the agent the same way.
 
+**Having the agent change your cut.** With a cut open in the Edit panel you can
+ask the agent to change it directly: *"lay the voice-over into the edit"*, *"put
+the music under shots 3 to 5"*, *"trim the last shot by a second"*, *"take clip 4
+out"*. It reads the cut and changes it (`edit_cut`): sound placed at a time goes on
+A2 and further sound tracks, pictures on V2 and up, and V1 shots are trimmed or
+taken out with the rest moving up. A voice-over can be laid line by line, each
+piece at its own time. The change is saved and shows in the open panel at once;
+`Ctrl+Z` undoes it. If you had unsaved changes, they are one `Ctrl+Z` back.
+
 **Recreating shots with changes.** Select the shots to change: click one,
 `Ctrl`+click to add or remove one, and `Shift`+click to take a range on a track.
 Then right-click them and choose **Recreate with changes…**, and say what should
