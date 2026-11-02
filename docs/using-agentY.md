@@ -760,6 +760,11 @@ the `.otio`. It works like an editor's timeline:
   clip's track (else V1) - after Shift+A / Shift+S, an arrow step or a scrub - and
   go when the playhead leaves the cut, when the film plays, or when you leave Trim
   mode. At the film's start or end only the side that exists is shown.
+  Click the left frame to select the cut's left side (the outgoing clip's out) or the
+  right frame for its right side (the incoming clip's in), as Shift+A / Shift+S do;
+  `,` / `.` then trim that side. Click the side that is already the only one selected
+  to select both (a roll); click a frame while both are selected to pick that side.
+  A side the cut doesn't have does nothing. The selected frame has a green outline.
   Leaving Trim mode or letting go of the cut gives you the normal in / out back.
 - **Moving a clip by keys.** With a clip selected and no edit point, `,` and `.`
   move the clip a frame (`Shift`: a second). In Selection it moves into a gap and
