@@ -736,6 +736,20 @@ the `.otio`. It works like an editor's timeline:
   dimmed, but are not seen, not heard and not rendered - the track under them shows
   through, or black. `D` again switches them back on; `Ctrl+Z` undoes it. The saved
   cut keeps it, and Export to Resolve hands the clip over switched off.
+- **Animating a clip (keyframes).** Every number in the Inspector - zoom, position,
+  anchor point, rotation, cropping, opacity and the volume - can change over a
+  clip. Put the playhead on the clip and click the diamond beside the row: a
+  keyframe at that moment. Move the playhead, change the number, and a second
+  keyframe is made by itself (once a row has keyframes, every change makes or
+  updates one where the playhead is). The diamond is filled on a keyframe and
+  outlined when the row has keyframes elsewhere; the small arrows beside it jump to
+  the keyframe before or after; right-click the diamond for linear, ease in, ease
+  out, ease in and out, or hold; the row's reset takes its keyframes away. On the
+  selected clip the keyframes show as small diamonds you can drag along the clip
+  (they snap to frames and the playhead), click and press `Del`, or right-click for the
+  ease. The viewer plays the animation, the rendered film has it, and Export to
+  Resolve hands it over as Resolve keyframes. A cut clip keeps its animation in both
+  pieces. agentY's own edit stage plays clips without keyframes.
 - **Playing around a cut.** In Trim mode with a cut selected, `Space` (or Play)
   plays from a second before the cut to a second after it, over and over (the
   stretch is shaded on the ruler). Trim it with `,` / `.` while it plays and the

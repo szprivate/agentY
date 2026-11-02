@@ -97,6 +97,11 @@ class ACutFromSomewhereElse(unittest.TestCase):
         self.assertIn("50 %", dropped[0])
         self.assertIn("pingpong", dropped[1])
         self.assertEqual(et.otio_dropped(et.to_otio(cut())), [])
+        # Keyframes from the viewer's Inspector: named, played without them.
+        doc = et.to_otio(cut())
+        first = [c for c in doc["tracks"]["children"][0]["children"] if c["OTIO_SCHEMA"].startswith("Clip")][0]
+        first.setdefault("metadata", {})["bepic"] = {"fx": {"op": 0.5, "keys": {"op": [{"t": 0, "v": 0}, {"t": 1, "v": 1}], "vol": [{"t": 0, "v": 1}]}}}
+        self.assertTrue(any("keyframes (op, vol)" in d for d in et.otio_dropped(doc)))
 
     def test_what_is_not_a_timeline_is_said(self):
         for bad in ({}, {"OTIO_SCHEMA": "Clip.1"}, []):

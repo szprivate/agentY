@@ -750,6 +750,11 @@ def otio_dropped(doc) -> list[str]:
             meta = child.get("metadata") if isinstance(child.get("metadata"), dict) else {}
             note = meta.get("bepic") if isinstance(meta.get("bepic"), dict) else {}
             name = str(child.get("name") or "a clip")
+            # Keyframes (the viewer's Inspector): this timeline has no effects at all, animated or not.
+            keys = note.get("fx", {}).get("keys") if isinstance(note.get("fx"), dict) else None
+            if isinstance(keys, dict) and any(isinstance(v, list) and v for v in keys.values()):
+                out.append(f"{name}: keyframes ({', '.join(sorted(k for k, v in keys.items() if isinstance(v, list) and v))})"
+                           " - played without them")
             speed = note.get("speed")
             if speed is None:
                 speed = next((fx.get("time_scalar") for fx in child.get("effects") or []
