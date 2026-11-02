@@ -726,9 +726,17 @@ the `.otio`. It works like an editor's timeline:
   it the incoming clip's edge, in the middle both (a roll). `,` and `.` then trim
   it by a frame (`Shift`: a second): in Trim mode it ripples, in Selection a gap
   opens or closes and nothing else moves. `E` moves it to the playhead.
-  `Shift`+`A` and `Shift`+`S` jump to the edit before and after and select it, so
-  you can go along the film trimming as you go: over V1, or the track of the
-  clip you have selected. `Esc` lets go of it.
+  `Shift`+`S` goes along the film three steps per cut: the outgoing clip's edge
+  (left), both sides (a roll), the incoming clip's edge (right), then on to the
+  next cut; `Shift`+`A` goes back the same way. The playhead goes to the cut, the
+  side is marked green, and `,` / `.` trim exactly that - over V1, or the track of
+  the clip you have selected. `Esc` lets go of it.
+- **Playing around a cut.** In Trim mode with a cut selected, `Space` (or Play)
+  plays from a second before the cut to a second after it, over and over (the
+  stretch is shaded on the ruler). Trim it with `,` / `.` while it plays and the
+  loop follows the cut, so you can judge the edit as you change it. While it
+  plays you see the film; stopped, a trim shows the two frames side by side.
+  Leaving Trim mode or letting go of the cut gives you the normal in / out back.
 - **Moving a clip by keys.** With a clip selected and no edit point, `,` and `.`
   move the clip a frame (`Shift`: a second). In Selection it moves into a gap and
   stops at the next clip; in Trim mode one clip slides, its neighbours giving and
@@ -738,7 +746,11 @@ the `.otio`. It works like an editor's timeline:
   picture and sound alike, the music under the film and texts too. Drag from an
   empty place of the timeline to draw a rectangle: everything it touches on any
   track is selected, and `Shift` adds to what was. Drag one of them and they all
-  move; `Del` takes them all out and leaves gaps, `Shift`+`Del` closes up, a
+  move together - along the film and up or down by tracks (pictures stay on video
+  tracks, sounds on sound tracks; past the top or bottom track a new one is made).
+  As in Resolve they pass over the clips that are not moving and lie over whatever
+  is where they land (it is cut back or split), leaving gaps where they were;
+  `,` and `.` move them all a frame (`Shift`: a second) the same way. `Del` takes them all out and leaves gaps, `Shift`+`Del` closes up, a
   linked sound or picture goes along, and `Ctrl+Z` brings it all back at once.
 - **More room, more tracks.** Zoom out past the length of the film (`Ctrl`+`-`,
   down to a quarter): there is empty timeline after the end to move or drop clips
