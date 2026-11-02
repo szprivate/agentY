@@ -731,6 +731,11 @@ the `.otio`. It works like an editor's timeline:
   next cut; `Shift`+`A` goes back the same way. The playhead goes to the cut, the
   side is marked green, and `,` / `.` trim exactly that - over V1, or the track of
   the clip you have selected. `Esc` lets go of it.
+- **Switching a clip off.** `D` (or right-click → *Disable clip*) switches the
+  selected clips off, with their linked sound or picture: they stay where they are,
+  dimmed, but are not seen, not heard and not rendered - the track under them shows
+  through, or black. `D` again switches them back on; `Ctrl+Z` undoes it. The saved
+  cut keeps it, and Export to Resolve hands the clip over switched off.
 - **Playing around a cut.** In Trim mode with a cut selected, `Space` (or Play)
   plays from a second before the cut to a second after it, over and over (the
   stretch is shaded on the ruler). Trim it with `,` / `.` while it plays and the
