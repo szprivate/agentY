@@ -696,6 +696,13 @@ the `.otio`. It works like an editor's timeline:
   canvas. They land where you let go - between the shots on V1 (or, in a gap
   on V1, at that moment), at that moment on any other track, sound on a sound
   track - snapped to the clip edges and the playhead.
+- **Adding from the + button inserts at the playhead.** *Files…* and *Selected
+  canvas nodes* go in where the playhead stands, as Resolve's insert edit: a shot
+  under the playhead is split and the new clips go between its halves, and
+  everything after the playhead (on the other tracks too) moves on to make room.
+  Several canvas nodes go in left to right as they stand on the canvas. With a
+  clip of a higher video track selected, they go onto that track instead. The
+  playhead then stands at the end of what went in; `Ctrl+Z` takes it all back.
 - Each clip shows **thumbnails of its frames** (more of them as you zoom in) and
   its **waveform**; the music bed shows its waveform too.
 - **The blade** (`B`) cuts a clip where you click; `Ctrl+B` or `S` cuts at the
@@ -805,6 +812,24 @@ the `.otio`. It works like an editor's timeline:
   *Auto edit* and *Detect cuts* work on.
 - **One playhead.** The panel's playhead and the viewer's frame bar are the same
   position: scrubbing, playing or stepping either moves both, also popped out.
+  Grab the playhead's **line anywhere down the tracks** (the pointer turns into a
+  double arrow within a few pixels of it) to scrub from there; only where the
+  playhead stands exactly on a cut does a click there select the cut instead.
+- **Hearing it while you scrub.** Dragging the playhead, `J K L` and the arrow keys
+  play short bits of the cut's sound under the playhead - higher and faster the
+  faster you drag, silent when you stop, as in Resolve. Two buttons in the bar
+  switch the sound: the **speaker** (`Ctrl+Shift+M`) turns all of the cut's sound
+  off, playing and scrubbing; the **wave** (`Shift+M`) only the scrubbing. The
+  viewer remembers both. A rendered film is not affected.
+- **Zooming keeps the playhead in place.** `Ctrl`+`=` / `Ctrl`+`-`, the zoom buttons
+  and `Shift+Z` zoom about the playhead (if it is out of view, it is centred);
+  `Ctrl` + the mouse wheel zooms about the pointer.
+- **Seeing both sides of a cut.** In the **Trim** mode (`T`), while you trim, roll,
+  slip or slide - by dragging, or with `,` / `.` - the viewer shows two frames side
+  by side: the last frame of the clip going out and the first frame of the one
+  coming in (for a slip: the clip's new first and last frame), each with its
+  timecode, following the edit as it moves. It goes back to the normal view when you
+  let go, a moment after the last key, or when you leave the Trim mode.
 - **Auto edit…** cuts on the beat of the music, gives every shot the same length
   or fits the cut to a length, takes the rhythm of another film, or trims each
   shot to its middle - one step each, undone with `Ctrl+Z`. **Detect cuts** finds
