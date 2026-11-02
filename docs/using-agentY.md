@@ -761,13 +761,13 @@ the `.otio`. It works like an editor's timeline:
   over, and leaves the others alone; the diamond and the arrows show the clip you clicked last. A
   row that has keyframes on a clip gets a key there, one that has none its plain value. The *Timing*
   and *File* tabs (start, length, speed, retime, loop, order, name) change the last clicked clip only,
-  and the header says so. Selected texts share their look the same way.
+  and the header says so. Selected titles share their look the same way (the *Title* tab).
 - **Copying one clip's look onto others (Paste Attributes).** As in Resolve: select a clip
   and press `Ctrl+C` (or right-click it, *Copy*), then select the clips it should go to and
   press `Alt+V` (or right-click, *Paste Attributes…*). A small window lists what can be
   pasted, grouped as in the Inspector: *Video* (zoom, position, anchor point, rotation, flip,
   cropping, opacity), *Audio* (volume), *Keyframes* (one switch: take the animation along),
-  *Timing* (speed), *Clip* (name, colour) and, for texts, their look. Tick what you want
+  *Timing* (speed), *Clip* (name, colour) and, for titles, their look (everything but the words). Tick what you want
   (*All* / *None* do all at once) and *Apply*: it goes to every selected clip that can take
   it, as one step - one `Ctrl+Z` takes it back - and the clips stay selected. A box is greyed
   out when the copied clip has no such thing (a sound has no zoom, a still picture no speed, a clip
@@ -804,6 +804,25 @@ the `.otio`. It works like an editor's timeline:
   stops at the next clip; in Trim mode one clip slides, its neighbours giving and
   taking. `Alt`+`,` and `Alt`+`.` slip it instead: same place, another part of
   the source.
+- **Titles are clips.** Drag a title from **Effects → Titles** onto a video track (or
+  double-click it: it lands at the playhead on the top video track). A title lives on
+  V2 or above, over whatever is under it, and everything you do to a clip you do to a
+  title the same way: select it (with others), move it along the film or to another
+  track, trim and ripple its edges, cut it with the blade, delete it, `D` to switch it
+  off, copy and paste its look, animate it with keyframes, undo. Texts in older cuts
+  open as titles, looking as before.
+- **Formatting a title.** Select it; the Inspector's **Title** tab has its words and,
+  for every selected title at once: the **font** (the fonts installed on the machine
+  ComfyUI runs on; a font that is missing there is named and replaced by Arial),
+  **bold, italic, underline, strikethrough, all capitals** (`Ctrl+B` / `Ctrl+I` /
+  `Ctrl+U` while typing the words - on the timeline `Ctrl+B` still cuts), **size,
+  tracking, line spacing**, **alignment** left / centre / right / justified and top /
+  middle / bottom inside the **text box** (its position and size: the words wrap at its
+  width), the **colour** and its opacity, an **outline**, a **drop shadow** and a
+  **background box** with padding and round corners. Size, tracking, line spacing and
+  the outline take keyframes (the diamonds); the *Video* tab moves, scales, turns, crops
+  and fades a title as it does a clip. What you see while playing is what the render
+  writes: both draw with the same font file and the same layout.
 - **Selecting several.** `Ctrl`+click and `Shift`+click select across tracks,
   picture and sound alike, the music under the film and texts too. Drag from an
   empty place of the timeline to draw a rectangle: everything it touches on any
@@ -841,7 +860,9 @@ the `.otio`. It works like an editor's timeline:
   is transcoded), and can be cancelled. Afterwards it gives the whole path and says
   what was left out. In Resolve: **File → Import → Timeline…**, choose the `.fcpxml`.
   If the folder was moved, answer Yes when Resolve asks for the media and pick
-  `media/`. Texts arrive as markers, not as drawn titles. A real import in Resolve
+  `media/`. Titles arrive as Resolve text titles (words, font, size, colour, bold /
+  italic, alignment, outline, shadow); the background box, the text box's size and
+  vertical alignment, underline and strike-through do not come along. A real import in Resolve
   has not been tried yet, so check your first one.
 - **Gaps.** V1 can hold empty time now: a clip moved up to V2, or deleted with
   `Del`, leaves its place empty and the clips after it stay where they are. A
@@ -917,13 +938,15 @@ the `.otio`. It works like an editor's timeline:
 - **Ask agentY…** in the same dialog sends the cut, with what you want done, to
   the agent; its edit opens in a tab of its own, and *Take into …* brings it into
   your cut. The agent's edit stage does not read back clips on extra tracks, the
-  Inspector's transforms or how the texts look; gaps on V1 come back closed up,
+  Inspector's transforms or how the titles look (it draws them with its own presets, or
+  as captions); gaps on V1 come back closed up,
   and a sound you unlinked is heard with its picture again (its J/L offset is
   lost). The dialog says when your cut has any of these.
 
 **Render** in the panel makes the film of your cut right there, as a new file
 beside the original (`<name>_cut1.mp4`) - picture, dissolves, sound and the
-texts as they look in the panel. To have the agent take it further, tell it to
+titles as they look in the panel (if a title's font is not on the ComfyUI machine,
+another is used and the render says so). To have the agent take it further, tell it to
 render your cut: it loads the file and renders that, rather than its own version. On the next pipeline turn it is also told by
 itself that you changed the cut. A cut you
 started in the panel from nothing is saved under `edits/` in the output folder;
