@@ -712,6 +712,13 @@ def _detached_sounds(doc) -> dict:
     return out
 
 
+def _positive(v) -> bool:
+    try:
+        return float(v) > 1e-6
+    except (TypeError, ValueError):
+        return False
+
+
 def otio_dropped(doc) -> list[str]:
     """What of an OpenTimelineIO cut :func:`from_otio` does not take in, in words.
 
@@ -783,6 +790,15 @@ def otio_dropped(doc) -> list[str]:
             if isinstance(keys, dict) and any(isinstance(v, list) and v for v in keys.values()):
                 out.append(f"{name}: keyframes ({', '.join(sorted(k for k, v in keys.items() if isinstance(v, list) and v))})"
                            " - played without them")
+            # Audio fades and crossfades (the viewer's Edit panel): not rendered here.
+            # Track locks (metadata.bepic.lock / auto_select) change nothing in the picture: not listed.
+            fades = [w for w, k in (("in", "afade_in"), ("out", "afade_out"))
+                     if _positive(note.get(k))]
+            if fades:
+                out.append(f"{name}: audio fade {' / '.join(fades)} - left out")
+            xf = note.get("axfade")
+            if isinstance(xf, dict) and _positive(xf.get("len")):
+                out.append(f"audio crossfade into {name} ({float(xf['len']):g}s) left out")
             speed = note.get("speed")
             if speed is None:
                 speed = next((fx.get("time_scalar") for fx in child.get("effects") or []

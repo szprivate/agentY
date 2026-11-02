@@ -44,6 +44,10 @@ If the answer has an `error` or `refused` paths, say so plainly; do not retry wi
   own `in`/`length` into the one file at its own `at` - no ffmpeg mixdown needed.
 - `{"op": "set", "track": "A2", "clip": 2, "at": .., "length": .., "volume": ..}` moves, trims or
   re-levels; on V1 `in`/`length` trim and ripple. `{"op": "remove", "track": .., "clip": ..}`.
+- A track the user locked in the Edit panel (`locked` in the read) takes no change: the op is
+  refused, so ask them to unlock it. The read also shows audio fades (`fade_in`/`fade_out`) and the
+  crossfades into cuts (`crossfades`: between which clips, length, curve, alignment). Auto-select
+  off (`auto_select_off`) only steers the panel's own tools.
 - All ops of a call are done or none. The open panel shows the change at once (Ctrl+Z undoes it).
   Never write the `.otio` yourself with `run_script`: the panel does not see that, and its next save
   drops it.

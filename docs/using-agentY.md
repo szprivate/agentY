@@ -838,6 +838,34 @@ the `.otio`. It works like an editor's timeline:
   onto. `Shift`+`Z` fits the film again. Drag a clip above the top video track, or
   a sound below the bottom sound track, and let go: it gets a new track of its
   own. This works for what you drop in from outside too.
+- **Audio crossfades and fades.** Where two sounds meet - two films cut together on
+  V1, or two clips touching on a sound track - `Shift`+`T` adds a crossfade (at the
+  selected cut, else at the cut nearest the playhead); a clip's right-click menu has
+  *Add audio crossfade at its start / end* too. It shows as a small bar over the cut
+  with its two curves: drag an edge to make it longer or shorter, click it to see its
+  **Duration**, **Curve** (Cross Fade +3 dB - the default, equal power - 0 dB or
+  −3 dB) and **Alignment** (centre, start or end on the edit) in the Inspector, `Del`
+  removes it. As in Resolve it takes its sound from beyond the cut, so nothing moves;
+  where a clip's file ends at the cut it is made shorter or put on the side that has
+  sound, and where neither has any it says so. A video dissolve on V1 already crosses
+  the two shots' own sound, so it adds no audio crossfade (and none can go there); for
+  a film whose sound you split onto a sound track, add the crossfade on that track.
+  **Fades**: hover a sound clip (or the music under the film) and drag the small
+  square at an upper corner inwards - the faded part is shaded over the waveform; the
+  Inspector's Audio tab has *Fade in* / *Fade out* in seconds, for every selected clip
+  at once. All of this plays in the Edit tab, renders, is saved in the `.otio` and goes
+  to Resolve as fade handles.
+- **Locking tracks and the Auto Track Selector.** Each track's header has, besides
+  its switch (● - off: not seen, not heard, not rendered) and solo (S), two editing
+  controls, as in Resolve. The **padlock** locks the track: nothing on it can be
+  selected, moved, trimmed, cut, deleted or landed on, and it is drawn hatched - it
+  still plays and renders. The **pointer in a dashed box** is the *Auto Track
+  Selector*: only tracks with it on (the default) are moved by a ripple of V1
+  (`Shift`+`Del`, a ripple trim in Trim mode), make room for an insert at the playhead,
+  are cut by `Ctrl+B` / `S` with nothing selected there, take Paste Attributes and are
+  stepped through by `Shift`+`A` / `S` and the arrow keys. Switch it off on, say, the
+  music track and a ripple delete on V1 leaves the music where it is. Both are saved
+  with the cut and are undoable; agentY respects a lock too.
 - **Where a cut is saved.** A new cut goes into the output folder, under
   `edits/`; with a project and shot set on the canvas under that shot:
   `<output>/<project>/<shot>/edits/v001/`. After every save a strip under the

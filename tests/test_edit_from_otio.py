@@ -103,6 +103,22 @@ class ACutFromSomewhereElse(unittest.TestCase):
         first.setdefault("metadata", {})["bepic"] = {"fx": {"op": 0.5, "keys": {"op": [{"t": 0, "v": 0}, {"t": 1, "v": 1}], "vol": [{"t": 0, "v": 1}]}}}
         self.assertTrue(any("keyframes (op, vol)" in d for d in et.otio_dropped(doc)))
 
+    def test_audio_fades_and_crossfades_are_named_but_locks_are_not(self):
+        doc = et.to_otio(cut())
+        clips = [c for c in doc["tracks"]["children"][0]["children"] if c["OTIO_SCHEMA"].startswith("Clip")]
+        clips[0].setdefault("metadata", {})["bepic"] = {"afade_in": 1.0, "afade_out": 0}
+        clips[1].setdefault("metadata", {})["bepic"] = {
+            "afade_out": 0.5, "axfade": {"len": 1, "curve": "+3", "align": "centre"}}
+        doc["tracks"]["children"][0].setdefault("metadata", {}).setdefault("bepic", {}).update(
+            {"lock": True, "auto_select": False})
+        dropped = et.otio_dropped(doc)
+        self.assertTrue(any("audio crossfade into" in d and "(1s) left out" in d for d in dropped), dropped)
+        self.assertTrue(any("audio fade in - left out" in d for d in dropped), dropped)
+        self.assertTrue(any("audio fade out - left out" in d for d in dropped), dropped)
+        self.assertFalse(any("lock" in d for d in dropped), dropped)
+        self.assertEqual(len(dropped), 3)
+        et.from_otio(doc)                                   # still loads
+
     def test_what_is_not_a_timeline_is_said(self):
         for bad in ({}, {"OTIO_SCHEMA": "Clip.1"}, []):
             with self.assertRaisesRegex(et.EditError, "not an OpenTimelineIO timeline"):
