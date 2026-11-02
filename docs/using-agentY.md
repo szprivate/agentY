@@ -855,6 +855,33 @@ the `.otio`. It works like an editor's timeline:
   Inspector's Audio tab has *Fade in* / *Fade out* in seconds, for every selected clip
   at once. All of this plays in the Edit tab, renders, is saved in the `.otio` and goes
   to Resolve as fade handles.
+- **The volume line.** Over every sound clip (and the sound part of a film) runs a
+  yellow line at its level, as Avid's and Resolve's rubber band. Drag it up or down to
+  set the level (the dB is shown while you drag). `Alt`+click the line for a point;
+  drag a point along the clip and up or down (it lands on frames and on the playhead);
+  `Alt`+click a point, or click it and press `Del`, to take it away; right-click it for
+  its ease (linear, ease in / out / in-out, hold). The points are the Inspector's volume
+  keyframes - change either, the other follows. Several clips selected: only the one you
+  grab changes. The line is shown on tracks tall enough for it; right-click a track's
+  header to hide it there (*Show volume curve*). Fades and crossfades work on top of it.
+- **Sound effects.** Open the **Effects** panel (the timeline button group) and pick
+  **Audio FX**: EQ, Compressor, Limiter, Reverb (room, hall, plate), Delay, Gain, Pan.
+  Drag one onto a sound clip - that clip only - or onto a sound track's empty lane or its
+  header - the whole track (the music under the film too); what it would go on lights up
+  green while you hold it there, and a locked track takes none. A clip with effects shows
+  a small **fx**; a track shows a badge per effect in its header. Click either (or a sound
+  track's name) and the Inspector opens them: each effect with an on/off switch (bypass),
+  ▲ ▼ to reorder, Remove, its settings, and a diamond on Mix, Gain and Pan to animate them
+  (a clip's keys in its own time, a track's in the film's). **+ Add effect…** adds one
+  there too. With several clips selected, an effect goes to all of them. The order is:
+  the clip's effects, then its volume and fades, then the track's effects. *Paste
+  Attributes* has an *Audio FX* group to copy a clip's effects onto others. Effects play in
+  the Edit tab, are rendered by Export film the same way (the compressor and limiter sound
+  close to the preview, not bit for bit), and are saved in the `.otio`. **To Resolve**:
+  FCPXML cannot carry effects, so *Export to Resolve…* has **Bake audio effects** (on by
+  default when there are any): each track (and V1) with effects plays from a WAV rendered
+  with them, and its original clips lie beside it on a muted track, named "… (dry)", to
+  redo the effects in Fairlight.
 - **Locking tracks and the Auto Track Selector.** Each track's header has, besides
   its switch (● - off: not seen, not heard, not rendered) and solo (S), two editing
   controls, as in Resolve. The **padlock** locks the track: nothing on it can be

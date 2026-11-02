@@ -652,6 +652,18 @@ def _bepic_note(obj) -> dict:
     return note if isinstance(note, dict) else {}
 
 
+_AFX_NAMES = {"eq": "EQ", "comp": "Compressor", "limit": "Limiter", "reverb": "Reverb", "delay": "Delay",
+              "gain": "Gain", "pan": "Pan"}
+
+
+def _afx_names(chain) -> list[str]:
+    """Display names of the sound effects of a chain that are on (not bypassed)."""
+    if not isinstance(chain, list):
+        return []
+    return [_AFX_NAMES.get(str(fx.get("type")), str(fx.get("type") or "effect"))
+            for fx in chain if isinstance(fx, dict) and fx.get("on") is not False]
+
+
 def _tracks_of(doc) -> list:
     stack = (doc or {}).get("tracks") if isinstance(doc, dict) else None
     return [t for t in (stack or {}).get("children") or []
@@ -778,6 +790,10 @@ def otio_dropped(doc) -> list[str]:
     if _titles(doc):
         out.append("the titles' look (font, style, position, outline, shadow, box) is not taken over - "
                    "agentY draws them with their preset (or as captions)")
+    for n, track in enumerate(tracks, 1):
+        fx_names = _afx_names(_bepic_note(track).get("afx"))
+        if fx_names:
+            out.append(f"track {track.get('name') or f'track {n}'}: sound effects ({', '.join(fx_names)}) - left out")
     for track in tracks:
         for child in track.get("children") or []:
             if not isinstance(child, dict) or not str(child.get("OTIO_SCHEMA") or "").startswith("Clip"):
@@ -799,6 +815,9 @@ def otio_dropped(doc) -> list[str]:
             xf = note.get("axfade")
             if isinstance(xf, dict) and _positive(xf.get("len")):
                 out.append(f"audio crossfade into {name} ({float(xf['len']):g}s) left out")
+            fx_names = _afx_names(note.get("afx"))
+            if fx_names:
+                out.append(f"{name}: sound effects ({', '.join(fx_names)}) - left out")
             speed = note.get("speed")
             if speed is None:
                 speed = next((fx.get("time_scalar") for fx in child.get("effects") or []

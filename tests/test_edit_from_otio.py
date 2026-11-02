@@ -119,6 +119,22 @@ class ACutFromSomewhereElse(unittest.TestCase):
         self.assertEqual(len(dropped), 3)
         et.from_otio(doc)                                   # still loads
 
+    def test_sound_effects_are_named_unless_bypassed(self):
+        doc = et.to_otio(cut())
+        track = doc["tracks"]["children"][0]
+        clips = [c for c in track["children"] if c["OTIO_SCHEMA"].startswith("Clip")]
+        clips[0].setdefault("metadata", {})["bepic"] = {"afx": [
+            {"type": "eq", "on": True, "p": {}}, {"type": "reverb", "on": True, "p": {}},
+            {"type": "delay", "on": False, "p": {}}]}
+        track.setdefault("metadata", {}).setdefault("bepic", {})["afx"] = [
+            {"type": "comp", "on": True, "p": {}}, {"type": "limit", "on": False, "p": {}}]
+        dropped = et.otio_dropped(doc)
+        self.assertTrue(any(d.endswith(": sound effects (EQ, Reverb) - left out") for d in dropped), dropped)
+        self.assertTrue(any(d.startswith("track ") and d.endswith(": sound effects (Compressor) - left out")
+                            for d in dropped), dropped)
+        self.assertEqual(len(dropped), 2)
+        et.from_otio(doc)                                   # still loads
+
     def test_what_is_not_a_timeline_is_said(self):
         for bad in ({}, {"OTIO_SCHEMA": "Clip.1"}, []):
             with self.assertRaisesRegex(et.EditError, "not an OpenTimelineIO timeline"):
