@@ -762,6 +762,19 @@ the `.otio`. It works like an editor's timeline:
   row that has keyframes on a clip gets a key there, one that has none its plain value. The *Timing*
   and *File* tabs (start, length, speed, retime, loop, order, name) change the last clicked clip only,
   and the header says so. Selected texts share their look the same way.
+- **Copying one clip's look onto others (Paste Attributes).** As in Resolve: select a clip
+  and press `Ctrl+C` (or right-click it, *Copy*), then select the clips it should go to and
+  press `Alt+V` (or right-click, *Paste Attributes…*). A small window lists what can be
+  pasted, grouped as in the Inspector: *Video* (zoom, position, anchor point, rotation, flip,
+  cropping, opacity), *Audio* (volume), *Keyframes* (one switch: take the animation along),
+  *Timing* (speed), *Clip* (name, colour) and, for texts, their look. Tick what you want
+  (*All* / *None* do all at once) and *Apply*: it goes to every selected clip that can take
+  it, as one step - one `Ctrl+Z` takes it back - and the clips stay selected. A box is greyed
+  out when the copied clip has no such thing (a sound has no zoom, a still picture no speed, a clip
+  without keyframes has none to take along) or none of the selected clips can take it (a still
+  has no sound). Keyframes keep their place counted from the clip's start, and those past a
+  shorter clip's end are cut off there. The window remembers what you ticked. The keys do
+  nothing while you type in a field. It works in the popped-out viewer too.
 - **Playing around a cut.** In Trim mode with a cut selected, `Space` (or Play)
   plays from a second before the cut to a second after it, over and over (the
   stretch is shaded on the ruler). Trim it with `,` / `.` while it plays and the
@@ -778,6 +791,14 @@ the `.otio`. It works like an editor's timeline:
   to select both (a roll); click a frame while both are selected to pick that side.
   A side the cut doesn't have does nothing. The selected frame has a green outline.
   Leaving Trim mode or letting go of the cut gives you the normal in / out back.
+- **The playhead stays on the selected cut.** In Trim mode, selecting a cut puts the
+  playhead on it, and it stays there: when the cut moves (a ripple, a roll, `,` / `.`, a
+  drag, an undo) the playhead moves with it, so the two frames side by side always show
+  that cut. A cut outside the part of the timeline you see is scrolled to the middle. While
+  the film plays, playing around the cut has the playhead; when it stops the playhead is back
+  on the cut. Selecting another cut takes the playhead there. Moving the playhead yourself
+  (a scrub, the arrows) leaves it where you put it until the cut next moves. Leaving Trim
+  mode or letting go of the cut frees it.
 - **Moving a clip by keys.** With a clip selected and no edit point, `,` and `.`
   move the clip a frame (`Shift`: a second). In Selection it moves into a gap and
   stops at the next clip; in Trim mode one clip slides, its neighbours giving and
@@ -807,6 +828,11 @@ the `.otio`. It works like an editor's timeline:
   asks for a name and folder and carries on in the new file, and **Open cut…**
   opens a saved `.otio` (so does double-clicking one in the file browser).
   `Ctrl+S` saves.
+- **Where the Edit panel's windows open.** Every small window of the Edit panel - Save cut
+  as…, Open cut…, Export film, Export to Resolve…, Auto edit and Ask agentY, Recreate with
+  changes, Paste Attributes, the folder pickers - opens over the middle of the timeline (in the
+  popped-out viewer, over its timeline), always fully on screen, and stays centred when the
+  window changes size. Right-click menus still open at the pointer.
 - **Export to Resolve.** In the save menu, **Export to Resolve…** makes a folder
   beside the cut with whole copies of the original clips (`media/`), a timeline
   (`.fcpxml`), a fallback for V1 (`.edl`), an `.otio` and a `README.txt`. The dialog
