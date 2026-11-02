@@ -674,6 +674,29 @@ def _placed(track) -> list:
     return out
 
 
+def _is_title(clip) -> bool:
+    """A title the bEpic viewer saved: a clip whose media is a generator, not a file."""
+    ref = clip.get("media_reference") if isinstance(clip, dict) else None
+    return isinstance(ref, dict) and str(ref.get("generator_kind") or "") == "bepic.title"
+
+
+def _title_off(clip) -> bool:
+    return clip.get("enabled") is False or bool(_bepic_note(clip).get("disabled"))
+
+
+def _titles(doc) -> list:
+    """The enabled title clips on the extra video tracks, in time order:
+    ``[(start seconds, length, clip)]``."""
+    video = [t for t in _tracks_of(doc) if str(t.get("kind") or "Video").lower() == "video"]
+    out = []
+    for track in video[1:]:
+        for at, child in _placed(track):
+            if _is_title(child) and not _title_off(child):
+                out.append((at, _range_seconds(child.get("source_range"))[1], child))
+    out.sort(key=lambda x: x[0])
+    return out
+
+
 def _detached_sounds(doc) -> dict:
     """The sound clips the bEpic viewer split off a film of the first video track
     ("Unlink audio / video": the film's ``metadata.bepic.mute``, a clip of the same
@@ -736,6 +759,8 @@ def otio_dropped(doc) -> list[str]:
                        + " - heard with its picture again")
     for n, track in enumerate(video[1:], 2):
         for _at, child in _placed(track):
+            if _is_title(child):
+                continue                          # titles come in as overlays
             out.append(f"{child.get('name') or 'a clip'} on {track.get('name') or f'V{n}'} - left out")
     for n, track in enumerate(audio[1:], 2):
         for _at, child in _placed(track):
@@ -743,6 +768,9 @@ def otio_dropped(doc) -> list[str]:
             if isinstance(link, str) and link in firsts and detached.get(link, (None, None))[1] is child:
                 continue
             out.append(f"the sound {child.get('name') or 'a clip'} on {track.get('name') or f'A{n}'} - left out")
+    if _titles(doc):
+        out.append("the titles' look (font, style, position, outline, shadow, box) is not taken over - "
+                   "agentY draws them with their preset (or as captions)")
     for track in tracks:
         for child in track.get("children") or []:
             if not isinstance(child, dict) or not str(child.get("OTIO_SCHEMA") or "").startswith("Clip"):
@@ -854,6 +882,18 @@ def from_otio(doc: dict, base: dict | None = None) -> dict:
                                "preset": str(about.get("preset") or "caption"), "text": text,
                                "start": round(start, 4), "length": round(length, 4),
                                "params": dict(about.get("params") or {})})
+    for start, length, child in _titles(doc):
+        about = _agenty(child)
+        look = _bepic_note(child).get("title")
+        text = str(about.get("text") or (look.get("text") if isinstance(look, dict) else "") or "").strip()
+        if not text or length <= 0:
+            continue
+        tl["overlays"].append({"id": "", "preset": str(about.get("preset") or "caption"), "text": text,
+                               "start": round(start, 4), "length": round(length, 4),
+                               "params": dict(about.get("params") or {})})
+    tl["overlays"].sort(key=lambda o: o["start"])
+    for n, o in enumerate(tl["overlays"], 1):
+        o["id"] = f"t{n}"
     audio = next((t for t in tracks if str(t.get("kind") or "").lower() == "audio"), None)
     beds = [c for c in (audio or {}).get("children") or [] if isinstance(c, dict)
             and str(c.get("OTIO_SCHEMA") or "").startswith("Clip")]
