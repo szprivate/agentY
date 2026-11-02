@@ -578,6 +578,11 @@ max_tokens = 16384
 # Reasoning for EVERY Claude agent. Off by default — set it per agent in
 # [llm.thinking] instead. Env: ANTHROPIC_THINK (1/0).
 think = false
+# How long Anthropic keeps the cached tools and system prompt: "1h" or "5m".
+# The conversation itself is always cached for 5 minutes. "1h" costs 2x on a
+# cache write (5m: 1.25x) and pays off when turns are 5-60 minutes apart.
+# Env: ANTHROPIC_CACHE_TTL.
+cache_ttl = "1h"
 
 [llm.dashscope]
 # Alibaba Model Studio (DashScope) — Qwen via the OpenAI-compatible API. Put the key

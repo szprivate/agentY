@@ -256,13 +256,34 @@ except Exception:  # noqa: BLE001
     pass
 
 
-class AnthropicModel(_BaseAnthropicModel):
-    """AnthropicModel with cache_control injected on the last tool.
+class _CallPrompt(str):
+    """The call's system prompt as Strands hands it to the model (one string),
+    still carrying the content blocks it was joined from."""
 
-    This causes Anthropic to cache the entire tools block on every request,
-    reducing cached-token cost to 10 % of the normal input price after the
-    first call (which pays the 1.25× cache-write surcharge).
+    blocks: list | None = None
+
+
+class AnthropicModel(_BaseAnthropicModel):
+    """AnthropicModel with the request marked for prompt caching: the tools, the
+    stable system prompt and the conversation so far (src/utils/anthropic_cache.py).
+
+    Without the conversation's breakpoints every call of a tool loop sent the
+    whole history fresh; only the ~60k tokens of tools and prompt were read back.
     """
+
+    # The TTL of the tools' and the system prompt's cache entries ("5m" or "1h");
+    # _build_model sets it from llm.anthropic.cache_ttl.
+    _cache_ttl = "5m"
+
+    async def stream(self, messages, tool_specs=None, system_prompt=None, *, tool_choice=None, **kwargs):  # type: ignore[override]
+        # Strands passes the prompt both joined and as its content blocks; only the
+        # blocks show where the stable prompt ends and the turn's guidance begins.
+        blocks = kwargs.get("system_prompt_content")
+        if isinstance(system_prompt, str) and isinstance(blocks, list) and blocks:
+            system_prompt = _CallPrompt(system_prompt)
+            system_prompt.blocks = list(blocks)
+        async for event in super().stream(messages, tool_specs, system_prompt, tool_choice=tool_choice, **kwargs):
+            yield event
 
     def format_request(self, messages, tool_specs=None, system_prompt=None, tool_choice=None):  # type: ignore[override]
         req = super().format_request(messages, tool_specs, system_prompt, tool_choice)
@@ -270,12 +291,10 @@ class AnthropicModel(_BaseAnthropicModel):
         # it wins over the one passed here - so whatever the agent's prompt has
         # gained since (the skills, the guidance for this kind of turn) never
         # arrived. The prompt of the call is the agent's, cached the same way.
-        if isinstance(system_prompt, str) and system_prompt.strip():
-            req["system"] = [{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}]
-        if req.get("tools"):
-            *head, last = req["tools"]
-            req["tools"] = head + [{**last, "cache_control": {"type": "ephemeral"}}]
-        return req
+        from src.utils import anthropic_cache  # noqa: PLC0415
+        prompt = system_prompt if isinstance(system_prompt, str) and system_prompt.strip() else None
+        return anthropic_cache.apply(req, prompt, getattr(system_prompt, "blocks", None) if prompt else None,
+                                     ttl_static=self._cache_ttl)
 
     def format_chunk(self, event):  # type: ignore[override]
         """Surface Anthropic prompt-cache token counts in the usage metadata.
@@ -1263,6 +1282,9 @@ def _build_model(*, role: str, llm: str, system_prompt: str,
             use_native_token_count=False,
             params=_an_params,
         )
+        # The tools and the prompt outlive the user's pauses between turns
+        # (5-60 minutes, measured), where the 5-minute entry has always expired.
+        model._cache_ttl = str(_cfg("ANTHROPIC_CACHE_TTL", "anthropic", "cache_ttl", default="1h"))
         print(f"[agentY:{role}] Using Anthropic — {model_id} (thinking={_an_think})")
     return model, model_id
 
