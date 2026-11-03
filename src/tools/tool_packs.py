@@ -125,9 +125,11 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
     "viewer": ("show files in the bEpic viewer, or in the chat panel; read again what the user has "
                "picked in a history panel (pinned whenever something is); what the viewer shows (tab, "
                "item, frame, in/out range, compare, camera) and the marks the user drew on it - also "
-               "as an inpaint mask (pinned when the item on screen has some)",
+               "as an inpaint mask (pinned when the item on screen has some); read or change a picture in "
+               "layers in the viewer's Paint tab (put a generated result back as a masked layer, add a logo, "
+               "an adjustment, a title - edit_image)",
                ("show_in_viewer", "show_in_panel", "get_history_selection", "get_viewer_state",
-                "get_viewer_annotations")),
+                "get_viewer_annotations", "edit_image")),
     "web_more": ("find reference IMAGES on the web, find other photos of the SAME thing from one picture "
                  "(reverse image search), or hand a web search to the scout "
                  "(web_search, read_web_page, download_image and run_info are always in your list)",

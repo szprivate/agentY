@@ -178,6 +178,9 @@ from agenty_core.tools.regenerate import recreatable_params, regenerate_from_sou
 # Read and change the cut open in the viewer's Edit panel (agenty_core.tools.edit_cut): a voice-over or a clip
 # at a time on a track, trims, moves, removals - saved by the viewer, taken in by the open panel.
 from agenty_core.tools.edit_cut import edit_cut  # noqa: F401,E402
+# Read and change a picture in layers in the viewer's Paint tab (agenty_core.tools.edit_image): layers from
+# files, adjustment layers, masks, selections, text - saved by the viewer, taken in by the open tab.
+from agenty_core.tools.edit_image import edit_image  # noqa: F401,E402
 # Fly a camera through a 3D scene in the viewer and render the move (agenty_core.tools.previz_shot).
 from agenty_core.tools.previz_shot import render_camera_move  # noqa: F401,E402
 # Editable motion graphics: a scene file (data) checked, previewed and rendered with Remotion.
@@ -290,6 +293,8 @@ _SHARED_CORE_TOOLS = [
     "recreatable_params", "regenerate_from_source", "swap_in_takes",
     # read and change the cut open in the viewer's Edit panel
     "edit_cut",
+    # read and change a picture in layers in the viewer's Paint tab
+    "edit_image",
     # animate a camera through a 3D scene in the viewer and render the move
     "render_camera_move",
     # editable motion graphics: write a *.mgscene.json scene, check it, look at stills, render it with Remotion
@@ -694,6 +699,7 @@ ORCHESTRATOR_TOOLS: list = [
     recreatable_params,  # recreate shots: what a generated file was made with (its stored graph, compactly)
     swap_in_takes,       # ... the new versions into the viewer's cut as takes (regenerate_from_source: pipeline)
     edit_cut,            # read / change the cut in the viewer's Edit panel: a VO at 8 s on A2, trims, removals
+    edit_image,          # read / change a picture in layers in the viewer's Paint tab: a result back as a masked layer
     render_camera_move,  # fly a camera through a 3D scene in the viewer, render the move (control video)
     mg_scene_validate,   # motion graphics: check a *.mgscene.json scene
     mg_scene_preview_frame,  # ... look at stills / a contact sheet of it

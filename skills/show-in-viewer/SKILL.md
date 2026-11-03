@@ -1,7 +1,7 @@
 ---
 name: show-in-viewer
-description: Load files into the bEpic image viewer when the user asks to see them there, and read what it shows (frame, range, marks) - "show me clip 3 in the viewer", "open these frames side by side", "open the edit", "put the two renders in a tab". Also opens an edit's cut in the viewer's Edit panel.
-allowed-tools: show_in_viewer, get_viewer_state, get_viewer_annotations, edit_cut
+description: Load files into the bEpic image viewer when the user asks to see them there, and read what it shows (frame, range, marks) - "show me clip 3 in the viewer", "open these frames side by side", "open the edit", "put the two renders in a tab". Also opens an edit's cut in the viewer's Edit panel, and a picture in Paint (layers) - and changes either.
+allowed-tools: show_in_viewer, get_viewer_state, get_viewer_annotations, edit_cut, edit_image
 ---
 
 # Showing files in the viewer
@@ -24,10 +24,42 @@ reach the viewer by themselves.
   The film needs an `.otio` beside it (an `agentY edit` render writes one). "Open the edit" means
   this: pass the edit's film (or its `.otio`) with `panel="edit"`.
 
+- `panel="paint"`: open the pictures in the viewer's Paint tab (layers, brush, masks). An `.ora`
+  or `.psd` always opens there. "Open it in Paint", "let me paint on it" mean this.
+
 An edit stage's render already opens itself this way when it finishes (Settings, `media_nodes.viewer_open_edit`),
 so do not call the tool again right after a render unless the user asks.
 
 If the answer has an `error` or `refused` paths, say so plainly; do not retry with other paths.
+
+## Changing a picture in Paint
+
+Paint is the viewer's small picture editor: layers, a brush, selections, masks, adjustment layers,
+text. Its file is an `.ora` (layers kept); a `.psd` and plain pictures open too. `edit_image` reads
+and changes it - never write the `.ora` yourself (the open tab would not see it and its next save
+would drop it).
+
+- `edit_image()` reads the picture open in Paint (or `doc=` any `.ora` / `.psd` / picture): its size,
+  layers numbered from 1 at the TOP (as the Layers panel shows them), the selection's box.
+  A layer is named by that number, its name, or `"active"`.
+- Changes are a list of ops, all done or none, saved by the viewer and shown in the open tab at
+  once (one `Ctrl+Z` there undoes all of them). A plain picture or a `.psd` is never written over:
+  the first change makes a new `.ora` version, whose path comes back as `doc`.
+- A refusal because the picture has **unsaved changes** means: ask the user to save in Paint
+  (`Ctrl+S`) - do not pass `doc=` to get round it, their unsaved strokes would be lost.
+
+**Generate in Paint.** The user's Generate buttons (generative fill, remove object, remove
+background, select subject, extend, upscale) arrive as a `[Paint] ...` message with the document,
+a PNG of the picture as it looks and a PNG of the selection (white = change). Run the fitting
+workflow (inpaint / outpaint / matte / upscale) on those files, then put the result back with the
+exact `edit_image` call the message gives - a new layer masked to the selection
+(`{"op": "add_layer", "file": <result>, "mask": "selection"}`), a layer mask
+(`{"op": "mask", "from": "file", "file": <matte>}`) or a selection (`{"op": "select", "mode": "file",
+"file": <matte>}`). Do not flatten or change the user's other layers.
+
+Other asks: "put the logo top right" - `add_layer` with `file`, `x`, `y`, `w`; "make it warmer" -
+`add_adjustment` (`grade`, `hue_saturation`, `levels`, `curves`, `exposure`...); "add a title" -
+`add_text`; "blur the background" - `select` + `filter` `{"type": "blur"}`.
 
 ## Changing the cut in the Edit panel
 

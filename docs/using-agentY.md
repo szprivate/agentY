@@ -1045,6 +1045,30 @@ taken out with the rest moving up. A voice-over can be laid line by line, each
 piece at its own time. The change is saved and shows in the open panel at once;
 `Ctrl+Z` undoes it. If you had unsaved changes, they are one `Ctrl+Z` back.
 
+**Paint: a picture in layers.** The viewer has a small picture editor: right-click a
+picture in the history or the file browser and choose **Edit in Paint**, or open
+**Paint ▸ Open picture…** on the viewer's bar. The picture opens in a tab of its own
+with **Layers** and **Properties** panels beside it: layers with blend modes, opacity
+and masks, adjustment layers (levels, curves, hue / saturation, exposure, grade, invert,
+threshold), a brush and eraser, selections (rectangle, ellipse, lasso, magic wand),
+fill, crop, text, blur and sharpen. Everything is undone with `Ctrl+Z`.
+
+- **Save** (`Ctrl+S`) keeps it as an `.ora` (Krita and GIMP open it too), as the next
+  version in the shot's `paint` folder, or under `bepic/paint/` in the output folder.
+  **Export…** writes a PNG, JPEG, WebP, TIFF or a layered **PSD** for Photoshop (an
+  adjustment layer is merged into what is under it there; the export says so).
+- **Generate** (in Properties, or the Generate menu) asks agentY to make the pixels:
+  *generative fill* makes what you type inside the selection, *remove object* fills it
+  as if nothing was there, *remove background* adds a mask, *select subject* selects it,
+  *extend* makes the canvas larger and fills the border, *upscale* adds detail. The
+  result comes back as a new layer masked to the selection, so you can paint the mask,
+  lower its opacity or delete it. *Fill around* and a plain extend or upscale work at
+  once, without the agent.
+- You can also ask the agent directly: *"put the logo in the top right corner"*,
+  *"make the sky warmer"*, *"add the title"*. It changes the picture open in Paint
+  (`edit_image`); the change shows at once and `Ctrl+Z` undoes it. Save your own
+  changes first: the agent will not change a picture with unsaved changes.
+
 **Recreating shots with changes.** Select the shots to change: click one,
 `Ctrl`+click to add or remove one, and `Shift`+click to take a range on a track.
 Then right-click them and choose **Recreate with changes…**, and say what should
