@@ -459,6 +459,21 @@ coder = ""
 [llm.routing]
 auto_switch = false
 
+# ESCALATION. When a turn goes in circles, the conversation moves to a stronger
+# model by itself (turning this on is the consent; it says so in the chat) and
+# stays there until the conversation ends or the agent is told model="default".
+# A turn counts as going in circles when the repeat guard refuses a repeated call,
+# when `after_errors` tool calls in a row fail, or when it has made
+# `after_tool_calls` tool calls (0 turns that signal off). No extra model call:
+# the host counts the tool results it already has. Once per conversation; a model
+# that is not available, or a text-only one for a conversation holding images,
+# leaves everything as it is. The orchestrator only, not the specialists.
+[llm.routing.escalation]
+enabled = false
+model = "claude,claude-opus-5-5"
+after_errors = 4
+after_tool_calls = 60
+
 [[llm.routing.rules]]
 when = { skill = "model-from-reference" }
 role = "orchestrator"

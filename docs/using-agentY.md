@@ -1392,6 +1392,16 @@ You set a few **tiers**; every role inherits from one:
 /switch_model orchestrator claude,claude-opus-4-8
 ```
 
+- **Escalate when stuck** (Settings ▸ Models, off by default). When a turn goes in
+  circles (the agent repeats a call that the repeat guard refuses, several tool
+  calls in a row fail, or one turn makes very many tool calls), the conversation
+  moves to the **escalation model** by itself, and the agent tells you. It happens
+  once per conversation, and the conversation stays on that model until it ends
+  (or you ask the agent to go back to the default model). A model that is not
+  available, or a text-only one while the conversation holds images, changes
+  nothing. Thresholds: `llm.routing.escalation.after_errors` and
+  `after_tool_calls` (0 turns that signal off).
+
 ---
 
 ## MCP servers

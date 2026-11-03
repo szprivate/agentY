@@ -13,6 +13,11 @@ Two pieces, and neither makes a model call of its own:
   has: a per-message classifier call was built and reverted (agentY 1e05c1f,
   edea633) because it added 4-8 s to every turn.
 
+* Escalation (:func:`escalate`, settings ``llm.routing.escalation``): when a turn
+  goes in circles - the repeat guard refuses a call, tool calls keep failing, or
+  the turn runs very long - the same hook moves the conversation to a stronger
+  model, counted from tool results the host already has.
+
 **The seat swap.** Only ``Agent.model`` is replaced; Strands reads it per model
 call, so the conversation, tools, hooks, skills and MCP tools all stay. The cost
 metadata moves with it, or the new model's tokens would bill at the old rate.
@@ -523,21 +528,124 @@ def reset_notices(tid: str | None = None) -> None:
             _NOTIFIED.discard(mark)
 
 
+# -- escalation: a turn going in circles moves to a stronger model ---------------
+#
+# The rules above fire on WHAT the task is. Escalation fires on HOW the turn is
+# going: the repeat guard refused a call (the agent asked the same thing again, or
+# one tool far too often), several tool calls in a row failed, or the turn has made
+# a great many calls. None of it costs a model call: the hook counts the results it
+# already sees. Settings ``llm.routing.escalation``: ``enabled`` (switching it on
+# is the consent, so it switches without asking), ``model`` ("provider,model"),
+# ``after_errors`` and ``after_tool_calls`` (0 = that signal is off). Once per
+# conversation; the vision trap and "never invent a model" hold as for any switch.
+
+ESCALATION_KEY = "escalation"
+
+
+def escalation() -> dict:
+    raw = _settings().get("escalation")
+    raw = raw if isinstance(raw, dict) else {}
+
+    def _int(key: str, default: int, low: int) -> int:
+        try:
+            value = int(raw.get(key, default))
+        except (TypeError, ValueError):
+            value = default
+        return 0 if value <= 0 else max(low, value)
+
+    model = str(raw.get("model") or "").strip()
+    return {"enabled": bool(raw.get("enabled", False)) and "," in model, "model": model,
+            "after_errors": _int("after_errors", 4, 2),
+            "after_tool_calls": _int("after_tool_calls", 60, 10)}
+
+
+class SpiralWatch:
+    """What one orchestrator turn has done so far. Pure: no agent, no settings."""
+
+    def __init__(self, after_errors: int = 4, after_tool_calls: int = 60):
+        self.after_errors = after_errors
+        self.after_tool_calls = after_tool_calls
+        self.calls = 0
+        self.errors_in_a_row = 0
+
+    def observe(self, name: str, result, cancelled: str = "") -> str:
+        """Why this turn is spiralling, or ``""``."""
+        if cancelled:
+            # The repeat guard's refusals all start so; a refusal for another
+            # reason (the user said no to a tool) is not the agent going round.
+            return (f"it kept repeating {name} and the repeat guard refused the call"
+                    if str(cancelled).startswith("Not run.") else "")
+        self.calls += 1
+        status = result.get("status") if isinstance(result, dict) else ""
+        self.errors_in_a_row = self.errors_in_a_row + 1 if status == "error" else 0
+        if self.after_errors and self.errors_in_a_row >= self.after_errors:
+            return f"{self.errors_in_a_row} tool calls in a row failed"
+        if self.after_tool_calls and self.calls >= self.after_tool_calls:
+            return f"this turn has made {self.calls} tool calls"
+        return ""
+
+
+def escalate(agent, why: str, *, models: Callable[[], list[dict]] | None = None) -> str:
+    """Move this conversation to the escalation model. Returns the note for the
+    agent, or ``""`` when nothing was done (off, already there, once already)."""
+    cfg = escalation()
+    if not cfg["enabled"] or not why:
+        return ""
+    tid = thread_id() or f"agent-{id(agent)}"
+    mark = (tid, ESCALATION_KEY)
+    with _LOCK:
+        if mark in _NOTIFIED:
+            return ""
+        _NOTIFIED.add(mark)
+    pick = find(cfg["model"], (models or available_models)())
+    if pick is None:
+        logger.info("escalation: %s is not available; staying put", cfg["model"])
+        return ""
+    if running_spec(agent).lower() == pick["id"].lower():
+        return ""
+    res = switch_model(agent, "orchestrator", pick["id"], f"escalation: {why}",
+                       scope="conversation", confirm=True)
+    if not res.get("applied"):
+        logger.info("escalation to %s refused: %s", pick["id"], res.get("error") or res.get("note"))
+        return ""
+    return (f"Escalation: {why}, so this conversation now runs on {pick['id']} from your next "
+            f"model call. Step back before going on: say in one line what you were trying, why it "
+            f"is not working, and pick a different approach instead of retrying the same one. "
+            f"Tell the user you switched to a stronger model. "
+            f"switch_model(role='orchestrator', model='default', reason=...) undoes it.")
+
+
 try:  # the hook needs strands; the rest of this module must import without it
     from strands.hooks import AfterToolCallEvent, HookProvider, HookRegistry
 
     class ModelRoutingHook(HookProvider):
         """After a tool call: if a routing rule matches it, say so in the result."""
 
+        def __init__(self) -> None:
+            self._watch: SpiralWatch | None = None
+
         def register_hooks(self, registry: HookRegistry, **kwargs) -> None:  # noqa: ARG002
+            from strands.hooks import BeforeInvocationEvent
+            registry.add_callback(BeforeInvocationEvent, self._on_start)
             registry.add_callback(AfterToolCallEvent, self._on_after)
+
+        def _on_start(self, event=None, **kwargs) -> None:  # noqa: ANN001, ARG002
+            cfg = escalation()
+            self._watch = SpiralWatch(cfg["after_errors"], cfg["after_tool_calls"]) if cfg["enabled"] else None
 
         def _on_after(self, event: AfterToolCallEvent, **kwargs) -> None:  # noqa: ARG002
             try:
-                if not _settings().get("rules"):
-                    return
                 use = getattr(event, "tool_use", None) or {}
-                notes = check_rules(event.agent, triggers_of(str(use.get("name") or ""), use.get("input") or {}))
+                notes: list[str] = []
+                if _settings().get("rules"):
+                    notes = check_rules(event.agent, triggers_of(str(use.get("name") or ""), use.get("input") or {}))
+                if self._watch is not None:
+                    why = self._watch.observe(str(use.get("name") or ""), getattr(event, "result", None),
+                                              str(getattr(event, "cancel_message", "") or ""))
+                    note = escalate(event.agent, why) if why else ""
+                    if note:
+                        notes.append(note)
+                        self._watch = None                 # said once; the new model starts fresh
                 result = getattr(event, "result", None)
                 if not notes or not isinstance(result, dict):
                     return

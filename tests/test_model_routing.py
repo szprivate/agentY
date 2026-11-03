@@ -285,11 +285,85 @@ class Rules(Base):
             turn_scope.leave(token)
 
 
+class Escalation(Base):
+    """A turn going in circles moves to the escalation model, once, without a model call to decide."""
+
+    def setUp(self):
+        super().setUp()
+        self.agent = make_agent()
+        self.routing = {"rules": [], "escalation": {"enabled": True, "model": "claude,claude-opus-5-5",
+                                                    "after_errors": 3, "after_tool_calls": 0}}
+
+    def hook(self):
+        h = mr.ModelRoutingHook()
+        h._on_start()
+        return h
+
+    @staticmethod
+    def event(agent, name="hf_file", status="success", cancelled=""):
+        return SimpleNamespace(agent=agent, tool_use={"name": name, "input": {}},
+                               result={"content": [{"text": "x"}], "status": status},
+                               cancel_message=cancelled)
+
+    def test_a_repeat_guard_refusal_escalates_and_says_so(self):
+        h, ev = self.hook(), self.event(self.agent, status="error", cancelled="Not run. You have made this exact call")
+        h._on_after(ev)
+        self.assertEqual(self.agent.model.tag, "claude,claude-opus-5-5")
+        self.assertTrue(ev.result["content"][-1]["text"].startswith("Escalation:"))
+        self.assertEqual(mr.conversation_spec(), "claude,claude-opus-5-5")
+
+    def test_errors_in_a_row_escalate_and_a_success_resets_the_count(self):
+        h = self.hook()
+        for status in ("error", "error", "success", "error", "error"):
+            h._on_after(self.event(self.agent, status=status))
+        self.assertEqual(self.built, [])
+        h._on_after(self.event(self.agent, status="error"))
+        self.assertEqual(len(self.built), 1)
+
+    def test_too_many_calls_escalate(self):
+        self.routing["escalation"]["after_tool_calls"] = 12
+        h = self.hook()
+        for _ in range(11):
+            h._on_after(self.event(self.agent))
+        self.assertEqual(self.built, [])
+        h._on_after(self.event(self.agent))
+        self.assertEqual(len(self.built), 1)
+
+    def test_off_means_nothing_happens(self):
+        self.routing["escalation"]["enabled"] = False
+        h = self.hook()
+        h._on_after(self.event(self.agent, cancelled="Not run. again"))
+        self.assertEqual(self.built, [])
+
+    def test_a_refusal_for_another_reason_is_not_a_spiral(self):
+        h = self.hook()
+        h._on_after(self.event(self.agent, cancelled="The user declined this tool call."))
+        self.assertEqual(self.built, [])
+
+    def test_once_per_conversation(self):
+        self.assertTrue(mr.escalate(self.agent, "looping"))
+        mr.switch_model(self.agent, "orchestrator", "default", "back", confirm=True)
+        self.assertEqual(mr.escalate(self.agent, "looping again"), "")
+
+    def test_an_unavailable_model_or_one_already_running_does_nothing(self):
+        self.routing["escalation"]["model"] = "claude,claude-ghost-9"
+        self.assertEqual(mr.escalate(self.agent, "looping"), "")
+        mr._NOTIFIED.clear()
+        self.routing["escalation"]["model"] = "dashscope,deepseek-v4.1-flash"
+        self.assertEqual(mr.escalate(self.agent, "looping"), "")
+        self.assertEqual(self.built, [])
+
+    def test_no_model_means_off(self):
+        self.routing["escalation"] = {"enabled": True, "model": ""}
+        self.assertFalse(mr.escalation()["enabled"])
+
+
 class Reload(unittest.TestCase):
     def test_editing_the_rules_does_not_rebuild_every_agent(self):
         from src.utils import model_reload
         base = {"llm": {"history_window": 12, "routing": {"auto_switch": False, "rules": []}}}
-        edited = {"llm": {"history_window": 12, "routing": {"auto_switch": True, "rules": RULES}}}
+        edited = {"llm": {"history_window": 12, "routing": {"auto_switch": True, "rules": RULES,
+                                                            "escalation": {"enabled": True, "model": "claude,x"}}}}
         prints = []
         for settings in (base, edited):
             with mock.patch.object(agents, "_settings", lambda s=settings: s),                  mock.patch.object(agents, "role_model", lambda *a, **k: "claude,x"),                  mock.patch.object(agents, "role_thinking", lambda *a, **k: False):
@@ -306,6 +380,9 @@ class Shipped(unittest.TestCase):
         self.assertFalse(routing["auto_switch"])
         kinds = {(next(iter(r["when"])), next(iter(r["when"].values()))) for r in routing["rules"]}
         self.assertEqual(kinds, {("skill", "model-from-reference"), ("tool_pack", "dcc")})
+        esc = routing["escalation"]
+        self.assertFalse(esc["enabled"])
+        self.assertIn(",", esc["model"])
 
 
 if __name__ == "__main__":
