@@ -4,7 +4,11 @@ The user wants generated shots made again with specific changes: the clips they
 selected in the viewer's Edit panel (the `[VIEWER]` line names them;
 `get_viewer_state` gives their files and the cut's `otio`), or the shots or files
 they name. Everything they did not ask to change stays exactly as it was, and so
-does the seed unless they ask for a new one. The stored graph of each shot is run
+does the seed unless they ask for a new one. When they marked an in/out on the
+cut ("the shot between my marks"), the frames of the source file under the marks
+are `marked` in `edit_cut()` / `get_viewer_state()` (`src_in`/`src_out`,
+`src_in_s`/`src_seconds` per clip): use those, never your own arithmetic, and
+never a selected clip's whole `in`/`out` instead. The stored graph of each shot is run
 again with only the changes applied. Do not rebuild anything with
 `prepare_workflow`.
 

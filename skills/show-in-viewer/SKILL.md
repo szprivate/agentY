@@ -53,11 +53,34 @@ If the answer has an `error` or `refused` paths, say so plainly; do not retry wi
   Never write the `.otio` yourself with `run_script`: the panel does not see that, and its next save
   drops it.
 
+## The in/out marked on the cut, in the source files
+
+"Recreate the shot between my marks", "extend what I marked", "take the start frame of the marked
+range": the user's in/out on the Edit tab are **frames of the cut** (`in/out=` in the `[VIEWER]`
+block). A generator, a trim or `video_frames` needs frames of the **source file** - which goes
+through the clip's place in the film, its in point, speed, loop, a split, and the file's own fps.
+**Never work that out yourself.** `edit_cut()` (with the cut's tab on screen) and `get_viewer_state()`
+return `marked` (`edit.marked` in the state) - one piece per clip under the marks:
+
+- `file`, `track`, `clip`; `rec_in`/`rec_out` (frames of the cut, on this clip);
+- `src_in`/`src_out` (frames of THAT FILE, 0 = its first frame, at `src_fps`), `src_frames`;
+  `src_in_s`/`src_out_s`/`src_seconds` (its seconds). Use them as they are:
+  `video_frames(path=file, frames=[src_in, src_out])` for the first and last frame, a trim from
+  `src_in_s` for `src_seconds` (`ffmpeg -ss <src_in_s> -t <src_seconds>`).
+- `loop` + `runs` for a looped clip (one per turn); `covered_by` when a higher track hides it there;
+  `still`/`title` pieces have no source frames. Marks over two clips are two pieces, two files.
+- A selected clip's `in`/`out` (in the state's `edit.selected`) are the WHOLE clip's seconds of its
+  file, not the marks. `edit_cut(frame_in=, frame_out=)` maps a range you were given in cut frames.
+
+A generated multi-shot clip holds several shots in one file: the piece's `src_in`..`src_out` is the
+one shot the user marked - recreate or extend that stretch, not the clip's whole `in`..`out`.
+
 ## Reading the viewer
 
 While the viewer is open each turn starts with a short `[VIEWER]` block (only when it changed):
-the tab, the item on screen, `frame=`, `fps=`, `in/out=` (the range the user marked), compare,
-view and `annotations=N`. "This frame", "the marked range", "the one I'm looking at" mean that.
+the tab, the item on screen, `frame=`, `fps=`, `in/out=` (the range the user marked; on the Edit
+tab frames of the cut - their source frames are `marked`, above), compare, view and
+`annotations=N`. "This frame", "the marked range", "the one I'm looking at" mean that.
 
 - `get_viewer_state()`: the full, live state - tab list, item, timeline, Edit panel selection,
   compare, view, 3D camera (pose, fov). Use it when the block is not enough or may be stale.
