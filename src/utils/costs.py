@@ -409,6 +409,31 @@ def _cache_accounting(obj) -> Tuple[float, float, bool]:
     return (hit, _CACHE_RATES_DEFAULT[1], True)
 
 
+def input_side(usage: dict, obj) -> Tuple[int, int, int, int]:
+    """``(fresh, cache_read, cache_write, total_input)`` of one usage dict.
+
+    Anthropic reports ``inputTokens`` as the fresh part only, so its total input is
+    fresh + read + write (a call with 3 fresh tokens and 90k read is a 90k call).
+    OpenAI-compatible providers (DashScope ...) count the cached part inside
+    ``inputTokens``, so that is the total and fresh is what is left of it.
+    """
+    in_tok = int(usage.get("inputTokens", 0) or 0)
+    cr = int(usage.get("cacheReadInputTokens", 0) or 0)
+    cw = int(usage.get("cacheWriteInputTokens", 0) or 0)
+    included = _cache_accounting(obj)[2]
+    if included and cr + cw > in_tok:
+        included = False
+    if included:
+        return max(0, in_tok - cr - cw), cr, cw, in_tok
+    return in_tok, cr, cw, in_tok + cr + cw
+
+
+def cache_hit_rate(usage: dict, obj) -> float:
+    """Share (0..1) of the input side that was read from the provider's cache."""
+    _fresh, cr, _cw, total = input_side(usage, obj)
+    return min(1.0, max(0.0, cr / total)) if total > 0 else 0.0
+
+
 def compute_cost_from_usage(usage: dict, obj) -> Tuple[float, int]:
     """Compute total cost (USD) and total tokens from a usage dict and model obj.
 
@@ -429,6 +454,11 @@ def compute_cost_from_usage(usage: dict, obj) -> Tuple[float, int]:
     out_tok = int(usage.get("outputTokens", 0) or 0)
     cache_read = int(usage.get("cacheReadInputTokens", 0) or 0)
     cache_write = int(usage.get("cacheWriteInputTokens", 0) or 0)
+    # Anthropic bills a one-hour cache write at 2x, a five-minute one at 1.25x.
+    # The live token hook cannot tell them apart (Strands sums one write counter),
+    # so a caller that can say how many were one-hour writes passes
+    # ``cacheWrite1hInputTokens`` (a part of ``cacheWriteInputTokens``).
+    write_1h = min(cache_write, int(usage.get("cacheWrite1hInputTokens", 0) or 0))
     in_price, out_price = get_model_prices_for(obj)
     hit_mult, write_mult, included = _cache_accounting(obj)
     # A breakdown can never exceed what it breaks down; if it does, the provider
@@ -440,7 +470,8 @@ def compute_cost_from_usage(usage: dict, obj) -> Tuple[float, int]:
         fresh * in_price
         + out_tok * out_price
         + cache_read * in_price * hit_mult
-        + cache_write * in_price * write_mult
+        + (cache_write - write_1h) * in_price * write_mult
+        + write_1h * in_price * (2.0 if write_mult == _CACHE_RATES_ANTHROPIC[1] else write_mult)
     )
     total = in_tok + out_tok + (0 if included else cache_read + cache_write)
     return cost, total

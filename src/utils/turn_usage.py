@@ -21,7 +21,7 @@ _SLOT = "turn_usage"
 
 def _blank() -> dict:
     return {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0,
-            "cost": 0.0, "calls": 0, "priced": False, "last_call": 0, "partner_cost": 0.0,
+            "cost": 0.0, "calls": 0, "denom": 0, "priced": False, "last_call": 0, "partner_cost": 0.0,
             "_sent": -1, "_rev": 0}
 
 
@@ -30,7 +30,8 @@ def _state(scope) -> dict:
 
 
 def add(d_in: int = 0, d_out: int = 0, d_cache_read: int = 0, d_cache_write: int = 0,
-        d_cost: float | None = None, calls: int = 1, last_call: int = 0) -> None:
+        d_cost: float | None = None, calls: int = 1, last_call: int = 0,
+        cached_in_input: bool = False) -> None:
     """Count what an agent used since its last report, in the current turn.
 
     *d_cost* None means the model has no known price: the tokens are counted and
@@ -47,6 +48,14 @@ def add(d_in: int = 0, d_out: int = 0, d_cache_read: int = 0, d_cache_write: int
         s["cache_read"] += max(0, int(d_cache_read or 0))
         s["cache_write"] += max(0, int(d_cache_write or 0))
         s["calls"] += max(0, int(calls or 0))
+        # What the hit rate is a share of: every input-side token once. Anthropic
+        # keeps cache reads/writes beside the fresh input; DashScope/OpenAI count
+        # them inside it.
+        d_in_n, d_cr_n, d_cw_n = (max(0, int(x or 0)) for x in (d_in, d_cache_read, d_cache_write))
+        if cached_in_input and d_cr_n + d_cw_n <= d_in_n:
+            s["denom"] += d_in_n
+        else:
+            s["denom"] += d_in_n + d_cr_n + d_cw_n
         if int(last_call or 0) > 0:
             s["last_call"] = int(last_call)
         if d_cost is not None:
@@ -70,14 +79,13 @@ def snapshot(scope=None) -> dict:
     scope = scope or turn_scope.current()
     with scope.lock:
         s = _state(scope)
-        total_in = s["input"]
         return {
-            "input": total_in,
+            "input": s["input"],
             "output": s["output"],
             "cache_read": s["cache_read"],
             "cache_write": s["cache_write"],
             # share of the input that was read from the provider's cache
-            "cache_hit": round(s["cache_read"] / total_in, 3) if total_in else 0.0,
+            "cache_hit": (round(min(1.0, s["cache_read"] / s["denom"]), 3) if s["denom"] else 0.0),
             "cost": round(s["cost"], 4) if s["priced"] else None,
             # Comfy credits spent on paid partner nodes (not part of ``cost``)
             "partner_cost": round(s["partner_cost"], 4),

@@ -28,7 +28,7 @@ from strands.hooks.events import AfterToolCallEvent
 
 from src.utils.comfyui_interrupt_hook import ComfyUIInterruptHook
 from src.utils.unknown_tool_hook import UnknownToolHookProvider
-from src.utils.costs import compute_cost_from_usage, _extract_meta
+from src.utils.costs import compute_cost_from_usage, input_side, _extract_meta
 
 from src.tools import (
     QUERYTEMPLATES_TOOLS,
@@ -641,8 +641,15 @@ class TokenUsageHookProvider:
                 # Between two reports at most one model call has finished, so a
                 # rise in input IS that call's input. Only the orchestrator's says
                 # how big the conversation is; a specialist's is its own.
+                # Anthropic keeps cache reads/writes beside the fresh input (a warm
+                # call's fresh input is 2-4 tokens), so the size of the call is
+                # the three added; elsewhere they are inside inputTokens already.
+                _fresh, _cr, _cw, call_in = input_side(
+                    {"inputTokens": d["in"], "cacheReadInputTokens": d["cr"],
+                     "cacheWriteInputTokens": d["cw"]}, agent)
                 turn_usage.add(d["in"], d["out"], d["cr"], d["cw"], d_cost, calls=calls,
-                               last_call=d["in"] if self._role == "orchestrator" else 0)
+                               last_call=call_in if self._role == "orchestrator" else 0,
+                               cached_in_input=(call_in == d["in"]))
         except Exception:  # noqa: BLE001 - never break the agent loop for a status line
             pass
 

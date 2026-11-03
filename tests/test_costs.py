@@ -15,7 +15,7 @@ the console put at roughly $3. Two causes, both pinned here:
 """
 import unittest
 
-from src.utils.costs import compute_cost_from_usage, get_model_prices_for
+from src.utils.costs import cache_hit_rate, compute_cost_from_usage, get_model_prices_for, input_side
 
 
 class _Model:
@@ -97,3 +97,40 @@ class AgreesWithTheConsole(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HitRate(unittest.TestCase):
+    SONNET = _Model("anthropic", "claude-sonnet-4-6")
+
+    def test_anthropic_call_with_tiny_fresh_input_and_huge_cache_read(self):
+        u = usage(3, 200, cache_read=90_000, cache_write=600)
+        self.assertEqual(input_side(u, self.SONNET), (3, 90_000, 600, 90_603))
+        self.assertAlmostEqual(cache_hit_rate(u, self.SONNET), 90_000 / 90_603)
+
+    def test_anthropic_cold_call_is_zero(self):
+        self.assertEqual(cache_hit_rate(usage(5, 10, 0, 60_000), self.SONNET), 0.0)
+
+    def test_dashscope_cached_tokens_are_inside_input(self):
+        u = usage(100_000, 1_000, cache_read=90_000)
+        self.assertEqual(input_side(u, FLASH), (10_000, 90_000, 0, 100_000))
+        self.assertAlmostEqual(cache_hit_rate(u, FLASH), 0.9)
+
+    def test_never_above_one_and_zero_without_input(self):
+        self.assertEqual(cache_hit_rate(usage(0, 0), FLASH), 0.0)
+        self.assertLessEqual(cache_hit_rate(usage(1_000, 0, cache_read=5_000), FLASH), 1.0)
+
+
+class AnthropicCacheCost(unittest.TestCase):
+    SONNET = _Model("anthropic", "claude-sonnet-4-6")
+
+    def test_warm_call_prices_read_at_a_tenth_and_write_at_1_25(self):
+        cost, tokens = compute_cost_from_usage(usage(3, 200, cache_read=90_000, cache_write=600), self.SONNET)
+        expected = (3 * 3.00 + 200 * 15.00 + 90_000 * 0.30 + 600 * 3.00 * 1.25) / MILLION
+        self.assertAlmostEqual(cost, expected)
+        self.assertEqual(tokens, 3 + 200 + 90_000 + 600)
+
+    def test_one_hour_writes_cost_twice_the_input_price(self):
+        u = {**usage(3, 0, cache_write=60_000), "cacheWrite1hInputTokens": 50_000}
+        cost, _ = compute_cost_from_usage(u, self.SONNET)
+        expected = (3 * 3.00 + 10_000 * 3.00 * 1.25 + 50_000 * 3.00 * 2.0) / MILLION
+        self.assertAlmostEqual(cost, expected)

@@ -3801,6 +3801,7 @@ def _aggregate_token_usage(accept) -> dict:
     """
     from src.agent import _load_settings
     from src.utils.costs import compute_cost_from_usage
+    from src.utils.costs import input_side as compute_input_side
 
     class _Meta:
         """Minimal stand-in carrying model metadata for cost lookup."""
@@ -3830,7 +3831,9 @@ def _aggregate_token_usage(accept) -> dict:
                  "calls_reported": 0, "calls_estimated": 0,
                  # Each token once. DashScope counts cache hits inside input,
                  # so input + cache_read would count them twice.
-                 "tokens": 0}
+                 "tokens": 0,
+                 # input-side tokens the cache hit rate is a share of
+                 "hit_denom": 0}
             agg[key] = b
         return b
 
@@ -3875,6 +3878,16 @@ def _aggregate_token_usage(accept) -> dict:
                 b["cache_read"] += d_cr
                 b["cache_write"] += d_cw
                 b["calls"] += 1
+                if model:
+                    _p, _, _mid = model.partition("/")
+                    try:
+                        b["hit_denom"] += compute_input_side(
+                            {"inputTokens": d_in, "cacheReadInputTokens": d_cr,
+                             "cacheWriteInputTokens": d_cw}, _Meta(_p, _mid))[3]
+                    except Exception:
+                        b["hit_denom"] += d_in + d_cr + d_cw
+                else:
+                    b["hit_denom"] += d_in + d_cr + d_cw
 
                 # Recompute cost from *this delta* (the logged cost column is
                 # cumulative and cannot be summed). Only possible when the model
@@ -3914,7 +3927,7 @@ def _aggregate_token_usage(accept) -> dict:
     total = {"input": 0, "output": 0, "cache_read": 0,
              "cache_write": 0, "cost": 0.0, "calls": 0, "tokens": 0,
              "cost_reported": 0.0, "cost_estimated": 0.0,
-             "calls_reported": 0, "calls_estimated": 0}
+             "calls_reported": 0, "calls_estimated": 0, "hit_denom": 0}
     for r in rows:
         for k in total:
             total[k] += r[k]

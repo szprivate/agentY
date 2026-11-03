@@ -36,8 +36,8 @@ class Counting(_InTurn):
         self.assertEqual(turn_usage.take_changed()["calls"], 2)
 
     def test_it_adds_up_and_is_sent_once_per_change(self):
-        turn_usage.add(1000, 50, 600, 0, 0.01)
-        turn_usage.add(2000, 150, 1400, 100, 0.02)
+        turn_usage.add(1000, 50, 600, 0, 0.01, cached_in_input=True)
+        turn_usage.add(2000, 150, 1400, 100, 0.02, cached_in_input=True)
         got = turn_usage.take_changed()
         self.assertEqual(got, {"input": 3000, "output": 200, "cache_read": 2000, "cache_write": 100,
                                "cache_hit": 0.667, "cost": 0.03, "partner_cost": 0.0,
@@ -45,6 +45,19 @@ class Counting(_InTurn):
         self.assertIsNone(turn_usage.take_changed(), "unchanged: not sent again")
         turn_usage.add(10, 1)
         self.assertEqual(turn_usage.take_changed()["input"], 3010)
+
+    def test_anthropic_hit_rate_counts_cache_beside_fresh_input(self):
+        # d4751dd-style warm calls: 3 fresh tokens, ~90k read from cache.
+        for _ in range(3):
+            turn_usage.add(3, 200, 90_000, 500, 0.02)
+        got = turn_usage.take_changed()
+        self.assertEqual(got["cache_hit"], round(270_000 / (9 + 270_000 + 1_500), 3))
+        self.assertLessEqual(got["cache_hit"], 1.0)
+        self.assertGreater(got["cache_hit"], 0.99)
+
+    def test_dashscope_hit_rate_is_a_share_of_input_which_holds_the_cache(self):
+        turn_usage.add(100_000, 100, 90_000, 0, 0.01, cached_in_input=True)
+        self.assertEqual(turn_usage.take_changed()["cache_hit"], 0.9)
 
     def test_partner_credits_are_counted_apart_from_the_llm_cost(self):
         turn_usage.add(500, 20, d_cost=0.004)
