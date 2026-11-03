@@ -275,6 +275,11 @@ class AnthropicModel(_BaseAnthropicModel):
     # _build_model sets it from llm.anthropic.cache_ttl.
     _cache_ttl = "5m"
 
+    # Cache-write tokens billed at the one-hour rate (2x), summed over this model's
+    # calls. Strands' metrics sum only the keys they know, so the one-hour part
+    # (``cacheWrite1hInputTokens``) is kept here and read by :func:`_usage_with_1h`.
+    cache_write_1h_total = 0
+
     async def stream(self, messages, tool_specs=None, system_prompt=None, *, tool_choice=None, **kwargs):  # type: ignore[override]
         # Strands passes the prompt both joined and as its content blocks; only the
         # blocks show where the stable prompt ends and the turn's guidance begins.
@@ -318,7 +323,14 @@ class AnthropicModel(_BaseAnthropicModel):
                 if cache_read is not None:
                     meta_usage["cacheReadInputTokens"] = int(cache_read or 0)
                 if cache_write is not None:
+                    # The total (5m + 1h); the 1h part is a part of it and is
+                    # priced at 2x instead of 1.25x (see utils/costs.py).
                     meta_usage["cacheWriteInputTokens"] = int(cache_write or 0)
+                    split = usage.get("cache_creation")
+                    if isinstance(split, dict):
+                        w1h = min(int(cache_write or 0), int(split.get("ephemeral_1h_input_tokens") or 0))
+                        meta_usage["cacheWrite1hInputTokens"] = w1h
+                        self.cache_write_1h_total += w1h
         return chunk
 
 
@@ -551,6 +563,16 @@ def _ensure_ollama_model(model_id: str, host: str) -> None:
 # Token-usage hook – prints token counts after every tool call
 # ---------------------------------------------------------------------------
 
+def _usage_with_1h(agent) -> dict:
+    """The agent's accumulated usage plus ``cacheWrite1hInputTokens``, which
+    Strands does not sum (the model keeps that count)."""
+    usage = dict(agent.event_loop_metrics.accumulated_usage)
+    w1h = int(getattr(getattr(agent, "model", None), "cache_write_1h_total", 0) or 0)
+    if w1h:
+        usage["cacheWrite1hInputTokens"] = w1h
+    return usage
+
+
 class TokenUsageHookProvider:
     """Prints a token-usage summary line after every tool call and appends to
     ./logs/tokens_usage.log.
@@ -576,6 +598,7 @@ class TokenUsageHookProvider:
         self._prev_out = 0
         self._prev_cache_read = 0
         self._prev_cache_write = 0
+        self._prev_w1h = 0
         # What has been reported to the turn's live usage line (src/utils/
         # turn_usage.py) - kept apart from the per-tool deltas above, which are
         # only taken after tool calls.
@@ -616,7 +639,7 @@ class TokenUsageHookProvider:
         """Hand the turn what this agent used since it last did."""
         try:
             from src.utils import turn_usage  # noqa: PLC0415
-            usage = agent.event_loop_metrics.accumulated_usage
+            usage = _usage_with_1h(agent)
             now = {"in": int(usage.get("inputTokens", 0) or 0),
                    "out": int(usage.get("outputTokens", 0) or 0),
                    "cr": int(usage.get("cacheReadInputTokens", 0) or 0),
@@ -655,7 +678,7 @@ class TokenUsageHookProvider:
 
     def _on_after_tool_call(self, event: AfterToolCallEvent, **kwargs) -> None:  # noqa: ARG002
         try:
-            usage = event.agent.event_loop_metrics.accumulated_usage
+            usage = _usage_with_1h(event.agent)
             in_tok = usage.get("inputTokens", 0)
             out_tok = usage.get("outputTokens", 0)
             cache_read = usage.get("cacheReadInputTokens", 0)
@@ -670,6 +693,9 @@ class TokenUsageHookProvider:
             self._prev_out = out_tok
             self._prev_cache_read = cache_read
             self._prev_cache_write = cache_write
+            w1h = int(usage.get("cacheWrite1hInputTokens", 0) or 0)
+            d_w1h = w1h - self._prev_w1h
+            self._prev_w1h = w1h
             self._prev_rep, d_rep = self._reported_delta(event.agent, self._prev_rep)
 
             tool_name = event.tool_use.get("name", "?")
@@ -758,7 +784,7 @@ class TokenUsageHookProvider:
                     f"{ts} [{self._role}] tool={tool_display} "
                     f"delta=+{d_in}in/+{d_out}out/+{d_cr}cache_read/+{d_cw}cache_write"
                     f"  total={in_tok}in/{out_tok}out/{cache_read}cache_read/{cache_write}cache_write"
-                    f"{cost_str} model={model_str}\n"
+                    f"{cost_str} model={model_str} w1h=+{d_w1h}\n"
                 )
                 with self._log_path.open("a", encoding="utf-8") as f:
                     f.write(log_entry)

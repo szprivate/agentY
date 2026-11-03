@@ -134,3 +134,52 @@ class AnthropicCacheCost(unittest.TestCase):
         cost, _ = compute_cost_from_usage(u, self.SONNET)
         expected = (3 * 3.00 + 10_000 * 3.00 * 1.25 + 50_000 * 3.00 * 2.0) / MILLION
         self.assertAlmostEqual(cost, expected)
+
+
+class OneHourWriteSplit(unittest.TestCase):
+    """Anthropic's ``cache_creation`` 5m/1h split reaches the cost as 2x writes."""
+
+    def _model(self):
+        from src.agent import AnthropicModel
+        return AnthropicModel(model_id="claude-sonnet-4-6", max_tokens=1024, client_args={"api_key": "x"})
+
+    def _chunk(self, m, usage):
+        return m.format_chunk({"type": "metadata", "usage": usage})["metadata"]["usage"]
+
+    def test_format_chunk_carries_the_1h_part_and_keeps_the_total(self):
+        m = self._model()
+        out = self._chunk(m, {"input_tokens": 3, "output_tokens": 5, "cache_read_input_tokens": 10,
+                              "cache_creation_input_tokens": 60_000,
+                              "cache_creation": {"ephemeral_5m_input_tokens": 10_000,
+                                                 "ephemeral_1h_input_tokens": 50_000}})
+        self.assertEqual(out["cacheWriteInputTokens"], 60_000)
+        self.assertEqual(out["cacheWrite1hInputTokens"], 50_000)
+        self.assertEqual(out["cacheReadInputTokens"], 10)
+        self.assertEqual(m.cache_write_1h_total, 50_000)
+
+    def test_without_a_split_there_is_no_1h_key(self):
+        m = self._model()
+        out = self._chunk(m, {"input_tokens": 3, "output_tokens": 5, "cache_creation_input_tokens": 600})
+        self.assertNotIn("cacheWrite1hInputTokens", out)
+        self.assertEqual(m.cache_write_1h_total, 0)
+
+    def test_1h_total_sums_over_calls_and_feeds_the_usage_helper(self):
+        from types import SimpleNamespace
+        from src.agent import _usage_with_1h
+        m = self._model()
+        for _ in range(2):
+            self._chunk(m, {"input_tokens": 1, "output_tokens": 1, "cache_creation_input_tokens": 100,
+                            "cache_creation": {"ephemeral_1h_input_tokens": 100}})
+        agent = SimpleNamespace(model=m, event_loop_metrics=SimpleNamespace(
+            accumulated_usage={"inputTokens": 2, "outputTokens": 2, "cacheWriteInputTokens": 200}))
+        self.assertEqual(_usage_with_1h(agent)["cacheWrite1hInputTokens"], 200)
+
+    def test_all_1h_writes_cost_twice_the_input_price(self):
+        sonnet = _Model("anthropic", "claude-sonnet-4-6")
+        u = {**usage(0, 0, cache_write=50_000), "cacheWrite1hInputTokens": 50_000}
+        cost, _ = compute_cost_from_usage(u, sonnet)
+        self.assertAlmostEqual(cost, 50_000 * 3.00 * 2.0 / MILLION)
+
+    def test_log_line_w1h_is_priced_by_the_overview_parser(self):
+        from src.utils.agentY_server import _RE_TOKENS_W1H
+        self.assertEqual(_RE_TOKENS_W1H.search("x model=a/b w1h=+1234").group(1), "1234")

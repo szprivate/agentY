@@ -3735,6 +3735,8 @@ _RE_TOKENS_DELTA = re.compile(
     r"delta=\+?(-?\d+)in/\+?(-?\d+)out/\+?(-?\d+)cache_read/\+?(-?\d+)cache_write"
 )
 _RE_TOKENS_MODEL = re.compile(r"\bmodel=(\S+)")
+# ``w1h=+N``: the part of the delta's cache writes billed at the one-hour rate.
+_RE_TOKENS_W1H = re.compile(r"\bw1h=\+?(-?\d+)")
 _RE_TOKENS_TOTAL = re.compile(r"total=(\d+)in/")
 # ``src=reported dcost=<USD>``: the provider stated the cost of this line's delta;
 # ``src=estimated`` / ``src=free``: priced from the table (absent on older lines).
@@ -3871,6 +3873,8 @@ def _aggregate_token_usage(accept) -> dict:
                 d_out = max(0, int(delta.group(2)))
                 d_cr = max(0, int(delta.group(3)))
                 d_cw = max(0, int(delta.group(4)))
+                w1h_m = _RE_TOKENS_W1H.search(line)
+                d_w1h = max(0, int(w1h_m.group(1))) if w1h_m else 0
 
                 b = _bucket(key)
                 b["input"] += d_in
@@ -3911,7 +3915,8 @@ def _aggregate_token_usage(accept) -> dict:
                     try:
                         cost, tokens = compute_cost_from_usage(
                             {"inputTokens": d_in, "outputTokens": d_out,
-                             "cacheReadInputTokens": d_cr, "cacheWriteInputTokens": d_cw},
+                             "cacheReadInputTokens": d_cr, "cacheWriteInputTokens": d_cw,
+                             "cacheWrite1hInputTokens": d_w1h},
                             _Meta(provider, model_id),
                         )
                         if src != "reported":
