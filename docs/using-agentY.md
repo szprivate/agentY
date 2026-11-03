@@ -899,9 +899,15 @@ the `.otio`. It works like an editor's timeline:
   bar gives the whole path, with **Copy path** and **Show in file browser**, and
   the Inspector keeps it under *File*; if a save fails it says why, and the cut
   stays marked as not saved. In the save menu, **Save cut as…** (`Ctrl+Shift+S`)
-  asks for a name and folder and carries on in the new file, and **Open cut…**
-  opens a saved `.otio` (so does double-clicking one in the file browser).
-  `Ctrl+S` saves.
+  asks for a name and folder and carries on in the new file. `Ctrl+S` saves.
+- **Opening a saved cut.** The **Open** button (the open folder, next to Save on the
+  Edit bar; `Ctrl+O` in the panel) picks a saved `.otio` and opens it in a tab of its
+  own; the little arrow beside it lists the last ten cuts you opened or saved (a file
+  that has gone is greyed). The viewer's tab bar has the same button, so you can open
+  a cut when no Edit panel is up; the save menu has *Open cut…* and *Open recent…* too.
+  Double-clicking an `.otio` in the file browser, dropping one from the desktop onto
+  the viewer, or asking the agent to show it ("open that edit in the viewer") work as well.
+  The picker starts in the folder of the cut you have open, else of the last one you opened.
 - **Where the Edit panel's windows open.** Every small window of the Edit panel - Save cut
   as…, Open cut…, Export film, Export to Resolve…, Auto edit and Ask agentY, Recreate with
   changes, Paste Attributes, the folder pickers - opens over the middle of the timeline (in the
