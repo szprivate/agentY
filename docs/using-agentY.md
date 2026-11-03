@@ -979,6 +979,29 @@ the `.otio`. It works like an editor's timeline:
 - **Zooming keeps the playhead in place.** `Ctrl`+`=` / `Ctrl`+`-`, the zoom buttons
   and `Shift+Z` zoom about the playhead (if it is out of view, it is centred);
   `Ctrl` + the mouse wheel zooms about the pointer.
+- **The ruler stays on top; the playhead as a timecode.** However far down you scroll
+  the tracks, the ruler (time) stays at the top, and scrubbing, the in and out, the
+  play-around-edit window and snapping work there as before. Left of it, above the
+  track names, the playhead is shown as a timecode (`HH:MM:SS:FF` at the cut's frame
+  rate) or as a frame number: click it to switch, or right-click to choose. Double-click
+  it to type where to go - a timecode (`1:00` is one second), a frame number, or `+12` /
+  `-12` to go on or back - and press `Enter` (`Esc` leaves it). The viewer remembers
+  which one you like.
+- **Video above, sound below, as in Resolve.** The timeline has two sections: the
+  video tracks (and the titles) above a splitter, the sound tracks below it. Drag the
+  splitter to give one more room; double-click it to fit the video tracks again. Each
+  section scrolls up and down on its own - with `Alt` + the mouse wheel over its tracks,
+  the wheel over its track names, or its scroll bar - and the video section stays down
+  at V1, next to the splitter, until you scroll it up. Everything that spans tracks
+  works across both: the playhead's line, snapping, selecting with a rectangle, a
+  picture dragged with its linked sound, a clip dragged above the top video track or
+  below the bottom sound track for a new track (also while that empty strip is scrolled
+  out of view: drag past the section's edge).
+- **Track heights with the mouse wheel.** `Shift` + the mouse wheel makes all the tracks
+  of the section under the pointer taller or lower at once (over the ruler: both
+  sections), between 12 and 160 pixels; a track's own lower edge in its header still
+  sets it alone. The heights and the splitter are kept with the cut. The wheel alone
+  still moves along the film (over the ruler too), as before.
 - **Seeing both sides of a cut.** In the **Trim** mode (`T`), while you trim, roll,
   slip or slide - by dragging, or with `,` / `.` - the viewer shows two frames side
   by side: the last frame of the clip going out and the first frame of the one
