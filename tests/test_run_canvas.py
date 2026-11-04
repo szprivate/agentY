@@ -71,6 +71,26 @@ class RunningTheOpenGraph(unittest.TestCase):
         self.assertIn("no graph is open", self._run(pipeline_stub(_canvas_graph={}))["error"])
         self.assertEqual(self.seen, {})
 
+    def test_a_price_refusal_can_be_answered_with_run_canvas_itself(self):
+        # The refusal says "run it again with confirm_cost=True": run_canvas has
+        # to take it, or the agent goes around it via run_workflow_now.
+        asked = []
+
+        def _gate(paths, confirm=False):
+            asked.append(confirm)
+            return None if confirm else {"status": "error", "error_kind": "confirm_cost"}
+
+        pipe = pipeline_stub(_canvas_graph=_graph())
+        with mock.patch("src.utils.partner_cost_host.gate", _gate), \
+                mock.patch("src.utils.partner_cost_host.estimate_of", lambda paths: None):
+            refused = self._run(pipe, node_ids=["6"])
+            self.assertEqual(refused.get("error_kind"), "confirm_cost", refused)
+            self.assertEqual(self.seen, {})
+            ran = self._run(pipe, node_ids=["6"], confirm_cost=True)
+        self.assertEqual(ran.get("status"), "done", ran)
+        self.assertEqual(asked, [False, True])
+        self.assertIn("confirm_cost", inspect.signature(tools(pipe)["run_canvas"]).parameters)
+
 
 class WhatTheAgentIsTold(unittest.TestCase):
 

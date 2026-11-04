@@ -4049,7 +4049,7 @@ class Pipeline:
                                "note": "The next stage's input is exactly these files."})
 
         @_tool
-        async def run_canvas(node_ids: list | None = None) -> str:
+        async def run_canvas(node_ids: list | None = None, confirm_cost: bool = False) -> str:
             """Run the graph the user has OPEN on the canvas, exactly as it is, now.
 
             This is "run it", "queue it", "execute the workflow", "run that again"
@@ -4066,9 +4066,15 @@ class Pipeline:
             Returns the output file paths, as ``run_workflow_now`` does. A canvas
             with agentY hook nodes on it is run with ``apply_canvas_hooks`` instead.
 
+            Paid (partner) nodes show their price first: a run at or above the
+            confirmation level is refused with ``error_kind: confirm_cost`` and the
+            estimate - tell the user the price, ask, and call ``run_canvas`` again
+            with the same ``node_ids`` and ``confirm_cost=True`` only after a yes.
+
             Args:
                 node_ids: Optional node ids (from `[CANVAS GRAPH]`) to run with
                     their inputs; leave empty to run the whole graph.
+                confirm_cost: True only once the user has agreed to the estimated cost.
             """
             from src.utils import canvas_edit as _ce
             graph = getattr(self, "_canvas_graph", None)
@@ -4100,7 +4106,7 @@ class Pipeline:
             except Exception as exc:  # noqa: BLE001
                 return json.dumps({"error": f"could not take the graph from the canvas: {exc}"})
             _push_progress(f"▶ Running the open graph as it is ({len(to_run)} node(s)).")
-            return await run_workflow_now(workflow_path=str(out))
+            return await run_workflow_now(workflow_path=str(out), confirm_cost=bool(confirm_cost))
 
         @_tool
         async def work_in_open_graph(on: bool) -> str:
