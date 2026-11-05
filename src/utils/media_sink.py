@@ -149,7 +149,8 @@ def push_to_viewer(path, group: str = "", label: str = "", *, wait: bool = False
         tab = tab_name() or DEFAULT_TAB
     except Exception:  # noqa: BLE001
         tab = "agentY"
-    body = {"paths": [str(path)], "tab_name": tab, "group": group, "label": label}
+    # The group of the viewer's Viewer tab: the stage's, else the agent's own.
+    body = {"paths": [str(path)], "group": group or tab, "label": label}
 
     def _send() -> bool:
         global _viewer_off_until

@@ -117,7 +117,7 @@ class TheViewer(Fresh):
         p.start()
         self.addCleanup(p.stop)
 
-    def test_a_file_is_pushed_once_into_the_agenty_tab(self):
+    def test_a_file_is_pushed_once_into_its_group(self):
         png = _touch(self.dir, "a.png")
         self.assertTrue(ms.push_to_viewer(png, "remotion", "still", wait=True))
         self.assertFalse(ms.push_to_viewer(png, "remotion", "still", wait=True))
@@ -125,7 +125,7 @@ class TheViewer(Fresh):
         body = self.client.post.call_args.kwargs["json_data"]
         self.assertEqual(path, "/bepic/push")
         self.assertEqual((body["paths"], body["group"], body["label"]), ([png], "remotion", "still"))
-        self.assertTrue(body["tab_name"])
+        self.assertNotIn("tab_name", body)
 
     def test_a_viewer_without_the_route_is_not_asked_again(self):
         self.client.post.side_effect = RuntimeError("404 Not Found")

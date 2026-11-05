@@ -689,8 +689,7 @@ def open_edit_in_viewer(film: str, otio: str = "", title: str = "") -> dict:
             if otio and Path(otio).is_file():
                 shutil.copy2(otio, str(dest / Path(target).with_suffix(".otio").name))
         from agenty_core.tools.show_in_viewer import open_in_viewer
-        from src.utils.viewer_group import DEFAULT_TAB, tab_name
-        res = open_in_viewer([target], tab_name=tab_name() or DEFAULT_TAB, group=title or "edit",
+        res = open_in_viewer([target], group=title or "edit",
                              label="edit", focus=True, panel="edit")
         # The generic delivery must not push the same film again without the cut.
         media_sink.mark_viewer_sent(target)

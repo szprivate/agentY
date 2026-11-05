@@ -53,7 +53,7 @@ class OneTabGroupedByStage(unittest.TestCase):
         g = _graph()
         self.assertEqual(self.stamp(g), 1)
         inputs = g["9"]["inputs"]
-        self.assertEqual((inputs["tab_name"], inputs["group"]), ("agentY", "Characters"))
+        self.assertEqual((inputs["tab_name"], inputs["group"]), ("", "Characters"))
         self.assertEqual(inputs["label"], "hero sheets")
 
     def test_a_batch_member_is_named_by_its_own_role(self):
@@ -69,10 +69,10 @@ class OneTabGroupedByStage(unittest.TestCase):
         self.stamp(g)
         self.assertEqual(g["9"]["inputs"]["label"], "")
 
-    def test_a_run_with_no_stage_still_lands_in_the_one_tab(self):
+    def test_a_run_with_no_stage_lands_in_the_agents_group(self):
         g = _graph()
         self.stamp(g)
-        self.assertEqual((g["9"]["inputs"]["tab_name"], g["9"]["inputs"]["group"]), ("agentY", ""))
+        self.assertEqual((g["9"]["inputs"]["tab_name"], g["9"]["inputs"]["group"]), ("", "agentY"))
 
     def test_a_tab_the_user_named_is_left_alone(self):
         output_tags.set_run_role("x", stage="Characters")
@@ -84,7 +84,7 @@ class OneTabGroupedByStage(unittest.TestCase):
     def test_the_tab_name_is_a_setting_and_empty_turns_it_off(self):
         g = _graph()
         self.assertEqual(self.stamp(g, viewer_tab="Previews"), 1)
-        self.assertEqual(g["9"]["inputs"]["tab_name"], "Previews")
+        self.assertEqual(g["9"]["inputs"]["group"], "Previews")
         g = _graph()
         self.assertEqual(self.stamp(g, viewer_tab=""), 0)
         self.assertEqual(g["9"]["inputs"]["tab_name"], "")

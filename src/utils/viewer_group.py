@@ -7,11 +7,11 @@ agent run is many such nodes, one per workflow, so its pictures would be scatter
 over groups named after node titles. Here the node is told, before the workflow is
 submitted:
 
-* ``tab_name`` - the group for an agent image with no stage (Settings ▸
-  ``media_nodes.viewer_tab``, "agentY" unless changed; empty leaves the node as it
-  is). Older viewers made it a tab of its own;
 * ``group`` - the stage the picture belongs to: the hook's own title
-  ("Characters", "Places"), else the role the user wrote in its prompt;
+  ("Characters", "Places"), else the role the user wrote in its prompt, else the
+  agent's own group (Settings ▸ ``media_nodes.viewer_tab``, "agentY" unless
+  changed; empty leaves the node as it is). ``tab_name``, the old name of
+  ``group``, is cleared;
 * ``label`` - what this picture is within the stage, when a batch named its members
   (one character each), so the viewer can say which is which.
 
@@ -79,8 +79,8 @@ def stamp(graph: dict, workflow_path="", schema_of=None) -> int:
     for node in nodes:
         inputs = node.setdefault("inputs", {})
         if str(inputs.get("tab_name") or "").strip() not in ("", tab):
-            continue                   # the user named this tab themselves
-        want = {"tab_name": tab, "group": group, "label": label}
+            continue                   # the user named its group themselves (old name)
+        want = {"tab_name": "", "group": group or tab, "label": label}
         if any(inputs.get(k) != v for k, v in want.items()):
             inputs.update(want)
             changed += 1
