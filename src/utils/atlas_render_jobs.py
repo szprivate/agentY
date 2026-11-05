@@ -8,7 +8,7 @@ tool runs. A render takes tens of seconds to minutes, so the request answers at 
 the page polls ``GET /agentY/atlas_render?id=``.
 
 The finished picture is handed to ``deliver`` (the host's out-of-turn delivery: a loader node on the
-canvas, a notification, the viewer's agentY tab). It runs in its own turn scope so it cannot land in
+canvas, a notification, the viewer's agentY group). It runs in its own turn scope so it cannot land in
 whichever conversation happens to be running.
 """
 from __future__ import annotations

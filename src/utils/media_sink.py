@@ -137,7 +137,7 @@ def mark_viewer_sent(path) -> None:
 
 
 def push_to_viewer(path, group: str = "", label: str = "", *, wait: bool = False) -> bool:
-    """Show *path* in the viewer's agentY tab, once. *path* must lie inside
+    """Show *path* in the viewer's agentY group, once. *path* must lie inside
     ComfyUI's folders (pass the staged copy). Never raises; True when sent."""
     global _viewer_off_until
     if not path or not _viewer_enabled() or time.time() < _viewer_off_until:

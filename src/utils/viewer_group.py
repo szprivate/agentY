@@ -1,13 +1,15 @@
-"""Put everything the agent saves into one viewer tab, grouped by stage.
+"""Group everything the agent saves in the viewer by stage.
 
-The bEpic viewer (ComfyUI-ImageViewer, installed with agentY) gives each
-``bEpicSendToViewer`` node a tab of its own unless it is told a ``tab_name``. An
-agent run is many such nodes, one per workflow, so its pictures used to be
-scattered over tabs named after node ids. Here the node is told, before the
-workflow is submitted:
+The bEpic viewer (ComfyUI-ImageViewer, installed with agentY) puts what every
+``bEpicSendToViewer`` node sends into its one Viewer tab, as a group of the History
+strip named after the node's ``tab_name`` (else after what feeds the node). An
+agent run is many such nodes, one per workflow, so its pictures would be scattered
+over groups named after node titles. Here the node is told, before the workflow is
+submitted:
 
-* ``tab_name`` - one tab for every agent image (Settings ▸ ``media_nodes.viewer_tab``,
-  "agentY" unless changed; empty leaves the node as it is);
+* ``tab_name`` - the group for an agent image with no stage (Settings ▸
+  ``media_nodes.viewer_tab``, "agentY" unless changed; empty leaves the node as it
+  is). Older viewers made it a tab of its own;
 * ``group`` - the stage the picture belongs to: the hook's own title
   ("Characters", "Places"), else the role the user wrote in its prompt;
 * ``label`` - what this picture is within the stage, when a batch named its members

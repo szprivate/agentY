@@ -703,7 +703,7 @@ def open_edit_in_viewer(film: str, otio: str = "", title: str = "") -> dict:
 
 def _deliver_atlas_render(path: str) -> None:
     """A finished viewer-asked Atlas render, with no turn around it: staged for ComfyUI, announced on the
-    notification bus (a loader node on the canvas + a toast) and sent to the viewer's agentY tab."""
+    notification bus (a loader node on the canvas + a toast) and sent to the viewer's agentY group."""
     try:
         staged = _stage_into_comfy_input(path)
         media_sink.note(path, "Atlas")
@@ -729,7 +729,7 @@ def _deliver_elsewhere(path: str, kind: str, staged: str | None, role: str,
     * The viewer: a file that came through no save node (an MCP render, a script's
       output, an edit render, a downloaded reference) was registered with
       :mod:`src.utils.media_sink`, which remembered its group; it is sent to the
-      viewer's agentY tab here, once, from its staged copy. A save node's own
+      viewer's agentY group here, once, from its staged copy. A save node's own
       output has no such record and is already there.
     * The canvas, for a turn no page is streaming (a shot, a lead woken by its
       shots, a Slack turn): its ``output`` event only fed a queue nobody reads - a

@@ -75,7 +75,7 @@ a **Render with Atlas** button. The viewer runs in ComfyUI's Python, which has n
 `POST /bepic/atlas_render` (ComfyUI-ImageViewer) forwards to this host's `POST /agentY/atlas_render` (address and
 session token from the connect extension's `/agent/host_info`), which runs the same core function in a background job
 (`src/utils/atlas_render_jobs.py`); the page polls `GET /bepic/atlas_render?id=`. The finished picture is delivered
-outside any turn: a loader node on the canvas, a toast, and the viewer's agentY tab.
+outside any turn: a loader node on the canvas, a toast, and the viewer's agentY group.
 
 ## A camera move painted by Atlas (`atlas_render_camera_move`)
 

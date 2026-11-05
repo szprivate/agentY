@@ -5,7 +5,7 @@ Node), so ComfyUI forwards the request to this host, which runs the shared core 
 (:func:`agenty_core.tools.motion_graphics.mg_render`, the same one the agent calls). A render takes seconds to
 minutes, so the request answers at once with an ``id`` and the page polls ``GET /agentY/mg_render?id=``.
 
-The finished video is handed to ``deliver`` (the host's out-of-turn delivery: notification, the viewer's agentY tab).
+The finished video is handed to ``deliver`` (the host's out-of-turn delivery: notification, the viewer's agentY group).
 """
 from __future__ import annotations
 
