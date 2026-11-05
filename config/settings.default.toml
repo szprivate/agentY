@@ -372,6 +372,16 @@ history_window = 12
 vision_models = ["deepseek-v4.1-flash", "qwen3.8-max", "qwen3.8-flash"]
 text_only_models = []
 
+# Images embedded in the conversation (attachments, viewer picks,
+# analyze_image(mode='full')) are sent as JPEG (PNG only with transparency).
+# embed_max_edge caps their long edge in px; unset = 1280 for DashScope, the usual
+# 1568 elsewhere; 0 = no extra cap. history_image_turns = how many of the latest
+# turns keep their images in the history (older ones keep only the path); -1 keeps
+# all. DashScope re-fetches every image of every call, and many big ones made it
+# fail with "Download multimodal file timed out" (src/utils/vision_payload.py).
+# embed_max_edge = 1280
+history_image_turns = 1
+
 # WHICH MODEL DOES WHICH JOB.
 #
 # Set the six TIERS below and you are done — every role inherits from one of them.

@@ -1138,6 +1138,15 @@ def _orchestrator_supports_vision() -> bool:
     normal way — ``llm.tiers.orchestrator`` — left this reading an empty string
     and answering about a model nobody was running.
     """
+    raw = _orchestrator_spec()
+    if not raw:
+        return False
+    from src.utils.vision_capability import supports_vision
+    return supports_vision(raw)
+
+
+def _orchestrator_spec() -> str:
+    """The ``'provider,model'`` the orchestrator runs this turn, or ``""``."""
     try:
         from src.agent import role_model
         # Same default as the factory in agent.py, so an unconfigured install is
@@ -1145,7 +1154,7 @@ def _orchestrator_supports_vision() -> bool:
         raw = str(role_model("orchestrator", default="claude,claude-haiku-4-5",
                              env_var="ORCHESTRATOR_LLM") or "")
     except Exception:  # noqa: BLE001
-        return False
+        return ""
     # A model this conversation was moved to with switch_model(scope="conversation")
     # is what will read the images, whatever the settings say.
     try:
@@ -1153,8 +1162,7 @@ def _orchestrator_supports_vision() -> bool:
         raw = model_routing.conversation_spec() or raw
     except Exception:  # noqa: BLE001 - routing must never cost a turn
         pass
-    from src.utils.vision_capability import supports_vision
-    return supports_vision(raw)
+    return raw
 
 
 # ── Content builder (text + attached images/videos -> Strands content blocks) ─
@@ -1181,7 +1189,9 @@ def _build_content(message: str, media_paths: list[str],
     if embed_images is None:
         embed_images = _orchestrator_supports_vision()
 
-    from src.tools.image_handling import _downsize, _detect_format, _MAX_IMAGE_BYTES
+    from src.tools.image_handling import _detect_format, _MAX_IMAGE_BYTES
+    from src.utils import vision_payload as _vision_payload
+    _orch_spec = _orchestrator_spec() if embed_images else ""
 
     blocks: list = []
     img_valid: list[str] = []
@@ -1203,7 +1213,9 @@ def _build_content(message: str, media_paths: list[str],
         try:
             raw = Path(path).read_bytes()
             img_fmt = _detect_format(path) or "png"
-            image_bytes, img_fmt = _downsize(raw, img_fmt)
+            # JPEG and, for DashScope, a smaller edge: the PNGs this used to send
+            # made DashScope time out fetching them (src/utils/vision_payload.py).
+            image_bytes, img_fmt = _vision_payload.for_model(raw, img_fmt, _orch_spec)
             if len(image_bytes) > _MAX_IMAGE_BYTES:
                 raise ValueError(f"Image still {len(image_bytes):,} bytes after downsize — skipping")
             blocks.append({"image": {"format": img_fmt, "source": {"bytes": image_bytes}}})
