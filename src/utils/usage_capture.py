@@ -106,7 +106,10 @@ def capturing_openai_model():
     Strands client itself)."""
     from strands.models.openai import OpenAIModel  # noqa: PLC0415
 
-    class CapturingOpenAIModel(UsageCaptureMixin, OpenAIModel):
-        """Strands' OpenAI client plus the provider's stated cost, when it states one."""
+    from src.utils.transient_retry import TransientRetryMixin  # noqa: PLC0415
+
+    class CapturingOpenAIModel(TransientRetryMixin, UsageCaptureMixin, OpenAIModel):
+        """Strands' OpenAI client plus the provider's stated cost, when it states
+        one, and a retry of the errors that pass (src/utils/transient_retry.py)."""
 
     return CapturingOpenAIModel

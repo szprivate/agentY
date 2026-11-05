@@ -6111,6 +6111,72 @@ class Pipeline:
         return dropped
 
     @staticmethod
+    def _strip_old_images(messages: list[dict], keep_turns: int | None = None) -> int:
+        """Replace image blocks of all but the last *keep_turns* turns with a note.
+
+        Call between turns only. An image stays in the history, and so is sent
+        again with every model call, for as long as its turn is in the window.
+        On DashScope each re-sent image is fetched again on its side, and a
+        history holding several of them is what made calls fail with "Download
+        multimodal file timed out". The paths stay in the text around each image,
+        so the agent can look again (``analyze_image``) when it needs to.
+        ``llm.history_image_turns`` (default 1) sets *keep_turns*; 0 drops every
+        earlier image, a negative value keeps them all.
+        """
+        if keep_turns is None:
+            keep_turns = 1
+            try:
+                from src.utils.settings import load_settings
+                raw = (load_settings().get("llm") or {}).get("history_image_turns")
+                if raw is not None and str(raw).strip() != "":
+                    keep_turns = int(raw)
+            except Exception:  # noqa: BLE001 - settings must never cost a turn
+                pass
+        if keep_turns < 0:
+            return 0
+        note = {"text": "(image from an earlier turn, not sent again; its path is in "
+                        "the text above — use analyze_image to look at it again)"}
+
+        def _strip(content: list) -> tuple[list, int]:
+            out, n = [], 0
+            for b in content:
+                if isinstance(b, dict) and "image" in b:
+                    out.append(dict(note))
+                    n += 1
+                elif isinstance(b, dict) and isinstance(b.get("toolResult"), dict):
+                    res = b["toolResult"]
+                    inner = res.get("content")
+                    if isinstance(inner, list):
+                        new_inner, k = _strip(inner)
+                        if k:
+                            res["content"] = new_inner
+                            n += k
+                    out.append(b)
+                else:
+                    out.append(b)
+            return out, n
+
+        turns_seen = 0
+        dropped = 0
+        for msg in reversed(messages or []):
+            if not isinstance(msg, dict):
+                continue
+            content = msg.get("content")
+            if not isinstance(content, list):
+                continue
+            if turns_seen >= keep_turns:
+                new_content, n = _strip(content)
+                if n:
+                    msg["content"] = new_content
+                    dropped += n
+            # A user message that is not only tool results opens a turn; every
+            # message before it belongs to an older one.
+            if msg.get("role") == "user" and any(
+                    isinstance(b, dict) and "toolResult" not in b for b in content):
+                turns_seen += 1
+        return dropped
+
+    @staticmethod
     def _shrink_old_catalogs(messages: list[dict]) -> int:
         """Replace earlier turns' ``get_workflow_catalog`` results with a note.
 
@@ -6512,6 +6578,12 @@ class Pipeline:
         if dropped and self._verbose:
             print(f"pipeline: dropped {dropped} image block(s) the orchestrator "
                   f"cannot read (text-only model).")
+        try:
+            dropped = self._strip_old_images(msgs)
+            if dropped and self._verbose:
+                print(f"pipeline: stopped re-sending {dropped} image(s) from earlier turns.")
+        except Exception:  # noqa: BLE001 - never cost a turn
+            pass
         cleaned = self._sanitize_messages(list(msgs))
         if len(cleaned) != len(msgs):
             if self._verbose:

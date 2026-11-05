@@ -682,6 +682,14 @@ def analyze_image(
         )
         return {"status": "success", "content": [{"text": "\n".join(info_parts)}]}
 
+    # Into the orchestrator's history, re-sent every turn: JPEG and, for
+    # DashScope, a smaller edge (src/utils/vision_payload.py).
+    try:
+        from src.utils import vision_payload as _vp
+        from src.utils.agentY_server import _orchestrator_spec
+        data, img_fmt = _vp.for_model(data, img_fmt, _orchestrator_spec())
+    except Exception:  # noqa: BLE001 — the bytes above still work
+        pass
     return {
         "status": "success",
         "content": [
