@@ -11,7 +11,7 @@ Two records, answering two different questions:
 * the **in-process registry** — what the CURRENT turn is producing. The panel
   reads it as each file lands, so the node it drops carries the role in its
   title instead of a filename. Per-turn, cleared with the turn.
-* a **``.agenty.json`` sidecar** beside the file (and beside its staged copy in
+* a **``.agenty.json`` sidecar** in ``agent_metadata`` beside the file (and beside its staged copy in
   ComfyUI's input dir) — what a file is months later, in another thread. This is
   what a collector pointed at a folder of forty renders can read, and what makes
   an anchor render as "the hero sheet" rather than "LoadImage(hero_02.png)".
@@ -187,13 +187,22 @@ def meta_for(path) -> dict:
 # ── the sidecar ───────────────────────────────────────────────────────────────
 
 def sidecar_path(path) -> Path:
-    """``<file>.agenty.json`` — beside the file, not in a database.
+    """``agent_metadata/<name>.agenty.json`` beside the file, not in a database (or the
+    old ``<file>.agenty.json`` right next to it, when a file still has one).
 
     A record that travels with the artifact survives a move, a copy into an input
     directory, a new thread, and a rebuilt project store. That is the whole point
     of it being a file.
     """
-    return Path(str(path) + SIDECAR_SUFFIX)
+    try:
+        from agenty_core.utils.provenance import sidecar_path as core_sidecar_path
+        return core_sidecar_path(path)
+    except Exception:  # noqa: BLE001 - core missing: the same rule, here
+        old = Path(str(path) + SIDECAR_SUFFIX)
+        if old.is_file():
+            return old
+        p = Path(str(path))
+        return p.parent / "agent_metadata" / (p.name + SIDECAR_SUFFIX)
 
 
 #: Sidecar keys other writers own: kept when the role record is rewritten.
@@ -234,7 +243,9 @@ def write_sidecar(path, role: str, **meta) -> bool:
             for k in _KEPT_KEYS:
                 if k in old:
                     body[k] = old[k]
-            sidecar_path(p).write_text(json.dumps(body, indent=1), encoding="utf-8")
+            sc = sidecar_path(p)
+            sc.parent.mkdir(parents=True, exist_ok=True)
+            sc.write_text(json.dumps(body, indent=1), encoding="utf-8")
         return True
     except Exception:  # noqa: BLE001
         return False

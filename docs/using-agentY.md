@@ -489,8 +489,8 @@ role: shot start frame
 ```
 
 Each output node is titled with the role, gets an `agentY add tag` node, and a
-small `.agenty.json` file is written next to the media so the agent knows later
-what it is. In a batch, each variant is named after the value that made it.
+small `.agenty.json` file is written into the `agent_metadata` folder next to the
+media so the agent knows later what it is. In a batch, each variant is named after the value that made it.
 
 ### Where the files go: the `agentY context` node
 
@@ -1090,8 +1090,11 @@ one.
   the clip; otherwise the clip is shortened to the take. Edits you have not saved
   yet are kept.
 - This works for every file agentY or the bEpic viewer's Send node made from now
-  on: each one keeps the graph that made it, in two small files beside it
-  (`<file>.agenty.json` and `<file>.prov.json.gz`), with API keys left out. An
+  on: each one keeps the graph that made it, in two small files in the
+  `agent_metadata` folder beside it (`<file>.agenty.json` and
+  `<file>.prov.json.gz`), with API keys left out. Files saved before 1.18 have
+  them right next to the file, and those still work. If you move a file by hand,
+  move its two files in `agent_metadata` with it. An
   older file can still be recreated if ComfyUI embedded its graph (PNG files
   saved by ComfyUI's Save node, videos from Save Video / Video Combine). A file
   with neither is named as one that can't be recreated exactly, and the other

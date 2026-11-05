@@ -588,12 +588,12 @@ def _copy_provenance(src, staged: Path, prov: dict) -> None:
     dropped onto the canvas can still be recreated with changes."""
     from agenty_core.utils import provenance as pv
     src = Path(str(src))
-    graph = src.parent / str(prov.get("graph_file") or pv.graph_path(src).name)
-    if not graph.is_file():
-        graph = pv.graph_path(src)
+    graph = pv.graph_file_of(src, prov)
     if not graph.is_file():
         return
-    shutil.copyfile(graph, pv.graph_path(staged))
+    target = pv.graph_path(staged)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(graph, target)
     with pv.SIDECAR_LOCK:
         sc = pv.sidecar_path(staged)
         try:
@@ -602,7 +602,7 @@ def _copy_provenance(src, staged: Path, prov: dict) -> None:
             doc = {}
         doc = doc if isinstance(doc, dict) else {}
         doc["provenance"] = {**prov, "graph_file": pv.graph_path(staged).name}
-        sc.write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
+        pv.write_json(sc, doc)
 
 
 def _staged_copy(path: str) -> str | None:

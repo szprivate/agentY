@@ -17,6 +17,7 @@ result is at most 400 tokens per shot; the tool pack loads only on such a turn.
 """
 from __future__ import annotations
 
+from agenty_core.utils.provenance import graph_path as pv_graph, sidecar_path as pv_sidecar
 import asyncio
 import copy
 import gzip
@@ -98,9 +99,9 @@ class Capture(Tmp):
         self.assertEqual((got["output_node"], got["output_index"]), ("9", 1))
         self.assertEqual(got["graph"]["3"]["inputs"]["seed"], 912334)
         for f in (a, b):
-            blob = gzip.decompress(Path(str(f) + ".prov.json.gz").read_bytes()).decode("utf-8")
+            blob = gzip.decompress(pv_graph(f).read_bytes()).decode("utf-8")
             self.assertNotIn("SECRETKEY", blob)
-            self.assertNotIn("SECRETKEY", Path(str(f) + ".agenty.json").read_text(encoding="utf-8"))
+            self.assertNotIn("SECRETKEY", pv_sidecar(f).read_text(encoding="utf-8"))
 
     def test_the_run_is_not_held_up_and_nothing_breaks_without_a_graph(self):
         from src.utils import provenance_capture as pc
@@ -128,13 +129,13 @@ class Capture(Tmp):
         from src.utils import output_tags
         f = self.shot("a.png")
         self.assertTrue(output_tags.write_sidecar(f, "hero shot", hook="12"))
-        doc = json.loads(Path(f + ".agenty.json").read_text(encoding="utf-8"))
+        doc = json.loads(pv_sidecar(f).read_text(encoding="utf-8"))
         self.assertEqual(doc["role"], "hero shot")
         self.assertEqual(doc["provenance"]["prompt_id"], "pid0")
         self.assertEqual(pv.provenance_of(f)["source"], "sidecar")
         # a later role refresh keeps it too, and a meta key cannot overwrite it
         output_tags.write_sidecar(f, "other", provenance={"bogus": 1})
-        doc = json.loads(Path(f + ".agenty.json").read_text(encoding="utf-8"))
+        doc = json.loads(pv_sidecar(f).read_text(encoding="utf-8"))
         self.assertEqual((doc["role"], doc["provenance"]["prompt_id"]), ("other", "pid0"))
 
     def test_a_staged_copy_keeps_the_provenance_and_the_graph(self):
@@ -148,7 +149,7 @@ class Capture(Tmp):
         shutil.copyfile(f, staged)
         with mock.patch.object(srv, "_comfy_input_dir", return_value=in_dir):
             srv._copy_sidecar(f, "agentY/render_1.png")
-        doc = json.loads(Path(str(staged) + ".agenty.json").read_text(encoding="utf-8"))
+        doc = json.loads(pv_sidecar(staged).read_text(encoding="utf-8"))
         self.assertEqual(doc["role"], "the hero")
         self.assertEqual(doc["provenance"]["graph_file"], "render_1.png.prov.json.gz")
         got = pv.provenance_of(staged)
@@ -339,7 +340,7 @@ class Host(Tmp):
         self.assertEqual([r["prompt_id"] for r in out["results"]], ["newpid1", "newpid2"])
         got = pv.provenance_of(news[0])
         self.assertEqual((got["source"], got["graph"]["3"]["inputs"]["seed"]), ("sidecar", 7))
-        doc = json.loads(Path(news[0] + ".agenty.json").read_text(encoding="utf-8"))["provenance"]
+        doc = json.loads(pv_sidecar(news[0]).read_text(encoding="utf-8"))["provenance"]
         self.assertEqual((doc["source"], doc["derived_from"]["file"]), ("regenerate", a))
         self.assertEqual(out["takes"][0], {"from_file": a, "file": news[0], "version": 2})
         self.assertIsNone(rg._runner)                         # the host's runner is not left behind
