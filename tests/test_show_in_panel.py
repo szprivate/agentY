@@ -43,6 +43,7 @@ class Files(unittest.TestCase):
             setattr(obj, name, getattr(Pipeline, name).__get__(obj))
         obj._SHOW_NUMBER = Pipeline._SHOW_NUMBER
         obj._SHOW_IMAGE_EXTS = Pipeline._SHOW_IMAGE_EXTS
+        obj._SHOW_AUDIO_EXTS = Pipeline._SHOW_AUDIO_EXTS
         return obj
 
     def pushed(self, fn, *args):
@@ -78,12 +79,18 @@ class WhatIsNamed(Files):
         self.assertEqual(items, [])
         self.assertIn("no output with that number", problems[0])
         self.assertIn("no such file", problems[1])
-        self.assertIn("not an image or a video", problems[2])
+        self.assertIn("not an image, a video or a sound", problems[2])
 
     def test_a_video_is_shown_too_and_a_file_named_twice_once(self):
         v = self.file("shot.mp4")
         items, _ = self.me()._show_items([v, v])
         self.assertEqual([i["path"] for i in items], [v])
+
+
+    def test_a_sound_is_shown_too(self):
+        w = self.file("voice.wav")
+        items, problems = self.me()._show_items([w])
+        self.assertEqual((items, problems), ([{"path": w, "number": None, "caption": ""}], []))
 
 
 class Showing(Files):
@@ -96,6 +103,15 @@ class Showing(Files):
         self.assertEqual([g["path"] for g in cs.get_gallery("lead")][-1], b)
         self.assertEqual(pushed, [{"op": "show_again", "items": sent,
                                    "caption": "approved characters"}])
+
+    def test_a_sound_is_shown_unnumbered(self):
+        # The numbers are the conversation's pictures and clips; a sound is not one to feed a loader.
+        w = self.file("voice.wav")
+        obj = self.me()
+        sent, pushed = self.pushed(obj._show_again, obj._show_items([w])[0])
+        self.assertEqual(sent[0]["number"], None)
+        self.assertEqual(cs.get_gallery("lead"), [])
+        self.assertEqual(pushed[0]["items"][0]["path"], w)
 
     def test_showing_it_again_does_not_number_it_again(self):
         b = self.file("mara.png")

@@ -3659,8 +3659,9 @@ class Pipeline:
 
         @_tool
         async def show_in_panel(files: list, caption: str = "") -> str:
-            """Show images or videos in the user's chat panel - again, or for the
-            first time in THIS conversation.
+            """Show images, videos or sounds in the user's chat panel - again, or
+            for the first time in THIS conversation. A sound (wav, mp3, flac, ogg,
+            m4a, aac, opus) is a card with a player; it gets no number.
 
             A result is shown once, when it is made, in the conversation that made
             it. Use this whenever the user should be looking at a picture that is
@@ -3684,7 +3685,7 @@ class Pipeline:
             if not items:
                 return json.dumps({
                     "error": "nothing to show - " + ("; ".join(problems) or "no files given."),
-                    "what_to_do": "Pass absolute paths of image or video files that exist, "
+                    "what_to_do": "Pass absolute paths of image, video or sound files that exist, "
                                   "or the numbers list_outputs gives.",
                 })
             sent = self._show_again(items, str(caption or "").strip())
@@ -8869,6 +8870,9 @@ class Pipeline:
     _SHOW_NUMBER = re.compile(r"(?:#|image|video|output|picture|no\.?)?\s*#?\s*(\d{1,5})", re.I)
     _SHOW_IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
                                   ".tif", ".tiff", ".avif"})
+    # Sounds play in the panel too. They are shown unnumbered: the numbers are the
+    # conversation's pictures and clips, which other tools take as image inputs.
+    _SHOW_AUDIO_EXTS = frozenset({".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".opus"})
 
     def _show_items(self, files) -> tuple[list, list]:
         """What *files* names, as ``[{path, number, caption}]``, and what it could not.
@@ -8896,8 +8900,9 @@ class Pipeline:
                 problems.append(f"{said}: no such file")
                 continue
             ext = os.path.splitext(path)[1].lower()
-            if ext not in self._SHOW_IMAGE_EXTS and not _is_video_file(path):
-                problems.append(f"{said}: not an image or a video")
+            if (ext not in self._SHOW_IMAGE_EXTS and not _is_video_file(path)
+                    and ext not in self._SHOW_AUDIO_EXTS):
+                problems.append(f"{said}: not an image, a video or a sound")
                 continue
             key = os.path.normcase(os.path.abspath(path))
             if key in seen:
@@ -8919,7 +8924,8 @@ class Pipeline:
         sent = []
         for it in items:
             it = dict(it)
-            if it.get("number") is None and thread:
+            sound = os.path.splitext(it["path"])[1].lower() in self._SHOW_AUDIO_EXTS
+            if it.get("number") is None and thread and not sound:
                 try:
                     from src.utils import conversation_store as _cs
                     it["number"] = _cs.add_gallery_image(thread, it["path"],
