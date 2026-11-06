@@ -318,7 +318,13 @@ def _is_video_path(path: str) -> bool:
     return Path(path).suffix.lower() in _VIDEO_SUFFIXES
 
 
-_AUDIO_SUFFIXES = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".opus"}
+_AUDIO_SUFFIXES = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".opus"}
+
+
+def _is_audio_path(path: str) -> bool:
+    return Path(path).suffix.lower() in _AUDIO_SUFFIXES
+
+
 _MODEL_SUFFIXES = {".glb", ".gltf", ".obj", ".fbx", ".stl", ".usdz", ".ply", ".splat", ".spz", ".ksplat"}
 
 
@@ -737,7 +743,7 @@ def _deliver_elsewhere(path: str, kind: str, staged: str | None, role: str,
     """
     try:
         intent = media_sink.take(path)
-        if intent is not None and kind in ("image", "video", "model"):
+        if intent is not None and (kind in ("image", "video", "model", "audio") or _is_audio_path(path)):
             target = _viewer_copy(path, staged)
             if target:
                 media_sink.push_to_viewer(target, intent.get("group", ""),
@@ -1986,8 +1992,11 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
             # it here also writes the sidecar beside the original, and the copy in
             # the input dir gets its own — that one is what a canvas node names.
             role, declared = _output_role(p)
+            # A sound with no loader chosen is still a "file" to the canvas, but
+            # the panel plays it and the viewer shows it, and both load the
+            # staged copy - so it is staged too.
             staged = (_stage_into_comfy_input(p, "3d" if kind == "model" else "")
-                      if kind != "file" else None)
+                      if kind != "file" or _is_audio_path(p) else None)
             if staged:
                 _copy_sidecar(p, staged)
             # Its number in this conversation - what the panel prints on it and
@@ -2040,7 +2049,8 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
                 continue
             again["n"] += 1
             out_q.put({
-                "type": "output", "kind": "video" if _is_video_path(p) else "image",
+                "type": "output",
+                "kind": "video" if _is_video_path(p) else "audio" if _is_audio_path(p) else "image",
                 "path": p, "filename": _staged_copy(p), "name": os.path.basename(p),
                 "caption": str(patch.get("caption") or it.get("caption") or ""),
                 "role": "", "node_candidates": [], "drop": False,
