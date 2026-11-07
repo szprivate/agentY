@@ -700,6 +700,13 @@ briefing_dir = "./config/qa/"
 [atlas]
 camera_move_enabled = false
 
+# Dependencies between files (agenty_core.utils.dependencies): every output records what it
+# was made from. With reuse_check on, a run that would make a mask / depth / pose pass that
+# already exists (same file, same frames and settings) is held once and the agent is told
+# which file to reuse; calling the same tool again runs it anyway. Renders are never held.
+[dependencies]
+reuse_check = true
+
 # Refine loops — `refine_canvas_until`, the agent running the graph you have open
 # over and over until its output meets a condition you stated. Every iteration is
 # a real generation, so this is a spend ceiling and not a suggestion: the agent

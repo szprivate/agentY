@@ -71,6 +71,7 @@ from src.tools.video_handling import (  # noqa: F401
 )
 # Mark up an image (circle / box / arrow a subject) without regenerating it.
 from src.tools.annotate import annotate_image, set_output_sink  # noqa: F401
+from src.tools.file_dependencies import file_dependencies  # noqa: F401
 from src.tools.comfyui import check_model  # noqa: F401
 from src.tools.huggingface import (  # noqa: F401
     search_huggingface_models,
@@ -688,6 +689,7 @@ ORCHESTRATOR_TOOLS: list = [
     analyze_video,       # understand a video input (samples frames -> Video Agent)
     split_video_into_shots,  # find the cuts in a video, write one file per shot
     annotate_image,      # circle/box/arrow things in an image (overlay, not a re-render)
+    file_dependencies,   # what a file was made from / what was made from it (passes to reuse, stale)
     download_image,
     upload_file_to_url,  # PUT a local file to a presigned URL (MCP upload flows)
     dashscope_generate,  # image/video on the user's own DashScope key (not Comfy credits)

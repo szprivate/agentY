@@ -2593,12 +2593,22 @@ def create_orchestrator_agent(
 
 
 def _routing_hooks() -> list:
-    """The rule check that suggests a better model (src/utils/model_routing.py)."""
+    """The rule check that suggests a better model (src/utils/model_routing.py), and the
+    check that holds a run once when the pass it makes already exists (src/utils/reuse_check.py)."""
+    hooks: list = []
     try:
         from src.utils.model_routing import ModelRoutingHook
-        return [ModelRoutingHook()] if ModelRoutingHook is not None else []
+        if ModelRoutingHook is not None:
+            hooks.append(ModelRoutingHook())
     except Exception:  # noqa: BLE001
-        return []
+        pass
+    try:
+        from src.utils.reuse_check import ReuseCheckHook
+        if ReuseCheckHook is not None:
+            hooks.append(ReuseCheckHook())
+    except Exception:  # noqa: BLE001
+        pass
+    return hooks
 
 
 def build_lead_model(system_prompt: str):
