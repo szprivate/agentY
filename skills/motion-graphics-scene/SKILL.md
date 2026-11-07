@@ -7,7 +7,7 @@ allowed-tools: write_text_file, read_text_file, mg_scene_validate, mg_scene_prev
 # Motion graphics as a scene file
 
 You do NOT write React. You write a **scene**: one JSON file that describes layers and their
-keyframes. One generic renderer (Remotion) turns any scene into a video, and the bEpic viewer's
+keyframes. One generic renderer (Remotion) turns any scene into a video, and the ComfyUI Image Viewer's
 **Motion** panel edits the same file (layers, timeline, keyframes, curves, gizmos), so you and the
 user change one thing. What the panel previews is exactly what renders.
 

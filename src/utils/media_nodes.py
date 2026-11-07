@@ -2,7 +2,7 @@
 
 By default agentY takes whatever a workflow was built with and, for results it
 drops on the canvas, the first loader this ComfyUI has. Settings ▸ Load & save
-nodes lets the user pick instead — a different saver for images (bEpic's "Send
+nodes lets the user pick instead — a different saver for images (the viewer's "Send
 to Image Viewer", an EXR writer), a path loader for videos, and so on.
 
 Three things live here:
@@ -110,7 +110,7 @@ def saver_kinds(class_type: str, schema: dict) -> list[str]:
         return []                      # a preview: it shows, it does not save
     wires = set().union(*[_accepts(t) for t in types.values() if _is_wire(t)])
     if wires & _WILD:
-        # Takes anything, e.g. bEpicSendToViewer. Stricter about the name input:
+        # Takes anything, e.g. ImageViewerSend. Stricter about the name input:
         # debug nodes ("show any") take anything too and save nothing.
         return list(KINDS) if "filename_prefix" in types else []
     if any(_is_model_type(t) for t in wires):
@@ -161,6 +161,8 @@ def choices(object_info: dict | None = None, keep: bool = False) -> dict:
     out["video"]["sequence_formats"] = {}
     for cls, schema in sorted((object_info or {}).items()):
         if not isinstance(schema, dict):
+            continue
+        if cls in LEGACY_NODE_IDS:      # the viewer's old ids: the same node, offered once
             continue
         entry = {"id": cls, "label": _label(cls, schema)}
         for kind in saver_kinds(cls, schema):
@@ -232,7 +234,18 @@ def preferred(kind: str, role: str) -> str:
         chosen = ((_load_settings() or {}).get("media_nodes") or {}).get(f"{kind}_{role}")
     except Exception:  # noqa: BLE001
         return ""
-    return str(chosen or "").strip()
+    chosen = str(chosen or "").strip()
+    return LEGACY_NODE_IDS.get(chosen, chosen)
+
+
+# The ComfyUI Image Viewer's node ids before it was renamed (it was "bEpic" until
+# 1.18): a choice saved in settings.local.toml under the old id is the node it is now.
+LEGACY_NODE_IDS = {
+    "bEpicSendToViewer": "ImageViewerSend",
+    "bEpicImageViewerRoto": "ImageViewerRoto",
+    "bEpicImageViewerSAM3Collector": "ImageViewerSAM3Collector",
+    "bEpicScene3D": "ImageViewerScene3D",
+}
 
 
 def loader_candidates(kind: str, defaults: list) -> list:
@@ -351,14 +364,14 @@ def _format_options(schema: dict) -> list:
 def sequence_formats(schema: dict) -> list:
     """The still formats a saver can write a clip's frames in, or ``[]`` when it
     cannot write an image sequence at all (it needs a format menu and a
-    ``is_sequence`` switch - bEpicSendToViewer has both)."""
+    ``is_sequence`` switch - ImageViewerSend has both)."""
     types = _types(schema)
     if types.get("file_format") != "COMBO" or types.get("is_sequence") not in ("BOOLEAN", "BOOL"):
         return []
     meta = (_required(schema).get("fps") or [None, {}])
     meta = meta[1] if len(meta) > 1 and isinstance(meta[1], dict) else {}
-    not_still = {str(f).lower() for f in (meta.get("bepic_video_formats") or [])} | _VIDEO_FORMATS \
-        | {str(f).lower() for f in (meta.get("bepic_model_formats") or [])} \
+    not_still = {str(f).lower() for f in (meta.get("imageviewer_video_formats") or meta.get("bepic_video_formats") or [])} | _VIDEO_FORMATS \
+        | {str(f).lower() for f in (meta.get("imageviewer_model_formats") or meta.get("bepic_model_formats") or [])} \
         | {"glb", "gltf", "obj", "ply", "stl", "usd", "usda", "usdc", "usdz", "fbx"}
     return [f for f in _format_options(schema) if f.lower() not in not_still]
 

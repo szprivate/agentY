@@ -330,9 +330,9 @@ exists during a run, so agentY renders just that branch first
 (`🔎 Rendering hook input(s)…`). Your savers don't run. Turn it off with
 `hook_tap_tensors`.
 
-### The bEpic viewer: tag, approve, find
+### The ComfyUI Image Viewer: tag, approve, find
 
-The [bEpic viewer](https://github.com/szprivate/ComfyUI-ImageViewer) is agentY's
+The [ComfyUI Image Viewer](https://github.com/szprivate/ComfyUI-ImageViewer) is agentY's
 standard viewer: the installer puts it beside the sidebar extension and
 **Send to Image Viewer** is the default save node for images, videos and 3D files
 (Settings ▸ Load & save nodes).
@@ -683,7 +683,7 @@ between turns.
 Each render is saved like any other result (`…/videos/v###/…`, one version per
 round) with an **`.otio`** file beside it. That is an OpenTimelineIO timeline:
 Resolve, Nuke Studio and Premiere open it, with the cut laid out on the original
-shot files and each text as a marker at its moment. The **bEpic viewer** reads it
+shot files and each text as a marker at its moment. The **ComfyUI Image Viewer** reads it
 too: open the film there and its **Edit panel** comes up with the cut, shot by
 shot, with the dissolves, the texts and the sound.
 
@@ -1054,7 +1054,7 @@ threshold), a brush and eraser, selections (rectangle, ellipse, lasso, magic wan
 fill, crop, text, blur and sharpen. Everything is undone with `Ctrl+Z`.
 
 - **Save** (`Ctrl+S`) keeps it as an `.ora` (Krita and GIMP open it too), as the next
-  version in the shot's `paint` folder, or under `bepic/paint/` in the output folder.
+  version in the shot's `paint` folder, or under `imageviewer/paint/` in the output folder.
   **Export…** writes a PNG, JPEG, WebP, TIFF or a layered **PSD** for Photoshop (an
   adjustment layer is merged into what is under it there; the export says so).
 - **Generate** (in Properties, or the Generate menu) asks agentY to make the pixels:
@@ -1089,7 +1089,7 @@ one.
   **Retime to fit** plays a take of a different length at the speed that fills
   the clip; otherwise the clip is shortened to the take. Edits you have not saved
   yet are kept.
-- This works for every file agentY or the bEpic viewer's Send node made from now
+- This works for every file agentY or the ComfyUI Image Viewer's Send node made from now
   on: each one keeps the graph that made it, in two small files in the
   `agent_metadata` folder beside it (`<file>.agenty.json` and
   `<file>.prov.json.gz`), with API keys left out. Files saved before 1.18 have
@@ -1365,12 +1365,12 @@ Changed values are saved to `config/settings.local.json`; the defaults in
 
 ### Load & save nodes
 
-Out of the box the viewer ([above](#the-bepic-viewer-tag-approve-find)) saves
+Out of the box the viewer ([above](#the-comfyui-image-viewer-tag-approve-find)) saves
 images, videos and 3D files; ComfyUI without it keeps each workflow's own save node.
 
 **Settings ▸ Load & save nodes** picks, for images, videos, audio and 3D models,
 which node loads a file and which node saves one. Each dropdown lists what this ComfyUI has,
-including bEpic's **Send to Image Viewer**.
+including the viewer's **Send to Image Viewer**.
 
 - **save with** — replaces the save node a workflow was built with, keeping its
   input and file name. Only when the chosen node can take the same connection:

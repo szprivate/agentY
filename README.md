@@ -65,7 +65,7 @@ COMFYUI_API_KEY=comfyui-...     # only if your ComfyUI requires auth / uses API 
 
 Close ComfyUI and the agent window, then run the uninstaller from the agentY folder. It shows what it
 would remove first and asks before each step; your conversations and settings (backed up to a zip
-first) and the bEpic viewer are only removed if you say so. ComfyUI itself and your models are never
+first) and the ComfyUI Image Viewer are only removed if you say so. ComfyUI itself and your models are never
 touched.
 
 ```powershell

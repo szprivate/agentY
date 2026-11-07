@@ -1424,8 +1424,8 @@ class Pipeline:
             pillars, benches …) or surfaces into one; matching its look to the
             picture; reading and acting on the notes the user pinned while
             walking it; reverting a world. It runs its own ComfyUI pipelines
-            (depth, SAM3, Hunyuan3D, Chord) and opens the world in the bEpic
-            viewer — do NOT prepare or signal workflows for it. It searches and
+            (depth, SAM3, Hunyuan3D, Chord) and opens the world in the ComfyUI Image
+            Viewer — do NOT prepare or signal workflows for it. It searches and
             runs the whole template library itself, and asks the workflow
             researcher for jobs no template of its own covers.
 
@@ -4863,7 +4863,7 @@ class Pipeline:
             if not produced:
                 session["done"] = "failed"
                 return json.dumps({"error": "the run produced no fetchable output, so there "
-                                   "is nothing to judge. If the saver is the bEpic viewer "
+                                   "is nothing to judge. If the saver is the ComfyUI Image Viewer "
                                    "node, turn its `save_to_output` ON.", "next": "failed"})
             out_path = produced[0]
             _loop.pair_output(thread, out_path, v=entry["v"])
@@ -5318,7 +5318,7 @@ class Pipeline:
                     return json.dumps({
                         "error": "the run produced no fetchable output, so there is nothing "
                                  "to judge and the loop cannot turn. If your saver is the "
-                                 "bEpic viewer node, turn its `save_to_output` ON — only "
+                                 "ComfyUI Image Viewer node, turn its `save_to_output` ON — only "
                                  "then are files written where the agent can fetch them.",
                         "varied": f"{tid}.{tparam}", "history": history,
                         "original_value": original})
@@ -7399,7 +7399,7 @@ class Pipeline:
             if graph_block:
                 pin += graph_block + "\n\n"
 
-        # What the user picked in a history panel (the bEpic viewer's strip,
+        # What the user picked in a history panel (the ComfyUI Image Viewer's strip,
         # ComfyUI's assets sidebar): "use the selected ones" points at files, not
         # nodes. Present only when something is picked (history_selection.md).
         hist_block = self._describe_history_selection()
@@ -7409,7 +7409,7 @@ class Pipeline:
                    for i in self._history_selection().get("items") or []):
                 guides.append("input_images")
 
-        # What the bEpic viewer shows (tab, item, frame, range, marks): a few
+        # What the ComfyUI Image Viewer shows (tab, item, frame, range, marks): a few
         # key=value lines, only while it is open and only when it changed - the
         # previous turn's block is taken out of the history (viewer_state.md).
         viewer_block = self._describe_viewer_state()

@@ -1,7 +1,7 @@
 """Walkable worlds from reference pictures — the tools of the World Builder.
 
 The worlds themselves are made by the **ComfyUI-bEpicWorlds** pack (its
-``/bepic_worlds/*`` routes) and shown in the bEpic Image Viewer, where the user
+``/bepic_worlds/*`` routes) and shown in the ComfyUI Image Viewer, where the user
 walks them and pins notes. These tools are the agent's side of that loop:
 
 * thin wrappers over the routes — create, rebuild, describe, edit, revert,

@@ -1,6 +1,6 @@
 """Atlas renders the viewer asked for: one background job each, polled by id.
 
-The bEpic viewer's "Render with Atlas" button posts the camera it is looking through; the viewer runs
+The ComfyUI Image Viewer's "Render with Atlas" button posts the camera it is looking through; the viewer runs
 inside ComfyUI's Python (no ``agenty_core``, no World Labs key), so ComfyUI forwards the request to this
 host, which has both. The render itself is the shared core function
 (:func:`agenty_core.tools.atlas_render.render_view`), the same one the agent's ``atlas_render_view``

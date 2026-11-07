@@ -29,7 +29,7 @@ SCHEMAS = {
                   "optional": {"image": ["IMAGE", {}],
                                "seed": ["INT", {"default": 0, "min": 0, "max": 2147483647}]}},
         "output": ["IMAGE"]},
-    "bEpicSendToViewer": {"input": {"required": {"input": ["*", {}]}}, "output": []},
+    "ImageViewerSend": {"input": {"required": {"input": ["*", {}]}}, "output": []},
     "LatentOnly": {"input": {"required": {"samples": ["LATENT", {}]}}, "output": ["LATENT"]},
 }
 
@@ -41,7 +41,7 @@ def graph():
         "7": {"class_type": "OpenAIGPTImage1",
               "inputs": {"prompt": ["8", 0], "image": ["29", 0], "mask": ["29", 1],
                          "seed": 42, "size": "auto", "model": "gpt-image-2"}},
-        "26": {"class_type": "bEpicSendToViewer", "inputs": {"input": ["7", 0]}},
+        "26": {"class_type": "ImageViewerSend", "inputs": {"input": ["7", 0]}},
     }
 
 

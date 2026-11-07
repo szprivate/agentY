@@ -161,13 +161,13 @@ from agenty_core.tools.reverse_search import reverse_image_search  # noqa: F401,
 # Image / video generation on the user's own DashScope key, not Comfy credits
 # (agenty_core.tools.dashscope_generate).
 from agenty_core.tools.dashscope_generate import dashscope_generate, dashscope_fetch  # noqa: F401,E402
-# Load files into the bEpic viewer on request (agenty_core.tools.show_in_viewer);
+# Load files into the ComfyUI Image Viewer on request (agenty_core.tools.show_in_viewer);
 # the default tab follows Settings > media_nodes.viewer_tab.
 from agenty_core.tools.show_in_viewer import show_in_viewer, set_default_tab_provider as _set_viewer_tab  # noqa: F401,E402
-# What the user picked in a history panel (the bEpic viewer's strip, ComfyUI's assets
+# What the user picked in a history panel (the ComfyUI Image Viewer's strip, ComfyUI's assets
 # sidebar), read live mid-turn (agenty_core.tools.history_selection).
 from agenty_core.tools.history_selection import get_history_selection  # noqa: F401,E402
-# What the bEpic viewer shows (tab, item, frame, range) and the marks the user drew on it
+# What the ComfyUI Image Viewer shows (tab, item, frame, range) and the marks the user drew on it
 # (agenty_core.tools.viewer_state).
 from agenty_core.tools.viewer_state import get_viewer_state, get_viewer_annotations  # noqa: F401,E402
 # Recreate generated shots with a few changes, everything else as it was (agenty_core.tools.regenerate):
@@ -283,11 +283,11 @@ _SHARED_CORE_TOOLS = [
     "download_image", "upload_file_to_url",
     # generation on the user's own DashScope key
     "dashscope_generate", "dashscope_fetch",
-    # show files in the bEpic viewer, open an edit in its Edit panel
+    # show files in the ComfyUI Image Viewer, open an edit in its Edit panel
     "show_in_viewer",
     # what the user picked in a history panel, read live
     "get_history_selection",
-    # what the bEpic viewer shows, and the user's annotations on it (as a mask too)
+    # what the ComfyUI Image Viewer shows, and the user's annotations on it (as a mask too)
     "get_viewer_state", "get_viewer_annotations",
     # recreate shots with changes (regenerate_from_source: the pipeline's closure runs it)
     "recreatable_params", "regenerate_from_source", "swap_in_takes",

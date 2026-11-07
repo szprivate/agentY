@@ -85,7 +85,7 @@ class BlockerTest(_Base):
 
     def test_a_viewer_counts_as_rendering_something(self):
         graph = {"20": {"class_type": "CLIPTextEncode", "inputs": {"text": "", "clip": ["6", 0]}},
-                 "11": {"class_type": "bEpicSendToViewer", "inputs": {"input": ["20", 0]}}}
+                 "11": {"class_type": "ImageViewerSend", "inputs": {"input": ["20", 0]}}}
         hooks = [{"hook_node_id": "30", "directive": "x",
                   "targets": [{"node_id": "20", "to_input": "text",
                                "to_input_type": "STRING"}]}]

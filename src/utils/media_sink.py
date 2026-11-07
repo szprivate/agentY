@@ -1,7 +1,7 @@
 """One place for media a tool makes outside a ComfyUI save node.
 
-A workflow's save node reaches the canvas (the executor's outputs) and the bEpic
-viewer (``bEpicSendToViewer``). Everything else a turn produces - an MCP server's
+A workflow's save node reaches the canvas (the executor's outputs) and the ComfyUI Image
+Viewer (``ImageViewerSend``). Everything else a turn produces - an MCP server's
 render, a script's output, a sub-conversation's picture, an edit render, a
 downloaded reference - used to reach neither, unless something happened to put the
 path in the turn's output list, and even then a turn nobody streams (a shot) had no
@@ -19,7 +19,7 @@ Three small pieces, no per-tool patching:
 * :func:`note` / :func:`take` - the group the file belongs under in the viewer (the
   MCP server, the shot, the hook title), remembered from the moment the file is
   registered until the host stages it and sends it on.
-* :func:`push_to_viewer` / :func:`claim_drop` - the viewer side (``POST /bepic/push``
+* :func:`push_to_viewer` / :func:`claim_drop` - the viewer side (``POST /imageviewer/push``
   on ComfyUI, from ComfyUI-ImageViewer) and the de-duplication for both.
 
 The viewer only opens files inside ComfyUI's own folders, so what is pushed is the
@@ -40,7 +40,7 @@ _intent: dict = {}        # norm path -> {"group", "label"}: not yet sent on
 _seen: set = set()        # (norm path, mtime): read from a tool result already
 _viewer_sent: set = set() # (norm path, mtime): already pushed to the viewer
 _dropped: set = set()     # (norm path, mtime): already announced for a drop
-_viewer_off_until = 0.0   # a viewer without /bepic/push: not asked again for a while
+_viewer_off_until = 0.0   # a viewer without /imageviewer/push: not asked again for a while
 _MAX_SET = 5000
 
 
@@ -156,10 +156,10 @@ def push_to_viewer(path, group: str = "", label: str = "", *, wait: bool = False
         global _viewer_off_until
         try:
             from agenty_core.utils.comfyui_client import get_client
-            res = get_client().post("/bepic/push", json_data=body)
+            res = get_client().post("/imageviewer/push", json_data=body)
             return bool(isinstance(res, dict) and res.get("shown"))
         except Exception as exc:  # noqa: BLE001
-            if "404" in str(exc):          # a viewer from before /bepic/push
+            if "404" in str(exc):          # a viewer from before /imageviewer/push
                 _viewer_off_until = time.time() + 600
             logger.info("viewer push skipped for %s: %s", path, exc)
             return False

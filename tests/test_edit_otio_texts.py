@@ -2,7 +2,7 @@
 
 A text is over the film at a moment, not inside a clip, so it is written as a
 marker on the whole timeline: an editor sees a note of what goes there, and the
-bEpic viewer draws the markers as a track of their own over the scrub bar.
+ComfyUI Image Viewer draws the markers as a track of their own over the scrub bar.
 """
 import unittest
 

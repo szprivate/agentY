@@ -123,7 +123,7 @@ class TheViewer(Fresh):
         self.assertFalse(ms.push_to_viewer(png, "remotion", "still", wait=True))
         path, = self.client.post.call_args.args
         body = self.client.post.call_args.kwargs["json_data"]
-        self.assertEqual(path, "/bepic/push")
+        self.assertEqual(path, "/imageviewer/push")
         self.assertEqual((body["paths"], body["group"], body["label"]), ([png], "remotion", "still"))
         self.assertNotIn("tab_name", body)
 

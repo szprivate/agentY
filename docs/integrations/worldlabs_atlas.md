@@ -72,21 +72,21 @@ upscale keeps the render and reports `upscale_error`.
 
 The viewer: `atlas_open_in_viewer(world)` (or the Previz panel opened on any `world.glb` from an Atlas folder) shows
 a **Render with Atlas** button. The viewer runs in ComfyUI's Python, which has neither `agenty_core` nor the key, so
-`POST /bepic/atlas_render` (ComfyUI-ImageViewer) forwards to this host's `POST /agentY/atlas_render` (address and
+`POST /imageviewer/atlas_render` (ComfyUI-ImageViewer) forwards to this host's `POST /agentY/atlas_render` (address and
 session token from the connect extension's `/agent/host_info`), which runs the same core function in a background job
-(`src/utils/atlas_render_jobs.py`); the page polls `GET /bepic/atlas_render?id=`. The finished picture is delivered
+(`src/utils/atlas_render_jobs.py`); the page polls `GET /imageviewer/atlas_render?id=`. The finished picture is delivered
 outside any turn: a loader node on the canvas, a toast, and the viewer's agentY group.
 
 ## A camera move painted by Atlas (`atlas_render_camera_move`)
 
-**Experimental, off by default.** It is paid and has not had a real run yet, so it is switched off: set `[atlas] camera_move_enabled = true` in `config/settings.default.toml` (or `settings.local.json`; `AGENTY_ATLAS_CAMERA_MOVE=1` overrides it, and is how agentY-mcp is switched on) and restart the host. Off, the agent has no `atlas_render_camera_move` tool (agentY and agentY-mcp), the `worldlabs-atlas` skill does not mention it, and `/agentY/atlas_camera_move` answers "disabled". The viewer has a matching switch (Settings -> bEpic Viewer -> Experimental: Atlas camera move) that shows the "Atlas move" button. Turn both on to try it; the skill step for the agent is not shipped while it is off (add a step 6b to `skills/worldlabs-atlas/SKILL.md` telling it to price with `dry_run=true` first and to run it only after a yes).
+**Experimental, off by default.** It is paid and has not had a real run yet, so it is switched off: set `[atlas] camera_move_enabled = true` in `config/settings.default.toml` (or `settings.local.json`; `AGENTY_ATLAS_CAMERA_MOVE=1` overrides it, and is how agentY-mcp is switched on) and restart the host. Off, the agent has no `atlas_render_camera_move` tool (agentY and agentY-mcp), the `worldlabs-atlas` skill does not mention it, and `/agentY/atlas_camera_move` answers "disabled". The viewer has a matching switch (Settings -> ComfyUI Image Viewer -> Experimental: Atlas camera move) that shows the "Atlas move" button. Turn both on to try it; the skill step for the agent is not shipped while it is off (add a step 6b to `skills/worldlabs-atlas/SKILL.md` telling it to price with `dry_run=true` first and to run it only after a yes).
 
 The Marble 2 Atlas beta API has **no video, trajectory or sequence mode**: `atlasGenerate` takes posed RGBD context
 frames and a list of 1280 x 720 target cameras and returns one still per camera (no maximum is published; this layer
 uses at most 8 per task). Video along a camera path exists only in World Labs' closed early-access "Atlas" omni model.
 So the move is built here (`agenty_core/tools/atlas_camera_move.py`): keyframe cameras along the path are painted by
 Atlas, a few per task, each task conditioned on the views the earlier ones painted (they are added, with depth, to a
-copy of the world), then every frame is rendered through the grown depth mesh in the bEpic viewer along the exact same
+copy of the world), then every frame is rendered through the grown depth mesh in the ComfyUI Image Viewer along the exact same
 path. At a keyframe the picture is Atlas's own; in between it is those pictures reprojected, which is stable in time
 by construction. `quality`: draft = a painted view every 1 s (8 per task), standard = 0.5 s (4 per task), high = 0.25 s.
 
@@ -98,7 +98,7 @@ US$; no balance API). The estimate is a range from `WLT_ATLAS_CREDITS_PER_TASK` 
 resumes from `<work world>/moves/<name>/plan.json` without paying a task twice.
 
 The viewer: **Atlas move** (Previz panel, next to Atlas) samples the active keyframed camera frame by frame, asks
-`POST /bepic/atlas_camera_move` (dry run) for the plan and price, and only the second press sends `confirm_cost`.
+`POST /imageviewer/atlas_camera_move` (dry run) for the plan and price, and only the second press sends `confirm_cost`.
 ComfyUI-ImageViewer relays to this host's `/agentY/atlas_camera_move` (`src/utils/atlas_move_jobs.py`); the page polls
 for tasks done / total and shows the clip in an "Atlas move" tab and on the canvas.
 
@@ -134,7 +134,7 @@ depth, then refines it (renders new views, cleans them up, trains on them). Rese
   and Atlas all share RUB). Depth must be the linear-depth EXR (`depthAsset`), not a log-depth PNG.
 - Output: `response.refinedSplats` {splat count: {assetId, url}} (refined) or `response.draftSplat` (draft).
   The tool keeps the largest level: `<world>/splats/<name>.spz` (as returned), plus `<name>.ply` and
-  `<name>_lite.ply` turned 180 degrees about X (Y down, the 3DGS convention the bEpic viewer turns upright, like a
+  `<name>_lite.ply` turned 180 degrees about X (Y down, the 3DGS convention the ComfyUI Image Viewer turns upright, like a
   `train_splat` PLY), records it under `splats` in `world.json`, opens it in the viewer. (`_lite.ply` only when the
   splat carries higher SH bands; World Labs' are colour only.)
 - Measured live 2026-10-30 (the promo's interior2 cabin, 33 views at 1280x720, refined): 17.5 min, SPZ v2,
@@ -190,7 +190,7 @@ reader), `api`.
 ## Not done / assumptions
 `atlasMasked` / `atlasChisel` are not wrapped; `splats2Mesh` and the `.spz` upload path are only mock-tested; the
 multi-image `images2PosedRGBD` reconstruction and `atlas_expand_world` with several moves were not run live beyond one
-view; GLB loading in the bEpic viewer itself was not exercised (the GLB parses in trimesh / pygltflib).
+view; GLB loading in the ComfyUI Image Viewer itself was not exercised (the GLB parses in trimesh / pygltflib).
 
 ## The hosted World Labs MCP server
 
@@ -251,7 +251,7 @@ Tools: `marble_create_world`, `marble_export` (`agenty_core/tools/worldlabs_marb
   `{asset_type: "splats", format: "ply", resolution: full_res|500k|150k|100k}`, synchronous, the result `url` is the file.
   [export](https://docs.worldlabs.ai/api/reference/worlds/export.md), [file specs](https://docs.worldlabs.ai/marble/export/specs.md)
 - **Axes:** SPZ assets are `marble_raw_opencv` (x right, y down, z forward); Marble's own viewer applies a 180 degree turn
-  about X, which is also what the bEpic viewer (Spark) does to every splat, so a Marble splat and a `train_splat` `.ply`
+  about X, which is also what the ComfyUI Image Viewer (Spark) does to every splat, so a Marble splat and a `train_splat` `.ply`
   (Y down) load the same way and nothing is flipped here. For an OpenGL tool negate Y and Z. `semantics_metadata` is metric
   scale + ground only: centres x factor then minus `ground_plane_offset` on Y, log-scales + ln(factor) (`marble_export(metric=true)`
   does this). [rendering-spz](https://docs.worldlabs.ai/api/rendering-spz.md)

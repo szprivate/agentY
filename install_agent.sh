@@ -285,11 +285,11 @@ update_checkout() {   # $1 = name  $2 = dir
 }
 
 # Clone $2 into $3 if missing; otherwise fast-forward it (update_checkout).
-# The bEpic viewer (szprivate/ComfyUI-ImageViewer) under ANY folder name: a git
+# The ComfyUI Image Viewer (szprivate/ComfyUI-ImageViewer) under ANY folder name: a git
 # checkout whose origin is that repo, or a registry/zip copy whose pyproject.toml
 # points at it (ComfyUI-Manager installs it as "comfyui-imageviewer", for one).
 # Prints "git <dir>" or "copy <dir>", nothing when absent.
-find_bepic_viewer() {   # $1 = custom_nodes dir
+find_image_viewer() {   # $1 = custom_nodes dir
   local d origin
   [ -d "$1" ] || return 0
   for d in "$1"/*/; do
@@ -311,24 +311,24 @@ find_bepic_viewer() {   # $1 = custom_nodes dir
 # Present (any folder name): update a git checkout, leave a registry copy to its
 # manager. Missing: clone it - into ComfyUI-ImageViewer, or beside a different
 # project that already holds that folder name.
-install_bepic_viewer() {   # $1 = custom_nodes dir
+install_image_viewer() {   # $1 = custom_nodes dir
   local nodes="$1" url="https://github.com/szprivate/ComfyUI-ImageViewer.git" found kind dir
-  found="$(find_bepic_viewer "$nodes")"
+  found="$(find_image_viewer "$nodes")"
   if [ -n "$found" ]; then
     kind="${found%% *}"; dir="${found#* }"
-    if [ "$kind" = "git" ]; then ensure_repo "ComfyUI-ImageViewer (bEpic viewer)" "$url" "$dir"
-    else success "bEpic viewer present at $dir (not a git checkout - update it from ComfyUI-Manager)"; fi
+    if [ "$kind" = "git" ]; then ensure_repo "ComfyUI Image Viewer" "$url" "$dir"
+    else success "ComfyUI Image Viewer present at $dir (not a git checkout - update it from ComfyUI-Manager)"; fi
     return 0
   fi
   dir="$nodes/ComfyUI-ImageViewer"
   if [ -d "$dir" ] && [ -n "$(ls -A "$dir" 2>/dev/null)" ]; then
-    info "A different ComfyUI-ImageViewer is at $dir (not szprivate's) - leaving it; installing the bEpic viewer beside it."
+    info "A different ComfyUI-ImageViewer is at $dir (not szprivate's) - leaving it; installing the ComfyUI Image Viewer beside it."
     info "If ComfyUI reports duplicate node names, disable one of the two."
-    dir="$nodes/ComfyUI-ImageViewer-bEpic"
+    dir="$nodes/ComfyUI-ImageViewer-agentY"
   else
-    info "bEpic viewer (szprivate/ComfyUI-ImageViewer) not found in $nodes - installing it."
+    info "ComfyUI Image Viewer (szprivate/ComfyUI-ImageViewer) not found in $nodes - installing it."
   fi
-  ensure_repo "ComfyUI-ImageViewer (bEpic viewer)" "$url" "$dir"
+  ensure_repo "ComfyUI Image Viewer" "$url" "$dir"
 }
 
 ensure_repo() {   # $1 = name  $2 = url  $3 = dir  $4 = "required"|""
@@ -1285,9 +1285,9 @@ else
     ensure_repo "agentY-comfyuiConnect" "https://github.com/szprivate/agentY-comfyuiConnect.git" "$NODE_DIR"
     success "Sidebar node installed under $RESOLVED_COMFY/custom_nodes - restart ComfyUI once."
 
-    # The bEpic viewer is agentY's standard viewer (Settings > Load & save nodes
+    # The ComfyUI Image Viewer is agentY's standard viewer (Settings > Load & save nodes
     # saves into it by default). A failed clone only costs the viewer.
-    install_bepic_viewer "$RESOLVED_COMFY/custom_nodes"
+    install_image_viewer "$RESOLVED_COMFY/custom_nodes"
 
     # Record where the agentY host lives so the sidebar's "Start server" button can
     # relaunch run_agent.sh when the host is down. The agentY host also rewrites

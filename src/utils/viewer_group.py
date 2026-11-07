@@ -1,7 +1,7 @@
 """Group everything the agent saves in the viewer by stage.
 
-The bEpic viewer (ComfyUI-ImageViewer, installed with agentY) puts what every
-``bEpicSendToViewer`` node sends into its one Viewer tab, as a group of the History
+The ComfyUI Image Viewer (ComfyUI-ImageViewer, installed with agentY) puts what every
+``ImageViewerSend`` node sends into its one Viewer tab, as a group of the History
 strip named after the node's ``tab_name`` (else after what feeds the node). An
 agent run is many such nodes, one per workflow, so its pictures would be scattered
 over groups named after node titles. Here the node is told, before the workflow is
@@ -27,7 +27,7 @@ import logging
 
 logger = logging.getLogger("agentY.viewer_group")
 
-VIEWER_NODE = "bEpicSendToViewer"
+VIEWER_NODE = "ImageViewerSend"
 DEFAULT_TAB = "agentY"
 _MAX = 60
 

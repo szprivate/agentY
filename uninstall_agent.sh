@@ -9,7 +9,7 @@
 #   * agentY, agentY-core (older: agenty_core), agentY-mcp   - the code and each venv
 #   * your data inside them: conversations, memory, settings, .env keys, MCP tokens, output
 #   * agentY-comfyuiConnect (older: comfyui-agent-canvas, agentY_bridge) in custom_nodes
-#   * the bEpic viewer (ComfyUI-ImageViewer, any folder name) - kept unless you say so
+#   * the ComfyUI Image Viewer (ComfyUI-ImageViewer, any folder name) - kept unless you say so
 #
 # It shows a plan first (every path with its size, and what it KEEPS), then asks per group. It
 # never removes ComfyUI, models, Ollama, Strata, Blender, or anything it cannot verify.
@@ -63,7 +63,7 @@ Usage: ./uninstall_agent.sh [OPTIONS]
   --dry-run               Only print the plan and the checks. Nothing is asked or removed.
   --keep-user-data        With --yes: keep conversations, memory, settings and keys.
   --no-backup             Do not make the backup zip of your data.
-  --include-viewer        With --yes: also remove the bEpic viewer.
+  --include-viewer        With --yes: also remove the ComfyUI Image Viewer.
   --include-comfyui-desktop
                           With --yes: also run the brew uninstall of ComfyUI Desktop.
   --port <n>              The port the agentY host listens on (default 5000).
@@ -467,7 +467,7 @@ while IFS= read -r root; do
       origin_matches connect "$o" && is_panel=1
       origin_matches viewer "$o" && is_viewer=1
     elif [ "$is_panel" = 0 ] && markers_ok viewer "$d"; then is_viewer=1; fi
-    if [ "$is_viewer" = 1 ]; then add_verified "$d" viewer viewer "bEpic viewer ($base)" || true
+    if [ "$is_viewer" = 1 ]; then add_verified "$d" viewer viewer "ComfyUI Image Viewer ($base)" || true
     elif [ "$is_panel" = 1 ]; then add_verified "$d" connect panel "sidebar panel ($base)" || true; fi
   done
 done <<EOF_COMFY
@@ -552,7 +552,7 @@ fi
 show_group "2. agentY, agentY-core and agentY-mcp: the code and the venvs" code "Y"
 show_group "3. Your data (conversations, memory, settings, .env keys, MCP tokens, output)" data "N - asked separately, with a backup zip first"
 show_group "4. The agentY panel in ComfyUI's custom_nodes" panel "Y"
-show_group "5. The bEpic viewer (works without agentY)" viewer "N - kept"
+show_group "5. The ComfyUI Image Viewer (works without agentY)" viewer "N - kept"
 if [ -n "$REFUSED" ]; then printf '%s\n' "$REFUSED" | while IFS= read -r l; do echo; fail "NOT TOUCHED  $l"; done; fi
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
@@ -653,7 +653,7 @@ else
     fi
   fi
   if [ "$HAS_PANEL" = 1 ]; then ask "4. Remove the agentY panel from ComfyUI's custom_nodes?" y && DO_PANEL=1; fi
-  if [ "$HAS_VIEWER" = 1 ]; then ask "5. Also remove the bEpic viewer (it works without agentY)?" n && DO_VIEWER=1; fi
+  if [ "$HAS_VIEWER" = 1 ]; then ask "5. Also remove the ComfyUI Image Viewer (it works without agentY)?" n && DO_VIEWER=1; fi
   if [ "$DESKTOP" = 1 ]; then ask "6. Run 'brew uninstall' for ComfyUI Desktop now?" n && DO_DESKTOP=1; fi
 fi
 if [ "$((DO_HOST + DO_CODE + DO_DATA + DO_PANEL + DO_VIEWER + DO_DESKTOP))" = 0 ]; then
@@ -806,7 +806,7 @@ while IFS="$TAB" read -r g p l k kb how; do
   [ -n "$g" ] || continue
   { [ -e "$p" ] || [ -L "$p" ]; } || continue
   case "$g" in
-    viewer) [ "$DO_VIEWER" = 1 ] || add_line KEPT "the bEpic viewer - works without agentY: $p" ;;
+    viewer) [ "$DO_VIEWER" = 1 ] || add_line KEPT "the ComfyUI Image Viewer - works without agentY: $p" ;;
     data)   [ "$DO_DATA" = 1 ] || add_line KEPT "your data: $p" ;;
     panel)  [ "$DO_PANEL" = 1 ] || add_line KEPT "the panel: $p" ;;
     code)   [ "$DO_CODE" = 1 ] || add_line KEPT "$l: $p" ;;

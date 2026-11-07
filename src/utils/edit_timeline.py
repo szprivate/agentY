@@ -472,8 +472,8 @@ def _url(path: str) -> str:
 
 # ── takes ────────────────────────────────────────────────────────────────────
 #
-# A clip recreated with changes (agenty_core.tools.regenerate, the bEpic viewer's
-# Takes menu) keeps every version it had: ``metadata.bepic.takes`` in the .otio,
+# A clip recreated with changes (agenty_core.tools.regenerate, the ComfyUI Image Viewer's
+# Takes menu) keeps every version it had: ``metadata.imageviewer.takes`` in the .otio,
 # ``[{"file", "version", "active", "note", "created", "len"?}]``, the active one being
 # the clip's media. Here a clip carries them as ``takes``; its ``src`` is the active
 # take. They are kept as they are and written back.
@@ -542,7 +542,7 @@ def _otio_clip(name: str, src: str, start: float, length: float, rate: float,
                note: dict | None = None, takes: list | None = None) -> dict:
     meta = {"agentY": dict(note)} if note else {}
     if takes:
-        meta["bepic"] = {"takes": [dict(t) for t in takes]}
+        meta["imageviewer"] = {"takes": [dict(t) for t in takes]}
     return {"OTIO_SCHEMA": "Clip.1", "name": name,
             "metadata": meta, "effects": [], "markers": [],
             "source_range": _range(start, length, rate),
@@ -639,16 +639,43 @@ def _agenty(obj) -> dict:
     return note if isinstance(note, dict) else {}
 
 
+def upgrade_old_names(doc):
+    """A cut saved while the ComfyUI Image Viewer was called "bEpic" (before 1.18)
+    keeps its notes under ``metadata.bepic`` and names its titles ``bepic.title``:
+    rename them, in place, to ``metadata.imageviewer`` / ``imageviewer.title``
+    (the viewer's ``legacy_names.renamed_otio`` does the same). Returns *doc*."""
+    stack = [doc]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, list):
+            stack.extend(cur)
+            continue
+        if not isinstance(cur, dict):
+            continue
+        meta = cur.get("metadata")
+        if isinstance(meta, dict) and "bepic" in meta:
+            old, new = meta.pop("bepic"), meta.get("imageviewer")
+            if isinstance(old, dict) and isinstance(new, dict):
+                meta["imageviewer"] = {**old, **new}
+            elif new is None:
+                meta["imageviewer"] = old
+        if cur.get("generator_kind") == "bepic.title":
+            cur["generator_kind"] = "imageviewer.title"
+        stack.extend(v for v in cur.values() if isinstance(v, (dict, list)))
+    return doc
+
+
 def viewer_stamp(doc) -> str:
-    """When *doc* was last changed in the bEpic viewer ("" = it was not)."""
+    """When *doc* was last changed in the ComfyUI Image Viewer ("" = it was not)."""
+    upgrade_old_names(doc)
     meta = doc.get("metadata") if isinstance(doc, dict) else None
-    note = meta.get("bepic") if isinstance(meta, dict) else None
+    note = meta.get("imageviewer") if isinstance(meta, dict) else None
     return str(note.get("edited") or "") if isinstance(note, dict) else ""
 
 
-def _bepic_note(obj) -> dict:
+def _imageviewer_note(obj) -> dict:
     meta = obj.get("metadata") if isinstance(obj, dict) else None
-    note = meta.get("bepic") if isinstance(meta, dict) else None
+    note = meta.get("imageviewer") if isinstance(meta, dict) else None
     return note if isinstance(note, dict) else {}
 
 
@@ -687,13 +714,13 @@ def _placed(track) -> list:
 
 
 def _is_title(clip) -> bool:
-    """A title the bEpic viewer saved: a clip whose media is a generator, not a file."""
+    """A title the ComfyUI Image Viewer saved: a clip whose media is a generator, not a file."""
     ref = clip.get("media_reference") if isinstance(clip, dict) else None
-    return isinstance(ref, dict) and str(ref.get("generator_kind") or "") == "bepic.title"
+    return isinstance(ref, dict) and str(ref.get("generator_kind") or "") == "imageviewer.title"
 
 
 def _title_off(clip) -> bool:
-    return clip.get("enabled") is False or bool(_bepic_note(clip).get("disabled"))
+    return clip.get("enabled") is False or bool(_imageviewer_note(clip).get("disabled"))
 
 
 def _titles(doc) -> list:
@@ -710,15 +737,15 @@ def _titles(doc) -> list:
 
 
 def _detached_sounds(doc) -> dict:
-    """The sound clips the bEpic viewer split off a film of the first video track
-    ("Unlink audio / video": the film's ``metadata.bepic.mute``, a clip of the same
+    """The sound clips the ComfyUI Image Viewer split off a film of the first video track
+    ("Unlink audio / video": the film's ``metadata.imageviewer.mute``, a clip of the same
     file on a sound track, the two in one link group): ``{link: (start, clip)}``."""
     tracks = _tracks_of(doc)
     audio = [t for t in tracks if str(t.get("kind") or "").lower() == "audio"]
     out = {}
     for track in audio[1:]:                       # the first sound track is the bed
         for at, child in _placed(track):
-            link = _bepic_note(child).get("link")
+            link = _imageviewer_note(child).get("link")
             if isinstance(link, str) and link:
                 out.setdefault(link, (at, child))
     return out
@@ -734,16 +761,17 @@ def _positive(v) -> bool:
 def otio_dropped(doc) -> list[str]:
     """What of an OpenTimelineIO cut :func:`from_otio` does not take in, in words.
 
-    The bEpic viewer's Edit panel can retime a clip (a speed: ``metadata.bepic.speed``
-    and an OTIO ``LinearTimeWarp``) and loop it (``metadata.bepic.loop`` / ``span``).
+    The ComfyUI Image Viewer's Edit panel can retime a clip (a speed: ``metadata.imageviewer.speed``
+    and an OTIO ``LinearTimeWarp``) and loop it (``metadata.imageviewer.loop`` / ``span``).
     This timeline has neither: such a clip comes in as the plain clip - from its in
     point for its length on the timeline - and this says which ones.
 
     Nor has it gaps (empty time on V1 - OTIO Gaps): they are closed up, the clips
     after one moving up. A film whose sound the panel split off onto a sound track
-    (``metadata.bepic.mute`` and a link group) is heard with its picture again, its
+    (``metadata.imageviewer.mute`` and a link group) is heard with its picture again, its
     J/L offset lost; the clips of further video and sound tracks are left out.
     """
+    upgrade_old_names(doc)
     out = []
     tracks = _tracks_of(doc)
     video = [t for t in tracks if str(t.get("kind") or "Video").lower() == "video"]
@@ -766,7 +794,7 @@ def otio_dropped(doc) -> list[str]:
     detached = _detached_sounds(doc)
     firsts = {}
     for at, child in _placed(video[0]) if video else []:
-        link = _bepic_note(child).get("link")
+        link = _imageviewer_note(child).get("link")
         if isinstance(link, str):
             firsts[link] = (at, child)
     for link, (at, child) in detached.items():
@@ -783,7 +811,7 @@ def otio_dropped(doc) -> list[str]:
             out.append(f"{child.get('name') or 'a clip'} on {track.get('name') or f'V{n}'} - left out")
     for n, track in enumerate(audio[1:], 2):
         for _at, child in _placed(track):
-            link = _bepic_note(child).get("link")
+            link = _imageviewer_note(child).get("link")
             if isinstance(link, str) and link in firsts and detached.get(link, (None, None))[1] is child:
                 continue
             out.append(f"the sound {child.get('name') or 'a clip'} on {track.get('name') or f'A{n}'} - left out")
@@ -791,7 +819,7 @@ def otio_dropped(doc) -> list[str]:
         out.append("the titles' look (font, style, position, outline, shadow, box) is not taken over - "
                    "agentY draws them with their preset (or as captions)")
     for n, track in enumerate(tracks, 1):
-        fx_names = _afx_names(_bepic_note(track).get("afx"))
+        fx_names = _afx_names(_imageviewer_note(track).get("afx"))
         if fx_names:
             out.append(f"track {track.get('name') or f'track {n}'}: sound effects ({', '.join(fx_names)}) - left out")
     for track in tracks:
@@ -799,7 +827,7 @@ def otio_dropped(doc) -> list[str]:
             if not isinstance(child, dict) or not str(child.get("OTIO_SCHEMA") or "").startswith("Clip"):
                 continue
             meta = child.get("metadata") if isinstance(child.get("metadata"), dict) else {}
-            note = meta.get("bepic") if isinstance(meta.get("bepic"), dict) else {}
+            note = meta.get("imageviewer") if isinstance(meta.get("imageviewer"), dict) else {}
             name = str(child.get("name") or "a clip")
             # Keyframes (the viewer's Inspector): this timeline has no effects at all, animated or not.
             keys = note.get("fx", {}).get("keys") if isinstance(note.get("fx"), dict) else None
@@ -807,7 +835,7 @@ def otio_dropped(doc) -> list[str]:
                 out.append(f"{name}: keyframes ({', '.join(sorted(k for k, v in keys.items() if isinstance(v, list) and v))})"
                            " - played without them")
             # Audio fades and crossfades (the viewer's Edit panel): not rendered here.
-            # Track locks (metadata.bepic.lock / auto_select) change nothing in the picture: not listed.
+            # Track locks (metadata.imageviewer.lock / auto_select) change nothing in the picture: not listed.
             fades = [w for w, k in (("in", "afade_in"), ("out", "afade_out"))
                      if _positive(note.get(k))]
             if fades:
@@ -844,6 +872,7 @@ def from_otio(doc: dict, base: dict | None = None) -> dict:
     """
     if not isinstance(doc, dict) or not str(doc.get("OTIO_SCHEMA") or "").startswith("Timeline"):
         raise EditError("that file is not an OpenTimelineIO timeline")
+    upgrade_old_names(doc)
     dropped = otio_dropped(doc)
     detached = _detached_sounds(doc)
     if dropped:
@@ -873,7 +902,7 @@ def from_otio(doc: dict, base: dict | None = None) -> dict:
             pending = (before, after)
             continue
         if not schema.startswith("Clip"):
-            # A gap (empty time - the bEpic viewer's V1 can hold them): this
+            # A gap (empty time - the ComfyUI Image Viewer's V1 can hold them): this
             # timeline has none, so it is closed up; otio_dropped says so.
             pending = None
             continue
@@ -893,7 +922,7 @@ def from_otio(doc: dict, base: dict | None = None) -> dict:
         if isinstance(volume, (int, float)) and not isinstance(volume, bool):
             clip["volume"] = float(volume)
         meta = child.get("metadata") if isinstance(child.get("metadata"), dict) else {}
-        bep = meta.get("bepic") if isinstance(meta.get("bepic"), dict) else {}
+        bep = meta.get("imageviewer") if isinstance(meta.get("imageviewer"), dict) else {}
         # Its sound split off in the viewer: heard with its picture again while that
         # sound clip is there; muted (silent) when the sound clip was deleted.
         if bep.get("mute") is True and bep.get("link") not in detached:
@@ -919,7 +948,7 @@ def from_otio(doc: dict, base: dict | None = None) -> dict:
                                "params": dict(about.get("params") or {})})
     for start, length, child in _titles(doc):
         about = _agenty(child)
-        look = _bepic_note(child).get("title")
+        look = _imageviewer_note(child).get("title")
         text = str(about.get("text") or (look.get("text") if isinstance(look, dict) else "") or "").strip()
         if not text or length <= 0:
             continue

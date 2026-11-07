@@ -11,7 +11,7 @@ use see [Using agentY](using-agentY.md).
 | **[agentY-core](https://github.com/szprivate/agentY-core)** | next to `agentY` | Shared tool layer (ComfyUI, Hugging Face, web, files) and the workflow template corpus. Required. |
 | **[agentY-comfyuiConnect](https://github.com/szprivate/agentY-comfyuiConnect)** | `<ComfyUI>/custom_nodes/` | The sidebar chat tab and the canvas nodes. |
 | **[agentY-mcp](https://github.com/szprivate/agentY-mcp)** | next to `agentY` | Optional MCP server for Claude Desktop, built on `agentY-core`. |
-| **[ComfyUI-ImageViewer](https://github.com/szprivate/ComfyUI-ImageViewer)** | `<ComfyUI>/custom_nodes/` | The bEpic viewer, agentY's standard picture/video viewer. Installed with agentY; released with it. |
+| **[ComfyUI-ImageViewer](https://github.com/szprivate/ComfyUI-ImageViewer)** | `<ComfyUI>/custom_nodes/` | The ComfyUI Image Viewer, agentY's standard picture/video viewer. Installed with agentY; released with it. |
 
 ## Architecture
 

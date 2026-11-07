@@ -1,4 +1,4 @@
-"""What the bEpic viewer shows reaches the orchestrator - small, and only for the turn it is true for.
+"""What the ComfyUI Image Viewer shows reaches the orchestrator - small, and only for the turn it is true for.
 
 The panel sends ``viewer_state`` with each message while the viewer is open; the server puts it on the
 turn's scope; the pipeline writes a few key=value lines at the top of the turn from
