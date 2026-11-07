@@ -2316,6 +2316,16 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
                 cs.add_message(thread_id, "assistant", text)
             except Exception:
                 pass
+        # A plan this turn put to the user goes to the panel's plan overview
+        # (the panel refetches it on `done`).
+        _wd.phase(req_id, "post:record_plan")
+        try:
+            from src.utils import proposed_plan as _pp
+            _pp.record_turn(thread_id, message or "", text,
+                            planner_raw=getattr(pipeline, "_planner_raw", "") or "",
+                            awaiting_approval=bool(getattr(session, "plan_awaiting_reply", False)))
+        except Exception:  # noqa: BLE001
+            pass
         _wd.phase(req_id, "post:save_state")
         _save_state(pipeline, thread_id)
         # Let the background auto-title finish (first turn only) so the thread
@@ -5083,9 +5093,20 @@ def _build_app():
             plan = _rl.plan(lead, shots, _shots.scope_of)
         except Exception:  # noqa: BLE001 - an unreadable ledger is an empty overview
             plan = {"summary": {}, "line": "", "groups": []}
+        # The plan the agent last wrote in THIS conversation (a branch has its own).
+        from src.utils import proposed_plan as _pp
+        proposal = _pp.get(tid)
         return jsonify({"ok": True, "lead_id": lead,
                         "lead_title": (cs.get_thread(lead) or {}).get("title", ""),
-                        "is_shot": lead != tid, "shots": shots, **plan})
+                        "is_shot": lead != tid, "shots": shots, **plan,
+                        "proposal": proposal})
+
+    # The user closing the written plan in the overview.
+    @app.route("/agentY/threads/<tid>/plan/proposal", methods=["DELETE"])
+    def thread_plan_proposal_clear(tid):
+        from src.utils import proposed_plan as _pp
+        _pp.clear(tid)
+        return jsonify({"ok": True})
 
     # ── CLI-side status notices (memory init, model pulls, …) ───────────────
     # The panel drains this on connect (so startup lines that predate it still

@@ -1549,6 +1549,7 @@ class Pipeline:
             """
             from src.utils.plan_gate import plan_note
             steps = await _run_specialist(self._planner_agent, "PLANNER", request)
+            self._planner_raw = steps if isinstance(steps, str) else str(steps or "")
             # The instruction rides back with the plan itself: told only in a system
             # prompt several thousand tokens earlier, "say it before you start" is
             # the first thing to go when the model gets busy.
@@ -7749,6 +7750,9 @@ class Pipeline:
         self._session.plan_awaiting_reply = False
         self._plan_approval = None
         self._plan_gate_fired = False
+        # What run_planner returned this turn: the host keeps it as the plan the
+        # panel's overview shows when the reply did not spell one out.
+        self._planner_raw = ""
         # "Don't stop, decide yourself" - the user's, for the rest of the conversation.
         try:
             from src.utils import standing_orders
