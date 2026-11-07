@@ -414,8 +414,9 @@ it, in `agent_metadata/<input>.derived.json`. Nothing has to be switched on.
   dependencies**: a Dependencies tab draws the files as nodes, top to bottom (what
   was read above, what was made from it below). Out-of-date files are outlined, a
   click opens a file, a double-click centres the graph on it, and more than four
-  passes of one kind from the same file fold into one node until clicked. It needs
-  the agentY host running.
+  passes of one kind from the same file fold into one node until clicked. The
+  prompts each file was made with are text boxes just above it (**Prompts** hides
+  them). It needs the agentY host running.
 
 ![The Dependencies tab: a plate, its passes and the render made from them](images/dependencies-tab.png)
 
