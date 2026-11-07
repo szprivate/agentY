@@ -1,8 +1,8 @@
 # Rules for coding agents
 
 These apply to every repository of the agentY stack: **agentY**, **agentY-core**,
-**agentY-comfyuiConnect**, **agentY-mcp** and **ComfyUI-ImageViewer** (the bEpic
-viewer). The same file is in each of them.
+**agentY-comfyuiConnect**, **agentY-mcp** and **ComfyUI-ImageViewer** (the ComfyUI Image
+Viewer). The same file is in each of them.
 
 ## Branches
 

@@ -1,4 +1,4 @@
-"""Code the agent makes, sent to the bEpic viewer's "Agent code" panel.
+"""Code the agent makes, sent to the ComfyUI Image Viewer's "Agent code" panel.
 
 Same idea as :mod:`src.utils.media_sink` for media, one seam each, no per-tool
 patching:
@@ -11,7 +11,7 @@ patching:
   clearly source code (a Remotion composition, ``remotion__update_composition``).
 * :func:`observe_turn` - a :mod:`src.utils.turn_bus` observer that watches the
   reply's text and sends each fenced code block once it is closed.
-* :func:`send` - ``POST /bepic/code`` on ComfyUI (ComfyUI-ImageViewer), in the
+* :func:`send` - ``POST /imageviewer/code`` on ComfyUI (ComfyUI-ImageViewer), in the
   background, once per identical snippet.
 
 The snippet keeps ``source`` (the tool), ``conversation`` and ``turn`` so a later
@@ -32,7 +32,7 @@ logger = logging.getLogger("agentY.code_sink")
 
 _LOCK = threading.Lock()
 _sent: set = set()               # hashes already sent (or in flight)
-_off_until = 0.0                 # a viewer without /bepic/code: not asked again for a while
+_off_until = 0.0                 # a viewer without /imageviewer/code: not asked again for a while
 _MAX_SET = 2000
 _MAX_CODE = 400_000
 _texts: dict = {}                # request_id -> {"buf": str, "n": int}: reply text not yet fenced
@@ -191,10 +191,10 @@ def send(snippet: dict, *, wait: bool = False, **context) -> bool:
         global _off_until
         try:
             from agenty_core.utils.comfyui_client import get_client
-            res = get_client().post("/bepic/code", json_data=body)
+            res = get_client().post("/imageviewer/code", json_data=body)
             return bool(isinstance(res, dict) and res.get("ok"))
         except Exception as exc:  # noqa: BLE001
-            if "404" in str(exc):          # a viewer from before /bepic/code
+            if "404" in str(exc):          # a viewer from before /imageviewer/code
                 _off_until = time.time() + 600
             with _LOCK:
                 _sent.discard(key)         # not delivered: may be tried again

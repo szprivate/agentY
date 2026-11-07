@@ -122,7 +122,7 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
     "dashscope": ("make an image or video on the user's own DashScope key (not Comfy credits) and "
                   "collect one that timed out",
                   ("dashscope_generate", "dashscope_fetch")),
-    "viewer": ("show files in the bEpic viewer, or in the chat panel; read again what the user has "
+    "viewer": ("show files in the ComfyUI Image Viewer, or in the chat panel; read again what the user has "
                "picked in a history panel (pinned whenever something is); what the viewer shows (tab, "
                "item, frame, in/out range, compare, camera) and the marks the user drew on it - also "
                "as an inpaint mask (pinned when the item on screen has some); read or change a picture in "
@@ -212,7 +212,7 @@ _RECREATE_VERB = re.compile(
     r"\b(re-?create|re-?generate|re-?make|re-?do|re-?render|re-?shoot|new\s+(?:version|take)s?|"
     r"another\s+take|make\s+(?:it|them|these|those)\s+again)\b", re.I)
 _RECREATE_WHAT = re.compile(r"\b(shots?|clips?|takes?|selected|selection|these|those|them)\b", re.I)
-_RECREATE_BRIDGE = "(Recreate with changes, from the bEpic viewer's Edit panel"
+_RECREATE_BRIDGE = "(Recreate with changes, from the ComfyUI Image Viewer's Edit panel"
 
 
 def edit_selection(viewer_state) -> list:

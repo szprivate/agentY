@@ -1309,7 +1309,7 @@ def edit_lines(edit_hooks: list, context_of, edits: dict | None = None) -> list:
         "  3. RENDER: render_edit(hook_node_id) makes the film, saves an .otio beside it, "
         "and returns the file. Then the stage after it, as for any stage - a review "
         "stops there with the film.\n"
-        "  THE USER CAN CUT IT THEMSELVES, in the bEpic viewer's Edit panel: they open "
+        "  THE USER CAN CUT IT THEMSELVES, in the ComfyUI Image Viewer's Edit panel: they open "
         "the film there, trim and reorder, and save - that writes the .otio beside the "
         "film. When they say they did (or a stage below says so), take THEIR cut in with "
         "{\"op\": \"load\", \"file\": \"<the film's path, ending .otio>\"} as the first "

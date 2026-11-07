@@ -24,7 +24,7 @@ def hist(status_str="success", messages=(), outputs=None):
 def graph(save):
     d = Path(tempfile.mkdtemp())
     p = d / "w.json"
-    p.write_text(json.dumps({"23": {"class_type": "bEpicSendToViewer",
+    p.write_text(json.dumps({"23": {"class_type": "ImageViewerSend",
                                     "inputs": {"save_to_output": save}}}), encoding="utf-8")
     return str(p)
 

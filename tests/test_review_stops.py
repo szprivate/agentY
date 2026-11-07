@@ -35,22 +35,22 @@ def canvas():
         hook("2", "loop_start", prev=["18"], anchors=[("18", "AgentYHook")]),
         hook("8", "inline_parameter", prev=["2"], anchors=[("2", "AgentYLoopStart")],
              targets=[("7", "prompt")], directive="3 prompts per character"),
-        hook("9", "human_review", anchors=[("30", "bEpicSendToViewer")]),
+        hook("9", "human_review", anchors=[("30", "ImageViewerSend")]),
         hook("3", "loop_break", prev=["9"], anchors=[("9", "AgentYHook")],
              condition="one image per character approved", max_rounds=5),
         hook("29", "text", prev=["11"], anchors=[("11", "AgentYLoopBreak")], directive="places"),
         hook("24", "loop_start", prev=["29"], anchors=[("29", "AgentYHook")]),
         hook("27", "inline_parameter", prev=["24"], anchors=[("24", "AgentYLoopStart")],
              targets=[("26", "prompt")], directive="3 prompts per place"),
-        hook("28", "human_review", anchors=[("31", "bEpicSendToViewer")]),
+        hook("28", "human_review", anchors=[("31", "ImageViewerSend")]),
         hook("25", "loop_break", prev=["28"], anchors=[("28", "AgentYHook")],
              condition="one image per place approved", max_rounds=5),
     ]
     graph = {
         "7": {"class_type": "OpenAIGPTImageNodeV2", "inputs": {"prompt": ["8", 0]}},
-        "30": {"class_type": "bEpicSendToViewer", "inputs": {"input": ["7", 0]}},
+        "30": {"class_type": "ImageViewerSend", "inputs": {"input": ["7", 0]}},
         "26": {"class_type": "OpenAIGPTImageNodeV2", "inputs": {"prompt": ""}},
-        "31": {"class_type": "bEpicSendToViewer", "inputs": {"input": ["26", 0]}},
+        "31": {"class_type": "ImageViewerSend", "inputs": {"input": ["26", 0]}},
     }
     return hooks, graph
 

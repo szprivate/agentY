@@ -74,7 +74,7 @@ _LIGHT = frozenset({
     "SaveAnimatedPNG", "SaveWEBM", "SaveVideo", "LoadVideo", "CreateVideo", "GetVideoComponents",
     "LoadAudio", "SaveAudio", "SaveAudioMP3", "SaveAudioOpus", "PreviewAudio", "PreviewAny", "Note",
     "MarkdownNote", "Reroute", "PrimitiveNode", "PrimitiveInt", "PrimitiveFloat", "PrimitiveString",
-    "PrimitiveStringMultiline", "PrimitiveBoolean", "bEpicSendToViewer", "VHS_LoadImagePath",
+    "PrimitiveStringMultiline", "PrimitiveBoolean", "ImageViewerSend", "VHS_LoadImagePath",
     "VHS_LoadVideoPath", "VHS_LoadVideo", "VHS_VideoCombine", "ImageBatch", "ImageFromBatch",
 })
 _LIGHT_PREFIXES = ("AgentY", "agentY", "Primitive", "String")

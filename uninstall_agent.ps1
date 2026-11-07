@@ -9,7 +9,7 @@
       * agentY, agentY-core (older: agenty_core), agentY-mcp   - the code and each .venv
       * your data inside them: conversations, memory, settings, .env keys, MCP tokens, output
       * agentY-comfyuiConnect (older: comfyui-agent-canvas, agentY_bridge) in custom_nodes
-      * the bEpic viewer (ComfyUI-ImageViewer, any folder name) - kept unless you say so
+      * the ComfyUI Image Viewer (ComfyUI-ImageViewer, any folder name) - kept unless you say so
 
     It shows a plan first (every path with its size, and what it KEEPS), then asks per group.
     It never removes ComfyUI, models, Ollama, Strata, Blender, or anything it cannot verify
@@ -42,7 +42,7 @@
     Do not offer / make the backup zip of your data.
 
 .PARAMETER IncludeViewer
-    With -Yes: also remove the bEpic viewer.
+    With -Yes: also remove the ComfyUI Image Viewer.
 
 .PARAMETER IncludeComfyDesktop
     With -Yes: also run the winget uninstall of ComfyUI Desktop.
@@ -603,7 +603,7 @@ foreach ($root in $ComfyRoots) {
             $toml = Join-Path $d.FullName "pyproject.toml"
             if ((Test-Path -LiteralPath $toml) -and ((Get-Content -LiteralPath $toml -Raw -ErrorAction SilentlyContinue) -match 'szprivate/ComfyUI-ImageViewer')) { $isViewer = $true }
         }
-        if ($isViewer) { $null = Add-Verified $d.FullName "viewer" "viewer" "bEpic viewer ($($d.Name))" }
+        if ($isViewer) { $null = Add-Verified $d.FullName "viewer" "viewer" "ComfyUI Image Viewer ($($d.Name))" }
         elseif ($isPanel) { $null = Add-Verified $d.FullName "connect" "panel" "sidebar panel ($($d.Name))" }
     }
 }
@@ -663,7 +663,7 @@ Show-Group "2. agentY, agentY-core and agentY-mcp: the code and the venvs" "code
 $codeItems = @($Items | Where-Object { $_.Group -eq "code" })
 Show-Group "3. Your data (conversations, memory, settings, .env keys, MCP tokens, output)" "data" "N - asked separately, with a backup zip first"
 Show-Group "4. The agentY panel in ComfyUI's custom_nodes" "panel" "Y"
-Show-Group "5. The bEpic viewer (works without agentY)" "viewer" "N - kept"
+Show-Group "5. The ComfyUI Image Viewer (works without agentY)" "viewer" "N - kept"
 foreach ($r in $Refused) { Write-Host ""; Write-Fail "NOT TOUCHED  $r" }
 
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -757,7 +757,7 @@ if ($Yes) {
         if ($doData -and -not $NoBackup) { $doBackup = Confirm-Group "   Back it up as a zip next to the folder first?" $true }
     }
     if ($hasPanel) { $doPanel = Confirm-Group "4. Remove the agentY panel from ComfyUI's custom_nodes?" $true }
-    if ($hasViewer) { $doViewer = Confirm-Group "5. Also remove the bEpic viewer (it works without agentY)?" $false }
+    if ($hasViewer) { $doViewer = Confirm-Group "5. Also remove the ComfyUI Image Viewer (it works without agentY)?" $false }
     if ($desktop) { $doDesktop = Confirm-Group "6. Run 'winget uninstall' for ComfyUI Desktop now?" $false }
 }
 if (-not ($doHost -or $doCode -or $doData -or $doPanel -or $doViewer -or $doDesktop)) {
@@ -895,7 +895,7 @@ if ($doDesktop) {
 foreach ($it in $Items.ToArray()) {
     $gone = -not (Test-Path -LiteralPath $it.Path)
     if ($gone) { continue }
-    if ($it.Group -eq "viewer" -and -not $doViewer) { $Kept.Add("the bEpic viewer - works without agentY: $($it.Path)") }
+    if ($it.Group -eq "viewer" -and -not $doViewer) { $Kept.Add("the ComfyUI Image Viewer - works without agentY: $($it.Path)") }
     elseif ($it.Group -eq "data" -and -not ($doData -and $doCode)) { if (-not $doData) { $Kept.Add("your data: $($it.Path)") } }
     elseif ($it.Group -eq "panel" -and -not $doPanel) { $Kept.Add("the panel: $($it.Path)") }
     elseif ($it.Group -eq "code" -and -not $doCode) { $Kept.Add("$($it.Label): $($it.Path)") }

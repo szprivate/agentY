@@ -1,4 +1,4 @@
-"""The bEpic viewer as agentY's viewer: its tab, its stages, its tags.
+"""The ComfyUI Image Viewer as agentY's viewer: its tab, its stages, its tags.
 
 Three things agentY does for the viewer (the viewer's own side - the history
 menu, the grouping in the strip - lives in ComfyUI-ImageViewer):
@@ -30,7 +30,7 @@ OLD_SCHEMA = {"input": {"required": {"input": ["*"], "tab_name": ["STRING"]}}}
 
 
 def _graph(**inputs):
-    return {"9": {"class_type": "bEpicSendToViewer", "inputs": {"input": ["4", 0], "tab_name": "", **inputs}},
+    return {"9": {"class_type": "ImageViewerSend", "inputs": {"input": ["4", 0], "tab_name": "", **inputs}},
             "4": {"class_type": "VAEDecode", "inputs": {}}}
 
 
@@ -128,7 +128,7 @@ class TaggingFromTheViewer(unittest.TestCase):
         self.assertEqual(hit["source"], "memory")
         self.assertTrue(hit["path"].endswith("anna.png"))
         self.assertIn("the face only", hit["role"])
-        self.assertIn("bEpic viewer", hit["text"])
+        self.assertIn("ComfyUI Image Viewer", hit["text"])
 
     def test_tagging_again_replaces_it(self):
         tag_memory.remember_file("hero", str(self.pic), "one")
@@ -164,7 +164,7 @@ class InstalledWithAgentY(unittest.TestCase):
     def test_the_viewer_is_the_default_saver(self):
         media = tomllib.loads((ROOT / "config" / "settings.default.toml").read_text(encoding="utf-8"))["media_nodes"]
         for kind in ("image", "video", "model"):
-            self.assertEqual(media[f"{kind}_save"], "bEpicSendToViewer")
+            self.assertEqual(media[f"{kind}_save"], "ImageViewerSend")
         self.assertEqual(media["viewer_tab"], "agentY")
 
     def test_the_installers_and_the_launchers_know_the_viewer(self):

@@ -310,7 +310,7 @@ else
   # who works on it, a dev clone beside agentY. Update every one we can find — a
   # stale installed clone is the usual reason the panel is missing a feature the
   # host already has. Candidates are cheap path guesses; nothing is searched.
-  # The bEpic viewer (ComfyUI-ImageViewer) is the same kind of checkout and is
+  # The ComfyUI Image Viewer (ComfyUI-ImageViewer) is the same kind of checkout and is
   # kept current the same way.
   ext_updated=0
   for ext_name in agentY-comfyuiConnect ComfyUI-ImageViewer; do

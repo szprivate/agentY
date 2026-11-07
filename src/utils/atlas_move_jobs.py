@@ -1,6 +1,6 @@
 """Atlas camera moves the viewer asked for: one background job each, polled by id.
 
-The bEpic viewer's "Render camera with Atlas" button posts the previz camera's animation (sampled from the
+The ComfyUI Image Viewer's "Render camera with Atlas" button posts the previz camera's animation (sampled from the
 timeline). The viewer runs inside ComfyUI's Python (no ``agenty_core``, no World Labs key), so ComfyUI relays
 the request here. The work is the shared core function
 (:func:`agenty_core.tools.atlas_camera_move.render_move`), the one the agent's ``atlas_render_camera_move``

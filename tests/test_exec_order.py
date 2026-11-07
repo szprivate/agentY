@@ -36,7 +36,7 @@ def canvas():
         stage("2", "loop_start", after=["18"]),
         stage("8", "set_parameter", after=["2"], reads=["18"], targets=[("7", "prompt")],
               directive="3 prompts per character"),
-        stage("9", "human_review", after=["8"], anchors=[("30", "bEpicSendToViewer")]),
+        stage("9", "human_review", after=["8"], anchors=[("30", "ImageViewerSend")]),
         stage("3", "loop_break", after=["9"], condition="one image per character approved"),
         stage("29", "text_only", after=["11"], reads=["4"], directive="places"),
         stage("24", "loop_start", after=["29"]),

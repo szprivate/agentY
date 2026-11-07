@@ -1,12 +1,12 @@
 ---
 name: show-in-viewer
-description: Load files into the bEpic image viewer when the user asks to see them there, and read what it shows (frame, range, marks) - "show me clip 3 in the viewer", "open these frames side by side", "open the edit", "put the two renders side by side". Also opens an edit's cut in the viewer's Edit panel, and a picture in Paint (layers) - and changes either.
+description: Load files into the ComfyUI Image Viewer when the user asks to see them there, and read what it shows (frame, range, marks) - "show me clip 3 in the viewer", "open these frames side by side", "open the edit", "put the two renders side by side". Also opens an edit's cut in the viewer's Edit panel, and a picture in Paint (layers) - and changes either.
 allowed-tools: show_in_viewer, get_viewer_state, get_viewer_annotations, edit_cut, edit_image
 ---
 
 # Showing files in the viewer
 
-`show_in_viewer(paths=[...])` loads files into the bEpic viewer. The viewer has one Viewer tab
+`show_in_viewer(paths=[...])` loads files into the ComfyUI Image Viewer. The viewer has one Viewer tab
 for pictures and films, sorted into groups in its History strip (documents - a cut, Paint, Motion,
 3D - have tabs of their own). By default the files go into the `agentY` group; the call brings the
 viewer up (even if it is closed or docked) and selects the first item. Use it only when the user asks to look at something in the viewer; generated pictures

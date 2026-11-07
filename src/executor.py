@@ -630,7 +630,7 @@ def why_no_outputs(history: dict, workflow_path: str = "") -> str:
 
     "Done, no outputs" told the agent nothing, so it re-ran the same graph. The
     history knows: the job errored, every output node was served from ComfyUI's
-    cache, a saver wrote nothing (the bEpic viewer with ``save_to_output`` off only
+    cache, a saver wrote nothing (the ComfyUI Image Viewer with ``save_to_output`` off only
     buffers), or no output node ran at all.
     """
     entries = [e for e in (history or {}).values() if isinstance(e, dict)]
@@ -662,12 +662,12 @@ def why_no_outputs(history: dict, workflow_path: str = "") -> str:
     try:
         wf = json.loads(Path(str(workflow_path).strip()).read_text(encoding="utf-8"))
         for nid, node in (wf.items() if isinstance(wf, dict) else []):
-            if isinstance(node, dict) and node.get("class_type") == "bEpicSendToViewer"                     and not (node.get("inputs") or {}).get("save_to_output"):
+            if isinstance(node, dict) and node.get("class_type") == "ImageViewerSend"                     and not (node.get("inputs") or {}).get("save_to_output"):
                 silent.append(str(nid))
     except Exception:  # noqa: BLE001
         pass
     if silent:
-        return (f"The output node(s) {', '.join(silent)} (bEpicSendToViewer) have save_to_output "
+        return (f"The output node(s) {', '.join(silent)} (ImageViewerSend) have save_to_output "
                 "off, so they only buffer for the viewer and write no file. Turn save_to_output on.")
     if out_nodes:
         return (f"Output node(s) {', '.join(sorted(out_nodes))} ran but produced no image, video or "

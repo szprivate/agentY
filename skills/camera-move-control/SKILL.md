@@ -1,6 +1,6 @@
 ---
 name: camera-move-control
-description: Make a new shot with a chosen camera move from ONE picture - picture to 3D scene, animate a camera through it in the bEpic viewer, render the move, and use the render as the control video of a video model (Wan Fun Control, LTX IC-LoRA). Use for "fly the camera through this", "a low drone pass toward the houses", "same place, new camera move", "turn this picture into a 3D scene and film it".
+description: Make a new shot with a chosen camera move from ONE picture - picture to 3D scene, animate a camera through it in the ComfyUI Image Viewer, render the move, and use the render as the control video of a video model (Wan Fun Control, LTX IC-LoRA). Use for "fly the camera through this", "a low drone pass toward the houses", "same place, new camera move", "turn this picture into a 3D scene and film it".
 allowed-tools: render_camera_move run_world_builder show_in_viewer
 ---
 
@@ -65,5 +65,5 @@ The chain, in order. Say the plan in one line first, then run it.
    so - never call a camera static when `camera.state` is "moving", nor a frame a void when its
    `empty_fraction` is under 0.6.
 
-If `render_camera_move` says it timed out, the bEpic viewer is not open in a browser tab -
+If `render_camera_move` says it timed out, the ComfyUI Image Viewer is not open in a browser tab -
 tell the user to open ComfyUI with the viewer and retry. Do not loop on it.

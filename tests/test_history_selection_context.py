@@ -41,7 +41,7 @@ class Block(unittest.TestCase):
         p = pipeline_stub()
         block = p._describe_history_selection()
         self.assertTrue(block.startswith("[HISTORY SELECTION"), block[:60])
-        self.assertIn('bEpic viewer history, tab "agentY" (selected)', block)
+        self.assertIn('ComfyUI Image Viewer history, tab "agentY" (selected)', block)
         self.assertIn("1. image: D:/out/a.png", block)
         self.assertIn("2. video: D:/out/b.mp4", block)
         self.assertNotIn("{list}", block)

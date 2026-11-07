@@ -127,7 +127,7 @@ def entry_body(tag: str, file_path: str, role: str, origin: str = "") -> str:
     return "\n".join(lines)
 
 
-_VIEWER_ORIGIN = "Tagged `#{tag}` for agentY from the bEpic viewer's history."
+_VIEWER_ORIGIN = "Tagged `#{tag}` for agentY from the ComfyUI Image Viewer's history."
 
 # Longest name a tag may be given. The name is also the entry's file name, and a
 # name nobody can type back into a prompt is not a name.
@@ -323,7 +323,8 @@ def origin_of(body: str) -> str:
     """Who made a remembered tag: ``viewer``, ``canvas`` (a tag node's remember
     switch) or ``agent``."""
     text = str(body or "")
-    if "from the bEpic viewer" in text:
+    # "the bEpic viewer": what tags remembered before the viewer was renamed say
+    if "from the ComfyUI Image Viewer" in text or "from the bEpic viewer" in text:
         return "viewer"
     if "`agentY add tag` node tagged" in text:
         return "canvas"

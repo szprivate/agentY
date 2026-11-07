@@ -1058,7 +1058,7 @@ _ORCH_SKILL_NAMES = [
     "canvas-layout",
     # Image/video generation on the user's own DashScope key.
     "dashscope-generate",
-    # Showing files in the bEpic viewer / opening an edit in its Edit panel.
+    # Showing files in the ComfyUI Image Viewer / opening an edit in its Edit panel.
     "show-in-viewer",
     # Picture -> 3D scene -> camera move -> control video.
     "camera-move-control",

@@ -1,6 +1,6 @@
 """A cut comes back from an OpenTimelineIO file.
 
-The user can cut a film themselves - in the bEpic viewer's Edit panel, or in an
+The user can cut a film themselves - in the ComfyUI Image Viewer's Edit panel, or in an
 editing program - and the result is a timeline file. agentY takes that cut in
 (the "load" operation) and renders it, instead of holding on to its own.
 """
@@ -84,10 +84,10 @@ class ACutFromSomewhereElse(unittest.TestCase):
         doc = et.to_otio(cut())
         video = doc["tracks"]["children"][0]["children"]
         clips = [c for c in video if c["OTIO_SCHEMA"].startswith("Clip")]
-        clips[0].setdefault("metadata", {})["bepic"] = {"speed": 0.5}
+        clips[0].setdefault("metadata", {})["imageviewer"] = {"speed": 0.5}
         clips[0].setdefault("effects", []).append({"OTIO_SCHEMA": "LinearTimeWarp.1", "name": "",
                                                    "effect_name": "LinearTimeWarp", "metadata": {}, "time_scalar": 0.5})
-        clips[1].setdefault("metadata", {})["bepic"] = {"loop": "pingpong", "span": 1.0}
+        clips[1].setdefault("metadata", {})["imageviewer"] = {"loop": "pingpong", "span": 1.0}
         plain = et.from_otio(et.to_otio(cut()))
         with self.assertLogs("src.utils.edit_timeline", level="WARNING"):
             back = et.from_otio(doc)
@@ -100,16 +100,16 @@ class ACutFromSomewhereElse(unittest.TestCase):
         # Keyframes from the viewer's Inspector: named, played without them.
         doc = et.to_otio(cut())
         first = [c for c in doc["tracks"]["children"][0]["children"] if c["OTIO_SCHEMA"].startswith("Clip")][0]
-        first.setdefault("metadata", {})["bepic"] = {"fx": {"op": 0.5, "keys": {"op": [{"t": 0, "v": 0}, {"t": 1, "v": 1}], "vol": [{"t": 0, "v": 1}]}}}
+        first.setdefault("metadata", {})["imageviewer"] = {"fx": {"op": 0.5, "keys": {"op": [{"t": 0, "v": 0}, {"t": 1, "v": 1}], "vol": [{"t": 0, "v": 1}]}}}
         self.assertTrue(any("keyframes (op, vol)" in d for d in et.otio_dropped(doc)))
 
     def test_audio_fades_and_crossfades_are_named_but_locks_are_not(self):
         doc = et.to_otio(cut())
         clips = [c for c in doc["tracks"]["children"][0]["children"] if c["OTIO_SCHEMA"].startswith("Clip")]
-        clips[0].setdefault("metadata", {})["bepic"] = {"afade_in": 1.0, "afade_out": 0}
-        clips[1].setdefault("metadata", {})["bepic"] = {
+        clips[0].setdefault("metadata", {})["imageviewer"] = {"afade_in": 1.0, "afade_out": 0}
+        clips[1].setdefault("metadata", {})["imageviewer"] = {
             "afade_out": 0.5, "axfade": {"len": 1, "curve": "+3", "align": "centre"}}
-        doc["tracks"]["children"][0].setdefault("metadata", {}).setdefault("bepic", {}).update(
+        doc["tracks"]["children"][0].setdefault("metadata", {}).setdefault("imageviewer", {}).update(
             {"lock": True, "auto_select": False})
         dropped = et.otio_dropped(doc)
         self.assertTrue(any("audio crossfade into" in d and "(1s) left out" in d for d in dropped), dropped)
@@ -123,10 +123,10 @@ class ACutFromSomewhereElse(unittest.TestCase):
         doc = et.to_otio(cut())
         track = doc["tracks"]["children"][0]
         clips = [c for c in track["children"] if c["OTIO_SCHEMA"].startswith("Clip")]
-        clips[0].setdefault("metadata", {})["bepic"] = {"afx": [
+        clips[0].setdefault("metadata", {})["imageviewer"] = {"afx": [
             {"type": "eq", "on": True, "p": {}}, {"type": "reverb", "on": True, "p": {}},
             {"type": "delay", "on": False, "p": {}}]}
-        track.setdefault("metadata", {}).setdefault("bepic", {})["afx"] = [
+        track.setdefault("metadata", {}).setdefault("imageviewer", {})["afx"] = [
             {"type": "comp", "on": True, "p": {}}, {"type": "limit", "on": False, "p": {}}]
         dropped = et.otio_dropped(doc)
         self.assertTrue(any(d.endswith(": sound effects (EQ, Reverb) - left out") for d in dropped), dropped)
@@ -147,7 +147,7 @@ class ACutFromSomewhereElse(unittest.TestCase):
     def test_a_cut_saved_from_the_viewer_says_so(self):
         doc = et.to_otio(cut())
         self.assertEqual(et.viewer_stamp(doc), "")
-        doc["metadata"]["bepic"] = {"edited": "2026-10-12T08:00:00+00:00"}
+        doc["metadata"]["imageviewer"] = {"edited": "2026-10-12T08:00:00+00:00"}
         self.assertEqual(et.viewer_stamp(doc), "2026-10-12T08:00:00+00:00")
 
 
@@ -180,9 +180,9 @@ class GapsAndSoundSplitOffInTheViewer(unittest.TestCase):
         doc = et.to_otio(cut())
         video = doc["tracks"]["children"][0]["children"]
         first = video[0]
-        first["metadata"]["bepic"] = {"link": "L1", "unlinked": True, "mute": True}
+        first["metadata"]["imageviewer"] = {"link": "L1", "unlinked": True, "mute": True}
         sound = json.loads(json.dumps(first))
-        sound["metadata"] = {"bepic": {"link": "L1", "unlinked": True}}
+        sound["metadata"] = {"imageviewer": {"link": "L1", "unlinked": True}}
         a1 = next(t for t in doc["tracks"]["children"] if t["kind"] == "Audio")
         a2 = {"OTIO_SCHEMA": "Track.1", "name": "A2", "kind": "Audio", "metadata": {}, "source_range": None,
               "effects": [], "markers": [], "children": [self.gap(12), sound]}
@@ -237,6 +237,19 @@ class TheLoadOperation(unittest.TestCase):
         self.assertIn("THE USER CAN CUT IT THEMSELVES", text)
         self.assertIn('{"op": "load", "file":', text)
 
+
+
+class OldViewerNames(unittest.TestCase):
+    """A cut saved while the viewer was "bEpic" (before 1.18) reads as one saved now."""
+
+    def test_old_notes_and_titles_get_the_new_names(self):
+        doc = {"metadata": {"bepic": {"edited": "2026-10-12T08:00:00+00:00"}},
+               "tracks": {"children": [{"metadata": {"bepic": {"lock": True}},
+                                        "children": [{"media_reference": {"generator_kind": "bepic.title"}}]}]}}
+        self.assertEqual(et.viewer_stamp(doc), "2026-10-12T08:00:00+00:00")
+        self.assertEqual(doc["tracks"]["children"][0]["metadata"], {"imageviewer": {"lock": True}})
+        self.assertEqual(doc["tracks"]["children"][0]["children"][0]["media_reference"]["generator_kind"],
+                         "imageviewer.title")
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,7 +1,7 @@
 """Make a release of the whole agentY stack, and read what a release is made of.
 
 agentY is five repositories - agentY, agentY-core, agentY-comfyuiConnect,
-agentY-mcp and ComfyUI-ImageViewer (the bEpic viewer) - that only work as a set. A release pins that set:
+agentY-mcp and ComfyUI-ImageViewer (the ComfyUI Image Viewer) - that only work as a set. A release pins that set:
 
 * ``release.toml`` (in agentY) records the version and the commit of each
   sibling it was made with;

@@ -1,4 +1,4 @@
-"""Motion-graphics renders the bEpic viewer's Motion panel asked for: one background job each, polled by id.
+"""Motion-graphics renders the ComfyUI Image Viewer's Motion panel asked for: one background job each, polled by id.
 
 The panel's Render button posts a scene file; the viewer runs inside ComfyUI's Python (no ``agenty_core``, no
 Node), so ComfyUI forwards the request to this host, which runs the shared core tool

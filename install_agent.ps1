@@ -370,8 +370,8 @@ function Stop-RunningHost {
     Write-Success "agentY stopped - start it again with .\run_agent.ps1 when the installer is done"
 }
 
-function Find-BepicViewer {
-    # The bEpic viewer (szprivate/ComfyUI-ImageViewer) under ANY folder name: a git
+function Find-ImageViewer {
+    # The ComfyUI Image Viewer (szprivate/ComfyUI-ImageViewer) under ANY folder name: a git
     # checkout whose origin is that repo, or a registry/zip copy whose pyproject.toml
     # points at it. ComfyUI-Manager installs it as "comfyui-imageviewer", for one.
     # Returns @{ Dir; Git } or $null.
@@ -392,27 +392,27 @@ function Find-BepicViewer {
     return $null
 }
 
-function Install-BepicViewer {
+function Install-ImageViewer {
     # Present (any folder name): update a git checkout, leave a registry copy to its
     # manager. Missing: clone it - into ComfyUI-ImageViewer, or beside a different
     # project that already holds that folder name.
     param([string]$CustomNodes)
     $url = "https://github.com/szprivate/ComfyUI-ImageViewer.git"
-    $found = Find-BepicViewer -CustomNodes $CustomNodes
+    $found = Find-ImageViewer -CustomNodes $CustomNodes
     if ($found) {
-        if ($found.Git) { Ensure-Repo -Name "ComfyUI-ImageViewer (bEpic viewer)" -Url $url -Dir $found.Dir }
-        else { Write-Success "bEpic viewer present at $($found.Dir) (not a git checkout - update it from ComfyUI-Manager)" }
+        if ($found.Git) { Ensure-Repo -Name "ComfyUI Image Viewer" -Url $url -Dir $found.Dir }
+        else { Write-Success "ComfyUI Image Viewer present at $($found.Dir) (not a git checkout - update it from ComfyUI-Manager)" }
         return
     }
     $dir = Join-Path $CustomNodes "ComfyUI-ImageViewer"
     if ((Test-Path $dir) -and (Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue)) {
-        Write-Info "A different ComfyUI-ImageViewer is at $dir (not szprivate's) - leaving it; installing the bEpic viewer beside it."
+        Write-Info "A different ComfyUI-ImageViewer is at $dir (not szprivate's) - leaving it; installing the ComfyUI Image Viewer beside it."
         Write-Info "If ComfyUI reports duplicate node names, disable one of the two."
-        $dir = Join-Path $CustomNodes "ComfyUI-ImageViewer-bEpic"
+        $dir = Join-Path $CustomNodes "ComfyUI-ImageViewer-agentY"
     } else {
-        Write-Info "bEpic viewer (szprivate/ComfyUI-ImageViewer) not found in $CustomNodes - installing it."
+        Write-Info "ComfyUI Image Viewer (szprivate/ComfyUI-ImageViewer) not found in $CustomNodes - installing it."
     }
-    Ensure-Repo -Name "ComfyUI-ImageViewer (bEpic viewer)" -Url $url -Dir $dir
+    Ensure-Repo -Name "ComfyUI Image Viewer" -Url $url -Dir $dir
 }
 
 function Ensure-Repo {
@@ -1336,9 +1336,9 @@ if ($SkipComfyNode) {
         Ensure-Repo -Name "agentY-comfyuiConnect" -Url "https://github.com/szprivate/agentY-comfyuiConnect.git" -Dir $nodeDir
         Write-Success "Sidebar node installed under $ResolvedComfy\custom_nodes - restart ComfyUI once."
 
-        # The bEpic viewer is agentY's standard viewer (Settings > Load & save nodes
+        # The ComfyUI Image Viewer is agentY's standard viewer (Settings > Load & save nodes
         # saves into it by default). A failed clone only costs the viewer.
-        Install-BepicViewer -CustomNodes (Join-Path $ResolvedComfy "custom_nodes")
+        Install-ImageViewer -CustomNodes (Join-Path $ResolvedComfy "custom_nodes")
 
         # Record where the agentY host lives so the sidebar's "Start server" button
         # can relaunch run_agent.ps1 when the host is down. The agentY host also

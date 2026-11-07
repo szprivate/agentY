@@ -193,7 +193,7 @@ class Wiring(unittest.TestCase):
         self.assertTrue(recreate_wanted("make it warmer", sel))
         for text in ("recreate shot 3 with warmer light", "Regenerate the selected clips",
                      "redo these two shots with a new seed", "give me another take of shot 5",
-                     "warmer\n\n(Recreate with changes, from the bEpic viewer's Edit panel - ...) Clips: a = b"):
+                     "warmer\n\n(Recreate with changes, from the ComfyUI Image Viewer's Edit panel - ...) Clips: a = b"):
             self.assertTrue(recreate_wanted(text, None), text)
         for text, state in (("a cat on a sofa", None), ("recreate the look of this painting", None),
                             ("make it warmer", {"open": True, "edit": {"selected": []}}),
@@ -407,7 +407,7 @@ class TimelineTakes(unittest.TestCase):
                        {"id": "c2", "src": "D:/o/shot_05.mp4", "in": 0.0, "out": 1.5, "transition": 0.0,
                         "label": "shot_05"}]
         doc = et.to_otio(tl)
-        doc["tracks"]["children"][0]["children"][0]["metadata"]["bepic"] = {"takes": [
+        doc["tracks"]["children"][0]["children"][0]["metadata"]["imageviewer"] = {"takes": [
             {"file": "D:/o/shot_03.mp4", "version": 1, "active": False, "note": "original", "created": ""},
             {"file": "D:/o/shot_03_v002.mp4", "version": 2, "active": True, "note": "warmer", "created": "x"}]}
         return doc
@@ -428,16 +428,16 @@ class TimelineTakes(unittest.TestCase):
         tl = et.from_otio(self.doc())
         back = et.to_otio(tl)["tracks"]["children"][0]["children"][0]
         self.assertEqual(back["media_reference"]["target_url"], "file:///D:/o/shot_03_v002.mp4")
-        self.assertEqual([t["file"] for t in back["metadata"]["bepic"]["takes"]],
+        self.assertEqual([t["file"] for t in back["metadata"]["imageviewer"]["takes"]],
                          ["D:/o/shot_03.mp4", "D:/o/shot_03_v002.mp4"])
         # switched back to the original (the viewer's Takes menu) - the src says which is active
         tl2 = copy.deepcopy(tl)
         tl2["clips"][0]["src"] = "D:/o/shot_03.mp4"
-        takes = et.to_otio(tl2)["tracks"]["children"][0]["children"][0]["metadata"]["bepic"]["takes"]
+        takes = et.to_otio(tl2)["tracks"]["children"][0]["children"][0]["metadata"]["imageviewer"]["takes"]
         self.assertEqual([t["active"] for t in takes], [True, False])
         # another shot in its place: the old shot's versions do not apply
         tl = et.apply(tl, [{"op": "replace", "clip": "c1", "src": "D:/o/other.mp4", "length": 2}])
-        self.assertNotIn("bepic", et.to_otio(tl)["tracks"]["children"][0]["children"][0]["metadata"])
+        self.assertNotIn("imageviewer", et.to_otio(tl)["tracks"]["children"][0]["children"][0]["metadata"])
 
 
 if __name__ == "__main__":

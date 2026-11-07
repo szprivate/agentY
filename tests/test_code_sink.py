@@ -90,7 +90,7 @@ class Delivery(Fresh):
         self.assertFalse(self.send_sync(dict(s, title="b"), conversation="c1", turn="t2"))
         self.assertEqual(len(self.posts), 1)
         path, body = self.posts[0]
-        self.assertEqual(path, "/bepic/code")
+        self.assertEqual(path, "/imageviewer/code")
         self.assertEqual((body["source"], body["conversation"], body["turn"]), ("run_python_node", "c1", "t1"))
 
     def test_failed_delivery_may_be_retried(self):

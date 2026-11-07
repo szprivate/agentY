@@ -1,4 +1,4 @@
-"""Titles the bEpic viewer saves (clips on extra video tracks) are read back as texts."""
+"""Titles the ComfyUI Image Viewer saves (clips on extra video tracks) are read back as texts."""
 import unittest
 
 from src.utils import edit_timeline as et
@@ -16,11 +16,11 @@ def rng(a, d):
 
 
 def title(words, length, agenty=None, **extra):
-    meta = {"bepic": {"title": {"text": words, "font": "Inter", "size": 8}},
+    meta = {"imageviewer": {"title": {"text": words, "font": "Inter", "size": 8}},
             "agentY": agenty if agenty is not None else {"kind": "text", "text": words}}
     clip = {"OTIO_SCHEMA": "Clip.1", "name": words.splitlines()[0], "metadata": meta, "effects": [], "markers": [],
             "source_range": rng(0, length),
-            "media_reference": {"OTIO_SCHEMA": "GeneratorReference.1", "generator_kind": "bepic.title",
+            "media_reference": {"OTIO_SCHEMA": "GeneratorReference.1", "generator_kind": "imageviewer.title",
                                 "name": "", "metadata": {}}}
     clip.update(extra)
     return clip
@@ -57,7 +57,7 @@ class Titles(unittest.TestCase):
 
     def test_disabled_left_out(self):
         d = doc([track("V2", [title("Off", 1.0, enabled=False), gap(1.0), title("Gone", 1.0)])])
-        d["tracks"]["children"][-1]["children"][2]["metadata"]["bepic"]["disabled"] = True
+        d["tracks"]["children"][-1]["children"][2]["metadata"]["imageviewer"]["disabled"] = True
         self.assertEqual(et.from_otio(d)["overlays"], [])
         self.assertFalse(any("titles' look" in w for w in et.otio_dropped(d)))
 

@@ -643,7 +643,7 @@ STAGE_SUBFOLDER = "agentY"
 
 
 def _viewer_copy(path: str, staged: str | None) -> str | None:
-    """The file the bEpic viewer may open: it only reads inside ComfyUI's own
+    """The file the ComfyUI Image Viewer may open: it only reads inside ComfyUI's own
     folders, so a result agentY wrote elsewhere is shown from its staged copy."""
     in_dir = _comfy_input_dir()
     if staged and in_dir is not None and (in_dir / staged).is_file():
@@ -1725,11 +1725,11 @@ def _run_pipeline_stream(thread_id: str, message: str, image_paths: list[str],
                     _turn_canvas.clear()
                 _turn_canvas[req_id] = str(snap["client"])
         turn_scope.current().set("canvas_client", _turn_canvas.get(req_id, ""))
-        # What the user picked in a history panel (the bEpic viewer's strip,
+        # What the user picked in a history panel (the ComfyUI Image Viewer's strip,
         # ComfyUI's assets sidebar); the pipeline lists it at the top of the turn.
         if isinstance(history_selection, dict) and history_selection:
             turn_scope.current().set("history_selection", history_selection)
-        # What the bEpic viewer shows (only sent while it is open); a [VIEWER] block.
+        # What the ComfyUI Image Viewer shows (only sent while it is open); a [VIEWER] block.
         if isinstance(viewer_state, dict) and viewer_state:
             turn_scope.current().set("viewer_state", viewer_state)
         if origin != "panel" and not _turn_canvas.get(req_id):
@@ -5170,7 +5170,7 @@ def _build_app():
         # take the prompt down either way.
         return jsonify({"ok": ok, "expired": not ok})
 
-    # A render with World Labs Atlas that the bEpic viewer asked for (its "Render with Atlas"
+    # A render with World Labs Atlas that the ComfyUI Image Viewer asked for (its "Render with Atlas"
     # button, through ComfyUI: the viewer has neither agenty_core nor the key). The core function is
     # the same one the agent's atlas_render_view tool runs; see src.utils.atlas_render_jobs.
     from src.utils.atlas_render_jobs import AtlasRenderJobs as _AtlasRenderJobs
@@ -6282,10 +6282,10 @@ def _build_app():
         # Arbitrary selected nodes (any type) with their widget values, so the
         # agent can read/alter their parameters and write the change back live.
         canvas_selection = [n for n in (body.get("canvas_selection") or []) if isinstance(n, dict)]
-        # What is picked in a history panel (the bEpic viewer's strip, ComfyUI's
+        # What is picked in a history panel (the ComfyUI Image Viewer's strip, ComfyUI's
         # assets sidebar): {viewer, assets}, or null when nothing is.
         history_selection = body.get("history_selection") if isinstance(body.get("history_selection"), dict) else None
-        # What the bEpic viewer shows (tab, item, frame, range, marks); null while it is closed.
+        # What the ComfyUI Image Viewer shows (tab, item, frame, range, marks); null while it is closed.
         viewer_state = body.get("viewer_state") if isinstance(body.get("viewer_state"), dict) else None
         # ComfyUI's open workflow tabs. The graph above is the ACTIVE one and
         # cannot say whether it was one of several — so without this, "the other
@@ -6436,7 +6436,7 @@ def _build_app():
                            str(node_id) if node_id not in ("?", None) else None)
         return jsonify({"status": "dispatched"})
 
-    # The bEpic viewer's "Tag for agentY": a picture from its history becomes a
+    # The ComfyUI Image Viewer's "Tag for agentY": a picture from its history becomes a
     # named reference (#name) the same way an `agentY add tag` node makes one. The
     # viewer reaches this through the panel's bridge (agentY-comfyuiConnect).
     @app.route("/agentY/viewer/tag", methods=["POST", "OPTIONS"])

@@ -44,7 +44,7 @@ def _graph():
                          "anchors.anchor2": ["7", 0]}},
         "348": {"class_type": "ByteDanceSeedreamNodeV2",
                 "inputs": {"prompt": ["5", 0], "model.images.image_1": ["5", 0]}},
-        "11": {"class_type": "bEpicSendToViewer", "inputs": {"input": ["348", 0]}},
+        "11": {"class_type": "ImageViewerSend", "inputs": {"input": ["348", 0]}},
     }
 
 

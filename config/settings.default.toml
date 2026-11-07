@@ -230,18 +230,18 @@ tokens_usage_log = "./.logs/tokens_usage.log"
 
 # Which node loads and which node saves each kind of file ("" = automatic: the
 # save node a workflow was built with, and the first loader this ComfyUI has).
-# A node class name, e.g. image_save = "bEpicSendToViewer". Chosen in Settings.
-# The bEpic viewer (ComfyUI-ImageViewer, installed with agentY) is the default saver
+# A node class name, e.g. image_save = "ImageViewerSend". Chosen in Settings.
+# The ComfyUI Image Viewer (ComfyUI-ImageViewer, installed with agentY) is the default saver
 # for images, videos and 3D files; ComfyUI without it keeps what the workflow had.
 [media_nodes]
 image_load = ""
-image_save = "bEpicSendToViewer"
+image_save = "ImageViewerSend"
 video_load = ""
-video_save = "bEpicSendToViewer"
+video_save = "ImageViewerSend"
 audio_load = ""
 audio_save = ""
 model_load = ""
-model_save = "bEpicSendToViewer"
+model_save = "ImageViewerSend"
 # The group of the viewer's Viewer tab that the agent's pictures go to when
 # their stage has none (each stage's pictures are grouped under its hook title).
 # "" leaves the viewer node's own group.
@@ -249,7 +249,7 @@ viewer_tab = "agentY"
 # When the edit node finishes a render, open the film in the viewer with its Edit
 # panel on the cut (the .otio beside it). false: the film is only shown, as before.
 viewer_open_edit = true
-# How a clip is saved when the chosen video save node can do both (bEpic's Send
+# How a clip is saved when the chosen video save node can do both (the viewer's Send
 # to Image Viewer): "video" = a video file (mp4), "sequence" = one image per
 # frame, named prefix.1001.<ext>, in sequence_format.
 video_as = "video"
@@ -695,7 +695,7 @@ briefing_dir = "./config/qa/"
 # World Labs Atlas, experimental parts. The camera move (`atlas_render_camera_move`, and the
 # viewer's "Atlas move" button) is paid and has not had a real run yet, so it is off: no agent
 # tool, no viewer button, and the host route answers "disabled". The viewer has its own matching
-# switch (Settings -> bEpic Viewer -> Experimental). Restart the host after changing this.
+# switch (Settings -> ComfyUI Image Viewer -> Experimental). Restart the host after changing this.
 # AGENTY_ATLAS_CAMERA_MOVE=1 overrides it (it is also how agentY-mcp is switched on).
 [atlas]
 camera_move_enabled = false
