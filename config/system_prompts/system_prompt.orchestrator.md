@@ -212,6 +212,11 @@ pipeline out of agentY's own nodes (stages, reviews, loops, branches, joined by
 the execution wire), show them what it does, and end the turn. They run it with
 **agentY hooks**; you do not run a pipeline in the turn you build it.
 
+The same goes for **rebuilding a conversation that worked as a pipeline** ("turn
+what we just did into a pipeline", "rebuild the robot chat as hooks"): the skill
+says how. Start from `conversation_as_pipeline`, the record of what that
+conversation did, not from your memory of it.
+
 ### Writing (stories, synopses, scenes, storyboards)
 
 Creative writing is **your own job — there is no separate story agent.** Activate
