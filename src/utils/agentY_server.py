@@ -5190,6 +5190,41 @@ def _build_app():
         except ValueError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
 
+    # The dependency graph around one file, for the viewer's Dependencies tab (through ComfyUI: the viewer
+    # has no agenty_core). Read-only: it reads sidecars and the .derived.json records, and writes only the
+    # record of an older file it had to work out from its stored graph. See agenty_core.utils.dependencies.
+    @app.route("/agentY/deps", methods=["GET", "OPTIONS"])
+    def deps_graph():
+        if request.method == "OPTIONS":
+            return "", 204
+        from agenty_core.utils import dependencies as _dp
+        from agenty_core.utils.path_guard import refuse_read as _refuse
+        path = str(request.args.get("path") or "").strip()
+        if not path:
+            return jsonify({"ok": False, "error": "send ?path=<file>"}), 400
+        if not os.path.isfile(path):
+            path = _dp.resolve_value(path) or path
+        if not os.path.isfile(path):
+            return jsonify({"ok": False, "error": f"no such file: {os.path.basename(path)}"}), 404
+        if _refuse(path, "deps"):
+            return jsonify({"ok": False, "error": "that file is not readable"}), 403
+
+        def _int(name, default, hi):
+            try:
+                return max(0, min(int(request.args.get(name, default)), hi))
+            except (TypeError, ValueError):
+                return default
+        if str(request.args.get("scan") or "") in ("1", "true"):
+            try:
+                _dp.reindex(os.path.dirname(os.path.abspath(path)))
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            g = _dp.graph(path, up=_int("up", 4, 12), down=_int("down", 4, 12), limit=_int("limit", 200, 1000))
+        except Exception as exc:  # noqa: BLE001
+            return jsonify({"ok": False, "error": f"could not read the dependencies: {exc}"}), 500
+        return jsonify({"ok": True, **g})
+
     # A camera move through an Atlas world the viewer asked for ("Render camera with Atlas"). A dry run
     # (plan + price) is answered at once; the real run is a job polled by id. See src.utils.atlas_move_jobs.
     from src.utils.atlas_move_jobs import AtlasMoveJobs as _AtlasMoveJobs
