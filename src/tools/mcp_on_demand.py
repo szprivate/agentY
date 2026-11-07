@@ -75,7 +75,7 @@ def server_tools(server: str) -> list:
     cached = _LISTS.get(server)
     if cached and cached[0] == id(client):
         return cached[1]
-    tools = client.list_tools_sync()
+    tools = _mcp.visible_tools(server, client.list_tools_sync())
     _LISTS[server] = (id(client), tools)
     return tools
 

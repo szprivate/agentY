@@ -711,6 +711,30 @@ def _friendly_reason(name: str, sc: dict, exc: BaseException) -> str:
     return " ".join(leaf.split())[:160]
 
 
+# Tools a server offers that the agent is not given, by the server's own tool
+# name, for servers whose name contains the key. ElevenLabs' play_audio plays a
+# file on the speakers of the machine agentY runs on and answers only once the
+# sound has ended, so a turn that called it sat waiting for the whole clip - and
+# the user, at a browser that may be on another machine, heard nothing. A sound
+# any tool makes is shown in the chat panel as a player instead (media_sink ->
+# the panel's sound card), where the user plays it as often as they like.
+_HIDDEN_TOOLS = {"elevenlabs": frozenset({"play_audio"})}
+
+
+def visible_tools(server: str, tools) -> list:
+    """*tools* of *server* without the ones in ``_HIDDEN_TOOLS``."""
+    hidden = frozenset().union(*(names for key, names in _HIDDEN_TOOLS.items()
+                                 if key in str(server or "").lower()))
+    tools = list(tools or ())
+    if not hidden:
+        return tools
+    kept = [t for t in tools if _tool_names(server, [t])[0] not in hidden]
+    if len(kept) != len(tools):
+        logger.info("mcp[%s]: %d tool(s) not given to the agent: %s", server,
+                    len(tools) - len(kept), ", ".join(sorted(hidden)))
+    return kept
+
+
 def _connect(name: str, sc: dict, interactive: bool):
     """Connect to one server and return ``(client, tools)``. Raises ``_AuthRequired``
     for an OAuth server with no usable token (silent mode), ``McpUnavailable`` for one
@@ -742,7 +766,7 @@ def _connect(name: str, sc: dict, interactive: bool):
             client = MCPClient(_transport_callable(sc, provider, errlog), prefix=f"{name}_")
             with quiet:
                 client.start()
-                tools = client.list_tools_sync()
+                tools = visible_tools(name, client.list_tools_sync())
         _harden_client(name, client)
         return client, tools
     except Exception as exc:  # noqa: BLE001
@@ -786,7 +810,7 @@ def load_mcp_tools() -> list:
         existing = _CLIENTS.get(name)
         if existing is not None:
             try:
-                t = existing.list_tools_sync()
+                t = visible_tools(name, existing.list_tools_sync())
                 tools.extend(t)
                 _LISTS[name] = (id(existing), list(t))
                 _STATUS[name] = f"connected ({len(t)})"
@@ -957,7 +981,7 @@ def mcp_server_report() -> str:
             client = _CLIENTS.get(name)
             if client is not None:
                 try:
-                    names = _tool_names(name, client.list_tools_sync())
+                    names = _tool_names(name, visible_tools(name, client.list_tools_sync()))
                     said = f"connected, {len(names)} tool(s): " + ", ".join(names[:25])
                 except Exception as exc:  # noqa: BLE001
                     from src.tools.mcp_resilience import describe

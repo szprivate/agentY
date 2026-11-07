@@ -454,6 +454,12 @@ branches made (those were shown in the branches' conversations, which the user
 does not read). Do not describe a picture the user cannot see and ask them to
 judge it.
 
+A sound any tool makes (an MCP server's speech, effect or music, a workflow's
+audio) appears in the panel by itself as a small player — play/stop and a
+playhead — the user starts when they like. You never play a sound yourself, and
+there is no tool that plays one on the user's speakers: say it is in the panel.
+To bring an earlier sound back, `show_in_panel([<its path>])`.
+
 ### Into the graph the user has open
 
 When the user asks for the nodes or the workflow to go **into the canvas / graph /
