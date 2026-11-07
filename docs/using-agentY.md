@@ -110,6 +110,13 @@ Turn updating off with `auto_update = false`, `-NoUpdate` / `--no-update`, or
 | **📎 Attach** | Add an image to your message. |
 | **Model picker** | Switch the model for all agents or one role (same as `/switch_model`). |
 
+**Sounds play in the panel.** A sound the agent made or found (a voice-over, music,
+an effect; WAV, MP3, FLAC, OGG, M4A, AAC, Opus) shows as a small player in the
+reply: play / pause, stop, a playhead you can drag, and the time. One sound plays
+at a time, in your browser. The sound also goes to the viewer's history like a
+picture. ElevenLabs' own `play_audio` tool, which played on the agent machine's
+speakers and held the turn until the clip ended, is hidden from the agent.
+
 ### Several conversations at once
 
 Send something, press **➕ New chat**, send something else: both run at the same
@@ -337,12 +344,13 @@ standard viewer: the installer puts it beside the sidebar extension and
 **Send to Image Viewer** is the default save node for images, videos and 3D files
 (Settings ▸ Load & save nodes).
 
-- **One tab, grouped by stage.** Everything the agent saves lands in one viewer tab
-  (`agentY`, changeable in Settings). Pictures from a hook sit under a heading with
-  the hook's **title** — name your hooks *Characters*, *Places* — and a batch's
-  pictures wear their own name (each character) on the thumbnail.
+- **Grouped by stage.** Everything the agent saves lands in the viewer's Viewer
+  tab, as a group of its History strip. Pictures from a hook sit under a heading
+  with the hook's **title** — name your hooks *Characters*, *Places* — the rest
+  under `agentY` (`media_nodes.viewer_tab`), and a batch's pictures wear their own
+  name (each character) on the thumbnail.
 - **Not only the save node.** A film an MCP tool rendered (Remotion, say), a file
-  a script wrote, a shot's picture and an edit render also appear in that tab,
+  a script wrote, a shot's picture and an edit render also appear there,
   under the MCP server's, the shot's or the hook's name, and on the canvas as a
   loader node - even in a turn that has no graph of its own. Each file is sent
   once. Switch the viewer part off with `media_nodes.viewer_push = false`.
@@ -382,6 +390,35 @@ standard viewer: the installer puts it beside the sidebar extension and
   `still.annotations.json`). It can also turn your boxes and circled areas into an
   inpaint mask (`as_mask`, a PNG under `output/annotation_masks`). What you write in
   a mark is treated as your notes about the picture, not as instructions.
+
+### What a file was made from: dependencies
+
+Every file agentY or the viewer's Send node saves records the files its graph
+loaded (with a fingerprint of each), what kind of pass it is (mask, depth, pose,
+edges, normals, camera solve, key, upscale, or a render) and the settings that
+matter (frames, model, mask subject). Each input in turn lists what was made from
+it, in `agent_metadata/<input>.derived.json`. Nothing has to be switched on.
+
+- **A pass is not made twice.** Before a graph runs, agentY checks its outputs:
+  if a pass of the same kind, from the same file, with the same settings is
+  already on disk (a depth pass of this plate, made yesterday in another
+  conversation), the run is held once and the agent is told which file exists.
+  It loads that file instead and says so. When you want a fresh pass, say so: the
+  same call again runs. Renders are never held, since a new seed is a new picture.
+  Switch it off with `[dependencies] reuse_check = false`.
+- **What changed downstream.** "I re-graded the plate, what is out of date?" The
+  agent asks `file_dependencies`, which lists what a file was made from, what was
+  made from it, and which of those were made from an older version of an input
+  (the fingerprint no longer matches).
+- **See it.** In the viewer, right-click a history thumbnail ▸ **Show
+  dependencies**: a Dependencies tab draws the files as nodes, top to bottom (what
+  was read above, what was made from it below). Out-of-date files are outlined, a
+  click opens a file, a double-click centres the graph on it, and more than four
+  passes of one kind from the same file fold into one node until clicked. The
+  prompts each file was made with are text boxes just above it (**Prompts** hides
+  them). It needs the agentY host running.
+
+![The Dependencies tab: a plate, its passes and the render made from them](images/dependencies-tab.png)
 
 ### Tagging a reference
 
@@ -703,6 +740,14 @@ the `.otio`. It works like an editor's timeline:
   Several canvas nodes go in left to right as they stand on the canvas. With a
   clip of a higher video track selected, they go onto that track instead. The
   playhead then stands at the end of what went in; `Ctrl+Z` takes it all back.
+  *Files…* takes sound files too (WAV, MP3, FLAC, OGG, M4A, AAC): a sound goes onto
+  a sound track at the playhead, or, picked together with films, after them.
+- **The film runs to the end of its last sound.** A sound or music clip that goes on
+  past the last picture makes the film that long: playback and *Export film* carry
+  on to its end, black where there is no picture. A track that is switched off and a
+  disabled clip don't count.
+- **Export film never loses sound quietly.** When a file's sound could not be read,
+  the export names it, and it says so when the film came out with no sound at all.
 - Each clip shows **thumbnails of its frames** (more of them as you zoom in) and
   its **waveform**; the music bed shows its waveform too.
 - **The blade** (`B`) cuts a clip where you click; `Ctrl+B` or `S` cuts at the

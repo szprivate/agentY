@@ -57,6 +57,9 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
     "upload": ("PUT a local file to a presigned URL — the upload step of an MCP flow (Magnific)",
                ("upload_file_to_url",)),
     "calc": ("exact arithmetic and symbolic maths", ("calculator",)),
+    "deps": ("what a file was made from and what was made from it: masks / depth / pose passes of a "
+             "clip that already exist and can be reused, and what is out of date after a source changed",
+             ("file_dependencies",)),
     # Added 2026-10-12, when the tool definitions had grown to ~31k of the ~41k
     # tokens every orchestrator step sent (106 tools). Each group below is a job
     # most conversations never do; together about 12k tokens.
