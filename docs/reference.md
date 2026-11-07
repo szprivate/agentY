@@ -171,6 +171,23 @@ With no panel open to ask (a Slack turn, an unattended machine) the request is
 declined. `security.unattended_tool_policy = "allow"` changes that;
 `security.ask_before_tools` is the list of tools that ask.
 
+## Dependencies between files
+
+`agenty_core.utils.dependencies` keeps the record, beside the files:
+
+- an output's provenance sidecar (`agent_metadata/<file>.prov.json.gz`) holds
+  `deps`: the pass `kind`, the settings that matter (`params`), and the `inputs`
+  its graph loaded, each with its node and a fingerprint (size plus a hash of the
+  first and last MiB);
+- each input lists what was made from it in `agent_metadata/<input>.derived.json`.
+
+Readers: the `file_dependencies` tool (orchestrator, tool pack `deps`), the
+host's `GET /agentY/deps?path=<file>&up=4&down=4[&scan=1]` (the viewer's
+Dependencies tab asks it through `/imageviewer/deps`), and the reuse check before
+a run (`[dependencies] reuse_check`, env `AGENTY_REUSE_CHECK`). `scan=1` first
+records the files in the file's folder that were made before this existed (from
+their sidecar or embedded graph).
+
 ## Configuration files
 
 | file | holds |
