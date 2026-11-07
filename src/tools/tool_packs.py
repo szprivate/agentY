@@ -49,6 +49,9 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
                 "list_generated_nodes", "spawn_subagent")),
     "annotate": ("circle, box or arrow things in an image (an overlay, not a re-render)",
                  ("annotate_image",)),
+    "rebuild": ("turn a conversation that worked into a hook pipeline the user can re-run: what it did, "
+                "step by step (read the `hook-pipeline` skill first)",
+                ("conversation_as_pipeline",)),
     "bake": ("bake a hook chain's workflows into subgraphs on the canvas (a hook's `bake` switch)",
              ("bake_hooks_to_canvas",)),
     "upload": ("PUT a local file to a presigned URL — the upload step of an MCP flow (Magnific)",
@@ -197,12 +200,31 @@ _NODE_PACK_WORDS = re.compile(
     re.I)
 
 
-def packs_asked_for(text: str) -> set:
-    """The packs a user's message plainly asks for (see _NODE_PACK_WORDS)."""
+# "turn this conversation into a hook pipeline", "make what we just did re-runnable as
+# hooks", "rebuild the robot chat as a pipeline": a conversation, and a pipeline.
+_PIPELINE_WORDS = re.compile(r"\b(pipelines?|hooks?|hook[\s-]*chains?|re-?runn?able)\b", re.I)
+_CONVERSATION_WORDS = re.compile(
+    r"\b(conversations?|chats?|threads?|sessions?|what\s+we\s+(?:just\s+)?did|"
+    r"what\s+(?:you|we)\s+(?:just\s+)?(?:made|built|ran)|(?:these|those|the|our|all)\s+steps)\b", re.I)
+_INTO_WORDS = re.compile(r"\b(into|as|to)\b", re.I)
+
+
+def rebuild_wanted(text: str) -> bool:
+    """A "rebuild this conversation as a hook pipeline" message."""
     text = str(text or "")
+    return bool(_PIPELINE_WORDS.search(text) and _CONVERSATION_WORDS.search(text) and _INTO_WORDS.search(text))
+
+
+def packs_asked_for(text: str) -> set:
+    """The packs a user's message plainly asks for (see _NODE_PACK_WORDS, rebuild_wanted)."""
+    text = str(text or "")
+    packs = set()
     if _INSTALL_VERB.search(text) and _NODE_PACK_WORDS.search(text):
-        return {"nodes"}
-    return set()
+        packs.add("nodes")
+    if rebuild_wanted(text):
+        # The record of the conversation, and the canvas tools that draw the pipeline.
+        packs |= {"rebuild", "graph"}
+    return packs
 
 
 # "recreate shot 3 with warmer light", "regenerate the selected clips", "redo these two

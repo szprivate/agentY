@@ -102,6 +102,7 @@ from src.tools.web_search import web_search, web_search_images  # noqa: F401
 # agentY-only pipeline handoff (not part of the shared agenty_core layer)
 from src.tools.workflow_handoff import signal_workflow_ready  # noqa: F401
 from src.tools.bake import bake_hooks_to_canvas  # noqa: F401
+from src.tools.conversation_pipeline import conversation_as_pipeline  # noqa: F401
 # Orchestrator meta-tools: live skill authoring + ad-hoc subagents (agentY-only)
 from src.tools.orchestration import (  # noqa: F401
     create_skill,
@@ -679,6 +680,8 @@ ORCHESTRATOR_TOOLS: list = [
     withdraw_workflow,
     # Bake a chain of standin workflows into canvas subgraphs (a hook's `bake` switch)
     bake_hooks_to_canvas,
+    # A conversation that worked, as steps to rebuild it as a hook pipeline
+    conversation_as_pipeline,
     # Image handling (the orchestrator owns input prep: stage + analyze)
     upload_image,
     upload_image_multiple,  # stage several inputs in one call

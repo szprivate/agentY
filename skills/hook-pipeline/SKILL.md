@@ -1,7 +1,7 @@
 ---
 name: hook-pipeline
-description: Build a hook pipeline on the user's canvas yourself — stages, reviews, loops, parallel branches — out of agentY's own nodes, wired with the execution wire. Activate when the user asks you to set up, design, build or restructure an automation pipeline or a hook chain ("build me a pipeline that…", "set this up as hooks", "turn this into a workflow I can re-run"), or when a request changes what the stages of an existing chain are.
-allowed-tools: edit_canvas_graph, set_canvas_node_params, delete_canvas_nodes, get_canvas_node
+description: Build a hook pipeline on the user's canvas yourself — stages, reviews, loops, parallel branches — out of agentY's own nodes, wired with the execution wire. Activate when the user asks you to set up, design, build or restructure an automation pipeline or a hook chain ("build me a pipeline that…", "set this up as hooks", "turn this into a workflow I can re-run"), or when a request changes what the stages of an existing chain are. Also when the user asks to rebuild a conversation that worked as a pipeline ("turn what we just did into a pipeline", "rebuild the robot chat as hooks") - see "From a conversation that worked".
+allowed-tools: edit_canvas_graph, set_canvas_node_params, delete_canvas_nodes, get_canvas_node, conversation_as_pipeline, insert_workflow_into_canvas
 ---
 
 # Building a hook pipeline
@@ -33,6 +33,45 @@ Before any node, write the pipeline as a numbered list and get it right there:
 
 If the user asked for the pipeline in one line, show this list and build it. If
 they are restructuring one they built, show what changes and wait for their go.
+
+## 1b. From a conversation that worked
+
+When the user asks to turn a conversation into a pipeline - this one or an
+older one - do not plan it from memory. Your history is compacted and leaves
+out which workflow made which file. Call `conversation_as_pipeline()` (or
+`conversation_as_pipeline(conversation="<words from its title>")`). It returns
+the steps: what was `asked`, the `outputs` with the `workflow` behind each, its
+`params` (prompt, model, seed), what it `reads` (earlier outputs it loaded),
+`used_by_a_later_step`, and the user's `reaction`.
+
+Read the steps as the user's real process, and boil them down:
+
+- **Drop the detours.** A step whose outputs nothing read, which the user moved
+  past ("no, go back to the first look"), is not a stage. Several rounds of the
+  same thing ("warmer", "again, less grain") are ONE stage.
+- **What the user said becomes the directive.** Merge the first ask and every
+  correction that stuck into one brief: *"Portrait of the robot, warm rim
+  light, low grain"*, not *"make it warmer"*. Leave out the specifics of this
+  one run that a re-run should change (a name, a file); say what is needed instead.
+- **The workflow that made the kept result is where the stage starts.** For a
+  `make workflow` stage, name it in the directive: *"Start from the workflow
+  <workflow>, which worked: bind the anchor image into its loader, keep the
+  model and settings."* If the user wants the canvas to hold the real graph,
+  `insert_workflow_into_canvas(workflow)` and drive it with a `set / sweep
+  parameter` stage wired into its prompt (the `params` ids say which input).
+- **`reads` is the anchor wiring.** If step 3's output read step 1's, the
+  stage for step 3 has stage 1's `out` in an anchor.
+- **Where the user chose or corrected, put a human review.** Its `notes` is the
+  question they answered then: *"Which of the four looks goes on?"*
+- **Where they asked for rounds until it was right, put a loop** with that
+  review last in the body.
+- **Steps that did not depend on each other become branches**, with a join
+  where a later step read both.
+- A step with no `workflow` was made by a tool (a partner or DashScope call, a
+  script): make it a `make workflow` stage whose directive says which tool to use.
+
+Show the boiled-down plan as a numbered list, each stage saying which steps of
+the conversation it stands for. Then build it as below.
 
 ## 2. The nodes
 

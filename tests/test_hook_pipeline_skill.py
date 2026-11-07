@@ -63,7 +63,7 @@ class TheSkill(unittest.TestCase):
         tools = head.split("allowed-tools:", 1)[1].strip().split(",")
         self.assertEqual([t.strip() for t in tools],
                          ["edit_canvas_graph", "set_canvas_node_params", "delete_canvas_nodes",
-                          "get_canvas_node"])
+                          "get_canvas_node", "conversation_as_pipeline", "insert_workflow_into_canvas"])
 
     def test_it_names_the_purposes_as_the_node_offers_them(self):
         for purpose in PURPOSES:
