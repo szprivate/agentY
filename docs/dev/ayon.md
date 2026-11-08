@@ -259,6 +259,9 @@ name.
 
 ## 9. Live test (needs the user)
 
+The agentY AYON add-on (`ayon_addon/`, see its README) does steps 1 and 4 at launch: it checks the ComfyUI port
+and starts the agentY host if it is down.
+
 Do these steps yourself; agentY never starts the Ayon launcher.
 
 1. Stop the ComfyUI on port 8188 (or the whole agentY launcher), so the port is free.
