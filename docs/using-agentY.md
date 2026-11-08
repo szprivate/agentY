@@ -398,6 +398,11 @@ loaded (with a fingerprint of each), what kind of pass it is (mask, depth, pose,
 edges, normals, camera solve, key, upscale, or a render) and the settings that
 matter (frames, model, mask subject). Each input in turn lists what was made from
 it, in `agent_metadata/<input>.derived.json`. Nothing has to be switched on.
+Files made before this existed are caught up in the background: once the host is up it
+walks ComfyUI's output and input folders slowly and records every file whose workflow is
+stored with it or embedded in it (a ComfyUI PNG or video). A file with neither, and a
+render made from a prompt alone, has nothing to show. Switch it off with
+`[dependencies] backfill = false`.
 
 - **A pass is not made twice.** Before a graph runs, agentY checks its outputs:
   if a pass of the same kind, from the same file, with the same settings is

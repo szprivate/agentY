@@ -6798,6 +6798,11 @@ def start_agentY_server(agent, host: str = "127.0.0.1", port: int | None = None)
     # The port too: it is what the panel calls, and only this process knows it.
     _register_with_comfyui(port)
     _start_slack_bridge()
+    try:   # older files' dependencies, in the background (src/utils/deps_backfill.py)
+        from src.utils import deps_backfill as _deps_backfill
+        _deps_backfill.start()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("dependencies backfill not started: %s", exc)
     return True
 
 
