@@ -182,11 +182,15 @@ declined. `security.unattended_tool_policy = "allow"` changes that;
 - each input lists what was made from it in `agent_metadata/<input>.derived.json`.
 
 Readers: the `file_dependencies` tool (orchestrator, tool pack `deps`), the
-host's `GET /agentY/deps?path=<file>&up=4&down=4[&scan=1]` (the viewer's
-Dependencies tab asks it through `/imageviewer/deps`), and the reuse check before
+host's `GET /agentY/deps?path=<file>&up=4&down=4[&scan=1]`, and the reuse check before
 a run (`[dependencies] reuse_check`, env `AGENTY_REUSE_CHECK`). `scan=1` first
 records the files in the file's folder that were made before this existed (from
 their sidecar or embedded graph).
+
+The viewer's Dependencies tab reads the same records in ComfyUI itself (its
+`deps_graph.py`, a copy of `agenty_core.utils.dependencies` kept in step by the
+viewer's `tests/test_deps_parity.py`), so it works without the host; its Send
+node writes `deps` and the inputs' `.derived.json` as agentY does.
 
 ## Configuration files
 

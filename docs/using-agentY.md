@@ -416,7 +416,8 @@ it, in `agent_metadata/<input>.derived.json`. Nothing has to be switched on.
   click opens a file, a double-click centres the graph on it, and more than four
   passes of one kind from the same file fold into one node until clicked. The
   prompts each file was made with are text boxes just above it (**Prompts** hides
-  them). It needs the agentY host running.
+  them). It runs in ComfyUI, so it works without agentY too, also for files saved
+  by ComfyUI's own Save Image / Save Video (their workflow is inside the file).
 
 ![The Dependencies tab: a plate, its passes and the render made from them](images/dependencies-tab.png)
 
