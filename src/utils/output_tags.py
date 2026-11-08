@@ -206,7 +206,7 @@ def sidecar_path(path) -> Path:
 
 
 #: Sidecar keys other writers own: kept when the role record is rewritten.
-_KEPT_KEYS = ("provenance",)
+_KEPT_KEYS = ("provenance", "generator", "tags")
 
 
 def _sidecar_lock():
@@ -246,6 +246,31 @@ def write_sidecar(path, role: str, **meta) -> bool:
             sc = sidecar_path(p)
             sc.parent.mkdir(parents=True, exist_ok=True)
             sc.write_text(json.dumps(body, indent=1), encoding="utf-8")
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def write_generator(path, generator: dict) -> bool:
+    """Keep what made *path* outside a ComfyUI graph (a Magnific creation: service, model, provider,
+    prompt, credits, its link) in its sidecar as ``generator``, with ``tags`` = the service and the
+    model. The role record and the provenance are left as they are. Best-effort."""
+    gen = {k: v for k, v in (generator or {}).items() if v not in (None, "", [], {})}
+    if not gen:
+        return False
+    try:
+        p = Path(str(path))
+        if not p.exists():
+            return False
+        with _sidecar_lock():
+            doc = read_sidecar(p)
+            doc["generator"] = gen
+            tags = [t for t in (gen.get("service"), gen.get("model")) if t]
+            doc["tags"] = list(dict.fromkeys([*(doc.get("tags") or []), *tags]))
+            doc.setdefault("made_by", "agentY")
+            sc = sidecar_path(p)
+            sc.parent.mkdir(parents=True, exist_ok=True)
+            sc.write_text(json.dumps(doc, indent=1), encoding="utf-8")
         return True
     except Exception:  # noqa: BLE001
         return False
