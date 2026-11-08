@@ -706,6 +706,11 @@ camera_move_enabled = false
 # which file to reuse; calling the same tool again runs it anyway. Renders are never held.
 [dependencies]
 reuse_check = true
+# Files made before dependency tracking existed: once the host is up, ComfyUI's output and
+# input folders are walked slowly in the background and every file whose workflow is stored
+# with it or embedded in it gets its record (small JSON files in agent_metadata folders only).
+# A folder is walked in full once; later starts look only at files changed since.
+backfill = true
 
 # Refine loops — `refine_canvas_until`, the agent running the graph you have open
 # over and over until its output meets a condition you stated. Every iteration is
