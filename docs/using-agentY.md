@@ -1509,6 +1509,13 @@ that runs on your machine — install only ones you trust.
 **OAuth servers** (Magnific ships preconfigured): click **Authorize…**, sign in,
 restart the agent.
 
+A Magnific creation the agent started is downloaded and dropped onto the canvas
+when it is ready. What Magnific says of it (prompt, model, the provider behind it,
+credits, its Magnific link) is kept in its `agent_metadata/<file>.agenty.json`,
+tagged `magnific` and the model, so the viewer's Dependencies tab can show where it
+came from. Files you download from Magnific yourself are recognised there too: by
+the model their content credentials (C2PA) name, and by "magnific" in their name.
+
 **Remotion** (motion-graphics video): ask the agent to make a Remotion video; its
 `remotion` skill offers to install the `remotion-mcp` server (the shell sandbox has
 no Node, so the server is what runs `npm` and renders).

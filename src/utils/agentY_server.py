@@ -568,7 +568,7 @@ def _copy_sidecar(src: str, staged_name: str) -> None:
     name to what the thing is.
     """
     try:
-        from src.utils.output_tags import read_sidecar, write_sidecar
+        from src.utils.output_tags import read_sidecar, write_generator, write_sidecar
         in_dir = _comfy_input_dir()
         if in_dir is None:
             return
@@ -580,8 +580,11 @@ def _copy_sidecar(src: str, staged_name: str) -> None:
         rec = read_sidecar(src)
         staged = in_dir / staged_name
         prov = rec.pop("provenance", None)
+        gen = rec.pop("generator", None)
         if rec.get("role"):
             write_sidecar(staged, rec.pop("role"), **rec)
+        if isinstance(gen, dict):
+            write_generator(staged, gen)
         if isinstance(prov, dict):
             _copy_provenance(src, staged, prov)
     except Exception as exc:  # noqa: BLE001
@@ -850,7 +853,23 @@ def _handle_magnific_complete(identifier: str, asset_url: str, kind: str,
         return None
     p = str(path)
     real_kind = "video" if _is_video_path(p) else "image" if _is_image_path(p) else (kind or "image")
+    # What Magnific said of it (prompt, model, provider, credits, link) goes beside the file, and beside
+    # its staged copy: the viewer's Dependencies tab tags it "magnific" + the model from there.
+    creation = dict((meta or {}).get("creation") or {"service": "magnific", "identifier": identifier})
+    creation.setdefault("web_url", (meta or {}).get("web_url", ""))
+    try:
+        from src.utils.output_tags import write_generator
+        write_generator(p, creation)
+    except Exception as exc:  # noqa: BLE001 - the record is never worth losing the result
+        logger.debug("magnific sidecar failed for %s: %s", p, exc)
     staged = _stage_into_comfy_input(p) if real_kind in ("image", "video") else None
+    if staged:
+        try:
+            in_dir = _comfy_input_dir()
+            if in_dir is not None:
+                write_generator(in_dir / staged, creation)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("magnific sidecar failed for the staged %s: %s", staged, exc)
     tid = (meta or {}).get("thread_id") or ""
     index = None
     if tid and real_kind in ("image", "video"):

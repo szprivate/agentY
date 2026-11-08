@@ -188,6 +188,11 @@ def _watch(identifier: str, meta: dict) -> None:
                 _emit_fail(identifier, meta, status)
                 return
             if status in _DONE and asset_url:
+                # The finished body in full (its download links' tokens masked): what Magnific says of a
+                # creation is kept beside the file (``creation``, written by the completion handler).
+                logger.info("magnific_watch[%s]: done body: %s", identifier,
+                            _mask_tokens(res.get("text") or ""))
+                meta = {**meta, "creation": creation_record(identifier, body, res.get("text") or "")}
                 _emit_done(identifier, meta, asset_url)
                 return
             if status in _DONE and not asset_url:
@@ -332,6 +337,84 @@ def _extract_status(body: object) -> Optional[str]:
         return None
     s = c.get("status") or c.get("state")
     return str(s).lower() if s else None
+
+
+_TOKEN_RE = re.compile(r"(?i)([?&](?:token|signature|sig|x-amz-[a-z-]+|expires|key)=)[^&\s\"']+")
+
+
+def _mask_tokens(text: str) -> str:
+    """*text* with the signed parts of its URLs masked (a download link's token is a credential)."""
+    return _TOKEN_RE.sub(r"\1<masked>", str(text or ""))
+
+
+def parse_metadata_block(text: str) -> dict:
+    """The ``metadata:`` block of a creations_get text body, one level deep::
+
+        metadata:
+          prompt: a fox in snow
+          mode: pro-2.0
+          api: bytedance
+          mediaCollection[0]:
+            url: ...
+
+    gives ``{"prompt": "a fox in snow", "mode": "pro-2.0", "api": "bytedance"}`` - the block's own
+    scalar keys; nested blocks (a media collection's urls) are left out."""
+    out: dict = {}
+    if not text or not isinstance(text, str):
+        return out
+    inside, indent = False, None
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        lead = len(line) - len(line.lstrip(" \t"))
+        if lead == 0:
+            inside = line.strip().rstrip(":").strip() == "metadata" and line.strip().endswith(":")
+            indent = None
+            continue
+        if not inside:
+            continue
+        if indent is None:
+            indent = lead
+        if lead != indent or ":" not in line:
+            continue
+        key, _, val = line.strip().partition(":")
+        val = val.strip().strip('"').strip()
+        if key and " " not in key and val and key not in out:
+            out[key] = val[:4000]
+    return out
+
+
+def creation_record(identifier: str, body, text: str) -> dict:
+    """What Magnific says of a finished creation, as the sidecar's ``generator`` key keeps it (the
+    Dependencies tab reads it: ComfyUI-ImageViewer ``deps_provenance.generator_of``)."""
+    top = body if isinstance(body, dict) else {}
+    md = top.get("metadata") if isinstance(top.get("metadata"), dict) else parse_metadata_block(text)
+
+    def pick(*keys, src=None):
+        src = md if src is None else src
+        for k in keys:
+            v = src.get(k)
+            if isinstance(v, (str, int, float)) and str(v).strip():
+                return str(v).strip()
+        return ""
+
+    rec = {
+        "service": "magnific",
+        "identifier": identifier,
+        "tool": pick("tool", src=top),
+        "kind": pick("kind", src=top),
+        "model": pick("mode", "model", "modelName"),
+        "provider": pick("api", "provider"),
+        "prompt": pick("prompt"),
+        "aspect_ratio": pick("aspectRatio"),
+        "duration": pick("duration"),
+        "resolution": pick("resolution"),
+        "credits": pick("credits"),
+        "created": pick("createdAt", src=top),
+        "family": pick("family", src=top),
+        "web_url": _mask_tokens(pick("webUrl", src=top)).replace("&amp;", "&"),
+    }
+    return {k: v for k, v in rec.items() if v}
 
 
 def _parse_kv_text(text: str) -> Optional[dict]:
