@@ -3,21 +3,21 @@
 #
 # Each sibling repository carries the same tag, and its `stable` branch points
 # at the commit named here.
-version = "1.24.0"
+version = "1.25.0"
 date = "2026-11-10"
 
 [repos."agentY-core"]
-tag = "v1.24.0"
-commit = "260becd78888f0e381007f572f1b03fee8714ccd"
+tag = "v1.25.0"
+commit = "60aeaccff0d294d4d3d6748f88e258d4558112bb"
 
 [repos."agentY-comfyuiConnect"]
-tag = "v1.24.0"
+tag = "v1.25.0"
 commit = "ce0087601afb77f6e5267ba01d95ecbbe0fa5055"
 
 [repos."agentY-mcp"]
-tag = "v1.24.0"
-commit = "8064b71ad2f1bacbb5db8842d702d726b9a772b2"
+tag = "v1.25.0"
+commit = "4c9c45ddcc2f63dfe2fc58d4f2998275919d150b"
 
 [repos."ComfyUI-ImageViewer"]
-tag = "v1.24.0"
-commit = "3b56287f95326142fef430c4f751e00528b0b841"
+tag = "v1.25.0"
+commit = "20e29d4c209445cb1d3a1f0d52f912ac7851a299"
