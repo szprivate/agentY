@@ -5249,6 +5249,25 @@ def _build_app():
         except ValueError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
 
+    # An Atlas Chisel picture the viewer asked for (its "Chisel this view" dialog in the 3D space, through
+    # ComfyUI): made by the core function the agent's atlas_chisel runs, delivered like an Atlas render.
+    from src.utils.atlas_chisel_jobs import AtlasChiselJobs as _AtlasChiselJobs
+    _atlas_chisel_jobs = _AtlasChiselJobs(deliver=_deliver_atlas_render)
+
+    @app.route("/agentY/atlas_chisel", methods=["GET", "POST", "OPTIONS"])
+    def atlas_chisel_route():
+        if request.method == "OPTIONS":
+            return "", 204
+        if request.method == "GET":
+            job = _atlas_chisel_jobs.get(request.args.get("id") or "")
+            if job is None:
+                return jsonify({"error": "unknown job"}), 404
+            return jsonify(_atlas_chisel_jobs.public(job))
+        try:
+            return jsonify({"ok": True, **_atlas_chisel_jobs.start(request.get_json(silent=True))})
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+
     # The dependency graph around one file, for the viewer's Dependencies tab (through ComfyUI: the viewer
     # has no agenty_core). Read-only: it reads sidecars and the .derived.json records, and writes only the
     # record of an older file it had to work out from its stored graph. See agenty_core.utils.dependencies.

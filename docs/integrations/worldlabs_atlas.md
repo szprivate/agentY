@@ -54,12 +54,23 @@ The viewer already loads glb/ply/splats, so no viewer change was needed. Atlas r
 
 ## New Atlas world from the viewer (no agent turn)
 The ComfyUI Image Viewer's 3D space has a "New Atlas world…" entry (3D menu) and a "New world" button (Previz panel):
-a prompt and / or up to 8 pictures (History selection, file picker, desktop drop), a name, the aspect ratio (prompt
+a prompt and / or up to 8 pictures (History selection, file picker, or dropped from Windows Explorer / the desktop /
+the History anywhere on the dialog), a name, the aspect ratio (prompt
 only) and the mesh detail. The viewer relays it through ComfyUI to this host's `/agentY/atlas_create`
 (`src/utils/atlas_create_jobs.py`), which runs `atlas_create_world` in a background job (its files go to no
 conversation) and then opens the world in the viewer's 3D space (`atlas_open_in_viewer`'s function), where the
 Previz panel's Atlas button paints new views. The page polls `GET /agentY/atlas_create?id=`. Needs agentY running
 and `WLT_API_KEY`; one billed Atlas task.
+
+**Chisel this view** (the Previz panel's "Chisel" button with an Atlas world open, or 3D › "Chisel this view…"): Atlas
+Chisel at the camera the viewer looks through, no agent turn. A prompt alone paints the view (the world's nearest
+views go along as context unless switched off); a picture of the view - the view as the 3D space draws it, or one
+dropped from Explorer / the History, e.g. an earlier Atlas render of that camera - is repainted, and with a mask
+painted over it in the dialog only that part changes (sent as white = change, which `atlas_chisel` turns into Atlas's
+white = keep). An optional style picture, a seed and "let Atlas expand the prompt" are there too. The viewer relays it
+to `/agentY/atlas_chisel` (`src/utils/atlas_chisel_jobs.py`), which runs the same `atlas_chisel` as the agent tool in
+a background job and delivers the picture like a viewer-asked Atlas render (canvas loader node, toast, the viewer's
+History). One billed Atlas task.
 
 ## Atlas Chisel (agent tool)
 `atlas_chisel(prompt, world, frame, camera, image_path, mask_path, mask_white_is, depth_path, z_min, z_max, fov,
