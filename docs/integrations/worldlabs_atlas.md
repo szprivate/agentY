@@ -23,7 +23,8 @@ Not a "prompt -> world" call. Every task is an async *operation* (`POST /tasks:<
 | `atlasGenerate` | posed RGBD `contextFrames`, `targetCameras` (exactly 1280x720), prompt, `returnDepth` | one new view per camera (+ depth), `promptUsed` |
 | `splats2Mesh` | a `.spz` asset | GLB mesh |
 | `posedImages2Splats` | >= 2 posed RGBD `posedFrames` (image, camera, linear-depth EXR, optional alpha mask), `refine`, `prompt` | a refined Gaussian splat (SPZ), see below |
-| `atlasMasked`, `atlasChisel` | inpainting / depth-guided generation | not wrapped |
+| `atlasChisel` | `targetFrames[]` (camera + optional picture / mask / depth, 1280x720), `contextFrames[]` (posed RGB photos), `styleReferenceImageAsset`, prompt, `voxelSize`, `modelParameters.seed` | one picture per target frame, `promptUsed` |
+| `atlasMasked` | inpainting | not wrapped (Chisel covers masked edits) |
 
 Also `/assets` (create from url/base64/upload URL, read URLs), `/operations` (list, cancel, trace), `/health`.
 Output URLs live 24 h (`:createReadUrl` makes a new one from the `assetId`); the tools download everything at once.
@@ -50,6 +51,21 @@ The viewer already loads glb/ply/splats, so no viewer change was needed. Atlas r
   as z-depth and scaling the 1024x578 camera to 1280x720 for targets is right.
 - `images2PosedRGBD` puts the camera at ~1.86 above a gravity-levelled origin; the base-frame transform absorbs it.
 - A prompt world is about 8 MB of GLB at stride 4 (34k vertices per view); stride 8 is a quarter of that.
+
+## Atlas Chisel (agent tool)
+`atlas_chisel(prompt, world, frame, camera, image_path, mask_path, mask_white_is, depth_path, z_min, z_max, fov,
+style_image, context, voxel_size, voxel_grid, seed, num_steps, enhance_prompt)` (`agenty_core/tools/atlas_chisel.py`)
+sends ONE target frame to `atlasChisel`. It follows the request shape World Labs changed in 2026-11: the target's
+camera and what is known there (picture, mask, depth) go in `targetFrames`; posed photos for materials and light go in
+`contextFrames` (formerly `sourceFrames`; the old per-target `contextFrames` + `targetCameras` are gone). `returnDepth`
+needs 2 - 256 targets, so the tool never asks for it. Pictures and masks are cover-resized / centre-cropped to
+1280 x 720; masks are thresholded and, by default (`mask_white_is="change"`), inverted into Atlas's white = keep. A
+camera of another size is rescaled onto the grid. With `world`, the camera works like `atlas_render_view`'s, `frame`
+edits that frame's picture at its camera, and the up-to-4 nearest other views go along as `contextFrames` (picture +
+camera); the result is noted under `chisel` in `world.json`. Files: `<world>/chisel/chisel_NNN.png` (no world:
+`<atlas root>/chisel/`) with sidecars. A timeout is resumable with `atlas_fetch(operation_id)`. Inputs are checked
+before the billed call (prompt, something to build on, mask needs a picture, log PNG needs `z_min`/`z_max`,
+`voxel_size` 0 - 0.4). Mock-tested only; not run live yet.
 
 ## Render a view (agent tool and viewer button)
 `atlas_render_view(world, camera, upscale=0|2|4, add_to_world, depth, fov, prompt)` (`agenty_core/tools/atlas_render.py`)
@@ -188,7 +204,7 @@ Atlas reports no per-task cost (`posedImages2Splats` has a documented flat price
 reader), `api`.
 
 ## Not done / assumptions
-`atlasMasked` / `atlasChisel` are not wrapped; `splats2Mesh` and the `.spz` upload path are only mock-tested; the
+`atlasMasked` is not wrapped and `atlas_chisel` is only mock-tested; `splats2Mesh` and the `.spz` upload path are only mock-tested; the
 multi-image `images2PosedRGBD` reconstruction and `atlas_expand_world` with several moves were not run live beyond one
 view; GLB loading in the ComfyUI Image Viewer itself was not exercised (the GLB parses in trimesh / pygltflib).
 
