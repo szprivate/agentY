@@ -101,6 +101,10 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
                 "atlas_rebuild_world_mesh", "atlas_splat_to_mesh", "atlas_fetch", "atlas_list",
                 "atlas_render_view", "atlas_open_in_viewer", "atlas_chisel", "atlas_capture_around", "train_splat",
                 "splat_training_status", "atlas_views_to_splat", "marble_create_world", "marble_export")),
+    "characters": ("rig and animate a character in the viewer's 3D scene: controls (FK / IK), auto-rig a model with "
+                   "no skeleton (UniRig), AI motion from text and AI in-betweens between keyed poses (Kimodo), pin the "
+                   "feet, export FBX / Alembic (read the `character-animation` skill first)",
+                   ("animate_character",)),
     "dcc": ("model a building / object / room in Blender, Maya or Houdini from a reference photo: run the one "
             "build script (live in the open app, or headless in batch) and check the silhouette by numbers; measure the photo with MoGe "
             "(read the `model-from-reference` skill first); destroy a model in Houdini with a rigid-body sim, dust, smoke and cloth "

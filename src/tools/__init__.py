@@ -185,6 +185,9 @@ from agenty_core.tools.edit_cut import edit_cut  # noqa: F401,E402
 from agenty_core.tools.edit_image import edit_image  # noqa: F401,E402
 # Fly a camera through a 3D scene in the viewer and render the move (agenty_core.tools.previz_shot).
 from agenty_core.tools.previz_shot import render_camera_move  # noqa: F401,E402
+# Rig and animate a character in the viewer's 3D scene (agenty_core.tools.animate_character): controls,
+# UniRig auto-rig, Kimodo motion from text and in-betweens, feet clean-up, FBX / Alembic export.
+from agenty_core.tools.animate_character import animate_character  # noqa: F401,E402
 # Editable motion graphics: a scene file (data) checked, previewed and rendered with Remotion.
 from agenty_core.tools.motion_graphics import mg_scene_validate, mg_scene_preview_frame, mg_render  # noqa: F401,E402
 # A 3D scene from a picture or a prompt with World Labs Atlas (agenty_core.tools.worldlabs_atlas).
@@ -301,6 +304,8 @@ _SHARED_CORE_TOOLS = [
     "edit_image",
     # animate a camera through a 3D scene in the viewer and render the move
     "render_camera_move",
+    # rig and animate a character in the viewer's 3D scene (AI motion, in-betweens, export)
+    "animate_character",
     # editable motion graphics: write a *.mgscene.json scene, check it, look at stills, render it with Remotion
     "mg_scene_validate", "mg_scene_preview_frame", "mg_render",
     # a 3D scene from a picture / prompt with World Labs Atlas
@@ -708,6 +713,7 @@ ORCHESTRATOR_TOOLS: list = [
     edit_cut,            # read / change the cut in the viewer's Edit panel: a VO at 8 s on A2, trims, removals
     edit_image,          # read / change a picture in layers in the viewer's Paint tab: a result back as a masked layer
     render_camera_move,  # fly a camera through a 3D scene in the viewer, render the move (control video)
+    animate_character,   # rig / auto-rig / AI motion and in-betweens / clean feet / FBX-Alembic export of a character
     mg_scene_validate,   # motion graphics: check a *.mgscene.json scene
     mg_scene_preview_frame,  # ... look at stills / a contact sheet of it
     mg_render,           # ... render it to a video with the generic Remotion renderer
