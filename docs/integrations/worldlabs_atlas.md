@@ -52,6 +52,28 @@ The viewer already loads glb/ply/splats, so no viewer change was needed. Atlas r
 - `images2PosedRGBD` puts the camera at ~1.86 above a gravity-levelled origin; the base-frame transform absorbs it.
 - A prompt world is about 8 MB of GLB at stride 4 (34k vertices per view); stride 8 is a quarter of that.
 
+## New Atlas world from the viewer (no agent turn)
+The ComfyUI Image Viewer's 3D space has a "New Atlas world…" entry (3D menu) and a "New world" button (Previz panel):
+a prompt and / or up to 8 pictures (History selection, file picker, or dropped from Windows Explorer / the desktop /
+the History anywhere on the dialog), a name, the aspect ratio (prompt
+only) and the mesh detail. The viewer relays it through ComfyUI to this host's `/agentY/atlas_create`
+(`src/utils/atlas_create_jobs.py`), which runs `atlas_create_world` in a background job (its files go to no
+conversation) and then opens the world in the viewer's 3D space (`atlas_open_in_viewer`'s function), where the
+Previz panel's Atlas button paints new views. The page polls `GET /agentY/atlas_create?id=`. Needs agentY running
+and `WLT_API_KEY`; one billed Atlas task.
+
+**Chisel this view** (the Previz panel's "Chisel" button with an Atlas world open, or 3D › "Chisel this view…"): Atlas
+Chisel at the camera the viewer looks through, no agent turn. It builds the picture on the 3D space's geometry
+from that camera: the viewer renders a depth map of the world mesh and every box or model placed there, and sends it
+as a log-depth PNG with its z_min / z_max (switchable; a "Loosen" slider sets `voxel_size` for rough blockouts). A
+prompt with that geometry paints the view (the world's nearest views go along as context unless switched off); a picture of the view - the view as the 3D space draws it, or one
+dropped from Explorer / the History, e.g. an earlier Atlas render of that camera - is repainted, and with a mask
+painted over it in the dialog only that part changes (sent as white = change, which `atlas_chisel` turns into Atlas's
+white = keep). An optional style picture, a seed and "let Atlas expand the prompt" are there too. The viewer relays it
+to `/agentY/atlas_chisel` (`src/utils/atlas_chisel_jobs.py`), which runs the same `atlas_chisel` as the agent tool in
+a background job and delivers the picture like a viewer-asked Atlas render (canvas loader node, toast, the viewer's
+History). One billed Atlas task.
+
 ## Atlas Chisel (agent tool)
 `atlas_chisel(prompt, world, frame, camera, image_path, mask_path, mask_white_is, depth_path, z_min, z_max, fov,
 style_image, context, voxel_size, voxel_grid, seed, num_steps, enhance_prompt)` (`agenty_core/tools/atlas_chisel.py`)
