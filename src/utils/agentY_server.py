@@ -5268,6 +5268,25 @@ def _build_app():
         except ValueError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
 
+    # A Gaussian splat of an Atlas world the viewer asked for (its Atlas menu's "Export Gaussian splat…", through
+    # ComfyUI): the core function the agent's atlas_views_to_splat runs. Dry run (price) answered at once.
+    from src.utils.atlas_splat_jobs import AtlasSplatJobs as _AtlasSplatJobs
+    _atlas_splat_jobs = _AtlasSplatJobs()
+
+    @app.route("/agentY/atlas_splat", methods=["GET", "POST", "OPTIONS"])
+    def atlas_splat_route():
+        if request.method == "OPTIONS":
+            return "", 204
+        if request.method == "GET":
+            job = _atlas_splat_jobs.get(request.args.get("id") or "")
+            if job is None:
+                return jsonify({"error": "unknown job"}), 404
+            return jsonify(_atlas_splat_jobs.public(job))
+        try:
+            return jsonify({"ok": True, **_atlas_splat_jobs.start(request.get_json(silent=True))})
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+
     # The dependency graph around one file, for the viewer's Dependencies tab (through ComfyUI: the viewer
     # has no agenty_core). Read-only: it reads sidecars and the .derived.json records, and writes only the
     # record of an older file it had to work out from its stored graph. See agenty_core.utils.dependencies.
