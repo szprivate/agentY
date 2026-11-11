@@ -1,6 +1,6 @@
 ---
 name: character-animation
-description: Rig and animate a character in the ComfyUI Image Viewer's 3D space - controls on a skinned model, auto-rig a model with no skeleton (UniRig), AI motion from a text prompt and AI in-betweens between keyed poses (NVIDIA Kimodo), feet pinned to the floor, motion restyled ("make the walk sneaky"), motion from a film, lip sync from a sound, AI takes on animation layers, constraints, the pose library, FBX / Alembic export. Use for "make the walk look tired", "restyle this as a march", "copy the dance from this video onto the hero", "lip sync her to this line", "put that on a new layer", "constrain the cup to his right hand", "save this pose", "apply the run pose", "rig this character", "add controls", "auto-rig the creature", "make him walk forward and wave", "animate the hero from frame 0 to 96", "fill in the motion between my two poses", "in-between these keys", "clean up the foot sliding", "export the character as FBX / Alembic".
+description: Rig and animate a character in the ComfyUI Image Viewer's 3D space - controls on a skinned model, auto-rig a model with no skeleton (UniRig), AI motion from a text prompt and AI in-betweens between keyed poses (NVIDIA Kimodo), feet pinned to the floor, motion restyled ("make the walk sneaky"), motion from a film, lip sync from a sound, AI takes on animation layers, constraints, the pose library, FBX / Alembic export. Use for "make the walk look tired", "restyle this as a march", "copy the dance from this video onto the hero", "lip sync her to this line", "put that on a new layer", "constrain the cup to his right hand", "save this pose", "apply the run pose", "pose him sitting with arms crossed", "make her kneel", "rig this character", "add controls", "auto-rig the creature", "make him walk forward and wave", "animate the hero from frame 0 to 96", "fill in the motion between my two poses", "in-between these keys", "clean up the foot sliding", "export the character as FBX / Alembic".
 allowed-tools: animate_character get_viewer_state show_in_viewer
 ---
 
@@ -44,6 +44,18 @@ Pick the model by its name; with one model in the scene the name can be left out
     (`options={"driven": ..}`), `"bake_constraints"` (keys them and removes them).
 11. **Pose library**: `"pose_save"` / `"pose_apply"` / `"pose_delete"` with `name`, `"pose_list"`,
     `"flip_pose"` (mirror the whole body). `options={"mirror": true, "blend": 0.5}` on apply.
+12. **One pose** ("pose him sitting with arms crossed", "make her kneel", "raise his left arm"):
+    `action="pose", from_frame=<frame>, options={"preset": ["sit", "arms_crossed"], "joints": {...}}` keys ONE
+    pose on that frame (no motion model needed). Presets are laid over each other in order (`"pose_presets"`
+    lists them with the parts and moves): stand, a_pose, t_pose, arms_up, arms_forward, arms_crossed,
+    hands_on_hips, hands_behind_head, wave, point, think, sit, sit_floor, kneel, kneel_both, crouch,
+    lie_back, lie_front. `joints` adjusts or builds on them, degrees from the T-pose in the parent's frame:
+    `{"head": {"turn": 30, "bend": 10}, "upperArm.L": {"down": -60}, "lowerArm.L": {"bend": 45},
+    "knees": {"bend": 20}}` (a part without ".L"/".R" is both sides, mirrored; upperArm down 90 = hanging,
+    negative = raised; upperLeg forward 90 = thigh level). The body is put on the floor by itself;
+    `"hips": {"height": 0.5}` overrides. A pose for each of several frames, then `inbetween`, is
+    pose-to-pose animation. With only a `prompt` (Kimodo set up) the pose comes from text instead. The
+    answer's `not_understood` lists parts / moves it ignored: fix and retry rather than ignoring it.
 
 A feature the viewer does not have yet answers "... are not in this viewer yet": pass that on (the viewer
 needs updating). Errors to pass on as they are: "AI motion is not set up" / "Auto-rigging is not set up" / "Motion from video is not set up" mean the tools are
