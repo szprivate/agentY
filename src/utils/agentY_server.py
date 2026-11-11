@@ -5287,6 +5287,21 @@ def _build_app():
         except ValueError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
 
+    # An Atlas world's mesh built again from its depth maps (the viewer's Atlas menu "Rebuild mesh", through
+    # ComfyUI): offline, no cost. See src.utils.atlas_rebuild.
+    @app.route("/agentY/atlas_rebuild", methods=["POST", "OPTIONS"])
+    def atlas_rebuild_route():
+        if request.method == "OPTIONS":
+            return "", 204
+        from src.utils.atlas_rebuild import rebuild as _rebuild_mesh
+        try:
+            return jsonify(_rebuild_mesh(request.get_json(silent=True)))
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        except Exception as exc:  # noqa: BLE001 - an AtlasError (no depth to mesh) and friends
+            msg = getattr(exc, "message", None) or str(exc)
+            return jsonify({"ok": False, "error": msg}), 422
+
     # The dependency graph around one file, for the viewer's Dependencies tab (through ComfyUI: the viewer
     # has no agenty_core). Read-only: it reads sidecars and the .derived.json records, and writes only the
     # record of an older file it had to work out from its stored graph. See agenty_core.utils.dependencies.
