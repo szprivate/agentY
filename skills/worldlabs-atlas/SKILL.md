@@ -1,7 +1,7 @@
 ---
 name: worldlabs-atlas
 description: Make a 3D scene from a picture or a text prompt with World Labs Atlas (a depth mesh in the picture's camera), grow it with new views, use it as the set for render_camera_move, and render single new views of it from any camera (consistent backgrounds). Use for "turn this image into a 3D world with Atlas / World Labs", "make a courtyard world from a prompt", "extend the scene sideways", "image to Atlas world to camera move to control video", "same room from another angle", "a new shot of this background", "render this view with Atlas", "a full 360 environment", "make a Gaussian splat of this place", "splat from the Atlas views", "explorable 3D scene from this picture", "make a splat in Marble", "Marble world from these images", "export the splat as SPZ / PLY", "splat to mesh".
-allowed-tools: atlas_create_world atlas_expand_world atlas_rebuild_world_mesh atlas_splat_to_mesh atlas_fetch atlas_list atlas_render_view atlas_open_in_viewer atlas_capture_around atlas_views_to_splat train_splat splat_training_status marble_create_world marble_export render_camera_move show_in_viewer
+allowed-tools: atlas_create_world atlas_expand_world atlas_rebuild_world_mesh atlas_splat_to_mesh atlas_fetch atlas_list atlas_render_view atlas_chisel atlas_open_in_viewer atlas_capture_around atlas_views_to_splat train_splat splat_training_status marble_create_world marble_export render_camera_move show_in_viewer
 ---
 
 # World Labs Atlas: picture or prompt -> 3D scene -> camera move
@@ -38,6 +38,16 @@ so say what you are about to spend (one call = one task) and do not loop.
      picture (LTX 2.5 i2v, the Layout-To-Render first frame, MiniMax H3 r2v reference);
    - several establishing angles of one set, before the clips are made;
    - upscale 2 or 4 when the picture goes on as a first frame (1280x720 is the model's native size).
+5. **Edit a picture, or paint one from a blockout (Atlas Chisel).** `atlas_chisel(prompt, ...)` makes ONE
+   1280x720 picture; one call = one billed task.
+   - Masked edit: `image_path` (or `world` + `frame`) + `mask_path` + a prompt saying what to do
+     ("remove the fence and continue the meadow"). Mask white = change, black = keep (pass
+     `mask_white_is="keep"` for the opposite).
+   - From depth: `depth_path` = a planar depth pass of a 3D blockout (linear `.exr`, or a log-depth `.png`
+     with `z_min` / `z_max`, white nearest, 0 = sky) + a scene prompt, with the camera / `fov` it was
+     rendered with. `voxel_size` 0.05 - 0.15 loosens a rough blockout.
+   - `style_image` matches a look; with `world` the nearest views go along as context so it stays the
+     same place. Output lands in `chisel/` (under the world, or the Atlas root), on the canvas and in the viewer.
    Keep each camera a believable step (a few metres, under ~60 degrees of turn) from an existing view:
    Atlas invents what no view showed, and a far jump drifts. For a far camera, step there with
    `add_to_world=true` renders, or `atlas_expand_world`.

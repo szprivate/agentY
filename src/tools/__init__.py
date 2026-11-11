@@ -193,6 +193,8 @@ from agenty_core.tools.worldlabs_atlas import (  # noqa: F401,E402
 )
 # Render one new view of an Atlas world at a camera, optionally upscaled; open a world in the viewer.
 from agenty_core.tools.atlas_render import atlas_render_view, atlas_open_in_viewer  # noqa: F401,E402
+# Masked edits / depth-guided pictures with World Labs Atlas Chisel.
+from agenty_core.tools.atlas_chisel import atlas_chisel  # noqa: F401,E402
 # A camera MOVE through an Atlas world with Atlas-painted keyframes (paid; dry_run prices it).
 from agenty_core.tools.atlas_camera_move import atlas_render_camera_move  # noqa: F401,E402
 # Capture an Atlas world all round; train a Gaussian splat from posed views locally (Brush).
@@ -303,7 +305,7 @@ _SHARED_CORE_TOOLS = [
     "mg_scene_validate", "mg_scene_preview_frame", "mg_render",
     # a 3D scene from a picture / prompt with World Labs Atlas
     "atlas_create_world", "atlas_expand_world", "atlas_rebuild_world_mesh", "atlas_splat_to_mesh",
-    "atlas_fetch", "atlas_list", "atlas_render_view", "atlas_open_in_viewer", "atlas_render_camera_move",
+    "atlas_fetch", "atlas_list", "atlas_render_view", "atlas_open_in_viewer", "atlas_render_camera_move", "atlas_chisel",
     # all-round Atlas capture, and a Gaussian splat trained from it (local, Brush)
     "atlas_capture_around", "train_splat", "splat_training_status",
     # a splat built by World Labs from the posed views (posedImages2Splats)
@@ -716,6 +718,7 @@ ORCHESTRATOR_TOOLS: list = [
     atlas_fetch,         # collect an Atlas job that timed out
     atlas_list,
     atlas_render_view,   # one new view of an Atlas world at a camera (+ optional upscale): consistent backgrounds
+    atlas_chisel,        # Atlas Chisel: masked edit of a picture / picture from a depth blockout (paid)
     atlas_open_in_viewer,  # open an Atlas world in the viewer's 3D view for the user to pick a camera
     atlas_render_camera_move,  # a camera move through an Atlas world, Atlas-painted keyframes (paid; dry_run prices it)
     atlas_capture_around,  # Atlas views all round a place (for a 360 environment / splat)
