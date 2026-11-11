@@ -52,6 +52,15 @@ The viewer already loads glb/ply/splats, so no viewer change was needed. Atlas r
 - `images2PosedRGBD` puts the camera at ~1.86 above a gravity-levelled origin; the base-frame transform absorbs it.
 - A prompt world is about 8 MB of GLB at stride 4 (34k vertices per view); stride 8 is a quarter of that.
 
+## New Atlas world from the viewer (no agent turn)
+The ComfyUI Image Viewer's 3D space has a "New Atlas world…" entry (3D menu) and a "New world" button (Previz panel):
+a prompt and / or up to 8 pictures (History selection, file picker, desktop drop), a name, the aspect ratio (prompt
+only) and the mesh detail. The viewer relays it through ComfyUI to this host's `/agentY/atlas_create`
+(`src/utils/atlas_create_jobs.py`), which runs `atlas_create_world` in a background job (its files go to no
+conversation) and then opens the world in the viewer's 3D space (`atlas_open_in_viewer`'s function), where the
+Previz panel's Atlas button paints new views. The page polls `GET /agentY/atlas_create?id=`. Needs agentY running
+and `WLT_API_KEY`; one billed Atlas task.
+
 ## Atlas Chisel (agent tool)
 `atlas_chisel(prompt, world, frame, camera, image_path, mask_path, mask_white_is, depth_path, z_min, z_max, fov,
 style_image, context, voxel_size, voxel_grid, seed, num_steps, enhance_prompt)` (`agenty_core/tools/atlas_chisel.py`)

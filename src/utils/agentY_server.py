@@ -5230,6 +5230,25 @@ def _build_app():
         except ValueError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
 
+    # A new Atlas world the viewer asked for (its "New Atlas world" dialog in the 3D space, through ComfyUI):
+    # made by the core function the agent's atlas_create_world runs, then opened in the viewer. No agent turn.
+    from src.utils.atlas_create_jobs import AtlasCreateJobs as _AtlasCreateJobs
+    _atlas_create_jobs = _AtlasCreateJobs()
+
+    @app.route("/agentY/atlas_create", methods=["GET", "POST", "OPTIONS"])
+    def atlas_create():
+        if request.method == "OPTIONS":
+            return "", 204
+        if request.method == "GET":
+            job = _atlas_create_jobs.get(request.args.get("id") or "")
+            if job is None:
+                return jsonify({"error": "unknown job"}), 404
+            return jsonify(_atlas_create_jobs.public(job))
+        try:
+            return jsonify({"ok": True, **_atlas_create_jobs.start(request.get_json(silent=True))})
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+
     # The dependency graph around one file, for the viewer's Dependencies tab (through ComfyUI: the viewer
     # has no agenty_core). Read-only: it reads sidecars and the .derived.json records, and writes only the
     # record of an older file it had to work out from its stored graph. See agenty_core.utils.dependencies.
