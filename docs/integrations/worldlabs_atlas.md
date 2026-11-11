@@ -63,8 +63,10 @@ Previz panel's Atlas button paints new views. The page polls `GET /agentY/atlas_
 and `WLT_API_KEY`; one billed Atlas task.
 
 **Chisel this view** (the Previz panel's "Chisel" button with an Atlas world open, or 3D › "Chisel this view…"): Atlas
-Chisel at the camera the viewer looks through, no agent turn. A prompt alone paints the view (the world's nearest
-views go along as context unless switched off); a picture of the view - the view as the 3D space draws it, or one
+Chisel at the camera the viewer looks through, no agent turn. It builds the picture on the 3D space's geometry
+from that camera: the viewer renders a depth map of the world mesh and every box or model placed there, and sends it
+as a log-depth PNG with its z_min / z_max (switchable; a "Loosen" slider sets `voxel_size` for rough blockouts). A
+prompt with that geometry paints the view (the world's nearest views go along as context unless switched off); a picture of the view - the view as the 3D space draws it, or one
 dropped from Explorer / the History, e.g. an earlier Atlas render of that camera - is repainted, and with a mask
 painted over it in the dialog only that part changes (sent as white = change, which `atlas_chisel` turns into Atlas's
 white = keep). An optional style picture, a seed and "let Atlas expand the prompt" are there too. The viewer relays it

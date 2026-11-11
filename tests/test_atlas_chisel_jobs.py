@@ -60,17 +60,25 @@ class ChiselJobTests(unittest.TestCase):
                           seen["enhance_prompt"], seen["context"], seen["style_image"]),
                          ("C:/w", CAM, img, mask, 7, False, None, ""))
 
-    def test_prompt_only_without_context_and_errors_are_kept(self):
+    def test_on_the_scene_depth_without_context_and_errors_are_kept(self):
         seen = {}
         jobs = AtlasChiselJobs(run=lambda **kw: seen.update(kw) or json.dumps(
             {"error": "out of credits", "error_kind": "billing", "operation_id": "op1"}))
-        job = jobs.start({"world": "C:/w", "camera": CAM, "prompt": "night", "context": False})
-        self.assertEqual(job["mode"], "paint")
-        done = wait(jobs, job["id"])
+        with tempfile.TemporaryDirectory() as d:
+            depth = os.path.join(d, "chisel_depth.png")
+            open(depth, "wb").write(b"x")
+            for bad in ({}, {"depth_path": depth}, {"depth_path": depth, "z_min": 5, "z_max": 2},
+                        {"depth_path": depth, "z_min": 0, "z_max": 2}):
+                with self.assertRaises(ValueError, msg=bad):
+                    jobs.start({"world": "C:/w", "camera": CAM, "prompt": "night", **bad})
+            job = jobs.start({"world": "C:/w", "camera": CAM, "prompt": "night", "context": False,
+                              "depth_path": depth, "z_min": "0.5", "z_max": 40, "voxel_size": 3})
+            self.assertEqual(job["mode"], "depth")
+            done = wait(jobs, job["id"])
         self.assertEqual((done["state"], done["message"], done["error_kind"], done["operation_id"]),
                          ("error", "out of credits", "billing", "op1"))
-        self.assertEqual((seen["context"], seen["seed"]), ([], -1))
-
+        self.assertEqual((seen["context"], seen["seed"], seen["depth_path"], seen["z_min"], seen["z_max"],
+                          seen["voxel_size"], seen["image_path"]), ([], -1, depth, 0.5, 40.0, 0.4, ""))
 
 if __name__ == "__main__":
     unittest.main()

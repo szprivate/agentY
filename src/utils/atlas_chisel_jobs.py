@@ -1,7 +1,8 @@
 """Atlas Chisel pictures the viewer asked for: one background job each, polled by id.
 
 The ComfyUI Image Viewer's "Chisel this view" dialog (3D space) posts the camera it is looking through, a
-prompt and, optionally, a picture of that view with a painted mask and a style picture. The viewer runs
+prompt, the 3D space's depth from that camera (a log-depth PNG the viewer wrote, with z_min / z_max: what the
+picture is built on) and, optionally, a picture of that view with a painted mask and a style picture. The viewer runs
 inside ComfyUI's Python (no ``agenty_core``, no World Labs key), so ComfyUI forwards the request to this
 host. The picture is made by the core function the agent's ``atlas_chisel`` tool runs, with the world's
 nearest views as context, and handed to ``deliver`` (the host's out-of-turn delivery, as for Atlas renders)
@@ -38,20 +39,35 @@ def _clean(body) -> dict:
     if not prompt:
         raise ValueError("say what Atlas should paint or change")
     paths = {}
-    for k in ("image_path", "mask_path", "style_image"):
+    for k in ("image_path", "mask_path", "style_image", "depth_path"):
         p = str(body.get(k) or "").strip()
         if p and not os.path.isfile(p):
             raise ValueError(f"no such picture: {os.path.basename(p)}")
         paths[k] = p
     if paths["mask_path"] and not paths["image_path"]:
         raise ValueError("a mask needs the picture it was painted on")
+    if not paths["image_path"] and not paths["depth_path"]:
+        raise ValueError("give Chisel something to build on: the scene's depth or a picture")
+    z_min = z_max = 0.0
+    if paths["depth_path"]:
+        try:
+            z_min, z_max = float(body.get("z_min")), float(body.get("z_max"))
+        except (TypeError, ValueError):
+            raise ValueError("a depth picture needs z_min and z_max")
+        if not 0 < z_min < z_max:
+            raise ValueError("z_min and z_max must be 0 < z_min < z_max")
+    try:
+        voxel = min(max(float(body.get("voxel_size") or 0.0), 0.0), 0.4)
+    except (TypeError, ValueError):
+        raise ValueError("voxel_size must be a number")
     try:
         seed = int(body.get("seed") if body.get("seed") not in (None, "") else -1)
     except (TypeError, ValueError):
         raise ValueError("seed must be a whole number")
     return {"world": world, "camera": {"viewer": dict(camera["viewer"])}, "prompt": prompt, **paths,
             "context": None if body.get("context", True) is not False else [],
-            "seed": seed if seed >= 0 else -1, "enhance_prompt": body.get("enhance_prompt", True) is not False}
+            "seed": seed if seed >= 0 else -1, "enhance_prompt": body.get("enhance_prompt", True) is not False,
+            "z_min": z_min, "z_max": z_max, "voxel_size": voxel}
 
 
 class AtlasChiselJobs:
@@ -69,9 +85,9 @@ class AtlasChiselJobs:
 
     def start(self, body) -> dict:
         args = _clean(body)
-        mode = "edit" if args["mask_path"] else ("restyle" if args["image_path"] else "paint")
+        mode = "edit" if args["mask_path"] else ("restyle" if args["image_path"] else "depth")
         phase = {"edit": "Atlas is changing the masked part", "restyle": "Atlas is repainting the picture",
-                 "paint": "Atlas is painting the view"}[mode]
+                 "depth": "Atlas is painting the view on the scene's geometry"}[mode]
         job = {"id": uuid.uuid4().hex[:12], "state": "running", "phase": phase, "mode": mode,
                "world": args["world"], "created": time.time(), "message": "", "path": None, "result": None}
         with self._lock:
