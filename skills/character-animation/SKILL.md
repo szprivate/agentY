@@ -1,6 +1,6 @@
 ---
 name: character-animation
-description: Rig and animate a character in the ComfyUI Image Viewer's 3D space - controls on a skinned model, auto-rig a model with no skeleton (UniRig), AI motion from a text prompt and AI in-betweens between keyed poses (NVIDIA Kimodo), feet pinned to the floor, motion restyled ("make the walk sneaky"), motion from a film, lip sync from a sound, AI takes on animation layers, constraints, the pose library, FBX / Alembic export. Use for "make the walk look tired", "restyle this as a march", "copy the dance from this video onto the hero", "lip sync her to this line", "put that on a new layer", "constrain the cup to his right hand", "save this pose", "apply the run pose", "pose him sitting with arms crossed", "make her kneel", "rig this character", "add controls", "auto-rig the creature", "make him walk forward and wave", "animate the hero from frame 0 to 96", "fill in the motion between my two poses", "in-between these keys", "clean up the foot sliding", "export the character as FBX / Alembic".
+description: Rig and animate a character in the ComfyUI Image Viewer's 3D space - controls on a skinned model, auto-rig a model with no skeleton (UniRig), AI motion from a text prompt and AI in-betweens between keyed poses (NVIDIA Kimodo), feet pinned to the floor, motion restyled ("make the walk sneaky"), motion from a film, lip sync from a sound, AI takes on animation layers, constraints, the pose library, FBX / Alembic export. Use for "make the walk look tired", "restyle this as a march", "copy the dance from this video onto the hero", "lip sync her to this line", "put that on a new layer", "constrain the cup to his right hand", "save this pose", "apply the run pose", "pose him sitting with arms crossed", "make her kneel", "pose him like in this photo", "put her hand on the floor", "rig this character", "add controls", "auto-rig the creature", "make him walk forward and wave", "animate the hero from frame 0 to 96", "fill in the motion between my two poses", "in-between these keys", "clean up the foot sliding", "export the character as FBX / Alembic".
 allowed-tools: animate_character get_viewer_state show_in_viewer
 ---
 
@@ -33,6 +33,10 @@ Pick the model by its name; with one model in the scene the name can be left out
 7. **Motion from a film** (humanoids): `action="video_motion", media_path="<film>"` tracks one person (whole
    body in view, still camera) and keys it from `from_frame`. `options={"clean": true}` smooths it with
    Kimodo, `{"in_place": true}` for a moving camera, `film_from` / `film_to` for part of the film.
+   `{"via": "sam3d"}` reads the film with ComfyUI's SAM 3D Body nodes (better on hard poses, needs its
+   weights in models/detection), `"mediapipe"` with MediaPipe; `"auto"` (default) takes SAM 3D Body when it
+   is there. The answer's `read_with` says which read it. `{"fov": 50}` is the camera's vertical field of
+   view in degrees, when known.
 8. **Lip sync**: `action="lipsync", media_path="<sound or film>"` keys the mouth's blendshapes (ARKit,
    visemes, or one mouth-open shape) from `from_frame`. A character with no mouth shapes cannot: say so.
    It is read from the sound, not word by word - offer to tidy keys by hand.
@@ -56,6 +60,15 @@ Pick the model by its name; with one model in the scene the name can be left out
     `"hips": {"height": 0.5}` overrides. A pose for each of several frames, then `inbetween`, is
     pose-to-pose animation. With only a `prompt` (Kimodo set up) the pose comes from text instead. The
     answer's `not_understood` lists parts / moves it ignored: fix and retry rather than ignoring it.
+    - **Touching the floor** ("a hand on the ground", "a plank", "kneeling on one knee"): `options={"contacts":
+      ["foot.L", "hand.R"]}` puts those parts ON the floor, the first one setting the body's height (hand,
+      foot or knee, ".L" / ".R"); `{"part": "right hand", "under": true}` puts it straight below its
+      shoulder / hip. Elbows and knees bend one way only and every joint stays in a natural range
+      (`"limits": false` turns that off - only when the user asks for something a body cannot do).
+    - **From a picture** ("pose him like in this photo"): `media_path="<picture of a person>"` reads the
+      whole pose off it; contacts and limits still apply. `options={"via": "sam3d" | "mediapipe" | "auto"}`
+      as for a film, `"fov"` the picture's vertical field of view, `"facing": "picture"` also turns the
+      character the way the person is turned (default: it keeps facing where it faced).
 
 A feature the viewer does not have yet answers "... are not in this viewer yet": pass that on (the viewer
 needs updating). Errors to pass on as they are: "AI motion is not set up" / "Auto-rigging is not set up" / "Motion from video is not set up" mean the tools are
