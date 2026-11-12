@@ -104,8 +104,10 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
                 "echo_create_world", "echo_export")),
     "characters": ("rig and animate a character in the viewer's 3D scene: controls (FK / IK), auto-rig a model with "
                    "no skeleton (UniRig), AI motion from text and AI in-betweens between keyed poses (Kimodo), pin the "
-                   "feet, export FBX / Alembic (read the `character-animation` skill first)",
-                   ("animate_character",)),
+                   "feet, export FBX / Alembic / USD; the 3D scene around it: clips in the Clip Sequencer, cameras, a "
+                   "turntable of each clip, renders and playblasts, keys, layers, IK/FK, set-driven keys (read the "
+                   "`character-animation` skill first)",
+                   ("animate_character", "animate_scene", "render_turntables")),
     "dcc": ("model a building / object / room in Blender, Maya or Houdini from a reference photo: run the one "
             "build script (live in the open app, or headless in batch) and check the silhouette by numbers; measure the photo with MoGe "
             "(read the `model-from-reference` skill first); destroy a model in Houdini with a rigid-body sim, dust, smoke and cloth "

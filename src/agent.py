@@ -1062,7 +1062,8 @@ _ORCH_SKILL_NAMES = [
     "show-in-viewer",
     # Picture -> 3D scene -> camera move -> control video.
     "camera-move-control",
-    # Rigging and animating a character in the viewer's 3D space (animate_character).
+    # Rigging and animating a character, clips, cameras and turntables in the viewer's 3D space
+    # (animate_character, animate_scene, render_turntables).
     "character-animation",
     # World Labs Atlas: picture / prompt -> 3D scene mesh.
     "worldlabs-atlas",
