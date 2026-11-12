@@ -96,11 +96,12 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
                ("arrange_canvas", "group_canvas_nodes", "auto_group_canvas", "save_canvas_workflow")),
     "worlds": ("build a walkable 3D world from reference images, and fly a camera through a 3D scene "
                "to render a camera move (read the `camera-move-control` skill first); make a 3D scene "
-               "with World Labs Atlas from a picture or a prompt, render new views of it from any camera; edit a picture with a mask or paint one from a depth blockout (Atlas Chisel); capture a place all round and have World Labs build a Gaussian splat from it (or train one locally), or make a ready splat world with World Labs Marble and export SPZ / PLY (read the `worldlabs-atlas` skill first)",
+               "with World Labs Atlas from a picture or a prompt, render new views of it from any camera; edit a picture with a mask or paint one from a depth blockout (Atlas Chisel); capture a place all round and have World Labs build a Gaussian splat from it (or train one locally), or make a ready splat world with World Labs Marble and export SPZ / PLY, or with SpAItial Echo (the second world generator) from one picture, a panorama or a prompt (read the `worldlabs-atlas` skill first)",
                ("run_world_builder", "render_camera_move", "atlas_create_world", "atlas_expand_world",
                 "atlas_rebuild_world_mesh", "atlas_splat_to_mesh", "atlas_fetch", "atlas_list",
                 "atlas_render_view", "atlas_open_in_viewer", "atlas_chisel", "atlas_capture_around", "train_splat",
-                "splat_training_status", "atlas_views_to_splat", "marble_create_world", "marble_export")),
+                "splat_training_status", "atlas_views_to_splat", "marble_create_world", "marble_export",
+                "echo_create_world", "echo_export")),
     "characters": ("rig and animate a character in the viewer's 3D scene: controls (FK / IK), auto-rig a model with "
                    "no skeleton (UniRig), AI motion from text and AI in-betweens between keyed poses (Kimodo), pin the "
                    "feet, export FBX / Alembic (read the `character-animation` skill first)",

@@ -207,6 +207,8 @@ from agenty_core.tools.splat_train import train_splat, splat_training_status  # 
 from agenty_core.tools.atlas_splat import atlas_views_to_splat  # noqa: F401,E402
 # World Labs Marble: a ready splat world from pictures (no training), SPZ / PLY export.
 from agenty_core.tools.worldlabs_marble import marble_create_world, marble_export  # noqa: F401,E402
+# SpAItial Echo: a second world generator (one picture, a panorama or a prompt -> a splat world; paid).
+from agenty_core.tools.spaitial_echo import echo_create_world, echo_export  # noqa: F401,E402
 # Rebuild a model in Blender / Maya / Houdini from ONE script file, and check its proportions against a
 # photo by projecting key points through the scene camera (agenty_core.tools.dcc).
 from agenty_core.tools.dcc import dcc_build, dcc_silhouette_check  # noqa: F401,E402
@@ -317,6 +319,8 @@ _SHARED_CORE_TOOLS = [
     "atlas_views_to_splat",
     # World Labs Marble: splat worlds from pictures, SPZ / PLY export
     "marble_create_world", "marble_export",
+    # SpAItial Echo: splat worlds from one picture / a panorama / a prompt, mesh export
+    "echo_create_world", "echo_export",
     # modelling from a reference photo in Blender / Maya / Houdini: one build script, a numeric silhouette check
     "dcc_build", "dcc_silhouette_check", "measure_reference",
     # which creative apps are installed here, and which version is the newest
@@ -733,6 +737,8 @@ ORCHESTRATOR_TOOLS: list = [
     atlas_views_to_splat,  # World Labs builds the splat from an Atlas world's posed views (paid; preferred over Brush)
     marble_create_world,   # World Labs Marble: pictures (or an Atlas world) -> a ready splat world (paid; dry_run prices it)
     marble_export,         # Marble world files: SPZ / PLY at a resolution, collider mesh
+    echo_create_world,     # SpAItial Echo: one picture / a panorama / a prompt -> a splat world (paid; dry_run prices it)
+    echo_export,           # Echo world files: the splat, a mesh / simplified mesh / floorplan export
     lora_dataset_prepare,  # LoRA training: build + caption a dataset (the user approves it before training)
     lora_dataset_set_captions,
     lora_dataset_review,   # opens the viewer's Dataset panel; the turn ends and waits for the user's approval

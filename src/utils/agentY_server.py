@@ -3444,6 +3444,8 @@ _KNOWN_ENV_KEYS = [
     "DASHSCOPE_API_KEY", "DASHSCOPE_BASE_URL",
     "DASHSCOPE_PAYG_API_KEY", "DASHSCOPE_PAYG_BASE_URL",
     "WORLDLABS_API_KEY", "WLT_MARBLE_API_KEY",
+    # SpAItial Echo, the second world generator
+    "SPAITIAL_API_KEY", "SPAITIAL_BASE_URL",
     # Ayon pipeline (service-user key; see docs/dev/ayon.md)
     "AYON_API_KEY", "AYON_SERVER_URL",
     # Deadline render farm (all optional; see docs/setup/deadline.md)
@@ -3499,6 +3501,10 @@ _BUILTIN_SERVICES = [
     {"id": "worldlabs_marble", "label": "World Labs Marble (World API)", "key_env": "WLT_MARBLE_API_KEY",
      "help_url": "https://platform.worldlabs.ai/api-keys",
      "hint": "The Marble World API (splat worlds) is a separate service from Atlas and refuses the Atlas key; create a World API key on the platform. Its credits are separate too."},
+    {"id": "spaitial", "label": "SpAItial Echo", "key_env": "SPAITIAL_API_KEY", "url_env": "SPAITIAL_BASE_URL",
+     "default_url": "https://api.spaitial.ai",
+     "help_url": "https://developers.spaitial.ai",
+     "hint": "The second world generator (splat worlds from one picture, a 360 panorama or a prompt; the viewer's New world dialog, Engine: Echo). Keys start spt_live_. Billed in SpAItial credits: echo-2 160 (US$ 1.60), echo-hq 800."},
     {"id": "ayon", "label": "Ayon", "key_env": "AYON_API_KEY", "url_env": "AYON_SERVER_URL",
      "default_url": "https://bepic.ayon.app",
      "help_url": "https://ayon.ynput.io/docs/",
