@@ -1,7 +1,7 @@
 ---
 name: character-animation
-description: Rig and animate a character in the ComfyUI Image Viewer's 3D space - controls on a skinned model, auto-rig a model with no skeleton (UniRig), AI motion from a text prompt and AI in-betweens between keyed poses (NVIDIA Kimodo), feet pinned to the floor, motion restyled ("make the walk sneaky"), motion from a film, lip sync from a sound, AI takes on animation layers, constraints, the pose library, FBX / Alembic export. Use for "make the walk look tired", "restyle this as a march", "copy the dance from this video onto the hero", "lip sync her to this line", "put that on a new layer", "constrain the cup to his right hand", "save this pose", "apply the run pose", "pose him sitting with arms crossed", "make her kneel", "pose him like in this photo", "put her hand on the floor", "rig this character", "add controls", "auto-rig the creature", "make him walk forward and wave", "animate the hero from frame 0 to 96", "fill in the motion between my two poses", "in-between these keys", "clean up the foot sliding", "export the character as FBX / Alembic".
-allowed-tools: animate_character get_viewer_state show_in_viewer
+description: Rig and animate a character in the ComfyUI Image Viewer's 3D space - controls on a skinned model, auto-rig a model with no skeleton (UniRig), AI motion from a text prompt and AI in-betweens between keyed poses (NVIDIA Kimodo), feet pinned to the floor, motion restyled ("make the walk sneaky"), motion from a film, lip sync from a sound, AI takes on animation layers, constraints, the pose library, FBX / Alembic export. Use for "make the walk look tired", "restyle this as a march", "copy the dance from this video onto the hero", "lip sync her to this line", "put that on a new layer", "constrain the cup to his right hand", "save this pose", "apply the run pose", "pose him sitting with arms crossed", "make her kneel", "pose him like in this photo", "put her hand on the floor", "rig this character", "add controls", "auto-rig the creature", "make him walk forward and wave", "animate the hero from frame 0 to 96", "fill in the motion between my two poses", "in-between these keys", "clean up the foot sliding", "export the character as FBX / Alembic", "turn the takes into clips", "render a turntable of each clip", "add a camera looking at him", "key the cube at frame 24", "playblast the shot", "export the scene as USD".
+allowed-tools: animate_character animate_scene render_turntables get_viewer_state show_in_viewer
 ---
 
 # Characters in the 3D space
@@ -69,6 +69,29 @@ Pick the model by its name; with one model in the scene the name can be left out
       whole pose off it; contacts and limits still apply. `options={"via": "sam3d" | "mediapipe" | "auto"}`
       as for a film, `"fov"` the picture's vertical field of view, `"facing": "picture"` also turns the
       character the way the person is turned (default: it keeps facing where it faced).
+
+13. **The scene around the character** (`animate_scene(action, options)`; `get_viewer_state()`'s `3d scene`
+    line names the shot, cameras, clips and layers). Items, clips, tracks, sources and layers go by name or id.
+    - **Clips** (the Clip Sequencer): an AI take becomes a clip at once with `animate_character("motion", ...,
+      options={"as_clip": true})`. Keys already in the scene: `"clip_from_keys"` {model or items, name, from, to, keep_keys, track}
+      makes a source and a clip of them. `"clip_list"`, `"clip_place"` {source, track?, start}, `"clip_set"`
+      {clip, start / length / speed / loop / weight / blend_in / blend_out / mute / name}, `"clip_split"`
+      {clip, at}, `"clip_remove"`, `"clip_match"` (line its start up with the clip before), `"clip_bake"`
+      (clips back to keys), `"clip_track_add"` / `"clip_track_set"` {track, mute / solo / weight / mode}.
+    - **Turntable of each clip**: `render_turntables(clips=None | ["Walk", ...], target="Hero", degrees=360)`
+      sets up ONE turntable camera and renders every clip's frames as its own film (`clips=None` = every live
+      clip; no clips = the whole shot). `"turntable"` alone only sets the camera up.
+    - **Cameras and renders**: `"add_camera"` {name, position, look_at, fov, resolution, active},
+      `"set_camera"` {camera, ...}, `"render"` {camera?, clip? or from / to, format mp4 / mov / webm / png,
+      shading original / clay / normal / wireframe, name}, `"playblast"` (the same, with the burnt-in HUD).
+    - **Keys**: `"key_set"` {item, prop position / rotation / scale / ..., frame, value, ease smooth / linear /
+      hold, layer?}, `"key_delete"`, `"key_list"`. `"add_model"` {path} brings a file in.
+    - **Layers**: `"layer_set"` {layer, weight / mute / solo / lock / mode}, `"layer_remove"`,
+      `"layer_merge_down"`; display layers `"display_layer_add"` {items, name} / `"_set"` / `"_list"`.
+    - **Rig extras**: `"ikfk_switch"` / `"ikfk_match"` {control}, `"space_set"` {control, space},
+      `"attr_add"` {item, name, value, min, max}, `"sdk_key"` {driver, driven}, `"sdk_remove"`.
+    - `"export_usd"` {name} writes the scene (clips and constraints baked) as USD; `"scene_set"` {fps, length,
+      active_camera}.
 
 A feature the viewer does not have yet answers "... are not in this viewer yet": pass that on (the viewer
 needs updating). Errors to pass on as they are: "AI motion is not set up" / "Auto-rigging is not set up" / "Motion from video is not set up" mean the tools are
