@@ -1,7 +1,7 @@
 ---
 name: worldlabs-atlas
-description: Make a 3D scene from a picture or a text prompt with World Labs Atlas (a depth mesh in the picture's camera), grow it with new views, use it as the set for render_camera_move, and render single new views of it from any camera (consistent backgrounds). Use for "turn this image into a 3D world with Atlas / World Labs", "make a courtyard world from a prompt", "extend the scene sideways", "image to Atlas world to camera move to control video", "same room from another angle", "a new shot of this background", "render this view with Atlas", "a full 360 environment", "make a Gaussian splat of this place", "splat from the Atlas views", "explorable 3D scene from this picture", "make a splat in Marble", "Marble world from these images", "export the splat as SPZ / PLY", "splat to mesh".
-allowed-tools: atlas_create_world atlas_expand_world atlas_rebuild_world_mesh atlas_splat_to_mesh atlas_fetch atlas_list atlas_render_view atlas_chisel atlas_open_in_viewer atlas_capture_around atlas_views_to_splat train_splat splat_training_status marble_create_world marble_export render_camera_move show_in_viewer
+description: Make a 3D scene from a picture or a text prompt with World Labs Atlas (a depth mesh in the picture's camera), grow it with new views, use it as the set for render_camera_move, and render single new views of it from any camera (consistent backgrounds). Use for "turn this image into a 3D world with Atlas / World Labs", "make a courtyard world from a prompt", "extend the scene sideways", "image to Atlas world to camera move to control video", "same room from another angle", "a new shot of this background", "render this view with Atlas", "a full 360 environment", "make a Gaussian splat of this place", "splat from the Atlas views", "explorable 3D scene from this picture", "make a splat in Marble", "Marble world from these images", "make a world with Echo / SpAItial", "a second opinion on the world", "export the splat as SPZ / PLY", "splat to mesh".
+allowed-tools: atlas_create_world atlas_expand_world atlas_rebuild_world_mesh atlas_splat_to_mesh atlas_fetch atlas_list atlas_render_view atlas_chisel atlas_open_in_viewer atlas_capture_around atlas_views_to_splat train_splat splat_training_status marble_create_world marble_export echo_create_world echo_export render_camera_move show_in_viewer
 ---
 
 # World Labs Atlas: picture or prompt -> 3D scene -> camera move
@@ -112,7 +112,7 @@ needs scopes tasks.create, operations.read, assets.create, assets.read; `rate_li
 Upscale errors do not lose the render: the 1280x720 picture is saved and the result carries `upscale_error`
 (ComfyUI down, or no model in `models/upscale_models`); say so and offer to retry with `upscale_model=...`.
 
-## Marble or Atlas or Brush? (a splat world)
+## Marble or Atlas or Echo or Brush? (a splat world)
 
 World Labs has two services, with their own keys and credits. Pick by what the user needs:
 
@@ -122,6 +122,10 @@ World Labs has two services, with their own keys and credits. Pick by what the u
   to four pictures, no training: SPZ (full ~2M splats, 500k, 100k), PLY, a collider mesh, a panorama.
   Use it for "give me a splat of this", an export for another app, or a splat to turn into a mesh.
   It invents what the pictures do not show on its own: you cannot aim cameras at it.
+- **Echo** (`echo_create_world`, `echo_export`): SpAItial's world generator - the SECOND one, not World Labs:
+  a ready splat world from ONE picture, a 360 panorama or a text prompt (never words beside a picture), with
+  a mesh / simplified mesh / floorplan export. Use it when the user asks for Echo / SpAItial, wants another
+  generator's take on a place, or wants a mesh export without World Labs. See "Echo steps" below.
 - **Atlas splat** (`atlas_capture_around` + `atlas_views_to_splat`): a splat that stays faithful to the views
   we hold (cameras we chose, views we checked): World Labs builds and refines it (US$ 5, or 0.50 as a draft).
   The default for a splat of an Atlas world.
@@ -158,3 +162,20 @@ Marble steps:
 Marble errors: `auth` -> the Marble API needs its OWN key, `WLT_MARBLE_API_KEY` (the Atlas key is refused
 with 401); `balance` -> credits at platform.worldlabs.ai/billing; `content_refusal` -> change the
 picture / prompt; `timeout` -> `marble_export(name)` collects it, do not resubmit.
+
+Echo steps (SpAItial, key `SPAITIAL_API_KEY` from developers.spaitial.ai; its own credits, 1 credit = US$ 0.01):
+1. **Price it first, say the price, then run it.** echo-2 (default) 160 credits = US$ 1.60, about 8 minutes;
+   echo-hq 800 credits = US$ 8, about an hour. `echo_create_world(..., dry_run=true)` shows the request and the
+   price (from SpAItial's model list when it gives one) and spends nothing. One call = one world: do not loop.
+2. `echo_create_world(name, image=<path or https url>)` or `echo_create_world(name, prompt="...")`; a 360
+   equirectangular picture with `is_pano="true"`. `mesh="mesh"` (full .ply) or `"mesh-simplified"` also asks
+   for a mesh (SpAItial's docs give exports no price: say so).
+3. **Files** land in `output/3d_scenes/echo/<name>/` (`world.json`, `splat.spz`, thumbnail, panorama, the mesh)
+   and the splat opens in the viewer. `echo_export(name, what="mesh" | "mesh-simplified" | "floorplan")` gets
+   more, and collects a creation that timed out (do not resubmit).
+4. The user can also start one without you: the viewer's 3D space, Atlas menu > "New Echo world…" (the New
+   world dialog with Engine: Echo).
+
+Echo errors: `auth` -> SPAITIAL_API_KEY in Settings > API keys; `balance` -> credits at developers.spaitial.ai;
+`scope` -> the key may not use that model (echo-hq may need to be granted); `content_refusal` -> SpAItial's
+moderation declined it, change the picture / prompt; `timeout` -> `echo_export(name)` collects it.

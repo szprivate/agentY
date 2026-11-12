@@ -90,3 +90,53 @@ class CreateJobTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EchoJobTests(unittest.TestCase):
+    """engine "echo": SpAItial Echo, the second world generator."""
+
+    def test_bad_echo_requests(self):
+        jobs = AtlasCreateJobs(create_echo=lambda **kw: "{}")
+        with tempfile.TemporaryDirectory() as d:
+            a, b = os.path.join(d, "a.png"), os.path.join(d, "b.png")
+            for p in (a, b):
+                open(p, "wb").write(b"x")
+            for body in ({"name": "w", "prompt": "x", "engine": "marble"},
+                         {"name": "w", "image_paths": [a, b], "engine": "echo"},
+                         {"name": "w", "prompt": "x", "engine": "echo", "model": "echo-3"},
+                         {"name": "w", "prompt": "x", "engine": "echo", "is_pano": "maybe"},
+                         {"name": "w", "prompt": "x", "engine": "echo", "mesh": "obj"}):
+                with self.assertRaises(ValueError, msg=body):
+                    jobs.start(body)
+
+    def test_an_echo_world_from_a_picture_leaves_the_words_out(self):
+        seen = {}
+
+        def echo(**kw):
+            seen.update(kw)
+            return json.dumps({"status": "ok", "world_dir": "C:/e/room", "splat": "C:/e/room/splat.spz",
+                               "mesh": "C:/e/room/mesh.ply", "viewer": {"tab": "previz:splat_room"}})
+        with tempfile.TemporaryDirectory() as d:
+            img = os.path.join(d, "room.png")
+            open(img, "wb").write(b"x")
+            jobs = AtlasCreateJobs(create=lambda **kw: self.fail("Atlas must not run"), create_echo=echo)
+            job = jobs.start({"name": "room", "prompt": "words", "image_paths": [img], "engine": "echo",
+                              "model": "echo-hq", "is_pano": "true", "mesh": "mesh"})
+            self.assertIn("an hour", job["phase"])
+            done = wait(jobs, job["id"])
+        self.assertEqual((done["state"], done["engine"], done["splat"], done["mesh"], done["tab"]),
+                         ("done", "echo", "C:/e/room/splat.spz", "C:/e/room/mesh.ply", "previz:splat_room"))
+        self.assertEqual(seen, {"name": "room", "image": img, "prompt": "", "model": "echo-hq", "is_pano": "true",
+                                "mesh": "mesh", "open_in_viewer": True})
+
+    def test_an_echo_error_and_notes_reach_the_page(self):
+        jobs = AtlasCreateJobs(create_echo=lambda **kw: json.dumps({"error": "too few credits", "error_kind": "balance",
+                                                                    "request_id": "req_9"}))
+        done = wait(jobs, jobs.start({"name": "p", "prompt": "a room", "engine": "echo"})["id"])
+        self.assertEqual((done["state"], done["error_kind"], done["operation_id"]), ("error", "balance", "req_9"))
+        jobs = AtlasCreateJobs(create_echo=lambda **kw: json.dumps({"world_dir": "d", "splat": "s", "mesh_error": "boom",
+                                                                    "viewer": {"error": "no viewer"}}))
+        done = wait(jobs, jobs.start({"name": "p", "prompt": "a room", "engine": "echo", "mesh": "mesh"})["id"])
+        self.assertEqual(done["state"], "done")
+        self.assertIn("mesh export failed: boom", done["message"])
+        self.assertIn("no viewer", done["message"])
