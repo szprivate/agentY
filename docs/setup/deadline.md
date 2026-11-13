@@ -141,6 +141,23 @@ and partner-node credit settlement is not measured for farm jobs (the worker's o
 Use it with a server host ([server.md](server.md)): a Slack request, queued in the turn queue, renders on the farm, and the
 files come back into the thread.
 
+## 6. Comps from the viewer's Comp space
+
+A comp's Write nodes go to the farm from the Comp tab (Save menu › Send to the farm…) or with the agent's
+`render_comp(farm=True)`. The viewer plans the job and agentY submits it as one job of Deadline's stock
+**CommandLine** plugin (nothing to install): each task runs the viewer's `scripts/comp_render.py` on its chunk of
+frames. No ComfyUI runs on the worker, but it needs a Python with numpy, Pillow and PyAV (ComfyUI's own venv does).
+
+| key | meaning |
+|---|---|
+| `DEADLINE_COMP_PYTHON` | that Python, as the workers see it (a share). Default: the path of ComfyUI's Python on this machine |
+| `DEADLINE_COMP_SCRIPT` | `comp_render.py`, as the workers see it. Default: the viewer's copy on this machine |
+| `DEADLINE_COMP_POOL` | the pool for comp jobs (default: the ComfyUI pool) |
+
+The comp, its footage and the Write nodes' folders must be on paths the workers can read and write; the dialog
+warns about any that are only on this machine. Deadline frames are the comp's frames shifted so none is below 0
+(handles before frame 0); the job says by how much.
+
 ### What is untested
 
 Everything here is tested against a stand-in for Deadline's status calls and for the plugin's output manifest, not

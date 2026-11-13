@@ -183,6 +183,9 @@ from agenty_core.tools.edit_cut import edit_cut  # noqa: F401,E402
 # Read and change a picture in layers in the viewer's Paint tab (agenty_core.tools.edit_image): layers from
 # files, adjustment layers, masks, selections, text - saved by the viewer, taken in by the open tab.
 from agenty_core.tools.edit_image import edit_image  # noqa: F401,E402
+# Build, read and render comps of the viewer's Comp space (agenty_core.tools.comp): nodes, wires, keys, Write
+# nodes rendered here or sent to the Deadline farm - saved by the viewer, taken in by the open tab.
+from agenty_core.tools.comp import edit_comp, render_comp  # noqa: F401,E402
 # Fly a camera through a 3D scene in the viewer and render the move (agenty_core.tools.previz_shot).
 from agenty_core.tools.previz_shot import render_camera_move  # noqa: F401,E402
 # Rig and animate a character in the viewer's 3D scene (agenty_core.tools.animate_character): controls,
@@ -307,6 +310,8 @@ _SHARED_CORE_TOOLS = [
     "edit_cut",
     # read and change a picture in layers in the viewer's Paint tab
     "edit_image",
+    # build, read and render comps of the viewer's Comp space (Write nodes here or on the farm)
+    "edit_comp", "render_comp",
     # animate a camera through a 3D scene in the viewer and render the move
     "render_camera_move",
     # rig and animate a character in the viewer's 3D scene (AI motion, in-betweens, export)
@@ -721,6 +726,8 @@ ORCHESTRATOR_TOOLS: list = [
     swap_in_takes,       # ... the new versions into the viewer's cut as takes (regenerate_from_source: pipeline)
     edit_cut,            # read / change the cut in the viewer's Edit panel: a VO at 8 s on A2, trims, removals
     edit_image,          # read / change a picture in layers in the viewer's Paint tab: a result back as a masked layer
+    edit_comp,           # read / build a comp (*.comp.json) of the viewer's Comp space: nodes, wires, keys, Write nodes
+    render_comp,         # ... render its Write nodes here, or send them to the Deadline farm
     render_camera_move,  # fly a camera through a 3D scene in the viewer, render the move (control video)
     animate_character,   # rig / auto-rig / AI motion and in-betweens / clean feet / FBX-Alembic export of a character
     animate_scene,       # the 3D scene: clips, cameras, turntables, renders / playblasts, keys, layers, IK/FK, USD
