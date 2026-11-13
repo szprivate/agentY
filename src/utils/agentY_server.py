@@ -5308,6 +5308,20 @@ def _build_app():
             msg = getattr(exc, "message", None) or str(exc)
             return jsonify({"ok": False, "error": msg}), 422
 
+    # A comp's Write nodes sent to the Deadline farm (the viewer's Comp space, Save menu > Send to the farm, through
+    # ComfyUI: the viewer plans the job, agenty_core.tools.deadline_farm.submit_comp submits it).
+    @app.route("/agentY/comp_farm", methods=["POST", "OPTIONS"])
+    def comp_farm_route():
+        if request.method == "OPTIONS":
+            return "", 204
+        from agenty_core.tools import deadline_farm as _df
+        try:
+            return jsonify(_df.submit_comp(request.get_json(silent=True) or {}))
+        except _df.FarmError as exc:
+            return jsonify({"ok": False, "error": str(exc), "error_kind": exc.kind}), (400 if exc.kind == "args" else 422)
+        except Exception as exc:  # noqa: BLE001
+            return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"}), 500
+
     # The dependency graph around one file, for the viewer's Dependencies tab (through ComfyUI: the viewer
     # has no agenty_core). Read-only: it reads sidecars and the .derived.json records, and writes only the
     # record of an older file it had to work out from its stored graph. See agenty_core.utils.dependencies.
