@@ -670,10 +670,37 @@ def why_no_outputs(history: dict, workflow_path: str = "") -> str:
         return (f"The output node(s) {', '.join(silent)} (ImageViewerSend) have save_to_output "
                 "off, so they only buffer for the viewer and write no file. Turn save_to_output on.")
     if out_nodes:
-        return (f"Output node(s) {', '.join(sorted(out_nodes))} ran but produced no image, video or "
-                "audio file.")
+        return (f"Output node(s) {', '.join(sorted(out_nodes))} ran but produced no image, video, "
+                "audio or 3D model file.")
     return ("No output node ran: the graph has no output (save/preview/viewer) node reached by a "
             "wire, or its inputs were not connected.")
+
+
+#: 3D model / point-cloud / splat files a run can produce. ComfyUI reports them under
+#: keys of their own (``SaveGLB`` uses ``"3d"``, ``Preview3D`` a bare path in
+#: ``"result"``), and some savers report nothing at all.
+MODEL_SUFFIXES = (".glb", ".gltf", ".obj", ".fbx", ".stl", ".usd", ".usda", ".usdc", ".usdz",
+                  ".ply", ".splat", ".spz", ".ksplat")
+
+
+def _model_path_item(value: str, node_id: str) -> dict | None:
+    """A history string that names a 3D model file, as an output item (else None)."""
+    s = str(value or "").strip().replace("\\", "/")
+    # "[output]" / "[temp]" suffixes the frontend's annotated paths carry.
+    kind = "output"
+    for tag in ("output", "temp", "input"):
+        if s.endswith(f" [{tag}]"):
+            s, kind = s[: -len(tag) - 3].strip(), tag
+    if not s or not s.lower().endswith(MODEL_SUFFIXES) or "\n" in s:
+        return None
+    if kind == "input":
+        return None  # a preview of a model the graph loaded, not something it made
+    item: dict = {"filename": s.rsplit("/", 1)[-1], "subfolder": s.rsplit("/", 1)[0] if "/" in s else "",
+                  "type": kind, "node_id": node_id}
+    if Path(s).is_absolute() or (len(s) > 2 and s[1] == ":"):
+        item["abs_path"] = s
+        item["subfolder"] = ""
+    return item
 
 
 def _extract_output_files(history: dict) -> list[dict]:
@@ -682,20 +709,97 @@ def _extract_output_files(history: dict) -> list[dict]:
 
     Handles the ``_strip_history`` output format where outputs are nested under
     ``{prompt_id: {"outputs": {node_id: {"images": [...], "gifs": [...], ...}}}}`.
+
+    Every key is read, not a fixed list: image, video and audio savers use
+    ``images`` / ``gifs`` / ``videos`` / ``audio``, but 3D savers use ``3d``
+    (``SaveGLB``) or put a bare model path in ``result`` (``Preview3D``). Missing
+    those made a finished mesh look like "no outputs" and the agent ran it again.
+    A string naming a model file becomes an item too (``abs_path`` when absolute).
     """
     files: list[dict] = []
+    seen: set[tuple] = set()
     for _prompt_id, entry in history.items():
         if not isinstance(entry, dict):
             continue
         for node_id, node_out in entry.get("outputs", {}).items():
             if not isinstance(node_out, dict):
                 continue
-            # ComfyUI may use different keys depending on the output node type
-            for key in ("images", "gifs", "videos", "audio"):
-                for item in node_out.get(key, []):
-                    if isinstance(item, dict) and "filename" in item:
-                        files.append({**item, "node_id": str(node_id)})
+            for _key, val in node_out.items():
+                for item in (val if isinstance(val, list) else [val]):
+                    if isinstance(item, dict) and item.get("filename"):
+                        out = {**item, "node_id": str(node_id)}
+                    elif isinstance(item, str):
+                        out = _model_path_item(item, str(node_id))
+                    else:
+                        out = None
+                    if not out:
+                        continue
+                    ident = (out.get("abs_path") or "", out["filename"], out.get("subfolder", ""),
+                             out.get("type", "output"))
+                    if ident in seen:
+                        continue
+                    seen.add(ident)
+                    files.append(out)
     return files
+
+
+def _execution_start(history: dict) -> float | None:
+    """When ComfyUI started this job (epoch seconds), from its status messages."""
+    for entry in (history or {}).values():
+        st = entry.get("status") if isinstance(entry, dict) else None
+        for m in (st.get("messages") or []) if isinstance(st, dict) else []:
+            if isinstance(m, (list, tuple)) and len(m) == 2 and m[0] == "execution_start" \
+                    and isinstance(m[1], dict) and m[1].get("timestamp"):
+                try:
+                    return float(m[1]["timestamp"]) / 1000.0
+                except (TypeError, ValueError):
+                    return None
+    return None
+
+
+def _unreported_model_files(history: dict, workflow_path: str) -> list[dict]:
+    """3D files a saver wrote without reporting them to ComfyUI's history.
+
+    Some mesh exporters (the Hunyuan3D wrappers' export nodes, for one) save the
+    file and hand its path on as a string output, with no UI entry, so history
+    has no outputs for them. Look where each node's ``filename_prefix`` points
+    for model files written since the job started.
+    """
+    started = _execution_start(history)
+    if started is None or not workflow_path:
+        return []
+    try:
+        wf = json.loads(Path(str(workflow_path).strip()).read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return []
+    comfy_out = _get_comfyui_output_dir()
+    found: list[dict] = []
+    seen: set[str] = set()
+    for nid, node in (wf.items() if isinstance(wf, dict) else []):
+        if not isinstance(node, dict):
+            continue
+        prefix = (node.get("inputs") or {}).get("filename_prefix")
+        if not isinstance(prefix, str) or not prefix.strip():
+            continue
+        pre = Path(prefix.strip())
+        if not pre.is_absolute():
+            if comfy_out is None:
+                continue
+            pre = comfy_out / pre
+        try:
+            candidates = list(pre.parent.glob(pre.name + "*")) if pre.parent.is_dir() else []
+        except OSError:
+            continue
+        for f in candidates:
+            try:
+                if (f.suffix.lower() in MODEL_SUFFIXES and f.is_file()
+                        and f.stat().st_mtime >= started - 2 and str(f) not in seen):
+                    seen.add(str(f))
+                    found.append({"filename": f.name, "subfolder": "", "type": "output",
+                                  "node_id": str(nid), "abs_path": str(f)})
+            except OSError:
+                continue
+    return found
 
 
 def _salvage_finished_outputs(collected_paths: list[str] | None) -> int:
@@ -721,8 +825,11 @@ def _salvage_finished_outputs(collected_paths: list[str] | None) -> int:
         for item in _extract_output_files(history):
             if not item.get("filename"):
                 continue
-            path = _resolve_output_path(item["filename"], item.get("subfolder", ""),
-                                        item.get("type", "output"))
+            if item.get("abs_path") and Path(item["abs_path"]).is_file():
+                path = Path(item["abs_path"])
+            else:
+                path = _resolve_output_path(item["filename"], item.get("subfolder", ""),
+                                            item.get("type", "output"))
             if str(path) not in have and Path(path).is_file():
                 have.add(str(path))
                 collected_paths.append(str(path))
@@ -826,6 +933,8 @@ async def _process_completed_job(
     # compared against; wire the input into the QA hook if that's what you want.
     output_files = _extract_output_files(history)
     if not output_files:
+        output_files = _unreported_model_files(history, workflow_path)
+    if not output_files:
         yield f"{pfx}⚠️ No output files found in ComfyUI history. {NO_OUTPUT_MARKER} " +             why_no_outputs(history, workflow_path)
         logger.warning("executor: no output files in history for prompt_id=%s", prompt_id)
         return
@@ -870,6 +979,9 @@ async def _process_completed_job(
         fallback_dir = _bb_output_dirs.get(node_id)
         try:
             resolved: Path | None = None
+            # A path the history (or the saver's prefix) gave in full.
+            if item.get("abs_path") and Path(item["abs_path"]).is_file():
+                resolved = Path(item["abs_path"])
             # Primary: derive path directly from the brainbriefing output_path.
             if fallback_dir is not None:
                 bb_candidate = fallback_dir.parent / filename
@@ -882,6 +994,8 @@ async def _process_completed_job(
             # Fallback: query ComfyUI /system_stats or download via /view.
             if resolved is None:
                 resolved = _resolve_output_path(filename, subfolder, file_type, fallback_dir=fallback_dir)
+            if resolved in saved_paths:
+                continue  # SaveGLB and a Preview3D after it name the same file
             saved_paths.append(resolved)
             if collected_paths is not None:
                 collected_paths.append(str(resolved))
