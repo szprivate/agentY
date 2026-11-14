@@ -83,6 +83,66 @@ def _is_loader(cls: str) -> bool:
     return "load" in c and any(t in c for t in ("image", "video", "audio", "mask"))
 
 
+_KIND_EXTS = {
+    "video": (".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v", ".mxf", ".gif"),
+    "audio": (".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".opus"),
+    "image": (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".exr"),
+}
+
+
+def _file_kind(name: str) -> str | None:
+    n = _lc(name)
+    return next((k for k, exts in _KIND_EXTS.items() if n.endswith(exts)), None)
+
+
+def _loader_kind(cls: str) -> str | None:
+    c = _lc(cls)
+    if "video" in c:
+        return "video"
+    if "audio" in c:
+        return "audio"
+    if "image" in c or "mask" in c:
+        return "image"
+    return None
+
+
+def pair_inputs_with_loaders(staged_inputs: list, loaders: list) -> list:
+    """The loader each staged file goes into: one of its own kind first.
+
+    They were paired by position, the first file into the lowest-numbered loader, so a
+    layout-to-render template (LoadVideo 5001, LoadImage 9009) given [look frame, previz]
+    loaded the look frame as its layout video - twice in one promo run. A file goes into
+    the first free loader of its kind (a mask's role to a mask loader); only a file of no
+    known kind, or one whose kind no loader takes, falls back to the old order.
+    """
+    picks: list = [None] * len(staged_inputs)
+    used: set = set()
+    for i, staged in enumerate(staged_inputs):
+        kind = _file_kind((staged or {}).get("filename", ""))
+        if not kind:
+            continue
+        want_mask = (staged or {}).get("role") == "mask"
+        cands = [j for j, (_nid, cls) in enumerate(loaders) if j not in used and _loader_kind(cls) == kind]
+        if want_mask:
+            cands = sorted(cands, key=lambda j: "mask" not in _lc(loaders[j][1]))
+        elif kind == "image":
+            cands = sorted(cands, key=lambda j: "mask" in _lc(loaders[j][1]))
+        if cands:
+            picks[i] = loaders[cands[0]]
+            used.add(cands[0])
+    rest = [j for j in range(len(loaders)) if j not in used]
+    for i in range(len(staged_inputs)):
+        if picks[i] is not None:
+            continue
+        if rest:
+            j = rest.pop(0)
+            picks[i] = loaders[j]
+            used.add(j)
+        else:
+            picks[i] = loaders[-1] if loaders else ("", "LoadImage")
+    return picks
+
+
 def _is_saver(cls: str) -> bool:
     c = _lc(cls)
     return (cls in _BUCKET_BY_CLASS or c.startswith("save")
@@ -389,8 +449,9 @@ def build_briefing_scaffold(
 
     # --- input_nodes: loaders × staged_inputs -------------------------------
     input_nodes: list[dict] = []
+    picks = pair_inputs_with_loaders(staged_inputs, loaders)
     for i, staged in enumerate(staged_inputs):
-        nid, node_cls = loaders[i] if i < len(loaders) else (loaders[-1] if loaders else ("", "LoadImage"))
+        nid, node_cls = picks[i]
         ins = (wf.get(nid, {}) or {}).get("inputs", {}) if nid else {}
         slot = next((k for k in ins if k in ("image", "images", "video", "audio", "mask")), "image")
         fname = staged.get("filename", "")
