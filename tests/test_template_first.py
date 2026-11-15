@@ -79,11 +79,21 @@ class TheRedirect(unittest.TestCase):
         self.assertIn("prepare_workflow(request, staged_inputs)", why)
         self.assertIn("find_local_models", why)
 
-    def test_only_once_per_turn(self):
+    def test_sending_it_again_does_not_get_it_through(self):
         t = Turn("make me a z-image turbo picture of a blue car")
         self.assertTrue(t.call("find_local_models", pattern="z-image"))
-        self.assertFalse(t.call("find_local_models", pattern="z-image"))
-        self.assertFalse(t.call("hf_search", query="z-image"))
+        self.assertTrue(t.call("find_local_models", pattern="z-image"))
+        self.assertTrue(t.call("hf_search", query="z-image"))
+
+    def test_a_turn_is_never_locked_out(self):
+        t = Turn("make me a z-image turbo picture of a blue car")
+        held = [bool(t.call("find_local_models", pattern="z")) for _ in range(tf.MAX_HOLDS + 2)]
+        self.assertEqual(held, [True] * tf.MAX_HOLDS + [False, False])
+
+    def test_the_message_does_not_invite_a_resend(self):
+        why = Turn("make me a picture of a blue car").call("find_local_models")
+        self.assertIn("Do NOT send find_local_models again", why)
+        self.assertNotIn("it runs", why)
 
     def test_after_prepare_workflow_lookups_run(self):
         t = Turn("make me a z-image turbo picture of a blue car")

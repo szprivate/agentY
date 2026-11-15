@@ -372,7 +372,8 @@ always the same:
 2. Models — only the files `prepare_workflow` reports missing, and only then.
    Never search for models, Hugging Face repos, templates (`find_workflows`,
    `inspect_workflow_file`) or the web BEFORE it: that is its work, done in one
-   call. A lookup made first is handed back unrun.
+   call. A lookup made first is handed back unrun, every time, until
+   `prepare_workflow` has run: call it, do not resend the lookup.
 3. A new graph — only when `prepare_workflow` returns `build_new` (no template
    fits), or the user explicitly asked for a workflow built from scratch.
 
