@@ -54,7 +54,7 @@ class TheAssembly(unittest.TestCase):
         from pathlib import Path
         prompt = (Path(pipeline.__file__).resolve().parents[1] / "config" / "system_prompts"
                   / "system_prompt.orchestrator.md").read_text(encoding="utf-8")
-        self.assertIn("**`missing_models`**", prompt)
+        self.assertIn("**`missing_nodes` / `missing_models`**", prompt)
 
 
 if __name__ == "__main__":
