@@ -265,7 +265,8 @@ these when the specialist's tuned skill helps; otherwise just do it yourself.
   (`[{"filename": "...", "role": "master_image|reference_image|mask|control_image|
   depth_map"}]`, or `[]` for text-to-X). Returns a `status`: `ready`
   (→ `signal_workflow_ready(workflow_path)`), `missing_models` (→ download the
-  listed files, then signal), `blocked` (→ ask the user),
+  listed files, then signal), `needs_inputs` (→ open it on the canvas, say which
+  loader takes the user's file), `blocked` (→ ask the user),
   `needs_fix` (→ repair with the assembly tools), or `build_new` (→ build from
   the recipe). Do NOT load templates or apply briefings yourself.
 - `run_info(question)` — answers questions about installed models, workflows, and
@@ -439,6 +440,13 @@ compare `built` against it and correct what differs with `update_workflow`.
      the repo), then `signal_workflow_ready(workflow_path)`. One you cannot get
      (gated, not found) is a question for the user, per the model rules above. Do
      NOT call `prepare_workflow` again, swap in another model or rebuild the graph.
+   - **`needs_inputs`** → the template fits and is loaded, but the user gave no
+     file for the loaders in `inputs_needed` (they still hold the template's
+     sample). That is the answer: `open_workflow_in_canvas(workflow_path)` (this
+     counts as the user asking to see it, even with auto-graphing off) and tell
+     them which loader takes their file. Do not run it, search for a sample file,
+     repair or rebuild it. `missing_models` can carry `inputs_needed` too: get the
+     models, then do the same.
    - **`blocked`** → ask the user for the missing detail named in `blockers`; do
      not proceed.
    - **`needs_fix` / `failed` / `error`** → the automated repair could not produce
