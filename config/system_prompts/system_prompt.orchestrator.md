@@ -264,7 +264,8 @@ these when the specialist's tuned skill helps; otherwise just do it yourself.
   `request`, and pass the staged files as the structured `staged_inputs` list
   (`[{"filename": "...", "role": "master_image|reference_image|mask|control_image|
   depth_map"}]`, or `[]` for text-to-X). Returns a `status`: `ready`
-  (→ `signal_workflow_ready(workflow_path)`), `blocked` (→ ask the user),
+  (→ `signal_workflow_ready(workflow_path)`), `missing_models` (→ download the
+  listed files, then signal), `blocked` (→ ask the user),
   `needs_fix` (→ repair with the assembly tools), or `build_new` (→ build from
   the recipe). Do NOT load templates or apply briefings yourself.
 - `run_info(question)` — answers questions about installed models, workflows, and
@@ -432,6 +433,12 @@ compare `built` against it and correct what differs with `update_workflow`.
      re-reading cannot tell you anything it does not already say, and a
      `prepare_workflow` that says `ready` has never returned an unassembled
      workflow.
+   - **`missing_models`** → the template fits and is already assembled with the
+     user's inputs and outputs; only the files in `missing_models` are not
+     installed. Get each with `download_hf_model` (`find_hf_file` / `hf_file` name
+     the repo), then `signal_workflow_ready(workflow_path)`. One you cannot get
+     (gated, not found) is a question for the user, per the model rules above. Do
+     NOT call `prepare_workflow` again, swap in another model or rebuild the graph.
    - **`blocked`** → ask the user for the missing detail named in `blockers`; do
      not proceed.
    - **`needs_fix` / `failed` / `error`** → the automated repair could not produce

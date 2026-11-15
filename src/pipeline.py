@@ -159,6 +159,21 @@ def _ratio_named_in(text: str) -> str:
     return found[0] if len(found) == 1 else ""
 
 
+_MISSING_MODEL_RE = re.compile(r"model '(?P<file>[^']+)' is not installed")
+
+
+def _only_missing_models(problems) -> list:
+    """The model files named when EVERY problem is a missing model, else ``[]``."""
+    files: list = []
+    for p in problems or []:
+        m = _MISSING_MODEL_RE.search(str(p))
+        if not m:
+            return []
+        if m.group("file") not in files:
+            files.append(m.group("file"))
+    return files
+
+
 def _mark_from_scratch(result, briefing) -> None:
     """Flag a READY result whose graph was built without a template."""
     if not isinstance(result, dict) or result.get("status") != "ready":
@@ -1329,6 +1344,12 @@ class Pipeline:
                                 otherwise assembled and valid — and do not hand it
                                 to a repair agent, which cannot rewrite your prompt
                                 for you.
+              * ``missing_models`` → ``workflow_path``, ``missing_models``: the
+                                template fits and is assembled; only those model
+                                files are not installed. Download them
+                                (``download_hf_model``) or ask the user, then
+                                ``signal_workflow_ready``. Do not call this again,
+                                swap models or rebuild.
               * ``build_new`` → ``briefing``: no template fit — build from scratch,
                                 then ``signal_workflow_ready``.
               * ``graph_is_open`` → a graph is open and unchanged, and this call
@@ -11261,6 +11282,26 @@ class Pipeline:
             if self._verbose:
                 print(f"pipeline: deterministic assembly patched OK; server offline — {wf}")
             return {"status": "ready", "workflow_path": wf, "unvalidated": True}
+
+        # The template fits and is assembled; only model files are missing. That is
+        # not a broken graph: the repair specialist has nothing to repair, and sent
+        # in it went straight to "repairing" a template it had not even shown the
+        # user, and could put another model in the missing one's place (Mac,
+        # 2026-11-15, LTX 2.5 SDR-to-HDR with no LTX 2.5 files installed). Hand the
+        # assembled workflow back with the list instead: get the files, then signal.
+        missing = _only_missing_models(problems)
+        if missing:
+            _push_progress(f"📦 Template '{tname}' assembled — {len(missing)} model file(s) not installed yet.")
+            return {
+                "status": "missing_models", "workflow_path": res.get("workflow_path", wf),
+                "template": tname, "missing_models": missing,
+                "guidance": ("The template is loaded and patched with the user's inputs and outputs; "
+                             "only these model files are missing. Get each with download_hf_model "
+                             "(find_hf_file / hf_file name the repo), or, when one cannot be fetched "
+                             "(gated, not found), tell the user what is missing and ask. Then "
+                             "signal_workflow_ready(workflow_path). Do NOT call prepare_workflow "
+                             "again, do not swap in another model, and do not rebuild the graph."),
+            }
 
         _push_progress("🩹 Workflow has issues — running the repair specialist …")
         if self._verbose:
