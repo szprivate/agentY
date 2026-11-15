@@ -13,11 +13,13 @@ prepare_workflow"; a model that wants to know whether the model is there asks
 that first anyway.
 
 So the redirect sits where that decision arrives. Until ``prepare_workflow`` has
-been called in a turn, the first model / template / web lookup is handed back
-once - not run - with the call to make instead. Once per turn: the same call (or
-any other) sent again runs as it is, because a question that really is about
-models ("which LTX files do I have?") must still get its answer, and a turn that
-works on the graph already on the canvas has no template to look for.
+been called in a turn, a model / template / web lookup is handed back - not run -
+with the call to make instead. A first version let the same call through when it
+was sent again, and the model on the Mac simply sent it again (2026-11-15), so a
+lookup now waits for ``prepare_workflow`` every time, up to :data:`MAX_HOLDS`
+per turn (then they run, so a turn can never be locked out). A question that
+really is about models ("which LTX files do I have?") is told apart by the user's
+own words and never held.
 
 Not armed at all when the turn plainly asks about models or downloads, when it is
 a hook-pipeline or open-graph turn (the graph is there; nothing is built), or when
@@ -51,6 +53,7 @@ _MODEL_QUESTION = re.compile(
 _GRAPH_TURN = re.compile(r"\[CANVAS HOOKS|\[OPEN GRAPH MODE\]")
 
 GATE_TOOL = "prepare_workflow"
+MAX_HOLDS = 4
 
 
 def _user_text(messages) -> str:
@@ -100,13 +103,13 @@ def message(tool_name: str) -> str:
         f"picks the one that fits, puts the user's files into its loader nodes and its outputs into "
         f"the save nodes, and reports any model file that is missing - so you look models up only "
         f"for what it names, and build from scratch only when it returns build_new or the user asked "
-        f"for a workflow built from scratch. If this turn is not about setting up a workflow (a "
-        f"question about models or files, or work on the graph already open), send this same "
-        f"{tool_name} call again and it runs.")
+        f"for a workflow built from scratch. Do NOT send {tool_name} again first: every model, "
+        f"template or workflow lookup waits until prepare_workflow has run in this turn. "
+        f"Your next call is prepare_workflow.")
 
 
 class TemplateFirstHook:
-    """Hand back, once per turn, a model/template lookup made before ``prepare_workflow``."""
+    """Hand back the model/template lookups made before ``prepare_workflow`` in a turn."""
 
     def __init__(self) -> None:
         self._state: dict = {}
@@ -122,7 +125,7 @@ class TemplateFirstHook:
             text = _user_text(getattr(event, "messages", None) or getattr(agent, "messages", None))
         except Exception:  # noqa: BLE001
             text = ""
-        self._state[id(agent)] = {"armed": armed_for(text)}
+        self._state[id(agent)] = {"armed": armed_for(text), "holds": 0}
 
     def _on_tool(self, event, **kwargs) -> None:  # noqa: ARG002
         try:
@@ -141,7 +144,9 @@ class TemplateFirstHook:
                 return
             if not is_lookup(name, use.get("input")):
                 return
-            st["armed"] = False            # once per turn
+            st["holds"] = st.get("holds", 0) + 1
+            if st["holds"] >= MAX_HOLDS:
+                st["armed"] = False        # never lock a turn out
             event.cancel_tool = message(name)
         except Exception:  # noqa: BLE001 - never cost a call
             pass
