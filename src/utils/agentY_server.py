@@ -720,6 +720,25 @@ def _deliver_atlas_render(path: str) -> None:
         logger.warning("could not deliver the Atlas render %s: %s", path, exc)
 
 
+_FARM_KINDS = {".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image", ".exr": "image",
+               ".tif": "image", ".tiff": "image", ".mp4": "video", ".webm": "video", ".mov": "video",
+               ".gif": "video", ".glb": "model", ".ply": "model", ".wav": "audio", ".mp3": "audio", ".flac": "audio"}
+
+
+def _deliver_farm_output(job: dict, task: dict, files: list) -> None:
+    """A render that came back from the GPU farm (agenty_core.utils.gpu_pool): staged for ComfyUI and sent to
+    the viewer's History under "Farm", like an Atlas render. No agent turn."""
+    for path in files or []:
+        kind = _FARM_KINDS.get(Path(path).suffix.lower(), "file")
+        try:
+            staged = _stage_into_comfy_input(path)
+            media_sink.note(path, "Farm")
+            _deliver_elsewhere(path, kind, staged, f"Farm: {job.get('name') or 'render'} #{int(task.get('i', 0)) + 1}",
+                               None, "farm", "")
+        except Exception as exc:  # noqa: BLE001 - delivery must never cost the render
+            logger.warning("could not deliver the farm render %s: %s", path, exc)
+
+
 def _deliver_mg_render(path: str) -> None:
     """A finished viewer-asked motion-graphics render, with no turn around it (see mg_render_jobs)."""
     try:
@@ -5319,6 +5338,30 @@ def _build_app():
             return jsonify(_df.submit_comp(request.get_json(silent=True) or {}))
         except _df.FarmError as exc:
             return jsonify({"ok": False, "error": str(exc), "error_kind": exc.kind}), (400 if exc.kind == "args" else 422)
+        except Exception as exc:  # noqa: BLE001
+            return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"}), 500
+
+    # The GPU farm (rented vast.ai / RunPod machines and ComfyUIs added by address) for the viewer's Farm space,
+    # through ComfyUI: the provider keys stay here, the viewer only ever sees agenty_core.utils.gpu_pool.state().
+    # GET = the state; POST {action, ...} = offers / rent / start / stop / terminate / add_url / remove / parity /
+    # submit / cancel / retry / remove_job / settings / refresh.
+    @app.route("/agentY/pool", methods=["GET", "POST", "OPTIONS"])
+    def gpu_pool_route():
+        if request.method == "OPTIONS":
+            return "", 204
+        from agenty_core.utils import gpu_pool as _gp
+        if _deliver_farm_output not in _gp.listeners:
+            _gp.listeners.append(_deliver_farm_output)
+        if request.method == "GET":
+            if any(m.get("state") not in ("stopped", "gone") for m in _gp.state().get("machines") or []):
+                _gp.ensure_running()
+            return jsonify({"ok": True, **_gp.state()})
+        try:
+            return jsonify({"ok": True, **_gp.action(request.get_json(silent=True) or {})})
+        except _gp.PoolError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 422
+        except (TypeError, ValueError) as exc:
+            return jsonify({"ok": False, "error": f"bad request: {exc}"}), 400
         except Exception as exc:  # noqa: BLE001
             return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"}), 500
 
