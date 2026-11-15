@@ -66,6 +66,13 @@ class TheToolsAndTheRule(unittest.TestCase):
         for word in ("web_search", "read_web_page", "from_scratch: true", "verify"):
             self.assertIn(word, section)
 
+    def test_templates_come_before_models_and_the_web(self):
+        order = PROMPT.index("**Order: templates, then models, then scratch.**")
+        self.assertLess(order, PROMPT.index("A workflow you do not know is looked up"))
+        section = PROMPT[order:PROMPT.index("A workflow you do not know is looked up")]
+        for word in ("prepare_workflow", "build_new", "built from scratch", "handed back unrun"):
+            self.assertIn(word, section)
+
 
 if __name__ == "__main__":
     unittest.main()

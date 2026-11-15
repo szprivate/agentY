@@ -2570,6 +2570,13 @@ def create_orchestrator_agent(
         orch_hooks.append(SpliceFirstHook())
     except Exception:  # noqa: BLE001
         pass
+    # Templates before models: a turn's first model/template lookup waits for
+    # prepare_workflow (src/utils/template_first.py).
+    try:
+        from src.utils.template_first import TemplateFirstHook
+        orch_hooks.append(TemplateFirstHook())
+    except Exception:  # noqa: BLE001
+        pass
     # With output checks switched off, no analyze_image on its own fresh renders
     # unless the user asked (src/utils/self_check_guard.py).
     try:

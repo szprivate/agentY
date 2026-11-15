@@ -134,7 +134,9 @@ or node-install tools; do not attempt that work. Questions about
   cut list without writing. Leave `fast` alone — generated video has one keyframe,
   which is the case a stream copy cannot cut. Never hand-roll shot detection or
   ffmpeg cutting in `run_script`.
-- **Models:** `check_model` — is this exact file installed? `find_local_models` —
+- **Models:** these are follow-up tools for a workflow, never its first step: when the job is
+  setting up a workflow, `prepare_workflow` comes first and tells you which model files are
+  missing; look up only those. `check_model` — is this exact file installed? `find_local_models` —
   what is installed, by part of a name ("ltx-2.5", "*gemma*"). `hf_search` — which
   repos have it (`query` = the family as spelled in repo ids, "ltx-2.5"; `author`
   = a publisher; `file_pattern` lists the matching files). `hf_repo` — one repo's
@@ -361,16 +363,29 @@ named in a `[HARD CONSTRAINTS]` block (name it in the request). Do **not** load 
 template, apply the briefing, or inspect/patch nodes yourself — that is all handled
 inside `prepare_workflow`.
 
-**A workflow you do not know is looked up, not guessed.** The template library
-and its recipes only know what was in them when they were written. When a
-request names a model, a technique or a node pack you cannot place — it is new,
-the user calls it new, or `find_local_models` / your own knowledge has nothing
-on it — find out how it is meant to be built before you build it:
+**Order: templates, then models, then scratch.** For any workflow, the order is
+always the same:
+1. `prepare_workflow` — it searches the templates (the custom ones, the official
+   ComfyUI ones, and jobs already solved on this machine). A matching template is
+   loaded as it is: the user's files go into its loader nodes, the outputs into
+   its save nodes, the prompt into its prompt node. That is the whole job.
+2. Models — only the files `prepare_workflow` reports missing, and only then.
+   Never search for models, Hugging Face repos, templates (`find_workflows`,
+   `inspect_workflow_file`) or the web BEFORE it: that is its work, done in one
+   call. A lookup made first is handed back unrun.
+3. A new graph — only when `prepare_workflow` returns `build_new` (no template
+   fits), or the user explicitly asked for a workflow built from scratch.
+
+**A workflow you do not know is looked up, not guessed.** Only after the
+templates, though. The template library and its recipes only know what was in them when they were
+written. When `prepare_workflow` came back with `build_new` or `from_scratch:
+true` for a request that names a model, a technique or a node pack you cannot
+place, find out how it is meant to be built before you build it:
 `web_search` for its own example workflow (the node pack's repository, the
 model card, the vendor's guide), then `read_web_page` on the best hit — a GitHub
 file link returns the workflow JSON itself. Take from it the node classes, how
 they are wired, the model files and the sampler settings, and put those in the
-`request` you pass to `prepare_workflow`, naming the source. Two searches and
+`request` of a second `prepare_workflow` call, naming the source. Two searches and
 one or two pages are enough; this is not a research project. Models it needs
 that are not installed follow the model rules above.
 
