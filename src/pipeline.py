@@ -214,6 +214,91 @@ def _only_file_errors(server_errors, waiting, missing) -> bool:
     return True
 
 
+_UNKNOWN_CLASS_RE = re.compile(r"unknown class_type '(?P<cls>[^']+)'")
+_NOT_FOUND_RE = re.compile(r"Node '(?P<cls>[^']+)' not found")
+
+
+def _absent_parts(res, workflow_path) -> dict | None:
+    """``{"models", "nodes", "inputs"}`` when everything wrong with an assembled
+    template is something not here yet - missing model files, node classes no
+    installed pack provides, loaders waiting for the user's file - else ``None``."""
+    if not isinstance(res, dict):
+        return None
+    models, nodes = [], []
+    for p in res.get("problems") or []:
+        m = _MISSING_MODEL_RE.search(str(p)) or None
+        if m:
+            models.append(m.group("file"))
+            continue
+        m = _UNKNOWN_CLASS_RE.search(str(p))
+        if m:
+            nodes.append(m.group("cls"))
+            continue
+        return None
+    waiting = _inputs_waiting(res) or []
+    server = res.get("server_errors") or {}
+    if server:
+        top = server.get("error") if isinstance(server, dict) else None
+        if isinstance(top, dict) and top.get("type") == "missing_node_type":
+            m = _NOT_FOUND_RE.search(str(top.get("message") or ""))
+            if m:
+                nodes.append(m.group("cls"))
+            nodes.extend(_classes_not_installed(workflow_path))
+            if not nodes:
+                return None
+        elif not _only_file_errors(server, waiting, models):
+            return None
+    if not (models or nodes or waiting):
+        return None
+    return {"models": list(dict.fromkeys(models)), "nodes": list(dict.fromkeys(nodes)), "inputs": waiting}
+
+
+def _classes_not_installed(workflow_path) -> list:
+    """The node classes in the workflow file ComfyUI does not know (best effort)."""
+    try:
+        wf = json.loads(Path(workflow_path).read_text(encoding="utf-8"))
+        graph = wf.get("prompt") if isinstance(wf.get("prompt"), dict) else wf
+        from agenty_core.tools.comfyui import _get_object_info
+        info = _get_object_info() or {}
+    except Exception:  # noqa: BLE001
+        return []
+    if not info:
+        return []
+    return sorted({str(n.get("class_type")) for n in (graph or {}).values()
+                   if isinstance(n, dict) and n.get("class_type") and n["class_type"] not in info})
+
+
+def _absent_result(tname: str, path: str, absent: dict) -> dict:
+    """What prepare_workflow answers for a template that waits for parts."""
+    models, nodes, inputs = absent["models"], absent["nodes"], absent["inputs"]
+    bits = [f"{len(nodes)} node type(s) from a pack that is not installed" if nodes else "",
+            f"{len(models)} model file(s) not installed" if models else "",
+            f"{len(inputs)} loader(s) waiting for the user's file" if inputs else ""]
+    _push_progress(f"📄 Template '{tname}' loaded — " + "; ".join(b for b in bits if b) + ".")
+    status = "missing_nodes" if nodes else "missing_models" if models else "needs_inputs"
+    steps = ["Open it on the canvas with open_workflow_in_canvas(workflow_path) (the user asked for this "
+             "workflow, so this holds even with auto-graphing off)"]
+    if nodes or models:
+        steps.append(
+            "tell the user what is missing - the node pack (find_custom_node_for names it) and each model "
+            "file with its size (hf_file) - and ASK before installing a pack or downloading: an install "
+            "needs a ComfyUI restart and models are often many GB. When the user said not to run it, or "
+            "gave no input, that is the whole answer for this turn. Install / download only once they say "
+            "so, and only with install_custom_node / download_hf_model - never git clone or pip in run_script")
+    if inputs:
+        steps.append("say which loader in `inputs_needed` takes their file (they still hold the template's "
+                     "sample); do not search for one")
+    if not (nodes or models or inputs):
+        steps.append("then signal_workflow_ready(workflow_path)")
+    return {
+        "status": status, "workflow_path": path, "template": tname,
+        "missing_nodes": nodes, "missing_models": models, "inputs_needed": inputs,
+        "guidance": ("The template fits and is loaded (prompt, outputs and the inputs that were given are "
+                     "set). " + "; ".join(steps) + ". Do NOT run the repair or call prepare_workflow again, "
+                     "swap in another model, or rebuild the graph."),
+    }
+
+
 def _mark_from_scratch(result, briefing) -> None:
     """Flag a READY result whose graph was built without a template."""
     if not isinstance(result, dict) or result.get("status") != "ready":
@@ -1390,6 +1475,11 @@ class Pipeline:
                                 (``download_hf_model``) or ask the user, then
                                 ``signal_workflow_ready``. Do not call this again,
                                 swap models or rebuild.
+              * ``missing_nodes`` → ``workflow_path``, ``missing_nodes`` (and maybe
+                                ``missing_models`` / ``inputs_needed``): the
+                                template fits and is loaded; a node pack is not
+                                installed. Open it, say what is missing, and ask
+                                before installing or downloading anything.
               * ``needs_inputs`` → ``workflow_path``, ``inputs_needed``: the template
                                 fits and is loaded, but no input file was given
                                 for those loaders. Open it on the canvas
@@ -11335,51 +11425,14 @@ class Pipeline:
         # user, and could put another model in the missing one's place (Mac,
         # 2026-11-15, LTX 2.5 SDR-to-HDR with no LTX 2.5 files installed). Hand the
         # assembled workflow back with the list instead: get the files, then signal.
-        missing = _only_missing_models(problems)
-        # No input given (or not uploaded yet): the template still names its own
-        # sample file, ComfyUI's validation refuses a file its input folder does
-        # not list, and that alone sent a fitting template to the repair
-        # specialist (Mac, 2026-11-15, "get me an LTX 2.5 SDR-to-HDR workflow").
-        # The template is right; it just waits for the user's file.
-        waiting = _inputs_waiting(res)
-        if (missing or not problems) and waiting is not None and (
-                waiting or res.get("server_errors")) and _only_file_errors(
-                    res.get("server_errors"), waiting, missing):
-            path = res.get("workflow_path", wf)
-            _push_progress(f"📄 Template '{tname}' loaded"
-                           + (f" — {len(missing)} model file(s) not installed yet" if missing else "")
-                           + (f" — {len(waiting)} loader(s) wait for the user's file" if waiting else "") + ".")
-            todo = []
-            if missing:
-                todo.append("get the missing model files with download_hf_model (find_hf_file / hf_file "
-                            "name the repo), or tell the user what is missing and ask")
-            if waiting:
-                todo.append("the loaders in `inputs_needed` still hold the template's sample file: the user "
-                            "gave none, so do NOT search for one, repair or rebuild - open the workflow on "
-                            "the canvas with open_workflow_in_canvas(workflow_path) and tell the user which "
-                            "loader takes their file; run it only once they give one")
-            else:
-                todo.append("then signal_workflow_ready(workflow_path)")
-            return {
-                "status": "missing_models" if missing else "needs_inputs",
-                "workflow_path": path, "template": tname,
-                "missing_models": missing, "inputs_needed": waiting,
-                "guidance": ("The template is loaded and patched (prompt, outputs, the inputs that were "
-                             "given). " + "; ".join(todo) + ". Do NOT call prepare_workflow again, swap "
-                             "in another model, or rebuild the graph."),
-            }
-        if missing:
-            _push_progress(f"📦 Template '{tname}' assembled — {len(missing)} model file(s) not installed yet.")
-            return {
-                "status": "missing_models", "workflow_path": res.get("workflow_path", wf),
-                "template": tname, "missing_models": missing,
-                "guidance": ("The template is loaded and patched with the user's inputs and outputs; "
-                             "only these model files are missing. Get each with download_hf_model "
-                             "(find_hf_file / hf_file name the repo), or, when one cannot be fetched "
-                             "(gated, not found), tell the user what is missing and ask. Then "
-                             "signal_workflow_ready(workflow_path). Do NOT call prepare_workflow "
-                             "again, do not swap in another model, and do not rebuild the graph."),
-            }
+        # Only things that are not here yet: model files, a node pack, the user's
+        # input file. None of that is a broken graph, and the repair specialist
+        # sent at it hunted for the pack, then the orchestrator git-cloned it and
+        # downloaded 25 GB for a request that said "don't run it" (Mac,
+        # 2026-11-15). The template is loaded; say what is missing and ask.
+        absent = _absent_parts(res, res.get("workflow_path", wf))
+        if absent is not None:
+            return _absent_result(tname, res.get("workflow_path", wf), absent)
 
         _push_progress("🩹 Workflow has issues — running the repair specialist …")
         if self._verbose:

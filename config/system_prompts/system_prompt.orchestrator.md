@@ -264,8 +264,8 @@ these when the specialist's tuned skill helps; otherwise just do it yourself.
   `request`, and pass the staged files as the structured `staged_inputs` list
   (`[{"filename": "...", "role": "master_image|reference_image|mask|control_image|
   depth_map"}]`, or `[]` for text-to-X). Returns a `status`: `ready`
-  (→ `signal_workflow_ready(workflow_path)`), `missing_models` (→ download the
-  listed files, then signal), `needs_inputs` (→ open it on the canvas, say which
+  (→ `signal_workflow_ready(workflow_path)`), `missing_nodes` / `missing_models` (→ open it, say what is
+  missing, ask before installing or downloading), `needs_inputs` (→ open it on the canvas, say which
   loader takes the user's file), `blocked` (→ ask the user),
   `needs_fix` (→ repair with the assembly tools), or `build_new` (→ build from
   the recipe). Do NOT load templates or apply briefings yourself.
@@ -434,12 +434,16 @@ compare `built` against it and correct what differs with `update_workflow`.
      re-reading cannot tell you anything it does not already say, and a
      `prepare_workflow` that says `ready` has never returned an unassembled
      workflow.
-   - **`missing_models`** → the template fits and is already assembled with the
-     user's inputs and outputs; only the files in `missing_models` are not
-     installed. Get each with `download_hf_model` (`find_hf_file` / `hf_file` name
-     the repo), then `signal_workflow_ready(workflow_path)`. One you cannot get
-     (gated, not found) is a question for the user, per the model rules above. Do
-     NOT call `prepare_workflow` again, swap in another model or rebuild the graph.
+   - **`missing_nodes` / `missing_models`** → the template fits and is already
+     loaded with the user's inputs and outputs; a node pack (`missing_nodes`)
+     and/or model files (`missing_models`) are not installed. Open it on the
+     canvas (`open_workflow_in_canvas`), tell the user exactly what is missing
+     (the pack, each file and its size) and **ask before installing or
+     downloading** - a pack needs a ComfyUI restart, models are often many GB.
+     When they said not to run it, or gave no input, that is the whole answer.
+     Once they say yes: `install_custom_node` / `download_hf_model` only (never
+     `git clone` or pip in `run_script`), then `signal_workflow_ready`. Do NOT
+     call `prepare_workflow` again, swap in another model or rebuild the graph.
    - **`needs_inputs`** → the template fits and is loaded, but the user gave no
      file for the loaders in `inputs_needed` (they still hold the template's
      sample). That is the answer: `open_workflow_in_canvas(workflow_path)` (this

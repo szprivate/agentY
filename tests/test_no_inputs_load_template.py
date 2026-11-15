@@ -77,3 +77,38 @@ class TheAssembly(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AMissingNodePack(unittest.TestCase):
+    """Mac, 2026-11-15: the LTXVideo pack was not installed; the template went to
+    repair, the pack was git-cloned and 25 GB downloaded for "don't run it"."""
+
+    def test_is_handed_back_loaded_with_what_is_missing(self):
+        server = {"error": {"type": "missing_node_type",
+                            "message": "Node 'LTXVHDRDecodePostprocess' not found. The custom node may not be installed."},
+                  "node_errors": {}}
+        with mock.patch.object(pipeline, "_classes_not_installed",
+                               lambda p: ["LTXICLoRALoaderModelOnly", "LTXVHDRDecodePostprocess"]):
+            got, repair = assemble({"status": "error", "workflow_path": "/w/t_1.json",
+                                    "problems": ["Node 7 (UNETLoader): model 'ltx-2.5-22b.safetensors' is not installed."],
+                                    "server_errors": server, "warnings": [WARN]})
+        repair.assert_not_called()
+        self.assertEqual(got["status"], "missing_nodes")
+        self.assertEqual(got["missing_nodes"], ["LTXVHDRDecodePostprocess", "LTXICLoRALoaderModelOnly"])
+        self.assertEqual(got["missing_models"], ["ltx-2.5-22b.safetensors"])
+        for word in ("ASK before installing", "never git clone", "open_workflow_in_canvas"):
+            self.assertIn(word, got["guidance"])
+
+    def test_an_unknown_class_found_locally(self):
+        got, repair = assemble({"status": "error", "workflow_path": "/w/t_1.json",
+                                "problems": ["Node 4: unknown class_type 'LTXVLoadConditioning'."],
+                                "server_errors": {}})
+        repair.assert_not_called()
+        self.assertEqual(got["missing_nodes"], ["LTXVLoadConditioning"])
+
+    def test_missing_models_alone_ask_before_downloading(self):
+        got, _ = assemble({"status": "error", "workflow_path": "/w/t_1.json",
+                           "problems": ["Node 7 (UNETLoader): model 'a.safetensors' is not installed."],
+                           "server_errors": {}})
+        self.assertEqual(got["status"], "missing_models")
+        self.assertIn("ASK before", got["guidance"])
