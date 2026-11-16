@@ -1996,6 +1996,15 @@ def _run_pipeline_turn(thread_id: str, message: str, image_paths: list[str],
         session.last_user_input_images = image_paths
     # What came with THIS message, as opposed to what the conversation remembers.
     pipeline._fresh_input_images = list(image_paths or [])
+    # A reply that is only the number of an option the agent put to the user
+    # ("2" in Slack, where there are no cards) is spelled out to that option.
+    try:
+        from src.utils import choices as _choices
+        _rows = (cs.get_thread(thread_id) or {}).get("messages", [])
+        _last = next((m.get("content") for m in reversed(_rows) if m.get("role") == "assistant"), "")
+        message = _choices.resolve_reply(_last or "", message)
+    except Exception:  # noqa: BLE001 - the message as it came
+        pass
     content = _build_content(message, image_paths)
 
     # First assistant turn of a thread → generate a short 2-3 word title in the

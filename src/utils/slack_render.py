@@ -76,7 +76,12 @@ _FENCE = re.compile(r"```.*?```", re.S)
 
 
 def to_mrkdwn(text: str) -> str:
-    """Rewrite the agent's markdown as Slack's. Code fences are left untouched."""
+    """Rewrite the agent's markdown as Slack's. Code fences are left untouched,
+    except a ``choices`` block (src/utils/choices.py): Slack has no cards, so it
+    becomes a numbered list, and a reply with the number is spelled out to the
+    option when the next turn starts."""
+    from src.utils import choices  # noqa: PLC0415
+    text = choices.to_plain(text or "")
     parts = []
     last = 0
     for m in _FENCE.finditer(text or ""):

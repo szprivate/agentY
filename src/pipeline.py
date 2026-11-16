@@ -1420,7 +1420,8 @@ class Pipeline:
             return out
 
         @_tool
-        async def prepare_workflow(request: str, staged_inputs: list | None = None) -> str:
+        async def prepare_workflow(request: str, staged_inputs: list | None = None,
+                                   template: str = "") -> str:
             """Research + assemble a generation request into a READY ComfyUI workflow.
 
             This is the one call to set up a generation. It selects the template,
@@ -1435,6 +1436,8 @@ class Pipeline:
                     of ``{"filename": "<name in ComfyUI input dir>", "role":
                     "master_image|reference_image|mask|control_image|depth_map"}``.
                     Pass ``[]`` for pure text-to-image/video (no inputs).
+                template: The template the USER chose from a ``choose_template``
+                    answer (its ``template`` value). Leave empty otherwise.
 
             Whenever a workflow exists, the result carries ``built``: the node
             ids and class types actually in the graph, the model files, the
@@ -1496,9 +1499,20 @@ class Pipeline:
                                 this turn, and this call would build a NEW graph
                                 without those changes. Nothing was built. If the
                                 canvas edit was the job, you are done.
+              * ``choose_template`` → ``options``: the request fits a local
+                                template AND a partner-API one of the same kind,
+                                and it says neither. Nothing was built, installed
+                                or downloaded. End the turn asking the user with
+                                the ``choices`` block in ``ask`` as it is; when
+                                they answer, call this again with
+                                ``template=<the option's template>``.
               * ``error``     → ``error``: report it.
             """
             _refusal = self._canvas_rebuild_refusal() or self._canvas_edit_first_refusal(request)
+            template = str(template or "").strip()
+            if template:
+                request = f"{request}\n\nUse the template {template} - the user chose it."
+                self._template_kind_chosen = "api" if self._template_is_api(template) else "local"
             if _refusal:
                 return json.dumps(_refusal)
             _push_progress("🔎 Researching template & prompt …")
@@ -1523,6 +1537,11 @@ class Pipeline:
             if briefing.status == "blocked":
                 _push_progress("🚧 Blocked — need more information.")
                 return json.dumps({"status": "blocked", "blockers": briefing.blockers})
+            if not template:
+                _choice = self._template_choice(getattr(briefing.template, "name", "") or "", request)
+                if _choice:
+                    _push_progress("🤔 A local and an API workflow both fit — asking which to use.")
+                    return json.dumps(_choice)
             result = await self._assemble_deterministic(briefing)
             result = await self._enforce_model_family(result, request)
             result = await self._enforce_local_only(result, request)
@@ -1664,6 +1683,11 @@ class Pipeline:
                 return json.dumps({"status": "error", "error": f"invalid briefing: {exc}"})
             if briefing.status == "blocked":
                 return json.dumps({"status": "blocked", "blockers": briefing.blockers})
+            if not template:
+                _choice = self._template_choice(getattr(briefing.template, "name", "") or "", request)
+                if _choice:
+                    _push_progress("🤔 A local and an API workflow both fit — asking which to use.")
+                    return json.dumps(_choice)
             result = await self._assemble_deterministic(briefing)
             result = await self._enforce_model_family(result, request)
             result = await self._enforce_local_only(result, request)
@@ -11468,6 +11492,82 @@ class Pipeline:
                     else:
                         local = True
         return api and not local
+
+    _API_RE = re.compile(r"\bapi\b|partner|cloud|credits?\b|comfy org|paid")
+
+    def _template_twins(self, name: str) -> tuple:
+        """``(is_api, [twin stems])``: the templates of the same capability and
+        model family on the OTHER side of local / partner API - the local and
+        the API version of one kind of workflow. Empty for a template the recipe
+        DB does not place, or one in the catch-all ``Generic`` family."""
+        stem = name[:-5] if str(name).endswith(".json") else str(name)
+        if not stem:
+            return False, []
+        strip = lambda f: f[:-5] if f.endswith(".json") else f  # noqa: E731
+        tasks = self._load_recipe_tasks()
+        home = None
+        for t in tasks:
+            for m in (t.get("models") or []):
+                if stem in [strip(f) for f in (m.get("member_files") or [])]:
+                    home = (self._task_base(str(t.get("task") or "")), str(m.get("model") or ""),
+                            bool(m.get("uses_api_nodes")))
+                    break
+            if home:
+                break
+        if not home or not home[1] or home[1] == "Generic":
+            return False, []
+        base, model, is_api = home
+        twins = []
+        for t in tasks:
+            if self._task_base(str(t.get("task") or "")) != base:
+                continue
+            for m in (t.get("models") or []):
+                if str(m.get("model") or "") != model or bool(m.get("uses_api_nodes")) == is_api:
+                    continue
+                for f in (m.get("member_files") or []):
+                    f = strip(f)
+                    if f != stem and f not in self._SUPPRESSED_TEMPLATES and f not in twins:
+                        twins.append(f)
+        return is_api, twins
+
+    def _template_choice(self, name: str, request: str) -> dict | None:
+        """A ``choose_template`` answer when the picked template has a twin on
+        the other side of local / API and the request says neither - so the
+        user picks BEFORE anything is installed, downloaded or assembled
+        (Sebastian 2026-11-16). None otherwise."""
+        q = self._norm_request(request)
+        if self._LOCAL_RE.search(q) or self._API_RE.search(q):
+            return None
+        if getattr(self, "_template_kind_chosen", None):
+            return None  # the user already chose in this conversation
+        is_api, twins = self._template_twins(name)
+        if not twins:
+            return None
+        stem = name[:-5] if str(name).endswith(".json") else str(name)
+        words = set(re.split(r"[^a-z0-9]+", stem.lower()))
+        # The closest by name first; a node pack's own example ("Pack__name")
+        # after the official templates.
+        twins.sort(key=lambda f: ("__" in f, -len(words & set(re.split(r"[^a-z0-9]+", f.lower()))), f))
+        local_note = "runs on this machine; any missing node pack or model files are offered before anything is installed"
+        api_note = "partner-API nodes: runs remotely, billed per run with Comfy credits"
+        picked = {"template": stem, "kind": "api" if is_api else "local"}
+        others = [{"template": f, "kind": "local" if is_api else "api"} for f in twins[:2]]
+        options = [picked] + others
+        options.sort(key=lambda o: o["kind"] != "local")
+        for o in options:
+            o["label"] = ("API" if o["kind"] == "api" else "Local") + " - " + o["template"]
+            o["detail"] = api_note if o["kind"] == "api" else local_note
+        block = "```choices\nWhich workflow should I use?\n" + "\n".join(
+            f"{i}. {o['label']} | {o['detail']}" for i, o in enumerate(options, 1)) + "\n```"
+        return {
+            "status": "choose_template", "options": options, "ask": block,
+            "guidance": ("Both a local and a partner-API workflow fit and the request names neither. "
+                         "Nothing was built, installed or downloaded. End this turn: say in one line "
+                         "that both kinds exist, then put the `ask` block in your answer exactly as it "
+                         "is (the panel shows it as cards, Slack as numbers). Do not install, download, "
+                         "open or prepare anything yet. When the user answers, call prepare_workflow "
+                         "again with the same request and template=<the chosen option's template>."),
+        }
 
     async def _enforce_local_only(self, result: dict, request: str) -> dict:
         """Hold a ``ready`` workflow to an explicit "local" request.
