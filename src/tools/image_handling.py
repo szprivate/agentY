@@ -427,6 +427,31 @@ def _analyze_many(paths: list, question: str, mode: str) -> dict:
     return {**out, "content": content}
 
 
+#: (mtime, size) of each file analyze_image looked at, by resolved path. A second
+#: look at a file no run has rewritten since is said for what it is: in the promo
+#: run of 2026-11-15 the agent judged a cached preview of its own input four times
+#: and took it for the result of each new setting (src/utils/run_outputs.py).
+_SEEN: dict[str, tuple] = {}
+
+
+def _unchanged_note(path: str) -> str:
+    """"" for a first look or a changed file, else a warning for the answer."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return ""
+    key = os.path.normcase(os.path.abspath(path))
+    stamp = (st.st_mtime, st.st_size)
+    before = _SEEN.get(key)
+    _SEEN[key] = stamp
+    if before != stamp:
+        return ""
+    return ("NOTE: this file has not changed since you last analysed it. No run has "
+            "rewritten it, so it does not show the result of anything you changed "
+            "since. A cached Preview / temp file keeps its old picture: judge the "
+            "file the Save node wrote in this run (run_workflow_now lists it first).\n\n")
+
+
 @tool
 def analyze_image(
     file_path: str = "",
@@ -506,6 +531,7 @@ def analyze_image(
     data: Optional[bytes] = None
     source_name = ""
     detected_mime = ""
+    _unchanged = ""
 
     if file_path:
         resolved = _resolve_local_image(file_path)
@@ -513,6 +539,7 @@ def analyze_image(
             return {"status": "error", "content": [{"text": f"File not found: {file_path}"}]}
         p = Path(resolved)
         source_name = str(p)
+        _unchanged = _unchanged_note(str(p))
         try:
             data = p.read_bytes()
         except Exception as exc:
@@ -611,7 +638,7 @@ def analyze_image(
                     "content": [
                         {
                             "text": (
-                                f"Image analysis for {label}:\n\n{vision_result}"
+                                f"{_unchanged}Image analysis for {label}:\n\n{vision_result}"
                             )
                         }
                     ],

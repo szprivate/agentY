@@ -55,12 +55,16 @@ Match the failure to the right repair:
   never the bare `ref_image_0`); `update_workflow` renames a bare slot name itself,
   and `validate_workflow` lists the inputs the node does take.
 - **Unknown / missing node type** (the class isn't recognised) →
-  `find_custom_node_for(node_type)` to locate the pack, then
-  `install_custom_node(source)`. Installed nodes need a ComfyUI restart before
-  they load — say so if a restart is required.
-- **Missing model / checkpoint / LoRA file** → `check_model([...])` to confirm,
-  then `find_hf_file` / `search_huggingface_models` → `download_hf_model` (pass
-  the right `node_class_type`), and point the loader at the real filename.
+  `find_custom_node_for(node_type)` to locate the pack, then STOP and report the
+  pack's name and source. You cannot install: the user decides that, through the
+  orchestrator.
+- **Missing model / checkpoint / LoRA file** → `check_model([...])` and
+  `find_local_models` to confirm it is not on disk under another name (if it is,
+  point the loader at the real filename). Otherwise `find_hf_file` / `hf_file` to
+  say where it is and how big, then STOP and report it. You cannot download: the
+  user decides that, through the orchestrator. Never look on Hugging Face for a
+  picture, video or sound the workflow takes as input: those are the user's files
+  in ComfyUI's input folder.
   - Unless the node runs its model remotely: a `category` beginning `partner/`,
     or ComfyUI flagging the node `api_node`, means its `model` input is a menu of
     remote model names, not a filename on disk. So `check_model(["MiniMax H3"])`
@@ -85,14 +89,14 @@ Match the failure to the right repair:
   the graph, re-prompt, or "improve" unrelated nodes.
 - One `update_workflow` call per pass (batch all fixes into a single `patches`
   array). At most two passes, then stop.
-- If the cause is genuinely unfixable here (a node needs a restart you can't do,
-  or a required model can't be found anywhere), stop and state exactly what the
+- If the cause is genuinely unfixable here (a node pack or a model is missing,
+  or a node needs a restart you can't do), stop and state exactly what the
   user must do — do not loop.
 
 ## Troubleshooting
 - **update_workflow returns error twice** → report remaining `node_errors` /
   `server_errors` and stop.
-- **Model truly missing** → report the exact filename and that it couldn't be
-  located on HuggingFace.
-- **Node needs a restart** → say the pack is installed but ComfyUI must be
-  restarted before the workflow can run.
+- **Model truly missing** → report the exact filename, and where it is on
+  Hugging Face if `find_hf_file` found it.
+- **Node pack missing** → report the pack and its source; installing it (and the
+  ComfyUI restart after) is the user's call.

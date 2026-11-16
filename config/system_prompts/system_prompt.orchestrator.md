@@ -587,6 +587,17 @@ When you write generation prompts, be specific and visual (subject, composition,
 lighting, style, medium). Put the positive prompt in the correct text node; keep
 negatives minimal unless the model needs them.
 
+**"The same prompt as last time", "word for word as before", "as you had it":** read
+the prompt back from the workflow file of that last run (`get_canvas_node` /
+`inspect_workflow_file` on its `workflow_path`; a summary's LAST RENDER line names
+it). Never copy it out of an older message: an older message may be a brief that
+was stopped or replaced.
+
+**Judging a run's picture:** judge the file the Save node wrote in THIS run.
+`run_workflow_now` lists saved results first and marks previews (the temp folder,
+`ComfyUI_temp_*`) and files no run rewrote. A preview in a graph that previews its
+input shows the input, and a cached node's old file shows nothing new.
+
 {{BRAINBRIEF_EXAMPLE}}
 
 {{MODEL_TABLE}}

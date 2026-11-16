@@ -29,8 +29,13 @@ class TheOrchestratorCanInstall(unittest.TestCase):
         names = {tp.name_of(t) for t in ORCHESTRATOR_TOOLS}
         self.assertIn("install_custom_node", names)
         self.assertIn("find_custom_node_for", names)
-        # The repair specialist keeps them too.
-        self.assertIn("install_custom_node", {tp.name_of(t) for t in FIX_WORKFLOW_ASSEMBLY_TOOLS})
+        # The repair specialist finds the pack but no longer installs it: that is
+        # the user's call, asked by the orchestrator (promo run 2026-11-15).
+        fix = {tp.name_of(t) for t in FIX_WORKFLOW_ASSEMBLY_TOOLS}
+        self.assertIn("find_custom_node_for", fix)
+        self.assertNotIn("install_custom_node", fix)
+        self.assertNotIn("download_hf_model", fix)
+        self.assertNotIn("search_huggingface_models", fix)
 
     def test_they_are_held_in_the_nodes_pack_and_listed_in_the_prompt(self):
         always, held = tp.split(ORCHESTRATOR_TOOLS)

@@ -531,8 +531,8 @@ ASSEMBLE_WORKFLOW_TOOLS: list = [
 #   * execution-time: ComfyUI failed to run the workflow (node/model error)
 # It diagnoses the failing node, patches the graph, and re-validates. It does NOT
 # select templates or write prompts (that is prepare_workflow's job) and does NOT
-# submit for execution (the pipeline re-runs it). Includes node install + model
-# download so it can heal missing-node / missing-model execution failures.
+# submit for execution (the pipeline re-runs it). It does NOT install nodes or
+# download models: it reports what is missing and the orchestrator asks the user.
 # ---------------------------------------------------------------------------
 FIX_WORKFLOW_ASSEMBLY_TOOLS: list = [
     # Diagnose
@@ -544,22 +544,22 @@ FIX_WORKFLOW_ASSEMBLY_TOOLS: list = [
     replace_node,
     save_workflow,
     validate_workflow,
-    # Heal missing node types (execution failures)
+    # Missing node types: find the pack and REPORT it. Installing is the
+    # orchestrator's, after the user said yes (the template-first rule): the
+    # promo run of 2026-11-15 had this specialist search Hugging Face and
+    # download files nobody asked for, inside a repair nobody could see.
     find_custom_node_for,
-    install_custom_node,
     # How a node works, and how other graphs used it
     get_node_source,
     find_workflows,
     inspect_workflow_file,
-    # Heal missing model files
+    # Missing model files: look locally, find where one is on Hugging Face and
+    # report it (name, repo, size). No search sweeps and no downloads here.
     check_model,
     find_local_models,
-    search_huggingface_models,
     get_model_info,
     find_hf_file,
     hf_file,
-    download_hf_model,
-    wait_for_download,
     # Server dirs (resolve paths when patching)
     get_comfyui_dirs,
     stop,
