@@ -2490,6 +2490,8 @@ class Pipeline:
             _estimate = await asyncio.to_thread(_pch.estimate_of, [workflow_path])
             _spent_before = _credits.turn_total()
             _why_empty = ""
+            import time as _time_mod
+            _run_started = _time_mod.time()
             try:
                 async for _line in _execute_workflow(
                     workflow_path, brief, user_message="", verbose=self._verbose,
@@ -2519,13 +2521,21 @@ class Pipeline:
                 str((_only or {}).get("hook_node_id") or ""), new)
             if self._verbose:
                 print(f"pipeline: run_workflow_now produced {len(new)} output(s).")
+            # Saved results first, previews and cached files said for what they are
+            # (src/utils/run_outputs.py: the promo run judged a cached preview of
+            # its own input four times).
+            from src.utils import run_outputs as _ro
+            _rows = _ro.describe(new, _run_started)
+            _ro_note = _ro.note(_rows)
             result = {
                 "status": "done",
-                "outputs": new,
+                "outputs": [r["path"] for r in _rows],
+                "output_files": _rows,
                 "message": (
                     f"{len(new)} output(s) produced and staged onto the canvas. To "
                     "chain: upload_image one of these paths and bind it to the next "
                     "stage's loader, then run that stage."
+                    + (" " + _ro_note if _ro_note else "")
                     + self._products_note(products)
                 ) if new else ("Workflow ran but produced no output files"
                                + (": " + _why_empty if _why_empty else ".")),

@@ -117,6 +117,94 @@ def turn_starts(messages) -> list[int]:
     return [i for i, m in enumerate(messages or []) if _is_turn_start(m)]
 
 
+def _answered(message) -> bool:
+    """An assistant message that said or did something (text or a tool call)."""
+    if not isinstance(message, dict) or message.get("role") != "assistant":
+        return False
+    for c in message.get("content") or []:
+        if isinstance(c, dict) and ("toolUse" in c or str(c.get("text") or "").strip()):
+            return True
+    return False
+
+
+def counted_turn_starts(messages) -> list[int]:
+    """The turn starts that count toward ``keep_turns``.
+
+    A turn stopped before the agent said or did anything is left out. In the promo
+    run of 2026-11-15 an old brief was sent by mistake and stopped at once. It still
+    took one of the two places kept word for word, so the turn before it, the only
+    place that held the night's prompts, went into the summary. The agent then
+    copied the one complete prompt it still had: the old brief's. The last turn
+    always counts: it is the one running now.
+    """
+    msgs = list(messages or [])
+    starts = turn_starts(msgs)
+    out = []
+    for k, i in enumerate(starts):
+        end = starts[k + 1] if k + 1 < len(starts) else len(msgs)
+        if k == len(starts) - 1 or any(_answered(m) for m in msgs[i + 1:end]):
+            out.append(i)
+    return out
+
+
+#: Inputs that hold a prompt's words, in the graphs agentY builds and loads.
+_PROMPT_KEYS = ("text", "prompt", "positive", "negative", "text_g", "text_l",
+                "positive_prompt", "negative_prompt", "string")
+#: Tools whose ``workflow_path`` is a workflow that was (about to be) rendered.
+_RUN_TOOLS = ("run_workflow_now", "signal_workflow_ready", "run_variants")
+
+
+def last_render(messages) -> dict | None:
+    """The last workflow a run or signal named in *messages*, with its prompts.
+
+    ``{"workflow_path", "tool", "prompts": [{"node", "input", "text"}]}``. The
+    prompts are read from the file on disk, not from the conversation, so they are
+    the words that were rendered, whatever a summary keeps of them. None when no
+    run is in *messages*.
+    """
+    path, tool = "", ""
+    for m in messages or []:
+        if not isinstance(m, dict) or m.get("role") != "assistant":
+            continue
+        for c in m.get("content") or []:
+            tu = c.get("toolUse") if isinstance(c, dict) else None
+            if not isinstance(tu, dict) or tu.get("name") not in _RUN_TOOLS:
+                continue
+            inp = tu.get("input") or {}
+            wp = inp.get("workflow_path") or (inp.get("workflow_paths") or [""])[0]
+            if isinstance(wp, str) and wp.strip():
+                path, tool = wp.strip(), str(tu.get("name"))
+    if not path:
+        return None
+    prompts = []
+    try:
+        graph = json.loads(Path(path).read_text(encoding="utf-8"))
+        if isinstance(graph, dict) and isinstance(graph.get("prompt"), dict):
+            graph = graph["prompt"]
+        for nid, node in (graph.items() if isinstance(graph, dict) else []):
+            inputs = (node or {}).get("inputs") if isinstance(node, dict) else None
+            for key in _PROMPT_KEYS:
+                val = (inputs or {}).get(key)
+                if isinstance(val, str) and len(val.strip()) >= 12:
+                    prompts.append({"node": str(nid), "input": key, "text": val.strip()[:3000]})
+    except Exception as exc:  # noqa: BLE001 — the path alone still helps
+        logger.debug("compaction: could not read %s (%s)", path, exc)
+    return {"workflow_path": path, "tool": tool, "prompts": prompts[:8]}
+
+
+def render_block(info: dict | None) -> str:
+    """The LAST RENDER lines a summary carries word for word ("" without a run)."""
+    if not info:
+        return ""
+    lines = [f"LAST RENDER before the turns below ({info['tool']}): {info['workflow_path']}"]
+    for p in info.get("prompts") or []:
+        lines.append(f"- node {p['node']} {p['input']}: \"{p['text']}\"")
+    lines.append("\"The same prompt as last time\" means these words: read them back from "
+                 "that file (get_canvas_node / inspect_workflow_file) before you reuse them, "
+                 "never from an older message.")
+    return NEWLINE.join(lines)
+
+
 # ── step 1: age ──────────────────────────────────────────────────────────────
 
 def _cut(text: str, head: int, what: str) -> str:
@@ -275,7 +363,7 @@ def summarise_older(messages: list, *, keep_turns: int,
     the first message kept — a real user message — so roles still alternate and
     no tool call loses its result.
     """
-    starts = turn_starts(messages)
+    starts = counted_turn_starts(messages)
     if len(starts) <= max(1, keep_turns):
         return list(messages), []
     cut = starts[-max(1, keep_turns)]
@@ -287,9 +375,15 @@ def summarise_older(messages: list, *, keep_turns: int,
     except Exception as exc:  # noqa: BLE001 — a summary must never cost the turns
         logger.warning("compaction: summariser failed (%s) — using the digest", exc)
         text = digest(old)
+    # Not left to the summariser: it keeps "with the updated prompts", not the
+    # prompts. The last render's words are read from its file and kept whole,
+    # unless a run in the kept turns is newer anyway.
+    render = "" if last_render(recent) else render_block(last_render(old))
     first = copy.copy(recent[0])
     block = {"text": f"{SUMMARY_MARK}; the full messages are archived on disk]\n"
-                     f"{text.strip()}\n{CONTINUE_NOTE}\n{SUMMARY_END}"}
+                     f"{text.strip()}\n"
+                     + (f"{render}\n" if render else "")
+                     + f"{CONTINUE_NOTE}\n{SUMMARY_END}"}
     first["content"] = [block] + list(first.get("content") or [])
     return [first] + recent[1:], old
 
