@@ -6811,7 +6811,7 @@ def _register_with_comfyui(port: int = 0) -> None:
     panel keeps building the address from its own location.hostname and a sidebar
     reaching ComfyUI across the network still works.
     """
-    def _do() -> None:
+    def _once() -> bool:
         try:
             from src.utils.settings import load_settings
             import urllib.request
@@ -6825,9 +6825,28 @@ def _register_with_comfyui(port: int = 0) -> None:
                                          headers={"Content-Type": "application/json"}, method="POST")
             urllib.request.urlopen(req, timeout=5).read()
             logger.info("registered agentY host location with the ComfyUI extension")
+            return True
         except Exception as exc:  # noqa: BLE001
             logger.debug("host self-registration skipped: %s", exc)
+            return False
+
+    # Kept trying, not tried once. A host started before ComfyUI (or while it
+    # restarts) would otherwise leave the PREVIOUS port on record, and a panel
+    # asking ComfyUI where the host is would be sent to it: with `--port 5003`
+    # because 5001 is taken, that is an address something else answers on, and the
+    # panel never wakes up although both sides are running.
+    def _do() -> None:
+        for pause in _REGISTER_RETRY_PAUSES:
+            if _once():
+                return
+            time.sleep(pause)
+        _once()
     threading.Thread(target=_do, name="agentY-register-host", daemon=True).start()
+
+
+# Seconds between registration attempts while ComfyUI is not answering: quick at
+# first (it is usually starting alongside), then every 30 s for about an hour.
+_REGISTER_RETRY_PAUSES = (2, 5, 10) + (30,) * 120
 
 
 _server_failed: str = ""   # set when the listener is gone for good; main() exits on it
