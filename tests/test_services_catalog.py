@@ -38,11 +38,15 @@ class ServicesCatalog(unittest.TestCase):
         by = {s["key_env"]: s for s in self.services}
         for key in ("DASHSCOPE_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY",
                     "COMFYUI_API_KEY", "HF_TOKEN", "WORLDLABS_API_KEY", "SLACK_BOT_TOKEN",
-                    "AYON_API_KEY"):
+                    "AYON_API_KEY", "VAST_API_KEY", "RUNPOD_API_KEY"):
             self.assertIn(key, by)
         self.assertEqual(by["DASHSCOPE_API_KEY"]["url_env"], "DASHSCOPE_BASE_URL")
         self.assertEqual(by["DASHSCOPE_API_KEY"]["default_url"],
                          "https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
+        self.assertEqual(by["VAST_API_KEY"]["url_env"], "VAST_API_URL")
+        self.assertEqual(by["VAST_API_KEY"]["default_url"], "https://console.vast.ai/api/v0")
+        self.assertEqual(by["RUNPOD_API_KEY"]["url_env"], "RUNPOD_API_URL")
+        self.assertEqual(by["RUNPOD_API_KEY"]["default_url"], "https://rest.runpod.io/v1")
         self.assertEqual(by["AYON_API_KEY"]["url_env"], "AYON_SERVER_URL")
         self.assertEqual(by["AYON_API_KEY"]["default_url"], "https://bepic.ayon.app")  # the studio server
         self.assertIn("service-user", by["AYON_API_KEY"]["hint"])

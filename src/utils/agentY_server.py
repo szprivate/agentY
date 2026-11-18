@@ -3474,6 +3474,8 @@ _KNOWN_ENV_KEYS = [
     "WORLDLABS_API_KEY", "WLT_MARBLE_API_KEY",
     # SpAItial Echo, the second world generator
     "SPAITIAL_API_KEY", "SPAITIAL_BASE_URL",
+    # GPU providers of the viewer's Farm space (agenty_core.utils.gpu_pool); the URLs are optional overrides
+    "VAST_API_KEY", "VAST_API_URL", "RUNPOD_API_KEY", "RUNPOD_API_URL",
     # Ayon pipeline (service-user key; see docs/dev/ayon.md)
     "AYON_API_KEY", "AYON_SERVER_URL",
     # Deadline render farm (all optional; see docs/setup/deadline.md)
@@ -3533,6 +3535,17 @@ _BUILTIN_SERVICES = [
      "default_url": "https://api.spaitial.ai",
      "help_url": "https://developers.spaitial.ai",
      "hint": "The second world generator (splat worlds from one picture, a 360 panorama or a prompt; the viewer's New world dialog, Engine: Echo). Keys start spt_live_. Billed in SpAItial credits: echo-2 160 (US$ 1.60), echo-hq 800."},
+    {"id": "vast", "label": "vast.ai (Farm GPUs)", "key_env": "VAST_API_KEY", "url_env": "VAST_API_URL",
+     "default_url": "https://console.vast.ai/api/v0",
+     "help_url": "https://cloud.vast.ai/manage-keys/",
+     "hint": "Rents GPUs for the viewer's Farm space (Farm > Machines > Add machines). The server URL is already "
+             "set to vast.ai's API; leave it as it is. Works right after Save, no restart."},
+    {"id": "runpod", "label": "RunPod (Farm GPUs)", "key_env": "RUNPOD_API_KEY", "url_env": "RUNPOD_API_URL",
+     "default_url": "https://rest.runpod.io/v1",
+     "help_url": "https://www.runpod.io/console/user/settings",
+     "hint": "Rents GPUs for the viewer's Farm space (Farm > Machines > Add machines). The server URL is already "
+             "set to RunPod's REST API (prices come from https://api.runpod.io/graphql); leave it as it is. "
+             "Works right after Save, no restart."},
     {"id": "ayon", "label": "Ayon", "key_env": "AYON_API_KEY", "url_env": "AYON_SERVER_URL",
      "default_url": "https://bepic.ayon.app",
      "help_url": "https://ayon.ynput.io/docs/",
@@ -4170,6 +4183,10 @@ def settings_payload(offline: bool = False) -> dict:
                                   "https://generativelanguage.googleapis.com/v1beta/openai/")):
         if not env.get(key):
             env[key] = str(((settings.get("llm") or {}).get(block) or {}).get("base_url") or fallback)
+    # The Farm's GPU providers: show the API address in use, so nobody has to look it up.
+    for sv in _BUILTIN_SERVICES:
+        if sv["id"] in ("vast", "runpod") and not env.get(sv["url_env"]):
+            env[sv["url_env"]] = sv["default_url"]
     # Show ComfyUI's live --user-directory rather than the static fallback.
     live_user_dir = _effective_comfyui_user_dir()
     if live_user_dir:
