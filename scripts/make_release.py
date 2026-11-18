@@ -22,6 +22,14 @@ half-updated mix. ``update_channel = "dev"`` follows every commit instead.
     .venv/Scripts/python.exe scripts/make_release.py 1.1.0             # do it
     .venv/Scripts/python.exe scripts/make_release.py --show            # the current release
     .venv/Scripts/python.exe scripts/make_release.py --check           # is this machine on it?
+    .venv/bin/python scripts/make_release.py 1.1.0 --via-actions       # from a cloud session
+
+``--via-actions`` is for a session that may push to dev but not push tags (a cloud
+session: its git proxy refuses tag pushes). It does everything up to pushing
+release.toml on agentY's dev, and leaves the tags, the main / master and stable moves
+and the GitHub releases to the Release workflow (.github/workflows/release.yml), which
+runs on that push. It keeps the committed requirements.lock unless ``--lock`` is given:
+a lock written on Linux moves the Windows-only pins to versions nobody tested.
 
 New work goes to each repository's `dev` branch first. A release takes the
 tested `dev` commits and moves the default branch (`main`; `master` in
@@ -285,7 +293,7 @@ def build_lock(python: str = sys.executable) -> str:
     return header + out.stdout.strip() + "\n"
 
 
-def release(version: str, dry_run: bool = False, lock: bool = True, notes: str = "") -> int:
+def release(version: str, dry_run: bool = False, lock: bool = True, notes: str = "", via_actions: bool = False) -> int:
     if not re.fullmatch(r"\d+\.\d+\.\d+", version):
         print(f"'{version}' is not a version like 1.2.0"); return 2
     tag = f"v{version}"
@@ -329,6 +337,8 @@ def release(version: str, dry_run: bool = False, lock: bool = True, notes: str =
         print(f"  {name:24} {repos[name]['commit'][:7]}  ({_git(dirs[name], 'branch', '--show-current') or 'detached'})")
     if dry_run:
         print("\n--dry-run: nothing written, tagged or pushed.\n\n" + manifest); return 0
+    if via_actions and _git(dirs["agentY"], "branch", "--show-current") != "dev":
+        print("Cannot release --via-actions: agentY must be on dev (the Release workflow runs on dev pushes)."); return 2
 
     if lock:
         print("Writing requirements.lock …")
@@ -342,6 +352,10 @@ def release(version: str, dry_run: bool = False, lock: bool = True, notes: str =
     print(f"  agentY                   {_git(agent, 'rev-parse', 'HEAD')[:7]}  ({branch})")
     if branch != "dev":
         print(f"  note: agentY is on '{branch}', not 'dev' - releases are meant to be cut from dev.")
+    if via_actions:
+        print(f"The Release workflow in agentY now tags {tag}, moves main / master and stable and makes the\n"
+              "GitHub releases: https://github.com/szprivate/agentY/actions/workflows/release.yml")
+        return 0
 
     body = notes or f"agentY {version}."
     for name, path in dirs.items():
@@ -385,7 +399,9 @@ def main(argv: list) -> int:
     for a in argv:
         if a.startswith("--notes-file="):
             notes = Path(a.split("=", 1)[1]).read_text(encoding="utf-8")
-    return release(versions[0], dry_run="--dry-run" in argv, lock="--no-lock" not in argv, notes=notes)
+    via = "--via-actions" in argv
+    lock = "--lock" in argv if via else "--no-lock" not in argv
+    return release(versions[0], dry_run="--dry-run" in argv, lock=lock, notes=notes, via_actions=via)
 
 
 if __name__ == "__main__":

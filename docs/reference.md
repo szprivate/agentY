@@ -72,6 +72,15 @@ branch, pushed, and the tests run):
 .venv\Scripts\python.exe scripts\make_release.py --check           # is this machine on it?
 ```
 
+**From a cloud session**, which may push to `dev` but not push tags:
+`.venv/bin/python scripts/make_release.py 1.1.0 --via-actions`. It stops after pushing
+`release.toml` to agentY's `dev`, and the **Release** workflow
+(`.github/workflows/release.yml`) does the rest on that push: tags, `main` / `master` and
+`stable`, GitHub releases, for all five repositories. The workflow needs the repository
+secret `RELEASE_TOKEN`, a fine-grained token with *Contents: read and write* on the five
+repositories. `--via-actions` keeps the committed `requirements.lock` unless `--lock` is
+given.
+
 It releases each repository at the commit it has checked out, writes
 `release.toml` and `requirements.lock`, tags, moves `main` and `stable`, and
 creates the GitHub releases (needs the `gh` CLI).

@@ -1,0 +1,73 @@
+# Finishes a release that scripts/make_release.py --via-actions started.
+#
+# The release script commits release.toml on agentY's dev branch. This workflow then
+# does what the script does after that on a dev machine, for all five repositories:
+# tag each one v<version> at the commit release.toml names (agentY at the commit that
+# was pushed), move main / master and stable forward to it (never backwards), and make
+# the GitHub releases. It is for sessions that may push to dev but not push tags
+# (a cloud session).
+#
+# It needs the secret RELEASE_TOKEN: a fine-grained token with "Contents: read and
+# write" on agentY, agentY-core, agentY-comfyuiConnect, agentY-mcp and ComfyUI-ImageViewer.
+# The run does nothing when the version in release.toml is already tagged, so a push that
+# only changes this file or the lock is safe.
+name: Release
+on:
+  push:
+    branches: [dev]
+    paths: [release.toml, .github/workflows/release.yml]
+concurrency:
+  group: release
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  release:
+    if: github.repository == 'szprivate/agentY'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag, move main and stable, make the GitHub releases
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          AGENT_COMMIT: ${{ github.sha }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          if [ -z "$GH_TOKEN" ]; then echo "::error::The secret RELEASE_TOKEN is not set"; exit 1; fi
+          V=$(sed -n 's/^version = "\(.*\)"$/\1/p' release.toml)
+          [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::release.toml has no version"; exit 1; }
+          TAG="v$V"
+          # repo commit, one per line: agentY at the pushed commit, the siblings as release.toml says
+          LIST="agentY $AGENT_COMMIT"$'\n'$(awk -F'"' '/^\[repos\./{r=$2} /^commit = /{print r" "$2}' release.toml)
+          echo "$LIST"
+          [ "$(echo "$LIST" | wc -l)" -eq 5 ] || { echo "::error::release.toml does not name four siblings"; exit 1; }
+          if gh api "repos/$OWNER/agentY/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            echo "$TAG is already tagged in agentY - nothing to do"; exit 0
+          fi
+          # check everything before changing anything
+          while read -r repo sha; do
+            [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::$repo: bad commit $sha"; exit 1; }
+            if gh api "repos/$OWNER/$repo/git/ref/tags/$TAG" >/dev/null 2>&1; then
+              echo "::error::$repo already has $TAG"; exit 1; fi
+            st=$(gh api "repos/$OWNER/$repo/compare/$sha...dev" --jq .status)
+            [[ "$st" == ahead || "$st" == identical ]] || { echo "::error::$repo: $sha is not on dev ($st)"; exit 1; }
+          done <<< "$LIST"
+          now=$(date -u +%Y-%m-%dT%H:%M:%SZ); bad=0
+          while read -r repo sha; do
+            R="repos/$OWNER/$repo"
+            obj=$(gh api -X POST "$R/git/tags" -f tag="$TAG" -f message="agentY $V" -f object="$sha" -f type=commit \
+                  -f tagger[name]="agentY release" -f tagger[email]="41898282+github-actions[bot]@users.noreply.github.com" \
+                  -f tagger[date]="$now" --jq .sha)
+            gh api -X POST "$R/git/refs" -f ref="refs/tags/$TAG" -f sha="$obj" >/dev/null
+            def=$(gh api "$R" --jq .default_branch)
+            for b in "$def" stable; do
+              # force=false: a branch only moves forward; a move that would rewind it is refused
+              gh api -X PATCH "$R/git/refs/heads/$b" -f sha="$sha" -F force=false >/dev/null \
+                || { echo "::warning::$repo: could not move $b to $TAG"; bad=1; }
+            done
+            gh release create "$TAG" -R "$OWNER/$repo" --title "agentY $V" --notes "agentY $V." --verify-tag >/dev/null \
+              || { echo "::warning::$repo: GitHub release failed"; bad=1; }
+            echo "$repo: $TAG at ${sha:0:7}, $def and stable moved, GitHub release made"
+          done <<< "$LIST"
+          exit $bad
