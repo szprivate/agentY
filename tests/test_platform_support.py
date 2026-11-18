@@ -464,6 +464,59 @@ class TheSidebarIsToldThePort(unittest.TestCase):
         side with something that cannot be dialled."""
         self.assertNotIn("agent_server_port", self._capture_registration(0))
 
+    def test_a_comfyui_that_starts_later_still_learns_the_port(self):
+        """Host first, ComfyUI second is an ordinary order to start them in. A
+        single attempt left the previous host's port on record, and the panel
+        dialled that forever (`--port 5003` with 5001 taken: never woke up)."""
+        import http.server
+        import json as _json
+        import socket
+        import socketserver
+        import threading
+        import time as _time
+        from unittest import mock
+
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            free = probe.getsockname()[1]
+        received = {}
+
+        class Stub(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                n = int(self.headers.get("Content-Length", 0))
+                received.update(_json.loads(self.rfile.read(n) or b"{}"))
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'{"ok":true}')
+
+            def log_message(self, *a):
+                pass
+
+        from src.utils import settings as st
+        from src.utils import agentY_server as A
+
+        previous = st._cache
+        st._cache = dict(st.load_settings())
+        st._cache["comfyui_url"] = f"http://127.0.0.1:{free}"
+        srv = None
+        try:
+            with mock.patch.object(A, "_REGISTER_RETRY_PAUSES", (0.1,) * 50):
+                A._register_with_comfyui(5003)
+                _time.sleep(0.3)                     # nothing there yet
+                self.assertEqual(received, {})
+                socketserver.TCPServer.allow_reuse_address = True
+                srv = socketserver.TCPServer(("127.0.0.1", free), Stub)
+                threading.Thread(target=srv.serve_forever, daemon=True).start()
+                for t in threading.enumerate():
+                    if t.name == "agentY-register-host":
+                        t.join(timeout=10)
+        finally:
+            st._cache = previous
+            if srv:
+                srv.shutdown()
+                srv.server_close()
+        self.assertEqual(received.get("agent_server_port"), 5003)
+
     def test_the_call_site_passes_what_was_bound(self):
         """Read from the source because the alternative — actually starting the
         host — is not a unit test. `port` here is start_agentY_server's own
