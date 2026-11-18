@@ -1,0 +1,31 @@
+# Builds the farm machine image (deploy/farm-image) and publishes it as ghcr.io/szprivate/agenty-farm.
+# Put ghcr.io/szprivate/agenty-farm:latest in the viewer's Farm > Setup > Machine image.
+# The package must be public (GitHub > Packages > agenty-farm > Package settings) so vast.ai and RunPod can pull it.
+name: Farm image
+on:
+  push:
+    branches: [dev]
+    paths: [deploy/farm-image/**, .github/workflows/farm-image.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+jobs:
+  build:
+    if: github.repository == 'szprivate/agentY'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: deploy/farm-image
+          push: true
+          tags: |
+            ghcr.io/szprivate/agenty-farm:latest
+            ghcr.io/szprivate/agenty-farm:${{ github.sha }}
