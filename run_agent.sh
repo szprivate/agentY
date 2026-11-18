@@ -326,6 +326,11 @@ else
       [ "$ext_i" -gt 1 ] && ext_label="$ext_name #$ext_i"
       update_repo "$ext_label" "$full"
       [ "$REPO_MOVED" = "1" ] && ext_updated=1
+      # The viewer's packages (usd-core, trimesh) live in ComfyUI's Python, which
+      # ComfyUI never fills from a node's requirements.txt. Quiet when nothing is missing.
+      if [ "$ext_name" = "ComfyUI-ImageViewer" ] && [ "$(basename "$(dirname "$full")")" = "custom_nodes" ]; then
+        python3 "$PROJECT_ROOT/scripts/viewer_deps.py" "$(dirname "$(dirname "$full")")" --quiet || true
+      fi
     done
   done
   if [ "$ext_updated" = "1" ]; then

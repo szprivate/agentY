@@ -1339,6 +1339,8 @@ if ($SkipComfyNode) {
         # The ComfyUI Image Viewer is agentY's standard viewer (Settings > Load & save nodes
         # saves into it by default). A failed clone only costs the viewer.
         Install-ImageViewer -CustomNodes (Join-Path $ResolvedComfy "custom_nodes")
+        # ...and its packages (usd-core for USD scenes, trimesh) into ComfyUI's own Python.
+        & (Get-VenvPython $ProjectRoot) (Join-Path $ProjectRoot "scripts\viewer_deps.py") $ResolvedComfy
 
         # Record where the agentY host lives so the sidebar's "Start server" button
         # can relaunch run_agent.ps1 when the host is down. The agentY host also

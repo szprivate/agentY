@@ -340,6 +340,15 @@ if ($skipUpdate) {
             if ($before -and $after -and $before -ne $after) { $extUpdated = $true }
         }
     }
+    # The viewer's packages (usd-core, trimesh) live in ComfyUI's Python, which
+    # ComfyUI never fills from a node's requirements.txt. Quiet when nothing is missing.
+    $agentPy = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+    foreach ($r in $targets) {
+        if (-not $r.ContainsKey("ext") -or $r.n -notlike "ComfyUI-ImageViewer*") { continue }
+        $nodes = Split-Path $r.d -Parent
+        if ((Split-Path $nodes -Leaf) -ne "custom_nodes" -or -not (Test-Path $agentPy)) { continue }
+        & $agentPy (Join-Path $ProjectRoot "scripts\viewer_deps.py") (Split-Path $nodes -Parent) --quiet
+    }
     if ($extUpdated) {
         Write-Host "[update] The ComfyUI sidebar extension or viewer changed - restart ComfyUI (or reload the browser for JS-only changes) to pick it up." -ForegroundColor Yellow
     }

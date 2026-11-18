@@ -1288,6 +1288,8 @@ else
     # The ComfyUI Image Viewer is agentY's standard viewer (Settings > Load & save nodes
     # saves into it by default). A failed clone only costs the viewer.
     install_image_viewer "$RESOLVED_COMFY/custom_nodes"
+    # ...and its packages (usd-core for USD scenes, trimesh) into ComfyUI's own Python.
+    python3 "$PROJECT_ROOT/scripts/viewer_deps.py" "$RESOLVED_COMFY" || true
 
     # Record where the agentY host lives so the sidebar's "Start server" button can
     # relaunch run_agent.sh when the host is down. The agentY host also rewrites
