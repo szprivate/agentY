@@ -5379,7 +5379,10 @@ def _build_app():
         if _deliver_farm_output not in _gp.listeners:
             _gp.listeners.append(_deliver_farm_output)
         if request.method == "GET":
-            if any(m.get("state") not in ("stopped", "gone") for m in _gp.state().get("machines") or []):
+            # Keep the farm's loop going while it has any machine (a stopped one too: it still has to notice when
+            # the machine is destroyed on the provider's site) or a job.
+            st = _gp.state()
+            if st.get("machines") or any(j.get("state") in ("queued", "running") for j in st.get("jobs") or []):
                 _gp.ensure_running()
             return jsonify({"ok": True, **_gp.state()})
         try:
