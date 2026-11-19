@@ -194,6 +194,8 @@ from agenty_core.tools.animate_character import animate_character  # noqa: F401,
 # The rest of the viewer's 3D scene (agenty_core.tools.animate_scene): the Clip Sequencer, cameras, turntables,
 # renders / playblasts of the scene on screen, keys, layers, IK/FK, set-driven keys, USD; a turntable per clip.
 from agenty_core.tools.animate_scene import animate_scene, render_turntables  # noqa: F401,E402
+# Track a plate's camera in the viewer's matchmove (agenty_core.tools.matchmove): lens, masks, tracks, solve, build.
+from agenty_core.tools.matchmove import matchmove  # noqa: F401,E402
 # Editable motion graphics: a scene file (data) checked, previewed and rendered with Remotion.
 from agenty_core.tools.motion_graphics import mg_scene_validate, mg_scene_preview_frame, mg_render  # noqa: F401,E402
 # A 3D scene from a picture or a prompt with World Labs Atlas (agenty_core.tools.worldlabs_atlas).
@@ -318,6 +320,8 @@ _SHARED_CORE_TOOLS = [
     "animate_character",
     # the rest of the 3D scene: clips, cameras, turntables, renders, keys, layers; a turntable of each clip
     "animate_scene", "render_turntables",
+    # track a plate's camera in the viewer's matchmove (lens, masks, tracks, solve, into the 3D space)
+    "matchmove",
     # editable motion graphics: write a *.mgscene.json scene, check it, look at stills, render it with Remotion
     "mg_scene_validate", "mg_scene_preview_frame", "mg_render",
     # a 3D scene from a picture / prompt with World Labs Atlas
@@ -732,6 +736,7 @@ ORCHESTRATOR_TOOLS: list = [
     animate_character,   # rig / auto-rig / AI motion and in-betweens / clean feet / FBX-Alembic export of a character
     animate_scene,       # the 3D scene: clips, cameras, turntables, renders / playblasts, keys, layers, IK/FK, USD
     render_turntables,   # a turntable of each animation clip, one film per clip
+    matchmove,           # the matchmove: a plate's camera tracked and solved, built into the 3D space
     mg_scene_validate,   # motion graphics: check a *.mgscene.json scene
     mg_scene_preview_frame,  # ... look at stills / a contact sheet of it
     mg_render,           # ... render it to a video with the generic Remotion renderer
