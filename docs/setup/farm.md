@@ -41,6 +41,24 @@ In this order:
 A model none of these knows fails the render with its name, so you can add it to `config/farm_models.json`.
 Gated Hugging Face repos need `HF_TOKEN` on the machine.
 
+## Keeping models between machines
+
+Without storage, every new machine downloads its models again: that is billed GPU time while it waits, and some
+vast.ai hosts also charge for download traffic. With **Farm > Setup > Keep models on storage** on, machines are
+rented with provider storage and the farm image keeps the models there (`FARM_MODELS_DIR`):
+
+- **vast.ai volumes live on one physical machine.** Renting an offer on a machine that has one of your volumes
+  attaches it, and the models are there at once; such offers are listed first and marked. Renting anywhere else
+  makes a new volume of *Volume size* on that machine (when it sells storage), so a second machine starts empty
+  again. A volume's size cannot be changed later. It costs storage while no instance runs.
+- **RunPod network volumes belong to a data centre** (the first EU one when *EU machines only* is on). The pod is
+  placed in the volume's data centre, so any GPU there finds the models. A network volume can grow, not shrink;
+  RunPod charges about $0.07 per GB a month.
+
+**Farm > Storage** lists the volumes with their size, cost, which models are on them and which machines use them.
+It makes a volume by hand (vast.ai: from a storage offer, which fixes the machine; RunPod: in a data centre), grows
+a RunPod one and deletes one no machine uses.
+
 ## The machine's token
 
 Every rented machine gets its own token, and the farm image answers only requests that carry it. *Open ComfyUI* on

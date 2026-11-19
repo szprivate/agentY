@@ -8,6 +8,11 @@
   it: ``Authorization: Bearer <token>``, or once ``?token=<token>`` in a browser (kept as a cookie). Without the
   token the machine's port would be open to anyone who finds it.
 
+* With ``FARM_MODELS_DIR`` (set by the farm when the machine is rented with storage: a vast.ai volume at
+  ``/data``, a RunPod network volume at ``/workspace``) every model folder gets ``<dir>/<folder>`` as its first
+  place, so downloads land on the storage and the next machine finds them there. ``GET /farm/models`` lists the
+  model files on it (``folder``, ``name``, ``bytes``).
+
 It registers no nodes. Only https URLs are fetched; HF_TOKEN, when set on the machine, is sent to huggingface.co.
 """
 from __future__ import annotations
@@ -69,6 +74,45 @@ if TOKEN:
         log.info("agentY farm helper: requests need the machine's token")
     except Exception as exc:  # noqa: BLE001
         log.error("agentY farm helper: could not install the token check: %s", exc)
+
+
+# ── storage ──────────────────────────────────────────────────────────────────
+MODELS_DIR = os.environ.get("FARM_MODELS_DIR", "").strip()
+MODEL_EXT = (".safetensors", ".gguf", ".ckpt", ".pt", ".pth", ".bin", ".sft", ".onnx")
+
+
+def _use_storage() -> None:
+    if not MODELS_DIR:
+        return
+    root = Path(MODELS_DIR)
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        log.error("agentY farm helper: cannot use %s for models: %s", root, exc)
+        return
+    for folder, entry in list(folder_paths.folder_names_and_paths.items()):
+        if folder in ("custom_nodes", "configs"):
+            continue
+        place = str(root / folder)
+        paths = entry[0]
+        if place not in paths:
+            paths.insert(0, place)
+    log.info("agentY farm helper: models are kept in %s", root)
+
+
+_use_storage()
+
+
+def _stored_models() -> list:
+    if not MODELS_DIR or not Path(MODELS_DIR).is_dir():
+        return []
+    out = []
+    for p in Path(MODELS_DIR).rglob("*"):
+        if p.is_file() and p.name.endswith(MODEL_EXT):
+            rel = p.relative_to(MODELS_DIR).parts
+            if len(rel) >= 2:
+                out.append({"folder": rel[0], "name": "/".join(rel[1:]), "bytes": p.stat().st_size})
+    return sorted(out, key=lambda f: (f["folder"], f["name"]))
 
 
 # ── model downloads ──────────────────────────────────────────────────────────
@@ -169,6 +213,11 @@ async def farm_fetch_status(request):
         return web.json_response({"items": [_public(it) for it in _items.values()]})
 
 
+@routes.get("/farm/models")
+async def farm_models(request):
+    return web.json_response({"dir": MODELS_DIR, "files": _stored_models()})
+
+
 @routes.get("/farm/helper")
 async def farm_helper(request):
-    return web.json_response({"ok": True, "version": 1, "token": bool(TOKEN)})
+    return web.json_response({"ok": True, "version": 2, "token": bool(TOKEN), "models_dir": MODELS_DIR})
