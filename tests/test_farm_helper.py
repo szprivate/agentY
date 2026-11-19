@@ -20,7 +20,7 @@ except ImportError:  # pragma: no cover
 HELPER = Path(__file__).resolve().parents[1] / "deploy" / "farm-image" / "agenty_farm_helper" / "__init__.py"
 
 
-def load_helper(models_dir: Path, token: str):
+def load_helper(models_dir: Path, token: str, storage: str = ""):
     """Import the helper against stand-ins for ComfyUI's folder_paths and PromptServer."""
     fp = types.ModuleType("folder_paths")
     fp.folder_names_and_paths = {"diffusion_models": ([str(models_dir / "diffusion_models")], set()),
@@ -35,7 +35,7 @@ def load_helper(models_dir: Path, token: str):
         return web.json_response({"ok": True})
     srv.PromptServer = types.SimpleNamespace(instance=types.SimpleNamespace(app=app, routes=routes))
     with mock.patch.dict(sys.modules, {"folder_paths": fp, "server": srv}), \
-            mock.patch.dict(os.environ, {"COMFY_TOKEN": token}):
+            mock.patch.dict(os.environ, {"COMFY_TOKEN": token, "FARM_MODELS_DIR": storage}):
         spec = importlib.util.spec_from_file_location("agenty_farm_helper_under_test", HELPER)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
@@ -120,6 +120,24 @@ class FarmHelper(unittest.TestCase):
         out = self.run_app(app, fn)
         self.assertEqual(out["items"][0]["state"], "done")
         self.assertEqual(out["items"][0]["total"], 3)
+
+    def test_with_storage_downloads_land_on_it_and_are_listed(self):
+        vol = self.models / "vol"
+        mod, app = load_helper(self.models, "", storage=str(vol / "models"))
+        data = b"y" * 300
+        with mock.patch.object(mod.urllib.request, "urlopen", lambda req, timeout=60: FakeResponse(data)):
+            async def fn(c):
+                await c.post("/farm/fetch", json={"items": [
+                    {"folder": "loras", "name": "s.safetensors", "url": "https://hf.co/s"}]})
+                for _ in range(50):
+                    st = await (await c.get("/farm/fetch")).json()
+                    if st["items"][0]["state"] in ("done", "failed"):
+                        break
+                    await asyncio.sleep(0.1)
+                return await (await c.get("/farm/models")).json()
+            out = self.run_app(app, fn)
+        self.assertEqual((vol / "models" / "loras" / "s.safetensors").read_bytes(), data)
+        self.assertEqual(out["files"], [{"folder": "loras", "name": "s.safetensors", "bytes": 300}])
 
 
 if __name__ == "__main__":
