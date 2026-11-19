@@ -93,7 +93,7 @@ def read_manifest(path: Path = MANIFEST) -> dict | None:
         return None
 
 
-def render_manifest(version: str, date: str, repos: dict) -> str:
+def render_manifest(version: str, date: str, repos: dict, via: str = "") -> str:
     lines = [
         "# The set of versions that make up this release of agentY. Written by",
         "# scripts/make_release.py - do not edit by hand.",
@@ -102,6 +102,7 @@ def render_manifest(version: str, date: str, repos: dict) -> str:
         "# at the commit named here.",
         f'version = "{version}"',
         f'date = "{date}"',
+        *([f'via = "{via}"'] if via else []),   # "actions": the Release workflow tags (--via-actions)
         "",
     ]
     for name in SIBLINGS:
@@ -331,7 +332,7 @@ def release(version: str, dry_run: bool = False, lock: bool = True, notes: str =
         print("Cannot release: the plugin is not ready (see above)."); return 2
 
     repos = {n: {"tag": tag, "commit": _git(dirs[n], "rev-parse", "HEAD")} for n in SIBLINGS}
-    manifest = render_manifest(version, datetime.date.today().isoformat(), repos)
+    manifest = render_manifest(version, datetime.date.today().isoformat(), repos, "actions" if via_actions else "")
     print(f"Release {tag}")
     for name in SIBLINGS:
         print(f"  {name:24} {repos[name]['commit'][:7]}  ({_git(dirs[name], 'branch', '--show-current') or 'detached'})")

@@ -80,6 +80,10 @@ branch, pushed, and the tests run):
 secret `RELEASE_TOKEN`, a fine-grained token with *Contents: read and write* on the five
 repositories. `--via-actions` keeps the committed `requirements.lock` unless `--lock` is
 given.
+The workflow acts only on a `release.toml` that says `via = "actions"` (only
+`--via-actions` writes it), so a release made on a dev machine is never tagged twice. Every
+run first checks that the token can write to all five repositories, so a push that changes
+only the workflow is a check that publishes nothing.
 
 It releases each repository at the commit it has checked out, writes
 `release.toml` and `requirements.lock`, tags, moves `main` and `stable`, and

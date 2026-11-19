@@ -9,8 +9,11 @@
 #
 # It needs the secret RELEASE_TOKEN: a fine-grained token with "Contents: read and
 # write" on agentY, agentY-core, agentY-comfyuiConnect, agentY-mcp and ComfyUI-ImageViewer.
-# The run does nothing when the version in release.toml is already tagged, so a push that
-# only changes this file or the lock is safe.
+# Every run first checks that the token can read and write all five repositories (it
+# makes a check tag in each and deletes it again). The release itself is done only when
+# release.toml says `via = "actions"`, which only --via-actions writes: a release made on a
+# dev machine tags by itself, and the two must not race. It is also skipped when the version
+# is already tagged, so a push that only changes this file is a check and nothing more.
 name: Release
 on:
   push:
@@ -27,6 +30,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check that RELEASE_TOKEN can write to all five repositories
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          RUN: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ -z "$GH_TOKEN" ]; then echo "::error::The secret RELEASE_TOKEN is not set"; exit 1; fi
+          for repo in agentY agentY-core agentY-comfyuiConnect agentY-mcp ComfyUI-ImageViewer; do
+            R="repos/$OWNER/$repo"
+            sha=$(gh api "$R/git/ref/heads/dev" --jq .object.sha) || { echo "::error::$repo: the token cannot read it"; exit 1; }
+            ref="refs/tags/release-token-check-$RUN"
+            gh api -X POST "$R/git/refs" -f ref="$ref" -f sha="$sha" >/dev/null \
+              || { echo "::error::$repo: the token cannot write (Contents: read and write needed)"; exit 1; }
+            gh api -X DELETE "$R/git/$ref" >/dev/null || { echo "::error::$repo: could not delete $ref"; exit 1; }
+            echo "$repo: read and write ok"
+          done
       - name: Tag, move main and stable, make the GitHub releases
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
@@ -38,6 +58,9 @@ jobs:
           V=$(sed -n 's/^version = "\(.*\)"$/\1/p' release.toml)
           [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::release.toml has no version"; exit 1; }
           TAG="v$V"
+          if ! grep -q '^via = "actions"' release.toml; then
+            echo "release.toml for $V was not written by --via-actions - the machine that made it tags; nothing to do"; exit 0
+          fi
           # repo commit, one per line: agentY at the pushed commit, the siblings as release.toml says
           LIST="agentY $AGENT_COMMIT"$'\n'$(awk -F'"' '/^\[repos\./{r=$2} /^commit = /{print r" "$2}' release.toml)
           echo "$LIST"
