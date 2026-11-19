@@ -108,6 +108,10 @@ PACKS: dict[str, tuple[str, tuple[str, ...]]] = {
                    "turntable of each clip, renders and playblasts, keys, layers, IK/FK, set-driven keys (read the "
                    "`character-animation` skill first)",
                    ("animate_character", "animate_scene", "render_turntables")),
+    "matchmove": ("track a plate's camera (and objects moving in it) in the viewer's matchmove: lens distortion "
+                  "from a grid, lines or a comp, masks, tracks, the solve and its error, orientation, the solved "
+                  "camera and plate built into the 3D space (read the `matchmove` skill first)",
+                  ("matchmove",)),
     "dcc": ("model a building / object / room in Blender, Maya or Houdini from a reference photo: run the one "
             "build script (live in the open app, or headless in batch) and check the silhouette by numbers; measure the photo with MoGe "
             "(read the `model-from-reference` skill first); destroy a model in Houdini with a rigid-body sim, dust, smoke and cloth "

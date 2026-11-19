@@ -14,6 +14,16 @@ class Registered(unittest.TestCase):
         self.assertIn("character-animation", agent._ORCH_SKILL_NAMES)
         self.assertTrue(agent._skill_sources(["character-animation"]))
 
+    def test_matchmove_tool_pack_and_skill(self):
+        import src.tools as tools
+        from src import agent
+        from src.tools import tool_packs
+        names = {tool_packs.name_of(t) for t in tools.ORCHESTRATOR_TOOLS}
+        self.assertIn("matchmove", names)
+        self.assertIn("matchmove", tool_packs.PACKS["matchmove"][1])
+        self.assertIn("matchmove", agent._ORCH_SKILL_NAMES)
+        self.assertTrue(agent._skill_sources(["matchmove"]))
+
 
 if __name__ == "__main__":
     unittest.main()

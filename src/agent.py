@@ -1065,6 +1065,8 @@ _ORCH_SKILL_NAMES = [
     # Rigging and animating a character, clips, cameras and turntables in the viewer's 3D space
     # (animate_character, animate_scene, render_turntables).
     "character-animation",
+    # Tracking a plate's camera in the viewer's matchmove (matchmove).
+    "matchmove",
     # World Labs Atlas: picture / prompt -> 3D scene mesh.
     "worldlabs-atlas",
     # Rendering on the Deadline farm.
