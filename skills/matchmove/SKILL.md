@@ -1,7 +1,7 @@
 ---
 name: matchmove
 description: Track a plate's camera in the ComfyUI Image Viewer's matchmove - the lens distortion from a grid, lines or a comp, masks over what moves, feature tracks, the camera solve and its error, cleaning up bad tracks, orienting and scaling the scene, a moving object's own track, and the solved camera with the undistorted plate built into the 3D space. Use for "track this shot", "matchmove the plate", "solve the camera of this clip", "camera track for CG", "get me the camera from this footage", "undistort the plate", "lens grid", "track the car in the shot", "put a CG object into this shot", "export the lens distortion to Comp", "why does the solve drift", "track my iPhone clip", "the solve looks squashed", "use the iPhone's depth", "set the ground", "mask the people with AI".
-allowed-tools: matchmove get_viewer_state show_in_viewer edit_comp animate_scene
+allowed-tools: matchmove get_viewer_state show_in_viewer edit_comp animate_scene analyze_image view_image
 ---
 
 # Matchmove: a plate's camera, step by step
@@ -14,9 +14,29 @@ Plate coordinates are its own pixels, x right, y down from the top left; frames 
 The order matters. A wrong lens or an unmasked moving car spoils every step after it, and no amount of
 solving fixes it later.
 
+## 0. Is a plate loaded already?
+
+The user often loads the plate themselves (the guide's Plate step, the Plate panel, the plate in the main
+view). The turn's `[VIEWER]` lines then carry a `matchmove plate=...` line: its path, size, frame range,
+the frame shown ("this frame"), the step, the tracks and the solve. `get_viewer_state` has the same under
+`state.matchmove`. **Start with `matchmove("info")`** and go on with that plate; `open` only when the user
+wants another one. Never ask the user for the plate's path when one is loaded.
+
+## Looking at the plate
+
+`matchmove("frame", {"frames": [0, 40, 80]})` (or `{"frame": n}`; no frame = the one shown) saves those
+frames as pictures with the tracks drawn on them (green: solved under 1 px, yellow: not solved yet, red:
+over 1 px or switched off; their ids beside them when there are few) and lists each frame's tracks with
+x, y and error. Hand `result.frames[i].path` (or `result.contact_sheet`) to
+`analyze_image(file_paths=[...])`. Use it to see what is in the shot (what moves and needs a mask, where
+the floor is, straight lines for the lens), to check tracks sit on corners rather than on reflections or
+edges, and before telling the user anything about how the plate looks. `"undistort": true` shows the plate
+through the lens (no tracks drawn). At most 16 frames a call.
+
 ## 1. Plate
 
-`matchmove("open", {"plate": "<film, or one frame of a numbered sequence>"})`.
+`matchmove("open", {"plate": "<film, or one frame of a numbered sequence>"})` - only for a plate that is
+not loaded yet (step 0).
 
 - Track the **original** plate: not a graded, retimed, stabilised, cropped or rescaled copy. The lens and
   the frame size have to be the camera's.
@@ -114,6 +134,11 @@ Tracks there pull the camera towards their motion.
   only on a distant wall, or only on the ground, solve badly. A shot with all tracks far away and no
   parallax is a nodal pan (see step 5).
 - Motion blur, rolling shutter, heavy grain and fast whip pans make tracks jump. Expect more cleanup there.
+- **Hard shots** (things coming into view, a fast turn, a start where little is trackable): after the first
+  pass, `matchmove("track", {"seeds": "thin"})` finds new points in the middle of every thin stretch and
+  follows them both ways; `{"seeds": [frame, ...], "direction": "both"}` does it on frames you pick;
+  `{"extend": true}` (or a list of track ids) carries tracks on past where they stopped. `direction`
+  (`forward`, `backward`, `both`) and `start` (the frame to start from) also work on a plain track.
 
 ## 5. Solve
 

@@ -44,6 +44,20 @@ class WhichTurnsGetWhat(unittest.TestCase):
                                   generated_images=[])
         self.assertEqual(_pins(_session=session), {"graph"})
 
+    def test_a_plate_loaded_in_the_matchmove_brings_the_matchmove_tool(self):
+        from agenty_core.utils import turn_scope
+
+        def pins_with(state):
+            sc = turn_scope.Scope()
+            sc.set("viewer_state", state)
+            tok = turn_scope.enter(sc)
+            try:
+                return _pins()
+            finally:
+                turn_scope.leave(tok)
+        self.assertEqual(pins_with({"open": True, "matchmove": {"plate": {"path": "D:/in/plate.####.exr"}}}), {"matchmove"})
+        self.assertEqual(pins_with({"open": True}), set())
+
     def test_both_at_once(self):
         got = _pins(_canvas_hooks=[{"hook_node_id": "4"}], _canvas_graph={"1": {}})
         self.assertEqual(got, {"hooks", "graph"})

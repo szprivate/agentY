@@ -6716,6 +6716,9 @@ class Pipeline:
             vstate = turn_scope.current().get("viewer_state")
             if isinstance(vstate, dict) and (vstate.get("annotations") or {}).get("count"):
                 pins.add("viewer")
+            # A plate loaded in the viewer's matchmove: the matchmove tool is at hand (its [VIEWER] line names it).
+            if isinstance(vstate, dict) and vstate.get("open") and isinstance(vstate.get("matchmove"), dict):
+                pins.add("matchmove")
         except Exception:  # noqa: BLE001
             pass
         # Clips picked in the viewer's Edit panel, or a message that asks to recreate
