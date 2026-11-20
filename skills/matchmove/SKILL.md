@@ -1,6 +1,6 @@
 ---
 name: matchmove
-description: Track a plate's camera in the ComfyUI Image Viewer's matchmove - the lens distortion from a grid, lines or a comp, masks over what moves, feature tracks, the camera solve and its error, cleaning up bad tracks, orienting and scaling the scene, a moving object's own track, and the solved camera with the undistorted plate built into the 3D space. Use for "track this shot", "matchmove the plate", "solve the camera of this clip", "camera track for CG", "get me the camera from this footage", "undistort the plate", "lens grid", "track the car in the shot", "put a CG object into this shot", "export the lens distortion to Comp", "why does the solve drift", "track my iPhone clip", "the solve looks squashed", "use the iPhone's depth", "set the ground", "mask the people with AI".
+description: Track a plate's camera in the ComfyUI Image Viewer's matchmove - the lens distortion from a grid, lines or a comp, masks over what moves, feature tracks, the camera solve and its error, cleaning up bad tracks, orienting and scaling the scene, a moving object's own track, and the solved camera with the undistorted plate built into the 3D space. Use for "track this shot", "matchmove the plate", "solve the camera of this clip", "camera track for CG", "get me the camera from this footage", "undistort the plate", "lens grid", "track the car in the shot", "put a CG object into this shot", "export the lens distortion to Comp", "why does the solve drift", "track my iPhone clip", "the solve looks squashed", "use the iPhone's depth", "use AI depth for the track", "the camera barely moves", "set the ground", "mask the people with AI".
 allowed-tools: matchmove get_viewer_state show_in_viewer edit_comp animate_scene analyze_image view_image
 ---
 
@@ -69,7 +69,8 @@ the phone (AirDrop or a cable, "Most Compatible" off), not a copy an app re-enco
   start, never the answer. A fresh iPhone film therefore starts with `refine: "on"`; keep it.
 - Only a **Cinematic** film carries depth (`matchmove.phone.depth` with `samples`); ordinary iPhone video
   has none, no gyro data and no LiDAR. A HEIC portrait photo may carry a depth picture. Use the depth in
-  step 7 (`ground` how `phone`) and, when the user wants the maps, `matchmove("phone_export")` writes the
+  the solve (step 5, `depth: "phone"`), for the clean-up (`track_delete` `depth_edges`), in step 7
+  (`ground` how `phone`) and, when the user wants the maps, `matchmove("phone_export")` writes the
   depth track as a 16-bit picture sequence (bright = near) and answers the pattern.
 - The phone's depth has no units: it sets the ground, not the scale. Measure for the scale (step 5).
 - The phone's lens distortion is already corrected in its film: use lens `none` unless lines still bend.
@@ -152,6 +153,30 @@ Tracks there pull the camera towards their motion.
   shot cannot tell the focal length apart (little parallax): the proportions in depth are not to be
   trusted - give the real focal length, or measure (below). `better` names a direction that fitted better.
 - `units` is `"m"` once a distance is measured, else the solve's own units.
+
+### Depth: when the camera hardly moves, or the solve looks squashed
+
+A depth picture per frame tells the solve how far each track is. `matchmove("solve", {"depth": "phone"})`
+uses a Cinematic iPhone film's own depth track; `{"depth": "ai"}` runs a depth model (Depth Anything 3) on
+12 frames over the tracks first, as one ComfyUI job, and keeps it for the next solves (`depth_again: true`
+or another `depth_workflow` runs it again; `depth_scale` 0.5 is quicker). The depth has no units: each
+frame is scaled onto the solve, so it fixes the PROPORTIONS (and with them the focal length), never the
+scale - measure a distance for metres. Use it when:
+
+- the camera moves little (a small push, a handheld drift): `focal_check.weak` is true, or the solve looks
+  squashed or stretched;
+- the solve came out inside out (near and far swapped - things that should be close are far): the depth
+  sees that and solves again from it (`solve.depth.turned`, and a note says so).
+
+Read `solve.depth`: `order` near 1 means the depth and the solve agree on near and far; `agreement` is how
+far apart they are (0.02 = 2 %). An `error` says why it was left out (read the wrong way, another plate, too
+few tracks with depth). `depth_strength` (default 1) pulls harder for a shot that barely moves. A tripod
+shot has no depth to fix and leaves it out. Nothing is lost by trying: when the depth does not fit, the
+solve is the one without it.
+
+Before the solve, or after a bad one: `matchmove("track_delete", {"depth_edges": true})` deletes the tracks
+the depth says not to trust - on a depth edge (a corner in front of something far, where the feature slides
+between the two) or jumping in depth against the rest. Answered as `depth_edges` [[id, edge | jumps]].
 
 ### Measurements: when the solve looks squashed or stretched
 
