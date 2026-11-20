@@ -193,6 +193,25 @@ Then `matchmove("solve")` again. `matchmove.measurements` says for each whether 
 tracks are never deleted by the clean-up. `{"remove": id}` or `{"clear": true}` takes them off. Ask the
 user for a real measurement (a door is about 2.0 m, a table top 0.75 m high, a parking bay 2.5 m wide)
 when the shot needs one.
+
+### Geometry in the 3D space: survey points
+
+When the set is already in the 3D space - a box placed where the real one stands, an imported set model, a
+scan, or points the user surveyed - pin tracks to it and the solve lands IN that space, in its units:
+
+- `matchmove("pin", {"add": [{"track": "t12", "point": [1.2, 0, -3.4]}, ...]})` - a track and the spot it
+  sits on, in the 3D space's axes and units (Y up).
+- `{"add": {"track": "t40", "item": "Table", "vertex": 7}}` - an item's vertex (`vertex` left out: its
+  origin, e.g. a locator the user placed). Ask the user which corner a track is when it is not clear; the
+  user can also click it themselves (Solve step, Geometry, "Pin … to geometry…").
+- 3 or more pins, spread out and NOT on one line (4-6 across the picture and in depth is better).
+- `mode`: `"hold"` (default) also pulls the solve into the pins - the camera and focal length follow, which
+  mends a squashed solve; `"align"` only moves, turns and scales the solve onto them. `"off"` ignores them.
+
+Then `matchmove("solve")`. Check `solve.surveyed` is true and read `solve.geometry.pins`: how far each pin
+lands off; one `used: false` disagreed with the rest (a wrong vertex, or a track that slid) - fix or
+remove it. A solve on geometry needs no orient, ground or scale in step 7: Build puts the camera straight
+into the geometry's world, and orienting would move it off. A tripod solve cannot use pins.
 - `frames_over_1px` lists frames where the camera is unsure. Look at the tracks there.
 - `unsolved_frames` means too few tracks there: back to step 4.
 
@@ -246,7 +265,8 @@ Read `ground.tilt` (degrees off level the cameras suggest; a few is fine) and `g
 the floor: many means the wrong surface). `lift` (scene units) raises or lowers it, `flip` turns it over
 when the camera comes out below the floor.
 
-Then orient the rest. A solve's axes and size are arbitrary until you set them:
+Then orient the rest (not after a solve on geometry pins, which is already placed). A solve's axes and size
+are arbitrary until you set them:
 
 - **Ground by hand**: `matchmove("orient", {"how": "ground", "points": [ids of 3+ tracks on the floor]})`
   (the same as ground `points`, without the search).
@@ -273,7 +293,7 @@ Tell the user:
 
 - the solve's rms in pixels and what it means (very good / usable / not yet),
 - the focal length found (and whether the focal check called it weak),
-- the scale: measured, from metric depth, or not set,
+- the scale: measured, from metric depth, from geometry pins (and how far they land off), or not set,
 - how many tracks were kept,
 - what you masked and why (by hand or with AI),
 - for an iPhone plate: which camera, and whether its depth was used,
